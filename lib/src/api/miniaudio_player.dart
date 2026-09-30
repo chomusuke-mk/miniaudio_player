@@ -28,6 +28,9 @@ const List<String> miniAudioPlayerSupportedExtensions = [
   'rf64',
   'bwf',
   'rifx',
+  'mp2',
+  'mp1',
+  'oga',
 ];
 
 /// Logging severity levels for miniaudio and internal player engine.

@@ -45,6 +45,9 @@ void main() {
         expect(miniAudioPlayerSupportedExtensions, contains('rf64'));
         expect(miniAudioPlayerSupportedExtensions, contains('bwf'));
         expect(miniAudioPlayerSupportedExtensions, contains('rifx'));
+        expect(miniAudioPlayerSupportedExtensions, contains('mp2'));
+        expect(miniAudioPlayerSupportedExtensions, contains('mp1'));
+        expect(miniAudioPlayerSupportedExtensions, contains('oga'));
         expect(miniAudioPlayerSupportedExtensions, isNot(contains('m4a')));
         expect(miniAudioPlayerSupportedExtensions, isNot(contains('aac')));
       },
@@ -262,6 +265,44 @@ void main() {
     );
 
     test(
+      'plays unmodified MP2, MP1, and OGA files (.mp2, .mp1, .oga) seamlessly via native decoders',
+      () async {
+        final mpegOggFiles = [
+          resolveAsset('example/assets/music/salida.mp2'),
+          resolveAsset('example/assets/music/salida.oga'),
+          resolveAsset('example/assets/music/salida.mp1'),
+        ];
+
+        for (final file in mpegOggFiles) {
+          if (!file.existsSync()) continue;
+
+          await player.action.open(file.absolute.path);
+          final duration = player.state.duration;
+          expect(
+            duration.inSeconds,
+            greaterThan(0),
+            reason: '${file.path} should have duration > 0',
+          );
+          expect(duration.inSeconds, inInclusiveRange(65, 75));
+
+          await player.action.play();
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+          expect(player.state.playing, isTrue);
+
+          // Test seeking
+          await player.action.seek(const Duration(seconds: 20));
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          expect(player.state.position.inSeconds, inInclusiveRange(19, 22));
+
+          await player.action.stop();
+          expect(player.state.playing, isFalse);
+        }
+      },
+      skip: skipIfMissing('example/assets/music/salida.mp2') ??
+          skipIfMissing('example/assets/music/salida.oga'),
+    );
+
+    test(
       'unsupported formats (e.g. M4A, AAC) fail decoding with exception without transcode',
       () async {
         final unsupportedFiles = [
@@ -377,6 +418,8 @@ void main() {
           resolveAsset('example/assets/music/salida.rf64'),
           resolveAsset('example/assets/music/salida.w64'),
           resolveAsset('example/assets/music/salida.rifx'),
+          resolveAsset('example/assets/music/salida.mp2'),
+          resolveAsset('example/assets/music/salida.oga'),
         ];
 
         final streamBitrates = <int>[];
