@@ -1,0 +1,33 @@
+# Run with `dart run ffigen --config ffigen.yaml`.
+name: MiniaudioPlayerBindings
+description: |
+  Bindings for `src/miniaudio_player.h`.
+
+  Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/miniaudio_player_bindings_generated.dart'
+headers:
+  entry-points:
+    - 'src/miniaudio_player.h'
+  include-directives:
+    - 'src/miniaudio_player.h'
+ffi-native:
+functions:
+  leaf:
+    include:
+      - 'miniaudio_player_get_.*'
+      - 'miniaudio_player_is_.*'
+      - 'miniaudio_player_set_volume'
+      - 'miniaudio_player_set_rate'
+      - 'miniaudio_player_set_pitch'
+      - 'miniaudio_player_set_equalizer.*'
+      - 'miniaudio_player_set_log_level'
+      - 'miniaudio_player_set_buffer_size'
+comments:
+  style: any
+  length: full
+type-map:
+  structs:
+    'miniaudio_player':
+      lib: 'ffi'
+      c-type: 'Opaque'
+      dart-type: 'Opaque'

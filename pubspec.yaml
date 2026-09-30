@@ -1,0 +1,19 @@
+name: miniaudio_player
+description: "Ultra-low-resource cross-platform audio player using miniaudio and Sonic DSP via Dart Native Assets."
+version: 0.1.0
+
+environment:
+  sdk: ^3.13.4
+
+dependencies:
+  code_assets: ^2.1.0
+  ffi: ^2.1.4
+  hooks: ^2.0.0
+  logging: ^1.3.0
+  native_toolchain_c: ^0.19.0
+
+dev_dependencies:
+  ffigen: ^22.0.0
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
