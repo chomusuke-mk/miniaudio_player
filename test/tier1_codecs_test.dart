@@ -40,6 +40,7 @@ void main() {
         expect(miniAudioPlayerSupportedExtensions, contains('opus'));
         expect(miniAudioPlayerSupportedExtensions, contains('aif'));
         expect(miniAudioPlayerSupportedExtensions, contains('aiff'));
+        expect(miniAudioPlayerSupportedExtensions, contains('aifc'));
         expect(miniAudioPlayerSupportedExtensions, isNot(contains('m4a')));
         expect(miniAudioPlayerSupportedExtensions, isNot(contains('aac')));
       },
@@ -177,11 +178,12 @@ void main() {
     );
 
     test(
-      'plays unmodified AIFF files (.aif, .aiff) seamlessly via native dr_wav',
+      'plays unmodified AIFF files (.aif, .aiff, .aifc) seamlessly via native dr_wav',
       () async {
         final aiffFiles = [
           resolveAsset('example/assets/music/salida.aif'),
           resolveAsset('example/assets/music/salida.aiff'),
+          resolveAsset('example/assets/music/salida.aifc'),
         ];
 
         for (final file in aiffFiles) {
@@ -210,7 +212,8 @@ void main() {
         }
       },
       skip: skipIfMissing('example/assets/music/salida.aif') ??
-          skipIfMissing('example/assets/music/salida.aiff'),
+          skipIfMissing('example/assets/music/salida.aiff') ??
+          skipIfMissing('example/assets/music/salida.aifc'),
     );
 
     test(
@@ -324,6 +327,7 @@ void main() {
           resolveAsset('example/assets/music/salida.wav'),
           resolveAsset('example/assets/music/salida.aif'),
           resolveAsset('example/assets/music/salida.aiff'),
+          resolveAsset('example/assets/music/salida.aifc'),
         ];
 
         final streamBitrates = <int>[];
