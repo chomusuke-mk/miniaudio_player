@@ -59,7 +59,7 @@ void main(List<String> args) async {
     addCDir('src/decoders/libopus/silk/float');
 
     if (targetOS == OS.linux) {
-      libraries.addAll(['pthread', 'm', 'dl', 'asound']);
+      libraries.addAll(['pthread', 'm', 'dl']);
       defines['_GNU_SOURCE'] = '1';
       defines['VAR_ARRAYS'] = '1';
     } else if (targetOS == OS.windows) {

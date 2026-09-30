@@ -21,6 +21,8 @@ const List<String> miniAudioPlayerSupportedExtensions = [
   'flac',
   'ogg',
   'opus',
+  'aif',
+  'aiff',
 ];
 
 /// Logging severity levels for miniaudio and internal player engine.
