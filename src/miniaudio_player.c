@@ -19,7 +19,11 @@
 #include "decoders/libopus/miniaudio_libopus.h"
 #endif
 
-static ma_decoding_backend_vtable *g_map_custom_decoders[2] = {NULL, NULL};
+#if !defined(MA_NO_AAC)
+#include "decoders/aac/miniaudio_aac.h"
+#endif
+
+static ma_decoding_backend_vtable *g_map_custom_decoders[4] = {NULL, NULL, NULL, NULL};
 static int g_map_custom_decoders_initialized = 0;
 
 static ma_uint32 map_get_custom_decoder_count(void)
@@ -33,11 +37,17 @@ static ma_uint32 map_get_custom_decoder_count(void)
             g_map_custom_decoders[count++] = ma_decoding_backend_libopus;
         }
 #endif
+#if !defined(MA_NO_AAC)
+        if (ma_decoding_backend_aac != NULL)
+        {
+            g_map_custom_decoders[count++] = ma_decoding_backend_aac;
+        }
+#endif
         g_map_custom_decoders_initialized = 1;
     }
     else
     {
-        while (count < 2 && g_map_custom_decoders[count] != NULL)
+        while (count < 4 && g_map_custom_decoders[count] != NULL)
         {
             count++;
         }

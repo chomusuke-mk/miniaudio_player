@@ -18,6 +18,7 @@ void main(List<String> args) async {
       'HAVE_LRINT': '1',
       'HAVE_LRINTF': '1',
       'FLOAT_APPROX': '1',
+      'USE_DEFAULT_STDLIB': '1',
     };
 
     final List<String> sources = [
@@ -37,6 +38,7 @@ void main(List<String> args) async {
       'src/decoders/libopus/opus_src/repacketizer.c',
       'src/decoders/libopus/opus_src/mapping_matrix.c',
       'src/decoders/libopus/opus_src/extensions.c',
+      'src/decoders/aac/miniaudio_aac.c',
     ];
 
     void addCDir(String path) {
@@ -57,6 +59,7 @@ void main(List<String> args) async {
     addCDir('src/decoders/libopus/celt');
     addCDir('src/decoders/libopus/silk');
     addCDir('src/decoders/libopus/silk/float');
+    addCDir('src/decoders/helix-aac');
 
     if (targetOS == OS.linux) {
       libraries.addAll(['pthread', 'm', 'dl']);
@@ -88,6 +91,9 @@ void main(List<String> args) async {
         'src/decoders/libopus/celt',
         'src/decoders/libopus/silk',
         'src/decoders/libopus/silk/float',
+        'src/decoders/helix-aac',
+        'src/decoders/minimp4',
+        'src/decoders/aac',
       ],
       libraries: libraries,
       defines: defines,

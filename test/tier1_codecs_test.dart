@@ -48,8 +48,8 @@ void main() {
         expect(miniAudioPlayerSupportedExtensions, contains('mp2'));
         expect(miniAudioPlayerSupportedExtensions, contains('mp1'));
         expect(miniAudioPlayerSupportedExtensions, contains('oga'));
-        expect(miniAudioPlayerSupportedExtensions, isNot(contains('m4a')));
-        expect(miniAudioPlayerSupportedExtensions, isNot(contains('aac')));
+        expect(miniAudioPlayerSupportedExtensions, contains('aac'));
+        expect(miniAudioPlayerSupportedExtensions, contains('m4a'));
       },
     );
 
@@ -303,11 +303,47 @@ void main() {
     );
 
     test(
-      'unsupported formats (e.g. M4A, AAC) fail decoding with exception without transcode',
+      'plays unmodified AAC and M4A files (.aac, .m4a) seamlessly via native helix/minimp4 decoders',
+      () async {
+        final aacFiles = [
+          resolveAsset('example/assets/music/salida.aac'),
+          resolveAsset('example/assets/music/salida_aac.m4a'),
+        ];
+
+        for (final file in aacFiles) {
+          if (!file.existsSync()) continue;
+
+          await player.action.open(file.absolute.path);
+          final duration = player.state.duration;
+          expect(
+            duration.inSeconds,
+            greaterThan(0),
+            reason: '${file.path} should have duration > 0',
+          );
+          expect(duration.inSeconds, inInclusiveRange(65, 75));
+
+          await player.action.play();
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+          expect(player.state.playing, isTrue);
+
+          // Test seeking
+          await player.action.seek(const Duration(seconds: 20));
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          expect(player.state.position.inSeconds, inInclusiveRange(19, 22));
+
+          await player.action.stop();
+          expect(player.state.playing, isFalse);
+        }
+      },
+      skip: skipIfMissing('example/assets/music/salida.aac') ??
+          skipIfMissing('example/assets/music/salida_aac.m4a'),
+    );
+
+    test(
+      'unsupported formats fail decoding with exception without transcode',
       () async {
         final unsupportedFiles = [
-          resolveAsset('example/assets/music/salida_aac.m4a'),
-          resolveAsset('example/assets/music/salida.aac'),
+          resolveAsset('example/assets/music/salida_unsupported.xyz'),
         ];
 
         for (final file in unsupportedFiles) {
@@ -319,8 +355,7 @@ void main() {
           );
         }
       },
-      skip: skipIfMissing('example/assets/music/salida_aac.m4a') ??
-          skipIfMissing('example/assets/music/salida.aac'),
+      skip: skipIfMissing('example/assets/music/salida_unsupported.xyz'),
     );
 
     test(
@@ -420,6 +455,8 @@ void main() {
           resolveAsset('example/assets/music/salida.rifx'),
           resolveAsset('example/assets/music/salida.mp2'),
           resolveAsset('example/assets/music/salida.oga'),
+          resolveAsset('example/assets/music/salida.aac'),
+          resolveAsset('example/assets/music/salida_aac.m4a'),
         ];
 
         final streamBitrates = <int>[];
