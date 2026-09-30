@@ -1,6 +1,6 @@
 /*
- * Miniaudio custom decoding backend for AAC (.aac ADTS) and M4A (.m4a MP4 container with AAC audio track).
- * Powered by minimp4 and Helix AAC decoder.
+ * Miniaudio custom decoding backend for AAC (.aac ADTS) and M4A (.m4a MP4 container with AAC or ALAC audio track).
+ * Powered by minimp4, Helix AAC decoder, and ALAC decoder.
  */
 #ifndef miniaudio_aac_h
 #define miniaudio_aac_h
@@ -11,6 +11,13 @@ extern "C"
 #endif
 
 #include "../../miniaudio.h"
+
+    typedef enum
+    {
+        MA_AAC_CODEC_UNKNOWN = 0,
+        MA_AAC_CODEC_AAC = 1,
+        MA_AAC_CODEC_ALAC = 2
+    } ma_aac_codec;
 
     typedef enum
     {
@@ -30,20 +37,29 @@ extern "C"
         void *pFile;               /* FILE* if opened via init_file */
         ma_bool32 ownsFile;
 
-        /* Helix AAC decoder instance */
+        /* Codec and container mode */
+        ma_aac_codec codec;
+        ma_aac_container container;
+
+        /* Helix AAC decoder instance (for AAC) */
         void *hDecoder;
 
-        /* Container mode & audio parameters */
-        ma_aac_container container;
+        /* ALAC decoder instance (for ALAC) */
+        void *pAlac;
+        int alacSampleSize;
+        uint8_t *alacRawBuffer;
+
+        /* Audio parameters */
         ma_uint32 channels;
         ma_uint32 sampleRate;
         ma_uint64 totalPCMFrameCount;
         ma_uint64 currentPCMFrame;
 
-        /* Decoded PCM buffer */
-        short pcmBuffer[2048 * 2];
-        ma_uint32 pcmBufferFrames;
-        ma_uint32 pcmBufferIndex;
+        /* Decoded PCM buffers (unified for AAC and ALAC) */
+        float floatBuffer[4096 * 2];
+        short shortBuffer[4096 * 2];
+        ma_uint32 bufferFrames;
+        ma_uint32 bufferIndex;
 
         /* MP4 container state */
         void *pMp4;                /* MP4D_demux_t* */

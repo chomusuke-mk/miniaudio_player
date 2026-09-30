@@ -12,6 +12,7 @@
 #define MINIMP4_IMPLEMENTATION
 #include "minimp4.h"
 #include "aacdec.h"
+#include "alac.h"
 #include "miniaudio_aac.h"
 
 #include <stdio.h>
@@ -167,6 +168,82 @@ static int ma_aac_mp4_read_cb(int64_t offset, void *buffer, size_t size, void *t
 }
 
 /*
+ * PCM buffer conversion helpers
+ */
+static void ma_aac_store_alac_pcm(ma_aac *pAac, int decodedBytes)
+{
+    int bytesPerSample = pAac->alacSampleSize / 8;
+    ma_uint32 pcmFrames = (ma_uint32)(decodedBytes / (pAac->channels * bytesPerSample));
+    ma_uint32 totalSamples = pcmFrames * pAac->channels;
+
+    if (pAac->alacSampleSize == 24)
+    {
+        const uint8_t *raw = pAac->alacRawBuffer;
+        if (pAac->format == ma_format_f32)
+        {
+            for (ma_uint32 i = 0; i < totalSamples; i++)
+            {
+                uint8_t b0 = raw[i * 3 + 0];
+                uint8_t b1 = raw[i * 3 + 1];
+                uint8_t b2 = raw[i * 3 + 2];
+                int32_t val = (int32_t)((uint32_t)b0 | ((uint32_t)b1 << 8) | ((uint32_t)b2 << 16));
+                if (val & 0x800000)
+                    val |= 0xFF000000;
+                pAac->floatBuffer[i] = (float)val / 8388608.0f;
+            }
+        }
+        else
+        {
+            for (ma_uint32 i = 0; i < totalSamples; i++)
+            {
+                uint8_t b0 = raw[i * 3 + 0];
+                uint8_t b1 = raw[i * 3 + 1];
+                uint8_t b2 = raw[i * 3 + 2];
+                int32_t val = (int32_t)((uint32_t)b0 | ((uint32_t)b1 << 8) | ((uint32_t)b2 << 16));
+                if (val & 0x800000)
+                    val |= 0xFF000000;
+                pAac->shortBuffer[i] = (short)(val >> 8);
+            }
+        }
+    }
+    else
+    {
+        const int16_t *s16 = (const int16_t *)pAac->alacRawBuffer;
+        if (pAac->format == ma_format_f32)
+        {
+            for (ma_uint32 i = 0; i < totalSamples; i++)
+            {
+                pAac->floatBuffer[i] = (float)s16[i] / 32768.0f;
+            }
+        }
+        else
+        {
+            memcpy(pAac->shortBuffer, s16, totalSamples * sizeof(short));
+        }
+    }
+
+    pAac->bufferFrames = pcmFrames;
+    pAac->bufferIndex = 0;
+}
+
+static void ma_aac_store_helix_pcm(ma_aac *pAac, int outputSamps)
+{
+    ma_uint32 pcmFrames = (ma_uint32)(outputSamps / pAac->channels);
+    ma_uint32 totalSamples = (ma_uint32)outputSamps;
+
+    if (pAac->format == ma_format_f32)
+    {
+        for (ma_uint32 i = 0; i < totalSamples; i++)
+        {
+            pAac->floatBuffer[i] = (float)pAac->shortBuffer[i] / 32768.0f;
+        }
+    }
+
+    pAac->bufferFrames = pcmFrames;
+    pAac->bufferIndex = 0;
+}
+
+/*
  * Internal initialization and parsing
  */
 static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig, ma_aac *pAac)
@@ -217,14 +294,6 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
     {
         MP4D_demux_t *pMp4 = (MP4D_demux_t *)malloc(sizeof(MP4D_demux_t));
         int audioTrack = -1;
-        AACFrameInfo aacInfo;
-        unsigned frameBytes = 0, ts = 0, dur = 0;
-        MP4D_file_offset_t offset;
-        uint8_t *frameData;
-        uint8_t *inPtr;
-        int bytesLeft;
-        int err;
-        AACFrameInfo curInfo;
 
         if (pMp4 == NULL)
             return MA_OUT_OF_MEMORY;
@@ -239,7 +308,8 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
         for (unsigned i = 0; i < pMp4->track_count; i++)
         {
             if (pMp4->track[i].handler_type == MP4D_HANDLER_TYPE_SOUN ||
-                pMp4->track[i].object_type_indication == MP4_OBJECT_TYPE_AUDIO_ISO_IEC_14496_3)
+                pMp4->track[i].object_type_indication == 0x40 ||
+                pMp4->track[i].object_type_indication == 0xC0)
             {
                 audioTrack = (int)i;
                 break;
@@ -253,80 +323,189 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
             return MA_INVALID_FILE;
         }
 
-        pAac->hDecoder = AACInitDecoder();
-        if (pAac->hDecoder == NULL)
+        /* Check whether track is ALAC */
+        if (pMp4->track[audioTrack].object_type_indication == 0xC0 ||
+            (pMp4->track[audioTrack].dsi && pMp4->track[audioTrack].dsi_bytes == 24))
         {
-            MP4D_close(pMp4);
-            free(pMp4);
-            return MA_OUT_OF_MEMORY;
-        }
+            uint8_t *cookie = pMp4->track[audioTrack].dsi;
+            int bitDepth = cookie[5];
+            int channels = cookie[9];
+            uint32_t sampleRate = (uint32_t)(((uint32_t)cookie[20] << 24) | ((uint32_t)cookie[21] << 16) | ((uint32_t)cookie[22] << 8) | (uint32_t)cookie[23]);
+            uint32_t maxSamples = (uint32_t)(((uint32_t)cookie[0] << 24) | ((uint32_t)cookie[1] << 16) | ((uint32_t)cookie[2] << 8) | (uint32_t)cookie[3]);
+            unsigned frameBytes = 0, ts = 0, dur = 0;
+            MP4D_file_offset_t offset;
+            uint8_t *frameData;
+            int decodedBytes = 0;
 
-        memset(&aacInfo, 0, sizeof(aacInfo));
-        aacInfo.nChans = 2;
-        aacInfo.sampRateCore = (int)pMp4->track[audioTrack].timescale;
-        if (aacInfo.sampRateCore == 0)
-            aacInfo.sampRateCore = 44100;
-        aacInfo.profile = AAC_PROFILE_LC;
+            if (maxSamples == 0)
+                maxSamples = 4096;
 
-        if (pMp4->track[audioTrack].dsi && pMp4->track[audioTrack].dsi_bytes >= 2)
-        {
-            uint8_t *dsi = pMp4->track[audioTrack].dsi;
-            int sfi = ((dsi[0] & 7) << 1) | ((dsi[1] >> 7) & 1);
-            int ch = (dsi[1] >> 3) & 0xF;
-            int rate = (sfi < 16) ? sample_rates[sfi] : aacInfo.sampRateCore;
-            if (ch > 0)
-                aacInfo.nChans = ch;
-            if (rate > 0)
-                aacInfo.sampRateCore = rate;
-        }
-        AACSetRawBlockParams((HAACDecoder)pAac->hDecoder, 0, &aacInfo);
+            pAac->codec = MA_AAC_CODEC_ALAC;
+            pAac->container = MA_AAC_CONTAINER_MP4;
+            pAac->pMp4 = pMp4;
+            pAac->mp4AudioTrack = (ma_uint32)audioTrack;
+            pAac->channels = (ma_uint32)(channels ? channels : 2);
+            pAac->sampleRate = sampleRate ? sampleRate : 44100;
+            pAac->alacSampleSize = bitDepth ? bitDepth : 16;
 
-        /* Decode sample 0 to initialize codec state and detect parameters */
-        offset = MP4D_frame_offset(pMp4, audioTrack, 0, &frameBytes, &ts, &dur);
-        frameData = (uint8_t *)malloc(frameBytes);
-        if (frameData == NULL)
-        {
-            AACFreeDecoder((HAACDecoder)pAac->hDecoder);
-            MP4D_close(pMp4);
-            free(pMp4);
-            return MA_OUT_OF_MEMORY;
-        }
+            pAac->pAlac = alac_create(pAac->alacSampleSize, (int)pAac->channels);
+            if (pAac->pAlac == NULL)
+            {
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_OUT_OF_MEMORY;
+            }
+            alac_set_info_cookie((alac_file *)pAac->pAlac, cookie);
 
-        ma_aac_stream_seek(pAac, offset, ma_seek_origin_start);
-        if (ma_aac_stream_read(pAac, frameData, frameBytes) != frameBytes)
-        {
+            pAac->alacRawBuffer = (uint8_t *)malloc(maxSamples * pAac->channels * (pAac->alacSampleSize / 8));
+            if (pAac->alacRawBuffer == NULL)
+            {
+                alac_free((alac_file *)pAac->pAlac);
+                pAac->pAlac = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_OUT_OF_MEMORY;
+            }
+
+            /* Decode sample 0 to initialize state */
+            offset = MP4D_frame_offset(pMp4, audioTrack, 0, &frameBytes, &ts, &dur);
+            frameData = (uint8_t *)malloc(frameBytes);
+            if (frameData == NULL)
+            {
+                free(pAac->alacRawBuffer);
+                pAac->alacRawBuffer = NULL;
+                alac_free((alac_file *)pAac->pAlac);
+                pAac->pAlac = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_OUT_OF_MEMORY;
+            }
+
+            ma_aac_stream_seek(pAac, offset, ma_seek_origin_start);
+            if (ma_aac_stream_read(pAac, frameData, frameBytes) != frameBytes)
+            {
+                free(frameData);
+                free(pAac->alacRawBuffer);
+                pAac->alacRawBuffer = NULL;
+                alac_free((alac_file *)pAac->pAlac);
+                pAac->pAlac = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_INVALID_FILE;
+            }
+
+            alac_decode_frame((alac_file *)pAac->pAlac, frameData, pAac->alacRawBuffer, &decodedBytes);
             free(frameData);
-            AACFreeDecoder((HAACDecoder)pAac->hDecoder);
-            MP4D_close(pMp4);
-            free(pMp4);
-            return MA_INVALID_FILE;
+
+            if (decodedBytes <= 0)
+            {
+                free(pAac->alacRawBuffer);
+                pAac->alacRawBuffer = NULL;
+                alac_free((alac_file *)pAac->pAlac);
+                pAac->pAlac = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_INVALID_FILE;
+            }
+
+            ma_aac_store_alac_pcm(pAac, decodedBytes);
+            pAac->mp4CurrentSample = 1;
+            pAac->currentPCMFrame = 0;
+            pAac->totalPCMFrameCount = (ma_uint64)pMp4->track[audioTrack].sample_count * pAac->bufferFrames;
+
+            return MA_SUCCESS;
         }
 
-        inPtr = frameData;
-        bytesLeft = (int)frameBytes;
-        err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->pcmBuffer);
-        free(frameData);
-        if (err != 0)
+        /* AAC in MP4 */
         {
-            AACFreeDecoder((HAACDecoder)pAac->hDecoder);
-            MP4D_close(pMp4);
-            free(pMp4);
-            return MA_INVALID_FILE;
+            AACFrameInfo aacInfo;
+            unsigned frameBytes = 0, ts = 0, dur = 0;
+            MP4D_file_offset_t offset;
+            uint8_t *frameData;
+            uint8_t *inPtr;
+            int bytesLeft;
+            int err;
+            AACFrameInfo curInfo;
+
+            pAac->hDecoder = AACInitDecoder();
+            if (pAac->hDecoder == NULL)
+            {
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_OUT_OF_MEMORY;
+            }
+
+            memset(&aacInfo, 0, sizeof(aacInfo));
+            aacInfo.nChans = 2;
+            aacInfo.sampRateCore = (int)pMp4->track[audioTrack].timescale;
+            if (aacInfo.sampRateCore == 0)
+                aacInfo.sampRateCore = 44100;
+            aacInfo.profile = AAC_PROFILE_LC;
+
+            if (pMp4->track[audioTrack].dsi && pMp4->track[audioTrack].dsi_bytes >= 2)
+            {
+                uint8_t *dsi = pMp4->track[audioTrack].dsi;
+                int sfi = ((dsi[0] & 7) << 1) | ((dsi[1] >> 7) & 1);
+                int ch = (dsi[1] >> 3) & 0xF;
+                int rate = (sfi < 16) ? sample_rates[sfi] : aacInfo.sampRateCore;
+                if (ch > 0)
+                    aacInfo.nChans = ch;
+                if (rate > 0)
+                    aacInfo.sampRateCore = rate;
+            }
+            AACSetRawBlockParams((HAACDecoder)pAac->hDecoder, 0, &aacInfo);
+
+            /* Decode sample 0 */
+            offset = MP4D_frame_offset(pMp4, audioTrack, 0, &frameBytes, &ts, &dur);
+            frameData = (uint8_t *)malloc(frameBytes);
+            if (frameData == NULL)
+            {
+                AACFreeDecoder((HAACDecoder)pAac->hDecoder);
+                pAac->hDecoder = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_OUT_OF_MEMORY;
+            }
+
+            ma_aac_stream_seek(pAac, offset, ma_seek_origin_start);
+            if (ma_aac_stream_read(pAac, frameData, frameBytes) != frameBytes)
+            {
+                free(frameData);
+                AACFreeDecoder((HAACDecoder)pAac->hDecoder);
+                pAac->hDecoder = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_INVALID_FILE;
+            }
+
+            inPtr = frameData;
+            bytesLeft = (int)frameBytes;
+            err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->shortBuffer);
+            free(frameData);
+            if (err != 0)
+            {
+                AACFreeDecoder((HAACDecoder)pAac->hDecoder);
+                pAac->hDecoder = NULL;
+                MP4D_close(pMp4);
+                free(pMp4);
+                return MA_INVALID_FILE;
+            }
+
+            AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
+            pAac->codec = MA_AAC_CODEC_AAC;
+            pAac->container = MA_AAC_CONTAINER_MP4;
+            pAac->pMp4 = pMp4;
+            pAac->mp4AudioTrack = (ma_uint32)audioTrack;
+            pAac->channels = (ma_uint32)curInfo.nChans;
+            pAac->sampleRate = (ma_uint32)curInfo.sampRateOut;
+
+            ma_aac_store_helix_pcm(pAac, curInfo.outputSamps);
+            pAac->mp4CurrentSample = 1;
+            pAac->currentPCMFrame = 0;
+            pAac->totalPCMFrameCount = (ma_uint64)pMp4->track[audioTrack].sample_count * pAac->bufferFrames;
+
+            return MA_SUCCESS;
         }
-
-        AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
-        pAac->container = MA_AAC_CONTAINER_MP4;
-        pAac->pMp4 = pMp4;
-        pAac->mp4AudioTrack = (ma_uint32)audioTrack;
-        pAac->channels = (ma_uint32)curInfo.nChans;
-        pAac->sampleRate = (ma_uint32)curInfo.sampRateOut;
-        pAac->pcmBufferFrames = (ma_uint32)(curInfo.outputSamps / curInfo.nChans);
-        pAac->pcmBufferIndex = 0;
-        pAac->mp4CurrentSample = 1;
-        pAac->currentPCMFrame = 0;
-        pAac->totalPCMFrameCount = (ma_uint64)pMp4->track[audioTrack].sample_count * pAac->pcmBufferFrames;
-
-        return MA_SUCCESS;
     }
 
     /* 2. Try ADTS stream (.aac) */
@@ -424,6 +603,7 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
         if (frameData == NULL)
         {
             AACFreeDecoder((HAACDecoder)pAac->hDecoder);
+            pAac->hDecoder = NULL;
             free(pAac->adtsFrameOffsets);
             pAac->adtsFrameOffsets = NULL;
             return MA_OUT_OF_MEMORY;
@@ -434,6 +614,7 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
         {
             free(frameData);
             AACFreeDecoder((HAACDecoder)pAac->hDecoder);
+            pAac->hDecoder = NULL;
             free(pAac->adtsFrameOffsets);
             pAac->adtsFrameOffsets = NULL;
             return MA_INVALID_FILE;
@@ -441,25 +622,27 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
 
         inPtr = frameData;
         bytesLeft = (int)f0_len;
-        err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->pcmBuffer);
+        err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->shortBuffer);
         free(frameData);
         if (err != 0)
         {
             AACFreeDecoder((HAACDecoder)pAac->hDecoder);
+            pAac->hDecoder = NULL;
             free(pAac->adtsFrameOffsets);
             pAac->adtsFrameOffsets = NULL;
             return MA_INVALID_FILE;
         }
 
         AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
+        pAac->codec = MA_AAC_CODEC_AAC;
         pAac->container = MA_AAC_CONTAINER_ADTS;
         pAac->channels = (ma_uint32)curInfo.nChans;
         pAac->sampleRate = (ma_uint32)curInfo.sampRateOut;
-        pAac->pcmBufferFrames = (ma_uint32)(curInfo.outputSamps / curInfo.nChans);
-        pAac->pcmBufferIndex = 0;
+
+        ma_aac_store_helix_pcm(pAac, curInfo.outputSamps);
         pAac->adtsCurrentFrame = 1;
         pAac->currentPCMFrame = 0;
-        pAac->totalPCMFrameCount = (ma_uint64)pAac->adtsFrameCount * pAac->pcmBufferFrames;
+        pAac->totalPCMFrameCount = (ma_uint64)pAac->adtsFrameCount * pAac->bufferFrames;
 
         return MA_SUCCESS;
     }
@@ -563,6 +746,18 @@ MA_API void ma_aac_uninit(ma_aac *pAac, const ma_allocation_callbacks *pAllocati
         pAac->hDecoder = NULL;
     }
 
+    if (pAac->pAlac != NULL)
+    {
+        alac_free((alac_file *)pAac->pAlac);
+        pAac->pAlac = NULL;
+    }
+
+    if (pAac->alacRawBuffer != NULL)
+    {
+        free(pAac->alacRawBuffer);
+        pAac->alacRawBuffer = NULL;
+    }
+
     if (pAac->container == MA_AAC_CONTAINER_MP4 && pAac->pMp4 != NULL)
     {
         MP4D_close((MP4D_demux_t *)pAac->pMp4);
@@ -600,29 +795,25 @@ MA_API ma_result ma_aac_read_pcm_frames(ma_aac *pAac, void *pFramesOut, ma_uint6
         ma_uint32 toCopy;
 
         /* 1. Copy available decoded frames from internal buffer */
-        if (pAac->pcmBufferIndex < pAac->pcmBufferFrames)
+        if (pAac->bufferIndex < pAac->bufferFrames)
         {
-            available = pAac->pcmBufferFrames - pAac->pcmBufferIndex;
+            available = pAac->bufferFrames - pAac->bufferIndex;
             toCopy = (ma_uint32)((frameCount - totalFramesRead < available) ? (frameCount - totalFramesRead) : available);
 
             if (pAac->format == ma_format_f32)
             {
                 float *pOut = (float *)ma_offset_pcm_frames_ptr(pFramesOut, totalFramesRead, ma_format_f32, pAac->channels);
-                const short *pIn = &pAac->pcmBuffer[pAac->pcmBufferIndex * pAac->channels];
-                ma_uint32 totalSamples = toCopy * pAac->channels;
-                for (ma_uint32 i = 0; i < totalSamples; i++)
-                {
-                    pOut[i] = (float)pIn[i] / 32768.0f;
-                }
+                const float *pIn = &pAac->floatBuffer[pAac->bufferIndex * pAac->channels];
+                memcpy(pOut, pIn, toCopy * pAac->channels * sizeof(float));
             }
             else
             {
                 short *pOut = (short *)ma_offset_pcm_frames_ptr(pFramesOut, totalFramesRead, ma_format_s16, pAac->channels);
-                const short *pIn = &pAac->pcmBuffer[pAac->pcmBufferIndex * pAac->channels];
+                const short *pIn = &pAac->shortBuffer[pAac->bufferIndex * pAac->channels];
                 memcpy(pOut, pIn, toCopy * pAac->channels * sizeof(short));
             }
 
-            pAac->pcmBufferIndex += toCopy;
+            pAac->bufferIndex += toCopy;
             pAac->currentPCMFrame += toCopy;
             totalFramesRead += toCopy;
             continue;
@@ -635,14 +826,10 @@ MA_API ma_result ma_aac_read_pcm_frames(ma_aac *pAac, void *pFramesOut, ma_uint6
             unsigned frameBytes = 0, ts = 0, dur = 0;
             MP4D_file_offset_t offset;
             uint8_t *frameData;
-            uint8_t *inPtr;
-            int bytesLeft;
-            int err;
-            AACFrameInfo curInfo;
 
             if (pAac->mp4CurrentSample >= pMp4->track[pAac->mp4AudioTrack].sample_count)
             {
-                break; /* Reached end of audio stream */
+                break; /* End of stream */
             }
 
             offset = MP4D_frame_offset(pMp4, pAac->mp4AudioTrack, pAac->mp4CurrentSample++, &frameBytes, &ts, &dur);
@@ -657,22 +844,40 @@ MA_API ma_result ma_aac_read_pcm_frames(ma_aac *pAac, void *pFramesOut, ma_uint6
                 break;
             }
 
-            inPtr = frameData;
-            bytesLeft = (int)frameBytes;
-            err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->pcmBuffer);
-            free(frameData);
-
-            if (err == 0)
+            if (pAac->codec == MA_AAC_CODEC_ALAC)
             {
-                AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
-                pAac->pcmBufferFrames = (ma_uint32)(curInfo.outputSamps / curInfo.nChans);
-                pAac->pcmBufferIndex = 0;
+                int decodedBytes = 0;
+                alac_decode_frame((alac_file *)pAac->pAlac, frameData, pAac->alacRawBuffer, &decodedBytes);
+                free(frameData);
+
+                if (decodedBytes > 0)
+                {
+                    ma_aac_store_alac_pcm(pAac, decodedBytes);
+                }
+                else
+                {
+                    pAac->bufferFrames = 0;
+                    pAac->bufferIndex = 0;
+                }
             }
             else
             {
-                /* Decode error on frame, keep going or finish */
-                pAac->pcmBufferFrames = 0;
-                pAac->pcmBufferIndex = 0;
+                uint8_t *inPtr = frameData;
+                int bytesLeft = (int)frameBytes;
+                int err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->shortBuffer);
+                free(frameData);
+
+                if (err == 0)
+                {
+                    AACFrameInfo curInfo;
+                    AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
+                    ma_aac_store_helix_pcm(pAac, curInfo.outputSamps);
+                }
+                else
+                {
+                    pAac->bufferFrames = 0;
+                    pAac->bufferIndex = 0;
+                }
             }
         }
         else if (pAac->container == MA_AAC_CONTAINER_ADTS)
@@ -683,11 +888,10 @@ MA_API ma_result ma_aac_read_pcm_frames(ma_aac *pAac, void *pFramesOut, ma_uint6
             uint8_t *inPtr;
             int bytesLeft;
             int err;
-            AACFrameInfo curInfo;
 
             if (pAac->adtsCurrentFrame >= pAac->adtsFrameCount)
             {
-                break; /* Reached end of ADTS stream */
+                break;
             }
 
             offset = pAac->adtsFrameOffsets[pAac->adtsCurrentFrame];
@@ -709,19 +913,19 @@ MA_API ma_result ma_aac_read_pcm_frames(ma_aac *pAac, void *pFramesOut, ma_uint6
 
             inPtr = frameData;
             bytesLeft = (int)len;
-            err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->pcmBuffer);
+            err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->shortBuffer);
             free(frameData);
 
             if (err == 0)
             {
+                AACFrameInfo curInfo;
                 AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
-                pAac->pcmBufferFrames = (ma_uint32)(curInfo.outputSamps / curInfo.nChans);
-                pAac->pcmBufferIndex = 0;
+                ma_aac_store_helix_pcm(pAac, curInfo.outputSamps);
             }
             else
             {
-                pAac->pcmBufferFrames = 0;
-                pAac->pcmBufferIndex = 0;
+                pAac->bufferFrames = 0;
+                pAac->bufferIndex = 0;
             }
         }
         else
@@ -752,15 +956,15 @@ MA_API ma_result ma_aac_seek_to_pcm_frame(ma_aac *pAac, ma_uint64 frameIndex)
     if (pAac == NULL)
         return MA_INVALID_ARGS;
 
-    nominalFrameSamples = (pAac->pcmBufferFrames > 0) ? pAac->pcmBufferFrames : 1024;
+    nominalFrameSamples = (pAac->bufferFrames > 0) ? pAac->bufferFrames : 1024;
     if (nominalFrameSamples == 0)
         nominalFrameSamples = 1024;
 
     if (frameIndex >= pAac->totalPCMFrameCount)
     {
         pAac->currentPCMFrame = pAac->totalPCMFrameCount;
-        pAac->pcmBufferFrames = 0;
-        pAac->pcmBufferIndex = 0;
+        pAac->bufferFrames = 0;
+        pAac->bufferIndex = 0;
         if (pAac->container == MA_AAC_CONTAINER_MP4 && pAac->pMp4 != NULL)
         {
             pAac->mp4CurrentSample = ((MP4D_demux_t *)pAac->pMp4)->track[pAac->mp4AudioTrack].sample_count;
@@ -775,18 +979,12 @@ MA_API ma_result ma_aac_seek_to_pcm_frame(ma_aac *pAac, ma_uint64 frameIndex)
     sampleIdx = frameIndex / nominalFrameSamples;
     remainder = (ma_uint32)(frameIndex % nominalFrameSamples);
 
-    AACFlushCodec((HAACDecoder)pAac->hDecoder);
-
     if (pAac->container == MA_AAC_CONTAINER_MP4)
     {
         MP4D_demux_t *pMp4 = (MP4D_demux_t *)pAac->pMp4;
         unsigned frameBytes = 0, ts = 0, dur = 0;
         MP4D_file_offset_t offset = MP4D_frame_offset(pMp4, pAac->mp4AudioTrack, (unsigned)sampleIdx, &frameBytes, &ts, &dur);
         uint8_t *frameData = (uint8_t *)malloc(frameBytes);
-        uint8_t *inPtr;
-        int bytesLeft;
-        int err;
-        AACFrameInfo curInfo;
 
         if (frameData == NULL)
             return MA_OUT_OF_MEMORY;
@@ -798,17 +996,36 @@ MA_API ma_result ma_aac_seek_to_pcm_frame(ma_aac *pAac, ma_uint64 frameIndex)
             return MA_ERROR;
         }
 
-        inPtr = frameData;
-        bytesLeft = (int)frameBytes;
-        err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->pcmBuffer);
-        free(frameData);
+        if (pAac->codec == MA_AAC_CODEC_ALAC)
+        {
+            int decodedBytes = 0;
+            alac_decode_frame((alac_file *)pAac->pAlac, frameData, pAac->alacRawBuffer, &decodedBytes);
+            free(frameData);
 
-        if (err != 0)
-            return MA_ERROR;
+            if (decodedBytes <= 0)
+                return MA_ERROR;
 
-        AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
-        pAac->pcmBufferFrames = (ma_uint32)(curInfo.outputSamps / curInfo.nChans);
-        pAac->pcmBufferIndex = (remainder < pAac->pcmBufferFrames) ? remainder : pAac->pcmBufferFrames;
+            ma_aac_store_alac_pcm(pAac, decodedBytes);
+        }
+        else
+        {
+            uint8_t *inPtr = frameData;
+            int bytesLeft = (int)frameBytes;
+            int err;
+
+            AACFlushCodec((HAACDecoder)pAac->hDecoder);
+            err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->shortBuffer);
+            free(frameData);
+
+            if (err != 0)
+                return MA_ERROR;
+
+            AACFrameInfo curInfo;
+            AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
+            ma_aac_store_helix_pcm(pAac, curInfo.outputSamps);
+        }
+
+        pAac->bufferIndex = (remainder < pAac->bufferFrames) ? remainder : pAac->bufferFrames;
         pAac->mp4CurrentSample = (ma_uint32)sampleIdx + 1;
         pAac->currentPCMFrame = frameIndex;
         return MA_SUCCESS;
@@ -835,17 +1052,18 @@ MA_API ma_result ma_aac_seek_to_pcm_frame(ma_aac *pAac, ma_uint64 frameIndex)
             return MA_ERROR;
         }
 
+        AACFlushCodec((HAACDecoder)pAac->hDecoder);
         inPtr = frameData;
         bytesLeft = (int)len;
-        err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->pcmBuffer);
+        err = AACDecode((HAACDecoder)pAac->hDecoder, &inPtr, &bytesLeft, pAac->shortBuffer);
         free(frameData);
 
         if (err != 0)
             return MA_ERROR;
 
         AACGetLastFrameInfo((HAACDecoder)pAac->hDecoder, &curInfo);
-        pAac->pcmBufferFrames = (ma_uint32)(curInfo.outputSamps / curInfo.nChans);
-        pAac->pcmBufferIndex = (remainder < pAac->pcmBufferFrames) ? remainder : pAac->pcmBufferFrames;
+        ma_aac_store_helix_pcm(pAac, curInfo.outputSamps);
+        pAac->bufferIndex = (remainder < pAac->bufferFrames) ? remainder : pAac->bufferFrames;
         pAac->adtsCurrentFrame = (ma_uint32)sampleIdx + 1;
         pAac->currentPCMFrame = frameIndex;
         return MA_SUCCESS;

@@ -303,11 +303,12 @@ void main() {
     );
 
     test(
-      'plays unmodified AAC and M4A files (.aac, .m4a) seamlessly via native helix/minimp4 decoders',
+      'plays unmodified AAC and M4A files (.aac, .m4a AAC, .m4a ALAC) seamlessly via native helix/alac/minimp4 decoders',
       () async {
         final aacFiles = [
           resolveAsset('example/assets/music/salida.aac'),
           resolveAsset('example/assets/music/salida_aac.m4a'),
+          resolveAsset('example/assets/music/salida_alac.m4a'),
         ];
 
         for (final file in aacFiles) {
@@ -336,7 +337,8 @@ void main() {
         }
       },
       skip: skipIfMissing('example/assets/music/salida.aac') ??
-          skipIfMissing('example/assets/music/salida_aac.m4a'),
+          skipIfMissing('example/assets/music/salida_aac.m4a') ??
+          skipIfMissing('example/assets/music/salida_alac.m4a'),
     );
 
     test(
@@ -457,6 +459,7 @@ void main() {
           resolveAsset('example/assets/music/salida.oga'),
           resolveAsset('example/assets/music/salida.aac'),
           resolveAsset('example/assets/music/salida_aac.m4a'),
+          resolveAsset('example/assets/music/salida_alac.m4a'),
         ];
 
         final streamBitrates = <int>[];

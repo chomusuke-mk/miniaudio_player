@@ -39,6 +39,7 @@ void main(List<String> args) async {
       'src/decoders/libopus/opus_src/mapping_matrix.c',
       'src/decoders/libopus/opus_src/extensions.c',
       'src/decoders/aac/miniaudio_aac.c',
+      'src/decoders/alac/alac.c',
     ];
 
     void addCDir(String path) {
@@ -94,6 +95,7 @@ void main(List<String> args) async {
         'src/decoders/helix-aac',
         'src/decoders/minimp4',
         'src/decoders/aac',
+        'src/decoders/alac',
       ],
       libraries: libraries,
       defines: defines,

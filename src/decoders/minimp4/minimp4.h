@@ -575,6 +575,7 @@ enum
     BOX_ipir    = FOUR_CHAR_INT( 'i', 'p', 'i', 'r' ),//IPIReferenceAtomType
     BOX_mp4s    = FOUR_CHAR_INT( 'm', 'p', '4', 's' ),//MPEGSampleEntryAtomType
     BOX_mp4a    = FOUR_CHAR_INT( 'm', 'p', '4', 'a' ),//MPEGAudioSampleEntryAtomType
+    BOX_alac    = FOUR_CHAR_INT( 'a', 'l', 'a', 'c' ),//AppleLosslessAudioCodecSampleEntryAtomType
     BOX_sowt    = FOUR_CHAR_INT( 's', 'o', 'w', 't' ),//QuickTime uncompressed 16-bit little-endian PCM sample entry
     BOX_chan    = FOUR_CHAR_INT( 'c', 'h', 'a', 'n' ),//QuickTime channel layout box (inside 'sowt')
     BOX_mp4v    = FOUR_CHAR_INT( 'm', 'p', '4', 'v' ),//MPEGVisualSampleEntryAtomType
@@ -2722,6 +2723,7 @@ int MP4D_open(MP4D_demux_t *mp4, int (*read_callback)(int64_t offset, void *buff
             {BOX_stbl, BOX_ATOM},
             {BOX_stsd, BOX_ATOM},
             {BOX_mp4a, BOX_ATOM},
+            {BOX_alac, BOX_ATOM},
             {BOX_mp4s, BOX_ATOM},
 #if MP4D_AVC_SUPPORTED
             {BOX_mp4v, BOX_ATOM},
@@ -3153,6 +3155,32 @@ broken_android_meta_hack:
                 ERROR("broken file structure!");
             }
             SKIP(6*1 + 2/*Base SampleEntry*/);
+            break;
+
+        case BOX_alac:
+            if (!tr)
+            {
+                ERROR("broken file structure!");
+            }
+            if (box_bytes > 36 && !tr->dsi)
+            {
+                SKIP(28);
+            }
+            else
+            {
+                if (payload_bytes >= 28)
+                {
+                    SKIP(4);
+                    MALLOC(unsigned char*, tr->dsi, 24);
+                    for (i = 0; i < 24; i++)
+                    {
+                        tr->dsi[i] = minimp4_read(mp4, 1, &eof_flag);
+                    }
+                    tr->dsi_bytes = 24;
+                    payload_bytes -= 28;
+                    tr->object_type_indication = 0xC0;
+                }
+            }
             break;
 
         case BOX_mp4a:
