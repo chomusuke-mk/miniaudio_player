@@ -44,6 +44,7 @@ void main() {
         expect(miniAudioPlayerSupportedExtensions, contains('w64'));
         expect(miniAudioPlayerSupportedExtensions, contains('rf64'));
         expect(miniAudioPlayerSupportedExtensions, contains('bwf'));
+        expect(miniAudioPlayerSupportedExtensions, contains('rifx'));
         expect(miniAudioPlayerSupportedExtensions, isNot(contains('m4a')));
         expect(miniAudioPlayerSupportedExtensions, isNot(contains('aac')));
       },
@@ -220,12 +221,13 @@ void main() {
     );
 
     test(
-      'plays unmodified Broadcast Wave and 64-bit WAV formats (.bwf, .rf64, .w64) seamlessly via native dr_wav',
+      'plays unmodified Broadcast Wave, 64-bit WAV, and RIFX formats (.bwf, .rf64, .w64, .rifx) seamlessly via native dr_wav',
       () async {
         final wav64Files = [
           resolveAsset('example/assets/music/salida.bwf'),
           resolveAsset('example/assets/music/salida.rf64'),
           resolveAsset('example/assets/music/salida.w64'),
+          resolveAsset('example/assets/music/salida.rifx'),
         ];
 
         for (final file in wav64Files) {
@@ -255,7 +257,8 @@ void main() {
       },
       skip: skipIfMissing('example/assets/music/salida.bwf') ??
           skipIfMissing('example/assets/music/salida.rf64') ??
-          skipIfMissing('example/assets/music/salida.w64'),
+          skipIfMissing('example/assets/music/salida.w64') ??
+          skipIfMissing('example/assets/music/salida.rifx'),
     );
 
     test(
@@ -373,6 +376,7 @@ void main() {
           resolveAsset('example/assets/music/salida.bwf'),
           resolveAsset('example/assets/music/salida.rf64'),
           resolveAsset('example/assets/music/salida.w64'),
+          resolveAsset('example/assets/music/salida.rifx'),
         ];
 
         final streamBitrates = <int>[];
