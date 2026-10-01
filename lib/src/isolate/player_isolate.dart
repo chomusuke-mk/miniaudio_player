@@ -435,18 +435,8 @@ class PlayerIsolateWorker {
         _playerHandle,
         devIdPtr != null ? devIdPtr.cast() : nullptr,
       );
-      if (res != MapResult.success) {
-        mainSendPort.send(
-          CommandErrorResponse(
-            cmd.requestId,
-            'Failed to set audio device: ${MapResult.describe(res)}',
-            errorCode: res,
-          ),
-        );
-        return;
-      }
       final devPtr = calloc<native.miniaudio_device_info_t>();
-      bool success = true;
+      bool success = res == MapResult.success;
       try {
         if (native.miniaudio_player_get_current_device(_playerHandle, devPtr) ==
             MapResult.success) {
@@ -469,6 +459,15 @@ class PlayerIsolateWorker {
           } else {
             success = !activeDev.isAuto && activeDev.id == cmd.device.id;
           }
+        } else if (!success) {
+          mainSendPort.send(
+            CommandErrorResponse(
+              cmd.requestId,
+              'Failed to set audio device: ${MapResult.describe(res)}',
+              errorCode: res,
+            ),
+          );
+          return;
         }
       } finally {
         calloc.free(devPtr);

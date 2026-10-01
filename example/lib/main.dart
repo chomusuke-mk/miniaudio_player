@@ -94,9 +94,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+  static const MethodChannel _androidDeviceChannel = MethodChannel(
+    'dev.chomusuke.miniaudio_player/devices',
+  );
+
+  Future<List<AudioDevice>> _loadAudioDevices() async {
+    if (Platform.isAndroid) {
+      try {
+        final List<dynamic>? rawList = await _androidDeviceChannel
+            .invokeListMethod<dynamic>('getAudioDevices');
+        if (rawList != null) {
+          final List<AudioDevice> list = [AudioDevice.auto];
+          for (final item in rawList) {
+            if (item is Map) {
+              final map = Map<String, dynamic>.from(item);
+              list.add(
+                AudioDevice(
+                  id: (map['id'] ?? '').toString(),
+                  name: (map['name'] ?? 'Audio Device').toString(),
+                  isDefault: map['isDefault'] == true,
+                  isAuto: false,
+                  type: map['type'] as int?,
+                ),
+              );
+            }
+          }
+          return list;
+        }
+      } catch (e) {
+        debugPrint('Error getting Android audio devices: $e');
+      }
+    }
+    return MiniaudioPlayer.getAudioDevices();
+  }
+
   Future<void> _refreshAudioDevices() async {
     try {
-      final devs = await MiniaudioPlayer.getAudioDevices();
+      final devs = await _loadAudioDevices();
       if (mounted) {
         setState(() {
           _audioDevices = devs;
@@ -123,7 +157,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       String? filePath,
       bool isGenerated = false,
     }) {
-      final filename = (assetPath ?? filePath ?? id).split(RegExp(r'[/\\]')).last;
+      final filename = (assetPath ?? filePath ?? id)
+          .split(RegExp(r'[/\\]'))
+          .last;
       if (seenFilenames.contains(filename)) return;
       seenFilenames.add(filename);
       tracks.add(
@@ -256,8 +292,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     // 3. Check filesystem locations
-    final filename =
-        (track.assetPath ?? track.id).split(RegExp(r'[/\\]')).last;
+    final filename = (track.assetPath ?? track.id).split(RegExp(r'[/\\]')).last;
     final possiblePaths = [
       'assets/music/$filename',
       'example/assets/music/$filename',
@@ -776,19 +811,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         }).toList(),
                         onChanged: (newDev) async {
                           if (newDev != null) {
-                            final success = await _player.action.setDevice(
-                              newDev,
-                            );
-                            if (!success && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Device "${newDev.name}" is unavailable or disconnected. Falling back to default.',
-                                  ),
-                                  backgroundColor: Colors.orange,
-                                  duration: const Duration(seconds: 3),
-                                ),
+                            try {
+                              final success = await _player.action.setDevice(
+                                newDev,
                               );
+                              if (!success && context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Device "${newDev.name}" is unavailable or disconnected. Falling back to default.',
+                                    ),
+                                    backgroundColor: Colors.orange,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Failed to set device: $e'),
+                                    backgroundColor: Colors.red,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+                              }
                             }
                             _refreshAudioDevices();
                           }

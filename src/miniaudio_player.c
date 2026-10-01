@@ -1102,6 +1102,12 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
         return MAP_ERROR_INVALID_STATE;
 
     player->is_switching_device = 1;
+#if defined(__ANDROID__)
+    if (pContext->backend == ma_backend_aaudio)
+    {
+        ma_atomic_bool32_set(&pDevice->aaudio.isTearingDown, MA_TRUE);
+    }
+#endif
 
     ma_mutex_lock(&player->lock);
     channels = player->channels;
@@ -1134,6 +1140,12 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
         {
             dev_cfg.playback.pDeviceID = &target_id;
             has_custom = MA_TRUE;
+#if defined(__ANDROID__)
+            /* Explicit non-default Android device routing: use conservative performance profile.
+               This forces AAudio to use AudioStreamTrack (tryMMap = false), avoiding exclusive
+               hardware MMAP conflicts and "requestStart() error = -898, stream was probably stolen". */
+            dev_cfg.performanceProfile = ma_performance_profile_conservative;
+#endif
         }
         else
         {
@@ -1217,7 +1229,52 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
 
     if (was_started || state == MAP_PLAYBACK_STATE_PLAYING)
     {
-        ma_device_start(pDevice);
+        res = ma_device_start(pDevice);
+        if (res != MA_SUCCESS && has_custom)
+        {
+            map_log_print(MAP_LOG_LEVEL_WARNING, "core", "failed to start custom device '%s' (res %d), falling back to default", device_id, res);
+#if defined(__ANDROID__)
+            if (pContext->backend == ma_backend_aaudio)
+            {
+                ma_atomic_bool32_set(&pDevice->aaudio.isTearingDown, MA_TRUE);
+            }
+#endif
+            dev_cfg.playback.pDeviceID = NULL;
+            dev_cfg.performanceProfile = ma_performance_profile_low_latency;
+            has_custom = MA_FALSE;
+            memset(&target_id, 0, sizeof(target_id));
+            ma_device_uninit(pDevice);
+            if (ma_device_init(pContext, &dev_cfg, pDevice) == MA_SUCCESS)
+            {
+                if (ma_device_get_info(pDevice, ma_device_type_playback, &dev_info) == MA_SUCCESS)
+                {
+                    snprintf(new_dev_info.name, sizeof(new_dev_info.name), "Default -> %.240s", dev_info.name);
+                }
+                else
+                {
+                    strncpy(new_dev_info.name, "Default", sizeof(new_dev_info.name) - 1);
+                }
+                new_dev_info.id[0] = '\0';
+                new_dev_info.is_default = 1;
+                new_dev_info.is_auto = 1;
+
+                ma_mutex_lock(&player->lock);
+                player->has_custom_device = 0;
+                player->custom_device_id = target_id;
+                player->current_device = new_dev_info;
+                player->device_changed = 1;
+                player->needs_device_fallback = 0;
+                ma_mutex_unlock(&player->lock);
+
+                ma_device_start(pDevice);
+                player->is_switching_device = 0;
+                map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active (fallback): '%s' (default: %d)",
+                              new_dev_info.name, new_dev_info.is_default);
+                return MAP_SUCCESS;
+            }
+            player->is_switching_device = 0;
+            return MAP_ERROR_GENERIC;
+        }
     }
 
     player->is_switching_device = 0;
@@ -1238,6 +1295,7 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
     miniaudio_player_t *player;
     ma_engine_config engine_cfg;
     ma_result result;
+    int32_t fail_result = MAP_ERROR_GENERIC;
 
     player = (miniaudio_player_t *)calloc(1, sizeof(miniaudio_player_t));
     if (player == NULL)
@@ -1277,13 +1335,33 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
         player->user_data = config->user_data;
     }
 
-    engine_cfg = ma_engine_config_init();
-    player->has_context = MA_FALSE;
-    result = ma_context_init(NULL, 0, NULL, &player->context);
+    player->has_log = MA_FALSE;
+    result = ma_log_init(NULL, &player->log);
     if (result == MA_SUCCESS)
     {
-        player->has_context = MA_TRUE;
-        engine_cfg.pContext = &player->context;
+        ma_log_register_callback(&player->log, ma_log_callback_init(map_miniaudio_log_callback, player));
+        player->has_log = MA_TRUE;
+    }
+
+    engine_cfg = ma_engine_config_init();
+    if (player->has_log)
+    {
+        engine_cfg.pLog = &player->log;
+    }
+
+    player->has_context = MA_FALSE;
+    {
+        ma_context_config context_cfg = ma_context_config_init();
+        if (player->has_log)
+        {
+            context_cfg.pLog = &player->log;
+        }
+        result = ma_context_init(NULL, 0, &context_cfg, &player->context);
+        if (result == MA_SUCCESS)
+        {
+            player->has_context = MA_TRUE;
+            engine_cfg.pContext = &player->context;
+        }
     }
 
     if (config != NULL)
@@ -1312,6 +1390,10 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
         if (custom_count > 0)
         {
             ma_resource_manager_config rm_cfg = ma_resource_manager_config_init();
+            if (player->has_log)
+            {
+                rm_cfg.pLog = &player->log;
+            }
             rm_cfg.ppCustomDecodingBackendVTables = g_map_custom_decoders;
             rm_cfg.customDecodingBackendCount = custom_count;
             rm_cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
@@ -1324,25 +1406,38 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
         }
     }
 
-    player->has_log = MA_FALSE;
-    result = ma_log_init(NULL, &player->log);
-    if (result == MA_SUCCESS)
-    {
-        ma_log_register_callback(&player->log, ma_log_callback_init(map_miniaudio_log_callback, player));
-        engine_cfg.pLog = &player->log;
-        player->has_log = MA_TRUE;
-    }
-
     result = ma_engine_init(&engine_cfg, &player->engine);
+    if (result != MA_SUCCESS && engine_cfg.pPlaybackDeviceID != NULL)
+    {
+        map_log_print(MAP_LOG_LEVEL_WARNING, "core", "ma_engine_init failed with custom device (%d), retrying with default device", result);
+        engine_cfg.pPlaybackDeviceID = NULL;
+        player->has_custom_device = MA_FALSE;
+        result = ma_engine_init(&engine_cfg, &player->engine);
+    }
+#if defined(__ANDROID__)
+    if (result != MA_SUCCESS && player->has_context && player->context.backend == ma_backend_aaudio)
+    {
+        map_log_print(MAP_LOG_LEVEL_WARNING, "core", "ma_engine_init failed with AAudio (%d), retrying with OpenSL ES fallback", result);
+        ma_context_uninit(&player->context);
+        player->has_context = MA_FALSE;
+
+        ma_backend backends[1] = { ma_backend_opensl };
+        ma_context_config ctx_cfg = ma_context_config_init();
+        if (player->has_log)
+            ctx_cfg.pLog = &player->log;
+        if (ma_context_init(backends, 1, &ctx_cfg, &player->context) == MA_SUCCESS)
+        {
+            player->has_context = MA_TRUE;
+            engine_cfg.pContext = &player->context;
+            result = ma_engine_init(&engine_cfg, &player->engine);
+        }
+    }
+#endif
     if (result != MA_SUCCESS)
     {
-        if (player->has_log)
-            ma_log_uninit(&player->log);
-        ma_mutex_uninit(&player->lock);
-        free(player);
-        if (out_result)
-            *out_result = MAP_ERROR_ENGINE_INIT;
-        return NULL;
+        map_log_print(MAP_LOG_LEVEL_ERROR, "core", "ma_engine_init failed: %d", result);
+        fail_result = MAP_ERROR_ENGINE_INIT;
+        goto cleanup_error;
     }
 
     player->sample_rate = ma_engine_get_sample_rate(&player->engine);
@@ -1352,29 +1447,21 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
     result = ma_equalizer_node_init(&player->engine.nodeGraph, player->channels, player->sample_rate, &player->eq_node);
     if (result != MA_SUCCESS)
     {
+        map_log_print(MAP_LOG_LEVEL_ERROR, "core", "ma_equalizer_node_init failed: %d", result);
         ma_engine_uninit(&player->engine);
-        if (player->has_log)
-            ma_log_uninit(&player->log);
-        ma_mutex_uninit(&player->lock);
-        free(player);
-        if (out_result)
-            *out_result = MAP_ERROR_NODE_FAILED;
-        return NULL;
+        fail_result = MAP_ERROR_NODE_FAILED;
+        goto cleanup_error;
     }
 
     /* Attach equalizer output to engine master endpoint */
     result = ma_node_attach_output_bus(&player->eq_node.baseNode, 0, ma_engine_get_endpoint(&player->engine), 0);
     if (result != MA_SUCCESS)
     {
+        map_log_print(MAP_LOG_LEVEL_ERROR, "core", "ma_node_attach_output_bus failed: %d", result);
         ma_equalizer_node_uninit(&player->eq_node);
         ma_engine_uninit(&player->engine);
-        if (player->has_log)
-            ma_log_uninit(&player->log);
-        ma_mutex_uninit(&player->lock);
-        free(player);
-        if (out_result)
-            *out_result = MAP_ERROR_NODE_FAILED;
-        return NULL;
+        fail_result = MAP_ERROR_NODE_FAILED;
+        goto cleanup_error;
     }
 
     {
@@ -1429,6 +1516,28 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
     if (out_result)
         *out_result = MAP_SUCCESS;
     return player;
+
+cleanup_error:
+    if (player->has_resource_manager)
+    {
+        ma_resource_manager_uninit(&player->resource_manager);
+        player->has_resource_manager = MA_FALSE;
+    }
+    if (player->has_log)
+    {
+        ma_log_uninit(&player->log);
+        player->has_log = MA_FALSE;
+    }
+    if (player->has_context)
+    {
+        ma_context_uninit(&player->context);
+        player->has_context = MA_FALSE;
+    }
+    ma_mutex_uninit(&player->lock);
+    free(player);
+    if (out_result)
+        *out_result = fail_result;
+    return NULL;
 }
 
 MAP_API int32_t miniaudio_player_destroy(miniaudio_player_t *player)

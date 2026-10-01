@@ -39539,12 +39539,27 @@ static ma_bool32 ma_has_default_device__aaudio(ma_context* pContext, ma_device_t
 static ma_result ma_wait_for_simple_state_transition__aaudio(ma_context* pContext, ma_AAudioStream* pStream, ma_aaudio_stream_state_t oldState, ma_aaudio_stream_state_t newState)
 {
     ma_aaudio_stream_state_t actualNewState;
-    ma_aaudio_result_t resultAA = ((MA_PFN_AAudioStream_waitForStateChange)pContext->aaudio.AAudioStream_waitForStateChange)(pStream, oldState, &actualNewState, 5000000000); /* 5 second timeout. */
+    ma_aaudio_result_t resultAA = ((MA_PFN_AAudioStream_waitForStateChange)pContext->aaudio.AAudioStream_waitForStateChange)(pStream, oldState, &actualNewState, 1000000000); /* 1 second timeout. */
     if (resultAA != MA_AAUDIO_OK) {
+        if (resultAA == -893 /* AAUDIO_ERROR_TIMEOUT */) {
+            actualNewState = ((MA_PFN_AAudioStream_getState)pContext->aaudio.AAudioStream_getState)(pStream);
+            if (newState == MA_AAUDIO_STREAM_STATE_STARTED && (actualNewState == MA_AAUDIO_STREAM_STATE_STARTING || actualNewState == MA_AAUDIO_STREAM_STATE_STARTED)) {
+                return MA_SUCCESS;
+            }
+            if (newState == MA_AAUDIO_STREAM_STATE_STOPPED && (actualNewState == MA_AAUDIO_STREAM_STATE_STOPPING || actualNewState == MA_AAUDIO_STREAM_STATE_STOPPED || actualNewState == MA_AAUDIO_STREAM_STATE_DISCONNECTED)) {
+                return MA_SUCCESS;
+            }
+        }
         return ma_result_from_aaudio(resultAA);
     }
 
     if (newState != actualNewState) {
+        if (newState == MA_AAUDIO_STREAM_STATE_STARTED && (actualNewState == MA_AAUDIO_STREAM_STATE_STARTING || actualNewState == MA_AAUDIO_STREAM_STATE_STARTED)) {
+            return MA_SUCCESS;
+        }
+        if (newState == MA_AAUDIO_STREAM_STATE_STOPPED && (actualNewState == MA_AAUDIO_STREAM_STATE_STOPPING || actualNewState == MA_AAUDIO_STREAM_STATE_STOPPED || actualNewState == MA_AAUDIO_STREAM_STATE_DISCONNECTED)) {
+            return MA_SUCCESS;
+        }
         return MA_ERROR;   /* Failed to transition into the expected state. */
     }
 
@@ -39814,6 +39829,10 @@ static ma_result ma_device_start_stream__aaudio(ma_device* pDevice, ma_AAudioStr
 
         result = ma_wait_for_simple_state_transition__aaudio(pDevice->pContext, pStream, currentState, MA_AAUDIO_STREAM_STATE_STARTED);
         if (result != MA_SUCCESS) {
+            ma_aaudio_stream_state_t checkState = ((MA_PFN_AAudioStream_getState)pDevice->pContext->aaudio.AAudioStream_getState)(pStream);
+            if (checkState == MA_AAUDIO_STREAM_STATE_STARTING || checkState == MA_AAUDIO_STREAM_STATE_STARTED) {
+                return MA_SUCCESS;
+            }
             return result;
         }
     }
@@ -39860,6 +39879,10 @@ static ma_result ma_device_stop_stream__aaudio(ma_device* pDevice, ma_AAudioStre
 
         result = ma_wait_for_simple_state_transition__aaudio(pDevice->pContext, pStream, currentState, MA_AAUDIO_STREAM_STATE_STOPPED);
         if (result != MA_SUCCESS) {
+            ma_aaudio_stream_state_t checkState = ((MA_PFN_AAudioStream_getState)pDevice->pContext->aaudio.AAudioStream_getState)(pStream);
+            if (checkState == MA_AAUDIO_STREAM_STATE_STOPPING || checkState == MA_AAUDIO_STREAM_STATE_STOPPED || checkState == MA_AAUDIO_STREAM_STATE_DISCONNECTED) {
+                return MA_SUCCESS;
+            }
             return result;
         }
     }
