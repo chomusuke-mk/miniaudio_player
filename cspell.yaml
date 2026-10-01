@@ -5,11 +5,13 @@ words:
   - absval
   - advapi
   - ALLOCA
+  - allprojects
   - alsa
   - ALSA
   - alxprd
   - ambisonics
   - AMDF
+  - androidx
   - Antho
   - APIC
   - ARCHMASK
@@ -31,9 +33,12 @@ words:
   - bosflag
   - bresenham
   - buildlog
+  - buildscript
   - bwexpander
   - cbuilder
   - cdim
+  - chomusuke
+  - classpath
   - cliptest
   - Clownacy
   - Coalson
@@ -41,6 +46,7 @@ words:
   - coef
   - COEF
   - COMBFILTER
+  - COMMDEVICE
   - coomputation
   - crctable
   - crossfade
@@ -72,6 +78,7 @@ words:
   - downmixing
   - DTFT
   - Durbin
+  - EARC
   - EBADHEADER
   - EBADLINK
   - EBADPACKET
@@ -134,8 +141,10 @@ words:
   - ipart
   - isqrt
   - itheta
+  - jetbrains
   - kbps
   - Koen
+  - kotlin
   - lbrr
   - LBRR
   - Leitgeb
@@ -203,6 +212,7 @@ words:
   - preclipped
   - preemph
   - premultiplies
+  - println
   - PSHR
   - pthread
   - publically
@@ -253,6 +263,8 @@ words:
   - spetral
   - SROUND
   - stbv
+  - Submix
+  - SUBMIX
   - sudiv
   - SUNPRO
   - Superwideband

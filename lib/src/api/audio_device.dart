@@ -12,11 +12,15 @@ class AudioDevice {
   /// Whether this device represents the automatic system-managed output.
   final bool isAuto;
 
+  /// Optional hardware device type code (e.g. Android AudioDeviceInfo.type).
+  final int? type;
+
   const AudioDevice({
     required this.id,
     required this.name,
     this.isDefault = false,
     this.isAuto = false,
+    this.type,
   });
 
   /// Automatic / system-managed default output audio device template.
@@ -40,5 +44,5 @@ class AudioDevice {
 
   @override
   String toString() =>
-      'AudioDevice(name: $name, id: ${id.isEmpty ? "auto" : (id.length > 8 ? "${id.substring(0, 8)}..." : id)}, default: $isDefault, auto: $isAuto)';
+      'AudioDevice(name: $name, id: ${id.isEmpty ? "auto" : (id.length > 8 ? "${id.substring(0, 8)}..." : id)}, default: $isDefault, auto: $isAuto${type != null ? ", type: $type" : ""})';
 }

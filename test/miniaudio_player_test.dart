@@ -3,6 +3,7 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player/miniaudio_player_bindings_generated.dart'
     as bindings;
 import 'package:miniaudio_player/src/ffi/native_types.dart';
@@ -29,4 +30,34 @@ void main() {
       calloc.free(devPtr);
     }
   });
+
+  test('AudioDevice correctly handles Android device ID and type metadata', () {
+    const deviceWithNoType = AudioDevice(
+      id: '2',
+      name: 'Built-in Speaker',
+      isDefault: true,
+      isAuto: false,
+    );
+    expect(deviceWithNoType.id, equals('2'));
+    expect(deviceWithNoType.type, isNull);
+    expect(deviceWithNoType.toString(), contains('Built-in Speaker'));
+
+    const deviceWithType = AudioDevice(
+      id: '14',
+      name: 'Bluetooth Headset',
+      isDefault: false,
+      isAuto: false,
+      type: 7, // TYPE_BLUETOOTH_SCO
+    );
+    expect(deviceWithType.id, equals('14'));
+    expect(deviceWithType.type, equals(7));
+    expect(deviceWithType.toString(), contains('type: 7'));
+  });
+
+  test('AudioDevice.auto static constant has empty ID and isAuto true', () {
+    expect(AudioDevice.auto.id, isEmpty);
+    expect(AudioDevice.auto.isAuto, isTrue);
+    expect(AudioDevice.auto.toString(), contains('auto'));
+  });
 }
+

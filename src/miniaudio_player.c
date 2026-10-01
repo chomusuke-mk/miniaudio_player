@@ -187,7 +187,28 @@ static wchar_t *map_utf8_to_wchar(const char *str)
 }
 #endif
 
-/* Device ID serialization: converts ma_device_id to/from 512-character hex string */
+/* Helper to check if a device ID string represents the automatic/default output */
+static ma_bool32 map_is_device_id_default(const char *str)
+{
+    size_t i, len;
+    if (str == NULL || str[0] == '\0')
+        return MA_TRUE;
+    if (strcmp(str, "auto") == 0 || strcmp(str, "default") == 0 || strcmp(str, "0") == 0)
+        return MA_TRUE;
+    len = strlen(str);
+    if (len == sizeof(ma_device_id) * 2)
+    {
+        for (i = 0; i < len; i++)
+        {
+            if (str[i] != '0')
+                return MA_FALSE;
+        }
+        return MA_TRUE;
+    }
+    return MA_FALSE;
+}
+
+/* Device ID serialization: converts ma_device_id to/from 512-character hex string, or integer on Android */
 static void map_device_id_to_string(const ma_device_id *pID, char *out_str, size_t max_len)
 {
     const unsigned char *bytes = (const unsigned char *)pID;
@@ -199,6 +220,18 @@ static void map_device_id_to_string(const ma_device_id *pID, char *out_str, size
         out_str[0] = '\0';
         return;
     }
+#if defined(__ANDROID__)
+    if (pID->aaudio > 0)
+    {
+        snprintf(out_str, max_len, "%d", (int)pID->aaudio);
+        return;
+    }
+    else
+    {
+        out_str[0] = '\0';
+        return;
+    }
+#endif
     for (i = 0; i < sizeof(ma_device_id); i++)
     {
         sprintf(out_str + (i * 2), "%02x", bytes[i]);
@@ -208,22 +241,43 @@ static void map_device_id_to_string(const ma_device_id *pID, char *out_str, size
 
 static ma_bool32 map_string_to_device_id(const char *str, ma_device_id *out_id)
 {
-    unsigned char *bytes = (unsigned char *)out_id;
     size_t i;
     if (str == NULL || out_id == NULL)
         return MA_FALSE;
-    if (strlen(str) != sizeof(ma_device_id) * 2)
-        return MA_FALSE;
-    for (i = 0; i < sizeof(ma_device_id); i++)
+
+    memset(out_id, 0, sizeof(ma_device_id));
+
+    if (strlen(str) == sizeof(ma_device_id) * 2)
     {
-        unsigned int val;
-        if (sscanf(str + (i * 2), "%02x", &val) != 1)
+        unsigned char *bytes = (unsigned char *)out_id;
+        for (i = 0; i < sizeof(ma_device_id); i++)
         {
-            return MA_FALSE;
+            unsigned int val;
+            if (sscanf(str + (i * 2), "%02x", &val) != 1)
+            {
+                return MA_FALSE;
+            }
+            bytes[i] = (unsigned char)val;
         }
-        bytes[i] = (unsigned char)val;
+        return MA_TRUE;
     }
-    return MA_TRUE;
+
+    const char *num_str = str;
+    if (strncmp(str, "android:", 8) == 0)
+    {
+        num_str = str + 8;
+    }
+
+    char *endptr = NULL;
+    long int_val = strtol(num_str, &endptr, 10);
+    if (endptr != num_str && *endptr == '\0')
+    {
+        out_id->aaudio = (ma_int32)int_val;
+        out_id->opensl = (ma_uint32)int_val;
+        return MA_TRUE;
+    }
+
+    return MA_FALSE;
 }
 
 /* Clamps frequency safely below the Nyquist limit */
@@ -936,7 +990,19 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
             {
                 strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
                 player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
-                map_device_id_to_string(&info.id, player->current_device.id, sizeof(player->current_device.id));
+                if (player->custom_device_id.aaudio > 0 &&
+                    (pNotification->pDevice->pContext == NULL || pNotification->pDevice->pContext->backend == ma_backend_aaudio || pNotification->pDevice->pContext->backend == ma_backend_opensl
+#if defined(__ANDROID__)
+                     || 1
+#endif
+                    ))
+                {
+                    snprintf(player->current_device.id, sizeof(player->current_device.id), "%d", (int)player->custom_device_id.aaudio);
+                }
+                else
+                {
+                    map_device_id_to_string(&info.id, player->current_device.id, sizeof(player->current_device.id));
+                }
                 player->current_device.is_default = info.isDefault;
                 player->current_device.is_auto = 0;
             }
@@ -975,6 +1041,18 @@ static ma_bool32 map_is_device_connected(ma_context *pContext, const ma_device_i
 
     if (pContext == NULL || pTargetID == NULL)
         return MA_FALSE;
+
+    if (pContext->backend == ma_backend_aaudio)
+    {
+        return (pTargetID->aaudio > 0) ? MA_TRUE : MA_FALSE;
+    }
+
+#if defined(__ANDROID__)
+    if (pContext->backend == ma_backend_opensl)
+    {
+        return (pTargetID->opensl > 0 || pTargetID->aaudio > 0) ? MA_TRUE : MA_FALSE;
+    }
+#endif
 
     res = ma_context_get_devices(pContext, &pPlaybackInfos, &playbackCount, NULL, NULL);
     if (res != MA_SUCCESS || playbackCount == 0)
@@ -1050,7 +1128,7 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     dev_cfg.noClip = MA_FALSE;
     dev_cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
 
-    if (device_id != NULL && device_id[0] != '\0' && strcmp(device_id, "auto") != 0)
+    if (!map_is_device_id_default(device_id))
     {
         if (map_string_to_device_id(device_id, &target_id) && map_is_device_connected(pContext, &target_id))
         {
@@ -1096,7 +1174,19 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
         {
             strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
             new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
-            map_device_id_to_string(&dev_info.id, new_dev_info.id, sizeof(new_dev_info.id));
+            if (target_id.aaudio > 0 &&
+                (pContext->backend == ma_backend_aaudio || pContext->backend == ma_backend_opensl
+#if defined(__ANDROID__)
+                 || 1
+#endif
+                ))
+            {
+                snprintf(new_dev_info.id, sizeof(new_dev_info.id), "%d", (int)target_id.aaudio);
+            }
+            else
+            {
+                map_device_id_to_string(&dev_info.id, new_dev_info.id, sizeof(new_dev_info.id));
+            }
             new_dev_info.is_default = dev_info.isDefault;
             new_dev_info.is_auto = 0;
         }
@@ -1208,8 +1298,7 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
     engine_cfg.resourceManagerResampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
     engine_cfg.pitchResampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
 
-    if (config != NULL && config->playback_device_id != NULL &&
-        config->playback_device_id[0] != '\0' && strcmp(config->playback_device_id, "auto") != 0)
+    if (config != NULL && !map_is_device_id_default(config->playback_device_id))
     {
         if (map_string_to_device_id(config->playback_device_id, &player->custom_device_id))
         {
@@ -1299,7 +1388,19 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
                 {
                     strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
                     player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
-                    map_device_id_to_string(&info.id, player->current_device.id, sizeof(player->current_device.id));
+                    if (player->custom_device_id.aaudio > 0 &&
+                        (pDevice->pContext == NULL || pDevice->pContext->backend == ma_backend_aaudio || pDevice->pContext->backend == ma_backend_opensl
+#if defined(__ANDROID__)
+                         || 1
+#endif
+                        ))
+                    {
+                        snprintf(player->current_device.id, sizeof(player->current_device.id), "%d", (int)player->custom_device_id.aaudio);
+                    }
+                    else
+                    {
+                        map_device_id_to_string(&info.id, player->current_device.id, sizeof(player->current_device.id));
+                    }
                     player->current_device.is_default = info.isDefault;
                     player->current_device.is_auto = 0;
                 }

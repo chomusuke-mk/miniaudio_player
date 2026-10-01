@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'package:ffi/ffi.dart';
 
 import '../../miniaudio_player_bindings_generated.dart' as native;
+import '../api/audio_device.dart';
 import '../ffi/native_types.dart';
 import 'isolate_messages.dart';
 import 'throttled_emitter.dart';
@@ -420,8 +421,13 @@ class PlayerIsolateWorker {
   }
 
   void _handleSetDevice(SetDeviceCommand cmd) {
+    final isAutoTarget = cmd.device.isAuto ||
+        cmd.device.id.isEmpty ||
+        cmd.device.id == 'auto' ||
+        cmd.device.id == 'default' ||
+        cmd.device.id == '0';
     Pointer<Utf8>? devIdPtr;
-    if (cmd.device.id.isNotEmpty && !cmd.device.isAuto) {
+    if (!isAutoTarget) {
       devIdPtr = cmd.device.id.toNativeUtf8();
     }
     try {
@@ -445,8 +451,20 @@ class PlayerIsolateWorker {
         if (native.miniaudio_player_get_current_device(_playerHandle, devPtr) ==
             MapResult.success) {
           final activeDev = devPtr.ref.toAudioDevice();
-          mainSendPort.send(AudioDeviceChangedEvent(activeDev));
-          if (cmd.device.isAuto) {
+          var eventDev = activeDev;
+          if (!isAutoTarget &&
+              activeDev.id == cmd.device.id &&
+              cmd.device.name.isNotEmpty) {
+            eventDev = AudioDevice(
+              id: activeDev.id,
+              name: cmd.device.name,
+              isDefault: cmd.device.isDefault,
+              isAuto: false,
+              type: cmd.device.type,
+            );
+          }
+          mainSendPort.send(AudioDeviceChangedEvent(eventDev));
+          if (isAutoTarget) {
             success = activeDev.isAuto;
           } else {
             success = !activeDev.isAuto && activeDev.id == cmd.device.id;
