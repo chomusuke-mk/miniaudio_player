@@ -672,3 +672,14 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+----------------------------------------------------------------------
+Additional Permission under GNU GPL version 3 section 7
+
+As a special exception under Section 7 of the GNU General Public License
+version 3, the authors and copyright holders of miniaudio_player grant you
+permission to link this program with the Helix AAC decoder distributed under
+the RealNetworks Public Source License (RPSL v1.0), and to convey the
+resulting executable work, provided that you also comply with the terms of
+the RPSL for the Helix AAC components.
+----------------------------------------------------------------------

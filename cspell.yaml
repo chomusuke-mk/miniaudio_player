@@ -16,19 +16,24 @@ words:
   - APIC
   - ARCHMASK
   - asound
+  - aspt
   - asssume
   - audinowho
   - audioBitrate
   - autocorr
   - autogenerado
   - Autogenerado
+  - autoplay
   - Ayllón
   - Balster
   - bandlimited
   - Bennefall
   - BFIN
+  - biquad
+  - Biquad
   - bitrate
   - bitrates
+  - bitstream
   - Borgerding
   - bosflag
   - bresenham
@@ -63,6 +68,7 @@ words:
   - deinterleave
   - demixing
   - DEMIXING
+  - demuxer
   - denormalise
   - deocder
   - depacket
@@ -123,6 +129,7 @@ words:
   - granuleval
   - hadamard
   - Hadamard
+  - Hammerton
   - hann
   - headret
   - hishelf
@@ -158,6 +165,7 @@ words:
   - libpulse
   - libvorbis
   - libvorbisfile
+  - lieff
   - livestreams
   - llret
   - loshelf
@@ -175,6 +183,7 @@ words:
   - mdcts
   - microcontrollers
   - miniaudio
+  - minimp
   - miscapture
   - morlat
   - MSVCRT
@@ -263,6 +272,7 @@ words:
   - spetral
   - SROUND
   - stbv
+  - submix
   - Submix
   - SUBMIX
   - sudiv
@@ -299,6 +309,7 @@ words:
   - vorb
   - vorbisfile
   - VSHR
+  - WASAPI
   - wfopen
   - wfreopen
   - winmm
@@ -310,5 +321,6 @@ words:
   - Xiph
   - xiphmont
   - Xlist
+  - yourapp
   - YTYPE
   - zlog
