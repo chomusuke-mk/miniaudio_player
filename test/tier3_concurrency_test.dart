@@ -44,7 +44,7 @@ void main() {
   });
 
   // =========================================================================
-  // Concurrency 1: Simultaneous Dual-Player Playback in Parallel Isolates
+  // Concurrency 1: Simultaneous Dual-Player Playback
   // =========================================================================
   group('Concurrency 1: Simultaneous Dual-Player Playback', () {
     late MiniaudioPlayer playerA;
@@ -60,7 +60,7 @@ void main() {
       if (!playerB.isDisposed) await playerB.dispose();
     });
 
-    test('C1.1: two players run simultaneously in parallel isolates without contention', () async {
+    test('C1.1: two players run simultaneously in parallel without contention', () async {
       await playerA.action.open(fileA.path);
       await playerB.action.open(fileB.path);
 
@@ -280,7 +280,7 @@ void main() {
       players.clear();
     });
 
-    test('C5.1: 4 concurrent players run simultaneously across 4 background isolates', () async {
+    test('C5.1: 4 concurrent players run simultaneously with zero crosstalk', () async {
       final p1 = MiniaudioPlayer();
       final p2 = MiniaudioPlayer();
       final p3 = MiniaudioPlayer();

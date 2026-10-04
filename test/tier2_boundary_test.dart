@@ -72,7 +72,7 @@ void main() {
       },
     );
 
-    test('B1.3: opening a non-existent file path throws without crashing isolate', () async {
+    test('B1.3: opening a non-existent file path throws without crashing engine', () async {
       expect(
         () => player.action.open(
           '/path/to/non_existent_file_${DateTime.now().microsecondsSinceEpoch}.wav',

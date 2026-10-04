@@ -1,16 +1,14 @@
 import 'dart:async';
 import 'dart:ffi';
-import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
 import '../../miniaudio_player_bindings_generated.dart' as native;
 import '../equalizer.dart';
 import '../ffi/native_types.dart';
-import '../isolate/isolate_messages.dart';
-import '../isolate/player_isolate_client.dart';
 import 'audio_device.dart';
 import 'player_action.dart';
+import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
 
@@ -77,16 +75,13 @@ class MiniaudioPlayerGlobalConfig {
 
 /// Cross-platform, ultra-low-resource audio player for Flutter.
 ///
-/// Executes each player instance in a dedicated secondary Dart Isolate,
-/// maintaining thread safety and preventing UI thread blocking.
+/// Directly connects to the native C miniaudio engine without Dart Isolates,
+/// utilizing native audio threads for real-time decoding, DSP, and playback.
 class MiniaudioPlayer {
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
   /// Global configuration accessor and updater for [MiniaudioPlayer].
-  ///
-  /// Can be used as `MiniaudioPlayer.config().defaultBufferSize = 1024` or
-  /// `MiniaudioPlayer.config(defaultBufferSize: 1024, logLevel: MiniaudioLogLevel.debug, defaultAudioDevice: AudioDevice.auto)`.
   static MiniaudioPlayerGlobalConfig config({
     int? defaultBufferSize,
     MiniaudioLogLevel? logLevel,
@@ -117,73 +112,72 @@ class MiniaudioPlayer {
   }
 
   /// Enumerates all available native playback audio devices on the system.
-  ///
-  /// If [includeAuto] is `true` (default), [AudioDevice.auto] is included as
-  /// the first option in the returned list.
   static Future<List<AudioDevice>> getAudioDevices({
     bool includeAuto = true,
   }) async {
-    return await Isolate.run<List<AudioDevice>>(() {
-      final outDevicesPtr = calloc<Pointer<native.miniaudio_device_info_t>>();
-      final outCountPtr = calloc<Uint32>();
+    final outDevicesPtr = calloc<Pointer<native.miniaudio_device_info_t>>();
+    final outCountPtr = calloc<Uint32>();
 
-      try {
-        final res = native.miniaudio_player_get_devices(
-          outDevicesPtr,
-          outCountPtr,
+    try {
+      final res = native.miniaudio_player_get_devices(
+        outDevicesPtr,
+        outCountPtr,
+      );
+      if (res != MapResult.success) {
+        throw MiniaudioPlayerException(
+          'Failed to enumerate audio devices: ${MapResult.describe(res)}',
+          errorCode: res,
         );
-        if (res != MapResult.success) {
-          throw MiniaudioPlayerException(
-            'Failed to enumerate audio devices: ${MapResult.describe(res)}',
-            errorCode: res,
-          );
-        }
-
-        final count = outCountPtr.value;
-        final devicesPtr = outDevicesPtr.value;
-        final hardwareDevices = <AudioDevice>[];
-
-        if (devicesPtr != nullptr) {
-          for (var i = 0; i < count; i++) {
-            final devC = devicesPtr[i];
-            hardwareDevices.add(devC.toAudioDevice());
-          }
-          native.miniaudio_player_free_devices(devicesPtr, count);
-        }
-
-        final result = <AudioDevice>[];
-
-        if (includeAuto) {
-          AudioDevice? defaultHardwareDev;
-          for (final dev in hardwareDevices) {
-            if (dev.isDefault) {
-              defaultHardwareDev = dev;
-              break;
-            }
-          }
-          defaultHardwareDev ??= hardwareDevices.isNotEmpty
-              ? hardwareDevices.first
-              : null;
-
-          final autoName = defaultHardwareDev != null
-              ? defaultHardwareDev.name
-              : 'Default';
-
-          result.add(
-            AudioDevice(id: '', name: autoName, isDefault: true, isAuto: true),
-          );
-        }
-
-        result.addAll(hardwareDevices);
-        return result;
-      } finally {
-        calloc.free(outDevicesPtr);
-        calloc.free(outCountPtr);
       }
-    });
+
+      final count = outCountPtr.value;
+      final devicesPtr = outDevicesPtr.value;
+      final hardwareDevices = <AudioDevice>[];
+
+      if (devicesPtr != nullptr) {
+        for (var i = 0; i < count; i++) {
+          final devC = devicesPtr[i];
+          hardwareDevices.add(devC.toAudioDevice());
+        }
+        native.miniaudio_player_free_devices(devicesPtr, count);
+      }
+
+      final result = <AudioDevice>[];
+
+      if (includeAuto) {
+        AudioDevice? defaultHardwareDev;
+        for (final dev in hardwareDevices) {
+          if (dev.isDefault) {
+            defaultHardwareDev = dev;
+            break;
+          }
+        }
+        defaultHardwareDev ??= hardwareDevices.isNotEmpty
+            ? hardwareDevices.first
+            : null;
+
+        final autoName = defaultHardwareDev != null
+            ? defaultHardwareDev.name
+            : 'Default';
+
+        result.add(
+          AudioDevice(id: '', name: autoName, isDefault: true, isAuto: true),
+        );
+      }
+
+      result.addAll(hardwareDevices);
+      return result;
+    } finally {
+      calloc.free(outDevicesPtr);
+      calloc.free(outCountPtr);
+    }
   }
 
-  late final PlayerIsolateClient _client;
+  Pointer<native.miniaudio_player_t> _playerHandle = nullptr;
+  Pointer<native.miniaudio_player_status_t>? _statusPtr;
+  late final NativeCallable<native.miniaudio_player_completed_cbFunction> _completedCallable;
+
+  Timer? _positionTimer;
 
   // Stream controllers (broadcast)
   final StreamController<Duration> _positionController =
@@ -225,6 +219,16 @@ class MiniaudioPlayer {
   Equalizer _equalizer = Equalizer.flat;
   AudioDevice _audioDevice = _globalConfig.defaultAudioDevice;
 
+  // Previous status cache for change detection
+  Duration? _lastPosition;
+  Duration? _lastDuration;
+  bool? _lastIsPlaying;
+  bool? _lastIsBuffering;
+  bool? _lastIsCompleted;
+  int? _lastState;
+  int? _lastBitrate;
+  AudioDevice? _lastDevice;
+
   bool _isDisposed = false;
 
   /// Action interface for controlling playback, volume, rate, pitch, buffer size, and DSP.
@@ -236,31 +240,74 @@ class MiniaudioPlayer {
   /// Synchronous state snapshot interface.
   late final PlayerState state;
 
-  /// Creates an isolated [MiniaudioPlayer] instance initialized with
+  /// Creates a [MiniaudioPlayer] instance initialized with
   /// [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
   /// [MiniaudioPlayerGlobalConfig.defaultAudioDevice].
   MiniaudioPlayer({int? bufferSize, AudioDevice? defaultAudioDevice}) {
     _bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
     _audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
 
-    _client = PlayerIsolateClient(
-      initialBufferSize: _bufferSize,
-      initialLogLevel: _globalConfig.logLevel.value,
-      initialDeviceId: _audioDevice.id,
-      onStatus: _handleStatusEvent,
-      onVolume: _handleVolumeEvent,
-      onRate: _handleRateEvent,
-      onPitch: _handlePitchEvent,
-      onBufferSize: _handleBufferSizeEvent,
-      onEqualizer: _handleEqualizerEvent,
-      onDevice: _handleDeviceEvent,
-      onError: _handleErrorEvent,
-    );
+    if (_globalConfig.logLevel.value > 0) {
+      try {
+        native.miniaudio_player_set_log_level(_globalConfig.logLevel.value);
+      } catch (_) {}
+    }
+
+    _completedCallable = NativeCallable<native.miniaudio_player_completed_cbFunction>.listener(_onNativeCompleted);
+
+    final outResult = calloc<Int32>();
+    try {
+      Pointer<Utf8>? devIdPtr;
+      if (_audioDevice.id.isNotEmpty && _audioDevice.id != 'auto') {
+        devIdPtr = _audioDevice.id.toNativeUtf8();
+      }
+
+      final configPtr = native.miniaudio_player_config_t.$allocate(
+        calloc,
+        sample_rate: 0,
+        channels: 0,
+        period_size_in_frames: _bufferSize > 0 ? _bufferSize : 0,
+        playback_device_id: devIdPtr != null ? devIdPtr.cast() : nullptr,
+        on_completed: _completedCallable.nativeFunction,
+        user_data: nullptr,
+      );
+
+      try {
+        _playerHandle = native.miniaudio_player_create(configPtr, outResult);
+      } finally {
+        if (devIdPtr != null) calloc.free(devIdPtr);
+        calloc.free(configPtr);
+      }
+
+      final result = outResult.value;
+      if (_playerHandle == nullptr || result != MapResult.success) {
+        _completedCallable.close();
+        throw MiniaudioPlayerException(
+          'Failed to create native audio engine: code $result',
+          errorCode: result,
+        );
+      }
+
+      _statusPtr = calloc<native.miniaudio_player_status_t>();
+
+      final devPtr = calloc<native.miniaudio_device_info_t>();
+      try {
+        if (native.miniaudio_player_get_current_device(_playerHandle, devPtr) ==
+            MapResult.success) {
+          _audioDevice = devPtr.ref.toAudioDevice();
+        }
+      } finally {
+        calloc.free(devPtr);
+      }
+    } finally {
+      calloc.free(outResult);
+    }
 
     action = PlayerAction(
-      _client,
+      this,
       onOptimisticSeek: (pos) {
         _position = pos;
+        _lastPosition = pos;
         if (!_positionController.isClosed) {
           _positionController.add(_position);
         }
@@ -298,59 +345,155 @@ class MiniaudioPlayer {
     );
   }
 
-  /// Sets the active audio output device.
-  ///
-  /// Returns `true` if the device was successfully set, or `false` if the device
-  /// was unavailable / disconnected and the player fell back to the default output.
-  Future<bool> setDevice(AudioDevice device) => action.setDevice(device);
+  /// Internal handle to the native miniaudio player.
+  Pointer<native.miniaudio_player_t> get handle => _playerHandle;
 
-  void _handleStatusEvent(PlaybackStatusEvent event) {
-    if (_isDisposed) return;
-
-    if (event.position != _position) {
-      _position = event.position;
-      if (!_positionController.isClosed) {
-        _positionController.add(_position);
-      }
-    }
-
-    if (event.duration != _duration) {
-      _duration = event.duration;
-      if (!_durationController.isClosed) {
-        _durationController.add(_duration);
-      }
-    }
-
-    if (event.isPlaying != _playing) {
-      _playing = event.isPlaying;
-      if (!_playingController.isClosed) {
-        _playingController.add(_playing);
-      }
-    }
-
-    if (event.isBuffering != _buffering) {
-      _buffering = event.isBuffering;
-      if (!_bufferingController.isClosed) {
-        _bufferingController.add(_buffering);
-      }
-    }
-
-    if (event.isCompleted != _completed) {
-      _completed = event.isCompleted;
-      if (!_completedController.isClosed) {
-        _completedController.add(_completed);
-      }
-    }
-
-    if (event.bitrate != _audioBitrate) {
-      _audioBitrate = event.bitrate;
-      if (!_audioBitrateController.isClosed) {
-        _audioBitrateController.add(_audioBitrate);
-      }
+  /// Ensures that the player has not been disposed.
+  void ensureNotDisposed() {
+    if (_isDisposed || _playerHandle == nullptr) {
+      throw MiniaudioPlayerException(
+        'Player is already disposed',
+        errorCode: MapResult.errorInvalidState,
+      );
     }
   }
 
-  void _handleVolumeEvent(double volume) {
+  void _onNativeCompleted(Pointer<Void> _) {
+    if (_isDisposed) return;
+    _stopPositionTimer();
+    _playing = false;
+    _completed = true;
+    _lastIsPlaying = false;
+    _lastIsCompleted = true;
+    _position = _duration;
+    _lastPosition = _duration;
+
+    if (!_playingController.isClosed) {
+      _playingController.add(false);
+    }
+    if (!_completedController.isClosed) {
+      _completedController.add(true);
+    }
+    if (!_positionController.isClosed) {
+      _positionController.add(_duration);
+    }
+  }
+
+  void _startPositionTimer() {
+    if (_positionTimer != null && _positionTimer!.isActive) return;
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (_isDisposed || _playerHandle == nullptr) {
+        _stopPositionTimer();
+        return;
+      }
+      pollAndEmit(force: false);
+    });
+  }
+
+  void _stopPositionTimer() {
+    _positionTimer?.cancel();
+    _positionTimer = null;
+  }
+
+  /// Queries the native miniaudio player snapshot and emits changes to broadcast streams.
+  bool pollAndEmit({bool force = false}) {
+    if (_isDisposed || _statusPtr == null || _playerHandle == nullptr) {
+      return false;
+    }
+
+    final res = native.miniaudio_player_get_status(_playerHandle, _statusPtr!);
+    if (res != MapResult.success) {
+      return false;
+    }
+
+    final status = _statusPtr!.ref;
+    final position = Duration(milliseconds: status.position_ms);
+    final duration = Duration(milliseconds: status.duration_ms);
+    final isPlaying = status.is_playing != 0;
+    final isBuffering = status.is_buffering != 0;
+    final isCompleted = status.is_completed != 0;
+    final state = status.state;
+    final bitrate = status.bitrate;
+    final device = status.device.toAudioDevice();
+
+    final bool deviceChanged =
+        _lastDevice == null ||
+        _lastDevice!.id != device.id ||
+        _lastDevice!.name != device.name ||
+        _lastDevice!.isDefault != device.isDefault ||
+        _lastDevice!.isAuto != device.isAuto;
+
+    if (deviceChanged) {
+      _lastDevice = device;
+      _audioDevice = device;
+      if (!_audioDeviceController.isClosed) {
+        _audioDeviceController.add(device);
+      }
+    }
+
+    final bool stateChanged =
+        isPlaying != _lastIsPlaying ||
+        isBuffering != _lastIsBuffering ||
+        isCompleted != _lastIsCompleted ||
+        state != _lastState;
+
+    if (stateChanged || force) {
+      _lastIsPlaying = isPlaying;
+      _lastIsBuffering = isBuffering;
+      _lastIsCompleted = isCompleted;
+      _lastState = state;
+      _playing = isPlaying;
+      _buffering = isBuffering;
+      _completed = isCompleted;
+
+      if (!_playingController.isClosed) {
+        _playingController.add(isPlaying);
+      }
+      if (!_bufferingController.isClosed) {
+        _bufferingController.add(isBuffering);
+      }
+      if (!_completedController.isClosed) {
+        _completedController.add(isCompleted);
+      }
+
+      if (isPlaying) {
+        _startPositionTimer();
+      } else {
+        _stopPositionTimer();
+      }
+    }
+
+    if (duration != _lastDuration || force) {
+      _lastDuration = duration;
+      _duration = duration;
+      if (!_durationController.isClosed) {
+        _durationController.add(duration);
+      }
+    }
+
+    if (bitrate != _lastBitrate || force) {
+      _lastBitrate = bitrate;
+      _audioBitrate = bitrate;
+      if (!_audioBitrateController.isClosed) {
+        _audioBitrateController.add(bitrate);
+      }
+    }
+
+    final bool positionChanged =
+        _lastPosition == null || position != _lastPosition;
+
+    if (positionChanged || force) {
+      _lastPosition = position;
+      _position = position;
+      if (!_positionController.isClosed) {
+        _positionController.add(position);
+      }
+    }
+
+    return true;
+  }
+
+  void notifyVolumeChanged(double volume) {
     if (_isDisposed) return;
     _volume = volume;
     if (!_volumeController.isClosed) {
@@ -358,7 +501,7 @@ class MiniaudioPlayer {
     }
   }
 
-  void _handleRateEvent(double rate) {
+  void notifyRateChanged(double rate) {
     if (_isDisposed) return;
     _rate = rate;
     if (!_rateController.isClosed) {
@@ -366,7 +509,7 @@ class MiniaudioPlayer {
     }
   }
 
-  void _handlePitchEvent(double pitch) {
+  void notifyPitchChanged(double pitch) {
     if (_isDisposed) return;
     _pitch = pitch;
     if (!_pitchController.isClosed) {
@@ -374,7 +517,7 @@ class MiniaudioPlayer {
     }
   }
 
-  void _handleBufferSizeEvent(int bufferSize) {
+  void notifyBufferSizeChanged(int bufferSize) {
     if (_isDisposed) return;
     _bufferSize = bufferSize;
     if (!_bufferSizeController.isClosed) {
@@ -382,25 +525,25 @@ class MiniaudioPlayer {
     }
   }
 
-  void _handleEqualizerEvent(List<double> gainsDb) {
+  void notifyEqualizerChanged(Equalizer equalizer) {
     if (_isDisposed) return;
-    _equalizer = Equalizer.fromList(gainsDb);
+    _equalizer = equalizer;
     if (!_equalizerController.isClosed) {
-      _equalizerController.add(_equalizer);
+      _equalizerController.add(equalizer);
     }
   }
 
-  void _handleDeviceEvent(AudioDevice device) {
+  void notifyDeviceChanged(AudioDevice device) {
     if (_isDisposed) return;
     _audioDevice = device;
+    _lastDevice = device;
     if (!_audioDeviceController.isClosed) {
       _audioDeviceController.add(device);
     }
   }
 
-  void _handleErrorEvent(String message, int? errorCode, String? details) {
-    // Errors are logged or dispatched to pending commands
-  }
+  /// Sets the active audio output device.
+  Future<bool> setDevice(AudioDevice device) => action.setDevice(device);
 
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
@@ -414,12 +557,23 @@ class MiniaudioPlayer {
   /// Alias for [audioBitrate].
   int get bitrate => _audioBitrate;
 
-  /// Destroys the player instance, terminates the secondary Isolate, and frees native C memory.
+  /// Destroys the player instance and frees native C memory.
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
 
-    await _client.dispose();
+    _stopPositionTimer();
+    _completedCallable.close();
+
+    if (_playerHandle != nullptr) {
+      native.miniaudio_player_destroy(_playerHandle);
+      _playerHandle = nullptr;
+    }
+
+    if (_statusPtr != null) {
+      calloc.free(_statusPtr!);
+      _statusPtr = null;
+    }
 
     await _positionController.close();
     await _durationController.close();

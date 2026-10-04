@@ -709,7 +709,7 @@ void main() {
       expect(player.isDisposed, isTrue);
     });
 
-    test('10.4: dispose while playing halts playback cleanly and cleans up isolate', () async {
+    test('10.4: dispose while playing halts playback cleanly and frees native resources', () async {
       final player = MiniaudioPlayer();
       await player.action.open(testWavFile.path, autoPlay: true);
       await Future<void>.delayed(const Duration(milliseconds: 100));
