@@ -98,6 +98,94 @@ void main() {
         expect(player.state.completed, isTrue);
       },
     );
+
+    test(
+      'B1.5: natural completion transition emits true on stream.completed exactly once',
+      () async {
+        await player.action.open(shortWavFile.path);
+
+        final completedEvents = <bool>[];
+        final sub = player.stream.completed.listen((val) {
+          completedEvents.add(val);
+        });
+
+        await player.action.play();
+
+        final stopwatch = Stopwatch()..start();
+        while (!player.state.completed && stopwatch.elapsedMilliseconds < 2000) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await sub.cancel();
+
+        expect(player.state.completed, isTrue);
+        expect(player.state.playing, isFalse);
+
+        final trueEvents = completedEvents.where((e) => e == true).toList();
+        expect(trueEvents.length, equals(1));
+      },
+    );
+
+    test(
+      'B1.6: post-completion stop resets state to stopped, position to zero, and does not emit true on completed stream',
+      () async {
+        await player.action.open(shortWavFile.path);
+
+        final completedEvents = <bool>[];
+        final sub = player.stream.completed.listen((val) {
+          completedEvents.add(val);
+        });
+
+        await player.action.play();
+
+        final stopwatch = Stopwatch()..start();
+        while (!player.state.completed && stopwatch.elapsedMilliseconds < 2000) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(player.state.completed, isTrue);
+        expect(completedEvents.where((e) => e == true).length, equals(1));
+
+        // Inmediatamente después de alcanzar el final, invocar player.stop()
+        await player.action.stop();
+
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await sub.cancel();
+
+        // Comprobar que el estado reportado es stopped, la posición es 0, y el stream completed no vuelve a emitir true
+        expect(player.state.playing, isFalse);
+        expect(player.state.completed, isFalse);
+        expect(player.state.position, equals(Duration.zero));
+
+        final trueEventsAfterStop =
+            completedEvents.where((e) => e == true).toList();
+        expect(trueEventsAfterStop.length, equals(1));
+      },
+    );
+
+    test(
+      'B1.7: pollAndEmit(force: true) does not re-emit completed true',
+      () async {
+        await player.action.open(shortWavFile.path);
+        await player.action.play();
+
+        final stopwatch = Stopwatch()..start();
+        while (!player.state.completed && stopwatch.elapsedMilliseconds < 2000) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(player.state.completed, isTrue);
+
+        final completedEvents = <bool>[];
+        final sub = player.stream.completed.listen(completedEvents.add);
+
+        // Force poll while completed
+        player.pollAndEmit(force: true);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await sub.cancel();
+
+        expect(completedEvents.where((e) => e == true), isEmpty);
+      },
+    );
   });
 
   // =========================================================================

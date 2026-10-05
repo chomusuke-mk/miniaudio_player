@@ -95,6 +95,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
+    _player.notifyStopped();
     _player.pollAndEmit(force: true);
   }
 

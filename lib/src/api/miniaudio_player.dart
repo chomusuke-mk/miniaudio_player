@@ -224,7 +224,6 @@ class MiniaudioPlayer {
   Duration? _lastDuration;
   bool? _lastIsPlaying;
   bool? _lastIsBuffering;
-  bool? _lastIsCompleted;
   int? _lastState;
   int? _lastBitrate;
   AudioDevice? _lastDevice;
@@ -358,20 +357,47 @@ class MiniaudioPlayer {
     }
   }
 
+  /// Notifies the player that playback was stopped manually.
+  ///
+  /// Resets internal completion and playback flags, rewinds position,
+  /// and cancels active polling timers.
+  void notifyStopped() {
+    if (_isDisposed) return;
+    _stopPositionTimer();
+    final wasPlaying = _playing;
+    final wasCompleted = _completed;
+    _playing = false;
+    _completed = false;
+    _lastIsPlaying = false;
+    _position = Duration.zero;
+    _lastPosition = Duration.zero;
+
+    if (!_playingController.isClosed && wasPlaying) {
+      _playingController.add(false);
+    }
+    if (!_completedController.isClosed && wasCompleted) {
+      _completedController.add(false);
+    }
+    if (!_positionController.isClosed) {
+      _positionController.add(Duration.zero);
+    }
+  }
+
   void _onNativeCompleted(Pointer<Void> _) {
     if (_isDisposed) return;
     _stopPositionTimer();
+    final wasPlaying = _playing;
+    final wasCompleted = _completed;
     _playing = false;
     _completed = true;
     _lastIsPlaying = false;
-    _lastIsCompleted = true;
     _position = _duration;
     _lastPosition = _duration;
 
-    if (!_playingController.isClosed) {
+    if (!_playingController.isClosed && wasPlaying) {
       _playingController.add(false);
     }
-    if (!_completedController.isClosed) {
+    if (!_completedController.isClosed && !wasCompleted && wasPlaying) {
       _completedController.add(true);
     }
     if (!_positionController.isClosed) {
@@ -431,29 +457,25 @@ class MiniaudioPlayer {
       }
     }
 
-    final bool stateChanged =
-        isPlaying != _lastIsPlaying ||
-        isBuffering != _lastIsBuffering ||
-        isCompleted != _lastIsCompleted ||
-        state != _lastState;
+    final bool playingChanged =
+        _lastIsPlaying == null || isPlaying != _lastIsPlaying;
+    final bool bufferingChanged =
+        _lastIsBuffering == null || isBuffering != _lastIsBuffering;
+    final bool stateIntChanged = _lastState == null || state != _lastState;
+    final bool wasActivelyPlaying = _playing || (_lastIsPlaying == true);
 
-    if (stateChanged || force) {
+    if (playingChanged || bufferingChanged || stateIntChanged || force) {
       _lastIsPlaying = isPlaying;
       _lastIsBuffering = isBuffering;
-      _lastIsCompleted = isCompleted;
       _lastState = state;
       _playing = isPlaying;
       _buffering = isBuffering;
-      _completed = isCompleted;
 
-      if (!_playingController.isClosed) {
+      if ((playingChanged || force) && !_playingController.isClosed) {
         _playingController.add(isPlaying);
       }
-      if (!_bufferingController.isClosed) {
+      if ((bufferingChanged || force) && !_bufferingController.isClosed) {
         _bufferingController.add(isBuffering);
-      }
-      if (!_completedController.isClosed) {
-        _completedController.add(isCompleted);
       }
 
       if (isPlaying) {
@@ -461,6 +483,21 @@ class MiniaudioPlayer {
       } else {
         _stopPositionTimer();
       }
+    }
+
+    // Terminal completed stream events are edge-triggered and decoupled from [force].
+    if (!_completed && isCompleted && wasActivelyPlaying) {
+      _completed = true;
+      if (!_completedController.isClosed) {
+        _completedController.add(true);
+      }
+    } else if (_completed && !isCompleted) {
+      _completed = false;
+      if (!_completedController.isClosed) {
+        _completedController.add(false);
+      }
+    } else {
+      _completed = isCompleted;
     }
 
     if (duration != _lastDuration || force) {

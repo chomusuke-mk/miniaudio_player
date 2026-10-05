@@ -1847,6 +1847,11 @@ MAP_API int32_t miniaudio_player_stop(miniaudio_player_t *player)
 
     ma_sound_stop(&player->sound);
     ma_sound_seek_to_pcm_frame(&player->sound, 0);
+    if (player->sound.pDataSource != NULL)
+    {
+        ma_data_source_seek_to_pcm_frame(player->sound.pDataSource, 0);
+    }
+    ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
     player->is_completed = 0;
     player->state = MAP_PLAYBACK_STATE_STOPPED;
     ma_mutex_unlock(&player->lock);
@@ -1893,6 +1898,7 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
     }
     else
     {
+        ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
         player->is_completed = 0;
         if (player->state == MAP_PLAYBACK_STATE_COMPLETED)
         {
@@ -3002,7 +3008,31 @@ MAP_API int32_t miniaudio_player_get_status(
             out_status->position_ms = mut_player->duration_ms;
         }
 
-        if (mut_player->is_completed || ma_sound_at_end(&mut_player->sound))
+        if (mut_player->state == MAP_PLAYBACK_STATE_STOPPED)
+        {
+            out_status->is_completed = 0;
+            out_status->is_playing = 0;
+            out_status->state = MAP_PLAYBACK_STATE_STOPPED;
+        }
+        else if (mut_player->state == MAP_PLAYBACK_STATE_PLAYING)
+        {
+            if (mut_player->is_completed || ma_sound_at_end(&mut_player->sound))
+            {
+                mut_player->is_completed = 1;
+                mut_player->state = MAP_PLAYBACK_STATE_COMPLETED;
+                out_status->is_completed = 1;
+                out_status->is_playing = 0;
+                out_status->state = MAP_PLAYBACK_STATE_COMPLETED;
+                out_status->position_ms = mut_player->duration_ms;
+            }
+            else
+            {
+                out_status->is_completed = 0;
+                out_status->is_playing = ma_sound_is_playing(&mut_player->sound) ? 1 : 0;
+                out_status->state = MAP_PLAYBACK_STATE_PLAYING;
+            }
+        }
+        else if (mut_player->state == MAP_PLAYBACK_STATE_COMPLETED)
         {
             out_status->is_completed = 1;
             out_status->is_playing = 0;
