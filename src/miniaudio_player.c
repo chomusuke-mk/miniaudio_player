@@ -79,6 +79,8 @@ MAP_API int32_t miniaudio_player_get_log_level(void)
 #include <jni.h>
 #include <dlfcn.h>
 #include <strings.h>
+#include <link.h>
+#include <elf.h>
 #endif
 
 static void map_log_print(int32_t level, const char *tag, const char *fmt, ...)
@@ -2018,6 +2020,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
 {
     (void)reserved;
     g_map_jvm = vm;
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] JNI_OnLoad called, captured JavaVM: %p", vm);
     return JNI_VERSION_1_6;
 }
 
@@ -2026,7 +2029,130 @@ MAP_API void miniaudio_player_set_jvm(void *jvm)
     if (jvm != NULL)
     {
         g_map_jvm = (JavaVM *)jvm;
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] miniaudio_player_set_jvm called: %p", jvm);
     }
+}
+
+typedef struct {
+    const char *target_symbol;
+    int match_specific_libs;
+    void *found_addr;
+} map_symbol_search_t;
+
+static int map_android_phdr_callback(struct dl_phdr_info *info, size_t size, void *data)
+{
+    (void)size;
+    map_symbol_search_t *search = (map_symbol_search_t *)data;
+    if (search == NULL || search->found_addr != NULL || info->dlpi_name == NULL)
+    {
+        return 0;
+    }
+
+    if (search->match_specific_libs)
+    {
+        if (strstr(info->dlpi_name, "libart.so") == NULL &&
+            strstr(info->dlpi_name, "libnativehelper.so") == NULL &&
+            strstr(info->dlpi_name, "libdvm.so") == NULL &&
+            strstr(info->dlpi_name, "libandroid_runtime.so") == NULL)
+        {
+            return 0;
+        }
+    }
+
+    ElfW(Addr) base = info->dlpi_addr;
+    const ElfW(Phdr) *dynamic_phdr = NULL;
+    for (int i = 0; i < info->dlpi_phnum; i++)
+    {
+        if (info->dlpi_phdr[i].p_type == PT_DYNAMIC)
+        {
+            dynamic_phdr = &info->dlpi_phdr[i];
+            break;
+        }
+    }
+    if (dynamic_phdr == NULL)
+    {
+        return 0;
+    }
+
+    const ElfW(Dyn) *dyn = (const ElfW(Dyn) *)(base + dynamic_phdr->p_vaddr);
+    const ElfW(Sym) *symtab = NULL;
+    const char *strtab = NULL;
+    const uint32_t *hash = NULL;
+    const uint32_t *gnu_hash = NULL;
+
+    for (const ElfW(Dyn) *d = dyn; d->d_tag != DT_NULL; d++)
+    {
+        ElfW(Addr) ptr = d->d_un.d_ptr;
+        if (ptr < base)
+        {
+            ptr += base;
+        }
+        if (d->d_tag == DT_SYMTAB)
+        {
+            symtab = (const ElfW(Sym) *)ptr;
+        }
+        else if (d->d_tag == DT_STRTAB)
+        {
+            strtab = (const char *)ptr;
+        }
+        else if (d->d_tag == DT_HASH)
+        {
+            hash = (const uint32_t *)ptr;
+        }
+        else if (d->d_tag == DT_GNU_HASH)
+        {
+            gnu_hash = (const uint32_t *)ptr;
+        }
+    }
+
+    if (symtab == NULL || strtab == NULL)
+    {
+        return 0;
+    }
+
+    size_t sym_count = 0;
+    if (hash != NULL)
+    {
+        sym_count = hash[1];
+    }
+    else if (gnu_hash != NULL)
+    {
+        uint32_t nbuckets = gnu_hash[0];
+        uint32_t symoffset = gnu_hash[1];
+        uint32_t bloom_size = gnu_hash[2];
+        const uint32_t *buckets = (const uint32_t *)((const char *)&gnu_hash[4] + bloom_size * sizeof(ElfW(Addr)));
+        const uint32_t *chains = &buckets[nbuckets];
+        uint32_t max_chain = 0;
+        for (uint32_t b = 0; b < nbuckets; b++)
+        {
+            if (buckets[b] > max_chain)
+            {
+                max_chain = buckets[b];
+            }
+        }
+        if (max_chain >= symoffset)
+        {
+            while (!(chains[max_chain - symoffset] & 1))
+            {
+                max_chain++;
+            }
+            sym_count = max_chain + 1;
+        }
+    }
+
+    for (size_t i = 0; i < sym_count; i++)
+    {
+        const char *name = strtab + symtab[i].st_name;
+        if (strcmp(name, search->target_symbol) == 0)
+        {
+            search->found_addr = (void *)(base + symtab[i].st_value);
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player",
+                "[JNI] Symbol %s found in %s at %p (base=%p)", search->target_symbol, info->dlpi_name, search->found_addr, (void *)base);
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 static JavaVM *map_android_get_jvm(void)
@@ -2037,13 +2163,92 @@ static JavaVM *map_android_get_jvm(void)
     }
 
     typedef jint (*GetCreatedJavaVMsFn)(JavaVM **, jsize, jsize *);
-    GetCreatedJavaVMsFn pfn = (GetCreatedJavaVMsFn)dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs");
+    GetCreatedJavaVMsFn pfn = NULL;
+
+    /* 1. Try RTLD_DEFAULT */
+    pfn = (GetCreatedJavaVMsFn)dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs");
+    if (pfn != NULL)
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Resolved JNI_GetCreatedJavaVMs via RTLD_DEFAULT");
+    }
+
+    /* 2. Try libnativehelper.so (public NDK library on Android 12+ / API 31+) */
+    if (pfn == NULL)
+    {
+        void *nh_handle = dlopen("libnativehelper.so", RTLD_NOW);
+        if (nh_handle != NULL)
+        {
+            pfn = (GetCreatedJavaVMsFn)dlsym(nh_handle, "JNI_GetCreatedJavaVMs");
+            if (pfn != NULL)
+            {
+                __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Resolved JNI_GetCreatedJavaVMs via libnativehelper.so");
+            }
+        }
+        else
+        {
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] dlopen(libnativehelper.so) failed: %s", dlerror());
+        }
+    }
+
+    /* 3. Try dlopen on libart.so */
     if (pfn == NULL)
     {
         void *art_handle = dlopen("libart.so", RTLD_NOW);
         if (art_handle != NULL)
         {
             pfn = (GetCreatedJavaVMsFn)dlsym(art_handle, "JNI_GetCreatedJavaVMs");
+            if (pfn != NULL)
+            {
+                __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Resolved JNI_GetCreatedJavaVMs via libart.so");
+            }
+        }
+        else
+        {
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] dlopen(libart.so) failed: %s", dlerror());
+        }
+    }
+
+    /* 4. Try dlopen on libdvm.so (older Android Dalvik) */
+    if (pfn == NULL)
+    {
+        void *dvm_handle = dlopen("libdvm.so", RTLD_NOW);
+        if (dvm_handle != NULL)
+        {
+            pfn = (GetCreatedJavaVMsFn)dlsym(dvm_handle, "JNI_GetCreatedJavaVMs");
+            if (pfn != NULL)
+            {
+                __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Resolved JNI_GetCreatedJavaVMs via libdvm.so");
+            }
+        }
+    }
+
+    /* 5. Try dl_iterate_phdr memory scanning on runtime libraries */
+    if (pfn == NULL)
+    {
+        map_symbol_search_t search;
+        search.target_symbol = "JNI_GetCreatedJavaVMs";
+        search.match_specific_libs = 1;
+        search.found_addr = NULL;
+        dl_iterate_phdr(map_android_phdr_callback, &search);
+        if (search.found_addr != NULL)
+        {
+            pfn = (GetCreatedJavaVMsFn)search.found_addr;
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Resolved JNI_GetCreatedJavaVMs via dl_iterate_phdr (targeted)");
+        }
+    }
+
+    /* 6. Try dl_iterate_phdr memory scanning on ALL loaded libraries */
+    if (pfn == NULL)
+    {
+        map_symbol_search_t search;
+        search.target_symbol = "JNI_GetCreatedJavaVMs";
+        search.match_specific_libs = 0;
+        search.found_addr = NULL;
+        dl_iterate_phdr(map_android_phdr_callback, &search);
+        if (search.found_addr != NULL)
+        {
+            pfn = (GetCreatedJavaVMsFn)search.found_addr;
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Resolved JNI_GetCreatedJavaVMs via dl_iterate_phdr (global)");
         }
     }
 
@@ -2051,11 +2256,21 @@ static JavaVM *map_android_get_jvm(void)
     {
         JavaVM *vm = NULL;
         jsize count = 0;
-        if (pfn(&vm, 1, &count) == JNI_OK && count > 0 && vm != NULL)
+        jint res = pfn(&vm, 1, &count);
+        if (res == JNI_OK && count > 0 && vm != NULL)
         {
             g_map_jvm = vm;
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Successfully obtained JavaVM: %p (count: %d)", vm, (int)count);
             return g_map_jvm;
         }
+        else
+        {
+            __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] JNI_GetCreatedJavaVMs invocation failed: res=%d, count=%d, vm=%p", (int)res, (int)count, vm);
+        }
+    }
+    else
+    {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Could not locate JNI_GetCreatedJavaVMs through any resolution strategy");
     }
 
     return NULL;
@@ -2108,10 +2323,12 @@ static int32_t map_android_get_devices(
     miniaudio_device_info_t **out_devices,
     uint32_t *out_count)
 {
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] map_android_get_devices: Starting Android audio device query...");
+
     JavaVM *jvm = map_android_get_jvm();
     if (jvm == NULL)
     {
-        map_log_print(MAP_LOG_LEVEL_ERROR, "android", "Failed to obtain JavaVM");
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] map_android_get_devices: FAILED: Unable to obtain JavaVM instance");
         return MAP_ERROR_GENERIC;
     }
 
@@ -2127,15 +2344,20 @@ static int32_t map_android_get_devices(
         attach_args.group = NULL;
         if ((*jvm)->AttachCurrentThread(jvm, &env, &attach_args) != JNI_OK || env == NULL)
         {
-            map_log_print(MAP_LOG_LEVEL_ERROR, "android", "Failed to attach current thread to JVM");
+            __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] map_android_get_devices: FAILED to attach thread to JavaVM");
             return MAP_ERROR_GENERIC;
         }
         need_detach = MA_TRUE;
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Successfully attached current thread as daemon (env=%p)", env);
     }
     else if (get_env_res != JNI_OK || env == NULL)
     {
-        map_log_print(MAP_LOG_LEVEL_ERROR, "android", "GetEnv failed with code: %d", get_env_res);
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] GetEnv returned error code %d", get_env_res);
         return MAP_ERROR_GENERIC;
+    }
+    else
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Current thread already attached to JVM (env=%p)", env);
     }
 
     int32_t status = MAP_ERROR_GENERIC;
@@ -2153,27 +2375,56 @@ static int32_t map_android_get_devices(
     actThreadCls = (*env)->FindClass(env, "android/app/ActivityThread");
     if ((*env)->ExceptionCheck(env) || actThreadCls == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Could not find class android.app.ActivityThread");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
 
     jmethodID curAppMethod = (*env)->GetStaticMethodID(env, actThreadCls, "currentApplication", "()Landroid/app/Application;");
-    if ((*env)->ExceptionCheck(env) || curAppMethod == NULL)
+    if (!(*env)->ExceptionCheck(env) && curAppMethod != NULL)
+    {
+        context = (*env)->CallStaticObjectMethod(env, actThreadCls, curAppMethod);
+    }
+    if ((*env)->ExceptionCheck(env))
     {
         (*env)->ExceptionClear(env);
-        goto cleanup;
     }
 
-    context = (*env)->CallStaticObjectMethod(env, actThreadCls, curAppMethod);
-    if ((*env)->ExceptionCheck(env) || context == NULL)
+    /* Fallback: currentActivityThread().getApplication() */
+    if (context == NULL)
     {
-        (*env)->ExceptionClear(env);
+        __android_log_print(ANDROID_LOG_WARN, "miniaudio_player", "[JNI] ActivityThread.currentApplication() returned null, trying currentActivityThread().getApplication()...");
+        jmethodID curActThreadMethod = (*env)->GetStaticMethodID(env, actThreadCls, "currentActivityThread", "()Landroid/app/ActivityThread;");
+        if (!(*env)->ExceptionCheck(env) && curActThreadMethod != NULL)
+        {
+            jobject actThreadObj = (*env)->CallStaticObjectMethod(env, actThreadCls, curActThreadMethod);
+            if (!(*env)->ExceptionCheck(env) && actThreadObj != NULL)
+            {
+                jmethodID getAppMethod = (*env)->GetMethodID(env, actThreadCls, "getApplication", "()Landroid/app/Application;");
+                if (!(*env)->ExceptionCheck(env) && getAppMethod != NULL)
+                {
+                    context = (*env)->CallObjectMethod(env, actThreadObj, getAppMethod);
+                }
+                (*env)->DeleteLocalRef(env, actThreadObj);
+            }
+        }
+        if ((*env)->ExceptionCheck(env))
+        {
+            (*env)->ExceptionClear(env);
+        }
+    }
+
+    if (context == NULL)
+    {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Failed to obtain Application context from ActivityThread");
         goto cleanup;
     }
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Successfully obtained Application context: %p", context);
 
     contextCls = (*env)->FindClass(env, "android/content/Context");
     if ((*env)->ExceptionCheck(env) || contextCls == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Could not find class android.content.Context");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2181,6 +2432,7 @@ static int32_t map_android_get_devices(
     jmethodID getSysServiceMethod = (*env)->GetMethodID(env, contextCls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
     if ((*env)->ExceptionCheck(env) || getSysServiceMethod == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Could not find getSystemService method");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2188,6 +2440,7 @@ static int32_t map_android_get_devices(
     audioServiceStr = (*env)->NewStringUTF(env, "audio");
     if ((*env)->ExceptionCheck(env) || audioServiceStr == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] NewStringUTF('audio') failed");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2195,13 +2448,16 @@ static int32_t map_android_get_devices(
     audioManager = (*env)->CallObjectMethod(env, context, getSysServiceMethod, audioServiceStr);
     if ((*env)->ExceptionCheck(env) || audioManager == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] getSystemService('audio') returned null");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Successfully obtained AudioManager: %p", audioManager);
 
     audioManagerCls = (*env)->FindClass(env, "android/media/AudioManager");
     if ((*env)->ExceptionCheck(env) || audioManagerCls == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Could not find class android.media.AudioManager");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2209,6 +2465,7 @@ static int32_t map_android_get_devices(
     jmethodID getDevicesMethod = (*env)->GetMethodID(env, audioManagerCls, "getDevices", "(I)[Landroid/media/AudioDeviceInfo;");
     if ((*env)->ExceptionCheck(env) || getDevicesMethod == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] AudioManager.getDevices(int) method not found (requires API 23+)");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2217,6 +2474,7 @@ static int32_t map_android_get_devices(
     deviceArray = (jobjectArray)(*env)->CallObjectMethod(env, audioManager, getDevicesMethod, (jint)2);
     if ((*env)->ExceptionCheck(env) || deviceArray == NULL)
     {
+        __android_log_print(ANDROID_LOG_WARN, "miniaudio_player", "[JNI] AudioManager.getDevices returned null");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2224,6 +2482,7 @@ static int32_t map_android_get_devices(
     devInfoCls = (*env)->FindClass(env, "android/media/AudioDeviceInfo");
     if ((*env)->ExceptionCheck(env) || devInfoCls == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] Could not find class android.media.AudioDeviceInfo");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2234,6 +2493,7 @@ static int32_t map_android_get_devices(
 
     if ((*env)->ExceptionCheck(env) || getIdMethod == NULL || getTypeMethod == NULL || getProductNameMethod == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] AudioDeviceInfo methods not found");
         (*env)->ExceptionClear(env);
         goto cleanup;
     }
@@ -2250,6 +2510,7 @@ static int32_t map_android_get_devices(
     }
 
     int sdk_version = ma_android_sdk_version();
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Detected Android SDK version: %d", sdk_version);
 
     /* Query communication device on Android 12+ (API 31+) */
     jint comm_device_id = -1;
@@ -2275,6 +2536,7 @@ static int32_t map_android_get_devices(
             (*env)->ExceptionClear(env);
         }
     }
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Active communication device ID: %d", (int)comm_device_id);
 
     /* Query wired headset and bluetooth states */
     jboolean is_wired_headset_on = JNI_FALSE;
@@ -2310,7 +2572,13 @@ static int32_t map_android_get_devices(
         (*env)->ExceptionClear(env);
     }
 
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player",
+        "[JNI] Audio states: wiredHeadsetOn=%d, btA2dpOn=%d",
+        (int)is_wired_headset_on, (int)is_bt_a2dp_on);
+
     jsize raw_count = (*env)->GetArrayLength(env, deviceArray);
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Raw output devices reported by AudioManager: %d", (int)raw_count);
+
     if (raw_count <= 0)
     {
         *out_devices = NULL;
@@ -2322,6 +2590,7 @@ static int32_t map_android_get_devices(
     devices = (miniaudio_device_info_t *)calloc((size_t)raw_count, sizeof(miniaudio_device_info_t));
     if (devices == NULL)
     {
+        __android_log_print(ANDROID_LOG_ERROR, "miniaudio_player", "[JNI] calloc failed for %d devices", (int)raw_count);
         status = MAP_ERROR_OUT_OF_MEMORY;
         goto cleanup;
     }
@@ -2350,6 +2619,7 @@ static int32_t map_android_get_devices(
         /* Skip telephony devices (TYPE_TELEPHONY = 18) */
         if (dev_type == 18)
         {
+            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Skipping telephony device (id=%d)", (int)dev_id);
             (*env)->DeleteLocalRef(env, devObj);
             continue;
         }
@@ -2447,6 +2717,11 @@ static int32_t map_android_get_devices(
         devices[valid_count].is_default = is_default;
         devices[valid_count].is_auto = 0;
 
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player",
+            "[JNI] Discovered Audio Output [%u]: id='%s', name='%s', is_default=%d, type=%d (%s)",
+            valid_count, devices[valid_count].id, devices[valid_count].name,
+            devices[valid_count].is_default, (int)dev_type, typeFallback);
+
         valid_count++;
         (*env)->DeleteLocalRef(env, devObj);
     }
@@ -2454,11 +2729,15 @@ static int32_t map_android_get_devices(
     if (!has_found_default && valid_count > 0)
     {
         devices[0].is_default = 1;
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player",
+            "[JNI] Default device heuristic did not match; defaulting first device: '%s'", devices[0].name);
     }
 
     *out_devices = devices;
     *out_count = valid_count;
     status = MAP_SUCCESS;
+    __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player",
+        "[JNI] map_android_get_devices: Completed successfully, returning %u devices", valid_count);
 
 cleanup:
     if (status != MAP_SUCCESS && devices != NULL)
@@ -2506,6 +2785,7 @@ cleanup:
     if (need_detach)
     {
         (*jvm)->DetachCurrentThread(jvm);
+        __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Detached current thread from JVM");
     }
 
     return status;

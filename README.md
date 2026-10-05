@@ -1,13 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/banner_placeholder.png" alt="miniaudio_player banner" width="100%" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/banner.svg" alt="miniaudio_player banner" width="100%" />
 </p>
 
 # miniaudio_player
 
-# NOT READY YET: This version is a pre-release alpha. Expect breaking changes, incomplete features, and bugs. Please report issues on GitHub
-
 [![pub package](https://img.shields.io/pub/v/miniaudio_player.svg?logo=dart&color=blue)](https://pub.dev/packages/miniaudio_player)
-[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-android%20|%20ios%20|%20macos%20|%20windows%20|%20linux-blue.svg)](https://pub.dev/packages/miniaudio_player)
 [![Dart FFI](https://img.shields.io/badge/Dart-FFI%20Native%20Assets-0175C2.svg?logo=dart)](https://dart.dev/interop/c-interop)
 [![Tests](https://img.shields.io/badge/tests-131%20passing-brightgreen.svg)](#)
@@ -65,6 +63,7 @@ Unlike traditional audio plugins that bridge through Java/Kotlin or Objective-C/
 2. **Zero Dart Isolate Overhead**: No secondary Dart VM isolates, no port serialization latency, and no background isolate memory bloat (~0 MB overhead in Dart).
 3. **Deterministic Low Latency**: Buffer sizes can be customized down to device hardware periods (`bufferSize`) for low-latency feedback.
 4. **Resilient Error Recovery**: Native audio route disconnections (e.g. unplugging headphones or system device switches) recover automatically without crashing or stalling.
+5. **Ultra-Responsive Reactive Pipeline**: Native engine events (such as track completion) are dispatched safely to Dart via `NativeCallable.listener`. Synchronous state getters (`player.state.*`) reflect atomic native values instantaneously, while broadcast streams (`player.stream.*`) provide fluid 60/120fps UI progress updates without isolate message-passing lag.
 
 ---
 
@@ -78,18 +77,14 @@ Unlike traditional audio plugins that bridge through Java/Kotlin or Objective-C/
 | **Speed (Time Stretch)**             |         ✅         |    ✅     |    ✅     |          ✅          |        ✅         |
 | **Pitch Scaling**                    |         ✅         |    ✅     |    ✅     |          ✅          |        ✅         |
 | **Background Isolate Instantiation** |         ✅         |    ✅     |    ✅     |          ✅          |        ✅         |
-| **Built-in Device Enumeration**      |   ⚠️ _See note_    |    ✅     |    ✅     |          ✅          |        ✅         |
+| **Built-in Device Enumeration**      |         ✅         |    ✅     |    ✅     |          ✅          |        ✅         |
 | **Dynamic Device Switching**         |         ✅         |    ✅     |    ✅     |          ✅          |        ✅         |
 
-> [!IMPORTANT]
+> [!NOTE]
 >
-> ### 📱 Note on Android Audio Device Enumeration
+> ### 📱 Android Audio Device Discovery (Built-in via C JNI)
 >
-> On desktop platforms and iOS/macOS, `miniaudio` directly queries the native audio system APIs to enumerate available output devices. However, on Android, native C/AAudio does not expose hardware output enumeration. Device discovery on Android strictly requires accessing Java/Kotlin Android SDK APIs (`android.media.AudioManager` and `AudioDeviceInfo`).
->
-> To preserve `miniaudio_player` as a **100% pure Dart FFI package** that can run inside raw Dart Isolates, background services, and CLI tools without depending on a Flutter Activity or engine attachment, **Android device enumeration is intentionally left to the host application**.
->
-> Switching audio devices via `player.action.setDevice(...)` **is fully supported on Android** once you pass the target device's integer ID string. See [Listing Devices on Android](#-listing-devices-on-android) below for a ready-to-use implementation.
+> While AAudio in native C does not expose hardware output enumeration, `miniaudio_player` includes a built-in C JNI subsystem that automatically interacts with Android's `AudioManager` and `AudioDeviceInfo`. It works completely out-of-the-box with **zero configuration**, **no MethodChannels**, and **no custom Kotlin code in MainActivity**.
 
 ---
 
@@ -303,7 +298,7 @@ await player.action.setPitch(1.2);
 
 ### 6. Audio Output Device Selection
 
-List and switch output devices dynamically at runtime across all supported platforms (**Android**, macOS, Windows, Linux, and iOS) with **zero configuration** and **no MethodChannels**:
+List and switch output devices dynamically at runtime across all supported platforms (Android, macOS, Windows, Linux, and iOS) with **zero configuration** and **no MethodChannels**:
 
 ```dart
 // Enumerate system playback devices (Android, macOS, Windows, Linux, iOS)
@@ -320,9 +315,16 @@ await player.action.setDevice(devices[1]);
 await player.action.setDevice(AudioDevice.auto);
 ```
 
-#### Automatic Android JNI Device Discovery
+#### Automatic Android JNI Device Discovery & Hot-Switching
 
-On Android, `MiniaudioPlayer.getAudioDevices()` interacts directly with Android's native `AudioManager` via internal C JNI reflection (`AudioManager.getDevices()`). It automatically resolves the running `JavaVM`, attaches worker threads as daemons, identifies default outputs (including Android 12+ communication devices, Bluetooth A2DP, and wired headsets), and performs full memory cleanup with zero reference leaks. No custom Kotlin in `MainActivity.kt` or Flutter platform channels are required.
+On Android, `MiniaudioPlayer.getAudioDevices()` interacts directly with Android's native `AudioManager` via an embedded C JNI engine:
+
+- **Zero Configuration**: No `MethodChannel`, no `package:jni`, and no custom Kotlin code in `MainActivity.kt`.
+- **Autonomous JavaVM Resolution**: Automatically discovers the running `JavaVM` across all Android versions (Android 5.0 through Android 15+) using a multi-tier fallback strategy (`libnativehelper.so`, runtime memory scanning, and `JNI_OnLoad`).
+- **Headless & Background Compatible**: Acquires application context reflectively via `ActivityThread.currentApplication()`, functioning seamlessly in Flutter UI threads, background isolates, or headless background services (`audio_service`).
+- **Smart Hardware Classification**: Accurately detects earpieces, built-in speakers, wired headphones/headsets, USB audio, and dynamic Bluetooth accessories (distinguishing between A2DP high-fidelity audio and SCO headsets). Accurately resolves system defaults using Android 12+ `AudioManager.getCommunicationDevice()` and audio route heuristics (`isBluetoothA2dpOn`, `isWiredHeadsetOn`).
+- **Resilient AAudio Hardware Rerouting**: When switching outputs or when Bluetooth devices connect/disconnect in real time, AAudio disconnect events (`AAUDIO_SERVICE_EVENT_DISCONNECTED`) are automatically handled and recreated without audio engine stall or crash.
+- **Zero Memory Leaks**: Strict JNI local reference management (`DeleteLocalRef`), UTF string release (`ReleaseStringUTFChars`), and clean thread detachment.
 
 ---
 
@@ -335,7 +337,7 @@ Feel free to open an issue or submit a pull request on [GitHub](https://github.c
 
 ## 📄 License & Third-Party Acknowledgements
 
-This project is licensed under the **GNU General Public License v3.0 (GPL-v3)** - see the [LICENSE](LICENSE) file for complete details.
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for complete details.
 
 ### Third-Party Native Libraries & Decoders
 
@@ -354,13 +356,7 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-v3)** 
 
 ---
 
-### ⚖️ GPL-v3 Licensing Notes & Considerations
+### ⚖️ Permissive Licensing & Commercial Use
 
-- **Inbound Compatibility**:
-  - The permissive licenses (**MIT**, **MIT-0**, **Public Domain / CC0**, and **BSD 3-Clause**) are 100% compatible with GPL-v3 and can be combined into a GPL-v3 covered work.
-  - **Apache 2.0** (Sonic DSP) is explicitly compatible with GPL-v3 according to the Free Software Foundation (FSF).
-  - **Helix AAC** (RPSL): In accordance with Section 7 of the GNU GPL-v3 (_Additional Permissions_), this project includes a linking permission allowing the program to be compiled and linked with the Helix AAC decoder under the RPSL.
-- **Copyleft (Outbound Usage in Flutter Apps)**:
-  - Because `miniaudio_player` is distributed under GPL-v3, applications that bundle and distribute this package must also make their complete source code available under GPL-v3.
-  - If your Flutter application is free and open-source (GPL-compatible), you can use and distribute `miniaudio_player` with no restrictions.
-  - Proprietary or closed-source commercial applications that cannot open-source their codebase should take this copyleft requirement into consideration.
+- **Unrestricted Commercial & Proprietary Usage**: Because `miniaudio_player` is distributed under the permissive **MIT License**, you are completely free to integrate, bundle, and distribute it in commercial, closed-source, proprietary, or open-source Flutter applications without any copyleft restrictions.
+- **Third-Party Attribution**: All bundled third-party libraries retain their original author notices, copyrights, and permissive licenses (`MIT`, `MIT-0`, `Apache 2.0`, `BSD-3-Clause`, `CC0`, and `RPSL`).

@@ -157,6 +157,8 @@ words:
   - Leitgeb
   - Levinson
   - lgain
+  - libart
+  - libnativehelper
   - libogg
   - libopus
   - LIBOPUS
@@ -168,6 +170,7 @@ words:
   - lieff
   - livestreams
   - llret
+  - logcat
   - loshelf
   - lpcs
   - LRINT
@@ -216,6 +219,7 @@ words:
   - overspans
   - ovflw
   - PERC
+  - phdr
   - PLTE
   - Pranckevicius
   - preclipped
