@@ -113,6 +113,53 @@ void main() {
     );
 
     test(
+      'seeking to or past end during active playback on OGG/OGA/OPUS stops playback and halts audio cleanly',
+      () async {
+        final formats = [
+          'example/assets/music/salida.ogg',
+          'example/assets/music/salida.oga',
+          'example/assets/music/salida.opus',
+        ];
+
+        for (final formatPath in formats) {
+          final file = resolveAsset(formatPath);
+          if (!file.existsSync()) continue;
+
+          await player.action.open(file.absolute.path);
+          final duration = player.state.duration;
+          expect(duration.inMilliseconds, greaterThan(0));
+
+          // Start playing
+          await player.action.play();
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+          expect(player.state.playing, isTrue);
+
+          // Seek to the exact end / past duration while playing
+          await player.action.seek(duration + const Duration(seconds: 10));
+
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+
+          // Must be stopped/completed, position clamped to duration, and audio halted
+          expect(player.state.playing, isFalse, reason: 'Must stop playing on $formatPath');
+          expect(player.state.completed, isTrue, reason: 'Must be completed on $formatPath');
+          expect(
+            player.state.position.inMilliseconds,
+            closeTo(duration.inMilliseconds, 100),
+          );
+
+          // Additional verification: position should NOT advance anymore (audio halted, not playing in background)
+          final pos1 = player.state.position;
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          final pos2 = player.state.position;
+          expect(pos2.inMilliseconds, equals(pos1.inMilliseconds), reason: 'Position must not advance after seek to end on $formatPath');
+          expect(player.state.playing, isFalse);
+
+          await player.action.stop();
+        }
+      },
+    );
+
+    test(
       'plays unmodified MP3 file seamlessly via native dr_mp3',
       () async {
         final mp3File = resolveAsset('example/assets/music/salida.mp3');

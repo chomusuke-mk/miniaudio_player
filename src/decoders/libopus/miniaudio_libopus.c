@@ -404,6 +404,12 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
 
 #if !defined(MA_NO_LIBOPUS)
     {
+        ogg_int64_t total = op_pcm_total((OggOpusFile *)pOpus->of, -1);
+        if (total > 0 && (ogg_int64_t)frameIndex >= total)
+        {
+            frameIndex = (ma_uint64)(total - 1);
+        }
+
         int libopusResult = op_pcm_seek((OggOpusFile *)pOpus->of, (ogg_int64_t)frameIndex);
         if (libopusResult != 0)
         {

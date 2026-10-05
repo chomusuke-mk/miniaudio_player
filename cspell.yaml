@@ -92,6 +92,7 @@ words:
   - Ediff
   - EDSP
   - EIMPL
+  - EINVAL
   - encoderctls
   - encstate
   - ener

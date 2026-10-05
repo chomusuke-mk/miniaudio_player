@@ -1,6 +1,6 @@
 name: miniaudio_player
 description: "Ultra-low-resource cross-platform audio player using miniaudio. Equalizer, pitch and rate are supported."
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/chomusuke-mk/miniaudio_player
 issue_tracker: https://github.com/chomusuke-mk/miniaudio_player/issues
 topics: 

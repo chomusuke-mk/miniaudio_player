@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.1
+
+### 🐛 Bug Fixes & Playback Lifecycle
+
+- **Stop & Completed State Separation**:
+  - Fixed an issue where calling `stop()` after natural completion caused `miniaudio_player_get_status()` to override the `STOPPED` state back to `COMPLETED` due to unconditioned `ma_sound_at_end()` evaluations.
+  - In native C, `ma_sound_at_end()` evaluation is now strictly conditioned on `MAP_PLAYBACK_STATE_PLAYING`. Stopped state is strictly preserved with `is_completed = 0` and `atEnd` flag reset.
+  - In Dart, modeled `stream.completed` as an edge-triggered transition (`false -> true`) during active playback, preventing redundant completion events.
+  - Decoupled `pollAndEmit(force: true)` from re-emitting terminal completion events.
+  - Added synchronous state cleanup (`notifyStopped()`) on `player.action.stop()` to ensure position resets to zero and `completed` is immediately reset for subsequent playback.
+- **OGG/OGA/OPUS Seek-to-End Background Audio Leak**:
+  - Fixed a bug where seeking to or past track duration while playing `.ogg`, `.oga`, or `.opus` files caused audio to continue playing in the background despite the UI reporting stopped/completed.
+  - Resolved root cause in underlying decoders (`stb_vorbis` and `opusfile`), which return seek errors (`VORBIS_seek_failed` / `OP_EINVAL`) when attempting to seek at or beyond `total_frames`.
+  - Implemented EOF clamping (to `total_frames - 1`) and EOF flag tracking in `map_time_stretch_ds_seek` and `ma_libopus_seek_to_pcm_frame`.
+  - Explicitly stopped the native sound (`ma_sound_stop`) when seeking to or past track duration to cleanly halt audio output.
+
+### 🧪 Tests
+
+- Added tests verifying edge-triggered completion transitions, post-completion stop state integrity, and immunity to `force: true` polling (`test/tier2_boundary_test.dart`).
+- Added tests verifying clean audio termination when seeking to or past track duration across OGG, OGA, and Opus codecs (`test/tier1_codecs_test.dart`).
+
 ## 1.0.0
 
 ### 📄 Relicensed to MIT

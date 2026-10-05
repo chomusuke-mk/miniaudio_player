@@ -729,10 +729,32 @@ static ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64
 {
     map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
     ma_result res;
+    ma_uint64 total_frames = 0;
     if (pDS == NULL)
         return MA_INVALID_ARGS;
 
     ma_spinlock_lock(&pDS->lock);
+    if (ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &total_frames) == MA_SUCCESS && total_frames > 0)
+    {
+        if (frameIndex >= total_frames)
+        {
+            /* Seeking at or beyond EOF:
+             * Many decoders (e.g. stb_vorbis for OGG/OGA and opusfile for OPUS)
+             * return error (OP_EINVAL or VORBIS_seek_failed) if attempting to
+             * seek at or beyond total_frames.
+             * Handle EOF cleanly: seek to the last valid frame (total_frames - 1) and mark is_eof.
+             */
+            ma_decoder_seek_to_pcm_frame(&pDS->decoder, total_frames - 1);
+            if (pDS->sonic != NULL)
+            {
+                sonicResetStream(pDS->sonic);
+            }
+            pDS->is_eof = MA_TRUE;
+            ma_spinlock_unlock(&pDS->lock);
+            return MA_SUCCESS;
+        }
+    }
+
     res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
     if (pDS->sonic != NULL)
     {
@@ -774,6 +796,10 @@ static ma_result map_time_stretch_ds_get_cursor(ma_data_source *pDataSource, ma_
     map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
     if (pDS == NULL || pCursor == NULL)
         return MA_INVALID_ARGS;
+    if (pDS->is_eof)
+    {
+        return ma_decoder_get_length_in_pcm_frames(&pDS->decoder, pCursor);
+    }
     return ma_decoder_get_cursor_in_pcm_frames(&pDS->decoder, pCursor);
 }
 
@@ -1893,6 +1919,16 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
 
     if (position_ms >= player->duration_ms && player->duration_ms > 0)
     {
+        ma_sound_stop(&player->sound);
+        if (player->sound.pDataSource != NULL)
+        {
+            ma_uint64 total_frames = 0;
+            if (ma_data_source_get_length_in_pcm_frames(player->sound.pDataSource, &total_frames) == MA_SUCCESS && total_frames > 0)
+            {
+                ma_data_source_seek_to_pcm_frame(player->sound.pDataSource, total_frames);
+            }
+        }
+        ma_atomic_exchange_32(&player->sound.atEnd, MA_TRUE);
         player->is_completed = 1;
         player->state = MAP_PLAYBACK_STATE_COMPLETED;
     }
