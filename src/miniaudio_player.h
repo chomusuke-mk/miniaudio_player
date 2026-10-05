@@ -204,6 +204,14 @@ extern "C"
         const miniaudio_player_t *player,
         miniaudio_device_info_t *out_device);
 
+#if defined(__ANDROID__)
+    /**
+     * @brief Optionally sets the JavaVM instance for Android JNI operations.
+     * If not called, the engine automatically resolves the running JavaVM via JNI_GetCreatedJavaVMs.
+     */
+    MAP_API void miniaudio_player_set_jvm(void *jvm);
+#endif
+
     /* ========================================================================= */
     /* Equalizer Controls                                                        */
     /* ========================================================================= */

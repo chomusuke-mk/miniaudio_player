@@ -94,43 +94,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
-  static const MethodChannel _androidDeviceChannel = MethodChannel(
-    'dev.chomusuke.miniaudio_player/devices',
-  );
-
-  Future<List<AudioDevice>> _loadAudioDevices() async {
-    if (Platform.isAndroid) {
-      try {
-        final List<dynamic>? rawList = await _androidDeviceChannel
-            .invokeListMethod<dynamic>('getAudioDevices');
-        if (rawList != null) {
-          final List<AudioDevice> list = [AudioDevice.auto];
-          for (final item in rawList) {
-            if (item is Map) {
-              final map = Map<String, dynamic>.from(item);
-              list.add(
-                AudioDevice(
-                  id: (map['id'] ?? '').toString(),
-                  name: (map['name'] ?? 'Audio Device').toString(),
-                  isDefault: map['isDefault'] == true,
-                  isAuto: false,
-                  type: map['type'] as int?,
-                ),
-              );
-            }
-          }
-          return list;
-        }
-      } catch (e) {
-        debugPrint('Error getting Android audio devices: $e');
-      }
-    }
-    return MiniaudioPlayer.getAudioDevices();
-  }
-
   Future<void> _refreshAudioDevices() async {
     try {
-      final devs = await _loadAudioDevices();
+      final devs = await MiniaudioPlayer.getAudioDevices();
       if (mounted) {
         setState(() {
           _audioDevices = devs;

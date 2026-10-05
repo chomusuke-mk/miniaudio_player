@@ -299,115 +299,30 @@ await player.action.setPitch(1.2);
 
 ---
 
+---
+
 ### 6. Audio Output Device Selection
 
-List and switch output devices at runtime:
+List and switch output devices dynamically at runtime across all supported platforms (**Android**, macOS, Windows, Linux, and iOS) with **zero configuration** and **no MethodChannels**:
 
 ```dart
-// Enumerate system playback devices (macOS, Windows, Linux, iOS)
+// Enumerate system playback devices (Android, macOS, Windows, Linux, iOS)
 final devices = await MiniaudioPlayer.getAudioDevices();
 
 for (final device in devices) {
   print('Device: ${device.name} (ID: ${device.id}, Default: ${device.isDefault})');
 }
 
-// Switch to a specific device
+// Switch playback to a specific hardware device
 await player.action.setDevice(devices[1]);
 
 // Return to automatic system default routing
 await player.action.setDevice(AudioDevice.auto);
 ```
 
----
+#### Automatic Android JNI Device Discovery
 
-## 📱 Listing Devices on Android
-
-Because Android device discovery requires the Android `AudioManager` Java/Kotlin SDK, you can quickly expose it to Flutter using a simple `MethodChannel` in your host application:
-
-### Step 1: In your Kotlin `MainActivity.kt`
-
-```kotlin
-package com.example.yourapp
-
-import android.content.Context
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
-
-class MainActivity : FlutterActivity() {
-    private val channelName = "com.example.yourapp/devices"
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
-            .setMethodCallHandler { call, result ->
-                if (call.method == "getAudioDevices") {
-                    val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                    val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-                    val resultList = mutableListOf<Map<String, Any>>()
-
-                    for (device in devices) {
-                        // Filter out non-media outputs (earpiece, telephony, screencast submix)
-                        if (device.type == AudioDeviceInfo.TYPE_TELEPHONY ||
-                            device.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE ||
-                            device.type == AudioDeviceInfo.TYPE_REMOTE_SUBMIX) {
-                            continue
-                        }
-
-                        resultList.add(mapOf(
-                            "id" to device.id.toString(),
-                            "name" to (device.productName?.toString() ?: "Audio Device"),
-                            "type" to device.type
-                        ))
-                    }
-                    result.success(resultList)
-                } else {
-                    result.notImplemented()
-                }
-            }
-    }
-}
-```
-
-### Step 2: In your Flutter code
-
-```dart
-import 'dart:io';
-import 'package:flutter/services.dart';
-import 'package:miniaudio_player/miniaudio_player.dart';
-
-const _deviceChannel = MethodChannel('com.example.yourapp/devices');
-
-Future<List<AudioDevice>> fetchDevices() async {
-  if (Platform.isAndroid) {
-    final rawList = await _deviceChannel.invokeListMethod<Map>('getAudioDevices');
-    final devices = <AudioDevice>[AudioDevice.auto];
-
-    if (rawList != null) {
-      for (final map in rawList) {
-        devices.add(AudioDevice(
-          id: map['id'].toString(),
-          name: map['name'].toString(),
-          isDefault: false,
-          isAuto: false,
-          type: map['type'] as int?,
-        ));
-      }
-    }
-    return devices;
-  }
-
-  // On desktop / iOS, use native built-in discovery:
-  return MiniaudioPlayer.getAudioDevices();
-}
-
-// Switching works identically across all platforms!
-void switchAudioDevice(AudioDevice device) async {
-  await player.action.setDevice(device);
-}
-```
+On Android, `MiniaudioPlayer.getAudioDevices()` interacts directly with Android's native `AudioManager` via internal C JNI reflection (`AudioManager.getDevices()`). It automatically resolves the running `JavaVM`, attaches worker threads as daemons, identifies default outputs (including Android 12+ communication devices, Bluetooth A2DP, and wired headsets), and performs full memory cleanup with zero reference leaks. No custom Kotlin in `MainActivity.kt` or Flutter platform channels are required.
 
 ---
 

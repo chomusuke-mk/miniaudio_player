@@ -76,6 +76,9 @@ MAP_API int32_t miniaudio_player_get_log_level(void)
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#include <jni.h>
+#include <dlfcn.h>
+#include <strings.h>
 #endif
 
 static void map_log_print(int32_t level, const char *tag, const char *fmt, ...)
@@ -2007,18 +2010,513 @@ MAP_API uint32_t miniaudio_player_get_buffer_size(const miniaudio_player_t *play
 /* Audio Device Management                                                   */
 /* ========================================================================= */
 
+#if defined(__ANDROID__)
+
+static JavaVM *g_map_jvm = NULL;
+
+JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    (void)reserved;
+    g_map_jvm = vm;
+    return JNI_VERSION_1_6;
+}
+
+MAP_API void miniaudio_player_set_jvm(void *jvm)
+{
+    if (jvm != NULL)
+    {
+        g_map_jvm = (JavaVM *)jvm;
+    }
+}
+
+static JavaVM *map_android_get_jvm(void)
+{
+    if (g_map_jvm != NULL)
+    {
+        return g_map_jvm;
+    }
+
+    typedef jint (*GetCreatedJavaVMsFn)(JavaVM **, jsize, jsize *);
+    GetCreatedJavaVMsFn pfn = (GetCreatedJavaVMsFn)dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs");
+    if (pfn == NULL)
+    {
+        void *art_handle = dlopen("libart.so", RTLD_NOW);
+        if (art_handle != NULL)
+        {
+            pfn = (GetCreatedJavaVMsFn)dlsym(art_handle, "JNI_GetCreatedJavaVMs");
+        }
+    }
+
+    if (pfn != NULL)
+    {
+        JavaVM *vm = NULL;
+        jsize count = 0;
+        if (pfn(&vm, 1, &count) == JNI_OK && count > 0 && vm != NULL)
+        {
+            g_map_jvm = vm;
+            return g_map_jvm;
+        }
+    }
+
+    return NULL;
+}
+
+static const char *map_android_device_type_name(int type)
+{
+    switch (type)
+    {
+    case 1:  return "Earpiece";                  /* TYPE_BUILTIN_EARPIECE */
+    case 2:  return "Speaker";                   /* TYPE_BUILTIN_SPEAKER */
+    case 3:  return "Wired Headset";             /* TYPE_WIRED_HEADSET */
+    case 4:  return "Wired Headphones";          /* TYPE_WIRED_HEADPHONES */
+    case 5:  return "Line Analog";               /* TYPE_LINE_ANALOG */
+    case 6:  return "Line Digital";              /* TYPE_LINE_DIGITAL */
+    case 7:  return "Bluetooth Headset";         /* TYPE_BLUETOOTH_SCO */
+    case 8:  return "Bluetooth Audio";           /* TYPE_BLUETOOTH_A2DP */
+    case 9:  return "HDMI";                      /* TYPE_HDMI */
+    case 10: return "HDMI ARC";                  /* TYPE_HDMI_ARC */
+    case 11: return "USB Audio Device";          /* TYPE_USB_DEVICE */
+    case 12: return "USB Audio Accessory";       /* TYPE_USB_ACCESSORY */
+    case 13: return "Dock Audio";                /* TYPE_DOCK */
+    case 14: return "FM Radio";                  /* TYPE_FM */
+    case 15: return "Built-in Microphone";       /* TYPE_BUILTIN_MIC */
+    case 16: return "FM Tuner";                  /* TYPE_FM_TUNER */
+    case 17: return "TV Tuner";                  /* TYPE_TV_TUNER */
+    case 18: return "Telephony";                 /* TYPE_TELEPHONY */
+    case 19: return "AUX Line";                  /* TYPE_AUX_LINE */
+    case 20: return "IP Audio";                  /* TYPE_IP */
+    case 21: return "Bus Audio";                 /* TYPE_BUS */
+    case 22: return "USB Headset";               /* TYPE_USB_HEADSET */
+    case 23: return "Hearing Aid";               /* TYPE_HEARING_AID */
+    case 24: return "Speaker (Safe)";            /* TYPE_BUILTIN_SPEAKER_SAFE */
+    case 25: return "Remote Submix";             /* TYPE_REMOTE_SUBMIX */
+    case 26: return "BLE Headset";               /* TYPE_BLE_HEADSET */
+    case 27: return "BLE Speaker";               /* TYPE_BLE_SPEAKER */
+    case 28: return "Echo Reference";            /* TYPE_ECHO_REFERENCE */
+    case 29: return "HDMI eARC";                 /* TYPE_HDMI_EARC */
+    case 30: return "BLE Broadcast";             /* TYPE_BLE_BROADCAST */
+    case 31: return "Dock Analog";               /* TYPE_DOCK_ANALOG */
+    case 32: return "Multichannel Group";        /* TYPE_MULTICHANNEL_GROUP */
+    case 33: return "BLE Hearing Aid";           /* TYPE_BLE_HEARING_AID */
+    case 34: return "BLE Central";               /* TYPE_BLE_CENTRAL */
+    case 35: return "BLE Central Broadcast";     /* TYPE_BLE_CENTRAL_BROADCAST */
+    default: return "Audio Output";
+    }
+}
+
+static int32_t map_android_get_devices(
+    miniaudio_device_info_t **out_devices,
+    uint32_t *out_count)
+{
+    JavaVM *jvm = map_android_get_jvm();
+    if (jvm == NULL)
+    {
+        map_log_print(MAP_LOG_LEVEL_ERROR, "android", "Failed to obtain JavaVM");
+        return MAP_ERROR_GENERIC;
+    }
+
+    JNIEnv *env = NULL;
+    jint get_env_res = (*jvm)->GetEnv(jvm, (void **)&env, JNI_VERSION_1_6);
+    ma_bool32 need_detach = MA_FALSE;
+
+    if (get_env_res == JNI_EDETACHED)
+    {
+        JavaVMAttachArgs attach_args;
+        attach_args.version = JNI_VERSION_1_6;
+        attach_args.name = "miniaudio_get_devices";
+        attach_args.group = NULL;
+        if ((*jvm)->AttachCurrentThread(jvm, &env, &attach_args) != JNI_OK || env == NULL)
+        {
+            map_log_print(MAP_LOG_LEVEL_ERROR, "android", "Failed to attach current thread to JVM");
+            return MAP_ERROR_GENERIC;
+        }
+        need_detach = MA_TRUE;
+    }
+    else if (get_env_res != JNI_OK || env == NULL)
+    {
+        map_log_print(MAP_LOG_LEVEL_ERROR, "android", "GetEnv failed with code: %d", get_env_res);
+        return MAP_ERROR_GENERIC;
+    }
+
+    int32_t status = MAP_ERROR_GENERIC;
+    jclass actThreadCls = NULL;
+    jobject context = NULL;
+    jclass contextCls = NULL;
+    jstring audioServiceStr = NULL;
+    jobject audioManager = NULL;
+    jclass audioManagerCls = NULL;
+    jclass devInfoCls = NULL;
+    jclass charSequenceCls = NULL;
+    jobjectArray deviceArray = NULL;
+    miniaudio_device_info_t *devices = NULL;
+
+    actThreadCls = (*env)->FindClass(env, "android/app/ActivityThread");
+    if ((*env)->ExceptionCheck(env) || actThreadCls == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    jmethodID curAppMethod = (*env)->GetStaticMethodID(env, actThreadCls, "currentApplication", "()Landroid/app/Application;");
+    if ((*env)->ExceptionCheck(env) || curAppMethod == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    context = (*env)->CallStaticObjectMethod(env, actThreadCls, curAppMethod);
+    if ((*env)->ExceptionCheck(env) || context == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    contextCls = (*env)->FindClass(env, "android/content/Context");
+    if ((*env)->ExceptionCheck(env) || contextCls == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    jmethodID getSysServiceMethod = (*env)->GetMethodID(env, contextCls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+    if ((*env)->ExceptionCheck(env) || getSysServiceMethod == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    audioServiceStr = (*env)->NewStringUTF(env, "audio");
+    if ((*env)->ExceptionCheck(env) || audioServiceStr == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    audioManager = (*env)->CallObjectMethod(env, context, getSysServiceMethod, audioServiceStr);
+    if ((*env)->ExceptionCheck(env) || audioManager == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    audioManagerCls = (*env)->FindClass(env, "android/media/AudioManager");
+    if ((*env)->ExceptionCheck(env) || audioManagerCls == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    jmethodID getDevicesMethod = (*env)->GetMethodID(env, audioManagerCls, "getDevices", "(I)[Landroid/media/AudioDeviceInfo;");
+    if ((*env)->ExceptionCheck(env) || getDevicesMethod == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    /* 2 = AudioManager.GET_DEVICES_OUTPUTS */
+    deviceArray = (jobjectArray)(*env)->CallObjectMethod(env, audioManager, getDevicesMethod, (jint)2);
+    if ((*env)->ExceptionCheck(env) || deviceArray == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    devInfoCls = (*env)->FindClass(env, "android/media/AudioDeviceInfo");
+    if ((*env)->ExceptionCheck(env) || devInfoCls == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    jmethodID getIdMethod = (*env)->GetMethodID(env, devInfoCls, "getId", "()I");
+    jmethodID getTypeMethod = (*env)->GetMethodID(env, devInfoCls, "getType", "()I");
+    jmethodID getProductNameMethod = (*env)->GetMethodID(env, devInfoCls, "getProductName", "()Ljava/lang/CharSequence;");
+
+    if ((*env)->ExceptionCheck(env) || getIdMethod == NULL || getTypeMethod == NULL || getProductNameMethod == NULL)
+    {
+        (*env)->ExceptionClear(env);
+        goto cleanup;
+    }
+
+    charSequenceCls = (*env)->FindClass(env, "java/lang/CharSequence");
+    jmethodID toStrMethod = NULL;
+    if (charSequenceCls != NULL)
+    {
+        toStrMethod = (*env)->GetMethodID(env, charSequenceCls, "toString", "()Ljava/lang/String;");
+    }
+    if ((*env)->ExceptionCheck(env))
+    {
+        (*env)->ExceptionClear(env);
+    }
+
+    int sdk_version = ma_android_sdk_version();
+
+    /* Query communication device on Android 12+ (API 31+) */
+    jint comm_device_id = -1;
+    if (sdk_version >= 31)
+    {
+        jmethodID getCommDevMethod = (*env)->GetMethodID(env, audioManagerCls, "getCommunicationDevice", "()Landroid/media/AudioDeviceInfo;");
+        if (!(*env)->ExceptionCheck(env) && getCommDevMethod != NULL)
+        {
+            jobject commDev = (*env)->CallObjectMethod(env, audioManager, getCommDevMethod);
+            if (!(*env)->ExceptionCheck(env) && commDev != NULL)
+            {
+                comm_device_id = (*env)->CallIntMethod(env, commDev, getIdMethod);
+                if ((*env)->ExceptionCheck(env))
+                {
+                    (*env)->ExceptionClear(env);
+                    comm_device_id = -1;
+                }
+                (*env)->DeleteLocalRef(env, commDev);
+            }
+        }
+        if ((*env)->ExceptionCheck(env))
+        {
+            (*env)->ExceptionClear(env);
+        }
+    }
+
+    /* Query wired headset and bluetooth states */
+    jboolean is_wired_headset_on = JNI_FALSE;
+    jboolean is_bt_a2dp_on = JNI_FALSE;
+
+    jmethodID isWiredHeadsetOnMethod = (*env)->GetMethodID(env, audioManagerCls, "isWiredHeadsetOn", "()Z");
+    if (!(*env)->ExceptionCheck(env) && isWiredHeadsetOnMethod != NULL)
+    {
+        is_wired_headset_on = (*env)->CallBooleanMethod(env, audioManager, isWiredHeadsetOnMethod);
+        if ((*env)->ExceptionCheck(env))
+        {
+            (*env)->ExceptionClear(env);
+            is_wired_headset_on = JNI_FALSE;
+        }
+    }
+    else if ((*env)->ExceptionCheck(env))
+    {
+        (*env)->ExceptionClear(env);
+    }
+
+    jmethodID isBtA2dpOnMethod = (*env)->GetMethodID(env, audioManagerCls, "isBluetoothA2dpOn", "()Z");
+    if (!(*env)->ExceptionCheck(env) && isBtA2dpOnMethod != NULL)
+    {
+        is_bt_a2dp_on = (*env)->CallBooleanMethod(env, audioManager, isBtA2dpOnMethod);
+        if ((*env)->ExceptionCheck(env))
+        {
+            (*env)->ExceptionClear(env);
+            is_bt_a2dp_on = JNI_FALSE;
+        }
+    }
+    else if ((*env)->ExceptionCheck(env))
+    {
+        (*env)->ExceptionClear(env);
+    }
+
+    jsize raw_count = (*env)->GetArrayLength(env, deviceArray);
+    if (raw_count <= 0)
+    {
+        *out_devices = NULL;
+        *out_count = 0;
+        status = MAP_SUCCESS;
+        goto cleanup;
+    }
+
+    devices = (miniaudio_device_info_t *)calloc((size_t)raw_count, sizeof(miniaudio_device_info_t));
+    if (devices == NULL)
+    {
+        status = MAP_ERROR_OUT_OF_MEMORY;
+        goto cleanup;
+    }
+
+    uint32_t valid_count = 0;
+    int has_found_default = 0;
+
+    for (jsize i = 0; i < raw_count; ++i)
+    {
+        jobject devObj = (*env)->GetObjectArrayElement(env, deviceArray, i);
+        if (devObj == NULL)
+        {
+            continue;
+        }
+
+        jint dev_id = (*env)->CallIntMethod(env, devObj, getIdMethod);
+        jint dev_type = (*env)->CallIntMethod(env, devObj, getTypeMethod);
+
+        if ((*env)->ExceptionCheck(env))
+        {
+            (*env)->ExceptionClear(env);
+            (*env)->DeleteLocalRef(env, devObj);
+            continue;
+        }
+
+        /* Skip telephony devices (TYPE_TELEPHONY = 18) */
+        if (dev_type == 18)
+        {
+            (*env)->DeleteLocalRef(env, devObj);
+            continue;
+        }
+
+        const char *typeFallback = map_android_device_type_name((int)dev_type);
+
+        /* Extract product name */
+        char prodNameBuf[256] = {0};
+        jobject prodNameObj = (*env)->CallObjectMethod(env, devObj, getProductNameMethod);
+        if (!(*env)->ExceptionCheck(env) && prodNameObj != NULL && toStrMethod != NULL)
+        {
+            jstring nameStr = (jstring)(*env)->CallObjectMethod(env, prodNameObj, toStrMethod);
+            if (!(*env)->ExceptionCheck(env) && nameStr != NULL)
+            {
+                const char *utf = (*env)->GetStringUTFChars(env, nameStr, NULL);
+                if (utf != NULL)
+                {
+                    const char *start = utf;
+                    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+                    {
+                        start++;
+                    }
+                    size_t len = strlen(start);
+                    while (len > 0 && (start[len - 1] == ' ' || start[len - 1] == '\t' ||
+                                       start[len - 1] == '\r' || start[len - 1] == '\n'))
+                    {
+                        len--;
+                    }
+                    if (len > 0 && len < sizeof(prodNameBuf))
+                    {
+                        memcpy(prodNameBuf, start, len);
+                        prodNameBuf[len] = '\0';
+                    }
+                    (*env)->ReleaseStringUTFChars(env, nameStr, utf);
+                }
+                (*env)->DeleteLocalRef(env, nameStr);
+            }
+        }
+        if ((*env)->ExceptionCheck(env))
+        {
+            (*env)->ExceptionClear(env);
+        }
+        if (prodNameObj != NULL)
+        {
+            (*env)->DeleteLocalRef(env, prodNameObj);
+        }
+
+        /* Format display name */
+        if (prodNameBuf[0] != '\0' && strcasecmp(prodNameBuf, "default") != 0)
+        {
+            snprintf(devices[valid_count].name, sizeof(devices[valid_count].name), "%s (%s)", prodNameBuf, typeFallback);
+        }
+        else
+        {
+            snprintf(devices[valid_count].name, sizeof(devices[valid_count].name), "%s", typeFallback);
+        }
+
+        /* Device ID formatted as decimal integer string */
+        snprintf(devices[valid_count].id, sizeof(devices[valid_count].id), "%d", (int)dev_id);
+
+        /* Default output detection */
+        int is_default = 0;
+        if (!has_found_default)
+        {
+            if (comm_device_id >= 0 && dev_id == comm_device_id)
+            {
+                is_default = 1;
+            }
+            else
+            {
+                switch (dev_type)
+                {
+                case 3:  /* TYPE_WIRED_HEADSET */
+                case 4:  /* TYPE_WIRED_HEADPHONES */
+                case 22: /* TYPE_USB_HEADSET */
+                    is_default = (is_wired_headset_on == JNI_TRUE) ? 1 : 0;
+                    break;
+                case 8:  /* TYPE_BLUETOOTH_A2DP */
+                    is_default = (is_bt_a2dp_on == JNI_TRUE) ? 1 : 0;
+                    break;
+                case 2:  /* TYPE_BUILTIN_SPEAKER */
+                    is_default = (!is_wired_headset_on && !is_bt_a2dp_on) ? 1 : 0;
+                    break;
+                default:
+                    is_default = 0;
+                    break;
+                }
+            }
+            if (is_default)
+            {
+                has_found_default = 1;
+            }
+        }
+
+        devices[valid_count].is_default = is_default;
+        devices[valid_count].is_auto = 0;
+
+        valid_count++;
+        (*env)->DeleteLocalRef(env, devObj);
+    }
+
+    if (!has_found_default && valid_count > 0)
+    {
+        devices[0].is_default = 1;
+    }
+
+    *out_devices = devices;
+    *out_count = valid_count;
+    status = MAP_SUCCESS;
+
+cleanup:
+    if (status != MAP_SUCCESS && devices != NULL)
+    {
+        free(devices);
+        devices = NULL;
+    }
+    if (deviceArray != NULL)
+    {
+        (*env)->DeleteLocalRef(env, deviceArray);
+    }
+    if (charSequenceCls != NULL)
+    {
+        (*env)->DeleteLocalRef(env, charSequenceCls);
+    }
+    if (devInfoCls != NULL)
+    {
+        (*env)->DeleteLocalRef(env, devInfoCls);
+    }
+    if (audioManagerCls != NULL)
+    {
+        (*env)->DeleteLocalRef(env, audioManagerCls);
+    }
+    if (audioManager != NULL)
+    {
+        (*env)->DeleteLocalRef(env, audioManager);
+    }
+    if (audioServiceStr != NULL)
+    {
+        (*env)->DeleteLocalRef(env, audioServiceStr);
+    }
+    if (contextCls != NULL)
+    {
+        (*env)->DeleteLocalRef(env, contextCls);
+    }
+    if (context != NULL)
+    {
+        (*env)->DeleteLocalRef(env, context);
+    }
+    if (actThreadCls != NULL)
+    {
+        (*env)->DeleteLocalRef(env, actThreadCls);
+    }
+
+    if (need_detach)
+    {
+        (*jvm)->DetachCurrentThread(jvm);
+    }
+
+    return status;
+}
+
+#endif /* __ANDROID__ */
+
 MAP_API int32_t miniaudio_player_get_devices(
     miniaudio_device_info_t **out_devices,
     uint32_t *out_count)
 {
-    ma_context context;
-    ma_result result;
-    ma_device_info *pPlaybackInfos;
-    ma_uint32 playbackCount = 0;
-    ma_device_info *pCaptureInfos;
-    ma_uint32 captureCount = 0;
-    miniaudio_device_info_t *devices = NULL;
-
     if (out_devices == NULL || out_count == NULL)
     {
         return MAP_ERROR_INVALID_ARGS;
@@ -2026,6 +2524,23 @@ MAP_API int32_t miniaudio_player_get_devices(
 
     *out_devices = NULL;
     *out_count = 0;
+
+#if defined(__ANDROID__)
+    int32_t android_res = map_android_get_devices(out_devices, out_count);
+    if (android_res == MAP_SUCCESS)
+    {
+        return MAP_SUCCESS;
+    }
+    map_log_print(MAP_LOG_LEVEL_WARNING, "android", "JNI device enumeration returned %d, falling back to miniaudio context", android_res);
+#endif
+
+    ma_context context;
+    ma_result result;
+    ma_device_info *pPlaybackInfos;
+    ma_uint32 playbackCount = 0;
+    ma_device_info *pCaptureInfos;
+    ma_uint32 captureCount = 0;
+    miniaudio_device_info_t *devices = NULL;
 
     result = ma_context_init(NULL, 0, NULL, &context);
     if (result != MA_SUCCESS)

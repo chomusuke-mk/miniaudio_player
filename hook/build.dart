@@ -71,7 +71,7 @@ void main(List<String> args) async {
       defines['_CRT_SECURE_NO_WARNINGS'] = '1';
       defines['USE_ALLOCA'] = '1';
     } else if (targetOS == OS.android) {
-      libraries.addAll(['OpenSLES', 'log', 'm']);
+      libraries.addAll(['OpenSLES', 'log', 'm', 'dl']);
       defines['VAR_ARRAYS'] = '1';
     } else {
       defines['VAR_ARRAYS'] = '1';
