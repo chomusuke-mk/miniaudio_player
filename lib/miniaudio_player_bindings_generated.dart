@@ -9,11 +9,8 @@ import 'dart:ffi' as ffi;
 /// @param[out] out_result Result status code.
 /// @return Pointer to player handle, or NULL on error.
 @ffi.Native<
-  ffi.Pointer<miniaudio_player_t> Function(
-    ffi.Pointer<miniaudio_player_config_t>,
-    ffi.Pointer<ffi.Int32>,
-  )
->()
+    ffi.Pointer<miniaudio_player_t> Function(
+        ffi.Pointer<miniaudio_player_config_t>, ffi.Pointer<ffi.Int32>)>()
 external ffi.Pointer<miniaudio_player_t> miniaudio_player_create(
   ffi.Pointer<miniaudio_player_config_t> config,
   ffi.Pointer<ffi.Int32> out_result,
@@ -23,11 +20,12 @@ external ffi.Pointer<miniaudio_player_t> miniaudio_player_create(
 /// @param player Player instance handle.
 /// @return MAP_SUCCESS on clean termination.
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
-external int miniaudio_player_destroy(ffi.Pointer<miniaudio_player_t> player);
+external int miniaudio_player_destroy(
+  ffi.Pointer<miniaudio_player_t> player,
+);
 
 @ffi.Native<
-  ffi.Void Function(ffi.Pointer<miniaudio_device_info_t>, ffi.Uint32)
->()
+    ffi.Void Function(ffi.Pointer<miniaudio_device_info_t>, ffi.Uint32)>()
 external void miniaudio_player_free_devices(
   ffi.Pointer<miniaudio_device_info_t> devices,
   int count,
@@ -44,11 +42,8 @@ external int miniaudio_player_get_buffer_size(
 );
 
 @ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<miniaudio_player_t>,
-    ffi.Pointer<miniaudio_device_info_t>,
-  )
->(isLeaf: true)
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_device_info_t>)>(isLeaf: true)
 external int miniaudio_player_get_current_device(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<miniaudio_device_info_t> out_device,
@@ -58,11 +53,8 @@ external int miniaudio_player_get_current_device(
 /// /* Audio Device Management                                                   */
 /// /* =========================================================================
 @ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<ffi.Pointer<miniaudio_device_info_t>>,
-    ffi.Pointer<ffi.Uint32>,
-  )
->(isLeaf: true)
+    ffi.Int32 Function(ffi.Pointer<ffi.Pointer<miniaudio_device_info_t>>,
+        ffi.Pointer<ffi.Uint32>)>(isLeaf: true)
 external int miniaudio_player_get_devices(
   ffi.Pointer<ffi.Pointer<miniaudio_device_info_t>> out_devices,
   ffi.Pointer<ffi.Uint32> out_count,
@@ -74,11 +66,8 @@ external int miniaudio_player_get_duration_ms(
 );
 
 @ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<miniaudio_player_t>,
-    ffi.Pointer<miniaudio_player_equalizer_params_t>,
-  )
->(isLeaf: true)
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_player_equalizer_params_t>)>(isLeaf: true)
 external int miniaudio_player_get_equalizer(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<miniaudio_player_equalizer_params_t> out_equalizer,
@@ -106,11 +95,8 @@ external double miniaudio_player_get_rate(
 /// /* Status & Query Inspection                                                 */
 /// /* =========================================================================
 @ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<miniaudio_player_t>,
-    ffi.Pointer<miniaudio_player_status_t>,
-  )
->(isLeaf: true)
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_player_status_t>)>(isLeaf: true)
 external int miniaudio_player_get_status(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<miniaudio_player_status_t> out_status,
@@ -136,21 +122,25 @@ external int miniaudio_player_is_playing(
 /// @param file_path UTF-8 null-terminated file path.
 /// @return MAP_SUCCESS or error code.
 @ffi.Native<
-  ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Char>)
->()
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Char>)>()
 external int miniaudio_player_open_file(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<ffi.Char> file_path,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
-external int miniaudio_player_pause(ffi.Pointer<miniaudio_player_t> player);
+external int miniaudio_player_pause(
+  ffi.Pointer<miniaudio_player_t> player,
+);
 
 /// ========================================================================= */
 /// /* Playback Controls                                                         */
 /// /* =========================================================================
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
-external int miniaudio_player_play(ffi.Pointer<miniaudio_player_t> player);
+external int miniaudio_player_play(
+  ffi.Pointer<miniaudio_player_t> player,
+);
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int64)>()
 external int miniaudio_player_seek(
@@ -162,16 +152,15 @@ external int miniaudio_player_seek(
 /// /* Buffer Size Configuration                                                 */
 /// /* =========================================================================
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Uint32)>(
-  isLeaf: true,
-)
+    isLeaf: true)
 external int miniaudio_player_set_buffer_size(
   ffi.Pointer<miniaudio_player_t> player,
   int buffer_size_in_frames,
 );
 
 @ffi.Native<
-  ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Char>)
->()
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Char>)>()
 external int miniaudio_player_set_device(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<ffi.Char> device_id,
@@ -181,19 +170,16 @@ external int miniaudio_player_set_device(
 /// /* Equalizer Controls                                                        */
 /// /* =========================================================================
 @ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<miniaudio_player_t>,
-    ffi.Pointer<miniaudio_player_equalizer_params_t>,
-  )
->(isLeaf: true)
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_player_equalizer_params_t>)>(isLeaf: true)
 external int miniaudio_player_set_equalizer(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<miniaudio_player_equalizer_params_t> equalizer,
 );
 
 @ffi.Native<
-  ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Uint32, ffi.Float)
->(isLeaf: true)
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>, ffi.Uint32, ffi.Float)>(isLeaf: true)
 external int miniaudio_player_set_equalizer_band(
   ffi.Pointer<miniaudio_player_t> player,
   int band_index,
@@ -201,19 +187,19 @@ external int miniaudio_player_set_equalizer_band(
 );
 
 @ffi.Native<ffi.Void Function(ffi.Int32)>(isLeaf: true)
-external void miniaudio_player_set_log_level(int level);
+external void miniaudio_player_set_log_level(
+  int level,
+);
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
-  isLeaf: true,
-)
+    isLeaf: true)
 external int miniaudio_player_set_pitch(
   ffi.Pointer<miniaudio_player_t> player,
   double pitch,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
-  isLeaf: true,
-)
+    isLeaf: true)
 external int miniaudio_player_set_rate(
   ffi.Pointer<miniaudio_player_t> player,
   double rate,
@@ -223,15 +209,16 @@ external int miniaudio_player_set_rate(
 /// /* Volume, Rate & Pitch Adjustments                                          */
 /// /* =========================================================================
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
-  isLeaf: true,
-)
+    isLeaf: true)
 external int miniaudio_player_set_volume(
   ffi.Pointer<miniaudio_player_t> player,
   double volume,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
-external int miniaudio_player_stop(ffi.Pointer<miniaudio_player_t> player);
+external int miniaudio_player_stop(
+  ffi.Pointer<miniaudio_player_t> player,
+);
 
 /// ========================================================================= */
 /// /* Player Status Snapshot (Single-Call FFI Marshalling)                      */
@@ -257,14 +244,12 @@ final class miniaudio_device_info_t extends ffi.Struct {
 /// ========================================================================= */
 /// /* Player Configuration & Callbacks                                          */
 /// /* =========================================================================
-typedef miniaudio_player_completed_cb =
-    ffi.Pointer<ffi.NativeFunction<miniaudio_player_completed_cbFunction>>;
+typedef miniaudio_player_completed_cb
+    = ffi.Pointer<ffi.NativeFunction<miniaudio_player_completed_cbFunction>>;
 typedef miniaudio_player_completed_cbFunction = ffi.Void Function(
-  ffi.Pointer<ffi.Void> user_data,
-);
+    ffi.Pointer<ffi.Void> user_data);
 typedef Dartminiaudio_player_completed_cbFunction = void Function(
-  ffi.Pointer<ffi.Void> user_data,
-);
+    ffi.Pointer<ffi.Void> user_data);
 
 final class miniaudio_player_config_t extends ffi.Struct {
   /// < Sample rate (0 = device native default)
@@ -296,13 +281,14 @@ final class miniaudio_player_config_t extends ffi.Struct {
     required ffi.Pointer<ffi.Char> playback_device_id,
     required miniaudio_player_completed_cb on_completed,
     required ffi.Pointer<ffi.Void> user_data,
-  }) => $allocator<miniaudio_player_config_t>()
-    ..ref.sample_rate = sample_rate
-    ..ref.channels = channels
-    ..ref.period_size_in_frames = period_size_in_frames
-    ..ref.playback_device_id = playback_device_id
-    ..ref.on_completed = on_completed
-    ..ref.user_data = user_data;
+  }) =>
+      $allocator<miniaudio_player_config_t>()
+        ..ref.sample_rate = sample_rate
+        ..ref.channels = channels
+        ..ref.period_size_in_frames = period_size_in_frames
+        ..ref.playback_device_id = playback_device_id
+        ..ref.on_completed = on_completed
+        ..ref.user_data = user_data;
 }
 
 /// ========================================================================= */
@@ -361,17 +347,18 @@ final class miniaudio_player_equalizer_params_t extends ffi.Struct {
     required double hz12k,
     required double hz14k,
     required double hz16k,
-  }) => $allocator<miniaudio_player_equalizer_params_t>()
-    ..ref.hz60 = hz60
-    ..ref.hz170 = hz170
-    ..ref.hz310 = hz310
-    ..ref.hz600 = hz600
-    ..ref.hz1k = hz1k
-    ..ref.hz3k = hz3k
-    ..ref.hz6k = hz6k
-    ..ref.hz12k = hz12k
-    ..ref.hz14k = hz14k
-    ..ref.hz16k = hz16k;
+  }) =>
+      $allocator<miniaudio_player_equalizer_params_t>()
+        ..ref.hz60 = hz60
+        ..ref.hz170 = hz170
+        ..ref.hz310 = hz310
+        ..ref.hz600 = hz600
+        ..ref.hz1k = hz1k
+        ..ref.hz3k = hz3k
+        ..ref.hz6k = hz6k
+        ..ref.hz12k = hz12k
+        ..ref.hz14k = hz14k
+        ..ref.hz16k = hz16k;
 }
 
 /// ========================================================================= */
@@ -389,16 +376,15 @@ enum miniaudio_player_log_level_t {
   const miniaudio_player_log_level_t(this.value);
 
   static miniaudio_player_log_level_t fromValue(int value) => switch (value) {
-    0 => MAP_LOG_LEVEL_NONE,
-    1 => MAP_LOG_LEVEL_ERROR,
-    2 => MAP_LOG_LEVEL_WARNING,
-    3 => MAP_LOG_LEVEL_INFO,
-    4 => MAP_LOG_LEVEL_DEBUG,
-    5 => MAP_LOG_LEVEL_VERBOSE,
-    _ => throw ArgumentError(
-      'Unknown value for miniaudio_player_log_level_t: $value',
-    ),
-  };
+        0 => MAP_LOG_LEVEL_NONE,
+        1 => MAP_LOG_LEVEL_ERROR,
+        2 => MAP_LOG_LEVEL_WARNING,
+        3 => MAP_LOG_LEVEL_INFO,
+        4 => MAP_LOG_LEVEL_DEBUG,
+        5 => MAP_LOG_LEVEL_VERBOSE,
+        _ => throw ArgumentError(
+            'Unknown value for miniaudio_player_log_level_t: $value'),
+      };
 }
 
 enum miniaudio_player_playback_state_t {
@@ -421,8 +407,7 @@ enum miniaudio_player_playback_state_t {
         4 => MAP_PLAYBACK_STATE_BUFFERING,
         5 => MAP_PLAYBACK_STATE_ERROR,
         _ => throw ArgumentError(
-          'Unknown value for miniaudio_player_playback_state_t: $value',
-        ),
+            'Unknown value for miniaudio_player_playback_state_t: $value'),
       };
 }
 
@@ -446,21 +431,20 @@ enum miniaudio_player_result_t {
   const miniaudio_player_result_t(this.value);
 
   static miniaudio_player_result_t fromValue(int value) => switch (value) {
-    0 => MAP_SUCCESS,
-    -1 => MAP_ERROR_GENERIC,
-    -2 => MAP_ERROR_INVALID_ARGS,
-    -3 => MAP_ERROR_OUT_OF_MEMORY,
-    -4 => MAP_ERROR_ENGINE_INIT,
-    -5 => MAP_ERROR_FILE_NOT_FOUND,
-    -6 => MAP_ERROR_DECODE_FAILED,
-    -7 => MAP_ERROR_INVALID_STATE,
-    -8 => MAP_ERROR_SEEK_FAILED,
-    -9 => MAP_ERROR_NODE_FAILED,
-    -10 => MAP_ERROR_UNSUPPORTED,
-    _ => throw ArgumentError(
-      'Unknown value for miniaudio_player_result_t: $value',
-    ),
-  };
+        0 => MAP_SUCCESS,
+        -1 => MAP_ERROR_GENERIC,
+        -2 => MAP_ERROR_INVALID_ARGS,
+        -3 => MAP_ERROR_OUT_OF_MEMORY,
+        -4 => MAP_ERROR_ENGINE_INIT,
+        -5 => MAP_ERROR_FILE_NOT_FOUND,
+        -6 => MAP_ERROR_DECODE_FAILED,
+        -7 => MAP_ERROR_INVALID_STATE,
+        -8 => MAP_ERROR_SEEK_FAILED,
+        -9 => MAP_ERROR_NODE_FAILED,
+        -10 => MAP_ERROR_UNSUPPORTED,
+        _ => throw ArgumentError(
+            'Unknown value for miniaudio_player_result_t: $value'),
+      };
 }
 
 final class miniaudio_player_status_t extends ffi.Struct {

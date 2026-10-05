@@ -7,6 +7,10 @@ import 'package:native_toolchain_c/native_toolchain_c.dart';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
+    if (!input.config.buildCodeAssets) {
+      return;
+    }
+
     final packageName = input.packageName;
     final targetOS = input.config.code.targetOS;
 
