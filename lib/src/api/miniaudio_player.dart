@@ -11,6 +11,7 @@ import 'player_action.dart';
 import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
+import 'replay_gain_result.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
 const List<String> miniAudioPlayerSupportedExtensions = [
@@ -263,6 +264,122 @@ class MiniaudioPlayer {
     } finally {
       calloc.free(outDevicesPtr);
       calloc.free(outCountPtr);
+    }
+  }
+
+  /// Asynchronously calculates ReplayGain and perceived loudness (ITU-R BS.1770-4 / EBU R128)
+  /// on a dedicated, non-blocking native C background thread.
+  ///
+  /// Does NOT spawn Dart Isolates or block the UI thread.
+  ///
+  /// - [filePath]: Path to the local audio file (e.g. MP3, WAV, FLAC, AAC, M4A, Opus, Ogg).
+  /// - [targetLufs]: Target loudness in LUFS (defaults to `-18.0` for ReplayGain, `-14.0` for streaming).
+  static Future<ReplayGainResult> calculateReplayGain(
+    String filePath, {
+    double targetLufs = -18.0,
+  }) {
+    final completer = Completer<ReplayGainResult>();
+
+    late final NativeCallable<native.miniaudio_replay_gain_completed_cbFunction>
+        callback;
+    callback = NativeCallable<
+        native.miniaudio_replay_gain_completed_cbFunction>.listener(
+      (
+        double gainDb,
+        double peak,
+        double lufs,
+        int status,
+        Pointer<Void> userData,
+      ) {
+        try {
+          if (status == MapResult.success) {
+            completer.complete(
+              ReplayGainResult(
+                gainDb: gainDb,
+                peak: peak,
+                lufs: lufs,
+              ),
+            );
+          } else {
+            completer.completeError(
+              MiniaudioPlayerException(
+                'Failed to calculate replay gain: ${MapResult.describe(status)}',
+                errorCode: status,
+              ),
+            );
+          }
+        } finally {
+          callback.close();
+        }
+      },
+    );
+
+    final path =
+        filePath.startsWith('file://')
+            ? Uri.parse(filePath).toFilePath()
+            : filePath;
+    final pathPtr = path.toNativeUtf8();
+
+    try {
+      final res = native.miniaudio_player_calculate_replay_gain_async(
+        pathPtr.cast(),
+        targetLufs,
+        callback.nativeFunction,
+        nullptr,
+      );
+      if (res != MapResult.success) {
+        callback.close();
+        throw MiniaudioPlayerException(
+          'Failed to dispatch native replay gain calculation: ${MapResult.describe(res)}',
+          errorCode: res,
+        );
+      }
+    } catch (e) {
+      callback.close();
+      rethrow;
+    } finally {
+      calloc.free(pathPtr);
+    }
+
+    return completer.future;
+  }
+
+  /// Synchronously calculates ReplayGain and perceived loudness (ITU-R BS.1770-4 / EBU R128).
+  ///
+  /// Note: This executes directly on the calling thread. For non-blocking execution,
+  /// prefer [calculateReplayGain].
+  static ReplayGainResult calculateReplayGainSync(
+    String filePath, {
+    double targetLufs = -18.0,
+  }) {
+    final path =
+        filePath.startsWith('file://')
+            ? Uri.parse(filePath).toFilePath()
+            : filePath;
+    final pathPtr = path.toNativeUtf8();
+    final outResultPtr = calloc<native.miniaudio_replay_gain_result_t>();
+
+    try {
+      final res = native.miniaudio_player_calculate_replay_gain(
+        pathPtr.cast(),
+        targetLufs,
+        outResultPtr,
+      );
+      if (res != MapResult.success) {
+        throw MiniaudioPlayerException(
+          'Failed to calculate replay gain: ${MapResult.describe(res)}',
+          errorCode: res,
+        );
+      }
+      final out = outResultPtr.ref;
+      return ReplayGainResult(
+        gainDb: out.gain_db,
+        peak: out.peak,
+        lufs: out.lufs,
+      );
+    } finally {
+      calloc.free(pathPtr);
+      calloc.free(outResultPtr);
     }
   }
 

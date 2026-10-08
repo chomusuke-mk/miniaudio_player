@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.1.0
+
+### 📊 ReplayGain & ITU-R BS.1770-4 Loudness Analysis
+
+- **Native C Loudness & Peak Analysis**:
+  - Implemented the full **ITU-R BS.1770-4 / EBU R128** standard in native C (`src/miniaudio_player.c`):
+    - Cascaded **Direct Form II Transposed (DF2T)** biquad filtering: High-Shelf pre-filter (~1,682 Hz, +3.99 dB) and RLB High-Pass filter (~38 Hz) with dynamic coefficient computation for any sample rate.
+    - True sample peak tracking (`fmaxf(abs(s), peak)`) across all channels.
+    - Energy accumulation over 100 ms sub-intervals and 400 ms sliding gating blocks.
+    - Dual gating algorithm: **Absolute Threshold** at -70 LUFS and **Relative Threshold** at -10 LUFS.
+- **Zero-Isolate Non-Blocking C Thread Architecture**:
+  - `MiniaudioPlayer.calculateReplayGain(path, {targetLufs = -18.0})`: executes on a dedicated OS background worker thread (`ma_thread` / `pthread` / `CreateThread`) and dispatches results to Dart via `NativeCallable.listener`.
+  - Zero Dart VM Isolate startup overhead, zero GC pressure, and zero Flutter UI blocking (preserves 60/120 fps).
+  - Synchronous version `MiniaudioPlayer.calculateReplayGainSync(...)` also available for synchronous script or batch pipelines.
+- **Ultra-Low Constant RAM Usage (< 100 KB)**:
+  - Streaming chunk decoder processes audio in 32 KB blocks residing entirely within CPU L1/L2 cache. Audio is never fully loaded into memory.
+  - Sub-block statistical history array uses only ~12 KB for a typical 5-minute track.
+- **`ReplayGainResult` Model & Volume Scaling**:
+  - Exposes `gainDb`, `peak`, and `lufs`.
+  - Includes `getRecommendedVolume({bool preventClipping = true})` to directly convert calculated decibels into a linear volume factor for `player.action.setVolume()`, with automatic anti-clipping protection against digital distortion.
+- **Extensive Codec Support**:
+  - Natively analyzes MP3, WAV, FLAC, OGG, Opus, AAC, M4A (AAC & ALAC), AIFF, and more.
+
 ## 2.0.0
 
 ### 🔊 Audio Device System Overhaul & DX Improvements

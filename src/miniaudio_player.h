@@ -252,6 +252,52 @@ extern "C"
         miniaudio_player_equalizer_params_t *out_equalizer);
 
     /* ========================================================================= */
+    /* ReplayGain & Loudness Analysis (ITU-R BS.1770-4 / EBU R128)               */
+    /* ========================================================================= */
+
+    typedef struct
+    {
+        float gain_db;   /**< Recommended ReplayGain in dB relative to target LUFS */
+        float peak;      /**< Peak sample value (1.0 = 0 dBFS) */
+        float lufs;      /**< Integrated perceived loudness in LUFS */
+        int32_t status;  /**< MAP_SUCCESS or error code */
+    } miniaudio_replay_gain_result_t;
+
+    typedef void (*miniaudio_replay_gain_completed_cb)(
+        float gain_db,
+        float peak,
+        float lufs,
+        int32_t status,
+        void *user_data);
+
+    /**
+     * @brief Synchronously calculates ReplayGain & Loudness for a local audio file.
+     * @param file_path Local audio file path.
+     * @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+     * @param[out] out_result Result structure pointer.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_calculate_replay_gain(
+        const char *file_path,
+        float target_lufs,
+        miniaudio_replay_gain_result_t *out_result);
+
+    /**
+     * @brief Asynchronously calculates ReplayGain on a dedicated non-blocking C OS thread.
+     * Invokes callback when analysis completes. Thread-safe and zero Dart Isolate overhead.
+     * @param file_path Local audio file path.
+     * @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+     * @param on_completed Completion callback.
+     * @param user_data User pointer passed to callback.
+     * @return MAP_SUCCESS if task was queued, error code otherwise.
+     */
+    MAP_API int32_t miniaudio_player_calculate_replay_gain_async(
+        const char *file_path,
+        float target_lufs,
+        miniaudio_replay_gain_completed_cb on_completed,
+        void *user_data);
+
+    /* ========================================================================= */
     /* Logging Configuration                                                     */
     /* ========================================================================= */
 

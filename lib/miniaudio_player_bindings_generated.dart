@@ -4,6 +4,37 @@
 // ignore_for_file: type=lint, unused_import, unused_element, deprecated_member_use_from_same_package
 import 'dart:ffi' as ffi;
 
+/// @brief Synchronously calculates ReplayGain & Loudness for a local audio file.
+/// @param file_path Local audio file path.
+/// @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+/// @param[out] out_result Result structure pointer.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Float,
+        ffi.Pointer<miniaudio_replay_gain_result_t>)>()
+external int miniaudio_player_calculate_replay_gain(
+  ffi.Pointer<ffi.Char> file_path,
+  double target_lufs,
+  ffi.Pointer<miniaudio_replay_gain_result_t> out_result,
+);
+
+/// @brief Asynchronously calculates ReplayGain on a dedicated non-blocking C OS thread.
+/// Invokes callback when analysis completes. Thread-safe and zero Dart Isolate overhead.
+/// @param file_path Local audio file path.
+/// @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+/// @param on_completed Completion callback.
+/// @param user_data User pointer passed to callback.
+/// @return MAP_SUCCESS if task was queued, error code otherwise.
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Float,
+        miniaudio_replay_gain_completed_cb, ffi.Pointer<ffi.Void>)>()
+external int miniaudio_player_calculate_replay_gain_async(
+  ffi.Pointer<ffi.Char> file_path,
+  double target_lufs,
+  miniaudio_replay_gain_completed_cb on_completed,
+  ffi.Pointer<ffi.Void> user_data,
+);
+
 /// @brief Creates and initializes an isolated native audio player instance.
 /// @param config Optional player configuration (NULL for defaults).
 /// @param[out] out_result Result status code.
@@ -512,3 +543,51 @@ final class miniaudio_player_status_t extends ffi.Struct {
 
 /// Opaque player handle
 typedef miniaudio_player_t = ffi.Opaque;
+typedef miniaudio_replay_gain_completed_cb = ffi
+    .Pointer<ffi.NativeFunction<miniaudio_replay_gain_completed_cbFunction>>;
+typedef miniaudio_replay_gain_completed_cbFunction = ffi.Void Function(
+    ffi.Float gain_db,
+    ffi.Float peak,
+    ffi.Float lufs,
+    ffi.Int32 status,
+    ffi.Pointer<ffi.Void> user_data);
+typedef Dartminiaudio_replay_gain_completed_cbFunction = void Function(
+    double gain_db,
+    double peak,
+    double lufs,
+    int status,
+    ffi.Pointer<ffi.Void> user_data);
+
+/// ========================================================================= */
+/// /* ReplayGain & Loudness Analysis (ITU-R BS.1770-4 / EBU R128)               */
+/// /* =========================================================================
+final class miniaudio_replay_gain_result_t extends ffi.Struct {
+  /// < Recommended ReplayGain in dB relative to target LUFS
+  @ffi.Float()
+  external double gain_db;
+
+  /// < Peak sample value (1.0 = 0 dBFS)
+  @ffi.Float()
+  external double peak;
+
+  /// < Integrated perceived loudness in LUFS
+  @ffi.Float()
+  external double lufs;
+
+  /// < MAP_SUCCESS or error code
+  @ffi.Int32()
+  external int status;
+
+  static ffi.Pointer<miniaudio_replay_gain_result_t> $allocate(
+    ffi.Allocator $allocator, {
+    required double gain_db,
+    required double peak,
+    required double lufs,
+    required int status,
+  }) =>
+      $allocator<miniaudio_replay_gain_result_t>()
+        ..ref.gain_db = gain_db
+        ..ref.peak = peak
+        ..ref.lufs = lufs
+        ..ref.status = status;
+}
