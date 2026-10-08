@@ -98,11 +98,57 @@ class MiniaudioPlayer {
       MiniaudioPlayerGlobalConfig();
 
   static final StreamController<List<AudioDevice>> _audioDevicesController =
-      StreamController<List<AudioDevice>>.broadcast();
+      StreamController<List<AudioDevice>>.broadcast(
+    onListen: () {
+      _ensureDeviceNotificationListener();
+    },
+    onCancel: () {
+      _removeDeviceNotificationListener();
+    },
+  );
 
   static List<AudioDevice> _cachedAudioDevices = const <AudioDevice>[
     AudioDevice.auto,
   ];
+
+  static NativeCallable<native.miniaudio_player_device_notification_cbFunction>?
+      _deviceNotificationCallable;
+
+  static void _ensureDeviceNotificationListener() {
+    if (_deviceNotificationCallable != null) return;
+    try {
+      _deviceNotificationCallable = NativeCallable<
+          native.miniaudio_player_device_notification_cbFunction>.listener(
+        _onNativeDeviceNotification,
+      );
+      native.miniaudio_player_set_device_notification_callback(
+        _deviceNotificationCallable!.nativeFunction,
+        nullptr,
+      );
+    } catch (_) {
+      // Ignored if native library cannot be loaded or in mock/test environment
+    }
+  }
+
+  static void _removeDeviceNotificationListener() {
+    if (_deviceNotificationCallable == null) return;
+    try {
+      native.miniaudio_player_set_device_notification_callback(
+        nullptr,
+        nullptr,
+      );
+      _deviceNotificationCallable?.close();
+      _deviceNotificationCallable = null;
+    } catch (_) {
+      // Ignored if native library cannot be loaded or in mock/test environment
+    }
+  }
+
+  static void _onNativeDeviceNotification(Pointer<Void> userData) {
+    try {
+      _queryAudioDevices();
+    } catch (_) {}
+  }
 
   static void _updateAudioDevices(List<AudioDevice> devices) {
     _cachedAudioDevices = List.unmodifiable(devices);
@@ -111,19 +157,10 @@ class MiniaudioPlayer {
     }
   }
 
-  /// Current list of enumerated audio output devices on the system.
-  static List<AudioDevice> get audioDevices {
-    if (_cachedAudioDevices.length <= 1) {
-      try {
-        return _queryAudioDevices();
-      } catch (_) {}
-    }
-    return _cachedAudioDevices;
+  /// Broadcast stream of system audio output device list changes triggered by native C events.
+  static Stream<List<AudioDevice>> getAudioDevicesStream() {
+    return _audioDevicesController.stream;
   }
-
-  /// Broadcast stream of system audio output device list changes.
-  static Stream<List<AudioDevice>> get audioDevicesStream =>
-      _audioDevicesController.stream;
 
   /// Global configuration accessor and updater for [MiniaudioPlayer].
   static MiniaudioPlayerGlobalConfig config({
@@ -160,11 +197,16 @@ class MiniaudioPlayer {
     return _globalConfig;
   }
 
-  /// Enumerates all available native playback audio devices on the system.
+  /// Enumerates all available native playback audio devices on the system via FFI.
   ///
   /// The first item in the list is always the automatic/system-managed default device
   /// ([AudioDevice.auto]) with its [AudioDevice.resolvedName] populated.
   static Future<List<AudioDevice>> getAudioDevices() async {
+    return _queryAudioDevices();
+  }
+
+  /// Synchronous enumeration of all available native playback audio devices on the system via FFI.
+  static List<AudioDevice> getAudioDevicesSync() {
     return _queryAudioDevices();
   }
 
@@ -201,9 +243,8 @@ class MiniaudioPlayer {
         native.miniaudio_player_free_devices(devicesPtr, count);
       }
 
-      defaultHardwareName ??= hardwareDevices.isNotEmpty
-          ? hardwareDevices.first.name
-          : 'Default';
+      defaultHardwareName ??=
+          hardwareDevices.isNotEmpty ? hardwareDevices.first.name : 'Default';
 
       final autoDevice = AudioDevice(
         id: '',
@@ -227,7 +268,8 @@ class MiniaudioPlayer {
 
   Pointer<native.miniaudio_player_t> _playerHandle = nullptr;
   Pointer<native.miniaudio_player_status_t>? _statusPtr;
-  late final NativeCallable<native.miniaudio_player_completed_cbFunction> _completedCallable;
+  late final NativeCallable<native.miniaudio_player_completed_cbFunction>
+      _completedCallable;
 
   Timer? _positionTimer;
 
@@ -304,7 +346,9 @@ class MiniaudioPlayer {
       } catch (_) {}
     }
 
-    _completedCallable = NativeCallable<native.miniaudio_player_completed_cbFunction>.listener(_onNativeCompleted);
+    _completedCallable =
+        NativeCallable<native.miniaudio_player_completed_cbFunction>.listener(
+            _onNativeCompleted);
 
     final outResult = calloc<Int32>();
     try {
@@ -406,8 +450,9 @@ class MiniaudioPlayer {
       if (native.miniaudio_player_get_current_device(_playerHandle, devPtr) ==
           MapResult.success) {
         var dev = devPtr.ref.toAudioDevice();
-        if (dev.isAuto && (dev.resolvedName == null || dev.resolvedName!.isEmpty)) {
-          final devices = MiniaudioPlayer.audioDevices;
+        if (dev.isAuto &&
+            (dev.resolvedName == null || dev.resolvedName!.isEmpty)) {
+          final devices = _cachedAudioDevices;
           for (final d in devices) {
             if (!d.isAuto) {
               dev = AudioDevice(
@@ -526,8 +571,7 @@ class MiniaudioPlayer {
     final bitrate = status.bitrate;
     final device = status.device.toAudioDevice();
 
-    final bool deviceChanged =
-        _lastDevice == null ||
+    final bool deviceChanged = _lastDevice == null ||
         _lastDevice!.id != device.id ||
         _lastDevice!.name != device.name ||
         _lastDevice!.isAuto != device.isAuto ||

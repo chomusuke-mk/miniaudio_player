@@ -1000,6 +1000,17 @@ static void miniaudio_player_on_sound_end(void *pUserData, ma_sound *pSound)
     }
 }
 
+static miniaudio_player_device_notification_cb g_device_notification_cb = NULL;
+static void *g_device_notification_user_data = NULL;
+
+MAP_API void miniaudio_player_set_device_notification_callback(
+    miniaudio_player_device_notification_cb on_device_notification,
+    void *user_data)
+{
+    g_device_notification_cb = on_device_notification;
+    g_device_notification_user_data = user_data;
+}
+
 /* Device notification callback for OS rerouting and hot-unplug detection */
 static void map_miniaudio_device_notification(const ma_device_notification *pNotification)
 {
@@ -1061,6 +1072,11 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
         {
             map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "device notification: playback device stopped (switch in progress or default device)");
         }
+    }
+
+    if (g_device_notification_cb != NULL)
+    {
+        g_device_notification_cb(g_device_notification_user_data);
     }
 }
 

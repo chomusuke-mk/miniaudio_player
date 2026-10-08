@@ -122,4 +122,31 @@ void main() {
     expect(autoA, equals(autoB));
     expect(autoA, equals(AudioDevice.auto));
   });
+
+  test('MiniaudioPlayer.getAudioDevices and getAudioDevicesSync enumerate devices', () async {
+    final asyncDevices = await MiniaudioPlayer.getAudioDevices();
+    final syncDevices = MiniaudioPlayer.getAudioDevicesSync();
+
+    expect(asyncDevices, isNotEmpty);
+    expect(syncDevices, isNotEmpty);
+    expect(asyncDevices.first, equals(AudioDevice.auto));
+    expect(syncDevices.first, equals(AudioDevice.auto));
+  });
+
+  test('MiniaudioPlayer.getAudioDevicesStream returns a broadcast stream', () {
+    final stream = MiniaudioPlayer.getAudioDevicesStream();
+    expect(stream.isBroadcast, isTrue);
+  });
+
+  test('MiniaudioPlayer.getAudioDevicesStream handles listen and cancel lifecycle cleanly', () async {
+    final stream = MiniaudioPlayer.getAudioDevicesStream();
+    final sub1 = stream.listen((_) {});
+    final sub2 = stream.listen((_) {});
+    await sub1.cancel();
+    await sub2.cancel();
+
+    // Re-listening should smoothly recreate the native callback
+    final sub3 = stream.listen((_) {});
+    await sub3.cancel();
+  });
 }

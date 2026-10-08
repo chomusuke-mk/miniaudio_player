@@ -327,10 +327,14 @@ MiniaudioPlayer.config(
       resolvedName.isEmpty ? 'Predeterminado del sistema' : 'Predeterminado ($resolvedName)',
 );
 
+// Query devices via FFI or listen to native device changes:
+final devices = await MiniaudioPlayer.getAudioDevices();
+// MiniaudioPlayer.getAudioDevicesStream().listen((devs) { ... });
+
 // Directly bind to Flutter widgets without manual ternaries:
 DropdownButton<AudioDevice>(
   value: player.state.audioDevice,
-  items: player.state.audioDevices.map((device) {
+  items: devices.map((device) {
     return DropdownMenuItem(
       value: device,
       child: Text(device.displayName),
@@ -346,11 +350,11 @@ DropdownButton<AudioDevice>(
 
 - **Player Instance**:
   - `player.state.audioDevice` & `player.stream.audioDevice`: Currently active output device for this player.
-  - `player.state.audioDevices` & `player.stream.audioDevices`: Available output devices on the host system.
   - `player.getAudioDevice()`: Queries and updates active hardware routing directly from the native engine.
-- **Global / Static Access**:
-  - `MiniaudioPlayer.audioDevices`: Synchronous snapshot of system audio devices.
-  - `MiniaudioPlayer.audioDevicesStream`: Broadcast stream notifying when devices are connected/disconnected.
+- **Global / Static Device Enumeration**:
+  - `MiniaudioPlayer.getAudioDevices()`: Asynchronously enumerates audio devices directly via FFI (`Future<List<AudioDevice>>`).
+  - `MiniaudioPlayer.getAudioDevicesSync()`: Synchronously queries audio devices directly via FFI (`List<AudioDevice>`).
+  - `MiniaudioPlayer.getAudioDevicesStream()`: Broadcast stream (`Stream<List<AudioDevice>>`) dispatching updates directly from native C device hotplug/reroute notifications.
 
 #### Automatic Android JNI Device Discovery & Hot-Switching
 

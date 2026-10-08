@@ -166,6 +166,14 @@ external int miniaudio_player_set_device(
   ffi.Pointer<ffi.Char> device_id,
 );
 
+@ffi.Native<
+    ffi.Void Function(
+        miniaudio_player_device_notification_cb, ffi.Pointer<ffi.Void>)>()
+external void miniaudio_player_set_device_notification_callback(
+  miniaudio_player_device_notification_cb on_device_notification,
+  ffi.Pointer<ffi.Void> user_data,
+);
+
 /// ========================================================================= */
 /// /* Equalizer Controls                                                        */
 /// /* =========================================================================
@@ -290,6 +298,13 @@ final class miniaudio_player_config_t extends ffi.Struct {
         ..ref.on_completed = on_completed
         ..ref.user_data = user_data;
 }
+
+typedef miniaudio_player_device_notification_cb = ffi.Pointer<
+    ffi.NativeFunction<miniaudio_player_device_notification_cbFunction>>;
+typedef miniaudio_player_device_notification_cbFunction = ffi.Void Function(
+    ffi.Pointer<ffi.Void> user_data);
+typedef Dartminiaudio_player_device_notification_cbFunction = void Function(
+    ffi.Pointer<ffi.Void> user_data);
 
 /// ========================================================================= */
 /// /* Equalizer Parameters (10 Bands in dB: -24.0 to +24.0)                     */

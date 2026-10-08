@@ -1,7 +1,6 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'audio_device.dart';
-import 'miniaudio_player.dart';
 import '../equalizer.dart';
 
 /// Synchronous snapshot of the current player and DSP states.
@@ -32,18 +31,18 @@ class PlayerState {
     required int Function() getAudioBitrate,
     required Equalizer Function() getEqualizer,
     required AudioDevice Function() getAudioDevice,
-  }) : _getPosition = getPosition,
-       _getDuration = getDuration,
-       _getPlaying = getPlaying,
-       _getBuffering = getBuffering,
-       _getCompleted = getCompleted,
-       _getVolume = getVolume,
-       _getRate = getRate,
-       _getPitch = getPitch,
-       _getBufferSize = getBufferSize,
-       _getAudioBitrate = getAudioBitrate,
-       _getEqualizer = getEqualizer,
-       _getAudioDevice = getAudioDevice;
+  })  : _getPosition = getPosition,
+        _getDuration = getDuration,
+        _getPlaying = getPlaying,
+        _getBuffering = getBuffering,
+        _getCompleted = getCompleted,
+        _getVolume = getVolume,
+        _getRate = getRate,
+        _getPitch = getPitch,
+        _getBufferSize = getBufferSize,
+        _getAudioBitrate = getAudioBitrate,
+        _getEqualizer = getEqualizer,
+        _getAudioDevice = getAudioDevice;
 
   /// Current playback position.
   Duration get position => _getPosition();
@@ -83,7 +82,4 @@ class PlayerState {
 
   /// Currently active audio output device.
   AudioDevice get audioDevice => _getAudioDevice();
-
-  /// List of currently available audio output devices on the system.
-  List<AudioDevice> get audioDevices => MiniaudioPlayer.audioDevices;
 }

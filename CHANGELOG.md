@@ -15,14 +15,15 @@
   - Removed confusing `isDefault` field in favor of `isAuto` (system routing) and `resolvedName` (underlying hardware).
   - Strict ID-based equality (`operator ==`) prevents UI assertion errors and selection flickers in Flutter dropdowns when device metadata updates dynamically.
   - Removed `includeAuto` parameter from `MiniaudioPlayer.getAudioDevices()`: the automatic/system-managed device (`AudioDevice.auto`) is now a first-class citizen always provided at index 0.
-- **Symmetric Instance & Global State/Streams**:
-  - **Player Instance (Singular & Plural)**:
+- **Clean Separation Between Player Instance & Global Enumeration**:
+  - **Player Instance (Singular Device Only)**:
     - `player.state.audioDevice` & `player.stream.audioDevice`: currently active output device for this player instance.
-    - `player.state.audioDevices` & `player.stream.audioDevices`: all available output devices on the host system.
-    - Added `player.getAudioDevice()` to query and resolve active hardware routing directly from the native engine.
-  - **Global Class**:
-    - `MiniaudioPlayer.audioDevices`: synchronous snapshot of enumerated audio devices.
-    - `MiniaudioPlayer.audioDevicesStream`: broadcast stream of audio device hotplug/routing changes.
+    - `player.getAudioDevice()`: queries and updates active hardware routing directly from the native engine.
+    - Removed plural `audioDevices` from `player.state` and `player.stream` to eliminate ambiguity and unnecessary per-instance device polling.
+  - **Global MiniaudioPlayer Class**:
+    - `MiniaudioPlayer.getAudioDevices()`: directly invokes the native FFI enumeration method (returns `Future<List<AudioDevice>>`).
+    - `MiniaudioPlayer.getAudioDevicesSync()`: provides synchronous FFI access to enumerated audio devices (`List<AudioDevice>`).
+    - `MiniaudioPlayer.getAudioDevicesStream()`: broadcast stream (`Stream<List<AudioDevice>>`) hooked directly into native C device hotplug and routing notifications via `NativeCallable.listener`.
 
 ### 📱 Android Audio Device Discovery Updates
 

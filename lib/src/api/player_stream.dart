@@ -3,7 +3,6 @@
 import 'dart:async';
 
 import 'audio_device.dart';
-import 'miniaudio_player.dart';
 import '../equalizer.dart';
 
 /// Reactive broadcast streams for observing playback and DSP state changes.
@@ -34,18 +33,18 @@ class PlayerStream {
     required StreamController<int> audioBitrateController,
     required StreamController<Equalizer> equalizerController,
     required StreamController<AudioDevice> audioDeviceController,
-  }) : _positionController = positionController,
-       _durationController = durationController,
-       _playingController = playingController,
-       _bufferingController = bufferingController,
-       _completedController = completedController,
-       _volumeController = volumeController,
-       _rateController = rateController,
-       _pitchController = pitchController,
-       _bufferSizeController = bufferSizeController,
-       _audioBitrateController = audioBitrateController,
-       _equalizerController = equalizerController,
-       _audioDeviceController = audioDeviceController;
+  })  : _positionController = positionController,
+        _durationController = durationController,
+        _playingController = playingController,
+        _bufferingController = bufferingController,
+        _completedController = completedController,
+        _volumeController = volumeController,
+        _rateController = rateController,
+        _pitchController = pitchController,
+        _bufferSizeController = bufferSizeController,
+        _audioBitrateController = audioBitrateController,
+        _equalizerController = equalizerController,
+        _audioDeviceController = audioDeviceController;
 
   /// Broadcast stream of the current playback position.
   Stream<Duration> get position => _positionController.stream;
@@ -85,8 +84,4 @@ class PlayerStream {
 
   /// Broadcast stream of active audio output device changes.
   Stream<AudioDevice> get audioDevice => _audioDeviceController.stream;
-
-  /// Broadcast stream of system audio output device list changes.
-  Stream<List<AudioDevice>> get audioDevices =>
-      MiniaudioPlayer.audioDevicesStream;
 }

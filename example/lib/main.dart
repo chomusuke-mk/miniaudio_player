@@ -92,7 +92,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _deviceSub = _player.stream.audioDevice.listen((_) {
       _refreshAudioDevices();
     });
-    _player.stream.audioDevices.listen((devs) {
+    MiniaudioPlayer.getAudioDevicesStream().listen((devs) {
       if (mounted) {
         setState(() {
           _audioDevices = devs;

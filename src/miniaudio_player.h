@@ -204,6 +204,12 @@ extern "C"
         const miniaudio_player_t *player,
         miniaudio_device_info_t *out_device);
 
+    typedef void (*miniaudio_player_device_notification_cb)(void *user_data);
+
+    MAP_API void miniaudio_player_set_device_notification_callback(
+        miniaudio_player_device_notification_cb on_device_notification,
+        void *user_data);
+
 #if defined(__ANDROID__)
     /**
      * @brief Optionally sets the JavaVM instance for Android JNI operations.
