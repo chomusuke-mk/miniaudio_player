@@ -92,6 +92,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _deviceSub = _player.stream.audioDevice.listen((_) {
       _refreshAudioDevices();
     });
+    _player.stream.audioDevices.listen((devs) {
+      if (mounted) {
+        setState(() {
+          _audioDevices = devs;
+        });
+      }
+    });
   }
 
   Future<void> _refreshAudioDevices() async {
@@ -770,7 +777,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           return DropdownMenuItem<AudioDevice>(
                             value: dev,
                             child: Text(
-                              "${dev.isAuto ? '[AUTO] ' : ''}${dev.name}${dev.isDefault ? ' [Default]' : ''}",
+                              dev.displayName,
                               overflow: TextOverflow.ellipsis,
                             ),
                           );

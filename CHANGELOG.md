@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.0.0
+
+### 🔊 Audio Device System Overhaul & DX Improvements
+
+- **User-Friendly Presentation & Localization**:
+  - Replaced ambiguous string formatting with a dedicated, human-readable `AudioDevice.displayName` getter designed directly for Flutter UI components (`DropdownButton`, `ListTile`, dialogs).
+  - Added `defaultDeviceDisplayNameResolver` in `MiniaudioPlayerGlobalConfig` / `MiniaudioPlayer.config(...)`, allowing full customization and internationalization (i18n/l10n) of the system default device label (defaults to `"System Default ($resolvedName)"` or `"System Default"` if empty).
+- **Clean Native C Architecture**:
+  - Completely removed artificial `"Default -> %s"` prefix formatting in native C (`src/miniaudio_player.c`), now directly emitting pure hardware device names.
+  - Eliminated string manipulation and parsing in Dart FFI interop (`native_types.dart`).
+- **Streamlined `AudioDevice` Model**:
+  - Clean field set: `id`, `name`, `resolvedName`, `isAuto`, and `type`.
+  - Removed confusing `isDefault` field in favor of `isAuto` (system routing) and `resolvedName` (underlying hardware).
+  - Strict ID-based equality (`operator ==`) prevents UI assertion errors and selection flickers in Flutter dropdowns when device metadata updates dynamically.
+  - Removed `includeAuto` parameter from `MiniaudioPlayer.getAudioDevices()`: the automatic/system-managed device (`AudioDevice.auto`) is now a first-class citizen always provided at index 0.
+- **Symmetric Instance & Global State/Streams**:
+  - **Player Instance (Singular & Plural)**:
+    - `player.state.audioDevice` & `player.stream.audioDevice`: currently active output device for this player instance.
+    - `player.state.audioDevices` & `player.stream.audioDevices`: all available output devices on the host system.
+    - Added `player.getAudioDevice()` to query and resolve active hardware routing directly from the native engine.
+  - **Global Class**:
+    - `MiniaudioPlayer.audioDevices`: synchronous snapshot of enumerated audio devices.
+    - `MiniaudioPlayer.audioDevicesStream`: broadcast stream of audio device hotplug/routing changes.
+
+### 📱 Android Audio Device Discovery Updates
+
+- **Telephony Filter Removed**:
+  - Telephony audio devices (`TYPE_TELEPHONY`) are no longer excluded on Android, ensuring full device availability for VoIP, telecommunication, and specialized voice communication applications.
+
 ## 1.0.1
 
 ### 🐛 Bug Fixes & Playback Lifecycle

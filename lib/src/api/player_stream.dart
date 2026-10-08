@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'audio_device.dart';
+import 'miniaudio_player.dart';
 import '../equalizer.dart';
 
 /// Reactive broadcast streams for observing playback and DSP state changes.
@@ -84,4 +85,8 @@ class PlayerStream {
 
   /// Broadcast stream of active audio output device changes.
   Stream<AudioDevice> get audioDevice => _audioDeviceController.stream;
+
+  /// Broadcast stream of system audio output device list changes.
+  Stream<List<AudioDevice>> get audioDevices =>
+      MiniaudioPlayer.audioDevicesStream;
 }

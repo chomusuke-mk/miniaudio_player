@@ -108,11 +108,21 @@ extension MiniaudioDeviceInfoCX on native.miniaudio_device_info_t {
   AudioDevice toAudioDevice() {
     final devId = _charArrayToString(id, 516);
     final devName = _charArrayToString(name, 256);
+    final isAutoDev = is_auto != 0;
+
+    if (isAutoDev) {
+      return AudioDevice(
+        id: '',
+        name: 'SYSTEM DEFAULT',
+        resolvedName: devName.isNotEmpty ? devName : null,
+        isAuto: true,
+      );
+    }
+
     return AudioDevice(
       id: devId,
       name: devName.isEmpty ? 'Default' : devName,
-      isDefault: is_default != 0,
-      isAuto: is_auto != 0,
+      isAuto: false,
     );
   }
 }

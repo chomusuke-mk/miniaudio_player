@@ -1039,7 +1039,8 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
             }
             else
             {
-                snprintf(player->current_device.name, sizeof(player->current_device.name), "Default -> %.240s", info.name);
+                strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
+                player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
                 player->current_device.id[0] = '\0';
                 player->current_device.is_default = 1;
                 player->current_device.is_auto = 1;
@@ -1235,7 +1236,8 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
         }
         else
         {
-            snprintf(new_dev_info.name, sizeof(new_dev_info.name), "Default -> %.240s", dev_info.name);
+            strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
+            new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
             new_dev_info.id[0] = '\0';
             new_dev_info.is_default = 1;
             new_dev_info.is_auto = 1;
@@ -1279,7 +1281,8 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
             {
                 if (ma_device_get_info(pDevice, ma_device_type_playback, &dev_info) == MA_SUCCESS)
                 {
-                    snprintf(new_dev_info.name, sizeof(new_dev_info.name), "Default -> %.240s", dev_info.name);
+                    strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
+                    new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
                 }
                 else
                 {
@@ -1524,7 +1527,8 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
                 }
                 else
                 {
-                    snprintf(player->current_device.name, sizeof(player->current_device.name), "Default -> %.240s", info.name);
+                    strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
+                    player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
                     player->current_device.id[0] = '\0';
                     player->current_device.is_default = 1;
                     player->current_device.is_auto = 1;
@@ -2658,14 +2662,6 @@ static int32_t map_android_get_devices(
             continue;
         }
 
-        /* Skip telephony devices (TYPE_TELEPHONY = 18) */
-        if (dev_type == 18)
-        {
-            __android_log_print(ANDROID_LOG_DEBUG, "miniaudio_player", "[JNI] Skipping telephony device (id=%d)", (int)dev_id);
-            (*env)->DeleteLocalRef(env, devObj);
-            continue;
-        }
-
         const char *typeFallback = map_android_device_type_name((int)dev_type);
 
         /* Extract product name */
@@ -3115,11 +3111,9 @@ MAP_API int32_t miniaudio_player_get_status(
                 }
                 else
                 {
-                    char expectedName[256];
-                    snprintf(expectedName, sizeof(expectedName), "Default -> %.240s", devInfo.name);
-                    if (strcmp(mut_player->current_device.name, expectedName) != 0)
+                    if (strcmp(mut_player->current_device.name, devInfo.name) != 0)
                     {
-                        strncpy(mut_player->current_device.name, expectedName, sizeof(mut_player->current_device.name) - 1);
+                        strncpy(mut_player->current_device.name, devInfo.name, sizeof(mut_player->current_device.name) - 1);
                         mut_player->current_device.name[sizeof(mut_player->current_device.name) - 1] = '\0';
                         mut_player->device_changed = 1;
                     }

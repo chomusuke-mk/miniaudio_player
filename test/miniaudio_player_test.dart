@@ -35,7 +35,6 @@ void main() {
     const deviceWithNoType = AudioDevice(
       id: '2',
       name: 'Built-in Speaker',
-      isDefault: true,
       isAuto: false,
     );
     expect(deviceWithNoType.id, equals('2'));
@@ -45,7 +44,6 @@ void main() {
     const deviceWithType = AudioDevice(
       id: '14',
       name: 'Bluetooth Headset',
-      isDefault: false,
       isAuto: false,
       type: 7, // TYPE_BLUETOOTH_SCO
     );
@@ -57,7 +55,71 @@ void main() {
   test('AudioDevice.auto static constant has empty ID and isAuto true', () {
     expect(AudioDevice.auto.id, isEmpty);
     expect(AudioDevice.auto.isAuto, isTrue);
+    expect(AudioDevice.auto.name, equals('SYSTEM DEFAULT'));
     expect(AudioDevice.auto.toString(), contains('auto'));
   });
-}
 
+  test('AudioDevice displayName uses defaultDeviceDisplayNameResolver for auto devices', () {
+    const autoDevice = AudioDevice(
+      id: '',
+      name: 'SYSTEM DEFAULT',
+      resolvedName: 'Speakers (Realtek)',
+      isAuto: true,
+    );
+    expect(autoDevice.displayName, equals('System Default (Speakers (Realtek))'));
+
+    // Custom resolver
+    MiniaudioPlayer.config(
+      defaultDeviceDisplayNameResolver: (resolved) =>
+          resolved.isEmpty ? 'Predeterminado' : 'Predeterminado: $resolved',
+    );
+    expect(autoDevice.displayName, equals('Predeterminado: Speakers (Realtek)'));
+
+    // Non-auto device returns name directly
+    const hardwareDevice = AudioDevice(
+      id: 'hw_1',
+      name: 'USB Headphones',
+    );
+    expect(hardwareDevice.displayName, equals('USB Headphones'));
+
+    // Reset resolver to default
+    MiniaudioPlayer.config(
+      defaultDeviceDisplayNameResolver: (resolved) {
+        final clean = resolved.trim();
+        return clean.isEmpty ? 'System Default' : 'System Default ($clean)';
+      },
+    );
+  });
+
+  test('AudioDevice equality is based on ID', () {
+    const devA = AudioDevice(
+      id: 'hw_123',
+      name: 'Speakers A',
+    );
+    const devB = AudioDevice(
+      id: 'hw_123',
+      name: 'Speakers A Renamed',
+    );
+    const devC = AudioDevice(
+      id: 'hw_999',
+      name: 'Headphones',
+    );
+    expect(devA, equals(devB));
+    expect(devA == devC, isFalse);
+
+    const autoA = AudioDevice(
+      id: '',
+      name: 'SYSTEM DEFAULT',
+      resolvedName: 'Speakers',
+      isAuto: true,
+    );
+    const autoB = AudioDevice(
+      id: '',
+      name: 'SYSTEM DEFAULT',
+      resolvedName: 'Headphones',
+      isAuto: true,
+    );
+    expect(autoA, equals(autoB));
+    expect(autoA, equals(AudioDevice.auto));
+  });
+}

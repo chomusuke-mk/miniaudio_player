@@ -264,13 +264,22 @@ class PlayerAction {
             MapResult.success) {
           final activeDev = devPtr.ref.toAudioDevice();
           var eventDev = activeDev;
-          if (!isAutoTarget &&
-              activeDev.id == device.id &&
-              device.name.isNotEmpty) {
+          if (isAutoTarget) {
+            final resolved = activeDev.resolvedName?.isNotEmpty == true
+                ? activeDev.resolvedName
+                : (device.resolvedName?.isNotEmpty == true
+                    ? device.resolvedName
+                    : null);
+            eventDev = AudioDevice(
+              id: '',
+              name: 'SYSTEM DEFAULT',
+              resolvedName: resolved,
+              isAuto: true,
+            );
+          } else if (activeDev.id == device.id && device.name.isNotEmpty) {
             eventDev = AudioDevice(
               id: activeDev.id,
               name: device.name,
-              isDefault: device.isDefault,
               isAuto: false,
               type: device.type,
             );

@@ -53,6 +53,9 @@ enum MiniaudioLogLevel {
   }
 }
 
+/// Resolves the user-facing display name for the system default audio device.
+typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
+
 /// Global configuration container for [MiniaudioPlayer].
 class MiniaudioPlayerGlobalConfig {
   /// Default period buffer size in frames applied when instantiating new players
@@ -66,11 +69,24 @@ class MiniaudioPlayerGlobalConfig {
   /// (default: [AudioDevice.auto]).
   AudioDevice defaultAudioDevice;
 
+  /// Resolver function to format the user-friendly [AudioDevice.displayName]
+  /// when an audio device is set to automatic/system default routing.
+  ///
+  /// Defaults to `"System Default ($resolvedName)"` (or `"System Default"` if empty).
+  DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
+
   MiniaudioPlayerGlobalConfig({
     this.defaultBufferSize = 0,
     this.logLevel = MiniaudioLogLevel.none,
     this.defaultAudioDevice = AudioDevice.auto,
-  });
+    DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
+  }) : defaultDeviceDisplayNameResolver = defaultDeviceDisplayNameResolver ??
+            _defaultDeviceDisplayNameResolver;
+
+  static String _defaultDeviceDisplayNameResolver(String resolvedName) {
+    final clean = resolvedName.trim();
+    return clean.isEmpty ? 'System Default' : 'System Default ($clean)';
+  }
 }
 
 /// Cross-platform, ultra-low-resource audio player for Flutter.
@@ -81,11 +97,40 @@ class MiniaudioPlayer {
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
+  static final StreamController<List<AudioDevice>> _audioDevicesController =
+      StreamController<List<AudioDevice>>.broadcast();
+
+  static List<AudioDevice> _cachedAudioDevices = const <AudioDevice>[
+    AudioDevice.auto,
+  ];
+
+  static void _updateAudioDevices(List<AudioDevice> devices) {
+    _cachedAudioDevices = List.unmodifiable(devices);
+    if (!_audioDevicesController.isClosed) {
+      _audioDevicesController.add(_cachedAudioDevices);
+    }
+  }
+
+  /// Current list of enumerated audio output devices on the system.
+  static List<AudioDevice> get audioDevices {
+    if (_cachedAudioDevices.length <= 1) {
+      try {
+        return _queryAudioDevices();
+      } catch (_) {}
+    }
+    return _cachedAudioDevices;
+  }
+
+  /// Broadcast stream of system audio output device list changes.
+  static Stream<List<AudioDevice>> get audioDevicesStream =>
+      _audioDevicesController.stream;
+
   /// Global configuration accessor and updater for [MiniaudioPlayer].
   static MiniaudioPlayerGlobalConfig config({
     int? defaultBufferSize,
     MiniaudioLogLevel? logLevel,
     AudioDevice? defaultAudioDevice,
+    DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
   }) {
     if (defaultBufferSize != null) {
       if (defaultBufferSize < 0) {
@@ -108,13 +153,22 @@ class MiniaudioPlayer {
     if (defaultAudioDevice != null) {
       _globalConfig.defaultAudioDevice = defaultAudioDevice;
     }
+    if (defaultDeviceDisplayNameResolver != null) {
+      _globalConfig.defaultDeviceDisplayNameResolver =
+          defaultDeviceDisplayNameResolver;
+    }
     return _globalConfig;
   }
 
   /// Enumerates all available native playback audio devices on the system.
-  static Future<List<AudioDevice>> getAudioDevices({
-    bool includeAuto = true,
-  }) async {
+  ///
+  /// The first item in the list is always the automatic/system-managed default device
+  /// ([AudioDevice.auto]) with its [AudioDevice.resolvedName] populated.
+  static Future<List<AudioDevice>> getAudioDevices() async {
+    return _queryAudioDevices();
+  }
+
+  static List<AudioDevice> _queryAudioDevices() {
     final outDevicesPtr = calloc<Pointer<native.miniaudio_device_info_t>>();
     final outCountPtr = calloc<Uint32>();
 
@@ -133,39 +187,37 @@ class MiniaudioPlayer {
       final count = outCountPtr.value;
       final devicesPtr = outDevicesPtr.value;
       final hardwareDevices = <AudioDevice>[];
+      String? defaultHardwareName;
 
       if (devicesPtr != nullptr) {
         for (var i = 0; i < count; i++) {
           final devC = devicesPtr[i];
-          hardwareDevices.add(devC.toAudioDevice());
+          final dev = devC.toAudioDevice();
+          hardwareDevices.add(dev);
+          if (devC.is_default != 0 && defaultHardwareName == null) {
+            defaultHardwareName = dev.name;
+          }
         }
         native.miniaudio_player_free_devices(devicesPtr, count);
       }
 
-      final result = <AudioDevice>[];
+      defaultHardwareName ??= hardwareDevices.isNotEmpty
+          ? hardwareDevices.first.name
+          : 'Default';
 
-      if (includeAuto) {
-        AudioDevice? defaultHardwareDev;
-        for (final dev in hardwareDevices) {
-          if (dev.isDefault) {
-            defaultHardwareDev = dev;
-            break;
-          }
-        }
-        defaultHardwareDev ??= hardwareDevices.isNotEmpty
-            ? hardwareDevices.first
-            : null;
+      final autoDevice = AudioDevice(
+        id: '',
+        name: 'SYSTEM DEFAULT',
+        resolvedName: defaultHardwareName,
+        isAuto: true,
+      );
 
-        final autoName = defaultHardwareDev != null
-            ? defaultHardwareDev.name
-            : 'Default';
+      final result = <AudioDevice>[
+        autoDevice,
+        ...hardwareDevices,
+      ];
 
-        result.add(
-          AudioDevice(id: '', name: autoName, isDefault: true, isAuto: true),
-        );
-      }
-
-      result.addAll(hardwareDevices);
+      _updateAudioDevices(result);
       return result;
     } finally {
       calloc.free(outDevicesPtr);
@@ -340,8 +392,40 @@ class MiniaudioPlayer {
       getBufferSize: () => _bufferSize,
       getAudioBitrate: () => _audioBitrate,
       getEqualizer: () => _equalizer,
-      getAudioDevice: () => _audioDevice,
+      getAudioDevice: getAudioDevice,
     );
+  }
+
+  /// Returns the currently active audio output device.
+  AudioDevice getAudioDevice() {
+    if (_isDisposed || _playerHandle == nullptr) {
+      return _audioDevice;
+    }
+    final devPtr = calloc<native.miniaudio_device_info_t>();
+    try {
+      if (native.miniaudio_player_get_current_device(_playerHandle, devPtr) ==
+          MapResult.success) {
+        var dev = devPtr.ref.toAudioDevice();
+        if (dev.isAuto && (dev.resolvedName == null || dev.resolvedName!.isEmpty)) {
+          final devices = MiniaudioPlayer.audioDevices;
+          for (final d in devices) {
+            if (!d.isAuto) {
+              dev = AudioDevice(
+                id: '',
+                name: 'SYSTEM DEFAULT',
+                resolvedName: d.name,
+                isAuto: true,
+              );
+              break;
+            }
+          }
+        }
+        _audioDevice = dev;
+      }
+    } finally {
+      calloc.free(devPtr);
+    }
+    return _audioDevice;
   }
 
   /// Internal handle to the native miniaudio player.
@@ -446,8 +530,8 @@ class MiniaudioPlayer {
         _lastDevice == null ||
         _lastDevice!.id != device.id ||
         _lastDevice!.name != device.name ||
-        _lastDevice!.isDefault != device.isDefault ||
-        _lastDevice!.isAuto != device.isAuto;
+        _lastDevice!.isAuto != device.isAuto ||
+        _lastDevice!.resolvedName != device.resolvedName;
 
     if (deviceChanged) {
       _lastDevice = device;

@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'audio_device.dart';
+import 'miniaudio_player.dart';
 import '../equalizer.dart';
 
 /// Synchronous snapshot of the current player and DSP states.
@@ -82,4 +83,7 @@ class PlayerState {
 
   /// Currently active audio output device.
   AudioDevice get audioDevice => _getAudioDevice();
+
+  /// List of currently available audio output devices on the system.
+  List<AudioDevice> get audioDevices => MiniaudioPlayer.audioDevices;
 }

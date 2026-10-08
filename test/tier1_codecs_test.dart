@@ -645,16 +645,14 @@ void main() {
       expect(devices, isNotEmpty);
       expect(devices.first, equals(AudioDevice.auto));
       expect(devices.first.isAuto, isTrue);
-      expect(devices.first.isDefault, isTrue);
+      expect(devices.first.displayName, contains('System Default'));
 
       for (final dev in devices) {
         expect(dev.name, isNotEmpty);
         expect(dev.id, isNotNull);
       }
 
-      final rawDevices = await MiniaudioPlayer.getAudioDevices(
-        includeAuto: false,
-      );
+      final rawDevices = devices.where((d) => !d.isAuto).toList();
       expect(rawDevices.any((d) => d.id.isEmpty), isFalse);
       expect(rawDevices.every((d) => !d.isAuto), isTrue);
     });
@@ -666,7 +664,6 @@ void main() {
       const customDevice = AudioDevice(
         id: 'test_dev_id',
         name: 'Custom USB DAC',
-        isDefault: false,
       );
       MiniaudioPlayer.config(defaultAudioDevice: customDevice);
       expect(MiniaudioPlayer.config().defaultAudioDevice, equals(customDevice));
@@ -716,7 +713,6 @@ void main() {
       const disconnectedDev = AudioDevice(
         id: 'deadbeef0123456789abcdefdeadbeef',
         name: 'Unplugged Headphones',
-        isDefault: false,
         isAuto: false,
       );
       final bool dcSuccess = await player.action.setDevice(disconnectedDev);

@@ -1,16 +1,18 @@
+import 'miniaudio_player.dart';
+
 /// Represents an audio output device.
 class AudioDevice {
   /// Unique device identifier (hex-encoded string for hardware devices, or empty for automatic default).
   final String id;
 
-  /// Human-readable device name (e.g. "Auriculares", "Audio Interno").
+  /// Human-readable device name or 'SYSTEM DEFAULT'.
   final String name;
 
-  /// Whether this device is currently the operating system's default playback device.
-  final bool isDefault;
+  /// Underlying hardware device name currently routed by the operating system (when [isAuto] is true).
+  final String? _resolvedName;
 
   /// Whether this device represents the automatic system-managed output.
-  final bool isAuto;
+  final bool _isAuto;
 
   /// Optional hardware device type code (e.g. Android AudioDeviceInfo.type).
   final int? type;
@@ -18,31 +20,49 @@ class AudioDevice {
   const AudioDevice({
     required this.id,
     required this.name,
-    this.isDefault = false,
-    this.isAuto = false,
+    String? resolvedName,
+    bool isAuto = false,
     this.type,
-  });
+  })  : _resolvedName = resolvedName,
+        _isAuto = isAuto;
+
+  /// Hardware device name currently routed by the OS (when [isAuto] is true).
+  String? get resolvedName => _resolvedName;
+
+  /// Whether this device represents the automatic system-managed output.
+  bool get isAuto => _isAuto;
 
   /// Automatic / system-managed default output audio device template.
   static const AudioDevice auto = AudioDevice(
     id: '',
-    name: 'Default',
-    isDefault: true,
+    name: 'SYSTEM DEFAULT',
     isAuto: true,
   );
+
+  /// User-friendly display name.
+  ///
+  /// Uses [MiniaudioPlayerGlobalConfig.defaultDeviceDisplayNameResolver] if this
+  /// device is [isAuto], otherwise returns [name] directly.
+  String get displayName {
+    if (isAuto) {
+      final resolver =
+          MiniaudioPlayer.config().defaultDeviceDisplayNameResolver;
+      return resolver(_resolvedName ?? '');
+    }
+    return name;
+  }
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is AudioDevice &&
+      (other is AudioDevice &&
           runtimeType == other.runtimeType &&
-          isAuto == other.isAuto &&
-          (isAuto ? true : id == other.id);
+          id == other.id);
 
   @override
-  int get hashCode => isAuto ? 0 : id.hashCode;
+  int get hashCode => id.hashCode;
 
   @override
   String toString() =>
-      'AudioDevice(name: $name, id: ${id.isEmpty ? "auto" : (id.length > 8 ? "${id.substring(0, 8)}..." : id)}, default: $isDefault, auto: $isAuto${type != null ? ", type: $type" : ""})';
+      'AudioDevice(id: $id, name: $name, auto: $_isAuto${_resolvedName != null ? ", resolved: $_resolvedName" : ""}${type != null ? ", type: $type" : ""})';
 }

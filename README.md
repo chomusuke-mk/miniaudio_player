@@ -305,7 +305,8 @@ List and switch output devices dynamically at runtime across all supported platf
 final devices = await MiniaudioPlayer.getAudioDevices();
 
 for (final device in devices) {
-  print('Device: ${device.name} (ID: ${device.id}, Default: ${device.isDefault})');
+  // Use device.displayName directly in UI menus, Dropdowns, and ListTiles
+  print('Device: ${device.displayName} (ID: ${device.id})');
 }
 
 // Switch playback to a specific hardware device
@@ -315,6 +316,42 @@ await player.action.setDevice(devices[1]);
 await player.action.setDevice(AudioDevice.auto);
 ```
 
+#### Flutter UI Integration & Localization
+
+`AudioDevice.displayName` automatically formats human-readable labels for UI selectors (`DropdownButton`, `ListTile`). For automatic system default routing, you can customize the localized display label globally via `MiniaudioPlayer.config`:
+
+```dart
+// Optional: Configure localized display name resolver
+MiniaudioPlayer.config(
+  defaultDeviceDisplayNameResolver: (resolvedName) =>
+      resolvedName.isEmpty ? 'Predeterminado del sistema' : 'Predeterminado ($resolvedName)',
+);
+
+// Directly bind to Flutter widgets without manual ternaries:
+DropdownButton<AudioDevice>(
+  value: player.state.audioDevice,
+  items: player.state.audioDevices.map((device) {
+    return DropdownMenuItem(
+      value: device,
+      child: Text(device.displayName),
+    );
+  }).toList(),
+  onChanged: (newDev) {
+    if (newDev != null) player.action.setDevice(newDev);
+  },
+)
+```
+
+#### Reactive Streams & Synchronous State
+
+- **Player Instance**:
+  - `player.state.audioDevice` & `player.stream.audioDevice`: Currently active output device for this player.
+  - `player.state.audioDevices` & `player.stream.audioDevices`: Available output devices on the host system.
+  - `player.getAudioDevice()`: Queries and updates active hardware routing directly from the native engine.
+- **Global / Static Access**:
+  - `MiniaudioPlayer.audioDevices`: Synchronous snapshot of system audio devices.
+  - `MiniaudioPlayer.audioDevicesStream`: Broadcast stream notifying when devices are connected/disconnected.
+
 #### Automatic Android JNI Device Discovery & Hot-Switching
 
 On Android, `MiniaudioPlayer.getAudioDevices()` interacts directly with Android's native `AudioManager` via an embedded C JNI engine:
@@ -322,7 +359,7 @@ On Android, `MiniaudioPlayer.getAudioDevices()` interacts directly with Android'
 - **Zero Configuration**: No `MethodChannel`, no `package:jni`, and no custom Kotlin code in `MainActivity.kt`.
 - **Autonomous JavaVM Resolution**: Automatically discovers the running `JavaVM` across all Android versions (Android 5.0 through Android 15+) using a multi-tier fallback strategy (`libnativehelper.so`, runtime memory scanning, and `JNI_OnLoad`).
 - **Headless & Background Compatible**: Acquires application context reflectively via `ActivityThread.currentApplication()`, functioning seamlessly in Flutter UI threads, background isolates, or headless background services (`audio_service`).
-- **Smart Hardware Classification**: Accurately detects earpieces, built-in speakers, wired headphones/headsets, USB audio, and dynamic Bluetooth accessories (distinguishing between A2DP high-fidelity audio and SCO headsets). Accurately resolves system defaults using Android 12+ `AudioManager.getCommunicationDevice()` and audio route heuristics (`isBluetoothA2dpOn`, `isWiredHeadsetOn`).
+- **Comprehensive Hardware Classification**: Accurately detects earpieces, built-in speakers, wired headphones/headsets, USB audio, dynamic Bluetooth accessories (distinguishing between A2DP high-fidelity audio and SCO headsets), and telephony devices (`TYPE_TELEPHONY`) for VoIP and voice communications. Accurately resolves system defaults using Android 12+ `AudioManager.getCommunicationDevice()` and audio route heuristics (`isBluetoothA2dpOn`, `isWiredHeadsetOn`).
 - **Resilient AAudio Hardware Rerouting**: When switching outputs or when Bluetooth devices connect/disconnect in real time, AAudio disconnect events (`AAUDIO_SERVICE_EVENT_DISCONNECTED`) are automatically handled and recreated without audio engine stall or crash.
 - **Zero Memory Leaks**: Strict JNI local reference management (`DeleteLocalRef`), UTF string release (`ReleaseStringUTFChars`), and clean thread detachment.
 
