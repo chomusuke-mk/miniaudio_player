@@ -79,6 +79,26 @@ extern "C"
     } miniaudio_player_equalizer_params_t;
 
     /* ========================================================================= */
+    /* Silence Detection & Skipping Parameters                                   */
+    /* ========================================================================= */
+
+    typedef enum
+    {
+        MAP_SILENCE_MODE_DISABLED = 0,
+        MAP_SILENCE_MODE_TRIM_EDGES = 1,
+        MAP_SILENCE_MODE_CONTINUOUS = 2,
+        MAP_SILENCE_MODE_ALL = 3
+    } miniaudio_player_silence_mode_t;
+
+    typedef struct
+    {
+        int32_t mode;                    /**< miniaudio_player_silence_mode_t */
+        float threshold_db;              /**< Silence threshold in dBFS (default: -45.0f, range: -90.0 to -10.0) */
+        uint32_t min_silence_duration_ms;/**< Minimum silence duration before skipping (default: 300ms) */
+        uint32_t padding_ms;             /**< Safety margin before and after voice (default: 50ms) */
+    } miniaudio_player_silence_config_t;
+
+    /* ========================================================================= */
     /* Player Status Snapshot (Single-Call FFI Marshalling)                      */
     /* ========================================================================= */
 
@@ -104,6 +124,8 @@ extern "C"
         uint32_t bitrate;                              /**< Audio bitrate in bits per second (bps) */
         miniaudio_player_equalizer_params_t equalizer; /**< Current 10-band equalizer settings */
         miniaudio_device_info_t device;                /**< Currently active audio output device */
+        miniaudio_player_silence_config_t silence;     /**< Currently active silence skipping settings */
+        int64_t silence_saved_ms;                      /**< Cumulative duration of skipped silence in ms */
     } miniaudio_player_status_t;
 
     /* ========================================================================= */
@@ -230,6 +252,20 @@ extern "C"
         miniaudio_player_t *player,
         uint32_t band_index,
         float gain_db);
+
+    /* ========================================================================= */
+    /* Silence Detection & Skipping Controls                                     */
+    /* ========================================================================= */
+
+    MAP_API int32_t miniaudio_player_set_silence_config(
+        miniaudio_player_t *player,
+        const miniaudio_player_silence_config_t *config);
+
+    MAP_API int32_t miniaudio_player_get_silence_config(
+        const miniaudio_player_t *player,
+        miniaudio_player_silence_config_t *out_config);
+
+    MAP_API int64_t miniaudio_player_get_silence_saved_ms(const miniaudio_player_t *player);
 
     /* ========================================================================= */
     /* Status & Query Inspection                                                 */

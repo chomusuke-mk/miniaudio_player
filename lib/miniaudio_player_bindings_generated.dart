@@ -122,6 +122,19 @@ external double miniaudio_player_get_rate(
   ffi.Pointer<miniaudio_player_t> player,
 );
 
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_player_silence_config_t>)>(isLeaf: true)
+external int miniaudio_player_get_silence_config(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<miniaudio_player_silence_config_t> out_config,
+);
+
+@ffi.Native<ffi.Int64 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
+external int miniaudio_player_get_silence_saved_ms(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
 /// ========================================================================= */
 /// /* Status & Query Inspection                                                 */
 /// /* =========================================================================
@@ -242,6 +255,17 @@ external int miniaudio_player_set_pitch(
 external int miniaudio_player_set_rate(
   ffi.Pointer<miniaudio_player_t> player,
   double rate,
+);
+
+/// ========================================================================= */
+/// /* Silence Detection & Skipping Controls                                     */
+/// /* =========================================================================
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_player_silence_config_t>)>(isLeaf: true)
+external int miniaudio_player_set_silence_config(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<miniaudio_player_silence_config_t> config,
 );
 
 /// ========================================================================= */
@@ -493,6 +517,60 @@ enum miniaudio_player_result_t {
       };
 }
 
+final class miniaudio_player_silence_config_t extends ffi.Struct {
+  /// < miniaudio_player_silence_mode_t
+  @ffi.Int32()
+  external int mode;
+
+  /// < Silence threshold in dBFS (default: -45.0f, range: -90.0 to -10.0)
+  @ffi.Float()
+  external double threshold_db;
+
+  /// < Minimum silence duration before skipping (default: 300ms)
+  @ffi.Uint32()
+  external int min_silence_duration_ms;
+
+  /// < Safety margin before and after voice (default: 50ms)
+  @ffi.Uint32()
+  external int padding_ms;
+
+  static ffi.Pointer<miniaudio_player_silence_config_t> $allocate(
+    ffi.Allocator $allocator, {
+    required int mode,
+    required double threshold_db,
+    required int min_silence_duration_ms,
+    required int padding_ms,
+  }) =>
+      $allocator<miniaudio_player_silence_config_t>()
+        ..ref.mode = mode
+        ..ref.threshold_db = threshold_db
+        ..ref.min_silence_duration_ms = min_silence_duration_ms
+        ..ref.padding_ms = padding_ms;
+}
+
+/// ========================================================================= */
+/// /* Silence Detection & Skipping Parameters                                   */
+/// /* =========================================================================
+enum miniaudio_player_silence_mode_t {
+  MAP_SILENCE_MODE_DISABLED(0),
+  MAP_SILENCE_MODE_TRIM_EDGES(1),
+  MAP_SILENCE_MODE_CONTINUOUS(2),
+  MAP_SILENCE_MODE_ALL(3);
+
+  final int value;
+  const miniaudio_player_silence_mode_t(this.value);
+
+  static miniaudio_player_silence_mode_t fromValue(int value) =>
+      switch (value) {
+        0 => MAP_SILENCE_MODE_DISABLED,
+        1 => MAP_SILENCE_MODE_TRIM_EDGES,
+        2 => MAP_SILENCE_MODE_CONTINUOUS,
+        3 => MAP_SILENCE_MODE_ALL,
+        _ => throw ArgumentError(
+            'Unknown value for miniaudio_player_silence_mode_t: $value'),
+      };
+}
+
 final class miniaudio_player_status_t extends ffi.Struct {
   /// < Current position in milliseconds
   @ffi.Int64()
@@ -539,6 +617,13 @@ final class miniaudio_player_status_t extends ffi.Struct {
 
   /// < Currently active audio output device
   external miniaudio_device_info_t device;
+
+  /// < Currently active silence skipping settings
+  external miniaudio_player_silence_config_t silence;
+
+  /// < Cumulative duration of skipped silence in ms
+  @ffi.Int64()
+  external int silence_saved_ms;
 }
 
 /// Opaque player handle

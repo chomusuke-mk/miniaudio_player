@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'audio_device.dart';
+import 'silence_skip_config.dart';
 import '../equalizer.dart';
 
 /// Reactive broadcast streams for observing playback and DSP state changes.
@@ -19,6 +20,9 @@ class PlayerStream {
   final StreamController<int> _audioBitrateController;
   final StreamController<Equalizer> _equalizerController;
   final StreamController<AudioDevice> _audioDeviceController;
+  final StreamController<bool> _skipSilenceController;
+  final StreamController<SilenceSkipConfig> _silenceConfigController;
+  final StreamController<Duration> _silenceSavedDurationController;
 
   PlayerStream({
     required StreamController<Duration> positionController,
@@ -33,6 +37,9 @@ class PlayerStream {
     required StreamController<int> audioBitrateController,
     required StreamController<Equalizer> equalizerController,
     required StreamController<AudioDevice> audioDeviceController,
+    required StreamController<bool> skipSilenceController,
+    required StreamController<SilenceSkipConfig> silenceConfigController,
+    required StreamController<Duration> silenceSavedDurationController,
   })  : _positionController = positionController,
         _durationController = durationController,
         _playingController = playingController,
@@ -44,7 +51,10 @@ class PlayerStream {
         _bufferSizeController = bufferSizeController,
         _audioBitrateController = audioBitrateController,
         _equalizerController = equalizerController,
-        _audioDeviceController = audioDeviceController;
+        _audioDeviceController = audioDeviceController,
+        _skipSilenceController = skipSilenceController,
+        _silenceConfigController = silenceConfigController,
+        _silenceSavedDurationController = silenceSavedDurationController;
 
   /// Broadcast stream of the current playback position.
   Stream<Duration> get position => _positionController.stream;
@@ -84,4 +94,14 @@ class PlayerStream {
 
   /// Broadcast stream of active audio output device changes.
   Stream<AudioDevice> get audioDevice => _audioDeviceController.stream;
+
+  /// Broadcast stream of silence skipping enabled state (`true` / `false`).
+  Stream<bool> get skipSilence => _skipSilenceController.stream;
+
+  /// Broadcast stream of silence configuration changes.
+  Stream<SilenceSkipConfig> get silenceConfig => _silenceConfigController.stream;
+
+  /// Broadcast stream of cumulative duration of skipped silence.
+  Stream<Duration> get silenceSavedDuration =>
+      _silenceSavedDurationController.stream;
 }

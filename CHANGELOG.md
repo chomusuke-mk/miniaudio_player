@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.2.0
+
+### 🔇 Native Real-Time Silence Skipping & Trimming (DSP Engine)
+
+- **Native C Streaming Silence Detector**:
+  - Implemented high-performance, real-time silence detection directly in the native C audio pipeline (`src/miniaudio_player.c`) upstream of Sonic DSP and the 10-band equalizer.
+  - Zero Dart Isolates, zero memory copying, and zero audio underruns or buffer starvation.
+  - Smooth anti-click crossfading (linear ramp over 5ms) when transitioning between silence and active speech/music, eliminating clicks or pops.
+- **Dual Silence Skipping Modalities (`SilenceSkipMode`)**:
+  - `SilenceSkipMode.trimEdges`: Eliminates lead-in silence immediately at track start and truncates trailing lead-out silence at track end. Ideal for music playlists and gapless playback.
+  - `SilenceSkipMode.continuous`: Truncates in-between pauses dynamically down to configurable padding (e.g., 50ms). Ideal for podcasts, audiobooks, lectures, and voice messages.
+  - `SilenceSkipMode.all`: Simultaneously trims lead-in/lead-out track edges and truncates continuous pauses in between.
+  - `SilenceSkipMode.disabled`: Completely bypasses silence detection with zero CPU overhead.
+- **Customizable DSP Parameters (`SilenceSkipConfig`)**:
+  - `thresholdDb`: Silence threshold in decibels (default: `-45.0 dB`, with automatic 2 dB hysteresis for stable exit).
+  - `minSilenceDuration`: Minimum silence duration required to trigger skipping (default: `300 ms`).
+  - `padding`: Padding duration preserved around speech/music boundaries to preserve natural attack and decay (default: `50 ms`).
+  - Named constructors: `SilenceSkipConfig.trimEdges(...)`, `SilenceSkipConfig.continuous(...)`, `SilenceSkipConfig.all(...)`, and `SilenceSkipConfig.disabled()`.
+- **Comprehensive API & Reactive Stream Integration**:
+  - **Player Actions**:
+    - `player.action.setSkipSilence(bool)`: Quick toggle enabling/disabling silence skipping with last configured parameters.
+    - `player.action.setSilenceConfig(SilenceSkipConfig)`: Replaces entire silence skip configuration dynamically at runtime.
+    - `player.action.configureSilenceSkip({mode, thresholdDb, minSilenceDuration, padding})`: Granular parameter adjustments.
+  - **Synchronous State Getters**:
+    - `player.state.skipSilence` / `isSkipSilenceEnabled`: Instant boolean status.
+    - `player.state.silenceSkipMode`: Current mode enum.
+    - `player.state.silenceConfig`: Full current `SilenceSkipConfig` object.
+    - `player.state.silenceSavedDuration`: Cumulative `Duration` saved by skipping silence during track playback.
+  - **Reactive Broadcast Streams**:
+    - `player.stream.skipSilence`: Emits boolean toggle updates.
+    - `player.stream.silenceConfig`: Emits configuration change events.
+    - `player.stream.silenceSavedDuration`: Real-time stream of accumulated saved time.
+
 ## 2.1.0
 
 ### 📊 ReplayGain & ITU-R BS.1770-4 Loudness Analysis

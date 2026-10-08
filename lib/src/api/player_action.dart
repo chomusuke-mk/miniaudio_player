@@ -11,6 +11,7 @@ import '../ffi/native_types.dart';
 import 'audio_device.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
+import 'silence_skip_config.dart';
 
 /// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
 class PlayerAction {
@@ -303,5 +304,90 @@ class PlayerAction {
     } finally {
       if (devIdPtr != null) calloc.free(devIdPtr);
     }
+  }
+
+  /// Sets whether silence skipping is enabled, optionally configuring mode and thresholds.
+  ///
+  /// - [enabled]: When `false`, disables silence skipping ([SilenceSkipMode.disabled]).
+  ///   When `true`, activates silence skipping (defaults to [SilenceSkipMode.continuous] if [mode] is omitted or disabled).
+  /// - [mode]: Operational mode ([SilenceSkipMode.trimEdges], [SilenceSkipMode.continuous], or [SilenceSkipMode.all]).
+  /// - [thresholdDb]: Audio amplitude silence threshold in dBFS (default: `-45.0`, clamp: `-90.0` to `-10.0`).
+  /// - [minSilenceDuration]: Minimum duration of silence before skipping (default: `300ms`).
+  /// - [padding]: Safety margin preserved before and after speech (default: `50ms`).
+  Future<void> setSkipSilence(
+    bool enabled, {
+    SilenceSkipMode mode = SilenceSkipMode.continuous,
+    double? thresholdDb,
+    Duration? minSilenceDuration,
+    Duration? padding,
+  }) async {
+    final effectiveMode = enabled
+        ? (mode == SilenceSkipMode.disabled ? SilenceSkipMode.continuous : mode)
+        : SilenceSkipMode.disabled;
+
+    final current = _player.state.silenceConfig;
+    final newConfig = SilenceSkipConfig(
+      mode: effectiveMode,
+      thresholdDb: thresholdDb ?? current.thresholdDb,
+      minSilenceDuration: minSilenceDuration ?? current.minSilenceDuration,
+      padding: padding ?? current.padding,
+    );
+    await setSilenceConfig(newConfig);
+  }
+
+  /// Configures dynamic silence detection and skipping.
+  Future<void> setSilenceConfig(SilenceSkipConfig config) async {
+    _player.ensureNotDisposed();
+
+    final threshold = config.thresholdDb.clamp(-90.0, -10.0);
+    final minMs = config.minSilenceDuration.inMilliseconds.clamp(50, 5000);
+    final maxPad = minMs ~/ 2;
+    final padMs = config.padding.inMilliseconds.clamp(0, maxPad);
+
+    final configPtr = calloc<native.miniaudio_player_silence_config_t>();
+    try {
+      configPtr.ref.mode = config.mode.value;
+      configPtr.ref.threshold_db = threshold;
+      configPtr.ref.min_silence_duration_ms = minMs;
+      configPtr.ref.padding_ms = padMs;
+
+      final res = native.miniaudio_player_set_silence_config(
+        _player.handle,
+        configPtr,
+      );
+      if (res != MapResult.success) {
+        throw MiniaudioPlayerException(
+          'Failed to set silence config: ${MapResult.describe(res)}',
+          errorCode: res,
+        );
+      }
+
+      final normalizedConfig = SilenceSkipConfig(
+        mode: config.mode,
+        thresholdDb: threshold,
+        minSilenceDuration: Duration(milliseconds: minMs),
+        padding: Duration(milliseconds: padMs),
+      );
+      _player.notifySilenceConfigChanged(normalizedConfig);
+    } finally {
+      calloc.free(configPtr);
+    }
+  }
+
+  /// Updates specific parameters of the silence detector while keeping existing values.
+  Future<void> configureSilenceSkip({
+    SilenceSkipMode? mode,
+    double? thresholdDb,
+    Duration? minSilenceDuration,
+    Duration? padding,
+  }) async {
+    final current = _player.state.silenceConfig;
+    final updated = current.copyWith(
+      mode: mode,
+      thresholdDb: thresholdDb,
+      minSilenceDuration: minSilenceDuration,
+      padding: padding,
+    );
+    await setSilenceConfig(updated);
   }
 }

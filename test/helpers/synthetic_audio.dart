@@ -173,6 +173,99 @@ class SyntheticAudioGenerator {
     );
   }
 
+  /// Generates a WAV file composed of multiple sequential audio segments.
+  static Uint8List generateMultiSegmentWavBytes({
+    required List<({double durationSeconds, double frequencyHz, double amplitude})>
+        segments,
+    int sampleRate = 44100,
+    int numChannels = 1,
+  }) {
+    double totalDuration = 0.0;
+    for (final seg in segments) {
+      totalDuration += seg.durationSeconds;
+    }
+    final int totalSamples = (totalDuration * sampleRate).toInt();
+    const int bitsPerSample = 16;
+    const int bytesPerSample = bitsPerSample ~/ 8;
+    final int subChunk2Size = totalSamples * numChannels * bytesPerSample;
+    final int chunkSize = 36 + subChunk2Size;
+    final int byteRate = sampleRate * numChannels * bytesPerSample;
+    final int blockAlign = numChannels * bytesPerSample;
+
+    final ByteData byteData = ByteData(44 + subChunk2Size);
+
+    // RIFF Header Chunk
+    byteData.setUint8(0, 0x52); // 'R'
+    byteData.setUint8(1, 0x49); // 'I'
+    byteData.setUint8(2, 0x46); // 'F'
+    byteData.setUint8(3, 0x46); // 'F'
+    byteData.setUint32(4, chunkSize, Endian.little);
+    byteData.setUint8(8, 0x57); // 'W'
+    byteData.setUint8(9, 0x41); // 'A'
+    byteData.setUint8(10, 0x56); // 'V'
+    byteData.setUint8(11, 0x45); // 'E'
+
+    // fmt Sub-chunk
+    byteData.setUint8(12, 0x66); // 'f'
+    byteData.setUint8(13, 0x6D); // 'm'
+    byteData.setUint8(14, 0x74); // 't'
+    byteData.setUint8(15, 0x20); // ' '
+    byteData.setUint32(16, 16, Endian.little);
+    byteData.setUint16(20, 1, Endian.little);
+    byteData.setUint16(22, numChannels, Endian.little);
+    byteData.setUint32(24, sampleRate, Endian.little);
+    byteData.setUint32(28, byteRate, Endian.little);
+    byteData.setUint16(32, blockAlign, Endian.little);
+    byteData.setUint16(34, bitsPerSample, Endian.little);
+
+    // data Sub-chunk
+    byteData.setUint8(36, 0x64); // 'd'
+    byteData.setUint8(37, 0x61); // 'a'
+    byteData.setUint8(38, 0x74); // 't'
+    byteData.setUint8(39, 0x61); // 'a'
+    byteData.setUint32(40, subChunk2Size, Endian.little);
+
+    int offset = 44;
+    for (final seg in segments) {
+      final int segSamples = (seg.durationSeconds * sampleRate).toInt();
+      final double peakVal = 32767.0 * seg.amplitude.clamp(0.0, 1.0);
+      final double angularFreq = 2.0 * pi * seg.frequencyHz / sampleRate;
+
+      for (int i = 0; i < segSamples; i++) {
+        final double sample = (seg.frequencyHz == 0.0 || seg.amplitude == 0.0)
+            ? 0.0
+            : sin(angularFreq * i);
+        final int intVal = (sample * peakVal).round().clamp(-32768, 32767);
+        for (int ch = 0; ch < numChannels; ch++) {
+          byteData.setInt16(offset, intVal, Endian.little);
+          offset += 2;
+        }
+      }
+    }
+
+    return byteData.buffer.asUint8List();
+  }
+
+  /// Creates a temporary multi-segment WAV file on disk.
+  static Future<File> createTempMultiSegmentWavFile({
+    String fileName = 'multi_segment.wav',
+    required List<({double durationSeconds, double frequencyHz, double amplitude})>
+        segments,
+    int sampleRate = 44100,
+    int numChannels = 1,
+  }) async {
+    final bytes = generateMultiSegmentWavBytes(
+      segments: segments,
+      sampleRate: sampleRate,
+      numChannels: numChannels,
+    );
+    final tempDir =
+        await Directory.systemTemp.createTemp('miniaudio_multiseg_');
+    final file = File('${tempDir.path}/$fileName');
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
   /// Creates a corrupted or truncated file to test parser/decoder resilience.
   static Future<File> createCorruptedFile({
     String fileName = 'corrupted.wav',

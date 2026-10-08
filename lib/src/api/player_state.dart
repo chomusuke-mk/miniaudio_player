@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'audio_device.dart';
+import 'silence_skip_config.dart';
 import '../equalizer.dart';
 
 /// Synchronous snapshot of the current player and DSP states.
@@ -17,6 +18,10 @@ class PlayerState {
   final int Function() _getAudioBitrate;
   final Equalizer Function() _getEqualizer;
   final AudioDevice Function() _getAudioDevice;
+  final bool Function() _getSkipSilence;
+  final SilenceSkipMode Function() _getSilenceSkipMode;
+  final SilenceSkipConfig Function() _getSilenceConfig;
+  final Duration Function() _getSilenceSavedDuration;
 
   PlayerState({
     required Duration Function() getPosition,
@@ -31,6 +36,10 @@ class PlayerState {
     required int Function() getAudioBitrate,
     required Equalizer Function() getEqualizer,
     required AudioDevice Function() getAudioDevice,
+    required bool Function() getSkipSilence,
+    required SilenceSkipMode Function() getSilenceSkipMode,
+    required SilenceSkipConfig Function() getSilenceConfig,
+    required Duration Function() getSilenceSavedDuration,
   })  : _getPosition = getPosition,
         _getDuration = getDuration,
         _getPlaying = getPlaying,
@@ -42,7 +51,11 @@ class PlayerState {
         _getBufferSize = getBufferSize,
         _getAudioBitrate = getAudioBitrate,
         _getEqualizer = getEqualizer,
-        _getAudioDevice = getAudioDevice;
+        _getAudioDevice = getAudioDevice,
+        _getSkipSilence = getSkipSilence,
+        _getSilenceSkipMode = getSilenceSkipMode,
+        _getSilenceConfig = getSilenceConfig,
+        _getSilenceSavedDuration = getSilenceSavedDuration;
 
   /// Current playback position.
   Duration get position => _getPosition();
@@ -82,4 +95,19 @@ class PlayerState {
 
   /// Currently active audio output device.
   AudioDevice get audioDevice => _getAudioDevice();
+
+  /// Whether silence skipping is currently enabled.
+  bool get skipSilence => _getSkipSilence();
+
+  /// Alias for [skipSilence].
+  bool get isSkipSilenceEnabled => _getSkipSilence();
+
+  /// Current silence skipping operational mode.
+  SilenceSkipMode get silenceSkipMode => _getSilenceSkipMode();
+
+  /// Current silence detection and skipping configuration.
+  SilenceSkipConfig get silenceConfig => _getSilenceConfig();
+
+  /// Cumulative duration of silence saved / skipped in the current track.
+  Duration get silenceSavedDuration => _getSilenceSavedDuration();
 }

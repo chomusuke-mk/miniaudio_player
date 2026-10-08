@@ -22,6 +22,7 @@ functions:
       - 'miniaudio_player_set_equalizer.*'
       - 'miniaudio_player_set_log_level'
       - 'miniaudio_player_set_buffer_size'
+      - 'miniaudio_player_set_silence_config'
 comments:
   style: any
   length: full

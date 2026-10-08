@@ -593,6 +593,151 @@ static ma_result ma_equalizer_node_set_all(
 }
 
 /* ========================================================================= */
+/* Silence Detection & Skipping DSP                                          */
+/* ========================================================================= */
+
+typedef enum
+{
+    MAP_SILENCE_STATE_VOICE = 0,
+    MAP_SILENCE_STATE_HOLDING = 1,
+    MAP_SILENCE_STATE_SKIPPING = 2
+} map_silence_state_t;
+
+typedef struct
+{
+    miniaudio_player_silence_config_t config;
+    map_silence_state_t state;
+    ma_uint32 channels;
+    ma_uint32 sample_rate;
+
+    float threshold_amp_linear;
+    float threshold_amp_exit;
+
+    ma_uint32 min_silence_frames;
+    ma_uint32 padding_frames;
+
+    ma_bool32 lead_in_active;
+    int64_t silence_saved_frames;
+
+    float *hold_buffer;
+    ma_uint32 hold_buffer_capacity; /* in frames */
+    ma_uint32 hold_frames_count;
+    ma_uint32 hold_frames_read_pos;
+
+    float last_sample[8];
+    ma_uint32 crossfade_length;
+    ma_uint32 crossfade_remaining;
+} map_silence_detector;
+
+static void map_silence_detector_update_params(map_silence_detector *pDet)
+{
+    if (pDet == NULL)
+        return;
+
+    pDet->threshold_amp_linear = powf(10.0f, pDet->config.threshold_db / 20.0f);
+    /* 2 dB hysteresis for exiting silence */
+    pDet->threshold_amp_exit = powf(10.0f, (pDet->config.threshold_db + 2.0f) / 20.0f);
+
+    if (pDet->sample_rate > 0)
+    {
+        pDet->min_silence_frames = (pDet->config.min_silence_duration_ms * pDet->sample_rate) / 1000;
+        pDet->padding_frames = (pDet->config.padding_ms * pDet->sample_rate) / 1000;
+        pDet->crossfade_length = (5 * pDet->sample_rate) / 1000; /* 5ms */
+        if (pDet->crossfade_length == 0)
+            pDet->crossfade_length = 1;
+    }
+}
+
+static void map_silence_detector_init(
+    map_silence_detector *pDet,
+    ma_uint32 channels,
+    ma_uint32 sample_rate)
+{
+    if (pDet == NULL)
+        return;
+
+    memset(pDet, 0, sizeof(*pDet));
+    pDet->channels = channels;
+    pDet->sample_rate = sample_rate;
+
+    pDet->config.mode = MAP_SILENCE_MODE_DISABLED;
+    pDet->config.threshold_db = -45.0f;
+    pDet->config.min_silence_duration_ms = 300;
+    pDet->config.padding_ms = 50;
+
+    map_silence_detector_update_params(pDet);
+
+    /* Allocate hold buffer: default up to 3 seconds of frames */
+    pDet->hold_buffer_capacity = sample_rate * 3;
+    if (channels > 0 && pDet->hold_buffer_capacity > 0)
+    {
+        pDet->hold_buffer = (float *)malloc(pDet->hold_buffer_capacity * channels * sizeof(float));
+    }
+}
+
+static void map_silence_detector_uninit(map_silence_detector *pDet)
+{
+    if (pDet == NULL)
+        return;
+    if (pDet->hold_buffer != NULL)
+    {
+        free(pDet->hold_buffer);
+        pDet->hold_buffer = NULL;
+    }
+}
+
+static void map_silence_detector_set_config(
+    map_silence_detector *pDet,
+    const miniaudio_player_silence_config_t *config)
+{
+    if (pDet == NULL || config == NULL)
+        return;
+
+    pDet->config = *config;
+    map_silence_detector_update_params(pDet);
+
+    /* Ensure hold buffer can hold at least min_silence_frames + padding_frames */
+    ma_uint32 required = pDet->min_silence_frames + pDet->padding_frames + (pDet->sample_rate * 2);
+    if (required > pDet->hold_buffer_capacity)
+    {
+        float *new_buf = (float *)realloc(pDet->hold_buffer, required * pDet->channels * sizeof(float));
+        if (new_buf != NULL)
+        {
+            pDet->hold_buffer = new_buf;
+            pDet->hold_buffer_capacity = required;
+        }
+    }
+}
+
+static void map_silence_detector_reset(map_silence_detector *pDet, ma_bool32 is_start)
+{
+    if (pDet == NULL)
+        return;
+
+    pDet->state = MAP_SILENCE_STATE_VOICE;
+    pDet->hold_frames_count = 0;
+    pDet->hold_frames_read_pos = 0;
+    pDet->crossfade_remaining = 0;
+    memset(pDet->last_sample, 0, sizeof(pDet->last_sample));
+
+    if (is_start && (pDet->config.mode == MAP_SILENCE_MODE_TRIM_EDGES || pDet->config.mode == MAP_SILENCE_MODE_ALL))
+    {
+        pDet->lead_in_active = MA_TRUE;
+    }
+    else
+    {
+        pDet->lead_in_active = MA_FALSE;
+    }
+}
+
+static int64_t map_silence_detector_get_saved_ms(const map_silence_detector *pDet)
+{
+    if (pDet == NULL || pDet->sample_rate == 0)
+        return 0;
+    return (pDet->silence_saved_frames * 1000) / pDet->sample_rate;
+}
+
+/* ========================================================================= */
 /* Time-Stretching & Pitch-Shifting Custom Data Source (Sonic DSP)           */
 /* ========================================================================= */
 
@@ -610,7 +755,282 @@ typedef struct
     ma_bool32 is_eof;
     float *scratchBuffer;
     ma_uint32 scratchCapacity; /* in floats */
+    float *rawBuffer;
+    ma_uint32 rawBufferCapacity; /* in floats */
+    ma_uint32 rawBufferCount;    /* in frames */
+    ma_uint32 rawBufferReadPos;  /* in frames */
+    map_silence_detector silence;
 } map_time_stretch_ds;
+
+static ma_result map_time_stretch_ds_read_filtered(
+    map_time_stretch_ds *pDS,
+    float *pFramesOut,
+    ma_uint64 framesToRead,
+    ma_uint64 *pFramesRead)
+{
+    map_silence_detector *pDet = &pDS->silence;
+    ma_uint32 channels = pDS->channels;
+    ma_uint64 totalRead = 0;
+
+    if (pFramesRead != NULL)
+        *pFramesRead = 0;
+    if (framesToRead == 0)
+        return MA_SUCCESS;
+
+    /* Fast path if silence detection is disabled and no buffered frames */
+    if (pDet->config.mode == MAP_SILENCE_MODE_DISABLED &&
+        pDet->hold_frames_read_pos >= pDet->hold_frames_count &&
+        pDS->rawBufferReadPos >= pDS->rawBufferCount)
+    {
+        return ma_decoder_read_pcm_frames(&pDS->decoder, pFramesOut, framesToRead, pFramesRead);
+    }
+
+    while (totalRead < framesToRead && !pDS->is_eof)
+    {
+        /* 1. Flush held frames from detector if any are ready to be read */
+        if (pDet->state != MAP_SILENCE_STATE_HOLDING && pDet->hold_frames_read_pos < pDet->hold_frames_count)
+        {
+            ma_uint64 avail = pDet->hold_frames_count - pDet->hold_frames_read_pos;
+            ma_uint64 to_copy = (avail < (framesToRead - totalRead)) ? avail : (framesToRead - totalRead);
+            if (pFramesOut != NULL)
+            {
+                memcpy(pFramesOut + totalRead * channels,
+                       pDet->hold_buffer + pDet->hold_frames_read_pos * channels,
+                       to_copy * channels * sizeof(float));
+            }
+            if (to_copy > 0)
+            {
+                float *last_frame = pDet->hold_buffer + (pDet->hold_frames_read_pos + to_copy - 1) * channels;
+                for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                {
+                    pDet->last_sample[c] = last_frame[c];
+                }
+            }
+            pDet->hold_frames_read_pos += (ma_uint32)to_copy;
+            totalRead += to_copy;
+            if (pDet->hold_frames_read_pos >= pDet->hold_frames_count)
+            {
+                pDet->hold_frames_read_pos = 0;
+                pDet->hold_frames_count = 0;
+            }
+            continue;
+        }
+
+        /* 2. Replenish rawBuffer from decoder if empty */
+        if (pDS->rawBufferReadPos >= pDS->rawBufferCount)
+        {
+            ma_uint64 rawRead = 0;
+            ma_result res = ma_decoder_read_pcm_frames(
+                &pDS->decoder,
+                pDS->rawBuffer,
+                1024,
+                &rawRead);
+
+            pDS->rawBufferCount = (ma_uint32)rawRead;
+            pDS->rawBufferReadPos = 0;
+
+            if (res != MA_SUCCESS || rawRead == 0)
+            {
+                pDS->is_eof = MA_TRUE;
+                /* If we reached EOF while holding silence, discard the held silence (lead-out trim) */
+                if (pDet->state == MAP_SILENCE_STATE_HOLDING)
+                {
+                    pDet->silence_saved_frames += (pDet->hold_frames_count - pDet->hold_frames_read_pos);
+                    pDet->hold_frames_count = 0;
+                    pDet->hold_frames_read_pos = 0;
+                }
+                break;
+            }
+        }
+
+        /* 3. Process frames from rawBuffer */
+        while (pDS->rawBufferReadPos < pDS->rawBufferCount && totalRead < framesToRead)
+        {
+            float *frame = pDS->rawBuffer + pDS->rawBufferReadPos * channels;
+            pDS->rawBufferReadPos++;
+
+            /* Calculate frame peak amplitude */
+            float peak = 0.0f;
+            for (ma_uint32 c = 0; c < channels; c++)
+            {
+                float val = fabsf(frame[c]);
+                if (val > peak)
+                    peak = val;
+            }
+
+            ma_bool32 is_silent_enter = (peak <= pDet->threshold_amp_linear);
+            ma_bool32 is_silent_exit  = (peak <= pDet->threshold_amp_exit);
+
+            /* Check disabled mode */
+            if (pDet->config.mode == MAP_SILENCE_MODE_DISABLED)
+            {
+                if (pFramesOut != NULL)
+                {
+                    memcpy(pFramesOut + totalRead * channels, frame, channels * sizeof(float));
+                }
+                totalRead++;
+                continue;
+            }
+
+            /* Lead-in silence trim */
+            if (pDet->lead_in_active)
+            {
+                if (is_silent_enter)
+                {
+                    pDet->silence_saved_frames++;
+                    continue;
+                }
+                else
+                {
+                    pDet->lead_in_active = MA_FALSE;
+                    pDet->crossfade_remaining = pDet->crossfade_length;
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        pDet->last_sample[c] = 0.0f;
+                }
+            }
+
+            /* Continuous or Edge trimming state machine */
+            ma_bool32 body_skip_enabled = (pDet->config.mode == MAP_SILENCE_MODE_CONTINUOUS ||
+                                           pDet->config.mode == MAP_SILENCE_MODE_ALL);
+
+            if (pDet->config.mode == MAP_SILENCE_MODE_TRIM_EDGES)
+            {
+                /* In TRIM_EDGES, also enable silence holding if near EOF */
+                ma_uint64 total_len = 0, cur_cursor = 0;
+                if (ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &total_len) == MA_SUCCESS && total_len > 0 &&
+                    ma_decoder_get_cursor_in_pcm_frames(&pDS->decoder, &cur_cursor) == MA_SUCCESS)
+                {
+                    if (cur_cursor + (pDS->sampleRate * 5) >= total_len)
+                    {
+                        body_skip_enabled = MA_TRUE;
+                    }
+                }
+            }
+
+            if (!body_skip_enabled)
+            {
+                if (pFramesOut != NULL)
+                {
+                    memcpy(pFramesOut + totalRead * channels, frame, channels * sizeof(float));
+                }
+                totalRead++;
+                continue;
+            }
+
+            /* State machine */
+            if (pDet->state == MAP_SILENCE_STATE_VOICE)
+            {
+                if (!is_silent_enter)
+                {
+                    /* Sound playing */
+                    if (pDet->crossfade_remaining > 0 && pDet->crossfade_length > 0)
+                    {
+                        float alpha = 1.0f - ((float)pDet->crossfade_remaining / (float)pDet->crossfade_length);
+                        for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        {
+                            frame[c] = (1.0f - alpha) * pDet->last_sample[c] + alpha * frame[c];
+                        }
+                        pDet->crossfade_remaining--;
+                    }
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                    {
+                        pDet->last_sample[c] = frame[c];
+                    }
+                    if (pFramesOut != NULL)
+                    {
+                        memcpy(pFramesOut + totalRead * channels, frame, channels * sizeof(float));
+                    }
+                    totalRead++;
+                }
+                else
+                {
+                    /* Transition to HOLDING */
+                    pDet->state = MAP_SILENCE_STATE_HOLDING;
+                    pDet->hold_frames_count = 0;
+                    pDet->hold_frames_read_pos = 0;
+                    if (pDet->hold_buffer != NULL && pDet->hold_buffer_capacity > 0)
+                    {
+                        memcpy(pDet->hold_buffer, frame, channels * sizeof(float));
+                        pDet->hold_frames_count = 1;
+                    }
+                }
+            }
+            else if (pDet->state == MAP_SILENCE_STATE_HOLDING)
+            {
+                if (is_silent_enter)
+                {
+                    if (pDet->hold_buffer != NULL && pDet->hold_frames_count < pDet->hold_buffer_capacity)
+                    {
+                        memcpy(pDet->hold_buffer + pDet->hold_frames_count * channels, frame, channels * sizeof(float));
+                        pDet->hold_frames_count++;
+                    }
+                    if (pDet->hold_frames_count >= pDet->min_silence_frames)
+                    {
+                        /* Silence duration exceeded threshold: prune to padding_frames and transition to SKIPPING */
+                        ma_uint32 keep = pDet->padding_frames;
+                        if (keep > pDet->hold_frames_count)
+                            keep = pDet->hold_frames_count;
+                        pDet->silence_saved_frames += (pDet->hold_frames_count - keep);
+                        pDet->hold_frames_count = keep;
+                        pDet->hold_frames_read_pos = 0;
+                        pDet->state = MAP_SILENCE_STATE_SKIPPING;
+
+                        /* Break inner loop to flush padding frames on next outer iteration */
+                        break;
+                    }
+                }
+                else
+                {
+                    /* Voice resumed before min_silence_frames: flush held frames */
+                    pDet->state = MAP_SILENCE_STATE_VOICE;
+                    pDet->hold_frames_read_pos = 0;
+                    /* Rewind current frame so it will be processed after held frames are flushed */
+                    pDS->rawBufferReadPos--;
+                    break;
+                }
+            }
+            else if (pDet->state == MAP_SILENCE_STATE_SKIPPING)
+            {
+                if (is_silent_exit)
+                {
+                    /* Discard frame */
+                    pDet->silence_saved_frames++;
+                }
+                else
+                {
+                    /* Voice resumed! */
+                    pDet->state = MAP_SILENCE_STATE_VOICE;
+                    pDet->crossfade_remaining = pDet->crossfade_length;
+
+                    if (pDet->crossfade_remaining > 0 && pDet->crossfade_length > 0)
+                    {
+                        float alpha = 1.0f - ((float)pDet->crossfade_remaining / (float)pDet->crossfade_length);
+                        for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        {
+                            frame[c] = (1.0f - alpha) * pDet->last_sample[c] + alpha * frame[c];
+                        }
+                        pDet->crossfade_remaining--;
+                    }
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                    {
+                        pDet->last_sample[c] = frame[c];
+                    }
+                    if (pFramesOut != NULL)
+                    {
+                        memcpy(pFramesOut + totalRead * channels, frame, channels * sizeof(float));
+                    }
+                    totalRead++;
+                }
+            }
+        }
+    }
+
+    if (pFramesRead != NULL)
+    {
+        *pFramesRead = totalRead;
+    }
+    return MA_SUCCESS;
+}
 
 static ma_result map_time_stretch_ds_read(
     ma_data_source *pDataSource,
@@ -673,9 +1093,9 @@ static ma_result map_time_stretch_ds_read(
         {
             ma_uint64 framesToRead = needed;
             ma_uint64 directRead = 0;
-            ma_result res = ma_decoder_read_pcm_frames(
-                &pDS->decoder,
-                pOut ? (pOut + totalFramesOut * pDS->channels) : NULL,
+            ma_result res = map_time_stretch_ds_read_filtered(
+                pDS,
+                pOut ? (pOut + totalFramesOut * pDS->channels) : discardBuf,
                 framesToRead,
                 &directRead);
             totalFramesOut += directRead;
@@ -687,10 +1107,10 @@ static ma_result map_time_stretch_ds_read(
             continue;
         }
 
-        /* Pull from decoder and write to sonic */
+        /* Pull from decoder through silence filter and write to sonic */
         ma_uint64 framesFromDecoder = 0;
-        ma_result readRes = ma_decoder_read_pcm_frames(
-            &pDS->decoder,
+        ma_result readRes = map_time_stretch_ds_read_filtered(
+            pDS,
             pDS->scratchBuffer,
             maxChunkFrames,
             &framesFromDecoder);
@@ -738,6 +1158,10 @@ static ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64
         return MA_INVALID_ARGS;
 
     ma_spinlock_lock(&pDS->lock);
+    pDS->rawBufferCount = 0;
+    pDS->rawBufferReadPos = 0;
+    map_silence_detector_reset(&pDS->silence, frameIndex == 0);
+
     if (ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &total_frames) == MA_SUCCESS && total_frames > 0)
     {
         if (frameIndex >= total_frames)
@@ -900,12 +1324,28 @@ static ma_result map_time_stretch_ds_init(
         return MA_OUT_OF_MEMORY;
     }
 
+    pDS->rawBufferCapacity = 1024 * targetChannels;
+    pDS->rawBuffer = (float *)malloc(pDS->rawBufferCapacity * sizeof(float));
+    if (pDS->rawBuffer == NULL)
+    {
+        free(pDS->scratchBuffer);
+        sonicDestroyStream(pDS->sonic);
+        ma_decoder_uninit(&pDS->decoder);
+        return MA_OUT_OF_MEMORY;
+    }
+    pDS->rawBufferCount = 0;
+    pDS->rawBufferReadPos = 0;
+
+    map_silence_detector_init(&pDS->silence, targetChannels, targetSampleRate);
+
     baseConfig = ma_data_source_config_init();
     baseConfig.vtable = &g_map_time_stretch_ds_vtable;
 
     result = ma_data_source_init(&baseConfig, &pDS->base);
     if (result != MA_SUCCESS)
     {
+        map_silence_detector_uninit(&pDS->silence);
+        free(pDS->rawBuffer);
         free(pDS->scratchBuffer);
         sonicDestroyStream(pDS->sonic);
         ma_decoder_uninit(&pDS->decoder);
@@ -933,6 +1373,12 @@ static void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
         free(pDS->scratchBuffer);
         pDS->scratchBuffer = NULL;
     }
+    if (pDS->rawBuffer != NULL)
+    {
+        free(pDS->rawBuffer);
+        pDS->rawBuffer = NULL;
+    }
+    map_silence_detector_uninit(&pDS->silence);
     pDS->is_initialized = MA_FALSE;
     ma_spinlock_unlock(&pDS->lock);
 
@@ -950,6 +1396,7 @@ struct miniaudio_player
     ma_bool32 has_resource_manager;
     uint32_t buffer_size;
     map_time_stretch_ds stretch_ds;
+    miniaudio_player_silence_config_t silence_config;
     ma_sound sound;
     ma_bool32 sound_loaded;
     ma_equalizer_node eq_node;
@@ -1377,6 +1824,10 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
     player->is_buffering = 0;
     player->sound_loaded = MA_FALSE;
     memset(&player->eq_params, 0, sizeof(player->eq_params));
+    player->silence_config.mode = MAP_SILENCE_MODE_DISABLED;
+    player->silence_config.threshold_db = -45.0f;
+    player->silence_config.min_silence_duration_ms = 300;
+    player->silence_config.padding_ms = 50;
 
     player->buffer_size = (config != NULL && config->period_size_in_frames > 0)
                               ? config->period_size_in_frames
@@ -1746,6 +2197,8 @@ MAP_API int32_t miniaudio_player_open_file(
         sonicSetSpeed(player->stretch_ds.sonic, player->rate);
         sonicSetPitch(player->stretch_ds.sonic, player->pitch);
     }
+    map_silence_detector_set_config(&player->stretch_ds.silence, &player->silence_config);
+    map_silence_detector_reset(&player->stretch_ds.silence, MA_TRUE);
     ma_spinlock_unlock(&player->stretch_ds.lock);
 
     sound_cfg = ma_sound_config_init();
@@ -3019,6 +3472,81 @@ MAP_API int32_t miniaudio_player_set_equalizer_band(
 }
 
 /* ========================================================================= */
+/* Silence Detection & Skipping Controls                                     */
+/* ========================================================================= */
+
+MAP_API int32_t miniaudio_player_set_silence_config(
+    miniaudio_player_t *player,
+    const miniaudio_player_silence_config_t *config)
+{
+    if (player == NULL || config == NULL)
+        return MAP_ERROR_INVALID_ARGS;
+
+    if (config->mode < MAP_SILENCE_MODE_DISABLED || config->mode > MAP_SILENCE_MODE_ALL)
+        return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+
+    player->silence_config = *config;
+    if (player->silence_config.threshold_db < -90.0f)
+        player->silence_config.threshold_db = -90.0f;
+    else if (player->silence_config.threshold_db > -10.0f)
+        player->silence_config.threshold_db = -10.0f;
+
+    if (player->silence_config.min_silence_duration_ms < 50)
+        player->silence_config.min_silence_duration_ms = 50;
+    else if (player->silence_config.min_silence_duration_ms > 5000)
+        player->silence_config.min_silence_duration_ms = 5000;
+
+    if (player->silence_config.padding_ms > player->silence_config.min_silence_duration_ms / 2)
+        player->silence_config.padding_ms = player->silence_config.min_silence_duration_ms / 2;
+
+    if (player->sound_loaded)
+    {
+        ma_spinlock_lock(&player->stretch_ds.lock);
+        map_silence_detector_set_config(&player->stretch_ds.silence, &player->silence_config);
+        ma_spinlock_unlock(&player->stretch_ds.lock);
+    }
+
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_get_silence_config(
+    const miniaudio_player_t *player,
+    miniaudio_player_silence_config_t *out_config)
+{
+    miniaudio_player_t *mut_player;
+    if (player == NULL || out_config == NULL)
+        return MAP_ERROR_INVALID_ARGS;
+
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    *out_config = mut_player->silence_config;
+    ma_mutex_unlock(&mut_player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int64_t miniaudio_player_get_silence_saved_ms(const miniaudio_player_t *player)
+{
+    miniaudio_player_t *mut_player;
+    int64_t saved_ms = 0;
+    if (player == NULL)
+        return 0;
+
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    if (mut_player->sound_loaded)
+    {
+        ma_spinlock_lock(&mut_player->stretch_ds.lock);
+        saved_ms = map_silence_detector_get_saved_ms(&mut_player->stretch_ds.silence);
+        ma_spinlock_unlock(&mut_player->stretch_ds.lock);
+    }
+    ma_mutex_unlock(&mut_player->lock);
+    return saved_ms;
+}
+
+/* ========================================================================= */
 /* State Snapshot & Query API                                                */
 /* ========================================================================= */
 
@@ -3043,6 +3571,17 @@ MAP_API int32_t miniaudio_player_get_status(
     out_status->bitrate = mut_player->bitrate;
     out_status->equalizer = mut_player->eq_params;
     out_status->is_buffering = mut_player->is_buffering;
+    out_status->silence = mut_player->silence_config;
+    if (mut_player->sound_loaded)
+    {
+        ma_spinlock_lock(&mut_player->stretch_ds.lock);
+        out_status->silence_saved_ms = map_silence_detector_get_saved_ms(&mut_player->stretch_ds.silence);
+        ma_spinlock_unlock(&mut_player->stretch_ds.lock);
+    }
+    else
+    {
+        out_status->silence_saved_ms = 0;
+    }
 
     if (mut_player->sound_loaded)
     {

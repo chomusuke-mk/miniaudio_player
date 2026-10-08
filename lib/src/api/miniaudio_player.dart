@@ -12,6 +12,7 @@ import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
 import 'replay_gain_result.dart';
+import 'silence_skip_config.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
 const List<String> miniAudioPlayerSupportedExtensions = [
@@ -415,6 +416,12 @@ class MiniaudioPlayer {
       StreamController<Equalizer>.broadcast();
   final StreamController<AudioDevice> _audioDeviceController =
       StreamController<AudioDevice>.broadcast();
+  final StreamController<bool> _skipSilenceController =
+      StreamController<bool>.broadcast();
+  final StreamController<SilenceSkipConfig> _silenceConfigController =
+      StreamController<SilenceSkipConfig>.broadcast();
+  final StreamController<Duration> _silenceSavedDurationController =
+      StreamController<Duration>.broadcast();
 
   // Cached synchronous state snapshot
   Duration _position = Duration.zero;
@@ -429,6 +436,8 @@ class MiniaudioPlayer {
   int _audioBitrate = 0;
   Equalizer _equalizer = Equalizer.flat;
   AudioDevice _audioDevice = _globalConfig.defaultAudioDevice;
+  SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
+  Duration _silenceSavedDuration = Duration.zero;
 
   // Previous status cache for change detection
   Duration? _lastPosition;
@@ -438,6 +447,8 @@ class MiniaudioPlayer {
   int? _lastState;
   int? _lastBitrate;
   AudioDevice? _lastDevice;
+  SilenceSkipConfig? _lastSilenceConfig;
+  Duration? _lastSilenceSavedDuration;
 
   bool _isDisposed = false;
 
@@ -539,6 +550,9 @@ class MiniaudioPlayer {
       audioBitrateController: _audioBitrateController,
       equalizerController: _equalizerController,
       audioDeviceController: _audioDeviceController,
+      skipSilenceController: _skipSilenceController,
+      silenceConfigController: _silenceConfigController,
+      silenceSavedDurationController: _silenceSavedDurationController,
     );
 
     state = PlayerState(
@@ -554,6 +568,10 @@ class MiniaudioPlayer {
       getAudioBitrate: () => _audioBitrate,
       getEqualizer: () => _equalizer,
       getAudioDevice: getAudioDevice,
+      getSkipSilence: () => _silenceConfig.mode != SilenceSkipMode.disabled,
+      getSilenceSkipMode: () => _silenceConfig.mode,
+      getSilenceConfig: () => _silenceConfig,
+      getSilenceSavedDuration: () => _silenceSavedDuration,
     );
   }
 
@@ -687,6 +705,8 @@ class MiniaudioPlayer {
     final state = status.state;
     final bitrate = status.bitrate;
     final device = status.device.toAudioDevice();
+    final silenceConfig = SilenceSkipConfig.fromNative(status.silence);
+    final silenceSavedDuration = Duration(milliseconds: status.silence_saved_ms);
 
     final bool deviceChanged = _lastDevice == null ||
         _lastDevice!.id != device.id ||
@@ -772,6 +792,31 @@ class MiniaudioPlayer {
       }
     }
 
+    final bool silenceConfigChanged =
+        _lastSilenceConfig == null || _lastSilenceConfig != silenceConfig;
+    if (silenceConfigChanged || force) {
+      final wasEnabled = _lastSilenceConfig?.mode != SilenceSkipMode.disabled;
+      final isEnabled = silenceConfig.mode != SilenceSkipMode.disabled;
+      _lastSilenceConfig = silenceConfig;
+      _silenceConfig = silenceConfig;
+
+      if ((wasEnabled != isEnabled || force) &&
+          !_skipSilenceController.isClosed) {
+        _skipSilenceController.add(isEnabled);
+      }
+      if (!_silenceConfigController.isClosed) {
+        _silenceConfigController.add(silenceConfig);
+      }
+    }
+
+    if (_lastSilenceSavedDuration != silenceSavedDuration || force) {
+      _lastSilenceSavedDuration = silenceSavedDuration;
+      _silenceSavedDuration = silenceSavedDuration;
+      if (!_silenceSavedDurationController.isClosed) {
+        _silenceSavedDurationController.add(silenceSavedDuration);
+      }
+    }
+
     return true;
   }
 
@@ -824,6 +869,21 @@ class MiniaudioPlayer {
     }
   }
 
+  void notifySilenceConfigChanged(SilenceSkipConfig config) {
+    if (_isDisposed) return;
+    final wasEnabled = _silenceConfig.mode != SilenceSkipMode.disabled;
+    final isEnabled = config.mode != SilenceSkipMode.disabled;
+    _silenceConfig = config;
+    _lastSilenceConfig = config;
+
+    if (wasEnabled != isEnabled && !_skipSilenceController.isClosed) {
+      _skipSilenceController.add(isEnabled);
+    }
+    if (!_silenceConfigController.isClosed) {
+      _silenceConfigController.add(config);
+    }
+  }
+
   /// Sets the active audio output device.
   Future<bool> setDevice(AudioDevice device) => action.setDevice(device);
 
@@ -869,5 +929,8 @@ class MiniaudioPlayer {
     await _audioBitrateController.close();
     await _equalizerController.close();
     await _audioDeviceController.close();
+    await _skipSilenceController.close();
+    await _silenceConfigController.close();
+    await _silenceSavedDurationController.close();
   }
 }

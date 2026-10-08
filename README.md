@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-android%20|%20ios%20|%20macos%20|%20windows%20|%20linux-blue.svg)](https://pub.dev/packages/miniaudio_player)
 [![Dart FFI](https://img.shields.io/badge/Dart-FFI%20Native%20Assets-0175C2.svg?logo=dart)](https://dart.dev/interop/c-interop)
-[![Tests](https://img.shields.io/badge/tests-131%20passing-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen.svg)](#)
 
 An **ultra-low-resource, high-performance cross-platform audio player** for Flutter and Dart. Powered by the industry-proven [miniaudio](https://miniaud.io/) C engine, [Sonic DSP](https://github.com/waywardgeek/sonic), and **Dart Native Assets** with 100% pure FFI bindings.
 
@@ -26,6 +26,7 @@ Engineered from the ground up for high fidelity, sub-millisecond command latency
 - 🔀 **100% Pure FFI & Zero-Isolate Architecture**: Commands execute directly via FFI in sub-microseconds without message-passing latency or Dart VM isolate memory bloat. Heavy audio decoding, DSP, and hardware streaming run concurrently on native OS audio threads.
 - 🎛️ **10-Band Parametric Equalizer**: Native biquad filtering with low-shelf, peaking, and high-shelf bands. Includes instant acoustic presets (_Rock_, _Pop_, _Jazz_, _Classical_, _Bass Boost_, _Flat_).
 - 🚀 **High-Definition Pitch & Speed (Sonic DSP)**: Real-time time-stretching and independent pitch shifting with exceptional clarity and no phase distortion.
+- 🔇 **Skip Silence & Edge Trimming**: Native C real-time silence detector. Eliminates lead-in/lead-out track silence for seamless music playback and truncates speech pauses for podcasts and audiobooks with anti-click crossfading and cumulative saved time tracking.
 - 🎧 **Dynamic Audio Device Routing**: Real-time switching between audio outputs (speakers, headphones, Bluetooth) with automatic, crash-free recovery fallbacks.
 - 📊 **ReplayGain & ITU-R BS.1770-4 Loudness Analysis**: Fast, non-blocking offline loudness and true sample peak calculation running on background native OS threads. Provides recommended gain (dB), peak, integrated LUFS, and anti-clipping defense volume scaling without spawning Dart Isolates or freezing the UI.
 - 📦 **Extensive Audio Codec Support**: Built-in native decoding for MP3, WAV, FLAC, OGG, Opus, AAC, M4A (AAC & ALAC), AIFF, W64, and more without external system dependencies.
@@ -396,6 +397,52 @@ await player.action.play();
 
 > [!TIP]
 > **Zero Isolate Overhead & Ultra-Low Memory**: The analyzer operates in streaming 32 KB blocks residing in CPU L1/L2 cache ($< 100\text{ KB}$ constant RAM footprint). It processes tracks at up to 700x+ real-time speed without spawning heavy Dart Isolates or copying memory buffers.
+
+---
+
+### 8. Skip Silence & Dynamic Pause Truncation
+
+Eliminate dead time and pauses in real time without audio glitches. The detector runs in native C upstream of time-stretching and equalization, supporting track edge trimming (lead-in/lead-out) and in-between continuous pause skipping:
+
+```dart
+// 1. Quick enable with standard defaults (-45 dB threshold, 300ms min silence, 50ms padding)
+await player.action.setSkipSilence(true);
+
+// 2. Configure for podcasts or audiobooks (skips pauses in the middle down to 50ms padding)
+await player.action.setSilenceConfig(
+  const SilenceSkipConfig.continuous(
+    thresholdDb: -45.0,
+    minSilenceDuration: Duration(milliseconds: 300),
+    padding: Duration(milliseconds: 50),
+  ),
+);
+
+// 3. Or configure for music albums / playlists (trims start & end silence only)
+await player.action.setSilenceConfig(
+  const SilenceSkipConfig.trimEdges(
+    thresholdDb: -50.0,
+  ),
+);
+
+// 4. Combined mode: trims edges AND skips continuous pauses
+await player.action.setSilenceConfig(const SilenceSkipConfig.all());
+
+// 5. Query saved time synchronously or listen reactively:
+print('Total time saved: ${player.state.silenceSavedDuration.inSeconds}s');
+
+player.stream.silenceSavedDuration.listen((saved) {
+  print('Saved duration updated: ${saved.inMilliseconds} ms');
+});
+```
+
+#### Silence Skip Modes (`SilenceSkipMode`)
+
+| Mode | Behavior | Best Used For |
+| :--- | :------- | :------------ |
+| `disabled` | Native detection completely bypassed with zero CPU cycles. | Default playback |
+| `trimEdges` | Discards silence at the beginning of the track immediately and trims trailing silence at EOF. | Music playlists, gapless albums |
+| `continuous` | Detects speech/vocal pauses exceeding `minSilenceDuration` and skips them down to `padding`. | Podcasts, audiobooks, lectures, voice memos |
+| `all` | Combines edge trimming and continuous pause skipping simultaneously. | Spoken-word media, recorded meetings |
 
 ---
 
