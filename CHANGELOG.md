@@ -34,7 +34,7 @@
 
 - **Hardware BPF Filter Bank in Native C Engine**:
   - Implemented a 10-band Direct Form II Transposed biquad bandpass filter bank directly embedded in `ma_equalizer_node` (`src/miniaudio_player.c`).
-  - Centered at the 10 exact equalizer frequencies (`60Hz`, `170Hz`, `310Hz`, `600Hz`, `1kHz`, `3kHz`, `6kHz`, `12kHz`, `14kHz`, `16kHz`).
+  - Centered at the 10 exact equalizer frequencies (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`).
   - Ultra-low CPU footprint (< 0.5% active, 0% idle/unsubscribed).
   - Built-in perceptual frequency compensation curve and smooth exponential decay (`0.82f`) for fluid 30-60 fps visual rendering.
   - Stereo VU meters (Left and Right channels), RMS amplitude, and peak sample tracking.
@@ -43,7 +43,7 @@
   - Automatically deactivates the native filter bank when listeners unsubscribe, keeping idle CPU overhead at 0%.
   - Dynamically accelerates polling to ~33 ms (~30 fps) during active visualizer streaming and returns to 100 ms when unsubscribed.
 - **API & Dart Models**:
-  - Model `VisualizerData`: `bands` (10 normalized amplitudes 0.0 - 1.0), `rms`, `peak`, `left`, `right`, plus convenient frequency getters (`hz60` through `hz16k`).
+  - Model `VisualizerData`: `bands` (10 normalized amplitudes 0.0 - 1.0), `rms`, `peak`, `left`, `right`, plus convenient frequency getters (`hz31` through `hz16k`).
   - Synchronous state: `player.state.visualizer`, `player.state.visualizerEnabled`.
   - Reactive streams: `player.stream.visualizer`, `player.stream.visualizerEnabled`.
   - Action: `player.action.setVisualizerEnabled(bool)` for manual override.

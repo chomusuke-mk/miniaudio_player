@@ -1029,15 +1029,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _buildVisualizerCard() {
     final bandLabels = [
-      '60Hz',
-      '170Hz',
-      '310Hz',
-      '600Hz',
+      '31Hz',
+      '63Hz',
+      '125Hz',
+      '250Hz',
+      '500Hz',
       '1kHz',
-      '3kHz',
-      '6kHz',
-      '12kHz',
-      '14kHz',
+      '2kHz',
+      '4kHz',
+      '8kHz',
       '16kHz',
     ];
 

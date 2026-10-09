@@ -394,7 +394,7 @@ static void ma_equalizer_node_process_pcm_frames(
 
     ma_spinlock_lock(&pEq->lock);
 
-    /* Band 0: Low-shelf filter at 60 Hz */
+    /* Band 0: Low-shelf filter at 31 Hz */
     ma_loshelf2_process_pcm_frames(&pEq->loshelf, ppFramesOut[0], ppFramesIn[0], frameCount);
 
     /* Bands 1..8: 8x Peaking EQ filters in-place on ppFramesOut[0] */

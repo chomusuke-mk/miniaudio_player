@@ -258,13 +258,6 @@ external int miniaudio_player_set_equalizer(
   ffi.Pointer<miniaudio_player_equalizer_params_t> equalizer,
 );
 
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
-    isLeaf: true)
-external int miniaudio_player_set_equalizer_balance(
-  ffi.Pointer<miniaudio_player_t> player,
-  double balance,
-);
-
 @ffi.Native<
     ffi.Int32 Function(
         ffi.Pointer<miniaudio_player_t>, ffi.Uint32, ffi.Float)>(isLeaf: true)
@@ -272,13 +265,6 @@ external int miniaudio_player_set_equalizer_band(
   ffi.Pointer<miniaudio_player_t> player,
   int band_index,
   double gain_db,
-);
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
-    isLeaf: true)
-external int miniaudio_player_set_equalizer_preamp(
-  ffi.Pointer<miniaudio_player_t> player,
-  double preamp_db,
 );
 
 @ffi.Native<ffi.Void Function(ffi.Int32)>(isLeaf: true)
@@ -548,14 +534,6 @@ final class miniaudio_player_equalizer_params_t extends ffi.Struct {
   @ffi.Float()
   external double hz16k;
 
-  /// < Global preamp gain in dB (-24.0 to +24.0 dB, default: 0.0 dB)
-  @ffi.Float()
-  external double preamp;
-
-  /// < Stereo balance (-1.0 = left, 0.0 = center, +1.0 = right, default: 0.0)
-  @ffi.Float()
-  external double balance;
-
   static ffi.Pointer<miniaudio_player_equalizer_params_t> $allocate(
     ffi.Allocator $allocator, {
     required double hz31,
@@ -568,8 +546,6 @@ final class miniaudio_player_equalizer_params_t extends ffi.Struct {
     required double hz4k,
     required double hz8k,
     required double hz16k,
-    required double preamp,
-    required double balance,
   }) =>
       $allocator<miniaudio_player_equalizer_params_t>()
         ..ref.hz31 = hz31
@@ -581,9 +557,7 @@ final class miniaudio_player_equalizer_params_t extends ffi.Struct {
         ..ref.hz2k = hz2k
         ..ref.hz4k = hz4k
         ..ref.hz8k = hz8k
-        ..ref.hz16k = hz16k
-        ..ref.preamp = preamp
-        ..ref.balance = balance;
+        ..ref.hz16k = hz16k;
 }
 
 /// ========================================================================= */

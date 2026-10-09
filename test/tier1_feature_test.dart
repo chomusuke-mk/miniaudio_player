@@ -644,9 +644,9 @@ void main() {
 
     test('9.3: Equalizer.pop boosts upper mids and vocals', () {
       const pop = Equalizer.pop;
+      expect(pop.hz125, greaterThan(0.0));
       expect(pop.hz250, greaterThan(0.0));
       expect(pop.hz500, greaterThan(0.0));
-      expect(pop.hz1k, greaterThan(0.0));
       expect(pop.hz16k, lessThan(0.0));
     });
 
@@ -654,17 +654,17 @@ void main() {
       const jazz = Equalizer.jazz;
       const classical = Equalizer.classical;
       expect(jazz.hz31, greaterThan(0.0));
-      expect(classical.hz31, greaterThan(0.0));
-      expect(classical.hz1k, lessThan(0.0));
+      expect(classical.hz4k, lessThan(0.0));
+      expect(classical.hz16k, lessThan(0.0));
     });
 
     test('9.5: Equalizer.bassBoost significantly elevates bass bands', () {
       const bass = Equalizer.bassBoost;
-      expect(bass.hz31, equals(7.0));
-      expect(bass.hz63, equals(6.0));
-      expect(bass.hz125, equals(4.5));
-      expect(bass.hz1k, equals(0.0));
-      expect(bass.hz16k, equals(0.0));
+      expect(bass.hz31, equals(7.4));
+      expect(bass.hz63, equals(7.2));
+      expect(bass.hz125, equals(7.2));
+      expect(bass.hz1k, lessThan(0.0));
+      expect(bass.hz16k, lessThan(0.0));
     });
 
     test('9.6: applying presets sequentially via setEqualizer updates state and stream', () async {

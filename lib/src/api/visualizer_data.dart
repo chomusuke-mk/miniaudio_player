@@ -5,16 +5,16 @@
 class VisualizerData {
   /// Array of 10 normalized frequency band levels, scaled between `0.0` (silent) and `1.0` (maximum).
   ///
-  /// Index mapping:
-  /// - `0`: 60 Hz (Sub-bass)
-  /// - `1`: 170 Hz (Bass)
-  /// - `2`: 310 Hz (Low-mids)
-  /// - `3`: 600 Hz (Midrange)
-  /// - `4`: 1 kHz (Center-mids)
-  /// - `5`: 3 kHz (High-mids / vocals)
-  /// - `6`: 6 kHz (Presence)
-  /// - `7`: 12 kHz (Brilliance)
-  /// - `8`: 14 kHz (Treble)
+  /// Index mapping (ISO 266 standard):
+  /// - `0`: 31 Hz (Sub-bass)
+  /// - `1`: 63 Hz (Sub-bass / Bass)
+  /// - `2`: 125 Hz (Bass)
+  /// - `3`: 250 Hz (Low-mids)
+  /// - `4`: 500 Hz (Midrange)
+  /// - `5`: 1 kHz (Center-mids)
+  /// - `6`: 2 kHz (High-mids / vocals)
+  /// - `7`: 4 kHz (Presence)
+  /// - `8`: 8 kHz (Brilliance)
   /// - `9`: 16 kHz (Air / high-shelf)
   final List<double> bands;
 
