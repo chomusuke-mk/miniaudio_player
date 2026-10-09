@@ -119,6 +119,26 @@ extern "C"
         float right;     /**< Right channel level (0.0 to 1.0) */
     } miniaudio_player_visualizer_data_t;
 
+    /* ========================================================================= */
+    /* DSP Effects & Normalization Structures                                    */
+    /* ========================================================================= */
+
+    typedef struct
+    {
+        float gain_db;            /**< Track gain in dB */
+        float peak;               /**< Track peak (1.0 = 0 dBFS), 0.0 if unknown */
+        float preamp_db;          /**< Additional preamp gain in dB */
+        int32_t prevent_clipping; /**< 1 to cap gain if boosted peak > 1.0 */
+        int32_t enabled;          /**< 1 if ReplayGain is active, 0 for bypass */
+    } miniaudio_player_replay_gain_config_t;
+
+    typedef enum
+    {
+        MAP_CROSSFEED_OFF          = 0,
+        MAP_CROSSFEED_MOFFAT_BAUER = 1,
+        MAP_CROSSFEED_CHU_MOY      = 2
+    } miniaudio_player_crossfeed_mode_t;
+
     typedef struct
     {
         int64_t position_ms;                           /**< Current position in milliseconds */
@@ -137,6 +157,14 @@ extern "C"
         int64_t silence_saved_ms;                      /**< Cumulative duration of skipped silence in ms */
         int32_t visualizer_enabled;                     /**< 1 if real-time visualizer enabled, 0 otherwise */
         miniaudio_player_visualizer_data_t visualizer;  /**< Real-time 10-band visualizer data */
+        float preamp_db;                               /**< Standalone preamp in dB */
+        miniaudio_player_replay_gain_config_t replay_gain; /**< ReplayGain active configuration */
+        float balance;                                 /**< Stereo balance / pan (-1.0 to +1.0) */
+        int32_t mono_enabled;                          /**< 1 if mono downmix enabled, 0 otherwise */
+        int32_t crossfeed_mode;                        /**< miniaudio_player_crossfeed_mode_t */
+        int32_t spatializer_enabled;                   /**< 1 if stereo widener enabled, 0 otherwise */
+        float spatializer_width;                       /**< Stereo widener width factor (1.0 to 2.0) */
+        int32_t limiter_enabled;                       /**< 1 if True-Peak limiter enabled, 0 otherwise */
     } miniaudio_player_status_t;
 
     /* ========================================================================= */
@@ -263,6 +291,45 @@ extern "C"
         miniaudio_player_t *player,
         uint32_t band_index,
         float gain_db);
+
+    /* ========================================================================= */
+    /* Advanced DSP Controls (ReplayGain, Preamp, Spatial, Balance, Limiter)     */
+    /* ========================================================================= */
+
+    MAP_API int32_t miniaudio_player_set_replay_gain(
+        miniaudio_player_t *player,
+        float gain_db,
+        float peak,
+        float preamp_db,
+        int32_t prevent_clipping);
+
+    MAP_API int32_t miniaudio_player_clear_replay_gain(
+        miniaudio_player_t *player);
+
+    MAP_API int32_t miniaudio_player_set_preamp(
+        miniaudio_player_t *player,
+        float preamp_db);
+
+    MAP_API int32_t miniaudio_player_set_balance(
+        miniaudio_player_t *player,
+        float pan);
+
+    MAP_API int32_t miniaudio_player_set_mono(
+        miniaudio_player_t *player,
+        int32_t enabled);
+
+    MAP_API int32_t miniaudio_player_set_crossfeed(
+        miniaudio_player_t *player,
+        int32_t mode);
+
+    MAP_API int32_t miniaudio_player_set_spatializer(
+        miniaudio_player_t *player,
+        int32_t enabled,
+        float width);
+
+    MAP_API int32_t miniaudio_player_set_limiter(
+        miniaudio_player_t *player,
+        int32_t enabled);
 
     /* ========================================================================= */
     /* Silence Detection & Skipping Controls                                     */

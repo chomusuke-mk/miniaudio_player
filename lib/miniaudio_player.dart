@@ -11,4 +11,5 @@ export 'src/api/player_stream.dart';
 export 'src/api/audio_analysis_result.dart';
 export 'src/api/visualizer_data.dart';
 export 'src/api/silence_skip_config.dart';
+export 'src/api/dsp_config.dart';
 export 'src/equalizer.dart';

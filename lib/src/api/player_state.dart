@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'audio_device.dart';
+import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
@@ -25,6 +26,14 @@ class PlayerState {
   final Duration Function() _getSilenceSavedDuration;
   final VisualizerData Function() _getVisualizer;
   final bool Function() _getVisualizerEnabled;
+  final double Function() _getPreamp;
+  final ReplayGainConfig Function() _getReplayGain;
+  final double Function() _getBalance;
+  final bool Function() _getMono;
+  final CrossfeedMode Function() _getCrossfeed;
+  final bool Function() _getSpatializerEnabled;
+  final double Function() _getSpatializerWidth;
+  final bool Function() _getLimiterEnabled;
 
   PlayerState({
     required Duration Function() getPosition,
@@ -45,6 +54,14 @@ class PlayerState {
     required Duration Function() getSilenceSavedDuration,
     required VisualizerData Function() getVisualizer,
     required bool Function() getVisualizerEnabled,
+    required double Function() getPreamp,
+    required ReplayGainConfig Function() getReplayGain,
+    required double Function() getBalance,
+    required bool Function() getMono,
+    required CrossfeedMode Function() getCrossfeed,
+    required bool Function() getSpatializerEnabled,
+    required double Function() getSpatializerWidth,
+    required bool Function() getLimiterEnabled,
   })  : _getPosition = getPosition,
         _getDuration = getDuration,
         _getPlaying = getPlaying,
@@ -62,7 +79,15 @@ class PlayerState {
         _getSilenceConfig = getSilenceConfig,
         _getSilenceSavedDuration = getSilenceSavedDuration,
         _getVisualizer = getVisualizer,
-        _getVisualizerEnabled = getVisualizerEnabled;
+        _getVisualizerEnabled = getVisualizerEnabled,
+        _getPreamp = getPreamp,
+        _getReplayGain = getReplayGain,
+        _getBalance = getBalance,
+        _getMono = getMono,
+        _getCrossfeed = getCrossfeed,
+        _getSpatializerEnabled = getSpatializerEnabled,
+        _getSpatializerWidth = getSpatializerWidth,
+        _getLimiterEnabled = getLimiterEnabled;
 
   /// Current playback position.
   Duration get position => _getPosition();
@@ -123,4 +148,31 @@ class PlayerState {
 
   /// Whether real-time visualizer DSP analysis is currently active.
   bool get visualizerEnabled => _getVisualizerEnabled();
+
+  /// Current manual preamp gain in decibels applied prior to equalizer (default: 0.0 dB).
+  double get preamp => _getPreamp();
+
+  /// Alias for [preamp].
+  double get preampDb => _getPreamp();
+
+  /// Current ReplayGain / EBU R128 track normalization configuration.
+  ReplayGainConfig get replayGain => _getReplayGain();
+
+  /// Current stereo balance / pan (-1.0 for left, 0.0 for center, +1.0 for right).
+  double get balance => _getBalance();
+
+  /// Whether mono downmix is currently active.
+  bool get mono => _getMono();
+
+  /// Current headphone binaural crossfeed (Bauer bs2b) mode.
+  CrossfeedMode get crossfeed => _getCrossfeed();
+
+  /// Whether stereo widener / spatializer is currently active.
+  bool get spatializerEnabled => _getSpatializerEnabled();
+
+  /// Current stereo widener width factor (1.0 to 2.0).
+  double get spatializerWidth => _getSpatializerWidth();
+
+  /// Whether the True-Peak soft-knee output limiter protector is active.
+  bool get limiterEnabled => _getLimiterEnabled();
 }

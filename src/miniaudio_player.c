@@ -354,6 +354,93 @@ static void map_biquad_bpf_init(map_biquad_df2t_t *filter, double f0, double fs,
     filter->s2 = 0.0f;
 }
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#define MAP_BS2B_DEFAULT_CLEVEL ((uint32_t)700 | ((uint32_t)45 << 16)) /* Moffat-Bauer: 700 Hz, 4.5 dB */
+#define MAP_BS2B_CMOY_CLEVEL    ((uint32_t)700 | ((uint32_t)60 << 16)) /* Chu Moy: 700 Hz, 6.0 dB */
+
+typedef struct
+{
+    uint32_t level;
+    uint32_t srate;
+    double a0_lo, b1_lo;
+    double a0_hi, a1_hi, b1_hi;
+    double gain;
+    struct { double asis[2], lo[2], hi[2]; } lfs;
+} map_bs2b_t;
+
+static void map_bs2b_init(map_bs2b_t *bs2b, uint32_t srate, uint32_t level)
+{
+    double Fc_lo, Fc_hi, G_lo, G_hi, GB_lo, GB_hi, lev_db, x;
+
+    if (bs2b == NULL) return;
+    memset(bs2b, 0, sizeof(*bs2b));
+
+    if (srate < 2000 || srate > 384000) srate = 44100;
+    bs2b->srate = srate;
+    bs2b->level = level;
+
+    Fc_lo = (double)(level & 0xffff);
+    lev_db = (double)((level & 0xffff0000) >> 16);
+
+    if (Fc_lo < 300.0 || Fc_lo > 2000.0 || lev_db < 10.0 || lev_db > 150.0)
+    {
+        Fc_lo = 700.0;
+        lev_db = 45.0;
+    }
+
+    lev_db /= 10.0; /* dB */
+
+    GB_lo = lev_db * (-5.0 / 6.0) - 3.0;
+    GB_hi = lev_db / 6.0 - 3.0;
+
+    G_lo = pow(10.0, GB_lo / 20.0);
+    G_hi = 1.0 - pow(10.0, GB_hi / 20.0);
+    Fc_hi = Fc_lo * pow(2.0, (GB_lo - 20.0 * log10(G_hi)) / 12.0);
+
+    x = exp(-2.0 * M_PI * Fc_lo / (double)srate);
+    bs2b->b1_lo = x;
+    bs2b->a0_lo = G_lo * (1.0 - x);
+
+    x = exp(-2.0 * M_PI * Fc_hi / (double)srate);
+    bs2b->b1_hi = x;
+    bs2b->a0_hi = 1.0 - G_hi * (1.0 - x);
+    bs2b->a1_hi = -x;
+
+    bs2b->gain = 1.0 / (1.0 - G_hi + G_lo);
+}
+
+static void map_bs2b_process_frames(map_bs2b_t *bs2b, float *pSamples, ma_uint32 frameCount, ma_uint32 channels)
+{
+    ma_uint32 f;
+    if (bs2b == NULL || pSamples == NULL || channels < 2) return;
+
+    for (f = 0; f < frameCount; f++)
+    {
+        double l = (double)pSamples[f * channels];
+        double r = (double)pSamples[f * channels + 1];
+
+        /* Lowpass filter */
+        bs2b->lfs.lo[0] = bs2b->a0_lo * l + bs2b->b1_lo * bs2b->lfs.lo[0];
+        bs2b->lfs.lo[1] = bs2b->a0_lo * r + bs2b->b1_lo * bs2b->lfs.lo[1];
+
+        /* Highboost filter */
+        bs2b->lfs.hi[0] = bs2b->a0_hi * l + bs2b->a1_hi * bs2b->lfs.asis[0] + bs2b->b1_hi * bs2b->lfs.hi[0];
+        bs2b->lfs.hi[1] = bs2b->a0_hi * r + bs2b->a1_hi * bs2b->lfs.asis[1] + bs2b->b1_hi * bs2b->lfs.hi[1];
+        bs2b->lfs.asis[0] = l;
+        bs2b->lfs.asis[1] = r;
+
+        /* Crossfeed */
+        double out_l = (bs2b->lfs.hi[0] + bs2b->lfs.lo[1]) * bs2b->gain;
+        double out_r = (bs2b->lfs.hi[1] + bs2b->lfs.lo[0]) * bs2b->gain;
+
+        pSamples[f * channels] = (float)out_l;
+        pSamples[f * channels + 1] = (float)out_r;
+    }
+}
+
 typedef struct
 {
     ma_node_base baseNode;
@@ -366,7 +453,48 @@ typedef struct
     int32_t visualizer_enabled;
     map_biquad_df2t_t vis_bpf[10];
     miniaudio_player_visualizer_data_t visualizer_data;
+
+    /* DSP Chain Extensions */
+    float preamp_db;
+    miniaudio_player_replay_gain_config_t rg_config;
+    float current_preamp_linear;
+    float target_preamp_linear;
+
+    float balance;
+    float current_balance;
+
+    int32_t mono_enabled;
+
+    int32_t crossfeed_mode;
+    map_bs2b_t bs2b;
+
+    int32_t spatializer_enabled;
+    float spatializer_width;
+
+    float current_volume;
+    float target_volume;
+
+    int32_t limiter_enabled;
 } ma_equalizer_node;
+
+static float map_calculate_effective_preamp(const miniaudio_player_replay_gain_config_t *rg, float standalone_preamp_db)
+{
+    float total_db = standalone_preamp_db;
+    if (rg != NULL && rg->enabled)
+    {
+        total_db += rg->gain_db + rg->preamp_db;
+    }
+    float linear = powf(10.0f, total_db / 20.0f);
+    if (rg != NULL && rg->enabled && rg->prevent_clipping && rg->peak > 0.0001f)
+    {
+        if (linear * rg->peak > 1.0f)
+        {
+            linear = 1.0f / rg->peak;
+        }
+    }
+    if (linear < 0.0f) linear = 0.0f;
+    return linear;
+}
 
 static void ma_equalizer_node_process_pcm_frames(
     ma_node *pNode,
@@ -394,8 +522,30 @@ static void ma_equalizer_node_process_pcm_frames(
 
     ma_spinlock_lock(&pEq->lock);
 
+    /* 1. Preamp & ReplayGain: Transfer from ppFramesIn to ppFramesOut with gain smoothing */
+    {
+        float target_linear = map_calculate_effective_preamp(&pEq->rg_config, pEq->preamp_db);
+        float current_linear = pEq->current_preamp_linear;
+        const float *pIn = ppFramesIn[0];
+        float *pOut = ppFramesOut[0];
+        ma_uint32 ch = pEq->channels;
+        ma_uint32 f, c;
+
+        for (f = 0; f < frameCount; f++)
+        {
+            current_linear += (target_linear - current_linear) * 0.005f;
+            for (c = 0; c < ch; c++)
+            {
+                pOut[f * ch + c] = pIn[f * ch + c] * current_linear;
+            }
+        }
+        pEq->current_preamp_linear = current_linear;
+        pEq->target_preamp_linear = target_linear;
+    }
+
+    /* 2. Equalizer (10 Bands) in-place on ppFramesOut[0] */
     /* Band 0: Low-shelf filter at 31 Hz */
-    ma_loshelf2_process_pcm_frames(&pEq->loshelf, ppFramesOut[0], ppFramesIn[0], frameCount);
+    ma_loshelf2_process_pcm_frames(&pEq->loshelf, ppFramesOut[0], ppFramesOut[0], frameCount);
 
     /* Bands 1..8: 8x Peaking EQ filters in-place on ppFramesOut[0] */
     for (i = 0; i < 8; i++)
@@ -406,34 +556,73 @@ static void ma_equalizer_node_process_pcm_frames(
     /* Band 9: High-shelf filter at 16 kHz in-place on ppFramesOut[0] */
     ma_hishelf2_process_pcm_frames(&pEq->hishelf, ppFramesOut[0], ppFramesOut[0], frameCount);
 
-    /* Studio-grade soft-saturation curve:
-       Keeps audio dynamic and punchy, preventing harsh digital square-wave clipping
-       at the DAC when EQ boosts are active.
-       Linear (y = x) for |x| <= 0.80f (-1.94 dBFS), smooth rational saturation above 0.80f. */
+    /* 3. Spatial Processing (Crossfeed or Spatializer) */
+    if (pEq->channels >= 2)
     {
-        ma_uint32 totalSamples = frameCount * pEq->channels;
-        float *pSamples = ppFramesOut[0];
-        ma_uint32 s;
-        const float threshold = 0.80f;
-        const float range = 1.0f - threshold; /* 0.20f */
-        const float invRange = 1.0f / range;  /* 5.0f */
-
-        for (s = 0; s < totalSamples; s++)
+        if (pEq->crossfeed_mode != MAP_CROSSFEED_OFF)
         {
-            float x = pSamples[s];
-            if (x > threshold)
+            map_bs2b_process_frames(&pEq->bs2b, ppFramesOut[0], frameCount, pEq->channels);
+        }
+        else if (pEq->spatializer_enabled && pEq->spatializer_width > 1.0f)
+        {
+            ma_uint32 f;
+            float w = pEq->spatializer_width;
+            float *pSamples = ppFramesOut[0];
+            ma_uint32 ch = pEq->channels;
+            for (f = 0; f < frameCount; f++)
             {
-                float excess = (x - threshold) * invRange;
-                pSamples[s] = threshold + range * (excess / (1.0f + excess));
-            }
-            else if (x < -threshold)
-            {
-                float excess = (-x - threshold) * invRange;
-                pSamples[s] = -(threshold + range * (excess / (1.0f + excess)));
+                float l = pSamples[f * ch];
+                float r = pSamples[f * ch + 1];
+                float mid = 0.5f * (l + r);
+                float side = 0.5f * (l - r) * w;
+                pSamples[f * ch] = mid + side;
+                pSamples[f * ch + 1] = mid - side;
             }
         }
     }
 
+    /* 4. Mono Downmix */
+    if (pEq->mono_enabled && pEq->channels >= 2)
+    {
+        ma_uint32 f;
+        float *pSamples = ppFramesOut[0];
+        ma_uint32 ch = pEq->channels;
+        for (f = 0; f < frameCount; f++)
+        {
+            float l = pSamples[f * ch];
+            float r = pSamples[f * ch + 1];
+            float mono = 0.5f * (l + r);
+            pSamples[f * ch] = mono;
+            pSamples[f * ch + 1] = mono;
+        }
+    }
+
+    /* 5. Stereo Balance / Pan (L/R) with smoothing */
+    if (pEq->channels >= 2)
+    {
+        ma_uint32 f;
+        float *pSamples = ppFramesOut[0];
+        ma_uint32 ch = pEq->channels;
+        float target_bal = pEq->balance;
+        float cur_bal = pEq->current_balance;
+
+        for (f = 0; f < frameCount; f++)
+        {
+            cur_bal += (target_bal - cur_bal) * 0.005f;
+            float norm = (cur_bal + 1.0f) * 0.5f;
+            if (norm < 0.0f) norm = 0.0f;
+            if (norm > 1.0f) norm = 1.0f;
+            float angle = norm * 1.57079632679f; /* PI / 2 */
+            float gl = cosf(angle) * 1.41421356f;
+            float gr = sinf(angle) * 1.41421356f;
+
+            pSamples[f * ch] *= gl;
+            pSamples[f * ch + 1] *= gr;
+        }
+        pEq->current_balance = cur_bal;
+    }
+
+    /* 6. Pre-Fader Visualizer Tap (measures balanced & equalized audio before master fader) */
     if (pEq->visualizer_enabled)
     {
         ma_uint32 totalFrames = frameCount;
@@ -506,6 +695,48 @@ static void ma_equalizer_node_process_pcm_frames(
             pEq->visualizer_data.right = (rms_r > 1.0f) ? 1.0f : rms_r;
         else
             pEq->visualizer_data.right = pEq->visualizer_data.right * decay;
+    }
+
+    /* 7. Master Volume Fader (Post-visualizer, with rampa/smoothing) */
+    {
+        ma_uint32 totalSamples = frameCount * pEq->channels;
+        float *pSamples = ppFramesOut[0];
+        ma_uint32 s;
+        float cur_vol = pEq->current_volume;
+        float tgt_vol = pEq->target_volume;
+
+        for (s = 0; s < totalSamples; s++)
+        {
+            cur_vol += (tgt_vol - cur_vol) * 0.005f;
+            pSamples[s] *= cur_vol;
+        }
+        pEq->current_volume = cur_vol;
+    }
+
+    /* 8. True-Peak Soft-Knee Limiter (DAC Protector at 0.95f threshold) */
+    if (pEq->limiter_enabled)
+    {
+        ma_uint32 totalSamples = frameCount * pEq->channels;
+        float *pSamples = ppFramesOut[0];
+        ma_uint32 s;
+        const float threshold = 0.95f;
+        const float range = 1.0f - threshold; /* 0.05f */
+        const float invRange = 1.0f / range;  /* 20.0f */
+
+        for (s = 0; s < totalSamples; s++)
+        {
+            float x = pSamples[s];
+            if (x > threshold)
+            {
+                float excess = (x - threshold) * invRange;
+                pSamples[s] = threshold + range * (excess / (1.0f + excess));
+            }
+            else if (x < -threshold)
+            {
+                float excess = (-x - threshold) * invRange;
+                pSamples[s] = -(threshold + range * (excess / (1.0f + excess)));
+            }
+        }
     }
 
     ma_spinlock_unlock(&pEq->lock);
@@ -611,6 +842,20 @@ static ma_result ma_equalizer_node_init(
         ma_hishelf2_uninit(&pNode->hishelf, NULL);
         return result;
     }
+
+    pNode->preamp_db = 0.0f;
+    pNode->current_preamp_linear = 1.0f;
+    pNode->target_preamp_linear = 1.0f;
+    pNode->balance = 0.0f;
+    pNode->current_balance = 0.0f;
+    pNode->mono_enabled = 0;
+    pNode->crossfeed_mode = MAP_CROSSFEED_OFF;
+    map_bs2b_init(&pNode->bs2b, sampleRate, MAP_BS2B_DEFAULT_CLEVEL);
+    pNode->spatializer_enabled = 0;
+    pNode->spatializer_width = 1.0f;
+    pNode->current_volume = 1.0f;
+    pNode->target_volume = 1.0f;
+    pNode->limiter_enabled = 1;
 
     return MA_SUCCESS;
 }
@@ -2351,8 +2596,12 @@ MAP_API int32_t miniaudio_player_open_file(
     player->is_buffering = 0;
     player->state = MAP_PLAYBACK_STATE_STOPPED;
 
-    /* Apply cached volume */
-    ma_sound_set_volume(&player->sound, player->volume);
+    /* Master volume fader operates in DSP node; sound is kept at unity gain */
+    ma_sound_set_volume(&player->sound, 1.0f);
+    ma_spinlock_lock(&player->eq_node.lock);
+    player->eq_node.target_volume = player->volume;
+    player->eq_node.current_volume = player->volume;
+    ma_spinlock_unlock(&player->eq_node.lock);
 
     /* Precise duration from underlying decoder */
     {
@@ -2565,9 +2814,12 @@ MAP_API int32_t miniaudio_player_set_volume(miniaudio_player_t *player, float vo
 
     ma_mutex_lock(&player->lock);
     player->volume = volume;
+    ma_spinlock_lock(&player->eq_node.lock);
+    player->eq_node.target_volume = volume;
+    ma_spinlock_unlock(&player->eq_node.lock);
     if (player->sound_loaded)
     {
-        ma_sound_set_volume(&player->sound, volume);
+        ma_sound_set_volume(&player->sound, 1.0f);
     }
     ma_mutex_unlock(&player->lock);
     return MAP_SUCCESS;
@@ -3599,6 +3851,162 @@ MAP_API int32_t miniaudio_player_set_equalizer_band(
 }
 
 /* ========================================================================= */
+/* Advanced DSP Controls (ReplayGain, Preamp, Spatial, Balance, Limiter)     */
+/* ========================================================================= */
+
+MAP_API int32_t miniaudio_player_set_replay_gain(
+    miniaudio_player_t *player,
+    float gain_db,
+    float peak,
+    float preamp_db,
+    int32_t prevent_clipping)
+{
+    if (player == NULL || isnan(gain_db) || isinf(gain_db) ||
+        isnan(peak) || isinf(peak) || isnan(preamp_db) || isinf(preamp_db))
+    {
+        return MAP_ERROR_INVALID_ARGS;
+    }
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.rg_config.gain_db = gain_db;
+    player->eq_node.rg_config.peak = (peak > 0.0f) ? peak : 0.0f;
+    player->eq_node.rg_config.preamp_db = preamp_db;
+    player->eq_node.rg_config.prevent_clipping = prevent_clipping ? 1 : 0;
+    player->eq_node.rg_config.enabled = 1;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_clear_replay_gain(miniaudio_player_t *player)
+{
+    if (player == NULL) return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.rg_config.enabled = 0;
+    player->eq_node.rg_config.gain_db = 0.0f;
+    player->eq_node.rg_config.peak = 0.0f;
+    player->eq_node.rg_config.preamp_db = 0.0f;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_set_preamp(miniaudio_player_t *player, float preamp_db)
+{
+    if (player == NULL || isnan(preamp_db) || isinf(preamp_db))
+    {
+        return MAP_ERROR_INVALID_ARGS;
+    }
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.preamp_db = preamp_db;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_set_balance(miniaudio_player_t *player, float pan)
+{
+    if (player == NULL || isnan(pan) || isinf(pan))
+    {
+        return MAP_ERROR_INVALID_ARGS;
+    }
+
+    if (pan < -1.0f) pan = -1.0f;
+    if (pan > 1.0f) pan = 1.0f;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.balance = pan;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_set_mono(miniaudio_player_t *player, int32_t enabled)
+{
+    if (player == NULL) return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.mono_enabled = (enabled != 0) ? 1 : 0;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_set_crossfeed(miniaudio_player_t *player, int32_t mode)
+{
+    if (player == NULL) return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.crossfeed_mode = mode;
+    if (mode == MAP_CROSSFEED_MOFFAT_BAUER)
+    {
+        map_bs2b_init(&player->eq_node.bs2b, player->sample_rate, MAP_BS2B_DEFAULT_CLEVEL);
+    }
+    else if (mode == MAP_CROSSFEED_CHU_MOY)
+    {
+        map_bs2b_init(&player->eq_node.bs2b, player->sample_rate, MAP_BS2B_CMOY_CLEVEL);
+    }
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_set_spatializer(miniaudio_player_t *player, int32_t enabled, float width)
+{
+    if (player == NULL || isnan(width) || isinf(width))
+    {
+        return MAP_ERROR_INVALID_ARGS;
+    }
+
+    if (width < 1.0f) width = 1.0f;
+    if (width > 2.0f) width = 2.0f;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.spatializer_enabled = (enabled != 0) ? 1 : 0;
+    player->eq_node.spatializer_width = width;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_set_limiter(miniaudio_player_t *player, int32_t enabled)
+{
+    if (player == NULL) return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.limiter_enabled = (enabled != 0) ? 1 : 0;
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
+/* ========================================================================= */
 /* Silence Detection & Skipping Controls                                     */
 /* ========================================================================= */
 
@@ -3820,6 +4228,15 @@ MAP_API int32_t miniaudio_player_get_status(
     {
         memset(&out_status->visualizer, 0, sizeof(out_status->visualizer));
     }
+
+    out_status->preamp_db = mut_player->eq_node.preamp_db;
+    out_status->replay_gain = mut_player->eq_node.rg_config;
+    out_status->balance = mut_player->eq_node.balance;
+    out_status->mono_enabled = mut_player->eq_node.mono_enabled;
+    out_status->crossfeed_mode = mut_player->eq_node.crossfeed_mode;
+    out_status->spatializer_enabled = mut_player->eq_node.spatializer_enabled;
+    out_status->spatializer_width = mut_player->eq_node.spatializer_width;
+    out_status->limiter_enabled = mut_player->eq_node.limiter_enabled;
 
     ma_mutex_unlock(&mut_player->lock);
     return MAP_SUCCESS;

@@ -12,6 +12,7 @@ import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
 import 'audio_analysis_result.dart';
+import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
 
@@ -534,6 +535,22 @@ class MiniaudioPlayer {
   late final StreamController<VisualizerData> _visualizerController;
   final StreamController<bool> _visualizerEnabledController =
       StreamController<bool>.broadcast();
+  final StreamController<double> _preampController =
+      StreamController<double>.broadcast();
+  final StreamController<ReplayGainConfig> _replayGainController =
+      StreamController<ReplayGainConfig>.broadcast();
+  final StreamController<double> _balanceController =
+      StreamController<double>.broadcast();
+  final StreamController<bool> _monoController =
+      StreamController<bool>.broadcast();
+  final StreamController<CrossfeedMode> _crossfeedController =
+      StreamController<CrossfeedMode>.broadcast();
+  final StreamController<bool> _spatializerEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<double> _spatializerWidthController =
+      StreamController<double>.broadcast();
+  final StreamController<bool> _limiterEnabledController =
+      StreamController<bool>.broadcast();
 
   // Cached synchronous state snapshot
   Duration _position = Duration.zero;
@@ -554,6 +571,14 @@ class MiniaudioPlayer {
   bool _manualVisualizerEnabled = false;
   bool _hasVisualizerListeners = false;
   Duration _currentTimerInterval = const Duration(milliseconds: 50);
+  double _preamp = 0.0;
+  ReplayGainConfig _replayGain = const ReplayGainConfig();
+  double _balance = 0.0;
+  bool _mono = false;
+  CrossfeedMode _crossfeed = CrossfeedMode.off;
+  bool _spatializerEnabled = false;
+  double _spatializerWidth = 1.0;
+  bool _limiterEnabled = true;
 
   // Previous status cache for change detection
   Duration? _lastPosition;
@@ -684,6 +709,14 @@ class MiniaudioPlayer {
       silenceSavedDurationController: _silenceSavedDurationController,
       visualizerController: _visualizerController,
       visualizerEnabledController: _visualizerEnabledController,
+      preampController: _preampController,
+      replayGainController: _replayGainController,
+      balanceController: _balanceController,
+      monoController: _monoController,
+      crossfeedController: _crossfeedController,
+      spatializerEnabledController: _spatializerEnabledController,
+      spatializerWidthController: _spatializerWidthController,
+      limiterEnabledController: _limiterEnabledController,
     );
 
     state = PlayerState(
@@ -706,6 +739,14 @@ class MiniaudioPlayer {
       getVisualizer: () => _visualizer,
       getVisualizerEnabled: () =>
           _manualVisualizerEnabled || _hasVisualizerListeners,
+      getPreamp: () => _preamp,
+      getReplayGain: () => _replayGain,
+      getBalance: () => _balance,
+      getMono: () => _mono,
+      getCrossfeed: () => _crossfeed,
+      getSpatializerEnabled: () => _spatializerEnabled,
+      getSpatializerWidth: () => _spatializerWidth,
+      getLimiterEnabled: () => _limiterEnabled,
     );
   }
 
@@ -1019,6 +1060,80 @@ class MiniaudioPlayer {
       _visualizerController.add(currentVis);
     }
 
+    final preamp = status.preamp_db;
+    if (_preamp != preamp || force) {
+      _preamp = preamp;
+      if (!_preampController.isClosed) {
+        _preampController.add(preamp);
+      }
+    }
+
+    final nativeRg = status.replay_gain;
+    final rg = ReplayGainConfig(
+      gainDb: nativeRg.gain_db,
+      peak: nativeRg.peak,
+      preampDb: nativeRg.preamp_db,
+      preventClipping: nativeRg.prevent_clipping != 0,
+      enabled: nativeRg.enabled != 0,
+    );
+    if (_replayGain != rg || force) {
+      _replayGain = rg;
+      if (!_replayGainController.isClosed) {
+        _replayGainController.add(rg);
+      }
+    }
+
+    final balance = status.balance;
+    if (_balance != balance || force) {
+      _balance = balance;
+      if (!_balanceController.isClosed) {
+        _balanceController.add(balance);
+      }
+    }
+
+    final mono = status.mono_enabled != 0;
+    if (_mono != mono || force) {
+      _mono = mono;
+      if (!_monoController.isClosed) {
+        _monoController.add(mono);
+      }
+    }
+
+    final crossfeedMode = (status.crossfeed_mode >= 0 &&
+            status.crossfeed_mode < CrossfeedMode.values.length)
+        ? CrossfeedMode.values[status.crossfeed_mode]
+        : CrossfeedMode.off;
+    if (_crossfeed != crossfeedMode || force) {
+      _crossfeed = crossfeedMode;
+      if (!_crossfeedController.isClosed) {
+        _crossfeedController.add(crossfeedMode);
+      }
+    }
+
+    final spatializerEnabled = status.spatializer_enabled != 0;
+    if (_spatializerEnabled != spatializerEnabled || force) {
+      _spatializerEnabled = spatializerEnabled;
+      if (!_spatializerEnabledController.isClosed) {
+        _spatializerEnabledController.add(spatializerEnabled);
+      }
+    }
+
+    final spatializerWidth = status.spatializer_width;
+    if (_spatializerWidth != spatializerWidth || force) {
+      _spatializerWidth = spatializerWidth;
+      if (!_spatializerWidthController.isClosed) {
+        _spatializerWidthController.add(spatializerWidth);
+      }
+    }
+
+    final limiterEnabled = status.limiter_enabled != 0;
+    if (_limiterEnabled != limiterEnabled || force) {
+      _limiterEnabled = limiterEnabled;
+      if (!_limiterEnabledController.isClosed) {
+        _limiterEnabledController.add(limiterEnabled);
+      }
+    }
+
     return true;
   }
 
@@ -1136,5 +1251,13 @@ class MiniaudioPlayer {
     await _silenceSavedDurationController.close();
     await _visualizerController.close();
     await _visualizerEnabledController.close();
+    await _preampController.close();
+    await _replayGainController.close();
+    await _balanceController.close();
+    await _monoController.close();
+    await _crossfeedController.close();
+    await _spatializerEnabledController.close();
+    await _spatializerWidthController.close();
+    await _limiterEnabledController.close();
   }
 }

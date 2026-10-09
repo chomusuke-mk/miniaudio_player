@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'audio_device.dart';
+import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
@@ -26,6 +27,14 @@ class PlayerStream {
   final StreamController<Duration> _silenceSavedDurationController;
   final StreamController<VisualizerData> _visualizerController;
   final StreamController<bool> _visualizerEnabledController;
+  final StreamController<double> _preampController;
+  final StreamController<ReplayGainConfig> _replayGainController;
+  final StreamController<double> _balanceController;
+  final StreamController<bool> _monoController;
+  final StreamController<CrossfeedMode> _crossfeedController;
+  final StreamController<bool> _spatializerEnabledController;
+  final StreamController<double> _spatializerWidthController;
+  final StreamController<bool> _limiterEnabledController;
 
   PlayerStream({
     required StreamController<Duration> positionController,
@@ -45,6 +54,14 @@ class PlayerStream {
     required StreamController<Duration> silenceSavedDurationController,
     required StreamController<VisualizerData> visualizerController,
     required StreamController<bool> visualizerEnabledController,
+    required StreamController<double> preampController,
+    required StreamController<ReplayGainConfig> replayGainController,
+    required StreamController<double> balanceController,
+    required StreamController<bool> monoController,
+    required StreamController<CrossfeedMode> crossfeedController,
+    required StreamController<bool> spatializerEnabledController,
+    required StreamController<double> spatializerWidthController,
+    required StreamController<bool> limiterEnabledController,
   })  : _positionController = positionController,
         _durationController = durationController,
         _playingController = playingController,
@@ -61,7 +78,15 @@ class PlayerStream {
         _silenceConfigController = silenceConfigController,
         _silenceSavedDurationController = silenceSavedDurationController,
         _visualizerController = visualizerController,
-        _visualizerEnabledController = visualizerEnabledController;
+        _visualizerEnabledController = visualizerEnabledController,
+        _preampController = preampController,
+        _replayGainController = replayGainController,
+        _balanceController = balanceController,
+        _monoController = monoController,
+        _crossfeedController = crossfeedController,
+        _spatializerEnabledController = spatializerEnabledController,
+        _spatializerWidthController = spatializerWidthController,
+        _limiterEnabledController = limiterEnabledController;
 
   /// Broadcast stream of the current playback position.
   Stream<Duration> get position => _positionController.stream;
@@ -117,4 +142,28 @@ class PlayerStream {
 
   /// Broadcast stream of visualizer active / enabled state changes.
   Stream<bool> get visualizerEnabled => _visualizerEnabledController.stream;
+
+  /// Broadcast stream of manual preamp gain changes.
+  Stream<double> get preamp => _preampController.stream;
+
+  /// Broadcast stream of ReplayGain configuration changes.
+  Stream<ReplayGainConfig> get replayGain => _replayGainController.stream;
+
+  /// Broadcast stream of stereo balance changes.
+  Stream<double> get balance => _balanceController.stream;
+
+  /// Broadcast stream of mono downmix status changes.
+  Stream<bool> get mono => _monoController.stream;
+
+  /// Broadcast stream of headphone crossfeed mode changes.
+  Stream<CrossfeedMode> get crossfeed => _crossfeedController.stream;
+
+  /// Broadcast stream of stereo widener enabled changes.
+  Stream<bool> get spatializerEnabled => _spatializerEnabledController.stream;
+
+  /// Broadcast stream of stereo widener width factor changes.
+  Stream<double> get spatializerWidth => _spatializerWidthController.stream;
+
+  /// Broadcast stream of limiter enabled changes.
+  Stream<bool> get limiterEnabled => _limiterEnabledController.stream;
 }

@@ -40,6 +40,11 @@ external int miniaudio_player_analyze_audio_async(
   ffi.Pointer<ffi.Void> user_data,
 );
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
+external int miniaudio_player_clear_replay_gain(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
 /// @brief Creates and initializes an isolated native audio player instance.
 /// @param config Optional player configuration (NULL for defaults).
 /// @param[out] out_result Result status code.
@@ -221,6 +226,13 @@ external int miniaudio_player_seek(
   int position_ms,
 );
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
+    isLeaf: true)
+external int miniaudio_player_set_balance(
+  ffi.Pointer<miniaudio_player_t> player,
+  double pan,
+);
+
 /// ========================================================================= */
 /// /* Buffer Size Configuration                                                 */
 /// /* =========================================================================
@@ -229,6 +241,13 @@ external int miniaudio_player_seek(
 external int miniaudio_player_set_buffer_size(
   ffi.Pointer<miniaudio_player_t> player,
   int buffer_size_in_frames,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32)>(
+    isLeaf: true)
+external int miniaudio_player_set_crossfeed(
+  ffi.Pointer<miniaudio_player_t> player,
+  int mode,
 );
 
 @ffi.Native<
@@ -267,9 +286,23 @@ external int miniaudio_player_set_equalizer_band(
   double gain_db,
 );
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32)>(
+    isLeaf: true)
+external int miniaudio_player_set_limiter(
+  ffi.Pointer<miniaudio_player_t> player,
+  int enabled,
+);
+
 @ffi.Native<ffi.Void Function(ffi.Int32)>(isLeaf: true)
 external void miniaudio_player_set_log_level(
   int level,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32)>(
+    isLeaf: true)
+external int miniaudio_player_set_mono(
+  ffi.Pointer<miniaudio_player_t> player,
+  int enabled,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
@@ -281,9 +314,30 @@ external int miniaudio_player_set_pitch(
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
     isLeaf: true)
+external int miniaudio_player_set_preamp(
+  ffi.Pointer<miniaudio_player_t> player,
+  double preamp_db,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
+    isLeaf: true)
 external int miniaudio_player_set_rate(
   ffi.Pointer<miniaudio_player_t> player,
   double rate,
+);
+
+/// ========================================================================= */
+/// /* Advanced DSP Controls (ReplayGain, Preamp, Spatial, Balance, Limiter)     */
+/// /* =========================================================================
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float, ffi.Float,
+        ffi.Float, ffi.Int32)>(isLeaf: true)
+external int miniaudio_player_set_replay_gain(
+  ffi.Pointer<miniaudio_player_t> player,
+  double gain_db,
+  double peak,
+  double preamp_db,
+  int prevent_clipping,
 );
 
 /// ========================================================================= */
@@ -295,6 +349,15 @@ external int miniaudio_player_set_rate(
 external int miniaudio_player_set_silence_config(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<miniaudio_player_silence_config_t> config,
+);
+
+@ffi.Native<
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>, ffi.Int32, ffi.Float)>(isLeaf: true)
+external int miniaudio_player_set_spatializer(
+  ffi.Pointer<miniaudio_player_t> player,
+  int enabled,
+  double width,
 );
 
 /// ========================================================================= */
@@ -483,6 +546,24 @@ final class miniaudio_player_config_t extends ffi.Struct {
         ..ref.user_data = user_data;
 }
 
+enum miniaudio_player_crossfeed_mode_t {
+  MAP_CROSSFEED_OFF(0),
+  MAP_CROSSFEED_MOFFAT_BAUER(1),
+  MAP_CROSSFEED_CHU_MOY(2);
+
+  final int value;
+  const miniaudio_player_crossfeed_mode_t(this.value);
+
+  static miniaudio_player_crossfeed_mode_t fromValue(int value) =>
+      switch (value) {
+        0 => MAP_CROSSFEED_OFF,
+        1 => MAP_CROSSFEED_MOFFAT_BAUER,
+        2 => MAP_CROSSFEED_CHU_MOY,
+        _ => throw ArgumentError(
+            'Unknown value for miniaudio_player_crossfeed_mode_t: $value'),
+      };
+}
+
 typedef miniaudio_player_device_notification_cb = ffi.Pointer<
     ffi.NativeFunction<miniaudio_player_device_notification_cbFunction>>;
 typedef miniaudio_player_device_notification_cbFunction = ffi.Void Function(
@@ -608,6 +689,46 @@ enum miniaudio_player_playback_state_t {
         _ => throw ArgumentError(
             'Unknown value for miniaudio_player_playback_state_t: $value'),
       };
+}
+
+/// ========================================================================= */
+/// /* DSP Effects & Normalization Structures                                    */
+/// /* =========================================================================
+final class miniaudio_player_replay_gain_config_t extends ffi.Struct {
+  /// < Track gain in dB
+  @ffi.Float()
+  external double gain_db;
+
+  /// < Track peak (1.0 = 0 dBFS), 0.0 if unknown
+  @ffi.Float()
+  external double peak;
+
+  /// < Additional preamp gain in dB
+  @ffi.Float()
+  external double preamp_db;
+
+  /// < 1 to cap gain if boosted peak > 1.0
+  @ffi.Int32()
+  external int prevent_clipping;
+
+  /// < 1 if ReplayGain is active, 0 for bypass
+  @ffi.Int32()
+  external int enabled;
+
+  static ffi.Pointer<miniaudio_player_replay_gain_config_t> $allocate(
+    ffi.Allocator $allocator, {
+    required double gain_db,
+    required double peak,
+    required double preamp_db,
+    required int prevent_clipping,
+    required int enabled,
+  }) =>
+      $allocator<miniaudio_player_replay_gain_config_t>()
+        ..ref.gain_db = gain_db
+        ..ref.peak = peak
+        ..ref.preamp_db = preamp_db
+        ..ref.prevent_clipping = prevent_clipping
+        ..ref.enabled = enabled;
 }
 
 /// ========================================================================= */
@@ -760,6 +881,37 @@ final class miniaudio_player_status_t extends ffi.Struct {
 
   /// < Real-time 10-band visualizer data
   external miniaudio_player_visualizer_data_t visualizer;
+
+  /// < Standalone preamp in dB
+  @ffi.Float()
+  external double preamp_db;
+
+  /// < ReplayGain active configuration
+  external miniaudio_player_replay_gain_config_t replay_gain;
+
+  /// < Stereo balance / pan (-1.0 to +1.0)
+  @ffi.Float()
+  external double balance;
+
+  /// < 1 if mono downmix enabled, 0 otherwise
+  @ffi.Int32()
+  external int mono_enabled;
+
+  /// < miniaudio_player_crossfeed_mode_t
+  @ffi.Int32()
+  external int crossfeed_mode;
+
+  /// < 1 if stereo widener enabled, 0 otherwise
+  @ffi.Int32()
+  external int spatializer_enabled;
+
+  /// < Stereo widener width factor (1.0 to 2.0)
+  @ffi.Float()
+  external double spatializer_width;
+
+  /// < 1 if True-Peak limiter enabled, 0 otherwise
+  @ffi.Int32()
+  external int limiter_enabled;
 }
 
 /// Opaque player handle

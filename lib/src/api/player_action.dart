@@ -12,6 +12,7 @@ import 'audio_device.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
 import 'silence_skip_config.dart';
+import 'dsp_config.dart';
 
 /// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
 class PlayerAction {
@@ -399,5 +400,130 @@ class PlayerAction {
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player.ensureNotDisposed();
     _player.setManualVisualizerEnabled(enabled);
+  }
+
+  /// Sets replay gain normalization for the track.
+  ///
+  /// Accepts primitive numerical values read from databases or tags:
+  /// - [gainDb]: Recommended adjustment in decibels relative to target LUFS (e.g. `-13.3`).
+  /// - [peak]: Track absolute peak amplitude (where `1.0` = 0 dBFS).
+  /// - [preampDb]: Additional user-configured preamp adjustment in dB (default `0.0`).
+  /// - [preventClipping]: When `true` (default), caps gain so `(gainDb + preampDb) * peak <= 1.0`.
+  Future<void> setReplayGain({
+    required double gainDb,
+    double? peak,
+    double preampDb = 0.0,
+    bool preventClipping = true,
+  }) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_replay_gain(
+      _player.handle,
+      gainDb,
+      peak ?? 0.0,
+      preampDb,
+      preventClipping ? 1 : 0,
+    );
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set replay gain: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Clears replay gain normalization back to unity gain (0.0 dB).
+  Future<void> clearReplayGain() async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_clear_replay_gain(_player.handle);
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to clear replay gain: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Sets standalone manual preamp gain in decibels applied prior to the equalizer.
+  Future<void> setPreamp(double preampDb) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_preamp(_player.handle, preampDb);
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set preamp: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Sets stereo channel balance (-1.0 for full left, 0.0 for center, +1.0 for full right).
+  Future<void> setBalance(double pan) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_balance(_player.handle, pan.clamp(-1.0, 1.0));
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set balance: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Sets whether mono downmix is enabled for accessibility or single speakers.
+  Future<void> setMono(bool enabled) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_mono(_player.handle, enabled ? 1 : 0);
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set mono: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Configures headphone binaural crossfeed (Bauer bs2b).
+  Future<void> setCrossfeed(CrossfeedMode mode) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_crossfeed(_player.handle, mode.index);
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set crossfeed: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Configures the stereo widener / spatializer.
+  Future<void> setSpatializer({required bool enabled, double width = 1.3}) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_spatializer(
+      _player.handle,
+      enabled ? 1 : 0,
+      width.clamp(1.0, 2.0),
+    );
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set spatializer: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Enables or disables the True-Peak soft-knee output limiter protector.
+  Future<void> setLimiter(bool enabled) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_limiter(_player.handle, enabled ? 1 : 0);
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set limiter: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
   }
 }

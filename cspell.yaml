@@ -57,6 +57,8 @@ words:
   - crctable
   - crossfade
   - crossfading
+  - crossfeed
+  - Crossfeed
   - cserialnos
   - CSIRO
   - cupertino
@@ -181,6 +183,7 @@ words:
   - lpcs
   - LRINT
   - LRINTF
+  - LTWH
   - lufs
   - machiney
   - manxorist
@@ -195,6 +198,7 @@ words:
   - miniaudio
   - minimp
   - miscapture
+  - moffat
   - morlat
   - MSVCRT
   - Muchachita
@@ -279,6 +283,7 @@ words:
   - smidge
   - spanp
   - SPATIALIZATION
+  - spatializer
   - spectrotram
   - Speex
   - spetral
@@ -292,6 +297,7 @@ words:
   - SUNPRO
   - Superwideband
   - SUPERWIDEBAND
+  - Suttle
   - Symbian
   - tagncompare
   - tapset
