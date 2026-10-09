@@ -490,17 +490,17 @@ static void test_5_equalizer_controls_and_presets(void)
 
     miniaudio_player_status_t st;
     assert(miniaudio_player_get_status(player, &st) == MAP_SUCCESS);
-    assert(fabs(st.equalizer.hz60 - (-18.0f)) < 0.001f);
+    assert(fabs(st.equalizer.hz31 - (-18.0f)) < 0.001f);
     assert(fabs(st.equalizer.hz16k - (18.0f)) < 0.001f);
 
     /* 5.2 Preset: Rock */
     miniaudio_player_equalizer_params_t rock = {
-        .hz60 = 4.5f, .hz170 = 3.5f, .hz310 = -1.5f, .hz600 = -2.5f, .hz1k = 0.0f, .hz3k = 2.0f, .hz6k = 4.0f, .hz12k = 5.0f, .hz14k = 5.0f, .hz16k = 4.5f};
+        .hz31 = 4.5f, .hz63 = 3.5f, .hz125 = -1.5f, .hz250 = -2.5f, .hz500 = 0.0f, .hz1k = 2.0f, .hz2k = 4.0f, .hz4k = 5.0f, .hz8k = 5.0f, .hz16k = 4.5f};
     assert(miniaudio_player_set_equalizer(player, &rock) == MAP_SUCCESS);
     assert(miniaudio_player_get_status(player, &st) == MAP_SUCCESS);
-    assert(fabs(st.equalizer.hz60 - 4.5f) < 0.001f);
-    assert(fabs(st.equalizer.hz600 - (-2.5f)) < 0.001f);
-    assert(fabs(st.equalizer.hz12k - 5.0f) < 0.001f);
+    assert(fabs(st.equalizer.hz31 - 4.5f) < 0.001f);
+    assert(fabs(st.equalizer.hz250 - (-2.5f)) < 0.001f);
+    assert(fabs(st.equalizer.hz4k - 5.0f) < 0.001f);
 
     /* 5.3 Active playback with equalizer streaming */
     assert(miniaudio_player_play(player) == MAP_SUCCESS);

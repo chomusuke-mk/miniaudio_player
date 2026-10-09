@@ -1,87 +1,89 @@
 /// Immutable 10-band parametric equalizer representation for miniaudio_player.
+/// Follows the ISO 266 standard preferred 1/1 octave band center frequencies:
+/// 31 Hz, 63 Hz, 125 Hz, 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz, 8 kHz, 16 kHz.
 class Equalizer {
-  /// Gain for 60 Hz band in dB (-24.0 to +24.0 dB, low-shelf).
-  final double hz60;
+  /// Gain for 31 Hz band in dB (-24.0 to +24.0 dB, low-shelf).
+  final double hz31;
 
-  /// Gain for 170 Hz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz170;
+  /// Gain for 63 Hz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz63;
 
-  /// Gain for 310 Hz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz310;
+  /// Gain for 125 Hz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz125;
 
-  /// Gain for 600 Hz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz600;
+  /// Gain for 250 Hz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz250;
+
+  /// Gain for 500 Hz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz500;
 
   /// Gain for 1 kHz band in dB (-24.0 to +24.0 dB, peaking).
   final double hz1k;
 
-  /// Gain for 3 kHz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz3k;
+  /// Gain for 2 kHz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz2k;
 
-  /// Gain for 6 kHz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz6k;
+  /// Gain for 4 kHz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz4k;
 
-  /// Gain for 12 kHz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz12k;
-
-  /// Gain for 14 kHz band in dB (-24.0 to +24.0 dB, peaking).
-  final double hz14k;
+  /// Gain for 8 kHz band in dB (-24.0 to +24.0 dB, peaking).
+  final double hz8k;
 
   /// Gain for 16 kHz band in dB (-24.0 to +24.0 dB, high-shelf).
   final double hz16k;
 
   /// Creates an immutable [Equalizer] with optional band gains in dB (default 0.0 dB).
   const Equalizer({
-    this.hz60 = 0.0,
-    this.hz170 = 0.0,
-    this.hz310 = 0.0,
-    this.hz600 = 0.0,
+    this.hz31 = 0.0,
+    this.hz63 = 0.0,
+    this.hz125 = 0.0,
+    this.hz250 = 0.0,
+    this.hz500 = 0.0,
     this.hz1k = 0.0,
-    this.hz3k = 0.0,
-    this.hz6k = 0.0,
-    this.hz12k = 0.0,
-    this.hz14k = 0.0,
+    this.hz2k = 0.0,
+    this.hz4k = 0.0,
+    this.hz8k = 0.0,
     this.hz16k = 0.0,
-  }) : assert(
-         hz60 == hz60 && hz60 > -1e308 && hz60 < 1e308,
-         'hz60 must be finite',
-       ),
-       assert(
-         hz170 == hz170 && hz170 > -1e308 && hz170 < 1e308,
-         'hz170 must be finite',
-       ),
-       assert(
-         hz310 == hz310 && hz310 > -1e308 && hz310 < 1e308,
-         'hz310 must be finite',
-       ),
-       assert(
-         hz600 == hz600 && hz600 > -1e308 && hz600 < 1e308,
-         'hz600 must be finite',
-       ),
-       assert(
-         hz1k == hz1k && hz1k > -1e308 && hz1k < 1e308,
-         'hz1k must be finite',
-       ),
-       assert(
-         hz3k == hz3k && hz3k > -1e308 && hz3k < 1e308,
-         'hz3k must be finite',
-       ),
-       assert(
-         hz6k == hz6k && hz6k > -1e308 && hz6k < 1e308,
-         'hz6k must be finite',
-       ),
-       assert(
-         hz12k == hz12k && hz12k > -1e308 && hz12k < 1e308,
-         'hz12k must be finite',
-       ),
-       assert(
-         hz14k == hz14k && hz14k > -1e308 && hz14k < 1e308,
-         'hz14k must be finite',
-       ),
-       assert(
-         hz16k == hz16k && hz16k > -1e308 && hz16k < 1e308,
-         'hz16k must be finite',
-       );
+  })  : assert(
+          hz31 == hz31 && hz31 > -1e308 && hz31 < 1e308,
+          'hz31 must be finite',
+        ),
+        assert(
+          hz63 == hz63 && hz63 > -1e308 && hz63 < 1e308,
+          'hz63 must be finite',
+        ),
+        assert(
+          hz125 == hz125 && hz125 > -1e308 && hz125 < 1e308,
+          'hz125 must be finite',
+        ),
+        assert(
+          hz250 == hz250 && hz250 > -1e308 && hz250 < 1e308,
+          'hz250 must be finite',
+        ),
+        assert(
+          hz500 == hz500 && hz500 > -1e308 && hz500 < 1e308,
+          'hz500 must be finite',
+        ),
+        assert(
+          hz1k == hz1k && hz1k > -1e308 && hz1k < 1e308,
+          'hz1k must be finite',
+        ),
+        assert(
+          hz2k == hz2k && hz2k > -1e308 && hz2k < 1e308,
+          'hz2k must be finite',
+        ),
+        assert(
+          hz4k == hz4k && hz4k > -1e308 && hz4k < 1e308,
+          'hz4k must be finite',
+        ),
+        assert(
+          hz8k == hz8k && hz8k > -1e308 && hz8k < 1e308,
+          'hz8k must be finite',
+        ),
+        assert(
+          hz16k == hz16k && hz16k > -1e308 && hz16k < 1e308,
+          'hz16k must be finite',
+        );
 
   /// Factory constructor to create an [Equalizer] from an ordered 10-element list.
   factory Equalizer.fromList(List<double> gains) {
@@ -93,15 +95,15 @@ class Equalizer {
       );
     }
     return Equalizer(
-      hz60: gains[0],
-      hz170: gains[1],
-      hz310: gains[2],
-      hz600: gains[3],
-      hz1k: gains[4],
-      hz3k: gains[5],
-      hz6k: gains[6],
-      hz12k: gains[7],
-      hz14k: gains[8],
+      hz31: gains[0],
+      hz63: gains[1],
+      hz125: gains[2],
+      hz250: gains[3],
+      hz500: gains[4],
+      hz1k: gains[5],
+      hz2k: gains[6],
+      hz4k: gains[7],
+      hz8k: gains[8],
       hz16k: gains[9],
     );
   }
@@ -111,104 +113,104 @@ class Equalizer {
 
   /// Rock preset: boosted bass and treble with recessed mid-range.
   static const Equalizer rock = Equalizer(
-    hz60: 4.5,
-    hz170: 3.0,
-    hz310: 1.0,
-    hz600: -1.5,
-    hz1k: -0.5,
-    hz3k: 1.5,
-    hz6k: 3.0,
-    hz12k: 4.0,
-    hz14k: 4.5,
-    hz16k: 4.5,
+    hz31: 5.4,
+    hz63: 4.5,
+    hz125: -3.6,
+    hz250: -6.6,
+    hz500: -2.7,
+    hz1k: 2.1,
+    hz2k: 6.0,
+    hz4k: 7.5,
+    hz8k: 7.8,
+    hz16k: 8.1,
   );
 
   /// Pop preset: enhanced mid-bass and vocal range.
   static const Equalizer pop = Equalizer(
-    hz60: -1.0,
-    hz170: 1.0,
-    hz310: 2.5,
-    hz600: 3.0,
-    hz1k: 2.0,
-    hz3k: 0.5,
-    hz6k: -0.5,
-    hz12k: -1.0,
-    hz14k: -1.5,
-    hz16k: -2.0,
+    hz31: -1.6,
+    hz63: 0.6,
+    hz125: 5.4,
+    hz250: 4.5,
+    hz500: 0.9,
+    hz1k: -1.5,
+    hz2k: -1.8,
+    hz4k: -2.1,
+    hz8k: -2.1,
+    hz16k: -0.3,
   );
 
   /// Jazz preset: smooth warmth for acoustic instruments.
   static const Equalizer jazz = Equalizer(
-    hz60: 3.0,
-    hz170: 2.0,
-    hz310: 1.0,
-    hz600: 1.5,
-    hz1k: -1.0,
-    hz3k: -1.0,
-    hz6k: 0.0,
-    hz12k: 1.5,
-    hz14k: 2.5,
-    hz16k: 3.0,
+    hz31: 3.0,
+    hz63: 6.3,
+    hz125: 3.6,
+    hz250: -3.9,
+    hz500: -5.1,
+    hz1k: 1.2,
+    hz2k: 9.0,
+    hz4k: -1.8,
+    hz8k: -2.4,
+    hz16k: 2.5,
   );
 
   /// Classical preset: dynamic balance with subdued harsh mids for orchestra.
   static const Equalizer classical = Equalizer(
-    hz60: 4.0,
-    hz170: 3.0,
-    hz310: 2.0,
-    hz600: 0.5,
-    hz1k: -1.5,
-    hz3k: -1.0,
-    hz6k: 0.5,
-    hz12k: 2.5,
-    hz14k: 3.5,
-    hz16k: 4.0,
+    hz31: 0.0,
+    hz63: 0.0,
+    hz125: 0.0,
+    hz250: 0.0,
+    hz500: 0.0,
+    hz1k: 0.0,
+    hz2k: 0.0,
+    hz4k: -2.9,
+    hz8k: -5.8,
+    hz16k: -8.1,
   );
 
   /// Bass boost preset: elevated low-end frequencies.
   static const Equalizer bassBoost = Equalizer(
-    hz60: 7.0,
-    hz170: 6.0,
-    hz310: 4.5,
-    hz600: 0.0,
-    hz1k: 0.0,
-    hz3k: 0.0,
-    hz6k: 0.0,
-    hz12k: 0.0,
-    hz14k: 0.0,
-    hz16k: 0.0,
+    hz31: 7.4,
+    hz63: 7.2,
+    hz125: 7.2,
+    hz250: 4.2,
+    hz500: -0.3,
+    hz1k: -3.0,
+    hz2k: -4.5,
+    hz4k: -6.0,
+    hz8k: -7.2,
+    hz16k: -9.0,
   );
 
   /// Returns a copy of this [Equalizer] with modified band values.
   Equalizer copyWith({
-    double? hz60,
-    double? hz170,
-    double? hz310,
-    double? hz600,
+    double? hz31,
+    double? hz63,
+    double? hz125,
+    double? hz250,
+    double? hz500,
     double? hz1k,
-    double? hz3k,
-    double? hz6k,
-    double? hz12k,
-    double? hz14k,
+    double? hz2k,
+    double? hz4k,
+    double? hz8k,
     double? hz16k,
   }) {
     return Equalizer(
-      hz60: hz60 ?? this.hz60,
-      hz170: hz170 ?? this.hz170,
-      hz310: hz310 ?? this.hz310,
-      hz600: hz600 ?? this.hz600,
+      hz31: hz31 ?? this.hz31,
+      hz63: hz63 ?? this.hz63,
+      hz125: hz125 ?? this.hz125,
+      hz250: hz250 ?? this.hz250,
+      hz500: hz500 ?? this.hz500,
       hz1k: hz1k ?? this.hz1k,
-      hz3k: hz3k ?? this.hz3k,
-      hz6k: hz6k ?? this.hz6k,
-      hz12k: hz12k ?? this.hz12k,
-      hz14k: hz14k ?? this.hz14k,
+      hz2k: hz2k ?? this.hz2k,
+      hz4k: hz4k ?? this.hz4k,
+      hz8k: hz8k ?? this.hz8k,
       hz16k: hz16k ?? this.hz16k,
     );
   }
 
   /// Converts this [Equalizer] to an ordered 10-element list of band gains in dB.
   List<double> toList() {
-    return [hz60, hz170, hz310, hz600, hz1k, hz3k, hz6k, hz12k, hz14k, hz16k];
+    return [hz31, hz63, hz125, hz250, hz500, hz1k, hz2k, hz4k, hz8k, hz16k];
   }
 
   @override
@@ -216,35 +218,35 @@ class Equalizer {
       identical(this, other) ||
       other is Equalizer &&
           runtimeType == other.runtimeType &&
-          hz60 == other.hz60 &&
-          hz170 == other.hz170 &&
-          hz310 == other.hz310 &&
-          hz600 == other.hz600 &&
+          hz31 == other.hz31 &&
+          hz63 == other.hz63 &&
+          hz125 == other.hz125 &&
+          hz250 == other.hz250 &&
+          hz500 == other.hz500 &&
           hz1k == other.hz1k &&
-          hz3k == other.hz3k &&
-          hz6k == other.hz6k &&
-          hz12k == other.hz12k &&
-          hz14k == other.hz14k &&
+          hz2k == other.hz2k &&
+          hz4k == other.hz4k &&
+          hz8k == other.hz8k &&
           hz16k == other.hz16k;
 
   @override
   int get hashCode => Object.hash(
-    hz60,
-    hz170,
-    hz310,
-    hz600,
-    hz1k,
-    hz3k,
-    hz6k,
-    hz12k,
-    hz14k,
-    hz16k,
-  );
+        hz31,
+        hz63,
+        hz125,
+        hz250,
+        hz500,
+        hz1k,
+        hz2k,
+        hz4k,
+        hz8k,
+        hz16k,
+      );
 
   @override
   String toString() {
-    return 'Equalizer(60Hz: ${hz60}dB, 170Hz: ${hz170}dB, 310Hz: ${hz310}dB, '
-        '600Hz: ${hz600}dB, 1kHz: ${hz1k}dB, 3kHz: ${hz3k}dB, 6kHz: ${hz6k}dB, '
-        '12kHz: ${hz12k}dB, 14kHz: ${hz14k}dB, 16kHz: ${hz16k}dB)';
+    return 'Equalizer(31Hz: ${hz31}dB, 63Hz: ${hz63}dB, 125Hz: ${hz125}dB, '
+        '250Hz: ${hz250}dB, 500Hz: ${hz500}dB, 1kHz: ${hz1k}dB, 2kHz: ${hz2k}dB, '
+        '4kHz: ${hz4k}dB, 8kHz: ${hz8k}dB, 16kHz: ${hz16k}dB)';
   }
 }

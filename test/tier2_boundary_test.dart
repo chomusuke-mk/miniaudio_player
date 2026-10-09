@@ -503,7 +503,7 @@ void main() {
 
     test('B7.1: Equalizer with non-finite values (NaN / Infinity) throws ArgumentError', () {
       expect(
-        () => Equalizer(hz60: double.nan),
+        () => Equalizer(hz31: double.nan),
         throwsA(anyOf(isA<ArgumentError>(), isA<AssertionError>())),
       );
       expect(
@@ -516,15 +516,15 @@ void main() {
       'B7.2: Equalizer boundary gains at -24.0 dB and +24.0 dB succeed',
       () async {
         const boundaryEq = Equalizer(
-          hz60: -24.0,
-          hz170: -24.0,
-          hz310: -24.0,
-          hz600: -24.0,
+          hz31: -24.0,
+          hz63: -24.0,
+          hz125: -24.0,
+          hz250: -24.0,
+          hz500: 0.0,
           hz1k: 0.0,
-          hz3k: 24.0,
-          hz6k: 24.0,
-          hz12k: 24.0,
-          hz14k: 24.0,
+          hz2k: 24.0,
+          hz4k: 24.0,
+          hz8k: 24.0,
           hz16k: 24.0,
         );
 
@@ -536,11 +536,11 @@ void main() {
     test(
       'B7.3: Equalizer extreme gains beyond +/- 24 dB are clamped or handled',
       () async {
-        const extremeEq = Equalizer(hz60: -35.0, hz16k: 40.0);
+        const extremeEq = Equalizer(hz31: -35.0, hz16k: 40.0);
 
         await player.action.setEqualizer(extremeEq);
         // Native layer clamps to [-24.0, +24.0]
-        expect(player.state.equalizer.hz60, inInclusiveRange(-35.0, 24.0));
+        expect(player.state.equalizer.hz31, inInclusiveRange(-35.0, 24.0));
       },
     );
   });

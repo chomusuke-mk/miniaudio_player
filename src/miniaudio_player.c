@@ -151,15 +151,15 @@ static void map_miniaudio_log_callback(void *pUserData, ma_uint32 level, const c
 #define MAP_EQ_SHELF_SLOPE 0.7071067811865475
 
 static const double g_map_eq_frequencies[MAP_EQ_BAND_COUNT] = {
-    60.0,
-    170.0,
-    310.0,
-    600.0,
+    31.0,
+    63.0,
+    125.0,
+    250.0,
+    500.0,
     1000.0,
-    3000.0,
-    6000.0,
-    12000.0,
-    14000.0,
+    2000.0,
+    4000.0,
+    8000.0,
     16000.0};
 
 /* Portable string duplication helper */
@@ -538,7 +538,7 @@ static ma_result ma_equalizer_node_init(
     pNode->sampleRate = sampleRate;
     pNode->lock = 0;
 
-    /* Band 0: 60 Hz low-shelf */
+    /* Band 0: 31 Hz low-shelf */
     {
         double f = map_clamp_frequency(g_map_eq_frequencies[0], sampleRate);
         ma_loshelf2_config config = ma_loshelf2_config_init(
@@ -677,15 +677,15 @@ static ma_result ma_equalizer_node_set_all(
     if (pEq == NULL || pParams == NULL)
         return MA_INVALID_ARGS;
 
-    gains[0] = map_clamp_gain_db(pParams->hz60);
-    gains[1] = map_clamp_gain_db(pParams->hz170);
-    gains[2] = map_clamp_gain_db(pParams->hz310);
-    gains[3] = map_clamp_gain_db(pParams->hz600);
-    gains[4] = map_clamp_gain_db(pParams->hz1k);
-    gains[5] = map_clamp_gain_db(pParams->hz3k);
-    gains[6] = map_clamp_gain_db(pParams->hz6k);
-    gains[7] = map_clamp_gain_db(pParams->hz12k);
-    gains[8] = map_clamp_gain_db(pParams->hz14k);
+    gains[0] = map_clamp_gain_db(pParams->hz31);
+    gains[1] = map_clamp_gain_db(pParams->hz63);
+    gains[2] = map_clamp_gain_db(pParams->hz125);
+    gains[3] = map_clamp_gain_db(pParams->hz250);
+    gains[4] = map_clamp_gain_db(pParams->hz500);
+    gains[5] = map_clamp_gain_db(pParams->hz1k);
+    gains[6] = map_clamp_gain_db(pParams->hz2k);
+    gains[7] = map_clamp_gain_db(pParams->hz4k);
+    gains[8] = map_clamp_gain_db(pParams->hz8k);
     gains[9] = map_clamp_gain_db(pParams->hz16k);
 
     ma_spinlock_lock(&pEq->lock);
@@ -3549,15 +3549,15 @@ MAP_API int32_t miniaudio_player_set_equalizer(
     if (player == NULL || eq == NULL)
         return MAP_ERROR_INVALID_ARGS;
 
-    if (isnan(eq->hz60) || isinf(eq->hz60) ||
-        isnan(eq->hz170) || isinf(eq->hz170) ||
-        isnan(eq->hz310) || isinf(eq->hz310) ||
-        isnan(eq->hz600) || isinf(eq->hz600) ||
+    if (isnan(eq->hz31) || isinf(eq->hz31) ||
+        isnan(eq->hz63) || isinf(eq->hz63) ||
+        isnan(eq->hz125) || isinf(eq->hz125) ||
+        isnan(eq->hz250) || isinf(eq->hz250) ||
+        isnan(eq->hz500) || isinf(eq->hz500) ||
         isnan(eq->hz1k) || isinf(eq->hz1k) ||
-        isnan(eq->hz3k) || isinf(eq->hz3k) ||
-        isnan(eq->hz6k) || isinf(eq->hz6k) ||
-        isnan(eq->hz12k) || isinf(eq->hz12k) ||
-        isnan(eq->hz14k) || isinf(eq->hz14k) ||
+        isnan(eq->hz2k) || isinf(eq->hz2k) ||
+        isnan(eq->hz4k) || isinf(eq->hz4k) ||
+        isnan(eq->hz8k) || isinf(eq->hz8k) ||
         isnan(eq->hz16k) || isinf(eq->hz16k))
     {
         return MAP_ERROR_INVALID_ARGS;

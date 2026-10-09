@@ -211,15 +211,15 @@ class PlayerAction {
     final gainsDb = equalizer.toList();
     final eqPtr = calloc<native.miniaudio_player_equalizer_params_t>();
     try {
-      eqPtr.ref.hz60 = gainsDb[0];
-      eqPtr.ref.hz170 = gainsDb[1];
-      eqPtr.ref.hz310 = gainsDb[2];
-      eqPtr.ref.hz600 = gainsDb[3];
-      eqPtr.ref.hz1k = gainsDb[4];
-      eqPtr.ref.hz3k = gainsDb[5];
-      eqPtr.ref.hz6k = gainsDb[6];
-      eqPtr.ref.hz12k = gainsDb[7];
-      eqPtr.ref.hz14k = gainsDb[8];
+      eqPtr.ref.hz31 = gainsDb[0];
+      eqPtr.ref.hz63 = gainsDb[1];
+      eqPtr.ref.hz125 = gainsDb[2];
+      eqPtr.ref.hz250 = gainsDb[3];
+      eqPtr.ref.hz500 = gainsDb[4];
+      eqPtr.ref.hz1k = gainsDb[5];
+      eqPtr.ref.hz2k = gainsDb[6];
+      eqPtr.ref.hz4k = gainsDb[7];
+      eqPtr.ref.hz8k = gainsDb[8];
       eqPtr.ref.hz16k = gainsDb[9];
 
       final res = native.miniaudio_player_set_equalizer(_player.handle, eqPtr);

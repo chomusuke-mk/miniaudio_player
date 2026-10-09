@@ -877,24 +877,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _buildEqualizerCard() {
     final bands = [
       (
-        '60Hz',
-        _currentEqualizer.hz60,
-        (double v) => _currentEqualizer.copyWith(hz60: v),
+        '31Hz',
+        _currentEqualizer.hz31,
+        (double v) => _currentEqualizer.copyWith(hz31: v),
       ),
       (
-        '170Hz',
-        _currentEqualizer.hz170,
-        (double v) => _currentEqualizer.copyWith(hz170: v),
+        '63Hz',
+        _currentEqualizer.hz63,
+        (double v) => _currentEqualizer.copyWith(hz63: v),
       ),
       (
-        '310Hz',
-        _currentEqualizer.hz310,
-        (double v) => _currentEqualizer.copyWith(hz310: v),
+        '125Hz',
+        _currentEqualizer.hz125,
+        (double v) => _currentEqualizer.copyWith(hz125: v),
       ),
       (
-        '600Hz',
-        _currentEqualizer.hz600,
-        (double v) => _currentEqualizer.copyWith(hz600: v),
+        '250Hz',
+        _currentEqualizer.hz250,
+        (double v) => _currentEqualizer.copyWith(hz250: v),
+      ),
+      (
+        '500Hz',
+        _currentEqualizer.hz500,
+        (double v) => _currentEqualizer.copyWith(hz500: v),
       ),
       (
         '1kHz',
@@ -902,24 +907,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
         (double v) => _currentEqualizer.copyWith(hz1k: v),
       ),
       (
-        '3kHz',
-        _currentEqualizer.hz3k,
-        (double v) => _currentEqualizer.copyWith(hz3k: v),
+        '2kHz',
+        _currentEqualizer.hz2k,
+        (double v) => _currentEqualizer.copyWith(hz2k: v),
       ),
       (
-        '6kHz',
-        _currentEqualizer.hz6k,
-        (double v) => _currentEqualizer.copyWith(hz6k: v),
+        '4kHz',
+        _currentEqualizer.hz4k,
+        (double v) => _currentEqualizer.copyWith(hz4k: v),
       ),
       (
-        '12kHz',
-        _currentEqualizer.hz12k,
-        (double v) => _currentEqualizer.copyWith(hz12k: v),
-      ),
-      (
-        '14kHz',
-        _currentEqualizer.hz14k,
-        (double v) => _currentEqualizer.copyWith(hz14k: v),
+        '8kHz',
+        _currentEqualizer.hz8k,
+        (double v) => _currentEqualizer.copyWith(hz8k: v),
       ),
       (
         '16kHz',

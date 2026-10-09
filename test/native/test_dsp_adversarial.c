@@ -76,7 +76,7 @@ void __wrap_free(void *ptr)
 /* ========================================================================= */
 
 static const double k_bands[10] = {
-    60.0, 170.0, 310.0, 600.0, 1000.0, 3000.0, 6000.0, 12000.0, 14000.0, 16000.0};
+    31.0, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0};
 
 /**
  * @brief Computes Discrete-Time Fourier Transform (DTFT) magnitude in dB at frequency f.
@@ -271,20 +271,20 @@ static void test_suite_1_impulse_response_dtft(void)
             }
             else if (b == 0)
             {
-                /* Low shelf (60 Hz): Passband at 20 Hz approaches full gain; 60 Hz is shelf midpoint */
-                double measured_20hz = compute_dtft_magnitude_db(out_buf, channels, frame_count, 20.0, sample_rate);
-                double measured_60hz = compute_dtft_magnitude_db(out_buf, channels, frame_count, 60.0, sample_rate);
-                printf("  Band 0 ( 60 LowShelf) Target: %+6.1f dB | @20Hz: %+6.2f dB | @60Hz: %+6.2f dB [PASS]\n",
-                       target_gain, measured_20hz, measured_60hz);
-                /* At 20 Hz, within 0.8 dB of full target gain; at 60 Hz, between 0 and target */
-                assert(fabs(measured_20hz - target_gain) < 1.0);
+                /* Low shelf (31 Hz): Passband at 15 Hz approaches full gain; 31 Hz is shelf midpoint */
+                double measured_15hz = compute_dtft_magnitude_db(out_buf, channels, frame_count, 15.0, sample_rate);
+                double measured_31hz = compute_dtft_magnitude_db(out_buf, channels, frame_count, 31.0, sample_rate);
+                printf("  Band 0 ( 31 LowShelf) Target: %+6.1f dB | @15Hz: %+6.2f dB | @31Hz: %+6.2f dB [PASS]\n",
+                       target_gain, measured_15hz, measured_31hz);
+                /* At 15 Hz, within 1.0 dB of full target gain; at 31 Hz, between 0 and target */
+                assert(fabs(measured_15hz - target_gain) < 1.0);
                 if (target_gain > 0)
                 {
-                    assert(measured_60hz > 0.0 && measured_60hz <= target_gain);
+                    assert(measured_31hz > 0.0 && measured_31hz <= target_gain);
                 }
                 else
                 {
-                    assert(measured_60hz < 0.0 && measured_60hz >= target_gain);
+                    assert(measured_31hz < 0.0 && measured_31hz >= target_gain);
                 }
             }
             else if (b == 9)
@@ -757,15 +757,15 @@ static void test_suite_4_hot_reinit_zero_alloc(void)
     for (int i = 0; i < 500; i++)
     {
         miniaudio_player_equalizer_params_t p;
-        p.hz60 = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz170 = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz310 = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz600 = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz31 = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz63 = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz125 = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz250 = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz500 = -12.0f + (float)(rand() % 2401) / 100.0f;
         p.hz1k = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz3k = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz6k = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz12k = -12.0f + (float)(rand() % 2401) / 100.0f;
-        p.hz14k = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz2k = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz4k = -12.0f + (float)(rand() % 2401) / 100.0f;
+        p.hz8k = -12.0f + (float)(rand() % 2401) / 100.0f;
         p.hz16k = -12.0f + (float)(rand() % 2401) / 100.0f;
         ma_result r = ma_equalizer_node_set_all(&eq, &p);
         assert(r == MA_SUCCESS);
@@ -842,15 +842,15 @@ static void test_suite_5_player_presets_and_playback(void)
         assert(miniaudio_player_get_status(player, &status) == MAP_SUCCESS);
 
         /* Verify all 10 bands in snapshot */
-        assert(fabs(status.equalizer.hz60 - presets[i].hz60) < 1e-4);
-        assert(fabs(status.equalizer.hz170 - presets[i].hz170) < 1e-4);
-        assert(fabs(status.equalizer.hz310 - presets[i].hz310) < 1e-4);
-        assert(fabs(status.equalizer.hz600 - presets[i].hz600) < 1e-4);
+        assert(fabs(status.equalizer.hz31 - presets[i].hz31) < 1e-4);
+        assert(fabs(status.equalizer.hz63 - presets[i].hz63) < 1e-4);
+        assert(fabs(status.equalizer.hz125 - presets[i].hz125) < 1e-4);
+        assert(fabs(status.equalizer.hz250 - presets[i].hz250) < 1e-4);
+        assert(fabs(status.equalizer.hz500 - presets[i].hz500) < 1e-4);
         assert(fabs(status.equalizer.hz1k - presets[i].hz1k) < 1e-4);
-        assert(fabs(status.equalizer.hz3k - presets[i].hz3k) < 1e-4);
-        assert(fabs(status.equalizer.hz6k - presets[i].hz6k) < 1e-4);
-        assert(fabs(status.equalizer.hz12k - presets[i].hz12k) < 1e-4);
-        assert(fabs(status.equalizer.hz14k - presets[i].hz14k) < 1e-4);
+        assert(fabs(status.equalizer.hz2k - presets[i].hz2k) < 1e-4);
+        assert(fabs(status.equalizer.hz4k - presets[i].hz4k) < 1e-4);
+        assert(fabs(status.equalizer.hz8k - presets[i].hz8k) < 1e-4);
         assert(fabs(status.equalizer.hz16k - presets[i].hz16k) < 1e-4);
 
         printf("  Preset %-10s applied and verified during live audio stream.\n", preset_names[i]);

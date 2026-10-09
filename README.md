@@ -24,7 +24,7 @@ Engineered from the ground up for high fidelity, sub-millisecond command latency
 
 - ⚡ **Ultra-Low Memory & CPU Overhead**: Direct native C memory management and zero-copy streaming ensure minimal battery and hardware resource drain.
 - 🔀 **100% Pure FFI & Zero-Isolate Architecture**: Commands execute directly via FFI in sub-microseconds without message-passing latency or Dart VM isolate memory bloat. Heavy audio decoding, DSP, and hardware streaming run concurrently on native OS audio threads.
-- 📈 **Real-Time Reactive Visualizer**: 10-band hardware BPF filter bank (`60Hz` through `16kHz`) matching the equalizer, stereo VU meters (L/R), RMS, and peak metrics embedded in the native C playback pipeline (< 0.5% CPU active, 0% idle/unsubscribed via automatic on-demand streaming).
+- 📈 **Real-Time Reactive Visualizer**: 10-band hardware BPF filter bank (`31Hz` through `16kHz`) matching the ISO 266 equalizer, stereo VU meters (L/R), RMS, and peak metrics embedded in the native C playback pipeline (< 0.5% CPU active, 0% idle/unsubscribed via automatic on-demand streaming).
 - 🎛️ **10-Band Parametric Equalizer**: Native biquad filtering with low-shelf, peaking, and high-shelf bands. Includes instant acoustic presets (_Rock_, _Pop_, _Jazz_, _Classical_, _Bass Boost_, _Flat_).
 - 🚀 **High-Definition Pitch & Speed (Sonic DSP)**: Real-time time-stretching and independent pitch shifting with exceptional clarity and no phase distortion.
 - 🔇 **Skip Silence & Edge Trimming**: Native C real-time silence detector. Eliminates lead-in/lead-out track silence for seamless music playback and truncates speech pauses for podcasts and audiobooks with anti-click crossfading and cumulative saved time tracking.
@@ -261,7 +261,7 @@ void startIsolatedPlayer() async {
 
 ### 4. 10-Band Parametric Equalizer
 
-Shape the audio frequency response in real time across 10 precision bands (`60Hz`, `170Hz`, `310Hz`, `600Hz`, `1kHz`, `3kHz`, `6kHz`, `12kHz`, `14kHz`, `16kHz`) from `-24.0 dB` to `+24.0 dB`:
+Shape the audio frequency response in real time across 10 ISO 266 standard bands (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`) from `-24.0 dB` to `+24.0 dB`:
 
 ```dart
 // Apply built-in acoustic presets
@@ -272,10 +272,10 @@ await player.action.setEqualizer(Equalizer.flat);
 
 // Or create a custom equalizer configuration
 final customEq = Equalizer(
-  hz60: 4.0,   // Boost sub-bass
-  hz170: 2.5,  // Warmth
+  hz31: 4.0,   // Boost sub-bass
+  hz63: 2.5,   // Warmth
   hz1k: -1.0,  // Tame mid harshness
-  hz14k: 3.0,  // Treble air
+  hz8k: 3.0,   // Treble air
   hz16k: 4.0,  // High-shelf sparkle
 );
 await player.action.setEqualizer(customEq);
@@ -480,7 +480,7 @@ Build dynamic, reactive audio visualizers, spectrum analyzers, and stereo VU met
 // Automatically activates C DSP filtering on-demand (0% idle CPU when unsubscribed!)
 final subscription = player.stream.visualizer.listen((data) {
   // 10 frequency bands (0.0 to 1.0) matching the 10-band equalizer:
-  print('Sub-bass (60Hz): ${data.hz60}');
+  print('Sub-bass (31Hz): ${data.hz31}');
   print('Midrange (1kHz): ${data.hz1k}');
   print('Treble (16kHz):  ${data.hz16k}');
 
@@ -502,7 +502,7 @@ await player.action.setVisualizerEnabled(true);
 #### Zero-Overhead Automatic Lifecycle
 - **On-Demand Activation**: Subscribing to `player.stream.visualizer` tells the engine to enable the native C filter bank and switches the Dart polling timer to ~33 ms (~30 fps).
 - **0% Idle Cost**: Cancelling the stream subscription (`subscription.cancel()`) automatically turns off native C filter processing and returns the timer to 100 ms, keeping background and idle battery consumption at zero.
-- **Equalizer Consistency**: The 10 visualizer bands match the exact center frequencies of the equalizer (`60Hz`, `170Hz`, `310Hz`, `600Hz`, `1kHz`, `3kHz`, `6kHz`, `12kHz`, `14kHz`, `16kHz`), ensuring that tweaking an EQ slider immediately reflects visually in the corresponding frequency bar.
+- **Equalizer Consistency**: The 10 visualizer bands match the exact center frequencies of the ISO 266 standard equalizer (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`), ensuring that tweaking an EQ slider immediately reflects visually in the corresponding frequency bar.
 
 ---
 

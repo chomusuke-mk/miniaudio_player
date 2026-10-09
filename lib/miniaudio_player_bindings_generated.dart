@@ -258,6 +258,13 @@ external int miniaudio_player_set_equalizer(
   ffi.Pointer<miniaudio_player_equalizer_params_t> equalizer,
 );
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
+    isLeaf: true)
+external int miniaudio_player_set_equalizer_balance(
+  ffi.Pointer<miniaudio_player_t> player,
+  double balance,
+);
+
 @ffi.Native<
     ffi.Int32 Function(
         ffi.Pointer<miniaudio_player_t>, ffi.Uint32, ffi.Float)>(isLeaf: true)
@@ -265,6 +272,13 @@ external int miniaudio_player_set_equalizer_band(
   ffi.Pointer<miniaudio_player_t> player,
   int band_index,
   double gain_db,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
+    isLeaf: true)
+external int miniaudio_player_set_equalizer_preamp(
+  ffi.Pointer<miniaudio_player_t> player,
+  double preamp_db,
 );
 
 @ffi.Native<ffi.Void Function(ffi.Int32)>(isLeaf: true)
@@ -494,70 +508,82 @@ typedef Dartminiaudio_player_device_notification_cbFunction = void Function(
 /// /* Equalizer Parameters (10 Bands in dB: -24.0 to +24.0)                     */
 /// /* =========================================================================
 final class miniaudio_player_equalizer_params_t extends ffi.Struct {
-  /// < Low-shelf filter at 60 Hz  (-24.0 to +24.0 dB)
+  /// < Low-shelf filter at 31 Hz   (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz60;
+  external double hz31;
 
-  /// < Peaking filter at 170 Hz   (-24.0 to +24.0 dB)
+  /// < Peaking filter at 63 Hz     (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz170;
+  external double hz63;
 
-  /// < Peaking filter at 310 Hz   (-24.0 to +24.0 dB)
+  /// < Peaking filter at 125 Hz    (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz310;
+  external double hz125;
 
-  /// < Peaking filter at 600 Hz   (-24.0 to +24.0 dB)
+  /// < Peaking filter at 250 Hz    (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz600;
+  external double hz250;
 
-  /// < Peaking filter at 1.0 kHz  (-24.0 to +24.0 dB)
+  /// < Peaking filter at 500 Hz    (-24.0 to +24.0 dB)
+  @ffi.Float()
+  external double hz500;
+
+  /// < Peaking filter at 1.0 kHz   (-24.0 to +24.0 dB)
   @ffi.Float()
   external double hz1k;
 
-  /// < Peaking filter at 3.0 kHz  (-24.0 to +24.0 dB)
+  /// < Peaking filter at 2.0 kHz   (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz3k;
+  external double hz2k;
 
-  /// < Peaking filter at 6.0 kHz  (-24.0 to +24.0 dB)
+  /// < Peaking filter at 4.0 kHz   (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz6k;
+  external double hz4k;
 
-  /// < Peaking filter at 12.0 kHz (-24.0 to +24.0 dB)
+  /// < Peaking filter at 8.0 kHz   (-24.0 to +24.0 dB)
   @ffi.Float()
-  external double hz12k;
-
-  /// < Peaking filter at 14.0 kHz (-24.0 to +24.0 dB)
-  @ffi.Float()
-  external double hz14k;
+  external double hz8k;
 
   /// < High-shelf filter at 16.0 kHz (-24.0 to +24.0 dB)
   @ffi.Float()
   external double hz16k;
 
+  /// < Global preamp gain in dB (-24.0 to +24.0 dB, default: 0.0 dB)
+  @ffi.Float()
+  external double preamp;
+
+  /// < Stereo balance (-1.0 = left, 0.0 = center, +1.0 = right, default: 0.0)
+  @ffi.Float()
+  external double balance;
+
   static ffi.Pointer<miniaudio_player_equalizer_params_t> $allocate(
     ffi.Allocator $allocator, {
-    required double hz60,
-    required double hz170,
-    required double hz310,
-    required double hz600,
+    required double hz31,
+    required double hz63,
+    required double hz125,
+    required double hz250,
+    required double hz500,
     required double hz1k,
-    required double hz3k,
-    required double hz6k,
-    required double hz12k,
-    required double hz14k,
+    required double hz2k,
+    required double hz4k,
+    required double hz8k,
     required double hz16k,
+    required double preamp,
+    required double balance,
   }) =>
       $allocator<miniaudio_player_equalizer_params_t>()
-        ..ref.hz60 = hz60
-        ..ref.hz170 = hz170
-        ..ref.hz310 = hz310
-        ..ref.hz600 = hz600
+        ..ref.hz31 = hz31
+        ..ref.hz63 = hz63
+        ..ref.hz125 = hz125
+        ..ref.hz250 = hz250
+        ..ref.hz500 = hz500
         ..ref.hz1k = hz1k
-        ..ref.hz3k = hz3k
-        ..ref.hz6k = hz6k
-        ..ref.hz12k = hz12k
-        ..ref.hz14k = hz14k
-        ..ref.hz16k = hz16k;
+        ..ref.hz2k = hz2k
+        ..ref.hz4k = hz4k
+        ..ref.hz8k = hz8k
+        ..ref.hz16k = hz16k
+        ..ref.preamp = preamp
+        ..ref.balance = balance;
 }
 
 /// ========================================================================= */

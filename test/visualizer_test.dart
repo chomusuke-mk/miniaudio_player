@@ -24,15 +24,15 @@ void main() {
         right: 0.60,
       );
 
-      expect(data.hz60, closeTo(0.1, 1e-4));
-      expect(data.hz170, closeTo(0.2, 1e-4));
-      expect(data.hz310, closeTo(0.3, 1e-4));
-      expect(data.hz600, closeTo(0.4, 1e-4));
-      expect(data.hz1k, closeTo(0.5, 1e-4));
-      expect(data.hz3k, closeTo(0.6, 1e-4));
-      expect(data.hz6k, closeTo(0.7, 1e-4));
-      expect(data.hz12k, closeTo(0.8, 1e-4));
-      expect(data.hz14k, closeTo(0.9, 1e-4));
+      expect(data.hz31, closeTo(0.1, 1e-4));
+      expect(data.hz63, closeTo(0.2, 1e-4));
+      expect(data.hz125, closeTo(0.3, 1e-4));
+      expect(data.hz250, closeTo(0.4, 1e-4));
+      expect(data.hz500, closeTo(0.5, 1e-4));
+      expect(data.hz1k, closeTo(0.6, 1e-4));
+      expect(data.hz2k, closeTo(0.7, 1e-4));
+      expect(data.hz4k, closeTo(0.8, 1e-4));
+      expect(data.hz8k, closeTo(0.9, 1e-4));
       expect(data.hz16k, closeTo(1.0, 1e-4));
       expect(data.rms, equals(0.55));
       expect(data.peak, equals(0.95));

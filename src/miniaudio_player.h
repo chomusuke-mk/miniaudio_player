@@ -66,15 +66,15 @@ extern "C"
 
     typedef struct
     {
-        float hz60;  /**< Low-shelf filter at 60 Hz  (-24.0 to +24.0 dB) */
-        float hz170; /**< Peaking filter at 170 Hz   (-24.0 to +24.0 dB) */
-        float hz310; /**< Peaking filter at 310 Hz   (-24.0 to +24.0 dB) */
-        float hz600; /**< Peaking filter at 600 Hz   (-24.0 to +24.0 dB) */
-        float hz1k;  /**< Peaking filter at 1.0 kHz  (-24.0 to +24.0 dB) */
-        float hz3k;  /**< Peaking filter at 3.0 kHz  (-24.0 to +24.0 dB) */
-        float hz6k;  /**< Peaking filter at 6.0 kHz  (-24.0 to +24.0 dB) */
-        float hz12k; /**< Peaking filter at 12.0 kHz (-24.0 to +24.0 dB) */
-        float hz14k; /**< Peaking filter at 14.0 kHz (-24.0 to +24.0 dB) */
+        float hz31;  /**< Low-shelf filter at 31 Hz   (-24.0 to +24.0 dB) */
+        float hz63;  /**< Peaking filter at 63 Hz     (-24.0 to +24.0 dB) */
+        float hz125; /**< Peaking filter at 125 Hz    (-24.0 to +24.0 dB) */
+        float hz250; /**< Peaking filter at 250 Hz    (-24.0 to +24.0 dB) */
+        float hz500; /**< Peaking filter at 500 Hz    (-24.0 to +24.0 dB) */
+        float hz1k;  /**< Peaking filter at 1.0 kHz   (-24.0 to +24.0 dB) */
+        float hz2k;  /**< Peaking filter at 2.0 kHz   (-24.0 to +24.0 dB) */
+        float hz4k;  /**< Peaking filter at 4.0 kHz   (-24.0 to +24.0 dB) */
+        float hz8k;  /**< Peaking filter at 8.0 kHz   (-24.0 to +24.0 dB) */
         float hz16k; /**< High-shelf filter at 16.0 kHz (-24.0 to +24.0 dB) */
     } miniaudio_player_equalizer_params_t;
 

@@ -544,15 +544,15 @@ void main() {
       () async {
         await player.action.open(testWavFile.path);
         const customEq = Equalizer(
-          hz60: 3.0,
-          hz170: 2.0,
-          hz310: 1.0,
-          hz600: 0.0,
-          hz1k: -1.0,
-          hz3k: -2.0,
-          hz6k: 1.5,
-          hz12k: 2.5,
-          hz14k: 3.5,
+          hz31: 3.0,
+          hz63: 2.0,
+          hz125: 1.0,
+          hz250: 0.0,
+          hz500: -1.0,
+          hz1k: -2.0,
+          hz2k: 1.5,
+          hz4k: 2.5,
+          hz8k: 3.5,
           hz16k: 4.0,
         );
 
@@ -563,7 +563,7 @@ void main() {
 
     test('8.3: setEqualizer emits new Equalizer on stream.equalizer', () async {
       await player.action.open(testWavFile.path);
-      const customEq = Equalizer(hz60: 5.0, hz16k: -5.0);
+      const customEq = Equalizer(hz31: 5.0, hz16k: -5.0);
 
       final expectation = expectLater(
         player.stream.equalizer,
@@ -582,8 +582,8 @@ void main() {
 
         expect(updated.hz1k, equals(4.5));
         expect(updated.hz16k, equals(-3.0));
-        expect(updated.hz60, equals(0.0));
-        expect(updated.hz170, equals(0.0));
+        expect(updated.hz31, equals(0.0));
+        expect(updated.hz63, equals(0.0));
       },
     );
 
@@ -591,15 +591,15 @@ void main() {
       '8.5: Equalizer.toList returns exactly 10 ordered frequency bands',
       () {
         const eq = Equalizer(
-          hz60: 1.0,
-          hz170: 2.0,
-          hz310: 3.0,
-          hz600: 4.0,
-          hz1k: 5.0,
-          hz3k: 6.0,
-          hz6k: 7.0,
-          hz12k: 8.0,
-          hz14k: 9.0,
+          hz31: 1.0,
+          hz63: 2.0,
+          hz125: 3.0,
+          hz250: 4.0,
+          hz500: 5.0,
+          hz1k: 6.0,
+          hz2k: 7.0,
+          hz4k: 8.0,
+          hz8k: 9.0,
           hz16k: 10.0,
         );
 
@@ -635,17 +635,17 @@ void main() {
 
     test('9.2: Equalizer.rock boosts bass and treble with recessed mids', () {
       const rock = Equalizer.rock;
-      expect(rock.hz60, greaterThan(0.0));
-      expect(rock.hz170, greaterThan(0.0));
-      expect(rock.hz600, lessThan(0.0));
-      expect(rock.hz12k, greaterThan(0.0));
+      expect(rock.hz31, greaterThan(0.0));
+      expect(rock.hz63, greaterThan(0.0));
+      expect(rock.hz500, lessThan(0.0));
+      expect(rock.hz8k, greaterThan(0.0));
       expect(rock.hz16k, greaterThan(0.0));
     });
 
     test('9.3: Equalizer.pop boosts upper mids and vocals', () {
       const pop = Equalizer.pop;
-      expect(pop.hz310, greaterThan(0.0));
-      expect(pop.hz600, greaterThan(0.0));
+      expect(pop.hz250, greaterThan(0.0));
+      expect(pop.hz500, greaterThan(0.0));
       expect(pop.hz1k, greaterThan(0.0));
       expect(pop.hz16k, lessThan(0.0));
     });
@@ -653,16 +653,16 @@ void main() {
     test('9.4: Equalizer.jazz and Equalizer.classical provide warm acoustic curves', () {
       const jazz = Equalizer.jazz;
       const classical = Equalizer.classical;
-      expect(jazz.hz60, greaterThan(0.0));
-      expect(classical.hz60, greaterThan(0.0));
+      expect(jazz.hz31, greaterThan(0.0));
+      expect(classical.hz31, greaterThan(0.0));
       expect(classical.hz1k, lessThan(0.0));
     });
 
     test('9.5: Equalizer.bassBoost significantly elevates bass bands', () {
       const bass = Equalizer.bassBoost;
-      expect(bass.hz60, equals(7.0));
-      expect(bass.hz170, equals(6.0));
-      expect(bass.hz310, equals(4.5));
+      expect(bass.hz31, equals(7.0));
+      expect(bass.hz63, equals(6.0));
+      expect(bass.hz125, equals(4.5));
       expect(bass.hz1k, equals(0.0));
       expect(bass.hz16k, equals(0.0));
     });

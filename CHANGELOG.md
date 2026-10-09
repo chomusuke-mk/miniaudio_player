@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.0.0
+
+### 🎛️ Standard ISO 266 10-Band Equalizer & Visualizer Alignment
+
+- **ISO 266 Preferred Octave Band Center Frequencies**:
+  - Replaced the custom 10-band equalizer frequencies with the international ISO 266 standard 1/1 octave preferred center frequencies:
+    - `hz31` (31 Hz, low-shelf)
+    - `hz63` (63 Hz, peaking)
+    - `hz125` (125 Hz, peaking)
+    - `hz250` (250 Hz, peaking)
+    - `hz500` (500 Hz, peaking)
+    - `hz1k` (1.0 kHz, peaking)
+    - `hz2k` (2.0 kHz, peaking)
+    - `hz4k` (4.0 kHz, peaking)
+    - `hz8k` (8.0 kHz, peaking)
+    - `hz16k` (16.0 kHz, high-shelf)
+- **Native C Audio Core (`src/miniaudio_player.c` & `src/miniaudio_player.h`)**:
+  - Updated `miniaudio_player_equalizer_params_t` struct fields from `hz60..hz16k` to `hz31..hz16k`.
+  - Realigned DSP biquad filter bank `g_map_eq_frequencies` to [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] Hz.
+  - Aligned hardware visualizer bandpass filter bank (BPF) center frequencies to match the new ISO 266 bands.
+- **Dart API & Presets (`Equalizer` & `VisualizerData`)**:
+  - Updated `Equalizer` class properties, constructor, `copyWith`, `toList()`, and string representations to the ISO 266 bands.
+  - Re-tuned built-in acoustic presets (`rock`, `pop`, `jazz`, `classical`, `bassBoost`, `flat`) for the standard octave frequencies.
+  - Updated `VisualizerData` frequency getters (`hz31`, `hz63`, `hz125`, `hz250`, `hz500`, `hz1k`, `hz2k`, `hz4k`, `hz8k`, `hz16k`).
+- **Example App & Tests**:
+  - Updated example application equalizer sliders and labels to display the ISO 266 standard bands.
+  - Updated all unit, boundary, visualizer, and native verification tests.
+
 ## 2.4.0
 
 ### 📈 Real-Time Reactive Audio Visualizer & Spectrum Analyzer
