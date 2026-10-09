@@ -4,34 +4,39 @@
 // ignore_for_file: type=lint, unused_import, unused_element, deprecated_member_use_from_same_package
 import 'dart:ffi' as ffi;
 
-/// @brief Synchronously calculates ReplayGain & Loudness for a local audio file.
+/// @brief Synchronously analyzes an audio file for ReplayGain and/or Waveform in a single decoding pass.
 /// @param file_path Local audio file path.
-/// @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+/// @param config Analysis configuration flags and parameters.
 /// @param[out] out_result Result structure pointer.
 /// @return MAP_SUCCESS or error code.
 @ffi.Native<
-    ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Float,
-        ffi.Pointer<miniaudio_replay_gain_result_t>)>()
-external int miniaudio_player_calculate_replay_gain(
+    ffi.Int32 Function(
+        ffi.Pointer<ffi.Char>,
+        ffi.Pointer<miniaudio_audio_analysis_config_t>,
+        ffi.Pointer<miniaudio_audio_analysis_result_t>)>()
+external int miniaudio_player_analyze_audio(
   ffi.Pointer<ffi.Char> file_path,
-  double target_lufs,
-  ffi.Pointer<miniaudio_replay_gain_result_t> out_result,
+  ffi.Pointer<miniaudio_audio_analysis_config_t> config,
+  ffi.Pointer<miniaudio_audio_analysis_result_t> out_result,
 );
 
-/// @brief Asynchronously calculates ReplayGain on a dedicated non-blocking C OS thread.
-/// Invokes callback when analysis completes. Thread-safe and zero Dart Isolate overhead.
+/// @brief Asynchronously analyzes an audio file on a dedicated non-blocking C OS worker thread.
+/// Invokes callback when analysis completes. Thread-safe with zero Dart Isolate overhead.
 /// @param file_path Local audio file path.
-/// @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+/// @param config Analysis configuration flags and parameters.
 /// @param on_completed Completion callback.
 /// @param user_data User pointer passed to callback.
 /// @return MAP_SUCCESS if task was queued, error code otherwise.
 @ffi.Native<
-    ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Float,
-        miniaudio_replay_gain_completed_cb, ffi.Pointer<ffi.Void>)>()
-external int miniaudio_player_calculate_replay_gain_async(
+    ffi.Int32 Function(
+        ffi.Pointer<ffi.Char>,
+        ffi.Pointer<miniaudio_audio_analysis_config_t>,
+        miniaudio_audio_analysis_completed_cb,
+        ffi.Pointer<ffi.Void>)>()
+external int miniaudio_player_analyze_audio_async(
   ffi.Pointer<ffi.Char> file_path,
-  double target_lufs,
-  miniaudio_replay_gain_completed_cb on_completed,
+  ffi.Pointer<miniaudio_audio_analysis_config_t> config,
+  miniaudio_audio_analysis_completed_cb on_completed,
   ffi.Pointer<ffi.Void> user_data,
 );
 
@@ -53,6 +58,17 @@ external ffi.Pointer<miniaudio_player_t> miniaudio_player_create(
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
 external int miniaudio_player_destroy(
   ffi.Pointer<miniaudio_player_t> player,
+);
+
+/// @brief Frees dynamically allocated memory in an audio analysis result.
+/// @param result Result structure pointer.
+/// @param free_struct If non-zero, also frees the result pointer itself (used for async heap result).
+@ffi.Native<
+    ffi.Void Function(ffi.Pointer<miniaudio_audio_analysis_result_t>,
+        ffi.Int32)>(isLeaf: true)
+external void miniaudio_player_free_audio_analysis(
+  ffi.Pointer<miniaudio_audio_analysis_result_t> result,
+  int free_struct,
 );
 
 @ffi.Native<
@@ -146,6 +162,14 @@ external int miniaudio_player_get_status(
   ffi.Pointer<miniaudio_player_status_t> out_status,
 );
 
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_player_visualizer_data_t>)>(isLeaf: true)
+external int miniaudio_player_get_visualizer_data(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<miniaudio_player_visualizer_data_t> out_data,
+);
+
 @ffi.Native<ffi.Float Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
 external double miniaudio_player_get_volume(
   ffi.Pointer<miniaudio_player_t> player,
@@ -158,6 +182,11 @@ external int miniaudio_player_is_completed(
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
 external int miniaudio_player_is_playing(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
+external int miniaudio_player_is_visualizer_enabled(
   ffi.Pointer<miniaudio_player_t> player,
 );
 
@@ -269,6 +298,16 @@ external int miniaudio_player_set_silence_config(
 );
 
 /// ========================================================================= */
+/// /* Real-Time Audio Visualizer Controls                                       */
+/// /* =========================================================================
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32)>(
+    isLeaf: true)
+external int miniaudio_player_set_visualizer_enabled(
+  ffi.Pointer<miniaudio_player_t> player,
+  int enabled,
+);
+
+/// ========================================================================= */
 /// /* Volume, Rate & Pitch Adjustments                                          */
 /// /* =========================================================================
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float)>(
@@ -282,6 +321,96 @@ external int miniaudio_player_set_volume(
 external int miniaudio_player_stop(
   ffi.Pointer<miniaudio_player_t> player,
 );
+
+/// ========================================================================= */
+/// /* Unified Audio Analysis (ReplayGain, Loudness & Waveform)                  */
+/// /* =========================================================================
+enum miniaudio_analysis_flags_t {
+  MAP_ANALYSIS_FLAG_REPLAY_GAIN(1),
+  MAP_ANALYSIS_FLAG_WAVEFORM(2);
+
+  final int value;
+  const miniaudio_analysis_flags_t(this.value);
+
+  static miniaudio_analysis_flags_t fromValue(int value) => switch (value) {
+        1 => MAP_ANALYSIS_FLAG_REPLAY_GAIN,
+        2 => MAP_ANALYSIS_FLAG_WAVEFORM,
+        _ => throw ArgumentError(
+            'Unknown value for miniaudio_analysis_flags_t: $value'),
+      };
+}
+
+typedef miniaudio_audio_analysis_completed_cb = ffi
+    .Pointer<ffi.NativeFunction<miniaudio_audio_analysis_completed_cbFunction>>;
+typedef miniaudio_audio_analysis_completed_cbFunction = ffi.Void Function(
+    ffi.Pointer<miniaudio_audio_analysis_result_t> result,
+    ffi.Pointer<ffi.Void> user_data);
+typedef Dartminiaudio_audio_analysis_completed_cbFunction = void Function(
+    ffi.Pointer<miniaudio_audio_analysis_result_t> result,
+    ffi.Pointer<ffi.Void> user_data);
+
+final class miniaudio_audio_analysis_config_t extends ffi.Struct {
+  /// < Bitmask of miniaudio_analysis_flags_t
+  @ffi.Uint32()
+  external int flags;
+
+  /// < Target LUFS for ReplayGain (default: -18.0)
+  @ffi.Float()
+  external double target_lufs;
+
+  /// < Number of points for waveform (default: 100)
+  @ffi.Uint32()
+  external int waveform_points;
+
+  static ffi.Pointer<miniaudio_audio_analysis_config_t> $allocate(
+    ffi.Allocator $allocator, {
+    required int flags,
+    required double target_lufs,
+    required int waveform_points,
+  }) =>
+      $allocator<miniaudio_audio_analysis_config_t>()
+        ..ref.flags = flags
+        ..ref.target_lufs = target_lufs
+        ..ref.waveform_points = waveform_points;
+}
+
+final class miniaudio_audio_analysis_result_t extends ffi.Struct {
+  /// < MAP_SUCCESS or error code
+  @ffi.Int32()
+  external int status;
+
+  /// < Track duration in milliseconds
+  @ffi.Int64()
+  external int duration_ms;
+
+  /// < Native sample rate in Hz
+  @ffi.Uint32()
+  external int sample_rate;
+
+  /// < Channel count
+  @ffi.Uint32()
+  external int channels;
+
+  /// < Average nominal bitrate in bps
+  @ffi.Uint32()
+  external int bitrate;
+
+  /// < True sample peak (1.0 = 0 dBFS)
+  @ffi.Float()
+  external double peak;
+
+  /// < 1 if ReplayGain was calculated, 0 otherwise
+  @ffi.Int32()
+  external int has_replay_gain;
+
+  external miniaudio_replay_gain_data_t replay_gain;
+
+  /// < 1 if Waveform was calculated, 0 otherwise
+  @ffi.Int32()
+  external int has_waveform;
+
+  external miniaudio_waveform_data_t waveform;
+}
 
 /// ========================================================================= */
 /// /* Player Status Snapshot (Single-Call FFI Marshalling)                      */
@@ -624,29 +753,41 @@ final class miniaudio_player_status_t extends ffi.Struct {
   /// < Cumulative duration of skipped silence in ms
   @ffi.Int64()
   external int silence_saved_ms;
+
+  /// < 1 if real-time visualizer enabled, 0 otherwise
+  @ffi.Int32()
+  external int visualizer_enabled;
+
+  /// < Real-time 10-band visualizer data
+  external miniaudio_player_visualizer_data_t visualizer;
 }
 
 /// Opaque player handle
 typedef miniaudio_player_t = ffi.Opaque;
-typedef miniaudio_replay_gain_completed_cb = ffi
-    .Pointer<ffi.NativeFunction<miniaudio_replay_gain_completed_cbFunction>>;
-typedef miniaudio_replay_gain_completed_cbFunction = ffi.Void Function(
-    ffi.Float gain_db,
-    ffi.Float peak,
-    ffi.Float lufs,
-    ffi.Int32 status,
-    ffi.Pointer<ffi.Void> user_data);
-typedef Dartminiaudio_replay_gain_completed_cbFunction = void Function(
-    double gain_db,
-    double peak,
-    double lufs,
-    int status,
-    ffi.Pointer<ffi.Void> user_data);
 
-/// ========================================================================= */
-/// /* ReplayGain & Loudness Analysis (ITU-R BS.1770-4 / EBU R128)               */
-/// /* =========================================================================
-final class miniaudio_replay_gain_result_t extends ffi.Struct {
+final class miniaudio_player_visualizer_data_t extends ffi.Struct {
+  /// < 10 normalized frequency bands (0.0 to 1.0) matching EQ bands
+  @ffi.Array.multi([10])
+  external ffi.Array<ffi.Float> bands;
+
+  /// < Global RMS energy (0.0 to 1.0)
+  @ffi.Float()
+  external double rms;
+
+  /// < Peak amplitude (0.0 to 1.0)
+  @ffi.Float()
+  external double peak;
+
+  /// < Left channel level (0.0 to 1.0)
+  @ffi.Float()
+  external double left;
+
+  /// < Right channel level (0.0 to 1.0)
+  @ffi.Float()
+  external double right;
+}
+
+final class miniaudio_replay_gain_data_t extends ffi.Struct {
   /// < Recommended ReplayGain in dB relative to target LUFS
   @ffi.Float()
   external double gain_db;
@@ -659,20 +800,32 @@ final class miniaudio_replay_gain_result_t extends ffi.Struct {
   @ffi.Float()
   external double lufs;
 
-  /// < MAP_SUCCESS or error code
-  @ffi.Int32()
-  external int status;
-
-  static ffi.Pointer<miniaudio_replay_gain_result_t> $allocate(
+  static ffi.Pointer<miniaudio_replay_gain_data_t> $allocate(
     ffi.Allocator $allocator, {
     required double gain_db,
     required double peak,
     required double lufs,
-    required int status,
   }) =>
-      $allocator<miniaudio_replay_gain_result_t>()
+      $allocator<miniaudio_replay_gain_data_t>()
         ..ref.gain_db = gain_db
         ..ref.peak = peak
-        ..ref.lufs = lufs
-        ..ref.status = status;
+        ..ref.lufs = lufs;
+}
+
+final class miniaudio_waveform_data_t extends ffi.Struct {
+  /// < Number of points in the array
+  @ffi.Uint32()
+  external int point_count;
+
+  /// < Dynamically allocated array of normalized points (0.0 to 1.0)
+  external ffi.Pointer<ffi.Float> points;
+
+  static ffi.Pointer<miniaudio_waveform_data_t> $allocate(
+    ffi.Allocator $allocator, {
+    required int point_count,
+    required ffi.Pointer<ffi.Float> points,
+  }) =>
+      $allocator<miniaudio_waveform_data_t>()
+        ..ref.point_count = point_count
+        ..ref.points = points;
 }

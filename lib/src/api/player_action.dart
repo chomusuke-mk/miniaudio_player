@@ -390,4 +390,14 @@ class PlayerAction {
     );
     await setSilenceConfig(updated);
   }
+
+  /// Enables or disables real-time audio visualizer DSP analysis in native C.
+  ///
+  /// Note: Listening to `player.stream.visualizer` automatically enables the visualizer
+  /// on-demand and disables it when listeners are cancelled, keeping idle CPU at 0%.
+  /// Use this action to explicitly force-enable or force-disable the visualizer.
+  Future<void> setVisualizerEnabled(bool enabled) async {
+    _player.ensureNotDisposed();
+    _player.setManualVisualizerEnabled(enabled);
+  }
 }

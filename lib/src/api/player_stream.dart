@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'audio_device.dart';
 import 'silence_skip_config.dart';
+import 'visualizer_data.dart';
 import '../equalizer.dart';
 
 /// Reactive broadcast streams for observing playback and DSP state changes.
@@ -23,6 +24,8 @@ class PlayerStream {
   final StreamController<bool> _skipSilenceController;
   final StreamController<SilenceSkipConfig> _silenceConfigController;
   final StreamController<Duration> _silenceSavedDurationController;
+  final StreamController<VisualizerData> _visualizerController;
+  final StreamController<bool> _visualizerEnabledController;
 
   PlayerStream({
     required StreamController<Duration> positionController,
@@ -40,6 +43,8 @@ class PlayerStream {
     required StreamController<bool> skipSilenceController,
     required StreamController<SilenceSkipConfig> silenceConfigController,
     required StreamController<Duration> silenceSavedDurationController,
+    required StreamController<VisualizerData> visualizerController,
+    required StreamController<bool> visualizerEnabledController,
   })  : _positionController = positionController,
         _durationController = durationController,
         _playingController = playingController,
@@ -54,7 +59,9 @@ class PlayerStream {
         _audioDeviceController = audioDeviceController,
         _skipSilenceController = skipSilenceController,
         _silenceConfigController = silenceConfigController,
-        _silenceSavedDurationController = silenceSavedDurationController;
+        _silenceSavedDurationController = silenceSavedDurationController,
+        _visualizerController = visualizerController,
+        _visualizerEnabledController = visualizerEnabledController;
 
   /// Broadcast stream of the current playback position.
   Stream<Duration> get position => _positionController.stream;
@@ -104,4 +111,10 @@ class PlayerStream {
   /// Broadcast stream of cumulative duration of skipped silence.
   Stream<Duration> get silenceSavedDuration =>
       _silenceSavedDurationController.stream;
+
+  /// Broadcast stream of real-time audio visualizer data (10 bands matching equalizer + volume metrics).
+  Stream<VisualizerData> get visualizer => _visualizerController.stream;
+
+  /// Broadcast stream of visualizer active / enabled state changes.
+  Stream<bool> get visualizerEnabled => _visualizerEnabledController.stream;
 }

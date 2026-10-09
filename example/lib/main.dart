@@ -84,6 +84,41 @@ class _PlayerScreenState extends State<PlayerScreen> {
   List<AudioDevice> _audioDevices = [AudioDevice.auto];
   StreamSubscription<AudioDevice>? _deviceSub;
 
+  AudioAnalysisResult? _analysisResult;
+  bool _isAnalyzing = false;
+  SilenceSkipMode _silenceMode = SilenceSkipMode.continuous;
+
+  Future<void> _runAnalysis() async {
+    final path = _samplePath;
+    if (path == null || path.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _isAnalyzing = true;
+      });
+    }
+    try {
+      final result = await MiniaudioPlayer.analyzeAudio(
+        path,
+        waveform: true,
+        replayGain: true,
+        waveformPoints: 72,
+      );
+      if (mounted) {
+        setState(() {
+          _analysisResult = result;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error analyzing audio: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAnalyzing = false;
+        });
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -210,6 +245,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _samplePath = path;
       if (path.isNotEmpty) {
         await _player.action.open(path);
+        _runAnalysis();
       }
     } catch (e, st) {
       debugPrint('Initial track open note: $e\n$st');
@@ -350,7 +386,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await _player.action.stop();
       final path = await _resolveTrackPath(track);
       _samplePath = path;
+      _analysisResult = null;
       await _player.action.open(path);
+      _runAnalysis();
       if (wasPlaying) {
         await _player.action.play();
       }
@@ -392,6 +430,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildPlaybackCard(),
+            const SizedBox(height: 16),
+            _buildVisualizerCard(),
+            const SizedBox(height: 16),
+            _buildWaveformAndAnalysisCard(),
+            const SizedBox(height: 16),
+            _buildSilenceSkipCard(),
             const SizedBox(height: 16),
             _buildDspControlsCard(),
             const SizedBox(height: 16),
@@ -981,5 +1025,709 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildVisualizerCard() {
+    final bandLabels = [
+      '60Hz',
+      '170Hz',
+      '310Hz',
+      '600Hz',
+      '1kHz',
+      '3kHz',
+      '6kHz',
+      '12kHz',
+      '14kHz',
+      '16kHz',
+    ];
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.equalizer, color: Colors.cyanAccent),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Real-Time Reactive Visualizer',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ],
+                ),
+                StreamBuilder<bool>(
+                  stream: _player.stream.visualizerEnabled,
+                  initialData: _player.state.visualizerEnabled,
+                  builder: (context, snapshot) {
+                    final isEnabled = snapshot.data ?? true;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          isEnabled ? 'ON' : 'OFF',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isEnabled ? Colors.cyanAccent : Colors.grey,
+                          ),
+                        ),
+                        Switch(
+                          value: isEnabled,
+                          activeThumbColor: Colors.cyanAccent,
+                          onChanged: (val) {
+                            _player.action.setVisualizerEnabled(val);
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+            Text(
+              '10-band hardware BPF filter bank & VU meters in C engine (<0.5% CPU)',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            StreamBuilder<VisualizerData>(
+              stream: _player.stream.visualizer,
+              initialData: _player.state.visualizer,
+              builder: (context, snapshot) {
+                final data = snapshot.data ?? VisualizerData.empty();
+                final bands = data.bands;
+
+                return Column(
+                  children: [
+                    // Reactive Pulsing Sound Wave Bar
+                    Container(
+                      height: 28,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.graphic_eq,
+                            size: 16,
+                            color: Colors.cyanAccent,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final pulseWidth =
+                                    constraints.maxWidth *
+                                    data.rms.clamp(0.04, 1.0);
+                                return Stack(
+                                  alignment: Alignment.centerLeft,
+                                  children: [
+                                    Container(
+                                      height: 6,
+                                      width: constraints.maxWidth,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white10,
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                    AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 33,
+                                      ),
+                                      height: (6 + (data.peak * 10)).clamp(
+                                        6.0,
+                                        16.0,
+                                      ),
+                                      width: pulseWidth,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            Colors.cyanAccent,
+                                            Colors.purpleAccent,
+                                            if (data.peak > 0.8)
+                                              Colors.redAccent,
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(3),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.cyanAccent.withValues(
+                                              alpha: (0.4 * data.rms).clamp(
+                                                0.0,
+                                                1.0,
+                                              ),
+                                            ),
+                                            blurRadius: 6,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'RMS ${(data.rms * 100).toInt()}%',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // 10-Band Frequency Spectrum Bars
+                    SizedBox(
+                      height: 120,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: List.generate(10, (i) {
+                          final val = bands[i].clamp(0.0, 1.0);
+                          final label = bandLabels[i];
+                          return Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2.0,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Expanded(
+                                    child: Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 33,
+                                        ),
+                                        height: (90 * val).clamp(2.0, 90.0),
+                                        width: double.infinity,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            3,
+                                          ),
+                                          gradient: LinearGradient(
+                                            begin: Alignment.bottomCenter,
+                                            end: Alignment.topCenter,
+                                            colors: [
+                                              Colors.tealAccent,
+                                              Colors.cyanAccent,
+                                              if (val > 0.6)
+                                                Colors.purpleAccent,
+                                              if (val > 0.85)
+                                                Colors.amberAccent,
+                                            ],
+                                          ),
+                                          boxShadow: [
+                                            if (val > 0.2)
+                                              BoxShadow(
+                                                color: Colors.cyanAccent
+                                                    .withValues(
+                                                      alpha: (0.35 * val).clamp(
+                                                        0.0,
+                                                        1.0,
+                                                      ),
+                                                    ),
+                                                blurRadius: 4,
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    label,
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      color: Colors.grey,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // Stereo VU Meter & Peak
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const SizedBox(
+                                    width: 16,
+                                    child: Text(
+                                      'L',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: LinearProgressIndicator(
+                                        value: data.left.clamp(0.0, 1.0),
+                                        minHeight: 7,
+                                        backgroundColor: Colors.white12,
+                                        color: data.left > 0.85
+                                            ? Colors.redAccent
+                                            : Colors.cyanAccent,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  const SizedBox(
+                                    width: 16,
+                                    child: Text(
+                                      'R',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: LinearProgressIndicator(
+                                        value: data.right.clamp(0.0, 1.0),
+                                        minHeight: 7,
+                                        backgroundColor: Colors.white12,
+                                        color: data.right > 0.85
+                                            ? Colors.redAccent
+                                            : Colors.cyanAccent,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'Peak: ${(data.peak * 100).toInt()}%',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: data.peak > 0.9
+                                    ? Colors.redAccent
+                                    : null,
+                              ),
+                            ),
+                            Text(
+                              'RMS: ${(data.rms * 100).toInt()}%',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWaveformAndAnalysisCard() {
+    final res = _analysisResult;
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.waves, color: Colors.purpleAccent),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Waveform & ReplayGain Analysis',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ],
+                ),
+                if (_isAnalyzing)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 20),
+                    tooltip: 'Re-analyze Track',
+                    onPressed: _runAnalysis,
+                  ),
+              ],
+            ),
+            Text(
+              'Unified single-pass native analysis (MiniaudioPlayer.analyzeAudio)',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            if (res == null && _isAnalyzing)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24.0),
+                child: Center(
+                  child: Text('Analyzing track acoustic properties...'),
+                ),
+              )
+            else if (res != null) ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(
+                      'Loudness: ${res.replayGain?.lufs.toStringAsFixed(1) ?? "N/A"} LUFS',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(
+                      'Gain: ${res.replayGain?.gainDb.toStringAsFixed(1) ?? "0.0"} dB',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(
+                      'True Peak: ${res.replayGain?.peak.toStringAsFixed(2) ?? res.peak.toStringAsFixed(2)}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  if (res.replayGain != null)
+                    ActionChip(
+                      avatar: const Icon(Icons.volume_up, size: 14),
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        'Apply ReplayGain (${(res.replayGain!.getRecommendedVolume() * 100).round()}%)',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      onPressed: () {
+                        final recVol = res.replayGain!.getRecommendedVolume();
+                        setState(() => _volume = recVol);
+                        _player.action.setVolume(recVol);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Volume normalized to ${(recVol * 100).round()}% (${res.replayGain!.gainDb.toStringAsFixed(1)} dB)',
+                            ),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (res.waveform != null && res.waveform!.points.isNotEmpty) ...[
+                Text(
+                  'Interactive Waveform Seekbar (Tap / Drag to Seek)',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                StreamBuilder<Duration>(
+                  stream: _player.stream.position,
+                  initialData: _player.state.position,
+                  builder: (context, posSnapshot) {
+                    final pos = posSnapshot.data ?? Duration.zero;
+                    final dur = _player.state.duration;
+                    final progress = (dur.inMilliseconds > 0)
+                        ? (pos.inMilliseconds / dur.inMilliseconds).clamp(
+                            0.0,
+                            1.0,
+                          )
+                        : 0.0;
+
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        void handleSeek(Offset localPosition) {
+                          if (dur.inMilliseconds <= 0) return;
+                          final frac = (localPosition.dx / constraints.maxWidth)
+                              .clamp(0.0, 1.0);
+                          final targetMs = (frac * dur.inMilliseconds).toInt();
+                          _player.action.seek(Duration(milliseconds: targetMs));
+                        }
+
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapDown: (details) =>
+                              handleSeek(details.localPosition),
+                          onHorizontalDragUpdate: (details) =>
+                              handleSeek(details.localPosition),
+                          child: Container(
+                            height: 60,
+                            width: constraints.maxWidth,
+                            decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            child: CustomPaint(
+                              size: Size(constraints.maxWidth - 16, 48),
+                              painter: WaveformPainter(
+                                points: res.waveform!.points,
+                                progress: progress,
+                                playedColor: Colors.purpleAccent,
+                                unplayedColor: Colors.white24,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ],
+            ] else
+              OutlinedButton.icon(
+                icon: const Icon(Icons.analytics_outlined),
+                label: const Text('Analyze Audio Track'),
+                onPressed: _runAnalysis,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSilenceSkipCard() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.mic_off_outlined,
+                      color: Colors.amberAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Smart Silence Skipping',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ],
+                ),
+                StreamBuilder<bool>(
+                  stream: _player.stream.skipSilence,
+                  initialData: _player.state.skipSilence,
+                  builder: (context, snapshot) {
+                    final isEnabled = snapshot.data ?? false;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          isEnabled ? 'ON' : 'OFF',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isEnabled ? Colors.amberAccent : Colors.grey,
+                          ),
+                        ),
+                        Switch(
+                          value: isEnabled,
+                          activeThumbColor: Colors.amberAccent,
+                          onChanged: (val) {
+                            _player.action.setSkipSilence(
+                              val,
+                              mode: _silenceMode,
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+            Text(
+              'Hardware RMS silence detection with micro-fade transitions',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text(
+                  'Mode: ',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButton<SilenceSkipMode>(
+                    value: _silenceMode,
+                    isExpanded: true,
+                    items: const [
+                      DropdownMenuItem(
+                        value: SilenceSkipMode.continuous,
+                        child: Text('Continuous (In-Between Pauses)'),
+                      ),
+                      DropdownMenuItem(
+                        value: SilenceSkipMode.trimEdges,
+                        child: Text('Trim Edges (Intro & Outro)'),
+                      ),
+                      DropdownMenuItem(
+                        value: SilenceSkipMode.all,
+                        child: Text('All (Edges + In-Between Pauses)'),
+                      ),
+                    ],
+                    onChanged: (newMode) {
+                      if (newMode != null) {
+                        setState(() => _silenceMode = newMode);
+                        if (_player.state.skipSilence) {
+                          _player.action.setSkipSilence(true, mode: newMode);
+                        }
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            StreamBuilder<Duration>(
+              stream: _player.stream.silenceSavedDuration,
+              initialData: _player.state.silenceSavedDuration,
+              builder: (context, snapshot) {
+                final saved = snapshot.data ?? Duration.zero;
+                final savedSec = (saved.inMilliseconds / 1000.0).toStringAsFixed(
+                  1,
+                );
+                return Row(
+                  children: [
+                    const Icon(
+                      Icons.timer_outlined,
+                      size: 16,
+                      color: Colors.amberAccent,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Time saved: $savedSec s (${saved.inMilliseconds} ms)',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class WaveformPainter extends CustomPainter {
+  final List<double> points;
+  final double progress;
+  final Color playedColor;
+  final Color unplayedColor;
+
+  WaveformPainter({
+    required this.points,
+    required this.progress,
+    required this.playedColor,
+    required this.unplayedColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.isEmpty) return;
+
+    final barWidth = size.width / points.length;
+    final spacing = (barWidth * 0.25).clamp(1.0, 3.0);
+    final actualBarWidth = (barWidth - spacing).clamp(1.0, 16.0);
+    final playedPaint = Paint()..color = playedColor;
+    final unplayedPaint = Paint()..color = unplayedColor;
+
+    for (int i = 0; i < points.length; i++) {
+      final pointProgress = (i + 0.5) / points.length;
+      final isPlayed = pointProgress <= progress;
+      final paint = isPlayed ? playedPaint : unplayedPaint;
+
+      final normalizedVal = points[i].clamp(0.05, 1.0);
+      final barHeight = (size.height * normalizedVal).clamp(4.0, size.height);
+      final left = i * barWidth + (spacing / 2);
+      final top = (size.height - barHeight) / 2;
+
+      final rrect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, top, actualBarWidth, barHeight),
+        Radius.circular(actualBarWidth / 2),
+      );
+      canvas.drawRRect(rrect, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant WaveformPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.points != points ||
+        oldDelegate.playedColor != playedColor ||
+        oldDelegate.unplayedColor != unplayedColor;
   }
 }

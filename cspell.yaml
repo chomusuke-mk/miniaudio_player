@@ -55,6 +55,7 @@ words:
   - coomputation
   - crctable
   - crossfade
+  - crossfading
   - cserialnos
   - CSIRO
   - cupertino
@@ -110,6 +111,7 @@ words:
   - fishead
   - fivesize
   - floorlist
+  - fmaxf
   - formants
   - formulars
   - Foxo
@@ -118,6 +120,7 @@ words:
   - ftelli
   - ftol
   - Gagiev
+  - gapless
   - Gargaj
   - GCONST
   - Gesemann
@@ -177,6 +180,7 @@ words:
   - lpcs
   - LRINT
   - LRINTF
+  - lufs
   - machiney
   - manxorist
   - masterbooks
@@ -263,6 +267,7 @@ words:
   - Rohit
   - Schyler
   - seekability
+  - seekbar
   - seeked
   - selcost
   - serialnos

@@ -2,6 +2,7 @@
 
 import 'audio_device.dart';
 import 'silence_skip_config.dart';
+import 'visualizer_data.dart';
 import '../equalizer.dart';
 
 /// Synchronous snapshot of the current player and DSP states.
@@ -22,6 +23,8 @@ class PlayerState {
   final SilenceSkipMode Function() _getSilenceSkipMode;
   final SilenceSkipConfig Function() _getSilenceConfig;
   final Duration Function() _getSilenceSavedDuration;
+  final VisualizerData Function() _getVisualizer;
+  final bool Function() _getVisualizerEnabled;
 
   PlayerState({
     required Duration Function() getPosition,
@@ -40,6 +43,8 @@ class PlayerState {
     required SilenceSkipMode Function() getSilenceSkipMode,
     required SilenceSkipConfig Function() getSilenceConfig,
     required Duration Function() getSilenceSavedDuration,
+    required VisualizerData Function() getVisualizer,
+    required bool Function() getVisualizerEnabled,
   })  : _getPosition = getPosition,
         _getDuration = getDuration,
         _getPlaying = getPlaying,
@@ -55,7 +60,9 @@ class PlayerState {
         _getSkipSilence = getSkipSilence,
         _getSilenceSkipMode = getSilenceSkipMode,
         _getSilenceConfig = getSilenceConfig,
-        _getSilenceSavedDuration = getSilenceSavedDuration;
+        _getSilenceSavedDuration = getSilenceSavedDuration,
+        _getVisualizer = getVisualizer,
+        _getVisualizerEnabled = getVisualizerEnabled;
 
   /// Current playback position.
   Duration get position => _getPosition();
@@ -110,4 +117,10 @@ class PlayerState {
 
   /// Cumulative duration of silence saved / skipped in the current track.
   Duration get silenceSavedDuration => _getSilenceSavedDuration();
+
+  /// Real-time audio frequency visualizer snapshot (10 bands matching equalizer + volume metrics).
+  VisualizerData get visualizer => _getVisualizer();
+
+  /// Whether real-time visualizer DSP analysis is currently active.
+  bool get visualizerEnabled => _getVisualizerEnabled();
 }

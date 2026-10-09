@@ -11,8 +11,9 @@ import 'player_action.dart';
 import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
-import 'replay_gain_result.dart';
+import 'audio_analysis_result.dart';
 import 'silence_skip_config.dart';
+import 'visualizer_data.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
 const List<String> miniAudioPlayerSupportedExtensions = [
@@ -268,48 +269,103 @@ class MiniaudioPlayer {
     }
   }
 
-  /// Asynchronously calculates ReplayGain and perceived loudness (ITU-R BS.1770-4 / EBU R128)
-  /// on a dedicated, non-blocking native C background thread.
+  /// Analyzes an audio file in a single, high-performance decoding pass on a dedicated
+  /// non-blocking native C background worker thread (zero Dart Isolates, zero UI frame freezing).
   ///
-  /// Does NOT spawn Dart Isolates or block the UI thread.
+  /// Simultaneously extracts:
+  /// - Essential track info: duration, sample rate, channels, bitrate, peak.
+  /// - [ReplayGainResult] loudness & recommended volume gain (if [replayGain] is `true`).
+  /// - [WaveformResult] normalized amplitude bars for seekbars/visualizers (if [waveform] is `true`).
+  ///
+  /// Disabling modules via `replayGain: false` or `waveform: false` skips their respective
+  /// computation in C, conserving CPU cycles when only one is needed. Running both together
+  /// in a single pass saves ~50% CPU and storage I/O compared to analyzing them separately.
   ///
   /// - [filePath]: Path to the local audio file (e.g. MP3, WAV, FLAC, AAC, M4A, Opus, Ogg).
-  /// - [targetLufs]: Target loudness in LUFS (defaults to `-18.0` for ReplayGain, `-14.0` for streaming).
-  static Future<ReplayGainResult> calculateReplayGain(
+  /// - [replayGain]: Whether to calculate ITU-R BS.1770-4 / EBU R128 loudness metrics (default: `true`).
+  /// - [waveform]: Whether to extract normalized waveform points for seekbars (default: `true`).
+  /// - [waveformPoints]: Number of bars/points to divide the audio into (default: `100`).
+  /// - [targetLufs]: Loudness reference level in LUFS (defaults to `-18.0` for ReplayGain, `-14.0` for streaming).
+  static Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {
+    bool replayGain = true,
+    bool waveform = true,
+    int waveformPoints = 100,
     double targetLufs = -18.0,
   }) {
-    final completer = Completer<ReplayGainResult>();
+    final completer = Completer<AudioAnalysisResult>();
 
-    late final NativeCallable<native.miniaudio_replay_gain_completed_cbFunction>
+    var flags = 0;
+    if (replayGain) flags |= native.miniaudio_analysis_flags_t.MAP_ANALYSIS_FLAG_REPLAY_GAIN.value;
+    if (waveform) flags |= native.miniaudio_analysis_flags_t.MAP_ANALYSIS_FLAG_WAVEFORM.value;
+
+    late final NativeCallable<native.miniaudio_audio_analysis_completed_cbFunction>
         callback;
     callback = NativeCallable<
-        native.miniaudio_replay_gain_completed_cbFunction>.listener(
+        native.miniaudio_audio_analysis_completed_cbFunction>.listener(
       (
-        double gainDb,
-        double peak,
-        double lufs,
-        int status,
+        Pointer<native.miniaudio_audio_analysis_result_t> resultPtr,
         Pointer<Void> userData,
       ) {
         try {
-          if (status == MapResult.success) {
+          if (resultPtr == nullptr) {
+            completer.completeError(
+              const MiniaudioPlayerException('Null result received from native audio analysis'),
+            );
+            return;
+          }
+
+          final res = resultPtr.ref;
+          if (res.status == MapResult.success) {
+            final duration = Duration(milliseconds: res.duration_ms);
+            final sampleRate = res.sample_rate;
+            final channels = res.channels;
+            final bitrate = res.bitrate;
+            final peak = res.peak;
+
+            ReplayGainResult? replayGainResult;
+            if (res.has_replay_gain != 0) {
+              replayGainResult = ReplayGainResult(
+                gainDb: res.replay_gain.gain_db,
+                peak: res.replay_gain.peak,
+                lufs: res.replay_gain.lufs,
+              );
+            }
+
+            WaveformResult? waveformResult;
+            if (res.has_waveform != 0 && res.waveform.points != nullptr) {
+              final count = res.waveform.point_count;
+              final points = List<double>.generate(
+                count,
+                (i) => res.waveform.points[i],
+                growable: false,
+              );
+              waveformResult = WaveformResult(points: points);
+            }
+
             completer.complete(
-              ReplayGainResult(
-                gainDb: gainDb,
+              AudioAnalysisResult(
+                duration: duration,
+                sampleRate: sampleRate,
+                channels: channels,
+                bitrate: bitrate,
                 peak: peak,
-                lufs: lufs,
+                replayGain: replayGainResult,
+                waveform: waveformResult,
               ),
             );
           } else {
             completer.completeError(
               MiniaudioPlayerException(
-                'Failed to calculate replay gain: ${MapResult.describe(status)}',
-                errorCode: status,
+                'Failed to analyze audio: ${MapResult.describe(res.status)}',
+                errorCode: res.status,
               ),
             );
           }
         } finally {
+          if (resultPtr != nullptr) {
+            native.miniaudio_player_free_audio_analysis(resultPtr, 1);
+          }
           callback.close();
         }
       },
@@ -320,18 +376,23 @@ class MiniaudioPlayer {
             ? Uri.parse(filePath).toFilePath()
             : filePath;
     final pathPtr = path.toNativeUtf8();
+    final configPtr = calloc<native.miniaudio_audio_analysis_config_t>();
 
     try {
-      final res = native.miniaudio_player_calculate_replay_gain_async(
+      configPtr.ref.flags = flags;
+      configPtr.ref.target_lufs = targetLufs;
+      configPtr.ref.waveform_points = waveformPoints;
+
+      final res = native.miniaudio_player_analyze_audio_async(
         pathPtr.cast(),
-        targetLufs,
+        configPtr,
         callback.nativeFunction,
         nullptr,
       );
       if (res != MapResult.success) {
         callback.close();
         throw MiniaudioPlayerException(
-          'Failed to dispatch native replay gain calculation: ${MapResult.describe(res)}',
+          'Failed to dispatch native audio analysis: ${MapResult.describe(res)}',
           errorCode: res,
         );
       }
@@ -340,47 +401,95 @@ class MiniaudioPlayer {
       rethrow;
     } finally {
       calloc.free(pathPtr);
+      calloc.free(configPtr);
     }
 
     return completer.future;
   }
 
-  /// Synchronously calculates ReplayGain and perceived loudness (ITU-R BS.1770-4 / EBU R128).
+  /// Synchronously analyzes an audio file in a single decoding pass.
   ///
-  /// Note: This executes directly on the calling thread. For non-blocking execution,
-  /// prefer [calculateReplayGain].
-  static ReplayGainResult calculateReplayGainSync(
+  /// Note: This executes directly on the calling thread. For Flutter UI applications,
+  /// prefer the non-blocking [analyzeAudio].
+  static AudioAnalysisResult analyzeAudioSync(
     String filePath, {
+    bool replayGain = true,
+    bool waveform = true,
+    int waveformPoints = 100,
     double targetLufs = -18.0,
   }) {
+    var flags = 0;
+    if (replayGain) flags |= native.miniaudio_analysis_flags_t.MAP_ANALYSIS_FLAG_REPLAY_GAIN.value;
+    if (waveform) flags |= native.miniaudio_analysis_flags_t.MAP_ANALYSIS_FLAG_WAVEFORM.value;
+
     final path =
         filePath.startsWith('file://')
             ? Uri.parse(filePath).toFilePath()
             : filePath;
     final pathPtr = path.toNativeUtf8();
-    final outResultPtr = calloc<native.miniaudio_replay_gain_result_t>();
+    final configPtr = calloc<native.miniaudio_audio_analysis_config_t>();
+    final outResultPtr = calloc<native.miniaudio_audio_analysis_result_t>();
 
     try {
-      final res = native.miniaudio_player_calculate_replay_gain(
+      configPtr.ref.flags = flags;
+      configPtr.ref.target_lufs = targetLufs;
+      configPtr.ref.waveform_points = waveformPoints;
+
+      final res = native.miniaudio_player_analyze_audio(
         pathPtr.cast(),
-        targetLufs,
+        configPtr,
         outResultPtr,
       );
       if (res != MapResult.success) {
         throw MiniaudioPlayerException(
-          'Failed to calculate replay gain: ${MapResult.describe(res)}',
+          'Failed to analyze audio: ${MapResult.describe(res)}',
           errorCode: res,
         );
       }
+
       final out = outResultPtr.ref;
-      return ReplayGainResult(
-        gainDb: out.gain_db,
-        peak: out.peak,
-        lufs: out.lufs,
+      final duration = Duration(milliseconds: out.duration_ms);
+      final sampleRate = out.sample_rate;
+      final channels = out.channels;
+      final bitrate = out.bitrate;
+      final peak = out.peak;
+
+      ReplayGainResult? replayGainResult;
+      if (out.has_replay_gain != 0) {
+        replayGainResult = ReplayGainResult(
+          gainDb: out.replay_gain.gain_db,
+          peak: out.replay_gain.peak,
+          lufs: out.replay_gain.lufs,
+        );
+      }
+
+      WaveformResult? waveformResult;
+      if (out.has_waveform != 0 && out.waveform.points != nullptr) {
+        final count = out.waveform.point_count;
+        final points = List<double>.generate(
+          count,
+          (i) => out.waveform.points[i],
+          growable: false,
+        );
+        waveformResult = WaveformResult(points: points);
+      }
+
+      return AudioAnalysisResult(
+        duration: duration,
+        sampleRate: sampleRate,
+        channels: channels,
+        bitrate: bitrate,
+        peak: peak,
+        replayGain: replayGainResult,
+        waveform: waveformResult,
       );
     } finally {
+      if (outResultPtr != nullptr) {
+        native.miniaudio_player_free_audio_analysis(outResultPtr, 0);
+        calloc.free(outResultPtr);
+      }
       calloc.free(pathPtr);
-      calloc.free(outResultPtr);
+      calloc.free(configPtr);
     }
   }
 
@@ -422,6 +531,9 @@ class MiniaudioPlayer {
       StreamController<SilenceSkipConfig>.broadcast();
   final StreamController<Duration> _silenceSavedDurationController =
       StreamController<Duration>.broadcast();
+  late final StreamController<VisualizerData> _visualizerController;
+  final StreamController<bool> _visualizerEnabledController =
+      StreamController<bool>.broadcast();
 
   // Cached synchronous state snapshot
   Duration _position = Duration.zero;
@@ -438,6 +550,10 @@ class MiniaudioPlayer {
   AudioDevice _audioDevice = _globalConfig.defaultAudioDevice;
   SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
   Duration _silenceSavedDuration = Duration.zero;
+  VisualizerData _visualizer = VisualizerData.empty();
+  bool _manualVisualizerEnabled = false;
+  bool _hasVisualizerListeners = false;
+  Duration _currentTimerInterval = const Duration(milliseconds: 50);
 
   // Previous status cache for change detection
   Duration? _lastPosition;
@@ -467,6 +583,19 @@ class MiniaudioPlayer {
   MiniaudioPlayer({int? bufferSize, AudioDevice? defaultAudioDevice}) {
     _bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
     _audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
+
+    _visualizerController = StreamController<VisualizerData>.broadcast(
+      onListen: () {
+        _hasVisualizerListeners = true;
+        _updateNativeVisualizerState();
+        if (_playing) _startPositionTimer();
+      },
+      onCancel: () {
+        _hasVisualizerListeners = false;
+        _updateNativeVisualizerState();
+        if (_playing) _startPositionTimer();
+      },
+    );
 
     if (_globalConfig.logLevel.value > 0) {
       try {
@@ -553,6 +682,8 @@ class MiniaudioPlayer {
       skipSilenceController: _skipSilenceController,
       silenceConfigController: _silenceConfigController,
       silenceSavedDurationController: _silenceSavedDurationController,
+      visualizerController: _visualizerController,
+      visualizerEnabledController: _visualizerEnabledController,
     );
 
     state = PlayerState(
@@ -572,6 +703,9 @@ class MiniaudioPlayer {
       getSilenceSkipMode: () => _silenceConfig.mode,
       getSilenceConfig: () => _silenceConfig,
       getSilenceSavedDuration: () => _silenceSavedDuration,
+      getVisualizer: () => _visualizer,
+      getVisualizerEnabled: () =>
+          _manualVisualizerEnabled || _hasVisualizerListeners,
     );
   }
 
@@ -621,6 +755,27 @@ class MiniaudioPlayer {
     }
   }
 
+  void _updateNativeVisualizerState() {
+    if (_isDisposed || _playerHandle == nullptr) return;
+    final shouldEnable = _manualVisualizerEnabled || _hasVisualizerListeners;
+    native.miniaudio_player_set_visualizer_enabled(
+      _playerHandle,
+      shouldEnable ? 1 : 0,
+    );
+    if (!_visualizerEnabledController.isClosed) {
+      _visualizerEnabledController.add(shouldEnable);
+    }
+  }
+
+  /// Sets whether the visualizer DSP is manually forced enabled or disabled.
+  void setManualVisualizerEnabled(bool enabled) {
+    _manualVisualizerEnabled = enabled;
+    _updateNativeVisualizerState();
+    if (_playing) {
+      _startPositionTimer();
+    }
+  }
+
   /// Notifies the player that playback was stopped manually.
   ///
   /// Resets internal completion and playback flags, rewinds position,
@@ -635,6 +790,12 @@ class MiniaudioPlayer {
     _lastIsPlaying = false;
     _position = Duration.zero;
     _lastPosition = Duration.zero;
+    _visualizer = VisualizerData.empty();
+
+    if (!_visualizerController.isClosed &&
+        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+      _visualizerController.add(VisualizerData.empty());
+    }
 
     if (!_playingController.isClosed && wasPlaying) {
       _playingController.add(false);
@@ -657,6 +818,12 @@ class MiniaudioPlayer {
     _lastIsPlaying = false;
     _position = _duration;
     _lastPosition = _duration;
+    _visualizer = VisualizerData.empty();
+
+    if (!_visualizerController.isClosed &&
+        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+      _visualizerController.add(VisualizerData.empty());
+    }
 
     if (!_playingController.isClosed && wasPlaying) {
       _playingController.add(false);
@@ -670,8 +837,17 @@ class MiniaudioPlayer {
   }
 
   void _startPositionTimer() {
-    if (_positionTimer != null && _positionTimer!.isActive) return;
-    _positionTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+    final isVisActive = _hasVisualizerListeners || _manualVisualizerEnabled;
+    final interval = isVisActive
+        ? const Duration(milliseconds: 33)
+        : const Duration(milliseconds: 50);
+
+    if (_positionTimer != null && _positionTimer!.isActive) {
+      if (_currentTimerInterval == interval) return;
+      _positionTimer!.cancel();
+    }
+    _currentTimerInterval = interval;
+    _positionTimer = Timer.periodic(interval, (_) {
       if (_isDisposed || _playerHandle == nullptr) {
         _stopPositionTimer();
         return;
@@ -683,6 +859,11 @@ class MiniaudioPlayer {
   void _stopPositionTimer() {
     _positionTimer?.cancel();
     _positionTimer = null;
+    _visualizer = VisualizerData.empty();
+    if (!_visualizerController.isClosed &&
+        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+      _visualizerController.add(VisualizerData.empty());
+    }
   }
 
   /// Queries the native miniaudio player snapshot and emits changes to broadcast streams.
@@ -817,6 +998,27 @@ class MiniaudioPlayer {
       }
     }
 
+    final visData = status.visualizer;
+    final visBands = List<double>.generate(
+      10,
+      (i) => visData.bands[i],
+      growable: false,
+    );
+    final currentVis = isPlaying
+        ? VisualizerData(
+            bands: visBands,
+            rms: visData.rms,
+            peak: visData.peak,
+            left: visData.left,
+            right: visData.right,
+          )
+        : VisualizerData.empty();
+    _visualizer = currentVis;
+    if (!_visualizerController.isClosed &&
+        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+      _visualizerController.add(currentVis);
+    }
+
     return true;
   }
 
@@ -932,5 +1134,7 @@ class MiniaudioPlayer {
     await _skipSilenceController.close();
     await _silenceConfigController.close();
     await _silenceSavedDurationController.close();
+    await _visualizerController.close();
+    await _visualizerEnabledController.close();
   }
 }

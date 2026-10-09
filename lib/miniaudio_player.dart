@@ -8,6 +8,7 @@ export 'src/api/player_action.dart';
 export 'src/api/player_exception.dart' show MiniaudioPlayerException;
 export 'src/api/player_state.dart';
 export 'src/api/player_stream.dart';
-export 'src/api/replay_gain_result.dart';
+export 'src/api/audio_analysis_result.dart';
+export 'src/api/visualizer_data.dart';
 export 'src/api/silence_skip_config.dart';
 export 'src/equalizer.dart';

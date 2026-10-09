@@ -23,6 +23,8 @@ functions:
       - 'miniaudio_player_set_log_level'
       - 'miniaudio_player_set_buffer_size'
       - 'miniaudio_player_set_silence_config'
+      - 'miniaudio_player_set_visualizer_enabled'
+      - 'miniaudio_player_free_audio_analysis'
 comments:
   style: any
   length: full

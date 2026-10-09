@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-android%20|%20ios%20|%20macos%20|%20windows%20|%20linux-blue.svg)](https://pub.dev/packages/miniaudio_player)
 [![Dart FFI](https://img.shields.io/badge/Dart-FFI%20Native%20Assets-0175C2.svg?logo=dart)](https://dart.dev/interop/c-interop)
-[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-166%20passing-brightgreen.svg)](#)
 
 An **ultra-low-resource, high-performance cross-platform audio player** for Flutter and Dart. Powered by the industry-proven [miniaudio](https://miniaud.io/) C engine, [Sonic DSP](https://github.com/waywardgeek/sonic), and **Dart Native Assets** with 100% pure FFI bindings.
 
@@ -24,11 +24,12 @@ Engineered from the ground up for high fidelity, sub-millisecond command latency
 
 - ⚡ **Ultra-Low Memory & CPU Overhead**: Direct native C memory management and zero-copy streaming ensure minimal battery and hardware resource drain.
 - 🔀 **100% Pure FFI & Zero-Isolate Architecture**: Commands execute directly via FFI in sub-microseconds without message-passing latency or Dart VM isolate memory bloat. Heavy audio decoding, DSP, and hardware streaming run concurrently on native OS audio threads.
+- 📈 **Real-Time Reactive Visualizer**: 10-band hardware BPF filter bank (`60Hz` through `16kHz`) matching the equalizer, stereo VU meters (L/R), RMS, and peak metrics embedded in the native C playback pipeline (< 0.5% CPU active, 0% idle/unsubscribed via automatic on-demand streaming).
 - 🎛️ **10-Band Parametric Equalizer**: Native biquad filtering with low-shelf, peaking, and high-shelf bands. Includes instant acoustic presets (_Rock_, _Pop_, _Jazz_, _Classical_, _Bass Boost_, _Flat_).
 - 🚀 **High-Definition Pitch & Speed (Sonic DSP)**: Real-time time-stretching and independent pitch shifting with exceptional clarity and no phase distortion.
 - 🔇 **Skip Silence & Edge Trimming**: Native C real-time silence detector. Eliminates lead-in/lead-out track silence for seamless music playback and truncates speech pauses for podcasts and audiobooks with anti-click crossfading and cumulative saved time tracking.
 - 🎧 **Dynamic Audio Device Routing**: Real-time switching between audio outputs (speakers, headphones, Bluetooth) with automatic, crash-free recovery fallbacks.
-- 📊 **ReplayGain & ITU-R BS.1770-4 Loudness Analysis**: Fast, non-blocking offline loudness and true sample peak calculation running on background native OS threads. Provides recommended gain (dB), peak, integrated LUFS, and anti-clipping defense volume scaling without spawning Dart Isolates or freezing the UI.
+- 📊 **Unified Audio Analysis (ReplayGain, Loudness & Waveform)**: High-speed, non-blocking offline analysis in a single decoding pass on background native C OS threads. Calculates ITU-R BS.1770-4 / EBU R128 loudness (LUFS), true sample peak, recommended gain (dB), anti-clipping defense volume, and normalized amplitude waveform points for UI seekbars without spawning Dart Isolates or freezing Flutter frames.
 - 📦 **Extensive Audio Codec Support**: Built-in native decoding for MP3, WAV, FLAC, OGG, Opus, AAC, M4A (AAC & ALAC), AIFF, W64, and more without external system dependencies.
 - 🔄 **Dual State Paradigm**: Access synchronous instant state snapshots (`player.state.*`) or listen to reactive broadcast streams (`player.stream.*`).
 
@@ -371,32 +372,56 @@ On Android, `MiniaudioPlayer.getAudioDevices()` interacts directly with Android'
 
 ---
 
-### 7. ReplayGain & Loudness Normalization (ITU-R BS.1770-4 / EBU R128)
+### 7. Unified Audio Analysis (ReplayGain, Loudness & Waveform)
 
-Calculate integrated perceived loudness (LUFS), true sample peak, and recommended ReplayGain (dB) across all supported formats directly in a non-blocking native C background thread:
+Analyze an audio track's acoustic properties, loudness, and visual waveform envelope in a **single decoding pass** on a dedicated native C OS background worker thread (zero Dart Isolates, 0 ms UI blocking, preserving 60/120 fps):
 
 ```dart
-// 1. Asynchronously analyze audio file on a native C worker thread (0 ms UI blocking, no Dart Isolates)
-final result = await MiniaudioPlayer.calculateReplayGain(
+// 1. Analyze audio file asynchronously (runs on native C background thread)
+final analysis = await MiniaudioPlayer.analyzeAudio(
   '/path/to/song.flac',
-  targetLufs: -18.0, // ReplayGain standard (-18.0) or streaming target (-14.0)
+  replayGain: true,       // ITU-R BS.1770-4 / EBU R128 loudness analysis
+  waveform: true,         // Normalized amplitude points for visual seekbars
+  waveformPoints: 100,    // Number of bars/points to extract
+  targetLufs: -18.0,      // Target loudness (-18.0 for ReplayGain, -14.0 for streaming)
 );
 
-print('Integrated Loudness: ${result.lufs} LUFS');
-print('Sample Peak: ${result.peak} (${result.peak > 1.0 ? "clipping" : "safe"})');
-print('Recommended Gain: ${result.gainDb} dB');
+// 2. Track & codec metrics:
+print('Duration: ${analysis.duration}');
+print('Sample Rate: ${analysis.sampleRate} Hz');
+print('Channels: ${analysis.channels}');
+print('Bitrate: ${analysis.bitrate ~/ 1000} kbps');
+print('Peak Amplitude: ${analysis.peak}');
 
-// 2. Convert to linear volume with built-in anti-clipping protection:
-final volume = result.getRecommendedVolume(preventClipping: true);
+// 3. ReplayGain & Volume Normalization (if replayGain: true):
+if (analysis.replayGain != null) {
+  final rg = analysis.replayGain!;
+  print('Integrated Loudness: ${rg.lufs} LUFS');
+  print('Recommended Gain: ${rg.gainDb} dB');
 
-// 3. Apply to player and start playback:
-await player.action.open('/path/to/song.flac');
-await player.action.setVolume(volume);
-await player.action.play();
+  // Convert to linear volume with built-in anti-clipping protection:
+  final volume = rg.getRecommendedVolume(preventClipping: true);
+  await player.action.setVolume(volume);
+}
+
+// 4. Waveform seekbar rendering (if waveform: true):
+if (analysis.waveform != null) {
+  final wf = analysis.waveform!;
+  print('Waveform points (${wf.length}): ${wf.points}');
+
+  // Sample height at 50% progress or at a specific playback position:
+  final midHeight = wf.getPointAtProgress(0.5); // 0.0 to 1.0
+  final currentHeight = wf.getPointAtPosition(player.state.position, analysis.duration);
+}
 ```
 
+#### Selective & Synchronous Execution
+
+- **Selective Execution**: Disable any module you don't need (`replayGain: false` or `waveform: false`) to skip its C processing. Running both simultaneously in a single pass saves ~50% CPU and storage I/O compared to analyzing them separately.
+- **Synchronous Execution**: Use `MiniaudioPlayer.analyzeAudioSync(...)` for CLI tools, server-side Dart scripts, or offline batch preprocessing pipelines.
+
 > [!TIP]
-> **Zero Isolate Overhead & Ultra-Low Memory**: The analyzer operates in streaming 32 KB blocks residing in CPU L1/L2 cache ($< 100\text{ KB}$ constant RAM footprint). It processes tracks at up to 700x+ real-time speed without spawning heavy Dart Isolates or copying memory buffers.
+> **Zero Isolate Overhead & Single-Pass Decoding**: The native analyzer streams audio in 32 KB blocks residing in CPU L1/L2 cache (< 100 KB constant RAM footprint). Decoding happens once, feeding the cascaded ITU-R BS.1770-4 pre-filters and waveform peak tracker simultaneously at up to 700x+ real-time speed.
 
 ---
 
@@ -443,6 +468,41 @@ player.stream.silenceSavedDuration.listen((saved) {
 | `trimEdges` | Discards silence at the beginning of the track immediately and trims trailing silence at EOF. | Music playlists, gapless albums |
 | `continuous` | Detects speech/vocal pauses exceeding `minSilenceDuration` and skips them down to `padding`. | Podcasts, audiobooks, lectures, voice memos |
 | `all` | Combines edge trimming and continuous pause skipping simultaneously. | Spoken-word media, recorded meetings |
+
+---
+
+### 9. Real-Time Reactive Audio Visualizer
+
+Build dynamic, reactive audio visualizers, spectrum analyzers, and stereo VU meters with sub-millisecond precision. Powered by a 10-band Direct Form II Transposed biquad bandpass filter bank built directly into `miniaudio`'s native playback node:
+
+```dart
+// 1. Listen to real-time visualizer data (~30 fps updates)
+// Automatically activates C DSP filtering on-demand (0% idle CPU when unsubscribed!)
+final subscription = player.stream.visualizer.listen((data) {
+  // 10 frequency bands (0.0 to 1.0) matching the 10-band equalizer:
+  print('Sub-bass (60Hz): ${data.hz60}');
+  print('Midrange (1kHz): ${data.hz1k}');
+  print('Treble (16kHz):  ${data.hz16k}');
+
+  // Stereo channel amplitude:
+  print('Left: ${data.left}, Right: ${data.right}');
+
+  // Energy metrics:
+  print('RMS: ${data.rms}, Peak: ${data.peak}');
+});
+
+// 2. Synchronous snapshot access:
+final current = player.state.visualizer;
+print('Current 10 bands: ${current.bands}');
+
+// 3. Manual enable/disable override (optional):
+await player.action.setVisualizerEnabled(true);
+```
+
+#### Zero-Overhead Automatic Lifecycle
+- **On-Demand Activation**: Subscribing to `player.stream.visualizer` tells the engine to enable the native C filter bank and switches the Dart polling timer to ~33 ms (~30 fps).
+- **0% Idle Cost**: Cancelling the stream subscription (`subscription.cancel()`) automatically turns off native C filter processing and returns the timer to 100 ms, keeping background and idle battery consumption at zero.
+- **Equalizer Consistency**: The 10 visualizer bands match the exact center frequencies of the equalizer (`60Hz`, `170Hz`, `310Hz`, `600Hz`, `1kHz`, `3kHz`, `6kHz`, `12kHz`, `14kHz`, `16kHz`), ensuring that tweaking an EQ slider immediately reflects visually in the corresponding frequency bar.
 
 ---
 

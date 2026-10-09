@@ -112,6 +112,15 @@ extern "C"
 
     typedef struct
     {
+        float bands[10]; /**< 10 normalized frequency bands (0.0 to 1.0) matching EQ bands */
+        float rms;       /**< Global RMS energy (0.0 to 1.0) */
+        float peak;      /**< Peak amplitude (0.0 to 1.0) */
+        float left;      /**< Left channel level (0.0 to 1.0) */
+        float right;     /**< Right channel level (0.0 to 1.0) */
+    } miniaudio_player_visualizer_data_t;
+
+    typedef struct
+    {
         int64_t position_ms;                           /**< Current position in milliseconds */
         int64_t duration_ms;                           /**< Total duration in milliseconds */
         int32_t is_playing;                            /**< 1 if actively playing, 0 if paused/stopped */
@@ -126,6 +135,8 @@ extern "C"
         miniaudio_device_info_t device;                /**< Currently active audio output device */
         miniaudio_player_silence_config_t silence;     /**< Currently active silence skipping settings */
         int64_t silence_saved_ms;                      /**< Cumulative duration of skipped silence in ms */
+        int32_t visualizer_enabled;                     /**< 1 if real-time visualizer enabled, 0 otherwise */
+        miniaudio_player_visualizer_data_t visualizer;  /**< Real-time 10-band visualizer data */
     } miniaudio_player_status_t;
 
     /* ========================================================================= */
@@ -268,6 +279,21 @@ extern "C"
     MAP_API int64_t miniaudio_player_get_silence_saved_ms(const miniaudio_player_t *player);
 
     /* ========================================================================= */
+    /* Real-Time Audio Visualizer Controls                                       */
+    /* ========================================================================= */
+
+    MAP_API int32_t miniaudio_player_set_visualizer_enabled(
+        miniaudio_player_t *player,
+        int32_t enabled);
+
+    MAP_API int32_t miniaudio_player_is_visualizer_enabled(
+        const miniaudio_player_t *player);
+
+    MAP_API int32_t miniaudio_player_get_visualizer_data(
+        const miniaudio_player_t *player,
+        miniaudio_player_visualizer_data_t *out_data);
+
+    /* ========================================================================= */
     /* Status & Query Inspection                                                 */
     /* ========================================================================= */
 
@@ -288,50 +314,90 @@ extern "C"
         miniaudio_player_equalizer_params_t *out_equalizer);
 
     /* ========================================================================= */
-    /* ReplayGain & Loudness Analysis (ITU-R BS.1770-4 / EBU R128)               */
+    /* Unified Audio Analysis (ReplayGain, Loudness & Waveform)                  */
     /* ========================================================================= */
+
+    typedef enum
+    {
+        MAP_ANALYSIS_FLAG_REPLAY_GAIN = 1 << 0,
+        MAP_ANALYSIS_FLAG_WAVEFORM    = 1 << 1
+    } miniaudio_analysis_flags_t;
+
+    typedef struct
+    {
+        uint32_t flags;            /**< Bitmask of miniaudio_analysis_flags_t */
+        float target_lufs;         /**< Target LUFS for ReplayGain (default: -18.0) */
+        uint32_t waveform_points;  /**< Number of points for waveform (default: 100) */
+    } miniaudio_audio_analysis_config_t;
 
     typedef struct
     {
         float gain_db;   /**< Recommended ReplayGain in dB relative to target LUFS */
         float peak;      /**< Peak sample value (1.0 = 0 dBFS) */
         float lufs;      /**< Integrated perceived loudness in LUFS */
-        int32_t status;  /**< MAP_SUCCESS or error code */
-    } miniaudio_replay_gain_result_t;
+    } miniaudio_replay_gain_data_t;
 
-    typedef void (*miniaudio_replay_gain_completed_cb)(
-        float gain_db,
-        float peak,
-        float lufs,
-        int32_t status,
+    typedef struct
+    {
+        uint32_t point_count; /**< Number of points in the array */
+        float *points;        /**< Dynamically allocated array of normalized points (0.0 to 1.0) */
+    } miniaudio_waveform_data_t;
+
+    typedef struct
+    {
+        int32_t status;            /**< MAP_SUCCESS or error code */
+        int64_t duration_ms;       /**< Track duration in milliseconds */
+        uint32_t sample_rate;      /**< Native sample rate in Hz */
+        uint32_t channels;         /**< Channel count */
+        uint32_t bitrate;          /**< Average nominal bitrate in bps */
+        float peak;                /**< True sample peak (1.0 = 0 dBFS) */
+
+        int32_t has_replay_gain;   /**< 1 if ReplayGain was calculated, 0 otherwise */
+        miniaudio_replay_gain_data_t replay_gain;
+
+        int32_t has_waveform;      /**< 1 if Waveform was calculated, 0 otherwise */
+        miniaudio_waveform_data_t waveform;
+    } miniaudio_audio_analysis_result_t;
+
+    typedef void (*miniaudio_audio_analysis_completed_cb)(
+        const miniaudio_audio_analysis_result_t *result,
         void *user_data);
 
     /**
-     * @brief Synchronously calculates ReplayGain & Loudness for a local audio file.
+     * @brief Synchronously analyzes an audio file for ReplayGain and/or Waveform in a single decoding pass.
      * @param file_path Local audio file path.
-     * @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+     * @param config Analysis configuration flags and parameters.
      * @param[out] out_result Result structure pointer.
      * @return MAP_SUCCESS or error code.
      */
-    MAP_API int32_t miniaudio_player_calculate_replay_gain(
+    MAP_API int32_t miniaudio_player_analyze_audio(
         const char *file_path,
-        float target_lufs,
-        miniaudio_replay_gain_result_t *out_result);
+        const miniaudio_audio_analysis_config_t *config,
+        miniaudio_audio_analysis_result_t *out_result);
 
     /**
-     * @brief Asynchronously calculates ReplayGain on a dedicated non-blocking C OS thread.
-     * Invokes callback when analysis completes. Thread-safe and zero Dart Isolate overhead.
+     * @brief Asynchronously analyzes an audio file on a dedicated non-blocking C OS worker thread.
+     * Invokes callback when analysis completes. Thread-safe with zero Dart Isolate overhead.
      * @param file_path Local audio file path.
-     * @param target_lufs Target LUFS (standard: -18.0 for ReplayGain, -14.0 for streaming).
+     * @param config Analysis configuration flags and parameters.
      * @param on_completed Completion callback.
      * @param user_data User pointer passed to callback.
      * @return MAP_SUCCESS if task was queued, error code otherwise.
      */
-    MAP_API int32_t miniaudio_player_calculate_replay_gain_async(
+    MAP_API int32_t miniaudio_player_analyze_audio_async(
         const char *file_path,
-        float target_lufs,
-        miniaudio_replay_gain_completed_cb on_completed,
+        const miniaudio_audio_analysis_config_t *config,
+        miniaudio_audio_analysis_completed_cb on_completed,
         void *user_data);
+
+    /**
+     * @brief Frees dynamically allocated memory in an audio analysis result.
+     * @param result Result structure pointer.
+     * @param free_struct If non-zero, also frees the result pointer itself (used for async heap result).
+     */
+    MAP_API void miniaudio_player_free_audio_analysis(
+        miniaudio_audio_analysis_result_t *result,
+        int32_t free_struct);
 
     /* ========================================================================= */
     /* Logging Configuration                                                     */
