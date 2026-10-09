@@ -289,12 +289,14 @@ static ma_bool32 map_string_to_device_id(const char *str, ma_device_id *out_id)
     return MA_FALSE;
 }
 
-/* Clamps frequency safely below the Nyquist limit */
+/* Clamps frequency safely below the Nyquist limit and above sub-audio 10 Hz lower bound */
 static MA_INLINE double map_clamp_frequency(double freq, ma_uint32 sampleRate)
 {
     double nyquist = (double)sampleRate * 0.499;
     if (freq > nyquist)
         return nyquist;
+    if (freq < 10.0)
+        return 10.0;
     return freq;
 }
 
@@ -323,6 +325,9 @@ static MA_INLINE float map_biquad_df2t_process(map_biquad_df2t_t *f, float x)
     float y = f->b0 * x + f->s1;
     f->s1 = f->b1 * x - f->a1 * y + f->s2;
     f->s2 = f->b2 * x - f->a2 * y;
+    /* Anti-denormal protection: flush subnormal filter state registers to zero */
+    if (fabsf(f->s1) < 1e-20f) f->s1 = 0.0f;
+    if (fabsf(f->s2) < 1e-20f) f->s2 = 0.0f;
     return y;
 }
 
@@ -436,10 +441,38 @@ static void map_bs2b_process_frames(map_bs2b_t *bs2b, float *pSamples, ma_uint32
         double out_l = (bs2b->lfs.hi[0] + bs2b->lfs.lo[1]) * bs2b->gain;
         double out_r = (bs2b->lfs.hi[1] + bs2b->lfs.lo[0]) * bs2b->gain;
 
+        /* Anti-denormal protection for BS2B IIR delay states */
+        if (fabs(bs2b->lfs.lo[0]) < 1e-20) bs2b->lfs.lo[0] = 0.0;
+        if (fabs(bs2b->lfs.lo[1]) < 1e-20) bs2b->lfs.lo[1] = 0.0;
+        if (fabs(bs2b->lfs.hi[0]) < 1e-20) bs2b->lfs.hi[0] = 0.0;
+        if (fabs(bs2b->lfs.hi[1]) < 1e-20) bs2b->lfs.hi[1] = 0.0;
+
         pSamples[f * channels] = (float)out_l;
         pSamples[f * channels + 1] = (float)out_r;
     }
 }
+
+#ifndef MAP_CACHE_LINE_SIZE
+#define MAP_CACHE_LINE_SIZE 64
+#endif
+
+#if defined(_MSC_VER)
+#define MAP_ALIGN_CACHE_LINE __declspec(align(64))
+#elif defined(__GNUC__) || defined(__clang__)
+#define MAP_ALIGN_CACHE_LINE __attribute__((aligned(64)))
+#else
+#define MAP_ALIGN_CACHE_LINE
+#endif
+
+#ifndef MAP_COMPILER_BARRIER
+#if defined(__GNUC__) || defined(__clang__)
+#define MAP_COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
+#elif defined(_MSC_VER)
+#define MAP_COMPILER_BARRIER() _ReadWriteBarrier()
+#else
+#define MAP_COMPILER_BARRIER()
+#endif
+#endif
 
 typedef struct
 {
@@ -452,16 +485,23 @@ typedef struct
     ma_uint32 sampleRate;
     int32_t visualizer_enabled;
     map_biquad_df2t_t vis_bpf[10];
-    miniaudio_player_visualizer_data_t visualizer_data;
+
+    /* Cache-line aligned telemetry section to prevent false sharing with audio processing state */
+    MAP_ALIGN_CACHE_LINE miniaudio_player_visualizer_data_t visualizer_data;
+    MAP_ALIGN_CACHE_LINE MA_ATOMIC(4, ma_uint32) vis_seq;
 
     /* DSP Chain Extensions */
-    float preamp_db;
+    MAP_ALIGN_CACHE_LINE float preamp_db;
     miniaudio_player_replay_gain_config_t rg_config;
     float current_preamp_linear;
     float target_preamp_linear;
 
     float balance;
     float current_balance;
+    float target_gl;
+    float target_gr;
+    float current_gl;
+    float current_gr;
 
     int32_t mono_enabled;
 
@@ -473,6 +513,9 @@ typedef struct
 
     float current_volume;
     float target_volume;
+    float smooth_factor;
+
+    float band_gains[10];
 
     int32_t limiter_enabled;
 } ma_equalizer_node;
@@ -530,15 +573,17 @@ static void ma_equalizer_node_process_pcm_frames(
         float *pOut = ppFramesOut[0];
         ma_uint32 ch = pEq->channels;
         ma_uint32 f, c;
+        float sf = pEq->smooth_factor;
 
         for (f = 0; f < frameCount; f++)
         {
-            current_linear += (target_linear - current_linear) * 0.005f;
+            current_linear += (target_linear - current_linear) * sf;
             for (c = 0; c < ch; c++)
             {
                 pOut[f * ch + c] = pIn[f * ch + c] * current_linear;
             }
         }
+        if (fabsf(current_linear) < 1e-15f) current_linear = 0.0f;
         pEq->current_preamp_linear = current_linear;
         pEq->target_preamp_linear = target_linear;
     }
@@ -597,7 +642,7 @@ static void ma_equalizer_node_process_pcm_frames(
         }
     }
 
-    /* 5. Stereo Balance / Pan (L/R) with smoothing */
+    /* 5. Stereo Balance / Pan (L/R) with optimized smoothing (Zero per-frame trig calls) */
     if (pEq->channels >= 2)
     {
         ma_uint32 f;
@@ -606,20 +651,42 @@ static void ma_equalizer_node_process_pcm_frames(
         float target_bal = pEq->balance;
         float cur_bal = pEq->current_balance;
 
-        for (f = 0; f < frameCount; f++)
-        {
-            cur_bal += (target_bal - cur_bal) * 0.005f;
-            float norm = (cur_bal + 1.0f) * 0.5f;
-            if (norm < 0.0f) norm = 0.0f;
-            if (norm > 1.0f) norm = 1.0f;
-            float angle = norm * 1.57079632679f; /* PI / 2 */
-            float gl = cosf(angle) * 1.41421356f;
-            float gr = sinf(angle) * 1.41421356f;
+        float norm = (target_bal + 1.0f) * 0.5f;
+        if (norm < 0.0f) norm = 0.0f;
+        if (norm > 1.0f) norm = 1.0f;
+        float angle = norm * 1.57079632679f; /* PI / 2 */
+        float tgt_gl = cosf(angle) * 1.41421356f;
+        float tgt_gr = sinf(angle) * 1.41421356f;
+        float cur_gl = pEq->current_gl;
+        float cur_gr = pEq->current_gr;
 
-            pSamples[f * ch] *= gl;
-            pSamples[f * ch + 1] *= gr;
+        if (cur_bal == target_bal && fabsf(cur_gl - tgt_gl) < 0.0001f && fabsf(cur_gr - tgt_gr) < 0.0001f)
+        {
+            /* Steady-state path: Vectorized gain scaling */
+            for (f = 0; f < frameCount; f++)
+            {
+                pSamples[f * ch]     *= tgt_gl;
+                pSamples[f * ch + 1] *= tgt_gr;
+            }
+            pEq->current_gl = tgt_gl;
+            pEq->current_gr = tgt_gr;
         }
-        pEq->current_balance = cur_bal;
+        else
+        {
+            /* Ramp path: Linear step without per-frame trig calculations */
+            float gl_step = (tgt_gl - cur_gl) / (float)frameCount;
+            float gr_step = (tgt_gr - cur_gr) / (float)frameCount;
+            for (f = 0; f < frameCount; f++)
+            {
+                cur_gl += gl_step;
+                cur_gr += gr_step;
+                pSamples[f * ch]     *= cur_gl;
+                pSamples[f * ch + 1] *= cur_gr;
+            }
+            pEq->current_gl = tgt_gl;
+            pEq->current_gr = tgt_gr;
+            pEq->current_balance = target_bal;
+        }
     }
 
     /* 6. Pre-Fader Visualizer Tap (measures balanced & equalized audio before master fader) */
@@ -660,10 +727,18 @@ static void ma_equalizer_node_process_pcm_frames(
         float global_rms = 0.5f * (rms_l + rms_r);
         float global_peak = (peak_l > peak_r) ? peak_l : peak_r;
 
-        const float decay = 0.82f;
+        /* Sample-rate and buffer-duration adaptive decay: 100ms standard release envelope */
+        float dt = (totalFrames > 0 && pEq->sampleRate > 0) ? ((float)totalFrames / (float)pEq->sampleRate) : 0.0213f;
+        float decay = expf(-dt / 0.100f);
+        if (decay < 0.1f) decay = 0.1f;
+        if (decay > 0.99f) decay = 0.99f;
         static const float band_weights[10] = {
             1.4f, 1.6f, 1.8f, 2.0f, 2.2f, 2.4f, 2.8f, 3.2f, 3.6f, 4.0f
         };
+
+        /* Begin Seqlock update for lock-free reader synchronization */
+        ma_atomic_fetch_add_32(&pEq->vis_seq, 1);
+        MAP_COMPILER_BARRIER();
 
         for (b = 0; b < 10; b++)
         {
@@ -695,25 +770,31 @@ static void ma_equalizer_node_process_pcm_frames(
             pEq->visualizer_data.right = (rms_r > 1.0f) ? 1.0f : rms_r;
         else
             pEq->visualizer_data.right = pEq->visualizer_data.right * decay;
+
+        /* End Seqlock update */
+        MAP_COMPILER_BARRIER();
+        ma_atomic_fetch_add_32(&pEq->vis_seq, 1);
     }
 
-    /* 7. Master Volume Fader (Post-visualizer, with rampa/smoothing) */
+    /* 7. Master Volume Fader (Post-visualizer, with sample-rate adapted smoothing) */
     {
         ma_uint32 totalSamples = frameCount * pEq->channels;
         float *pSamples = ppFramesOut[0];
         ma_uint32 s;
         float cur_vol = pEq->current_volume;
         float tgt_vol = pEq->target_volume;
+        float sf = pEq->smooth_factor;
 
         for (s = 0; s < totalSamples; s++)
         {
-            cur_vol += (tgt_vol - cur_vol) * 0.005f;
+            cur_vol += (tgt_vol - cur_vol) * sf;
             pSamples[s] *= cur_vol;
         }
+        if (fabsf(cur_vol) < 1e-15f) cur_vol = 0.0f;
         pEq->current_volume = cur_vol;
     }
 
-    /* 8. True-Peak Soft-Knee Limiter (DAC Protector at 0.95f threshold) */
+    /* 8. True-Peak Soft-Knee Limiter (DAC Protector at 0.95f threshold with branch optimization) */
     if (pEq->limiter_enabled)
     {
         ma_uint32 totalSamples = frameCount * pEq->channels;
@@ -726,15 +807,12 @@ static void ma_equalizer_node_process_pcm_frames(
         for (s = 0; s < totalSamples; s++)
         {
             float x = pSamples[s];
-            if (x > threshold)
+            float abs_x = fabsf(x);
+            if (abs_x > threshold)
             {
-                float excess = (x - threshold) * invRange;
-                pSamples[s] = threshold + range * (excess / (1.0f + excess));
-            }
-            else if (x < -threshold)
-            {
-                float excess = (-x - threshold) * invRange;
-                pSamples[s] = -(threshold + range * (excess / (1.0f + excess)));
+                float excess = (abs_x - threshold) * invRange;
+                float sat = threshold + range * (excess / (1.0f + excess));
+                pSamples[s] = (x > 0.0f) ? sat : -sat;
             }
         }
     }
@@ -848,6 +926,10 @@ static ma_result ma_equalizer_node_init(
     pNode->target_preamp_linear = 1.0f;
     pNode->balance = 0.0f;
     pNode->current_balance = 0.0f;
+    pNode->target_gl = 1.0f;
+    pNode->target_gr = 1.0f;
+    pNode->current_gl = 1.0f;
+    pNode->current_gr = 1.0f;
     pNode->mono_enabled = 0;
     pNode->crossfeed_mode = MAP_CROSSFEED_OFF;
     map_bs2b_init(&pNode->bs2b, sampleRate, MAP_BS2B_DEFAULT_CLEVEL);
@@ -855,7 +937,14 @@ static ma_result ma_equalizer_node_init(
     pNode->spatializer_width = 1.0f;
     pNode->current_volume = 1.0f;
     pNode->target_volume = 1.0f;
-    pNode->limiter_enabled = 1;
+    pNode->smooth_factor = 1.0f - expf(-1.0f / ((float)sampleRate * 0.005f));
+    if (pNode->smooth_factor <= 0.0f || pNode->smooth_factor > 0.05f)
+    {
+        pNode->smooth_factor = 0.005f;
+    }
+    ma_atomic_store_32(&pNode->vis_seq, 0);
+    memset(pNode->band_gains, 0, sizeof(pNode->band_gains));
+    pNode->limiter_enabled = 0;
 
     return MA_SUCCESS;
 }
@@ -885,6 +974,14 @@ static ma_result ma_equalizer_node_set_band(
     clampedGain = map_clamp_gain_db(gainDB);
 
     ma_spinlock_lock(&pEq->lock);
+
+    /* Skip redundant filter reinitialization if gain is unchanged */
+    if (fabsf(clampedGain - pEq->band_gains[bandIndex]) < 0.0001f)
+    {
+        ma_spinlock_unlock(&pEq->lock);
+        return MA_SUCCESS;
+    }
+    pEq->band_gains[bandIndex] = clampedGain;
 
     if (bandIndex == 0)
     {
@@ -1039,11 +1136,16 @@ static void map_silence_detector_init(
 
     map_silence_detector_update_params(pDet);
 
-    /* Allocate hold buffer: default up to 3 seconds of frames */
-    pDet->hold_buffer_capacity = sample_rate * 3;
+    /* Allocate hold buffer: precisely sized and 64-byte aligned to prevent cache thrashing and split-loads */
+    pDet->hold_buffer_capacity = pDet->min_silence_frames + pDet->padding_frames + 2048;
     if (channels > 0 && pDet->hold_buffer_capacity > 0)
     {
-        pDet->hold_buffer = (float *)malloc(pDet->hold_buffer_capacity * channels * sizeof(float));
+        size_t size_bytes = pDet->hold_buffer_capacity * channels * sizeof(float);
+        pDet->hold_buffer = (float *)ma_aligned_malloc(size_bytes, 64, NULL);
+        if (pDet->hold_buffer != NULL)
+        {
+            memset(pDet->hold_buffer, 0, size_bytes);
+        }
     }
 }
 
@@ -1053,7 +1155,7 @@ static void map_silence_detector_uninit(map_silence_detector *pDet)
         return;
     if (pDet->hold_buffer != NULL)
     {
-        free(pDet->hold_buffer);
+        ma_aligned_free(pDet->hold_buffer, NULL);
         pDet->hold_buffer = NULL;
     }
 }
@@ -1068,13 +1170,26 @@ static void map_silence_detector_set_config(
     pDet->config = *config;
     map_silence_detector_update_params(pDet);
 
-    /* Ensure hold buffer can hold at least min_silence_frames + padding_frames */
-    ma_uint32 required = pDet->min_silence_frames + pDet->padding_frames + (pDet->sample_rate * 2);
+    /* Ensure hold buffer can hold at least min_silence_frames + padding_frames + 2048 frames */
+    ma_uint32 required = pDet->min_silence_frames + pDet->padding_frames + 2048;
     if (required > pDet->hold_buffer_capacity)
     {
-        float *new_buf = (float *)realloc(pDet->hold_buffer, required * pDet->channels * sizeof(float));
+        size_t new_size = required * pDet->channels * sizeof(float);
+        float *new_buf = (float *)ma_aligned_malloc(new_size, 64, NULL);
         if (new_buf != NULL)
         {
+            memset(new_buf, 0, new_size);
+            if (pDet->hold_buffer != NULL && pDet->hold_frames_count > 0)
+            {
+                ma_uint32 frames_to_copy = pDet->hold_frames_count;
+                if (frames_to_copy > required)
+                    frames_to_copy = required;
+                memcpy(new_buf, pDet->hold_buffer, frames_to_copy * pDet->channels * sizeof(float));
+            }
+            if (pDet->hold_buffer != NULL)
+            {
+                ma_aligned_free(pDet->hold_buffer, NULL);
+            }
             pDet->hold_buffer = new_buf;
             pDet->hold_buffer_capacity = required;
         }
@@ -1192,10 +1307,13 @@ static ma_result map_time_stretch_ds_read_filtered(
         if (pDS->rawBufferReadPos >= pDS->rawBufferCount)
         {
             ma_uint64 rawRead = 0;
+            ma_uint64 framesToFetch = (channels > 0) ? (pDS->rawBufferCapacity / channels) : 4096;
+            if (framesToFetch == 0)
+                framesToFetch = 4096;
             ma_result res = ma_decoder_read_pcm_frames(
                 &pDS->decoder,
                 pDS->rawBuffer,
-                1024,
+                framesToFetch,
                 &rawRead);
 
             pDS->rawBufferCount = (ma_uint32)rawRead;
@@ -1688,7 +1806,7 @@ static ma_result map_time_stretch_ds_init(
     sonicSetQuality(pDS->sonic, 1);
 
     pDS->scratchCapacity = 8192 * targetChannels;
-    pDS->scratchBuffer = (float *)malloc(pDS->scratchCapacity * sizeof(float));
+    pDS->scratchBuffer = (float *)ma_aligned_malloc(pDS->scratchCapacity * sizeof(float), 64, NULL);
     if (pDS->scratchBuffer == NULL)
     {
         sonicDestroyStream(pDS->sonic);
@@ -1696,11 +1814,11 @@ static ma_result map_time_stretch_ds_init(
         return MA_OUT_OF_MEMORY;
     }
 
-    pDS->rawBufferCapacity = 1024 * targetChannels;
-    pDS->rawBuffer = (float *)malloc(pDS->rawBufferCapacity * sizeof(float));
+    pDS->rawBufferCapacity = 4096 * targetChannels;
+    pDS->rawBuffer = (float *)ma_aligned_malloc(pDS->rawBufferCapacity * sizeof(float), 64, NULL);
     if (pDS->rawBuffer == NULL)
     {
-        free(pDS->scratchBuffer);
+        ma_aligned_free(pDS->scratchBuffer, NULL);
         sonicDestroyStream(pDS->sonic);
         ma_decoder_uninit(&pDS->decoder);
         return MA_OUT_OF_MEMORY;
@@ -1717,8 +1835,8 @@ static ma_result map_time_stretch_ds_init(
     if (result != MA_SUCCESS)
     {
         map_silence_detector_uninit(&pDS->silence);
-        free(pDS->rawBuffer);
-        free(pDS->scratchBuffer);
+        ma_aligned_free(pDS->rawBuffer, NULL);
+        ma_aligned_free(pDS->scratchBuffer, NULL);
         sonicDestroyStream(pDS->sonic);
         ma_decoder_uninit(&pDS->decoder);
         return result;
@@ -1742,12 +1860,12 @@ static void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
     ma_decoder_uninit(&pDS->decoder);
     if (pDS->scratchBuffer != NULL)
     {
-        free(pDS->scratchBuffer);
+        ma_aligned_free(pDS->scratchBuffer, NULL);
         pDS->scratchBuffer = NULL;
     }
     if (pDS->rawBuffer != NULL)
     {
-        free(pDS->rawBuffer);
+        ma_aligned_free(pDS->rawBuffer, NULL);
         pDS->rawBuffer = NULL;
     }
     map_silence_detector_uninit(&pDS->silence);
@@ -1794,8 +1912,8 @@ struct miniaudio_player
     miniaudio_device_info_t current_device;
     ma_device_id custom_device_id;
     ma_bool32 has_custom_device;
-    volatile int32_t needs_device_fallback;
-    volatile int32_t is_switching_device;
+    MA_ATOMIC(4, ma_int32) needs_device_fallback;
+    MA_ATOMIC(4, ma_int32) is_switching_device;
     int32_t device_changed;
 };
 
@@ -1811,6 +1929,12 @@ static void miniaudio_player_on_sound_end(void *pUserData, ma_sound *pSound)
         return;
 
     ma_mutex_lock(&player->lock);
+    if (player->is_completed)
+    {
+        /* Idempotent guard: already completed, prevent duplicate triggers */
+        ma_mutex_unlock(&player->lock);
+        return;
+    }
     player->is_completed = 1;
     player->state = MAP_PLAYBACK_STATE_COMPLETED;
     cb = player->on_completed;
@@ -1886,10 +2010,10 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
     }
     else if (pNotification->type == ma_device_notification_type_stopped)
     {
-        if (!player->is_switching_device && player->has_custom_device)
+        if (!ma_atomic_load_32(&player->is_switching_device) && player->has_custom_device)
         {
             map_log_print(MAP_LOG_LEVEL_WARNING, "core", "device notification: playback device stopped (unplugged/disconnected)");
-            player->needs_device_fallback = 1;
+            ma_atomic_store_32(&player->needs_device_fallback, 1);
         }
         else
         {
@@ -1972,7 +2096,7 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     if (pContext == NULL)
         return MAP_ERROR_INVALID_STATE;
 
-    player->is_switching_device = 1;
+    ma_atomic_store_32(&player->is_switching_device, 1);
 #if defined(__ANDROID__)
     if (pContext->backend == ma_backend_aaudio)
     {
@@ -2046,7 +2170,7 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     if (res != MA_SUCCESS)
     {
         map_log_print(MAP_LOG_LEVEL_ERROR, "core", "failed to reinit playback device: %d", res);
-        player->is_switching_device = 0;
+        ma_atomic_store_32(&player->is_switching_device, 0);
         return MAP_ERROR_GENERIC;
     }
 
@@ -2096,7 +2220,7 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     player->custom_device_id = target_id;
     player->current_device = new_dev_info;
     player->device_changed = 1;
-    player->needs_device_fallback = 0;
+    ma_atomic_store_32(&player->needs_device_fallback, 0);
     ma_mutex_unlock(&player->lock);
 
     if (was_started || state == MAP_PLAYBACK_STATE_PLAYING)
@@ -2136,21 +2260,21 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
                 player->custom_device_id = target_id;
                 player->current_device = new_dev_info;
                 player->device_changed = 1;
-                player->needs_device_fallback = 0;
+                ma_atomic_store_32(&player->needs_device_fallback, 0);
                 ma_mutex_unlock(&player->lock);
 
                 ma_device_start(pDevice);
-                player->is_switching_device = 0;
+                ma_atomic_store_32(&player->is_switching_device, 0);
                 map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active (fallback): '%s' (default: %d)",
                               new_dev_info.name, new_dev_info.is_default);
                 return MAP_SUCCESS;
             }
-            player->is_switching_device = 0;
+            ma_atomic_store_32(&player->is_switching_device, 0);
             return MAP_ERROR_GENERIC;
         }
     }
 
-    player->is_switching_device = 0;
+    ma_atomic_store_32(&player->is_switching_device, 0);
 
     map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active: '%s' (default: %d)",
                   new_dev_info.name, new_dev_info.is_default);
@@ -2340,6 +2464,7 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
         fail_result = MAP_ERROR_NODE_FAILED;
         goto cleanup_error;
     }
+    player->eq_node.limiter_enabled = 1;
 
     {
         ma_device *pDevice = ma_engine_get_device(&player->engine);
@@ -2425,7 +2550,7 @@ MAP_API int32_t miniaudio_player_destroy(miniaudio_player_t *player)
 
     map_log_print(MAP_LOG_LEVEL_INFO, "core", "player destroy initiated");
 
-    player->is_switching_device = 1;
+    ma_atomic_store_32(&player->is_switching_device, 1);
 
     ma_mutex_lock(&player->lock);
 
@@ -3708,8 +3833,6 @@ MAP_API int32_t miniaudio_player_get_devices(
     ma_result result;
     ma_device_info *pPlaybackInfos;
     ma_uint32 playbackCount = 0;
-    ma_device_info *pCaptureInfos;
-    ma_uint32 captureCount = 0;
     miniaudio_device_info_t *devices = NULL;
 
     result = ma_context_init(NULL, 0, NULL, &context);
@@ -4177,9 +4300,9 @@ MAP_API int32_t miniaudio_player_get_status(
         out_status->state = mut_player->state;
     }
 
-    if (mut_player->needs_device_fallback && !mut_player->is_switching_device)
+    if (ma_atomic_load_32(&mut_player->needs_device_fallback) && !ma_atomic_load_32(&mut_player->is_switching_device))
     {
-        mut_player->needs_device_fallback = 0;
+        ma_atomic_store_32(&mut_player->needs_device_fallback, 0);
         if (mut_player->has_custom_device)
         {
             ma_mutex_unlock(&mut_player->lock);
@@ -4197,9 +4320,9 @@ MAP_API int32_t miniaudio_player_get_status(
             {
                 if (mut_player->has_custom_device)
                 {
-                    if (devInfo.isDefault != mut_player->current_device.is_default)
+                    if ((int32_t)devInfo.isDefault != mut_player->current_device.is_default)
                     {
-                        mut_player->current_device.is_default = devInfo.isDefault;
+                        mut_player->current_device.is_default = (int32_t)devInfo.isDefault;
                         mut_player->device_changed = 1;
                     }
                 }
@@ -4220,9 +4343,16 @@ MAP_API int32_t miniaudio_player_get_status(
     out_status->visualizer_enabled = mut_player->eq_node.visualizer_enabled;
     if (out_status->is_playing && mut_player->eq_node.visualizer_enabled)
     {
-        ma_spinlock_lock(&mut_player->eq_node.lock);
-        out_status->visualizer = mut_player->eq_node.visualizer_data;
-        ma_spinlock_unlock(&mut_player->eq_node.lock);
+        uint32_t seq1, seq2;
+        int attempts = 0;
+        do
+        {
+            seq1 = ma_atomic_load_32(&mut_player->eq_node.vis_seq);
+            MAP_COMPILER_BARRIER();
+            out_status->visualizer = mut_player->eq_node.visualizer_data;
+            MAP_COMPILER_BARRIER();
+            seq2 = ma_atomic_load_32(&mut_player->eq_node.vis_seq);
+        } while (((seq1 != seq2) || (seq1 & 1)) && ++attempts < 4);
     }
     else
     {
@@ -4342,11 +4472,21 @@ MAP_API int32_t miniaudio_player_get_visualizer_data(
     const miniaudio_player_t *player,
     miniaudio_player_visualizer_data_t *out_data)
 {
+    miniaudio_player_t *mut_player;
+    uint32_t seq1, seq2;
+    int attempts = 0;
+
     if (player == NULL || out_data == NULL) return MAP_ERROR_INVALID_ARGS;
-    miniaudio_player_t *mut_player = (miniaudio_player_t *)player;
-    ma_spinlock_lock(&mut_player->eq_node.lock);
-    *out_data = mut_player->eq_node.visualizer_data;
-    ma_spinlock_unlock(&mut_player->eq_node.lock);
+    mut_player = (miniaudio_player_t *)player;
+    do
+    {
+        seq1 = ma_atomic_load_32(&mut_player->eq_node.vis_seq);
+        MAP_COMPILER_BARRIER();
+        *out_data = mut_player->eq_node.visualizer_data;
+        MAP_COMPILER_BARRIER();
+        seq2 = ma_atomic_load_32(&mut_player->eq_node.vis_seq);
+    } while (((seq1 != seq2) || (seq1 & 1)) && ++attempts < 4);
+
     return MAP_SUCCESS;
 }
 
@@ -4686,8 +4826,6 @@ MAP_API int32_t miniaudio_player_analyze_audio(
                 double z_unmasked = 0.0;
                 size_t count_unmasked = 0;
                 float abs_thresh = -70.0f;
-                double rel_sum = 0.0;
-                size_t count_rel = 0;
                 float rel_thresh;
                 double z_gated_sum = 0.0;
                 size_t count_gated = 0;

@@ -15,6 +15,7 @@ words:
   - Antho
   - APIC
   - ARCHMASK
+  - asintóticamente
   - asound
   - aspt
   - asssume
@@ -24,6 +25,7 @@ words:
   - autogenerado
   - Autogenerado
   - autoplay
+  - autovectoriza
   - Ayllón
   - Balster
   - bandlimited
@@ -32,15 +34,22 @@ words:
   - BFIN
   - biquad
   - Biquad
+  - biquads
   - bitrate
   - bitrates
   - bitstream
+  - Blackman
+  - bloqueante
   - Borgerding
   - bosflag
   - bresenham
+  - Bristow
   - buildlog
   - buildscript
   - bwexpander
+  - cachés
+  - calloc
+  - casteo
   - cbuilder
   - cdim
   - chomusuke
@@ -49,11 +58,14 @@ words:
   - Clownacy
   - Coalson
   - codebooks
+  - códecs
   - coef
   - COEF
   - COMBFILTER
   - COMMDEVICE
+  - conversores
   - coomputation
+  - cosf
   - crctable
   - crossfade
   - crossfading
@@ -66,6 +78,7 @@ words:
   - CVBR
   - Dartminiaudio
   - dealloca
+  - declspec
   - decoderctls
   - deconstitution
   - decstate
@@ -73,10 +86,18 @@ words:
   - demixing
   - DEMIXING
   - demuxer
+  - denormal
+  - Denormal
   - denormalise
+  - Denormals
   - deocder
   - depacket
   - deptr
+  - desalineación
+  - deslizador
+  - deslizadores
+  - desnormalizado
+  - desnormalizados
   - desync
   - devs
   - DIVSCALAR
@@ -93,10 +114,12 @@ words:
   - EBADLINK
   - EBADPACKET
   - EBADTIMESTAMP
+  - ecualizador
   - Ediff
   - EDSP
   - EIMPL
   - EINVAL
+  - elif
   - encoderctls
   - encstate
   - ener
@@ -104,20 +127,26 @@ words:
   - ENOTAUDIO
   - ENOTFORMAT
   - eosflag
+  - Equalizador
   - EREAD
   - Estebanez
   - etmp
+  - Expansor
+  - fabs
+  - fabsf
   - FCOEF
   - ffigen
   - filelengthi
   - finalise
   - fishead
   - fivesize
+  - flasheo
   - floorlist
   - fmaxf
   - formants
   - formulars
   - Foxo
+  - fread
   - Frykholm
   - fseeki
   - ftelli
@@ -129,6 +158,7 @@ words:
   - Gesemann
   - glassbox
   - glog
+  - GNUC
   - Gomila
   - Goulart
   - granpos
@@ -141,17 +171,25 @@ words:
   - headret
   - hishelf
   - histeresis
+  - histéresis
   - hotplug
   - Hsieh's
   - huffman
   - icdf
   - Icecast
+  - idempotencia
+  - Idempotencia
+  - Idempotente
+  - ifndef
   - imdct
   - imid
+  - indetermina
   - infatum
+  - infty
   - Ingo
   - initialiser
   - INLINES
+  - interbloqueos
   - iovecin
   - ipart
   - isqrt
@@ -173,6 +211,7 @@ words:
   - libopusfile
   - libopusurl
   - libpulse
+  - libsonic
   - libvorbis
   - libvorbisfile
   - lieff
@@ -186,29 +225,41 @@ words:
   - LTWH
   - lufs
   - machiney
+  - malloc
   - manxorist
   - masterbooks
+  - mathbf
+  - mathcal
   - Mathisen
   - maxabs
   - MAXG
   - mdct
   - MDCT
   - mdcts
+  - MESI
+  - microarquitectura
+  - microcódigo
   - microcontrollers
   - miniaudio
   - minimp
   - miscapture
+  - MMAP
   - moffat
+  - monofónica
   - morlat
+  - MSVC
   - MSVCRT
   - Muchachita
   - MULBYSCALAR
   - MULC
+  - multicanal
+  - multinúcleo
   - multistream
   - mults
   - Muratori
   - Musix
   - muxing
+  - nanosegundo
   - nbuffered
   - nlacing
   - normalisation
@@ -221,6 +272,7 @@ words:
   - nyquist
   - oga
   - oggpack
+  - optimizador
   - opusdec
   - opusfile
   - Opusness
@@ -233,7 +285,13 @@ words:
   - phdr
   - PLTE
   - Pranckevicius
+  - preajustes
+  - preamplificación
+  - preamplificador
+  - Preasignación
+  - Preasignar
   - preclipped
+  - Preconfigurar
   - preemph
   - premultiplies
   - println
@@ -252,10 +310,26 @@ words:
   - quantisation
   - Raphson
   - Ravier
+  - recálculo
   - recepient
+  - reconexión
+  - reconfiguraciones
+  - Redimensionamiento
+  - redimensionar
   - redirections
+  - reentrancia
+  - reinicialización
+  - Reinicialización
+  - reinicios
+  - Reintenta
+  - remuestreador
+  - remuestreo
+  - Remuestreo
+  - renderizado
+  - Renderizado
   - renormalise
   - Renormalising
+  - reordenamiento
   - repacketization
   - repacketized
   - repacketizer
@@ -270,29 +344,46 @@ words:
   - rifx
   - robustify
   - Rohit
+  - SCHED
   - Schyler
   - seekability
   - seekbar
   - seeked
   - selcost
+  - Seqlock
   - serialnos
   - Shoutcast
+  - SIGSEGV
   - sinc
+  - síncronas
+  - síncrono
+  - sinf
   - sixsize
   - SLES
   - smidge
+  - sobrecostes
+  - sobredimensionada
+  - Sobredimensionamiento
   - spanp
   - SPATIALIZATION
   - spatializer
   - spectrotram
   - Speex
   - spetral
+  - spinlocks
+  - SPSC
   - SROUND
   - stbv
   - STDLIB
+  - Subárbol
+  - subgraves
   - submix
   - Submix
   - SUBMIX
+  - subsónica
+  - subsónicas
+  - Subsónicas
+  - subsónicos
   - sudiv
   - SUNPRO
   - Superwideband
@@ -302,6 +393,8 @@ words:
   - tagncompare
   - tapset
   - TDAC
+  - telemetría
+  - Telemetría
   - Terje
   - Theora
   - Thiago
@@ -310,9 +403,11 @@ words:
   - throughs
   - timestamping
   - toneishness
+  - TPDF
   - tvbr
   - TWID
   - ubsan
+  - udata
   - unawaited
   - unclipped
   - Uninitializes
@@ -321,14 +416,22 @@ words:
   - unquantized
   - unseekable
   - uuid
+  - Vacia
+  - Vectorización
+  - Vectorizar
+  - ventanado
   - Verschelde
   - videoconference
   - Vinen
   - Viterbi
+  - vmaxvq
+  - vmovups
   - vorb
   - vorbisfile
   - VSHR
   - WASAPI
+  - Werror
+  - Wextra
   - wfopen
   - wfreopen
   - winmm
@@ -337,6 +440,9 @@ words:
   - Wparentheses
   - wpath
   - writetrunc
+  - Wsign
+  - WSOLA
+  - Wunused
   - Xiph
   - xiphmont
   - Xlist
