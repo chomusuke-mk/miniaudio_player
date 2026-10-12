@@ -97,7 +97,7 @@ class MiniaudioPlayerGlobalConfig {
 ///
 /// Directly connects to the native C miniaudio engine without Dart Isolates,
 /// utilizing native audio threads for real-time decoding, DSP, and playback.
-class MiniaudioPlayer {
+class MiniaudioPlayer implements Finalizable {
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
@@ -593,6 +593,12 @@ class MiniaudioPlayer {
 
   bool _isDisposed = false;
 
+  static final _finalizer = NativeFinalizer(
+    Native.addressOf<
+      NativeFunction<Int32 Function(Pointer<native.miniaudio_player_t>)>
+    >(native.miniaudio_player_destroy).cast(),
+  );
+
   /// Action interface for controlling playback, volume, rate, pitch, buffer size, and DSP.
   late final PlayerAction action;
 
@@ -664,6 +670,8 @@ class MiniaudioPlayer {
           errorCode: result,
         );
       }
+
+      _finalizer.attach(this, _playerHandle.cast(), detach: this);
 
       _statusPtr = calloc<native.miniaudio_player_status_t>();
 
@@ -1221,6 +1229,7 @@ class MiniaudioPlayer {
     if (_isDisposed) return;
     _isDisposed = true;
 
+    _finalizer.detach(this);
     _stopPositionTimer();
     _completedCallable.close();
 

@@ -26,6 +26,12 @@ void main(List<String> args) async {
     };
 
     final List<String> sources = [
+      'src/miniaudio_impl.c',
+      'src/map_silence.c',
+      'src/map_dsp.c',
+      'src/map_source.c',
+      'src/map_device.c',
+      'src/map_analysis.c',
       'src/miniaudio_player.c',
       'src/sonic/sonic.c',
       'src/decoders/libogg/bitwise.c',
@@ -66,19 +72,55 @@ void main(List<String> args) async {
     addCDir('src/decoders/libopus/silk/float');
     addCDir('src/decoders/helix-aac');
 
+    final List<String> commonFlags = [];
+    final List<String> linkFlags = [];
+
     if (targetOS == OS.linux) {
       libraries.addAll(['pthread', 'm', 'dl']);
       defines['_GNU_SOURCE'] = '1';
       defines['VAR_ARRAYS'] = '1';
+      commonFlags.addAll([
+        '-std=c99',
+        '-O3',
+        '-fomit-frame-pointer',
+        '-fno-math-errno',
+        '-ffp-contract=fast',
+        '-fno-trapping-math',
+      ]);
     } else if (targetOS == OS.windows) {
       libraries.addAll(['ole32', 'uuid', 'winmm', 'advapi32']);
       defines['_CRT_SECURE_NO_WARNINGS'] = '1';
       defines['USE_ALLOCA'] = '1';
+      // MSVC-compatible flags when compiling on Windows
+      commonFlags.addAll([
+        '/std:c11',
+        '/fp:precise',
+      ]);
     } else if (targetOS == OS.android) {
       libraries.addAll(['OpenSLES', 'log', 'm', 'dl']);
       defines['VAR_ARRAYS'] = '1';
+      commonFlags.addAll([
+        '-std=c99',
+        '-O3',
+        '-fomit-frame-pointer',
+        '-fno-math-errno',
+        '-ffp-contract=fast',
+        '-fno-trapping-math',
+      ]);
+
+      // Android 15+ 16 KB Page Size ELF Segment Alignment
+      linkFlags.addAll(['-Wl,-z,max-page-size=16384']);
+
+      // 32-bit ARM NEON Hardware Activation
+      if (input.config.code.targetArchitecture == Architecture.arm) {
+        commonFlags.addAll(['-mfpu=neon-vfpv4', '-mfloat-abi=softfp']);
+        defines['OPUS_ARM_MAY_HAVE_NEON_INTR'] = '1';
+      } else if (input.config.code.targetArchitecture == Architecture.arm64) {
+        defines['OPUS_ARM_PRESUME_AARCH64_NEON_INTR'] = '1';
+      }
     } else {
       defines['VAR_ARRAYS'] = '1';
+      commonFlags.addAll(['-std=c99', '-O3']);
     }
 
     final cbuilder = CBuilder.library(
@@ -103,7 +145,7 @@ void main(List<String> args) async {
       ],
       libraries: libraries,
       defines: defines,
-      flags: targetOS == OS.windows ? [] : ['-std=c99'],
+      flags: [...commonFlags, ...linkFlags],
     );
 
     hierarchicalLoggingEnabled = true;

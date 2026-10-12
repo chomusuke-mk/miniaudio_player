@@ -1,0 +1,998 @@
+/**
+ * @file map_source.c
+ * @brief SPSC ring buffer, Sonic time-stretching, and asynchronous decoding data source implementation.
+ */
+
+#include "map_source.h"
+
+static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pData;
+    if (pDS == NULL)
+        return (ma_thread_result)0;
+
+    map_disable_denormals();
+
+    while (!ma_atomic_load_32(&pDS->worker_stop))
+    {
+        ma_uint32 writeFrames = 8192;
+        void *pWriteBuf = NULL;
+        ma_result res;
+
+        if (ma_atomic_load_32(&pDS->decoder_eof))
+        {
+            /* Sleep until a seek signals us to resume buffering */
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 1);
+            ma_event_wait(&pDS->worker_event);
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 0);
+            if (ma_atomic_load_32(&pDS->worker_stop)) break;
+            continue;
+        }
+
+        /* Check ring buffer fill level and available write capacity */
+        ma_uint32 cap = ma_pcm_rb_get_subbuffer_size(&pDS->rb);
+        ma_uint32 fill = ma_pcm_rb_available_read(&pDS->rb);
+        ma_uint32 avail_write = ma_pcm_rb_available_write(&pDS->rb);
+
+        if (avail_write == 0)
+        {
+            /* Ring buffer is completely full; sleep until consumer drops below watermark and signals */
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 1);
+            ma_event_wait(&pDS->worker_event);
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 0);
+            if (ma_atomic_load_32(&pDS->worker_stop)) break;
+            continue;
+        }
+
+        if (cap > 0 && fill >= (cap * 4) / 5)
+        {
+            /* Buffer fill level is above 80% capacity:
+             * Use adaptive backoff sleep (progressive 5-15ms) to yield the CPU,
+             * preventing busy spinning and high CPU context switches. */
+            ma_uint32 sleep_ms = 10;
+            if (fill >= (cap * 95) / 100)
+            {
+                sleep_ms = 15;
+            }
+            else if (fill >= (cap * 9) / 10)
+            {
+                sleep_ms = 10;
+            }
+            else
+            {
+                sleep_ms = 5;
+            }
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 1);
+            ma_sleep(sleep_ms);
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 0);
+            if (ma_atomic_load_32(&pDS->worker_stop)) break;
+        }
+
+        res = ma_pcm_rb_acquire_write(&pDS->rb, &writeFrames, &pWriteBuf);
+        if (res == MA_SUCCESS && writeFrames > 0)
+        {
+            ma_uint64 readFromDecoder = 0;
+            ma_result decRes;
+
+            ma_mutex_lock(&pDS->decoder_mutex);
+            if (ma_atomic_load_32(&pDS->worker_stop))
+            {
+                ma_mutex_unlock(&pDS->decoder_mutex);
+                break;
+            }
+            decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pWriteBuf, writeFrames, &readFromDecoder);
+            ma_mutex_unlock(&pDS->decoder_mutex);
+
+            if (readFromDecoder > 0)
+            {
+                ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFromDecoder);
+            }
+
+            if (decRes == MA_AT_END || (decRes == MA_SUCCESS && readFromDecoder == 0) || decRes != MA_SUCCESS)
+            {
+                ma_atomic_store_32(&pDS->decoder_eof, 1);
+            }
+        }
+        else
+        {
+            /* Ring buffer is full; sleep until consumer signals available space */
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 1);
+            ma_event_wait(&pDS->worker_event);
+            ma_atomic_store_32(&pDS->worker_is_sleeping, 0);
+            if (ma_atomic_load_32(&pDS->worker_stop)) break;
+        }
+    }
+
+    return (ma_thread_result)0;
+}
+
+static MA_INLINE void map_time_stretch_ds_check_signal_worker(map_time_stretch_ds *pDS)
+{
+    if (pDS != NULL && pDS->has_worker)
+    {
+        /* Lock-free check: only invoke event signal if worker is confirmed waiting */
+        if (ma_atomic_load_32(&pDS->worker_is_sleeping) != 0)
+        {
+            ma_uint32 cap = ma_pcm_rb_get_subbuffer_size(&pDS->rb);
+            ma_uint32 fill = ma_pcm_rb_available_read(&pDS->rb);
+            /* Watermark hysteresis: signal decode worker only when buffer fill drops below 50% capacity */
+            if (cap == 0 || fill < (cap / 2))
+            {
+                ma_event_signal(&pDS->worker_event);
+            }
+        }
+    }
+}
+
+static ma_result map_time_stretch_ds_read_filtered(
+    map_time_stretch_ds *pDS,
+    float *pFramesOut,
+    ma_uint64 framesToRead,
+    ma_uint64 *pFramesRead)
+{
+    map_silence_detector *pDet = &pDS->silence;
+    ma_uint32 channels = pDS->channels;
+    ma_uint64 totalRead = 0;
+
+    if (pFramesRead != NULL)
+        *pFramesRead = 0;
+    if (framesToRead == 0)
+        return MA_SUCCESS;
+
+    /* Fast path if silence detection is disabled and no buffered frames */
+    if (pDet->config.mode == MAP_SILENCE_MODE_DISABLED &&
+        pDet->hold_frames_read_pos >= pDet->hold_frames_count &&
+        pDS->rawBufferReadPos >= pDS->rawBufferCount)
+    {
+        if (pDS->has_worker)
+        {
+            ma_uint64 fastRead = 0;
+            while (fastRead < framesToRead)
+            {
+                ma_uint32 toRead = (ma_uint32)(framesToRead - fastRead);
+                void *pReadBuf = NULL;
+                ma_result rbRes = ma_pcm_rb_acquire_read(&pDS->rb, &toRead, &pReadBuf);
+                if (rbRes == MA_SUCCESS && toRead > 0)
+                {
+                    if (pFramesOut != NULL)
+                    {
+                        memcpy(pFramesOut + fastRead * channels, pReadBuf, toRead * channels * sizeof(float));
+                    }
+                    ma_pcm_rb_commit_read(&pDS->rb, toRead);
+                    fastRead += toRead;
+                    continue;
+                }
+                break;
+            }
+
+            if (fastRead > 0)
+            {
+                if (pFramesRead != NULL) *pFramesRead = fastRead;
+                map_time_stretch_ds_check_signal_worker(pDS);
+                return MA_SUCCESS;
+            }
+            if (ma_atomic_load_32(&pDS->decoder_eof))
+            {
+                pDS->is_eof = MA_TRUE;
+                if (pFramesRead != NULL) *pFramesRead = 0;
+                return MA_AT_END;
+            }
+
+            /* Transient buffer lag / starvation: synthesize silence without blocking RT thread */
+            ma_atomic_fetch_add_32(&pDS->underrun_count, 1);
+            if (pFramesOut != NULL && framesToRead > 0)
+            {
+                memset(pFramesOut, 0, framesToRead * channels * sizeof(float));
+            }
+            if (pFramesRead != NULL) *pFramesRead = framesToRead;
+            map_time_stretch_ds_check_signal_worker(pDS);
+            return MA_SUCCESS;
+        }
+        else
+        {
+            return ma_decoder_read_pcm_frames(&pDS->decoder, pFramesOut, framesToRead, pFramesRead);
+        }
+    }
+
+    while (totalRead < framesToRead && !pDS->is_eof)
+    {
+        /* 1. Flush held frames from detector if any are ready to be read */
+        if (pDet->state != MAP_SILENCE_STATE_HOLDING && pDet->hold_frames_read_pos < pDet->hold_frames_count)
+        {
+            ma_uint64 avail = pDet->hold_frames_count - pDet->hold_frames_read_pos;
+            ma_uint64 to_copy = (avail < (framesToRead - totalRead)) ? avail : (framesToRead - totalRead);
+            if (pFramesOut != NULL)
+            {
+                memcpy(pFramesOut + totalRead * channels,
+                       pDet->hold_buffer + pDet->hold_frames_read_pos * channels,
+                       to_copy * channels * sizeof(float));
+            }
+            if (to_copy > 0)
+            {
+                float *last_frame = pDet->hold_buffer + (pDet->hold_frames_read_pos + to_copy - 1) * channels;
+                for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                {
+                    pDet->last_sample[c] = last_frame[c];
+                }
+            }
+            pDet->hold_frames_read_pos += (ma_uint32)to_copy;
+            totalRead += to_copy;
+            if (pDet->hold_frames_read_pos >= pDet->hold_frames_count)
+            {
+                pDet->hold_frames_read_pos = 0;
+                pDet->hold_frames_count = 0;
+            }
+            continue;
+        }
+
+        /* 2. Replenish rawBuffer from lock-free SPSC ring buffer (or fallback) if empty (NP3-01) */
+        if (pDS->rawBufferReadPos >= pDS->rawBufferCount)
+        {
+            ma_uint32 maxFrames = (channels > 0) ? (pDS->rawBufferCapacity / channels) : 4096;
+            if (maxFrames == 0) maxFrames = 4096;
+            ma_uint32 framesFetched = 0;
+
+            if (pDS->has_worker)
+            {
+                ma_uint32 availFrames = maxFrames;
+                void *pReadBuf = NULL;
+                ma_result rbRes = ma_pcm_rb_acquire_read(&pDS->rb, &availFrames, &pReadBuf);
+                if (rbRes == MA_SUCCESS && availFrames > 0)
+                {
+                    memcpy(pDS->rawBuffer, pReadBuf, availFrames * channels * sizeof(float));
+                    ma_pcm_rb_commit_read(&pDS->rb, availFrames);
+                    framesFetched = availFrames;
+                    map_time_stretch_ds_check_signal_worker(pDS);
+                }
+                else if (ma_atomic_load_32(&pDS->decoder_eof))
+                {
+                    pDS->is_eof = MA_TRUE;
+                }
+                else
+                {
+                    /* Ring buffer underflow / starvation: synthesize silence without blocking RT thread */
+                    ma_uint64 remaining = framesToRead - totalRead;
+                    ma_atomic_fetch_add_32(&pDS->underrun_count, 1);
+                    if (pFramesOut != NULL && remaining > 0)
+                    {
+                        memset(pFramesOut + totalRead * channels, 0, remaining * channels * sizeof(float));
+                    }
+                    totalRead += remaining;
+                    map_time_stretch_ds_check_signal_worker(pDS);
+                    break;
+                }
+            }
+            else
+            {
+                ma_uint64 rawRead = 0;
+                ma_result res = ma_decoder_read_pcm_frames(&pDS->decoder, pDS->rawBuffer, maxFrames, &rawRead);
+                framesFetched = (ma_uint32)rawRead;
+                if (res != MA_SUCCESS || rawRead == 0)
+                {
+                    pDS->is_eof = MA_TRUE;
+                }
+            }
+
+            pDS->rawBufferCount = framesFetched;
+            pDS->rawBufferReadPos = 0;
+
+            if (framesFetched == 0)
+            {
+                pDS->is_eof = MA_TRUE;
+                /* If we reached EOF while holding silence, discard the held silence (lead-out trim) */
+                if (pDet->state == MAP_SILENCE_STATE_HOLDING)
+                {
+                    pDet->silence_saved_frames += (pDet->hold_frames_count - pDet->hold_frames_read_pos);
+                    pDet->hold_frames_count = 0;
+                    pDet->hold_frames_read_pos = 0;
+                }
+                break;
+            }
+        }
+
+        /* 3. Process frames from rawBuffer */
+        while (pDS->rawBufferReadPos < pDS->rawBufferCount && totalRead < framesToRead)
+        {
+            float *frame = pDS->rawBuffer + pDS->rawBufferReadPos * channels;
+            pDS->rawBufferReadPos++;
+
+            /* Calculate frame peak amplitude using vectorized reduction (NP3-06) */
+            float peak = map_frame_peak(frame, channels);
+
+            ma_bool32 is_silent_enter = (peak <= pDet->threshold_amp_linear);
+            ma_bool32 is_silent_exit  = (peak <= pDet->threshold_amp_exit);
+
+            /* Check disabled mode: block copy all remaining frames directly */
+            if (pDet->config.mode == MAP_SILENCE_MODE_DISABLED)
+            {
+                ma_uint64 remaining_raw = (ma_uint64)(pDS->rawBufferCount - (pDS->rawBufferReadPos - 1));
+                ma_uint64 needed_frames = framesToRead - totalRead;
+                ma_uint64 chunk = (remaining_raw < needed_frames) ? remaining_raw : needed_frames;
+                if (pFramesOut != NULL && chunk > 0)
+                {
+                    memcpy(pFramesOut + totalRead * channels, frame, chunk * channels * sizeof(float));
+                }
+                pDS->rawBufferReadPos += (ma_uint32)(chunk - 1);
+                totalRead += chunk;
+                continue;
+            }
+
+            /* Lead-in silence trim */
+            if (pDet->lead_in_active)
+            {
+                if (is_silent_enter)
+                {
+                    pDet->silence_saved_frames++;
+                    continue;
+                }
+                else
+                {
+                    pDet->lead_in_active = MA_FALSE;
+                    pDet->crossfade_remaining = pDet->crossfade_length;
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        pDet->last_sample[c] = 0.0f;
+                }
+            }
+
+            /* Continuous or Edge trimming state machine */
+            ma_bool32 body_skip_enabled = (pDet->config.mode == MAP_SILENCE_MODE_CONTINUOUS ||
+                                           pDet->config.mode == MAP_SILENCE_MODE_ALL);
+
+            if (pDet->config.mode == MAP_SILENCE_MODE_TRIM_EDGES)
+            {
+                /* In TRIM_EDGES, also enable silence holding if near EOF */
+                ma_uint64 total_len = pDS->totalFrames;
+                ma_uint64 cur_cursor = pDS->readCursorFrames + totalRead;
+                if (total_len > 0 && cur_cursor + (pDS->sampleRate * 5) >= total_len)
+                {
+                    body_skip_enabled = MA_TRUE;
+                }
+            }
+
+            if (!body_skip_enabled)
+            {
+                ma_uint64 remaining_raw = (ma_uint64)(pDS->rawBufferCount - (pDS->rawBufferReadPos - 1));
+                ma_uint64 needed_frames = framesToRead - totalRead;
+                ma_uint64 chunk = (remaining_raw < needed_frames) ? remaining_raw : needed_frames;
+                if (pFramesOut != NULL && chunk > 0)
+                {
+                    memcpy(pFramesOut + totalRead * channels, frame, chunk * channels * sizeof(float));
+                }
+                if (chunk > 0)
+                {
+                    float *last_frame = frame + (chunk - 1) * channels;
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        pDet->last_sample[c] = last_frame[c];
+                }
+                pDS->rawBufferReadPos += (ma_uint32)(chunk - 1);
+                totalRead += chunk;
+                continue;
+            }
+
+            /* State machine */
+            if (pDet->state == MAP_SILENCE_STATE_VOICE)
+            {
+                if (!is_silent_enter)
+                {
+                    /* Sound playing */
+                    if (pDet->crossfade_remaining > 0 && pDet->crossfade_length > 0)
+                    {
+                        float alpha = 1.0f - ((float)pDet->crossfade_remaining / (float)pDet->crossfade_length);
+                        for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        {
+                            frame[c] = (1.0f - alpha) * pDet->last_sample[c] + alpha * frame[c];
+                        }
+                        pDet->crossfade_remaining--;
+                    }
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                    {
+                        pDet->last_sample[c] = frame[c];
+                    }
+                    if (pFramesOut != NULL)
+                    {
+                        memcpy(pFramesOut + totalRead * channels, frame, channels * sizeof(float));
+                    }
+                    totalRead++;
+                }
+                else
+                {
+                    /* Transition to HOLDING */
+                    pDet->state = MAP_SILENCE_STATE_HOLDING;
+                    pDet->hold_frames_count = 0;
+                    pDet->hold_frames_read_pos = 0;
+                    if (pDet->hold_buffer != NULL && pDet->hold_buffer_capacity > 0)
+                    {
+                        memcpy(pDet->hold_buffer, frame, channels * sizeof(float));
+                        pDet->hold_frames_count = 1;
+                    }
+                }
+            }
+            else if (pDet->state == MAP_SILENCE_STATE_HOLDING)
+            {
+                if (is_silent_enter)
+                {
+                    if (pDet->hold_buffer != NULL && pDet->hold_frames_count < pDet->hold_buffer_capacity)
+                    {
+                        memcpy(pDet->hold_buffer + pDet->hold_frames_count * channels, frame, channels * sizeof(float));
+                        pDet->hold_frames_count++;
+                    }
+                    if (pDet->hold_frames_count >= pDet->min_silence_frames)
+                    {
+                        /* Silence duration exceeded threshold: prune to padding_frames and transition to SKIPPING */
+                        ma_uint32 keep = pDet->padding_frames;
+                        if (keep > pDet->hold_frames_count)
+                            keep = pDet->hold_frames_count;
+                        pDet->silence_saved_frames += (pDet->hold_frames_count - keep);
+                        pDet->hold_frames_count = keep;
+                        pDet->hold_frames_read_pos = 0;
+                        pDet->state = MAP_SILENCE_STATE_SKIPPING;
+
+                        /* Break inner loop to flush padding frames on next outer iteration */
+                        break;
+                    }
+                }
+                else
+                {
+                    /* Voice resumed before min_silence_frames: flush held frames */
+                    pDet->state = MAP_SILENCE_STATE_VOICE;
+                    pDet->hold_frames_read_pos = 0;
+                    /* Rewind current frame so it will be processed after held frames are flushed */
+                    pDS->rawBufferReadPos--;
+                    break;
+                }
+            }
+            else if (pDet->state == MAP_SILENCE_STATE_SKIPPING)
+            {
+                if (is_silent_exit)
+                {
+                    /* Discard frame */
+                    pDet->silence_saved_frames++;
+                }
+                else
+                {
+                    /* Voice resumed! */
+                    pDet->state = MAP_SILENCE_STATE_VOICE;
+                    pDet->crossfade_remaining = pDet->crossfade_length;
+
+                    if (pDet->crossfade_remaining > 0 && pDet->crossfade_length > 0)
+                    {
+                        float alpha = 1.0f - ((float)pDet->crossfade_remaining / (float)pDet->crossfade_length);
+                        for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                        {
+                            frame[c] = (1.0f - alpha) * pDet->last_sample[c] + alpha * frame[c];
+                        }
+                        pDet->crossfade_remaining--;
+                    }
+                    for (ma_uint32 c = 0; c < channels && c < 8; c++)
+                    {
+                        pDet->last_sample[c] = frame[c];
+                    }
+                    if (pFramesOut != NULL)
+                    {
+                        memcpy(pFramesOut + totalRead * channels, frame, channels * sizeof(float));
+                    }
+                    totalRead++;
+                }
+            }
+        }
+    }
+
+    if (pFramesRead != NULL)
+    {
+        *pFramesRead = totalRead;
+    }
+    return MA_SUCCESS;
+}
+
+ma_result map_time_stretch_ds_read(
+    ma_data_source *pDataSource,
+    void *pFramesOut,
+    ma_uint64 frameCount,
+    ma_uint64 *pFramesRead)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
+    map_silence_detector *pDet;
+    ma_uint64 totalFramesOut = 0;
+    float *pOut = (float *)pFramesOut;
+    float discardBuf[128 * 8];
+    const ma_uint32 maxChunkFrames = 2048;
+
+    if (pDS == NULL)
+        return MA_INVALID_ARGS;
+    pDet = &pDS->silence;
+    if (pFramesRead != NULL)
+        *pFramesRead = 0;
+    if (frameCount == 0)
+        return MA_SUCCESS;
+
+    ma_spinlock_lock(&pDS->lock);
+
+    while (totalFramesOut < frameCount)
+    {
+        ma_uint64 needed = frameCount - totalFramesOut;
+        int avail = (pDS->sonic != NULL) ? sonicSamplesAvailable(pDS->sonic) : 0;
+
+        if (avail > 0)
+        {
+            int toRead = (int)((needed < (ma_uint64)avail) ? needed : (ma_uint64)avail);
+            int readCount = 0;
+            if (pOut != NULL)
+            {
+                readCount = sonicReadFloatFromStream(
+                    pDS->sonic,
+                    pOut + totalFramesOut * pDS->channels,
+                    toRead);
+            }
+            else
+            {
+                int batch = (toRead < 128) ? toRead : 128;
+                readCount = sonicReadFloatFromStream(pDS->sonic, discardBuf, batch);
+            }
+            if (readCount > 0)
+            {
+                totalFramesOut += (ma_uint64)readCount;
+                continue;
+            }
+        }
+
+        if (pDS->is_eof)
+        {
+            break;
+        }
+
+        /* Fast bypass if speed == 1.0, pitch == 1.0 and no leftover samples in sonic */
+        if (pDS->speed >= 0.99999f && pDS->speed <= 1.00001f &&
+            pDS->pitch >= 0.99999f && pDS->pitch <= 1.00001f &&
+            avail == 0)
+        {
+            ma_uint64 framesToRead = needed;
+            ma_uint64 directRead = 0;
+            ma_result res = map_time_stretch_ds_read_filtered(
+                pDS,
+                pOut ? (pOut + totalFramesOut * pDS->channels) : discardBuf,
+                framesToRead,
+                &directRead);
+            totalFramesOut += directRead;
+            if (res == MA_AT_END || pDS->is_eof)
+            {
+                pDS->is_eof = MA_TRUE;
+                break;
+            }
+            if (directRead == 0)
+            {
+                break;
+            }
+            continue;
+        }
+
+        /* Direct SPSC zero-copy bypass to sonic stream when silence detection is disabled */
+        if (pDet->config.mode == MAP_SILENCE_MODE_DISABLED &&
+            pDet->hold_frames_read_pos >= pDet->hold_frames_count &&
+            pDS->rawBufferReadPos >= pDS->rawBufferCount &&
+            pDS->has_worker &&
+            pDS->sonic != NULL)
+        {
+            ma_uint32 toRead = maxChunkFrames;
+            void *pReadBuf = NULL;
+            ma_result rbRes = ma_pcm_rb_acquire_read(&pDS->rb, &toRead, &pReadBuf);
+            if (rbRes == MA_SUCCESS && toRead > 0)
+            {
+                sonicWriteFloatToStream(pDS->sonic, (const float *)pReadBuf, (int)toRead);
+                ma_pcm_rb_commit_read(&pDS->rb, toRead);
+                map_time_stretch_ds_check_signal_worker(pDS);
+                continue;
+            }
+            if (ma_atomic_load_32(&pDS->decoder_eof))
+            {
+                pDS->is_eof = MA_TRUE;
+                sonicFlushStream(pDS->sonic);
+                if (sonicSamplesAvailable(pDS->sonic) == 0)
+                {
+                    break;
+                }
+                continue;
+            }
+        }
+
+        /* Pull from decoder through silence filter and write to sonic */
+        ma_uint64 framesFromDecoder = 0;
+        ma_result readRes = map_time_stretch_ds_read_filtered(
+            pDS,
+            pDS->scratchBuffer,
+            maxChunkFrames,
+            &framesFromDecoder);
+
+        if (framesFromDecoder > 0 && pDS->sonic != NULL)
+        {
+            sonicWriteFloatToStream(pDS->sonic, pDS->scratchBuffer, (int)framesFromDecoder);
+        }
+
+        if (readRes != MA_SUCCESS || framesFromDecoder == 0)
+        {
+            if (readRes == MA_AT_END || pDS->is_eof)
+            {
+                pDS->is_eof = MA_TRUE;
+                if (pDS->sonic != NULL)
+                {
+                    sonicFlushStream(pDS->sonic);
+                }
+                if (pDS->sonic == NULL || sonicSamplesAvailable(pDS->sonic) == 0)
+                {
+                    break;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+
+    pDS->readCursorFrames += totalFramesOut;
+    if (pDS->totalFrames > 0 && pDS->readCursorFrames > pDS->totalFrames)
+    {
+        pDS->readCursorFrames = pDS->totalFrames;
+    }
+
+    ma_spinlock_unlock(&pDS->lock);
+
+    if (pFramesRead != NULL)
+    {
+        *pFramesRead = totalFramesOut;
+    }
+
+    if (totalFramesOut == 0 && pDS->is_eof)
+    {
+        return MA_AT_END;
+    }
+
+    return MA_SUCCESS;
+}
+
+ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameIndex)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
+    ma_result res;
+    ma_uint64 total_frames;
+    if (pDS == NULL)
+        return MA_INVALID_ARGS;
+
+    if (pDS->has_worker)
+    {
+        /* Acquire decoder_mutex first outside spinlock to avoid priority inversion */
+        ma_mutex_lock(&pDS->decoder_mutex);
+        total_frames = pDS->totalFrames;
+        if (total_frames > 0 && frameIndex >= total_frames)
+        {
+            ma_decoder_seek_to_pcm_frame(&pDS->decoder, total_frames - 1);
+            ma_atomic_store_32(&pDS->decoder_eof, 1);
+            pDS->is_eof = MA_TRUE;
+            pDS->readCursorFrames = total_frames;
+            res = MA_SUCCESS;
+        }
+        else
+        {
+            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
+            ma_atomic_store_32(&pDS->decoder_eof, 0);
+            pDS->is_eof = MA_FALSE;
+            pDS->readCursorFrames = frameIndex;
+        }
+
+        /* Update internal stream state and ring buffer under spinlock */
+        ma_spinlock_lock(&pDS->lock);
+        pDS->rawBufferCount = 0;
+        pDS->rawBufferReadPos = 0;
+        map_silence_detector_reset(&pDS->silence, frameIndex == 0);
+        ma_pcm_rb_reset(&pDS->rb);
+        if (pDS->sonic != NULL)
+        {
+            sonicResetStream(pDS->sonic);
+        }
+        ma_spinlock_unlock(&pDS->lock);
+
+        ma_mutex_unlock(&pDS->decoder_mutex);
+        ma_event_signal(&pDS->worker_event);
+    }
+    else
+    {
+        ma_spinlock_lock(&pDS->lock);
+        pDS->rawBufferCount = 0;
+        pDS->rawBufferReadPos = 0;
+        map_silence_detector_reset(&pDS->silence, frameIndex == 0);
+        total_frames = pDS->totalFrames;
+
+        if (total_frames > 0 && frameIndex >= total_frames)
+        {
+            ma_decoder_seek_to_pcm_frame(&pDS->decoder, total_frames - 1);
+            pDS->is_eof = MA_TRUE;
+            pDS->readCursorFrames = total_frames;
+            res = MA_SUCCESS;
+        }
+        else
+        {
+            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
+            pDS->is_eof = MA_FALSE;
+            pDS->readCursorFrames = frameIndex;
+        }
+
+        if (pDS->sonic != NULL)
+        {
+            sonicResetStream(pDS->sonic);
+        }
+        ma_spinlock_unlock(&pDS->lock);
+    }
+
+    return res;
+}
+
+ma_result map_time_stretch_ds_get_data_format(
+    ma_data_source *pDataSource,
+    ma_format *pFormat,
+    ma_uint32 *pChannels,
+    ma_uint32 *pSampleRate,
+    ma_channel *pChannelMap,
+    size_t channelMapCap)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
+    if (pDS == NULL)
+        return MA_INVALID_ARGS;
+
+    if (pFormat != NULL)
+        *pFormat = ma_format_f32;
+    if (pChannels != NULL)
+        *pChannels = pDS->channels;
+    if (pSampleRate != NULL)
+        *pSampleRate = pDS->sampleRate;
+    if (pChannelMap != NULL)
+    {
+        ma_channel_map_init_standard(ma_standard_channel_map_default, pChannelMap, channelMapCap, pDS->channels);
+    }
+    return MA_SUCCESS;
+}
+
+ma_result map_time_stretch_ds_get_cursor(ma_data_source *pDataSource, ma_uint64 *pCursor)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
+    if (pDS == NULL || pCursor == NULL)
+        return MA_INVALID_ARGS;
+    ma_spinlock_lock(&pDS->lock);
+    if (pDS->is_eof && pDS->totalFrames > 0)
+    {
+        *pCursor = pDS->totalFrames;
+    }
+    else
+    {
+        *pCursor = pDS->readCursorFrames;
+    }
+    ma_spinlock_unlock(&pDS->lock);
+    return MA_SUCCESS;
+}
+
+ma_result map_time_stretch_ds_get_length(ma_data_source *pDataSource, ma_uint64 *pLength)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
+    if (pDS == NULL || pLength == NULL)
+        return MA_INVALID_ARGS;
+    *pLength = pDS->totalFrames;
+    return MA_SUCCESS;
+}
+
+ma_result map_time_stretch_ds_set_looping(ma_data_source *pDataSource, ma_bool32 isLooping)
+{
+    (void)pDataSource;
+    (void)isLooping;
+    return MA_SUCCESS;
+}
+
+static ma_data_source_vtable g_map_time_stretch_ds_vtable = {
+    map_time_stretch_ds_read,
+    map_time_stretch_ds_seek,
+    map_time_stretch_ds_get_data_format,
+    map_time_stretch_ds_get_cursor,
+    map_time_stretch_ds_get_length,
+    map_time_stretch_ds_set_looping,
+    0
+};
+
+ma_result map_time_stretch_ds_init(
+    map_time_stretch_ds *pDS,
+    const char *file_path,
+    ma_uint32 targetChannels,
+    ma_uint32 targetSampleRate)
+{
+    ma_result result;
+    ma_decoder_config decoder_cfg;
+    ma_data_source_config baseConfig;
+    ma_uint32 custom_count;
+
+    if (pDS == NULL || file_path == NULL)
+        return MA_INVALID_ARGS;
+
+    memset(pDS, 0, sizeof(*pDS));
+
+    decoder_cfg = ma_decoder_config_init(ma_format_f32, targetChannels, targetSampleRate);
+    decoder_cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
+    custom_count = map_get_custom_decoder_count();
+    if (custom_count > 0)
+    {
+        decoder_cfg.ppCustomBackendVTables = g_map_custom_decoders;
+        decoder_cfg.customBackendCount = custom_count;
+    }
+
+#if defined(_WIN32)
+    {
+        wchar_t *wpath = map_utf8_to_wchar(file_path);
+        if (wpath != NULL)
+        {
+            result = ma_decoder_init_file_w(wpath, &decoder_cfg, &pDS->decoder);
+            free(wpath);
+        }
+        else
+        {
+            result = ma_decoder_init_file(file_path, &decoder_cfg, &pDS->decoder);
+        }
+    }
+#else
+    result = ma_decoder_init_file(file_path, &decoder_cfg, &pDS->decoder);
+#endif
+    if (result != MA_SUCCESS)
+    {
+        return result;
+    }
+
+    pDS->channels = targetChannels;
+    pDS->sampleRate = targetSampleRate;
+    pDS->speed = 1.0f;
+    pDS->pitch = 1.0f;
+    pDS->is_eof = MA_FALSE;
+    pDS->readCursorFrames = 0;
+    pDS->totalFrames = 0;
+    ma_atomic_store_32(&pDS->underrun_count, 0);
+    ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &pDS->totalFrames);
+
+    pDS->sonic = sonicCreateStream((int)targetSampleRate, (int)targetChannels);
+    if (pDS->sonic == NULL)
+    {
+        ma_decoder_uninit(&pDS->decoder);
+        return MA_OUT_OF_MEMORY;
+    }
+    sonicSetQuality(pDS->sonic, 1);
+
+    pDS->scratchCapacity = 8192 * targetChannels;
+    pDS->scratchBuffer = (float *)ma_aligned_malloc(pDS->scratchCapacity * sizeof(float), 64, NULL);
+    if (pDS->scratchBuffer == NULL)
+    {
+        sonicDestroyStream(pDS->sonic);
+        ma_decoder_uninit(&pDS->decoder);
+        return MA_OUT_OF_MEMORY;
+    }
+    memset(pDS->scratchBuffer, 0, pDS->scratchCapacity * sizeof(float));
+
+    pDS->rawBufferCapacity = 16384 * targetChannels;
+    pDS->rawBuffer = (float *)ma_aligned_malloc(pDS->rawBufferCapacity * sizeof(float), 64, NULL);
+    if (pDS->rawBuffer == NULL)
+    {
+        ma_aligned_free(pDS->scratchBuffer, NULL);
+        sonicDestroyStream(pDS->sonic);
+        ma_decoder_uninit(&pDS->decoder);
+        return MA_OUT_OF_MEMORY;
+    }
+    memset(pDS->rawBuffer, 0, pDS->rawBufferCapacity * sizeof(float));
+    pDS->rawBufferCount = 0;
+    pDS->rawBufferReadPos = 0;
+
+    /* Pre-allocate buffer headroom to upper bound (65,536 frames) to prevent realloc on RT thread */
+    sonicWriteFloatToStream(pDS->sonic, pDS->scratchBuffer, 8192);
+    sonicReadFloatFromStream(pDS->sonic, pDS->scratchBuffer, 8192);
+
+    map_silence_detector_init(&pDS->silence, targetChannels, targetSampleRate);
+
+    baseConfig = ma_data_source_config_init();
+    baseConfig.vtable = &g_map_time_stretch_ds_vtable;
+
+    result = ma_data_source_init(&baseConfig, &pDS->base);
+    if (result != MA_SUCCESS)
+    {
+        map_silence_detector_uninit(&pDS->silence);
+        ma_aligned_free(pDS->rawBuffer, NULL);
+        ma_aligned_free(pDS->scratchBuffer, NULL);
+        sonicDestroyStream(pDS->sonic);
+        ma_decoder_uninit(&pDS->decoder);
+        return result;
+    }
+
+    /* Initialize decoupled background decoder worker and lock-free SPSC ring buffer (NP3-01) */
+    pDS->has_worker = MA_FALSE;
+    ma_atomic_store_32(&pDS->worker_is_sleeping, 0);
+    ma_atomic_store_32(&pDS->worker_stop, 0);
+    ma_atomic_store_32(&pDS->decoder_eof, 0);
+
+    if (ma_pcm_rb_init(ma_format_f32, targetChannels, 65536, NULL, NULL, &pDS->rb) == MA_SUCCESS)
+    {
+        if (ma_mutex_init(&pDS->decoder_mutex) == MA_SUCCESS)
+        {
+            if (ma_event_init(&pDS->worker_event) == MA_SUCCESS)
+            {
+                /* Prefill initial frames synchronously so startup is instantaneous */
+                ma_uint32 prefillFrames = 8192;
+                void *pPrefillBuf = NULL;
+                if (ma_pcm_rb_acquire_write(&pDS->rb, &prefillFrames, &pPrefillBuf) == MA_SUCCESS && prefillFrames > 0)
+                {
+                    ma_uint64 readFrames = 0;
+                    ma_result decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pPrefillBuf, prefillFrames, &readFrames);
+                    if (readFrames > 0)
+                    {
+                        ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFrames);
+                    }
+                    if (decRes == MA_AT_END || (decRes == MA_SUCCESS && readFrames == 0) || decRes != MA_SUCCESS)
+                    {
+                        ma_atomic_store_32(&pDS->decoder_eof, 1);
+                    }
+                }
+
+                if (ma_thread_create(&pDS->worker_thread, ma_thread_priority_normal, 0, map_decoder_worker_entry, pDS, NULL) == MA_SUCCESS)
+                {
+                    pDS->has_worker = MA_TRUE;
+                }
+                else
+                {
+                    ma_event_uninit(&pDS->worker_event);
+                    ma_mutex_uninit(&pDS->decoder_mutex);
+                    ma_pcm_rb_uninit(&pDS->rb);
+                }
+            }
+            else
+            {
+                ma_mutex_uninit(&pDS->decoder_mutex);
+                ma_pcm_rb_uninit(&pDS->rb);
+            }
+        }
+        else
+        {
+            ma_pcm_rb_uninit(&pDS->rb);
+        }
+    }
+
+    pDS->is_initialized = MA_TRUE;
+    return MA_SUCCESS;
+}
+
+void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
+{
+    if (pDS == NULL || !pDS->is_initialized)
+        return;
+
+    if (pDS->has_worker)
+    {
+        ma_atomic_store_32(&pDS->worker_stop, 1);
+        ma_event_signal(&pDS->worker_event);
+        ma_thread_wait(&pDS->worker_thread);
+        ma_event_uninit(&pDS->worker_event);
+        ma_mutex_uninit(&pDS->decoder_mutex);
+        ma_pcm_rb_uninit(&pDS->rb);
+        pDS->has_worker = MA_FALSE;
+    }
+
+    ma_spinlock_lock(&pDS->lock);
+    if (pDS->sonic != NULL)
+    {
+        sonicDestroyStream(pDS->sonic);
+        pDS->sonic = NULL;
+    }
+    ma_decoder_uninit(&pDS->decoder);
+    if (pDS->scratchBuffer != NULL)
+    {
+        ma_aligned_free(pDS->scratchBuffer, NULL);
+        pDS->scratchBuffer = NULL;
+    }
+    if (pDS->rawBuffer != NULL)
+    {
+        ma_aligned_free(pDS->rawBuffer, NULL);
+        pDS->rawBuffer = NULL;
+    }
+    map_silence_detector_uninit(&pDS->silence);
+    pDS->is_initialized = MA_FALSE;
+    ma_spinlock_unlock(&pDS->lock);
+
+    ma_data_source_uninit(&pDS->base);
+}

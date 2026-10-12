@@ -533,9 +533,18 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
         pAac->adtsDataStartOffset = offset;
         pAac->adtsFileSize = (ma_uint64)fileSize;
 
-        /* Verify syncword at start offset */
+        /* Verify syncword at start offset:
+         * ADTS syncword is 12 bits 0xFFF.
+         * Byte 1: bits 7..4=1111, bit 3=ID, bits 2..1=layer (MUST BE 00 for AAC), bit 0=protection_absent.
+         * Byte 2: bits 7..6=profile (must be != 3), bits 5..2=sample_rate_idx (must be <= 11).
+         * If layer != 00, it is MPEG Audio (MP1, MP2, or MP3) and must NOT be claimed by AAC.
+         */
         ma_aac_stream_seek(pAac, offset, ma_seek_origin_start);
-        if (ma_aac_stream_read(pAac, syncHdr, 7) != 7 || syncHdr[0] != 0xFF || (syncHdr[1] & 0xF0) != 0xF0)
+        if (ma_aac_stream_read(pAac, syncHdr, 7) != 7 ||
+            syncHdr[0] != 0xFF ||
+            (syncHdr[1] & 0xF6) != 0xF0 ||
+            ((syncHdr[2] >> 6) & 0x03) == 3 ||
+            ((syncHdr[2] >> 2) & 0x0F) > 11)
         {
             return MA_INVALID_FILE;
         }
@@ -554,7 +563,10 @@ static ma_result ma_aac_init_internal(const ma_decoding_backend_config *pConfig,
             if (ma_aac_stream_read(pAac, syncHdr, 7) != 7)
                 break;
 
-            if (syncHdr[0] == 0xFF && (syncHdr[1] & 0xF0) == 0xF0)
+            if (syncHdr[0] == 0xFF &&
+                (syncHdr[1] & 0xF6) == 0xF0 &&
+                ((syncHdr[2] >> 6) & 0x03) != 3 &&
+                ((syncHdr[2] >> 2) & 0x0F) <= 11)
             {
                 int frameLen = ((syncHdr[3] & 3) << 11) | (syncHdr[4] << 3) | ((syncHdr[5] & 0xE0) >> 5);
                 if (frameLen < 7)

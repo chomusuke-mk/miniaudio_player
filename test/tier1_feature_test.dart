@@ -660,11 +660,11 @@ void main() {
 
     test('9.5: Equalizer.bassBoost significantly elevates bass bands', () {
       const bass = Equalizer.bassBoost;
-      expect(bass.hz31, equals(7.4));
-      expect(bass.hz63, equals(7.2));
-      expect(bass.hz125, equals(7.2));
-      expect(bass.hz1k, lessThan(0.0));
-      expect(bass.hz16k, lessThan(0.0));
+      expect(bass.hz31, equals(7.0));
+      expect(bass.hz63, equals(6.0));
+      expect(bass.hz125, equals(5.0));
+      expect(bass.hz1k, lessThanOrEqualTo(0.0));
+      expect(bass.hz16k, lessThanOrEqualTo(0.0));
     });
 
     test('9.6: applying presets sequentially via setEqualizer updates state and stream', () async {

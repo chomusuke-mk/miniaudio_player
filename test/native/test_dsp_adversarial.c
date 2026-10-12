@@ -19,8 +19,10 @@
 #include <stdatomic.h>
 #include <unistd.h>
 
-/* Direct inclusion of source to allow white-box inspection of internal DSP node */
-#include "../../src/miniaudio_player.c"
+#include "miniaudio.h"
+#include "miniaudio_player.h"
+#include "map_common.h"
+#include "map_dsp.h"
 
 /* ========================================================================= */
 /* Linker-Wrapped Heap Allocation Interceptors                                */
@@ -191,7 +193,7 @@ static void test_suite_1_impulse_response_dtft(void)
 
     const uint32_t sample_rate = 48000;
     const uint32_t channels = 2;
-    const uint32_t frame_count = 8192;
+    const uint32_t frame_count = 16384; /* 16,384 samples (341ms) for complete sub-30Hz impulse decay (NP3-03) */
 
     ma_engine_config engine_cfg = ma_engine_config_init();
     engine_cfg.sampleRate = sample_rate;
@@ -223,7 +225,11 @@ static void test_suite_1_impulse_response_dtft(void)
     const float *pIn = in_buf;
     float *pOut = out_buf;
     ma_uint32 fc = frame_count;
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
     ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
 
     for (int b = 0; b < 10; b++)
     {
@@ -258,7 +264,11 @@ static void test_suite_1_impulse_response_dtft(void)
             pIn = in_buf;
             pOut = out_buf;
             fc = frame_count;
+            atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+            atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
             ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+            atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+            assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
 
             if (b >= 1 && b <= 8)
             {
@@ -306,6 +316,25 @@ static void test_suite_1_impulse_response_dtft(void)
             }
         }
     }
+
+    /* 1.3 Strict Zero-Allocation Verification with Equalizer, Visualizer, and Crossfeed Enabled */
+    printf("\n--- 1.3 Verifying 0 RT Heap Allocations (EQ + Visualizer + Crossfeed Enabled) ---\n");
+    eq.visualizer_enabled = 1;
+    eq.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER;
+    for (int b = 0; b < 10; b++)
+    {
+        ma_equalizer_node_set_band(&eq, b, (b % 2 == 0) ? 6.0f : -6.0f);
+    }
+    pIn = in_buf;
+    pOut = out_buf;
+    fc = frame_count;
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
+    ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
+    assert(eq.visualizer_data.rms >= 0.0f);
+    printf("  Impulse processing with EQ + Visualizer + Crossfeed: 0 heap allocations detected.\n");
 
     free(in_buf);
     free(out_buf);
@@ -371,7 +400,11 @@ static void test_suite_2_sinusoid_steady_state(void)
         const float *pIn = in_buf;
         float *pOut = out_buf;
         ma_uint32 fc = total_frames;
+        atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+        atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
         ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+        atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+        assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
         double rms_out_boost = compute_rms(out_buf, channels, settling_frames, measure_frames);
         double measured_boost_db = 20.0 * log10(rms_out_boost / rms_in);
 
@@ -382,7 +415,11 @@ static void test_suite_2_sinusoid_steady_state(void)
         pIn = in_buf;
         pOut = out_buf;
         fc = total_frames;
+        atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+        atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
         ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+        atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+        assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
         double rms_out_cut = compute_rms(out_buf, channels, settling_frames, measure_frames);
         double measured_cut_db = 20.0 * log10(rms_out_cut / rms_in);
 
@@ -392,6 +429,25 @@ static void test_suite_2_sinusoid_steady_state(void)
         assert(fabs(measured_boost_db - boost_db) < 0.35);
         assert(fabs(measured_cut_db - cut_db) < 0.35);
     }
+
+    /* 2.2 Strict Zero-Allocation Verification with Equalizer, Visualizer, and Crossfeed Enabled */
+    printf("\n--- 2.2 Verifying 0 RT Heap Allocations (EQ + Visualizer + Crossfeed Enabled) ---\n");
+    eq.visualizer_enabled = 1;
+    eq.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER;
+    for (int b = 0; b < 10; b++)
+    {
+        ma_equalizer_node_set_band(&eq, b, 3.0f);
+    }
+    const float *pIn2 = in_buf;
+    float *pOut2 = out_buf;
+    ma_uint32 fc2 = total_frames;
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
+    ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn2, &fc2, &pOut2, &fc2);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
+    assert(eq.visualizer_data.rms >= 0.0f);
+    printf("  Sinusoid processing with EQ + Visualizer + Crossfeed: 0 heap allocations detected.\n");
 
     free(in_buf);
     free(out_buf);
@@ -450,6 +506,9 @@ static void test_suite_3_extreme_inputs(void)
     float *extreme_out = (float *)malloc(test_frames * channels * sizeof(float));
     assert(extreme_in != NULL && extreme_out != NULL);
 
+    eq.visualizer_enabled = 1;
+    eq.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER;
+
     /* Set all bands to +24 dB */
     for (int b = 0; b < 10; b++)
     {
@@ -466,7 +525,11 @@ static void test_suite_3_extreme_inputs(void)
     const float *pIn = extreme_in;
     float *pOut = extreme_out;
     ma_uint32 fc = test_frames;
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
     ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
 
     /* Assert NO NaN or INF */
     for (uint32_t i = 0; i < test_frames * channels; i++)
@@ -474,20 +537,24 @@ static void test_suite_3_extreme_inputs(void)
         assert(!isnan(extreme_out[i]));
         assert(!isinf(extreme_out[i]));
     }
-    printf("  Full-scale square wave under +24dB EQ: 0 NaN, 0 INF values.\n");
+    printf("  Full-scale square wave under +24dB EQ (EQ+Vis+Crossfeed): 0 NaN, 0 INF, 0 heap allocs.\n");
 
     /* Feed Silence (0.0f) under +24 dB and -24 dB */
     memset(extreme_in, 0, test_frames * channels * sizeof(float));
     pIn = extreme_in;
     pOut = extreme_out;
     fc = test_frames;
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
     ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
     for (uint32_t i = 0; i < test_frames * channels; i++)
     {
         assert(!isnan(extreme_out[i]));
         assert(!isinf(extreme_out[i]));
     }
-    printf("  Zero input silence: zero divergence, 0 NaN, 0 INF.\n");
+    printf("  Zero input silence: zero divergence, 0 NaN, 0 INF, 0 heap allocs.\n");
 
     /* Feed Subnormals (1e-38f) */
     for (uint32_t i = 0; i < test_frames * channels; i++)
@@ -497,13 +564,17 @@ static void test_suite_3_extreme_inputs(void)
     pIn = extreme_in;
     pOut = extreme_out;
     fc = test_frames;
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
     ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
     for (uint32_t i = 0; i < test_frames * channels; i++)
     {
         assert(!isnan(extreme_out[i]));
         assert(!isinf(extreme_out[i]));
     }
-    printf("  Denormal / subnormal float stress: 0 NaN, 0 INF, filter stable.\n");
+    printf("  Denormal / subnormal float stress: 0 NaN, 0 INF, filter stable, 0 heap allocs.\n");
 
     free(extreme_in);
     free(extreme_out);
@@ -524,6 +595,8 @@ static void test_suite_3_extreme_inputs(void)
 
         res = ma_equalizer_node_init(&engine.nodeGraph, 2, sr, &eq);
         assert(res == MA_SUCCESS);
+        eq.visualizer_enabled = 1;
+        eq.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER;
 
         /* Set all bands to +12 dB */
         for (int b = 0; b < 10; b++)
@@ -540,7 +613,11 @@ static void test_suite_3_extreme_inputs(void)
         pIn = burst_in;
         pOut = burst_out;
         fc = 1024;
+        atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+        atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
         ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+        atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+        assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
 
         for (int i = 0; i < 2048; i++)
         {
@@ -550,7 +627,7 @@ static void test_suite_3_extreme_inputs(void)
 
         ma_equalizer_node_uninit(&eq);
         ma_engine_uninit(&engine);
-        printf("  Sample rate %6u Hz passed with zero NaN/INF (Nyquist clamp verified).\n", sr);
+        printf("  Sample rate %6u Hz passed with zero NaN/INF, 0 heap allocs (EQ+Vis+Crossfeed).\n", sr);
     }
 
     /* 3.4 Multi-Channel Extreme Tests (Mono, Stereo, Quad, 5.1, 7.1) */
@@ -567,6 +644,8 @@ static void test_suite_3_extreme_inputs(void)
 
         res = ma_equalizer_node_init(&engine.nodeGraph, ch, 48000, &eq);
         assert(res == MA_SUCCESS);
+        eq.visualizer_enabled = 1;
+        if (ch >= 2) eq.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER;
 
         float *ch_buf_in = (float *)calloc(2048 * ch, sizeof(float));
         float *ch_buf_out = (float *)calloc(2048 * ch, sizeof(float));
@@ -577,7 +656,11 @@ static void test_suite_3_extreme_inputs(void)
         pIn = ch_buf_in;
         pOut = ch_buf_out;
         fc = 2048;
+        atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+        atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
         ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+        atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+        assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
 
         for (uint32_t i = 0; i < 2048 * ch; i++)
         {
@@ -589,7 +672,7 @@ static void test_suite_3_extreme_inputs(void)
         free(ch_buf_out);
         ma_equalizer_node_uninit(&eq);
         ma_engine_uninit(&engine);
-        printf("  %u-channel stream verified under AddressSanitizer (zero buffer overflow).\n", ch);
+        printf("  %u-channel stream verified under AddressSanitizer (zero buffer overflow, 0 heap allocs).\n", ch);
     }
 
     /* 3.5 Rate & Pitch Public API Boundaries */
@@ -724,6 +807,8 @@ static void test_suite_4_hot_reinit_zero_alloc(void)
     ma_equalizer_node eq;
     res = ma_equalizer_node_init(&engine.nodeGraph, channels, sample_rate, &eq);
     assert(res == MA_SUCCESS);
+    eq.visualizer_enabled = 1; /* Explicitly enable visualizer to verify 0 RT heap allocations during streaming */
+    eq.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER; /* Explicitly enable crossfeed to verify 0 RT heap allocations during streaming */
 
     /* Launch concurrent audio streaming worker */
     stream_worker_args_t worker_args;
@@ -739,23 +824,31 @@ static void test_suite_4_hot_reinit_zero_alloc(void)
     /* Let audio streaming start */
     usleep(10000);
 
-    printf("--- Engaging Zero-Allocation Strict Guard ---\n");
+    printf("--- Engaging Zero-Allocation Strict Guard (EQ + Visualizer + Crossfeed) ---\n");
     atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
     atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
 
     /* Perform 1,000 rapid hot-reinitialization updates while audio streams */
-    printf("  Executing 500 random individual band re-inits...\n");
+    printf("  Executing 500 random individual band re-inits with crossfeed switching...\n");
     for (int i = 0; i < 500; i++)
     {
+        if (i % 50 == 0)
+        {
+            eq.crossfeed_mode = (i % 100 == 0) ? MAP_CROSSFEED_CHU_MOY : MAP_CROSSFEED_MOFFAT_BAUER;
+        }
         uint32_t band = (uint32_t)(i % 10);
         float gain = -24.0f + (float)(rand() % 4801) / 100.0f; /* -24.0 to +24.0 dB */
         ma_result r = ma_equalizer_node_set_band(&eq, band, gain);
         assert(r == MA_SUCCESS);
     }
 
-    printf("  Executing 500 random full 10-band preset re-inits...\n");
+    printf("  Executing 500 random full 10-band preset re-inits with crossfeed switching...\n");
     for (int i = 0; i < 500; i++)
     {
+        if (i % 50 == 0)
+        {
+            eq.crossfeed_mode = (i % 100 == 0) ? MAP_CROSSFEED_MOFFAT_BAUER : MAP_CROSSFEED_CHU_MOY;
+        }
         miniaudio_player_equalizer_params_t p;
         p.hz31 = -12.0f + (float)(rand() % 2401) / 100.0f;
         p.hz63 = -12.0f + (float)(rand() % 2401) / 100.0f;
@@ -785,6 +878,8 @@ static void test_suite_4_hot_reinit_zero_alloc(void)
 
     assert(forbidden_allocs == 0);
     assert(total_streamed > 10000);
+    assert(eq.visualizer_data.rms > 0.0f);
+    assert(eq.visualizer_data.peak > 0.0f);
 
     ma_equalizer_node_uninit(&eq);
     ma_engine_uninit(&engine);
@@ -811,6 +906,10 @@ static void test_suite_5_player_presets_and_playback(void)
     result = miniaudio_player_open_file(player, wav_path);
     assert(result == MAP_SUCCESS);
 
+    assert(miniaudio_player_set_visualizer_enabled(player, 1) == MAP_SUCCESS);
+    assert(miniaudio_player_is_visualizer_enabled(player) == 1);
+    assert(miniaudio_player_set_crossfeed(player, MAP_CROSSFEED_MOFFAT_BAUER) == MAP_SUCCESS);
+
     int64_t dur = miniaudio_player_get_duration_ms(player);
     assert(dur >= 1400 && dur <= 1600);
 
@@ -825,7 +924,7 @@ static void test_suite_5_player_presets_and_playback(void)
         /* Jazz */
         {3.5f, 2.5f, 1.0f, 1.5f, -1.0f, -1.0f, 0.5f, 1.5f, 2.5f, 3.5f},
         /* Classical */
-        {4.0f, 3.0f, 2.0f, 1.5f, -1.0f, -1.0f, 0.0f, 1.5f, 2.5f, 3.0f},
+        {4.0f, 3.0f, 2.0f, 1.5f, -1.0f, -1.0f, 0.0f, -1.5f, -2.0f, -2.5f},
         /* BassBoost */
         {7.0f, 6.0f, 5.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}};
     const char *preset_names[] = {"Flat", "Rock", "Pop", "Jazz", "Classical", "BassBoost"};
@@ -858,7 +957,7 @@ static void test_suite_5_player_presets_and_playback(void)
     }
 
     /* Perform 1,000 rapid preset switches against the live playing player */
-    printf("  Stress-testing 1000 live updates on playing player instance...\n");
+    printf("  Stress-testing 1000 live updates on playing player instance (EQ+Vis+Crossfeed)...\n");
     atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
     atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
 
@@ -867,12 +966,20 @@ static void test_suite_5_player_presets_and_playback(void)
         uint32_t b = (uint32_t)(i % 10);
         float g = -10.0f + (float)(i % 20);
         assert(miniaudio_player_set_equalizer_band(player, b, g) == MAP_SUCCESS);
+        if (i % 50 == 0) {
+            int32_t cf_mode = (i % 100 == 0) ? MAP_CROSSFEED_CHU_MOY : MAP_CROSSFEED_MOFFAT_BAUER;
+            assert(miniaudio_player_set_crossfeed(player, cf_mode) == MAP_SUCCESS);
+        }
     }
 
     atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
     int forbidden_allocs = atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst);
     assert(forbidden_allocs == 0);
-    printf("  1000 live player EQ updates completed with 0 heap allocations.\n");
+    printf("  1000 live player EQ+Crossfeed updates completed with 0 heap allocations.\n");
+
+    miniaudio_player_visualizer_data_t vis_data;
+    assert(miniaudio_player_get_visualizer_data(player, &vis_data) == MAP_SUCCESS);
+    assert(vis_data.rms > 0.0f || vis_data.peak > 0.0f);
 
     /* Pause, seek, stop, destroy */
     assert(miniaudio_player_pause(player) == MAP_SUCCESS);
@@ -956,9 +1063,13 @@ static void test_suite_6_adversarial_deep_validation(void)
 
     /* Clean init then uninit NULL */
     assert(ma_equalizer_node_init(&engine.nodeGraph, 2, 48000, &eq_node) == MA_SUCCESS);
+    eq_node.visualizer_enabled = 1;
+    eq_node.crossfeed_mode = MAP_CROSSFEED_MOFFAT_BAUER;
     ma_equalizer_node_uninit(NULL); /* must be safe no-op */
 
-    /* Process frames with NULL buffers or 0 frame counts */
+    /* Process frames with NULL buffers or 0 frame counts under zero-allocation guard */
+    atomic_store_explicit(&g_forbidden_alloc_count, 0, memory_order_seq_cst);
+    atomic_store_explicit(&g_disallow_allocations, 1, memory_order_seq_cst);
     const float *pIn = NULL;
     float *pOut = NULL;
     ma_uint32 count = 0;
@@ -970,10 +1081,12 @@ static void test_suite_6_adversarial_deep_validation(void)
     pIn = dummy_f;
     pOut = dummy_f;
     ma_equalizer_node_process_pcm_frames(&eq_node.baseNode, &pIn, &count, &pOut, &count);
+    atomic_store_explicit(&g_disallow_allocations, 0, memory_order_seq_cst);
+    assert(atomic_load_explicit(&g_forbidden_alloc_count, memory_order_seq_cst) == 0);
 
     ma_equalizer_node_uninit(&eq_node);
     ma_engine_uninit(&engine);
-    printf("  Low-level node edge cases safely handled.\n");
+    printf("  Low-level node edge cases safely handled (0 heap allocations).\n");
 
     assert(miniaudio_player_destroy(player) == MAP_SUCCESS);
     printf(">>> SUITE 6 (Deep Adversarial Validation) PASSED CLEANLY <<<\n");

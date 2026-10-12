@@ -129,6 +129,7 @@ static void *sonicCalloc(int num, int size) { return calloc(num, size); }
 /* Just call realloc */
 static void *sonicRealloc(void *p, int oldNum, int newNum, int size)
 {
+  (void)oldNum;
   return realloc(p, newNum * size);
 }
 
@@ -330,11 +331,11 @@ void sonicSetRate(sonicStream stream, float rate)
 }
 
 /* DEPRECATED.  Get the vocal chord pitch setting. */
-int sonicGetChordPitch(sonicStream stream) { return 0; }
+int sonicGetChordPitch(sonicStream stream) { (void)stream; return 0; }
 
 /* DEPRECATED. Set the vocal chord mode for pitch computation.  Default is off.
  */
-void sonicSetChordPitch(sonicStream stream, int useChordPitch) {}
+void sonicSetChordPitch(sonicStream stream, int useChordPitch) { (void)stream; (void)useChordPitch; }
 
 /* Get the quality setting. */
 int sonicGetQuality(sonicStream stream) { return stream->quality; }
@@ -412,8 +413,18 @@ static int allocateStreamBuffers(sonicStream stream, int sampleRate,
   int maxPeriod = sampleRate / SONIC_MIN_PITCH;
   int maxRequired = 2 * maxPeriod;
 
-  /* Allocate 25% more than needed so we hopefully won't grow. */
-  stream->inputBufferSize = maxRequired + (maxRequired >> 2);
+#ifndef SONIC_MIN_STREAM_BUFFER_CAPACITY
+#define SONIC_MIN_STREAM_BUFFER_CAPACITY 65536
+#endif
+
+  /* Preallocate generous buffer capacity to avoid any mid-playback realloc (RT-02 / NP3-02) */
+  int minCap = maxRequired + (maxRequired >> 2);
+  if (minCap < SONIC_MIN_STREAM_BUFFER_CAPACITY)
+  {
+    minCap = SONIC_MIN_STREAM_BUFFER_CAPACITY;
+  }
+
+  stream->inputBufferSize = minCap;
 
   stream->inputBuffer =
       (short *)sonicCalloc(stream->inputBufferSize, sizeof(short) * numChannels);
@@ -422,8 +433,7 @@ static int allocateStreamBuffers(sonicStream stream, int sampleRate,
     sonicDestroyStream(stream);
     return 0;
   }
-  /* Allocate 25% more than needed so we hopefully won't grow. */
-  stream->outputBufferSize = maxRequired + (maxRequired >> 2);
+  stream->outputBufferSize = minCap;
   stream->outputBuffer = (short *)sonicCalloc(stream->outputBufferSize,
                                               sizeof(short) * numChannels);
   if (stream->outputBuffer == NULL)
@@ -431,8 +441,7 @@ static int allocateStreamBuffers(sonicStream stream, int sampleRate,
     sonicDestroyStream(stream);
     return 0;
   }
-  /* Allocate 25% more than needed so we hopefully won't grow. */
-  stream->pitchBufferSize = maxRequired + (maxRequired >> 2);
+  stream->pitchBufferSize = minCap;
   stream->pitchBuffer =
       (short *)sonicCalloc(stream->pitchBufferSize, sizeof(short) * numChannels);
   if (stream->pitchBuffer == NULL)
@@ -1475,6 +1484,7 @@ int sonicChangeFloatSpeed(float *samples, int numSamples, float speed,
                           int useChordPitch, int sampleRate, int numChannels)
 {
   sonicStream stream = sonicCreateStream(sampleRate, numChannels);
+  (void)useChordPitch;
 
   sonicSetSpeed(stream, speed);
   sonicSetPitch(stream, pitch);
@@ -1495,6 +1505,7 @@ int sonicChangeShortSpeed(short *samples, int numSamples, float speed,
                           int useChordPitch, int sampleRate, int numChannels)
 {
   sonicStream stream = sonicCreateStream(sampleRate, numChannels);
+  (void)useChordPitch;
 
   sonicSetSpeed(stream, speed);
   sonicSetPitch(stream, pitch);
