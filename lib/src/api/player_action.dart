@@ -394,12 +394,19 @@ class PlayerAction {
 
   /// Enables or disables real-time audio visualizer DSP analysis in native C.
   ///
-  /// Note: Listening to `player.stream.visualizer` automatically enables the visualizer
-  /// on-demand and disables it when listeners are cancelled, keeping idle CPU at 0%.
-  /// Use this action to explicitly force-enable or force-disable the visualizer.
+  /// Setting this to `false` explicitly overrides and disables visualizer DSP processing,
+  /// even if listeners are subscribed to `player.stream.visualizer`.
+  /// Setting this to `true` explicitly force-enables visualizer DSP processing.
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player.ensureNotDisposed();
-    _player.setManualVisualizerEnabled(enabled);
+    _player.setManualVisualizerOverride(enabled);
+  }
+
+  /// Clears any manual visualizer override, reverting to reactive on-demand
+  /// control based on active `player.stream.visualizer` listeners.
+  Future<void> clearVisualizerOverride() async {
+    _player.ensureNotDisposed();
+    _player.setManualVisualizerOverride(null);
   }
 
   /// Sets replay gain normalization for the track.

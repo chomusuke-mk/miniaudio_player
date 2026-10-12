@@ -568,8 +568,13 @@ class MiniaudioPlayer implements Finalizable {
   SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
   Duration _silenceSavedDuration = Duration.zero;
   VisualizerData _visualizer = VisualizerData.empty();
-  bool _manualVisualizerEnabled = false;
+  bool? _manualVisualizerOverride;
   bool _hasVisualizerListeners = false;
+
+  /// Returns whether the visualizer DSP is currently active, considering
+  /// explicit manual overrides and reactive stream listeners.
+  bool get _isVisualizerActive =>
+      _manualVisualizerOverride ?? _hasVisualizerListeners;
   Duration _currentTimerInterval = const Duration(milliseconds: 50);
   double _preamp = 0.0;
   ReplayGainConfig _replayGain = const ReplayGainConfig();
@@ -590,6 +595,7 @@ class MiniaudioPlayer implements Finalizable {
   AudioDevice? _lastDevice;
   SilenceSkipConfig? _lastSilenceConfig;
   Duration? _lastSilenceSavedDuration;
+  bool? _lastVisualizerEnabled;
 
   bool _isDisposed = false;
 
@@ -745,8 +751,7 @@ class MiniaudioPlayer implements Finalizable {
       getSilenceConfig: () => _silenceConfig,
       getSilenceSavedDuration: () => _silenceSavedDuration,
       getVisualizer: () => _visualizer,
-      getVisualizerEnabled: () =>
-          _manualVisualizerEnabled || _hasVisualizerListeners,
+      getVisualizerEnabled: () => _isVisualizerActive,
       getPreamp: () => _preamp,
       getReplayGain: () => _replayGain,
       getBalance: () => _balance,
@@ -806,23 +811,42 @@ class MiniaudioPlayer implements Finalizable {
 
   void _updateNativeVisualizerState() {
     if (_isDisposed || _playerHandle == nullptr) return;
-    final shouldEnable = _manualVisualizerEnabled || _hasVisualizerListeners;
+    final shouldEnable = _isVisualizerActive;
     native.miniaudio_player_set_visualizer_enabled(
       _playerHandle,
       shouldEnable ? 1 : 0,
     );
-    if (!_visualizerEnabledController.isClosed) {
-      _visualizerEnabledController.add(shouldEnable);
+    if (!shouldEnable) {
+      _visualizer = VisualizerData.empty();
+      if (!_visualizerController.isClosed && _hasVisualizerListeners) {
+        _visualizerController.add(VisualizerData.empty());
+      }
+    }
+    if (_lastVisualizerEnabled != shouldEnable) {
+      _lastVisualizerEnabled = shouldEnable;
+      if (!_visualizerEnabledController.isClosed) {
+        _visualizerEnabledController.add(shouldEnable);
+      }
     }
   }
 
-  /// Sets whether the visualizer DSP is manually forced enabled or disabled.
-  void setManualVisualizerEnabled(bool enabled) {
-    _manualVisualizerEnabled = enabled;
+  /// Sets or clears the explicit manual visualizer override.
+  ///
+  /// When `false`, visualizer DSP is forced disabled even if stream listeners exist.
+  /// When `true`, visualizer DSP is forced enabled even without stream listeners.
+  /// When `null`, visualizer DSP is governed reactively by stream listeners on demand.
+  void setManualVisualizerOverride(bool? override) {
+    _manualVisualizerOverride = override;
     _updateNativeVisualizerState();
     if (_playing) {
       _startPositionTimer();
     }
+  }
+
+  /// Sets whether the visualizer DSP is manually forced enabled or disabled.
+  /// (Maintained for backward compatibility, delegates to [setManualVisualizerOverride]).
+  void setManualVisualizerEnabled(bool enabled) {
+    setManualVisualizerOverride(enabled);
   }
 
   /// Notifies the player that playback was stopped manually.
@@ -841,8 +865,7 @@ class MiniaudioPlayer implements Finalizable {
     _lastPosition = Duration.zero;
     _visualizer = VisualizerData.empty();
 
-    if (!_visualizerController.isClosed &&
-        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+    if (!_visualizerController.isClosed && _isVisualizerActive) {
       _visualizerController.add(VisualizerData.empty());
     }
 
@@ -869,8 +892,7 @@ class MiniaudioPlayer implements Finalizable {
     _lastPosition = _duration;
     _visualizer = VisualizerData.empty();
 
-    if (!_visualizerController.isClosed &&
-        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+    if (!_visualizerController.isClosed && _isVisualizerActive) {
       _visualizerController.add(VisualizerData.empty());
     }
 
@@ -886,7 +908,7 @@ class MiniaudioPlayer implements Finalizable {
   }
 
   void _startPositionTimer() {
-    final isVisActive = _hasVisualizerListeners || _manualVisualizerEnabled;
+    final isVisActive = _isVisualizerActive;
     final interval = isVisActive
         ? const Duration(milliseconds: 33)
         : const Duration(milliseconds: 50);
@@ -909,8 +931,7 @@ class MiniaudioPlayer implements Finalizable {
     _positionTimer?.cancel();
     _positionTimer = null;
     _visualizer = VisualizerData.empty();
-    if (!_visualizerController.isClosed &&
-        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
+    if (!_visualizerController.isClosed && _isVisualizerActive) {
       _visualizerController.add(VisualizerData.empty());
     }
   }
@@ -1047,25 +1068,28 @@ class MiniaudioPlayer implements Finalizable {
       }
     }
 
-    final visData = status.visualizer;
-    final visBands = List<double>.generate(
-      10,
-      (i) => visData.bands[i],
-      growable: false,
-    );
-    final currentVis = isPlaying
-        ? VisualizerData(
-            bands: visBands,
-            rms: visData.rms,
-            peak: visData.peak,
-            left: visData.left,
-            right: visData.right,
-          )
-        : VisualizerData.empty();
-    _visualizer = currentVis;
-    if (!_visualizerController.isClosed &&
-        (_hasVisualizerListeners || _manualVisualizerEnabled)) {
-      _visualizerController.add(currentVis);
+    if (_isVisualizerActive) {
+      final visData = status.visualizer;
+      final visBands = List<double>.generate(
+        10,
+        (i) => visData.bands[i],
+        growable: false,
+      );
+      final currentVis = isPlaying
+          ? VisualizerData(
+              bands: visBands,
+              rms: visData.rms,
+              peak: visData.peak,
+              left: visData.left,
+              right: visData.right,
+            )
+          : VisualizerData.empty();
+      _visualizer = currentVis;
+      if (!_visualizerController.isClosed && _hasVisualizerListeners) {
+        _visualizerController.add(currentVis);
+      }
+    } else {
+      _visualizer = VisualizerData.empty();
     }
 
     final preamp = status.preamp_db;

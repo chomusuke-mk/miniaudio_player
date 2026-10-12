@@ -77,16 +77,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isLoadingTrack = false;
 
   Equalizer _currentEqualizer = Equalizer.flat;
+  String? _selectedPreset = 'flat';
+
+  static String? _detectPreset(Equalizer eq) {
+    if (eq == Equalizer.flat) return 'flat';
+    if (eq == Equalizer.rock) return 'rock';
+    if (eq == Equalizer.pop) return 'pop';
+    if (eq == Equalizer.jazz) return 'jazz';
+    if (eq == Equalizer.classical) return 'classical';
+    if (eq == Equalizer.bassBoost) return 'bassBoost';
+    return null;
+  }
   double _volume = 1.0;
   double _rate = 1.0;
   double _pitch = 1.0;
   double? _dragPositionMs;
   List<AudioDevice> _audioDevices = [AudioDevice.auto];
   StreamSubscription<AudioDevice>? _deviceSub;
+  StreamSubscription<List<AudioDevice>>? _deviceListSub;
+  StreamSubscription<Equalizer>? _equalizerSub;
+  StreamSubscription<SilenceSkipConfig>? _silenceConfigSub;
+  StreamSubscription<double>? _volumeSub;
+  StreamSubscription<double>? _rateSub;
+  StreamSubscription<double>? _pitchSub;
 
   AudioAnalysisResult? _analysisResult;
   bool _isAnalyzing = false;
   SilenceSkipMode _silenceMode = SilenceSkipMode.continuous;
+  double _silenceThresholdDb = -45.0;
+  int _minSilenceDurationMs = 300;
+  int _silencePaddingMs = 50;
+  bool _replayGainPreventClipping = true;
 
   Future<void> _runAnalysis() async {
     final path = _samplePath;
@@ -127,11 +148,46 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _deviceSub = _player.stream.audioDevice.listen((_) {
       _refreshAudioDevices();
     });
-    MiniaudioPlayer.getAudioDevicesStream().listen((devs) {
+    _deviceListSub = MiniaudioPlayer.getAudioDevicesStream().listen((devs) {
       if (mounted) {
         setState(() {
           _audioDevices = devs;
         });
+      }
+    });
+    _equalizerSub = _player.stream.equalizer.listen((eq) {
+      if (mounted) {
+        setState(() {
+          _currentEqualizer = eq;
+          _selectedPreset = _detectPreset(eq);
+        });
+      }
+    });
+    _silenceConfigSub = _player.stream.silenceConfig.listen((cfg) {
+      if (mounted) {
+        setState(() {
+          if (cfg.mode != SilenceSkipMode.disabled) {
+            _silenceMode = cfg.mode;
+          }
+          _silenceThresholdDb = cfg.thresholdDb;
+          _minSilenceDurationMs = cfg.minSilenceDuration.inMilliseconds;
+          _silencePaddingMs = cfg.padding.inMilliseconds;
+        });
+      }
+    });
+    _volumeSub = _player.stream.volume.listen((v) {
+      if (mounted && (_volume - v).abs() > 0.001) {
+        setState(() => _volume = v);
+      }
+    });
+    _rateSub = _player.stream.rate.listen((r) {
+      if (mounted && (_rate - r).abs() > 0.001) {
+        setState(() => _rate = r);
+      }
+    });
+    _pitchSub = _player.stream.pitch.listen((p) {
+      if (mounted && (_pitch - p).abs() > 0.001) {
+        setState(() => _pitch = p);
       }
     });
   }
@@ -406,6 +462,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _deviceSub?.cancel();
+    _deviceListSub?.cancel();
+    _equalizerSub?.cancel();
+    _silenceConfigSub?.cancel();
+    _volumeSub?.cancel();
+    _rateSub?.cancel();
+    _pitchSub?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -457,7 +519,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Row(
               children: [
                 Expanded(
-                  child: InputDecorator(
+                  child: DropdownButtonFormField<AudioTrack>(
+                    key: ValueKey(_selectedTrack),
+                    initialValue: _selectedTrack,
+                    isExpanded: true,
                     decoration: const InputDecoration(
                       labelText: 'Pista de audio (Assets)',
                       border: OutlineInputBorder(),
@@ -467,45 +532,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                       prefixIcon: Icon(Icons.library_music),
                     ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<AudioTrack>(
-                        value: _selectedTrack,
-                        isExpanded: true,
-                        items: _availableTracks.map((track) {
-                          final isFallback = track.isGenerated;
-                          return DropdownMenuItem<AudioTrack>(
-                            value: track,
-                            child: Row(
-                              children: [
-                                Icon(
-                                  isFallback
-                                      ? Icons.graphic_eq
-                                      : Icons.audiotrack,
-                                  size: 18,
-                                  color: isFallback
-                                      ? Colors.amberAccent
-                                      : Colors.tealAccent,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    track.title,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                    items: _availableTracks.map((track) {
+                      final isFallback = track.isGenerated;
+                      return DropdownMenuItem<AudioTrack>(
+                        value: track,
+                        child: Row(
+                          children: [
+                            Icon(
+                              isFallback
+                                  ? Icons.graphic_eq
+                                  : Icons.audiotrack,
+                              size: 18,
+                              color: isFallback
+                                  ? Colors.amberAccent
+                                  : Colors.tealAccent,
                             ),
-                          );
-                        }).toList(),
-                        onChanged: _isLoadingTrack
-                            ? null
-                            : (track) {
-                                if (track != null && track != _selectedTrack) {
-                                  _selectTrack(track);
-                                }
-                              },
-                      ),
-                    ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                track.title,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: _isLoadingTrack
+                        ? null
+                        : (track) {
+                            if (track != null && track != _selectedTrack) {
+                              _selectTrack(track);
+                            }
+                          },
                   ),
                 ),
                 if (_isLoadingTrack) ...[
@@ -519,15 +578,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
               children: [
-                Expanded(
-                  child: Text(
-                    'Archivo: ${_samplePath?.split(RegExp(r"[/\\]")).last ?? ''}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                Text(
+                  'Archivo: ${_samplePath?.split(RegExp(r"[/\\]")).last ?? ''}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 StreamBuilder<int>(
                   stream: _player.stream.audioBitrate,
@@ -536,16 +596,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     final bitrate = snapshot.data ?? 0;
                     if (bitrate <= 0) return const SizedBox.shrink();
                     final kbps = (bitrate / 1000).round();
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8.0),
-                      child: Chip(
-                        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                        visualDensity: VisualDensity.compact,
-                        avatar: const Icon(Icons.speed, size: 14),
-                        label: Text(
-                          '$kbps kbps',
-                          style: const TextStyle(fontSize: 10),
-                        ),
+                    return Chip(
+                      labelPadding:
+                          const EdgeInsets.symmetric(horizontal: 4),
+                      visualDensity: VisualDensity.compact,
+                      avatar: const Icon(Icons.speed, size: 14),
+                      label: Text(
+                        '$kbps kbps',
+                        style: const TextStyle(fontSize: 10),
                       ),
                     );
                   },
@@ -556,7 +614,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   builder: (context, snapshot) {
                     final isPlaying = snapshot.data ?? false;
                     return Chip(
-                      labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      labelPadding:
+                          const EdgeInsets.symmetric(horizontal: 4),
                       visualDensity: VisualDensity.compact,
                       label: Text(
                         isPlaying ? 'PLAYING' : 'STOPPED / PAUSED',
@@ -603,16 +662,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          _formatDuration(
-                            _dragPositionMs != null
-                                ? Duration(
-                                    milliseconds: _dragPositionMs!.toInt(),
-                                  )
-                                : pos,
+                        Flexible(
+                          child: Text(
+                            _formatDuration(
+                              _dragPositionMs != null
+                                  ? Duration(
+                                      milliseconds: _dragPositionMs!.toInt(),
+                                    )
+                                  : pos,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        Text(_formatDuration(dur)),
+                        Flexible(
+                          child: Text(
+                            _formatDuration(dur),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -666,11 +733,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'DSP Controls',
-              style: Theme.of(context).textTheme.titleMedium,
+            Row(
+              children: [
+                const Icon(Icons.tune, color: Colors.deepPurpleAccent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'DSP & Audio Processing Chain',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 4),
+            Text(
+              'Real-time low-latency DSP chain (0 heap allocations in RT audio thread)',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Playback Adjustments',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Colors.deepPurpleAccent,
+                  ),
+            ),
+            const SizedBox(height: 8),
             Row(
               children: [
                 const SizedBox(width: 70, child: Text('Volume')),
@@ -735,6 +824,372 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ],
             ),
             const Divider(height: 24),
+            Text(
+              'DSP Signal Chain',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Colors.deepPurpleAccent,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            StreamBuilder<bool>(
+              stream: _player.stream.limiterEnabled,
+              initialData: _player.state.limiterEnabled,
+              builder: (context, snapshot) {
+                final isLimiterOn = snapshot.data ?? false;
+                return SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(
+                    Icons.shield_outlined,
+                    color: Colors.deepPurpleAccent,
+                  ),
+                  title: const Text('True-Peak Limiter Guard'),
+                  subtitle: const Text(
+                    'Branchless soft-knee limiter (THD < 0.01% under 0.95)',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  value: isLimiterOn,
+                  activeThumbColor: Colors.deepPurpleAccent,
+                  onChanged: (val) {
+                    _player.action.setLimiter(val);
+                  },
+                );
+              },
+            ),
+            const Divider(height: 16),
+            StreamBuilder<CrossfeedMode>(
+              stream: _player.stream.crossfeed,
+              initialData: _player.state.crossfeed,
+              builder: (context, snapshot) {
+                final currentMode = snapshot.data ?? CrossfeedMode.off;
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    Widget buildDropdown() {
+                      return DropdownButtonFormField<CrossfeedMode>(
+                        key: ValueKey(currentMode),
+                        initialValue: currentMode,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: CrossfeedMode.off,
+                            child: Text(
+                              'Off (Stereo)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: CrossfeedMode.moffatBauer,
+                            child: Text(
+                              'Moffat-Bauer (4.5 dB)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: CrossfeedMode.chuMoy,
+                            child: Text(
+                              'Chu Moy (6.0 dB)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                        onChanged: (mode) {
+                          if (mode != null) {
+                            _player.action.setCrossfeed(mode);
+                          }
+                        },
+                      );
+                    }
+
+                    if (constraints.maxWidth < 480) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(
+                                Icons.headphones,
+                                size: 22,
+                                color: Colors.deepPurpleAccent,
+                              ),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Headphone Crossfeed (BS2B)',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w500),
+                                    ),
+                                    Text(
+                                      'Reduces headphone listening fatigue with acoustic binaural feed',
+                                      style: TextStyle(
+                                          fontSize: 11, color: Colors.grey),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: buildDropdown(),
+                          ),
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        const Icon(
+                          Icons.headphones,
+                          size: 22,
+                          color: Colors.deepPurpleAccent,
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Headphone Crossfeed (BS2B)',
+                                style: TextStyle(fontWeight: FontWeight.w500),
+                              ),
+                              Text(
+                                'Reduces headphone listening fatigue with acoustic binaural feed',
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 220,
+                          child: buildDropdown(),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+            const Divider(height: 16),
+            StreamBuilder<bool>(
+              stream: _player.stream.mono,
+              initialData: _player.state.mono,
+              builder: (context, snapshot) {
+                final isMono = snapshot.data ?? false;
+                return SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(
+                    Icons.speaker_group_outlined,
+                    color: Colors.deepPurpleAccent,
+                  ),
+                  title: const Text('Mono Downmix'),
+                  subtitle: const Text(
+                    'Sum stereo channels (L+R)/2 for single speaker or accessibility',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  value: isMono,
+                  activeThumbColor: Colors.deepPurpleAccent,
+                  onChanged: (val) {
+                    _player.action.setMono(val);
+                  },
+                );
+              },
+            ),
+            const Divider(height: 16),
+            StreamBuilder<double>(
+              stream: _player.stream.balance,
+              initialData: _player.state.balance,
+              builder: (context, snapshot) {
+                final currentBalance = snapshot.data ?? 0.0;
+                String panLabel;
+                if (currentBalance.abs() < 0.05) {
+                  panLabel = 'Center (0.0)';
+                } else if (currentBalance < 0) {
+                  panLabel = 'L ${(currentBalance.abs() * 100).toInt()}%';
+                } else {
+                  panLabel = 'R ${(currentBalance * 100).toInt()}%';
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text('Stereo Balance: $panLabel'),
+                        ),
+                        if (currentBalance.abs() >= 0.05)
+                          IconButton(
+                            icon: const Icon(Icons.center_focus_strong, size: 18),
+                            tooltip: 'Center Balance',
+                            onPressed: () => _player.action.setBalance(0.0),
+                          ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        const Text(
+                          'L',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: currentBalance.clamp(-1.0, 1.0),
+                            min: -1.0,
+                            max: 1.0,
+                            divisions: 20,
+                            label: panLabel,
+                            onChanged: (val) {
+                              _player.action.setBalance(val);
+                            },
+                          ),
+                        ),
+                        const Text(
+                          'R',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
+            const Divider(height: 16),
+            StreamBuilder<double>(
+              stream: _player.stream.preamp,
+              initialData: _player.state.preamp,
+              builder: (context, snapshot) {
+                final currentPreamp = snapshot.data ?? 0.0;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Preamp Gain: ${currentPreamp > 0 ? "+" : ""}${currentPreamp.toStringAsFixed(1)} dB',
+                          ),
+                        ),
+                        if (currentPreamp.abs() > 0.01)
+                          IconButton(
+                            icon: const Icon(Icons.refresh, size: 18),
+                            tooltip: 'Reset Preamp to 0 dB',
+                            onPressed: () => _player.action.setPreamp(0.0),
+                          ),
+                      ],
+                    ),
+                    Slider(
+                      value: currentPreamp.clamp(-12.0, 12.0),
+                      min: -12.0,
+                      max: 12.0,
+                      divisions: 24,
+                      label: '${currentPreamp.toStringAsFixed(1)} dB',
+                      onChanged: (val) {
+                        _player.action.setPreamp(val);
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+            const Divider(height: 16),
+            StreamBuilder<bool>(
+              stream: _player.stream.spatializerEnabled,
+              initialData: _player.state.spatializerEnabled,
+              builder: (context, snapEnabled) {
+                final isSpatialOn = snapEnabled.data ?? false;
+                return Column(
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(
+                        Icons.surround_sound,
+                        color: Colors.deepPurpleAccent,
+                      ),
+                      title: const Text('Stereo Spatializer (Widener)'),
+                      subtitle: const Text(
+                        'Mid/Side spatial field expansion processor',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      value: isSpatialOn,
+                      activeThumbColor: Colors.deepPurpleAccent,
+                      onChanged: (val) {
+                        _player.action.setSpatializer(
+                          enabled: val,
+                          width: _player.state.spatializerWidth,
+                        );
+                      },
+                    ),
+                    if (isSpatialOn)
+                      StreamBuilder<double>(
+                        stream: _player.stream.spatializerWidth,
+                        initialData: _player.state.spatializerWidth,
+                        builder: (context, snapWidth) {
+                          final width = snapWidth.data ?? 1.3;
+                          return Row(
+                            children: [
+                              const SizedBox(
+                                width: 70,
+                                child: Text(
+                                  'Width',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
+                              Expanded(
+                                child: Slider(
+                                  value: width.clamp(1.0, 2.0),
+                                  min: 1.0,
+                                  max: 2.0,
+                                  divisions: 10,
+                                  label: '${width.toStringAsFixed(1)}x',
+                                  onChanged: (w) {
+                                    _player.action.setSpatializer(
+                                      enabled: true,
+                                      width: w,
+                                    );
+                                  },
+                                ),
+                              ),
+                              SizedBox(
+                                width: 45,
+                                child: Text('${width.toStringAsFixed(1)}x'),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                  ],
+                );
+              },
+            ),
+            const Divider(height: 24),
+            Text(
+              'Hardware & Output Device',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Colors.deepPurpleAccent,
+                  ),
+            ),
+            const SizedBox(height: 8),
             Row(
               children: [
                 const SizedBox(width: 70, child: Text('Buffer Size')),
@@ -749,33 +1204,60 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           ? currentBuffer
                           : 0;
 
-                      return DropdownButton<int>(
-                        value: value,
+                      return DropdownButtonFormField<int>(
+                        key: ValueKey(value),
+                        initialValue: value,
                         isExpanded: true,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          border: OutlineInputBorder(),
+                        ),
                         items: const [
                           DropdownMenuItem(
                             value: 0,
-                            child: Text('0 (Native Default)'),
+                            child: Text(
+                              '0 (Native Default)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 256,
-                            child: Text('256 frames (~5.8ms @ 44.1kHz)'),
+                            child: Text(
+                              '256 frames (~5.8ms @ 44.1kHz)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 512,
-                            child: Text('512 frames (~11.6ms @ 44.1kHz)'),
+                            child: Text(
+                              '512 frames (~11.6ms @ 44.1kHz)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 1024,
-                            child: Text('1024 frames (~23.2ms @ 44.1kHz)'),
+                            child: Text(
+                              '1024 frames (~23.2ms @ 44.1kHz)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 2048,
-                            child: Text('2048 frames (~46.4ms @ 44.1kHz)'),
+                            child: Text(
+                              '2048 frames (~46.4ms @ 44.1kHz)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           DropdownMenuItem(
                             value: 4096,
-                            child: Text('4096 frames (~92.8ms @ 44.1kHz)'),
+                            child: Text(
+                              '4096 frames (~92.8ms @ 44.1kHz)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                         onChanged: (newBuf) {
@@ -814,9 +1296,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       }
                       selectedValue ??= items.isNotEmpty ? items.first : null;
 
-                      return DropdownButton<AudioDevice>(
-                        value: selectedValue,
+                      return DropdownButtonFormField<AudioDevice>(
+                        key: ValueKey(selectedValue),
+                        initialValue: selectedValue,
                         isExpanded: true,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          border: OutlineInputBorder(),
+                        ),
                         items: items.map((dev) {
                           return DropdownMenuItem<AudioDevice>(
                             value: dev,
@@ -935,85 +1426,180 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                Text(
-                  '10-Band Equalizer',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                DropdownButton<String>(
-                  value: null,
-                  hint: const Text('Presets'),
-                  items: const [
-                    DropdownMenuItem(value: 'flat', child: Text('Flat')),
-                    DropdownMenuItem(value: 'rock', child: Text('Rock')),
-                    DropdownMenuItem(value: 'pop', child: Text('Pop')),
-                    DropdownMenuItem(value: 'jazz', child: Text('Jazz')),
-                    DropdownMenuItem(
-                      value: 'classical',
-                      child: Text('Classical'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'bassBoost',
-                      child: Text('Bass Boost'),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.graphic_eq, color: Colors.tealAccent),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '10-Band Equalizer (ISO 266)',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
                   ],
-                  onChanged: (preset) {
-                    if (preset == null) return;
-                    Equalizer target;
-                    switch (preset) {
-                      case 'rock':
-                        target = Equalizer.rock;
-                      case 'pop':
-                        target = Equalizer.pop;
-                      case 'jazz':
-                        target = Equalizer.jazz;
-                      case 'classical':
-                        target = Equalizer.classical;
-                      case 'bassBoost':
-                        target = Equalizer.bassBoost;
-                      default:
-                        target = Equalizer.flat;
-                    }
-                    setState(() => _currentEqualizer = target);
-                    _player.action.setEqualizer(target);
-                  },
+                ),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.restart_alt, size: 16),
+                      label: const Text('Flat', style: TextStyle(fontSize: 12)),
+                      onPressed: () {
+                        setState(() {
+                          _currentEqualizer = Equalizer.flat;
+                          _selectedPreset = 'flat';
+                        });
+                        _player.action.setEqualizer(Equalizer.flat);
+                      },
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(_selectedPreset),
+                        initialValue: _selectedPreset,
+                        isExpanded: true,
+                        hint: const Text('Presets', style: TextStyle(fontSize: 12)),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          border: OutlineInputBorder(),
+                        ),
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium
+                            ?.copyWith(fontSize: 12),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'flat',
+                            child: Text('Flat', style: TextStyle(fontSize: 12)),
+                          ),
+                          DropdownMenuItem(
+                            value: 'rock',
+                            child: Text('Rock', style: TextStyle(fontSize: 12)),
+                          ),
+                          DropdownMenuItem(
+                            value: 'pop',
+                            child: Text('Pop', style: TextStyle(fontSize: 12)),
+                          ),
+                          DropdownMenuItem(
+                            value: 'jazz',
+                            child: Text('Jazz', style: TextStyle(fontSize: 12)),
+                          ),
+                          DropdownMenuItem(
+                            value: 'classical',
+                            child: Text(
+                              'Classical',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'bassBoost',
+                            child: Text(
+                              'Bass Boost',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                        onChanged: (preset) {
+                          if (preset == null) return;
+                          Equalizer target;
+                          switch (preset) {
+                            case 'rock':
+                              target = Equalizer.rock;
+                            case 'pop':
+                              target = Equalizer.pop;
+                            case 'jazz':
+                              target = Equalizer.jazz;
+                            case 'classical':
+                              target = Equalizer.classical;
+                            case 'bassBoost':
+                              target = Equalizer.bassBoost;
+                            default:
+                              target = Equalizer.flat;
+                          }
+                          setState(() {
+                            _currentEqualizer = target;
+                            _selectedPreset = preset;
+                          });
+                          _player.action.setEqualizer(target);
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
+            Text(
+              'Preferred 1/1 octave center frequencies with RBJ peaking/shelving biquads',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
+            ),
             const SizedBox(height: 12),
             SizedBox(
-              height: 180,
+              height: 190,
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
                 child: Row(
                   children: bands.map((band) {
+                    final val = band.$2;
+                    final isPositive = val > 0.05;
+                    final isNegative = val < -0.05;
+                    final color = isPositive
+                        ? Colors.tealAccent
+                        : (isNegative ? Colors.orangeAccent : Colors.grey);
+
                     return SizedBox(
-                      width: 48,
+                      width: 52,
                       child: Column(
                         children: [
                           Text(
-                            '${band.$2.toInt() > 0 ? "+" : ""}${band.$2.toInt()}',
-                            style: const TextStyle(fontSize: 10),
+                            '${val > 0 ? "+" : ""}${val.toStringAsFixed(1)}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: color,
+                            ),
                           ),
                           Expanded(
                             child: RotatedBox(
                               quarterTurns: 3,
                               child: Slider(
-                                value: band.$2.clamp(-24.0, 24.0),
+                                value: val.clamp(-24.0, 24.0),
                                 min: -24.0,
                                 max: 24.0,
+                                activeColor: color,
                                 onChanged: (newVal) {
                                   final updated = band.$3(newVal);
-                                  setState(() => _currentEqualizer = updated);
+                                  setState(() {
+                                    _currentEqualizer = updated;
+                                    _selectedPreset = _detectPreset(updated);
+                                  });
                                   _player.action.setEqualizer(updated);
                                 },
                               ),
                             ),
                           ),
-                          Text(band.$1, style: const TextStyle(fontSize: 10)),
+                          Text(
+                            band.$1,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ],
                       ),
                     );
@@ -1045,28 +1631,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: StreamBuilder<bool>(
+          stream: _player.stream.visualizerEnabled,
+          initialData: _player.state.visualizerEnabled,
+          builder: (context, enabledSnapshot) {
+            final isEnabled = enabledSnapshot.data ?? true;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
-                    const Icon(Icons.equalizer, color: Colors.cyanAccent),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Real-Time Reactive Visualizer',
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.equalizer, color: Colors.cyanAccent),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Real-Time Reactive Visualizer',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                StreamBuilder<bool>(
-                  stream: _player.stream.visualizerEnabled,
-                  initialData: _player.state.visualizerEnabled,
-                  builder: (context, snapshot) {
-                    final isEnabled = snapshot.data ?? true;
-                    return Row(
+                    Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
@@ -1085,282 +1677,300 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           },
                         ),
                       ],
-                    );
-                  },
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            Text(
-              '10-band hardware BPF filter bank & VU meters in C engine (<0.5% CPU)',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white70,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            StreamBuilder<VisualizerData>(
-              stream: _player.stream.visualizer,
-              initialData: _player.state.visualizer,
-              builder: (context, snapshot) {
-                final data = snapshot.data ?? VisualizerData.empty();
-                final bands = data.bands;
-
-                return Column(
-                  children: [
-                    // Reactive Pulsing Sound Wave Bar
-                    Container(
-                      height: 28,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.black26,
-                        borderRadius: BorderRadius.circular(6),
+                Text(
+                  '10-band hardware BPF filter bank & VU meters in C engine (<0.5% CPU)',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Row(
+                ),
+                const SizedBox(height: 16),
+                StreamBuilder<VisualizerData>(
+                  stream: _player.stream.visualizer,
+                  initialData: _player.state.visualizer,
+                  builder: (context, snapshot) {
+                    final data = isEnabled
+                        ? (snapshot.data ?? VisualizerData.empty())
+                        : VisualizerData.empty();
+                    final bands = data.bands;
+
+                    return AnimatedOpacity(
+                      duration: const Duration(milliseconds: 150),
+                      opacity: isEnabled ? 1.0 : 0.38,
+                      child: Column(
                         children: [
-                          const Icon(
-                            Icons.graphic_eq,
-                            size: 16,
-                            color: Colors.cyanAccent,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: LayoutBuilder(
-                              builder: (context, constraints) {
-                                final pulseWidth =
-                                    constraints.maxWidth *
-                                    data.rms.clamp(0.04, 1.0);
-                                return Stack(
-                                  alignment: Alignment.centerLeft,
-                                  children: [
-                                    Container(
-                                      height: 6,
-                                      width: constraints.maxWidth,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white10,
-                                        borderRadius: BorderRadius.circular(3),
-                                      ),
-                                    ),
-                                    AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 33,
-                                      ),
-                                      height: (6 + (data.peak * 10)).clamp(
-                                        6.0,
-                                        16.0,
-                                      ),
-                                      width: pulseWidth,
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            Colors.cyanAccent,
-                                            Colors.purpleAccent,
-                                            if (data.peak > 0.8)
-                                              Colors.redAccent,
-                                          ],
-                                        ),
-                                        borderRadius: BorderRadius.circular(3),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.cyanAccent.withValues(
-                                              alpha: (0.4 * data.rms).clamp(
-                                                0.0,
-                                                1.0,
-                                              ),
+                          // Reactive Pulsing Sound Wave Bar
+                          Container(
+                            height: 28,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.graphic_eq,
+                                  size: 16,
+                                  color: Colors.cyanAccent,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final pulseWidth =
+                                          (!isEnabled || data.rms == 0.0)
+                                              ? 0.0
+                                              : constraints.maxWidth *
+                                                  data.rms.clamp(0.04, 1.0);
+                                      return Stack(
+                                        alignment: Alignment.centerLeft,
+                                        children: [
+                                          Container(
+                                            height: 6,
+                                            width: constraints.maxWidth,
+                                            decoration: BoxDecoration(
+                                              color: Colors.white10,
+                                              borderRadius:
+                                                  BorderRadius.circular(3),
                                             ),
-                                            blurRadius: 6,
+                                          ),
+                                          AnimatedContainer(
+                                            duration: const Duration(
+                                              milliseconds: 33,
+                                            ),
+                                            height:
+                                                (6 + (data.peak * 10)).clamp(
+                                              6.0,
+                                              16.0,
+                                            ),
+                                            width: pulseWidth,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                colors: [
+                                                  Colors.cyanAccent,
+                                                  Colors.purpleAccent,
+                                                  if (data.peak > 0.8)
+                                                    Colors.redAccent,
+                                                ],
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(3),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.cyanAccent
+                                                      .withValues(
+                                                    alpha:
+                                                        (0.4 * data.rms).clamp(
+                                                      0.0,
+                                                      1.0,
+                                                    ),
+                                                  ),
+                                                  blurRadius: 6,
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ],
-                                      ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'RMS ${(data.rms * 100).toInt()}%',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          // 10-Band Frequency Spectrum Bars
+                          SizedBox(
+                            height: 120,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: List.generate(10, (i) {
+                                final val = bands[i].clamp(0.0, 1.0);
+                                final label = bandLabels[i];
+                                return Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2.0,
+                                    ),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.end,
+                                      children: [
+                                        Expanded(
+                                          child: Align(
+                                            alignment: Alignment.bottomCenter,
+                                            child: AnimatedContainer(
+                                              duration: const Duration(
+                                                milliseconds: 33,
+                                              ),
+                                              height:
+                                                  (90 * val).clamp(2.0, 90.0),
+                                              width: double.infinity,
+                                              decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                  3,
+                                                ),
+                                                gradient: LinearGradient(
+                                                  begin: Alignment.bottomCenter,
+                                                  end: Alignment.topCenter,
+                                                  colors: [
+                                                    Colors.tealAccent,
+                                                    Colors.cyanAccent,
+                                                    if (val > 0.6)
+                                                      Colors.purpleAccent,
+                                                    if (val > 0.85)
+                                                      Colors.amberAccent,
+                                                  ],
+                                                ),
+                                                boxShadow: [
+                                                  if (val > 0.2)
+                                                    BoxShadow(
+                                                      color: Colors.cyanAccent
+                                                          .withValues(
+                                                        alpha: (0.35 * val)
+                                                            .clamp(
+                                                          0.0,
+                                                          1.0,
+                                                        ),
+                                                      ),
+                                                      blurRadius: 4,
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          label,
+                                          style: const TextStyle(
+                                            fontSize: 9,
+                                            color: Colors.grey,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          // Stereo VU Meter & Peak
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const SizedBox(
+                                          width: 16,
+                                          child: Text(
+                                            'L',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            child: LinearProgressIndicator(
+                                              value: data.left.clamp(0.0, 1.0),
+                                              minHeight: 7,
+                                              backgroundColor: Colors.white12,
+                                              color: data.left > 0.85
+                                                  ? Colors.redAccent
+                                                  : Colors.cyanAccent,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      children: [
+                                        const SizedBox(
+                                          width: 16,
+                                          child: Text(
+                                            'R',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            child: LinearProgressIndicator(
+                                              value: data.right.clamp(0.0, 1.0),
+                                              minHeight: 7,
+                                              backgroundColor: Colors.white12,
+                                              color: data.right > 0.85
+                                                  ? Colors.redAccent
+                                                  : Colors.cyanAccent,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'RMS ${(data.rms * 100).toInt()}%',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    // 10-Band Frequency Spectrum Bars
-                    SizedBox(
-                      height: 120,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: List.generate(10, (i) {
-                          final val = bands[i].clamp(0.0, 1.0);
-                          final label = bandLabels[i];
-                          return Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 2.0,
+                                ),
                               ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.end,
+                              const SizedBox(width: 16),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  Expanded(
-                                    child: Align(
-                                      alignment: Alignment.bottomCenter,
-                                      child: AnimatedContainer(
-                                        duration: const Duration(
-                                          milliseconds: 33,
-                                        ),
-                                        height: (90 * val).clamp(2.0, 90.0),
-                                        width: double.infinity,
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            3,
-                                          ),
-                                          gradient: LinearGradient(
-                                            begin: Alignment.bottomCenter,
-                                            end: Alignment.topCenter,
-                                            colors: [
-                                              Colors.tealAccent,
-                                              Colors.cyanAccent,
-                                              if (val > 0.6)
-                                                Colors.purpleAccent,
-                                              if (val > 0.85)
-                                                Colors.amberAccent,
-                                            ],
-                                          ),
-                                          boxShadow: [
-                                            if (val > 0.2)
-                                              BoxShadow(
-                                                color: Colors.cyanAccent
-                                                    .withValues(
-                                                      alpha: (0.35 * val).clamp(
-                                                        0.0,
-                                                        1.0,
-                                                      ),
-                                                    ),
-                                                blurRadius: 4,
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
                                   Text(
-                                    label,
+                                    'Peak: ${(data.peak * 100).toInt()}%',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontFamily: 'monospace',
+                                      color: data.peak > 0.9
+                                          ? Colors.redAccent
+                                          : null,
+                                    ),
+                                  ),
+                                  Text(
+                                    'RMS: ${(data.rms * 100).toInt()}%',
                                     style: const TextStyle(
-                                      fontSize: 9,
+                                      fontSize: 11,
+                                      fontFamily: 'monospace',
                                       color: Colors.grey,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    // Stereo VU Meter & Peak
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const SizedBox(
-                                    width: 16,
-                                    child: Text(
-                                      'L',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: LinearProgressIndicator(
-                                        value: data.left.clamp(0.0, 1.0),
-                                        minHeight: 7,
-                                        backgroundColor: Colors.white12,
-                                        color: data.left > 0.85
-                                            ? Colors.redAccent
-                                            : Colors.cyanAccent,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Row(
-                                children: [
-                                  const SizedBox(
-                                    width: 16,
-                                    child: Text(
-                                      'R',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: LinearProgressIndicator(
-                                        value: data.right.clamp(0.0, 1.0),
-                                        minHeight: 7,
-                                        backgroundColor: Colors.white12,
-                                        color: data.right > 0.85
-                                            ? Colors.redAccent
-                                            : Colors.cyanAccent,
-                                      ),
                                     ),
                                   ),
                                 ],
                               ),
                             ],
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              'Peak: ${(data.peak * 100).toInt()}%',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontFamily: 'monospace',
-                                color: data.peak > 0.9
-                                    ? Colors.redAccent
-                                    : null,
-                              ),
-                            ),
-                            Text(
-                              'RMS: ${(data.rms * 100).toInt()}%',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontFamily: 'monospace',
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                );
-              },
-            ),
-          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1377,17 +1987,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.waves, color: Colors.purpleAccent),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Waveform & ReplayGain Analysis',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ],
+                const Icon(Icons.waves, color: Colors.purpleAccent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Waveform & ReplayGain Analysis',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
                 if (_isAnalyzing)
                   const SizedBox(
@@ -1404,7 +2011,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ],
             ),
             Text(
-              'Unified single-pass native analysis (MiniaudioPlayer.analyzeAudio)',
+              'Unified single-pass native C analysis (MiniaudioPlayer.analyzeAudio)',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Colors.white70,
                   ),
@@ -1443,33 +2050,153 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       style: const TextStyle(fontSize: 11),
                     ),
                   ),
-                  if (res.replayGain != null)
-                    ActionChip(
-                      avatar: const Icon(Icons.volume_up, size: 14),
-                      visualDensity: VisualDensity.compact,
-                      label: Text(
-                        'Apply ReplayGain (${(res.replayGain!.getRecommendedVolume() * 100).round()}%)',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      onPressed: () {
-                        final recVol = res.replayGain!.getRecommendedVolume();
-                        setState(() => _volume = recVol);
-                        _player.action.setVolume(recVol);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Volume normalized to ${(recVol * 100).round()}% (${res.replayGain!.gainDb.toStringAsFixed(1)} dB)',
-                            ),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      },
-                    ),
                 ],
               ),
+              const SizedBox(height: 12),
+              if (res.replayGain != null) ...[
+                StreamBuilder<ReplayGainConfig>(
+                  stream: _player.stream.replayGain,
+                  initialData: _player.state.replayGain,
+                  builder: (context, snapshot) {
+                    final rg = snapshot.data ?? const ReplayGainConfig();
+                    final isActive = rg.enabled;
+
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isActive
+                              ? Colors.purpleAccent.withValues(alpha: 0.5)
+                              : Colors.white12,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Wrap(
+                            alignment: WrapAlignment.spaceBetween,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    isActive
+                                        ? Icons.check_circle
+                                        : Icons.radio_button_unchecked,
+                                    size: 16,
+                                    color: isActive
+                                        ? Colors.purpleAccent
+                                        : Colors.grey,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    isActive
+                                        ? 'Native ReplayGain: ACTIVE (${rg.gainDb.toStringAsFixed(1)} dB)'
+                                        : 'Native ReplayGain: BYPASSED',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: isActive
+                                          ? Colors.purpleAccent
+                                          : Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Checkbox(
+                                    value: _replayGainPreventClipping,
+                                    activeColor: Colors.purpleAccent,
+                                    onChanged: (val) {
+                                      setState(() {
+                                        _replayGainPreventClipping =
+                                            val ?? true;
+                                      });
+                                      if (rg.enabled) {
+                                        _player.action.setReplayGain(
+                                          gainDb: res.replayGain!.gainDb,
+                                          peak: res.replayGain!.peak,
+                                          preventClipping:
+                                              _replayGainPreventClipping,
+                                        );
+                                      }
+                                    },
+                                  ),
+                                  const Text(
+                                    'Clip Defense',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              ElevatedButton.icon(
+                                icon: const Icon(Icons.bolt, size: 16),
+                                label: const Text('Engage Native ReplayGain'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.purple.shade700,
+                                  foregroundColor: Colors.white,
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                onPressed: () {
+                                  _player.action.setReplayGain(
+                                    gainDb: res.replayGain!.gainDb,
+                                    peak: res.replayGain!.peak,
+                                    preventClipping:
+                                        _replayGainPreventClipping,
+                                  );
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Native ReplayGain applied (${res.replayGain!.gainDb.toStringAsFixed(1)} dB, anti-clipping: $_replayGainPreventClipping)',
+                                        ),
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.clear, size: 16),
+                                label: const Text('Bypass / Clear'),
+                                style: OutlinedButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                onPressed: () {
+                                  _player.action.clearReplayGain();
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Native ReplayGain bypassed (unity gain 0 dB)',
+                                        ),
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
               const SizedBox(height: 14),
               if (res.waveform != null && res.waveform!.points.isNotEmpty) ...[
                 Text(
@@ -1520,7 +2247,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               vertical: 6,
                             ),
                             child: CustomPaint(
-                              size: Size(constraints.maxWidth - 16, 48),
+                              size: Size(max(0.0, constraints.maxWidth - 16), 48),
                               painter: WaveformPainter(
                                 points: res.waveform!.points,
                                 progress: progress,
@@ -1552,31 +2279,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: StreamBuilder<bool>(
+          stream: _player.stream.skipSilence,
+          initialData: _player.state.skipSilence,
+          builder: (context, snapshot) {
+            final isEnabled = snapshot.data ?? false;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
-                    const Icon(
-                      Icons.mic_off_outlined,
-                      color: Colors.amberAccent,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.mic_off_outlined,
+                          color: Colors.amberAccent,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Smart Silence Skipping',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Smart Silence Skipping',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ],
-                ),
-                StreamBuilder<bool>(
-                  stream: _player.stream.skipSilence,
-                  initialData: _player.state.skipSilence,
-                  builder: (context, snapshot) {
-                    final isEnabled = snapshot.data ?? false;
-                    return Row(
+                    Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
@@ -1594,88 +2327,284 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             _player.action.setSkipSilence(
                               val,
                               mode: _silenceMode,
+                              thresholdDb: _silenceThresholdDb,
+                              minSilenceDuration:
+                                  Duration(milliseconds: _minSilenceDurationMs),
+                              padding:
+                                  Duration(milliseconds: _silencePaddingMs),
                             );
                           },
                         ),
                       ],
-                    );
-                  },
-                ),
-              ],
-            ),
-            Text(
-              'Hardware RMS silence detection with micro-fade transitions',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white70,
-                  ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text(
-                  'Mode: ',
-                  style: TextStyle(fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButton<SilenceSkipMode>(
-                    value: _silenceMode,
-                    isExpanded: true,
-                    items: const [
-                      DropdownMenuItem(
-                        value: SilenceSkipMode.continuous,
-                        child: Text('Continuous (In-Between Pauses)'),
-                      ),
-                      DropdownMenuItem(
-                        value: SilenceSkipMode.trimEdges,
-                        child: Text('Trim Edges (Intro & Outro)'),
-                      ),
-                      DropdownMenuItem(
-                        value: SilenceSkipMode.all,
-                        child: Text('All (Edges + In-Between Pauses)'),
-                      ),
-                    ],
-                    onChanged: (newMode) {
-                      if (newMode != null) {
-                        setState(() => _silenceMode = newMode);
-                        if (_player.state.skipSilence) {
-                          _player.action.setSkipSilence(true, mode: newMode);
-                        }
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            StreamBuilder<Duration>(
-              stream: _player.stream.silenceSavedDuration,
-              initialData: _player.state.silenceSavedDuration,
-              builder: (context, snapshot) {
-                final saved = snapshot.data ?? Duration.zero;
-                final savedSec = (saved.inMilliseconds / 1000.0).toStringAsFixed(
-                  1,
-                );
-                return Row(
-                  children: [
-                    const Icon(
-                      Icons.timer_outlined,
-                      size: 16,
-                      color: Colors.amberAccent,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Time saved: $savedSec s (${saved.inMilliseconds} ms)',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
                     ),
                   ],
-                );
-              },
-            ),
-          ],
+                ),
+                Text(
+                  'Hardware RMS silence detection with micro-fade transitions',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: isEnabled ? 1.0 : 0.38,
+                  child: IgnorePointer(
+                    ignoring: !isEnabled,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'Mode: ',
+                              style: TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: DropdownButtonFormField<SilenceSkipMode>(
+                                key: ValueKey(_silenceMode),
+                                initialValue: _silenceMode,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: SilenceSkipMode.continuous,
+                                    child: Text(
+                                      'Continuous (In-Between Pauses)',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: SilenceSkipMode.trimEdges,
+                                    child: Text(
+                                      'Trim Edges (Intro & Outro)',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: SilenceSkipMode.all,
+                                    child: Text(
+                                      'All (Edges + In-Between Pauses)',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                                onChanged: isEnabled
+                                    ? (newMode) {
+                                        if (newMode != null) {
+                                          setState(
+                                              () => _silenceMode = newMode);
+                                          if (_player.state.skipSilence) {
+                                            _player.action.configureSilenceSkip(
+                                              mode: newMode,
+                                              thresholdDb: _silenceThresholdDb,
+                                              minSilenceDuration: Duration(
+                                                milliseconds:
+                                                    _minSilenceDurationMs,
+                                              ),
+                                              padding: Duration(
+                                                milliseconds:
+                                                    _silencePaddingMs,
+                                              ),
+                                            );
+                                          }
+                                        }
+                                      }
+                                    : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Threshold: ${_silenceThresholdDb.toStringAsFixed(1)} dBFS',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Slider(
+                          value: _silenceThresholdDb.clamp(-90.0, -10.0),
+                          min: -90.0,
+                          max: -10.0,
+                          divisions: 80,
+                          label:
+                              '${_silenceThresholdDb.toStringAsFixed(1)} dBFS',
+                          onChanged: isEnabled
+                              ? (val) {
+                                  setState(() => _silenceThresholdDb = val);
+                                  if (_player.state.skipSilence) {
+                                    _player.action.configureSilenceSkip(
+                                      thresholdDb: val,
+                                    );
+                                  }
+                                }
+                              : null,
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Min Silence: $_minSilenceDurationMs ms',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  Slider(
+                                    value: _minSilenceDurationMs
+                                        .toDouble()
+                                        .clamp(50.0, 2000.0),
+                                    min: 50.0,
+                                    max: 2000.0,
+                                    divisions: 39,
+                                    label: '$_minSilenceDurationMs ms',
+                                    onChanged: isEnabled
+                                        ? (val) {
+                                            setState(() =>
+                                                _minSilenceDurationMs =
+                                                    val.toInt());
+                                            if (_player.state.skipSilence) {
+                                              _player.action
+                                                  .configureSilenceSkip(
+                                                minSilenceDuration: Duration(
+                                                  milliseconds: val.toInt(),
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        : null,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Padding: $_silencePaddingMs ms',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  Slider(
+                                    value: _silencePaddingMs
+                                        .toDouble()
+                                        .clamp(0.0, 250.0),
+                                    min: 0.0,
+                                    max: 250.0,
+                                    divisions: 25,
+                                    label: '$_silencePaddingMs ms',
+                                    onChanged: isEnabled
+                                        ? (val) {
+                                            setState(() =>
+                                                _silencePaddingMs =
+                                                    val.toInt());
+                                            if (_player.state.skipSilence) {
+                                              _player.action
+                                                  .configureSilenceSkip(
+                                                padding: Duration(
+                                                  milliseconds: val.toInt(),
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        : null,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            StreamBuilder<Duration>(
+                              stream: _player.stream.silenceSavedDuration,
+                              initialData: _player.state.silenceSavedDuration,
+                              builder: (context, snapshot) {
+                                final saved = snapshot.data ?? Duration.zero;
+                                final savedSec =
+                                    (saved.inMilliseconds / 1000.0)
+                                        .toStringAsFixed(1);
+                                return Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.timer_outlined,
+                                      size: 16,
+                                      color: Colors.amberAccent,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        'Time saved: $savedSec s (${saved.inMilliseconds} ms)',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                            TextButton.icon(
+                              icon: const Icon(Icons.restart_alt, size: 14),
+                              label: const Text(
+                                'Defaults',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                              onPressed: isEnabled
+                                  ? () {
+                                      setState(() {
+                                        _silenceThresholdDb = -45.0;
+                                        _minSilenceDurationMs = 300;
+                                        _silencePaddingMs = 50;
+                                      });
+                                      if (_player.state.skipSilence) {
+                                        _player.action.setSilenceConfig(
+                                          SilenceSkipConfig(
+                                            mode: _silenceMode,
+                                            thresholdDb: -45.0,
+                                            minSilenceDuration: const Duration(
+                                              milliseconds: 300,
+                                            ),
+                                            padding: const Duration(
+                                              milliseconds: 50,
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1697,7 +2626,7 @@ class WaveformPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (points.isEmpty) return;
+    if (points.isEmpty || size.width <= 0 || size.height <= 0) return;
 
     final barWidth = size.width / points.length;
     final spacing = (barWidth * 0.25).clamp(1.0, 3.0);
@@ -1711,7 +2640,9 @@ class WaveformPainter extends CustomPainter {
       final paint = isPlayed ? playedPaint : unplayedPaint;
 
       final normalizedVal = points[i].clamp(0.05, 1.0);
-      final barHeight = (size.height * normalizedVal).clamp(4.0, size.height);
+      final minBarHeight = min(4.0, size.height);
+      final barHeight =
+          (size.height * normalizedVal).clamp(minBarHeight, size.height);
       final left = i * barWidth + (spacing / 2);
       final top = (size.height - barHeight) / 2;
 

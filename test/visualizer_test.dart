@@ -116,5 +116,117 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(player.state.visualizer.rms, equals(0.0));
     });
+
+    test('setVisualizerEnabled(false) force-disables visualizer DSP even with active stream listeners', () async {
+      final player = MiniaudioPlayer();
+      addTearDown(() => player.dispose());
+
+      // 1. Subscribe to visualizer stream -> should auto-enable
+      final sub = player.stream.visualizer.listen((_) {});
+      addTearDown(() => sub.cancel());
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(player.state.visualizerEnabled, isTrue);
+
+      // 2. Explicitly force-disable via action
+      await player.action.setVisualizerEnabled(false);
+      expect(player.state.visualizerEnabled, isFalse);
+
+      // 3. Verify visualizer state is empty and disabled
+      expect(player.state.visualizer.rms, equals(0.0));
+      expect(player.state.visualizer.bands.every((b) => b == 0.0), isTrue);
+
+      // 4. Force-enable again
+      await player.action.setVisualizerEnabled(true);
+      expect(player.state.visualizerEnabled, isTrue);
+
+      // 5. Force-disable again
+      await player.action.setVisualizerEnabled(false);
+      expect(player.state.visualizerEnabled, isFalse);
+    });
+
+    test('clearVisualizerOverride reverts to listener-based automatic activation', () async {
+      final player = MiniaudioPlayer();
+      addTearDown(() => player.dispose());
+
+      final sub = player.stream.visualizer.listen((_) {});
+      addTearDown(() => sub.cancel());
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(player.state.visualizerEnabled, isTrue);
+
+      // Force disable
+      await player.action.setVisualizerEnabled(false);
+      expect(player.state.visualizerEnabled, isFalse);
+
+      // Clear override -> should revert to listener presence (active)
+      await player.action.clearVisualizerOverride();
+      expect(player.state.visualizerEnabled, isTrue);
+
+      // Cancel listener -> should revert to disabled
+      await sub.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(player.state.visualizerEnabled, isFalse);
+    });
+
+    test('Playback visualizer stream receives empty data when force-disabled mid-playback', () async {
+      final mp3 = resolveAsset('example/assets/music/salida.mp3');
+      expect(mp3.existsSync(), isTrue);
+
+      final player = MiniaudioPlayer();
+      addTearDown(() => player.dispose());
+
+      final emitted = <VisualizerData>[];
+      final sub = player.stream.visualizer.listen((data) {
+        emitted.add(data);
+      });
+      addTearDown(() => sub.cancel());
+
+      await player.action.open(mp3.path, autoPlay: true);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      expect(player.state.visualizerEnabled, isTrue);
+      expect(emitted.any((d) => d.rms > 0.001), isTrue);
+
+      // Force-disable mid-playback
+      await player.action.setVisualizerEnabled(false);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(player.state.visualizerEnabled, isFalse);
+      expect(player.state.visualizer.rms, equals(0.0));
+      expect(emitted.last.rms, equals(0.0));
+      expect(emitted.last.bands.every((b) => b == 0.0), isTrue);
+    });
+
+    test('visualizerEnabled broadcast stream emits correct transitions with manual override', () async {
+      final player = MiniaudioPlayer();
+      addTearDown(() => player.dispose());
+
+      final enabledStates = <bool>[];
+      final subEnabled = player.stream.visualizerEnabled.listen((v) {
+        enabledStates.add(v);
+      });
+      addTearDown(() => subEnabled.cancel());
+
+      final visSub = player.stream.visualizer.listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Listener added -> true
+
+      await player.action.setVisualizerEnabled(false);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Force disabled -> false
+
+      await player.action.setVisualizerEnabled(true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Force enabled -> true
+
+      await visSub.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Listener removed while override is true -> remains true
+
+      await player.action.setVisualizerEnabled(false);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Force disabled -> false
+
+      expect(enabledStates, equals([true, false, true, false]));
+    });
   });
 }

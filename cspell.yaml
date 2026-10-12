@@ -15,6 +15,7 @@ words:
   - Antho
   - APIC
   - ARCHMASK
+  - armeabi
   - asintóticamente
   - asound
   - aspt
@@ -43,6 +44,7 @@ words:
   - Borgerding
   - bosflag
   - bresenham
+  - brickwall
   - Bristow
   - buildlog
   - buildscript
@@ -63,6 +65,7 @@ words:
   - COEF
   - COMBFILTER
   - COMMDEVICE
+  - controlfp
   - conversores
   - coomputation
   - cosf
@@ -89,6 +92,7 @@ words:
   - denormal
   - Denormal
   - denormalise
+  - denormals
   - Denormals
   - deocder
   - depacket
@@ -119,6 +123,7 @@ words:
   - EDSP
   - EIMPL
   - EINVAL
+  - electroacoustic
   - elif
   - encoderctls
   - encstate
@@ -138,6 +143,8 @@ words:
   - ffigen
   - filelengthi
   - finalise
+  - Finalizable
+  - Finalizer
   - fishead
   - fivesize
   - flasheo
@@ -146,6 +153,8 @@ words:
   - formants
   - formulars
   - Foxo
+  - FPCR
+  - FPSCR
   - fread
   - Frykholm
   - fseeki
@@ -192,6 +201,7 @@ words:
   - interbloqueos
   - iovecin
   - ipart
+  - ISHLD
   - isqrt
   - itheta
   - jetbrains
@@ -236,7 +246,12 @@ words:
   - mdct
   - MDCT
   - mdcts
+  - memset
   - MESI
+  - mfence
+  - microarchitectural
+  - Microarchitectural
+  - Microarchitecture
   - microarquitectura
   - microcódigo
   - microcontrollers
@@ -244,6 +259,7 @@ words:
   - minimp
   - miscapture
   - MMAP
+  - MMCSS
   - moffat
   - monofónica
   - morlat
@@ -254,11 +270,13 @@ words:
   - MULC
   - multicanal
   - multinúcleo
+  - Multiplatform
   - multistream
   - mults
   - Muratori
   - Musix
   - muxing
+  - MXCSR
   - nanosegundo
   - nbuffered
   - nlacing
@@ -349,8 +367,10 @@ words:
   - Schyler
   - seekability
   - seekbar
+  - seekbars
   - seeked
   - selcost
+  - seqlock
   - Seqlock
   - serialnos
   - Shoutcast
@@ -418,18 +438,23 @@ words:
   - unseekable
   - uuid
   - Vacia
+  - varispeed
   - Vectorización
   - Vectorizar
   - ventanado
   - Verschelde
+  - vfpv
   - videoconference
   - Vinen
   - Viterbi
   - vmaxvq
+  - vmlaq
+  - vmlsq
   - vmovups
   - vorb
   - vorbisfile
   - VSHR
+  - wasapi
   - WASAPI
   - Werror
   - Wextra
