@@ -34,10 +34,9 @@ static const int host_bigendian = 0;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-    #include "stdint_win.h"
-#else
-    #include <stdint.h>
+#include <stdint.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
 #endif
 
 #include "alac.h"
@@ -266,23 +265,17 @@ static int count_leading_zeros(int input)
 {
     return __builtin_clz(input);
 }
-#elif defined(_MSC_VER) && defined(_M_IX86)
+#elif defined(_MSC_VER)
 static int count_leading_zeros(int input)
 {
-    int output = 0;
-    if (!input) return 32;
-    __asm
+    unsigned long index;
+    if (_BitScanReverse(&index, (unsigned long)input))
     {
-        mov eax, input;
-        mov edx, 0x1f;
-        bsr ecx, eax;
-        sub edx, ecx;
-        mov output, edx;
+        return 31 - (int)index;
     }
-    return output;
+    return 32;
 }
 #else
-#warning using generic count leading zeroes. You may wish to write one for your CPU / compiler
 static int count_leading_zeros(int input)
 {
     int output = 0;
