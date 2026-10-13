@@ -3,7 +3,11 @@ description: "Ultra-low-resource cross-platform audio player and DSP engine usin
 version: 2.1.0
 repository: https://github.com/chomusuke-mk/miniaudio_player
 issue_tracker: https://github.com/chomusuke-mk/miniaudio_player/issues
-topics: 
+funding:
+  - https://www.buymeacoffee.com/chomusuke
+  - https://www.patreon.com/chomusuke_dev
+  - https://ko-fi.com/chomusuke_dev
+topics:
   - audio
   - miniaudio
   - sound
@@ -14,7 +18,7 @@ screenshots:
     path: "pictures/miniaudio_player.webp"
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
+  sdk: ">=3.6.0 <4.0.0"
 
 dependencies:
   code_assets: ^2.1.0
