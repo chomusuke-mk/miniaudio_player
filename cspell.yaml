@@ -150,6 +150,7 @@ words:
   - flasheo
   - floorlist
   - fmaxf
+  - fomit
   - formants
   - formulars
   - Foxo
@@ -249,6 +250,8 @@ words:
   - memset
   - MESI
   - mfence
+  - mfloat
+  - mfpu
   - microarchitectural
   - Microarchitectural
   - Microarchitecture
@@ -385,6 +388,7 @@ words:
   - sobrecostes
   - sobredimensionada
   - Sobredimensionamiento
+  - softfp
   - spanp
   - SPATIALIZATION
   - spatializer

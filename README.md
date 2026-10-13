@@ -16,7 +16,9 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 
 ---
 
-![Screenshot with arrows pointing to features](https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/feature_screenshot.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/1-visualizer.png" alt="miniaudio_player Demo - Real-Time Playback & Reactive Visualizer" width="550" />
+</p>
 
 ---
 
@@ -252,6 +254,10 @@ void main() async {
 
 ### 2. Complete DSP Chain (Limiter, Crossfeed, Mono, Balance & Spatializer)
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/3-effects.png" alt="DSP & Audio Processing Chain - Limiter Guard & Binaural Crossfeed" width="550" />
+</p>
+
 ```dart
 // 1. Hardware Output Limiter (True-Peak soft-knee protection against digital clipping)
 await player.action.setLimiter(true);
@@ -284,6 +290,10 @@ await player.action.setReplayGain(
 
 Shape frequency response in real time across the 10 ISO 266 standard octave bands (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`) from `-24.0 dB` to `+24.0 dB`:
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/4-advanced-effects.png" alt="10-Band Parametric Equalizer, Spatializer & Device Routing" width="550" />
+</p>
+
 ```dart
 // Apply built-in acoustic presets
 await player.action.setEqualizer(Equalizer.rock);
@@ -315,6 +325,10 @@ await player.action.setEqualizer(customEq);
 
 Build dynamic spectrum analyzers, frequency visualizers, and stereo VU meters. Subscribing to the stream automatically enables native C filtering, and unsubscribing keeps **idle CPU strictly at 0%**:
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/1-visualizer.png" alt="Real-Time Reactive Visualizer - 10-Band BPF Filter Bank & Stereo VU Meters" width="550" />
+</p>
+
 ```dart
 // 1. Listen to real-time visualizer data (~30 fps updates)
 final subscription = player.stream.visualizer.listen((data) {
@@ -343,6 +357,10 @@ await subscription.cancel();
 ### 5. Native Silence Detection & Dynamic Skipping
 
 Eliminate pauses and silent gaps in real time without audio glitches or pops, protected by a smooth 5ms anti-click crossfade:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/2-replaygain+silence.png" alt="Smart Silence Skipping & Waveform / ReplayGain Analysis" width="550" />
+</p>
 
 ```dart
 // 1. Quick enable with standard defaults (-45 dB threshold, 300ms min silence, 50ms padding)
