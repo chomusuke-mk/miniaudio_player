@@ -13,6 +13,7 @@ import 'miniaudio_player.dart';
 import 'player_exception.dart';
 import 'silence_skip_config.dart';
 import 'dsp_config.dart';
+import '../reverb.dart';
 
 /// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
 class PlayerAction {
@@ -532,5 +533,50 @@ class PlayerAction {
       );
     }
     _player.pollAndEmit(force: true);
+  }
+
+  /// Configures studio-grade algorithmic reverberation.
+  ///
+  /// Can use convenient presets like [Reverb.smallRoom], [Reverb.studio],
+  /// [Reverb.concertHall], [Reverb.cathedral], [Reverb.plate], [Reverb.ambient] or [Reverb.off].
+  Future<void> setReverb(Reverb config) async {
+    _player.ensureNotDisposed();
+    final res = native.miniaudio_player_set_reverb(
+      _player.handle,
+      config.enabled ? 1 : 0,
+      config.roomSize.clamp(0.0, 1.0),
+      config.damping.clamp(0.0, 1.0),
+      config.width.clamp(0.0, 1.0),
+      config.wet.clamp(0.0, 2.0),
+      config.dry.clamp(0.0, 2.0),
+    );
+    if (res != MapResult.success) {
+      throw MiniaudioPlayerException(
+        'Failed to set reverb: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Updates specific parameters of the active reverb effect while preserving others.
+  Future<void> configureReverb({
+    bool? enabled,
+    double? roomSize,
+    double? damping,
+    double? width,
+    double? wet,
+    double? dry,
+  }) async {
+    final current = _player.state.reverb;
+    final updated = current.copyWith(
+      enabled: enabled,
+      roomSize: roomSize,
+      damping: damping,
+      width: width,
+      wet: wet,
+      dry: dry,
+    );
+    await setReverb(updated);
   }
 }

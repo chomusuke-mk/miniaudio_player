@@ -13,3 +13,4 @@ export 'src/api/visualizer_data.dart';
 export 'src/api/silence_skip_config.dart';
 export 'src/api/dsp_config.dart';
 export 'src/equalizer.dart';
+export 'src/reverb.dart';

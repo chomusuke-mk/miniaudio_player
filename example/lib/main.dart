@@ -1182,6 +1182,189 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 );
               },
             ),
+            const Divider(height: 16),
+            StreamBuilder<Reverb>(
+              stream: _player.stream.reverb,
+              initialData: _player.state.reverb,
+              builder: (context, snapReverb) {
+                final reverb = snapReverb.data ?? Reverb.off;
+                return Column(
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(
+                        Icons.waves,
+                        color: Colors.deepPurpleAccent,
+                      ),
+                      title: const Text('Algorithmic Reverb'),
+                      subtitle: const Text(
+                        'Studio Freeverb physical acoustic simulation',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      value: reverb.enabled,
+                      activeThumbColor: Colors.deepPurpleAccent,
+                      onChanged: (val) {
+                        _player.action.setReverb(
+                          val
+                              ? (reverb.roomSize > 0.05
+                                  ? reverb.copyWith(enabled: true)
+                                  : Reverb.concertHall)
+                              : Reverb.off,
+                        );
+                      },
+                    ),
+                    if (reverb.enabled) ...[
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 70,
+                            child: Text(
+                              'Preset',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Builder(
+                              builder: (context) {
+                                final presetKey = Reverb.presets.entries
+                                    .firstWhere(
+                                      (e) => e.value == reverb,
+                                      orElse: () => const MapEntry('Custom', Reverb.off),
+                                    )
+                                    .key;
+                                return DropdownButtonFormField<String>(
+                                  key: ValueKey(presetKey),
+                                  initialValue: presetKey,
+                                  decoration: const InputDecoration(
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                border: OutlineInputBorder(),
+                              ),
+                              items: [
+                                ...Reverb.presets.keys
+                                    .where((k) => k != 'Off')
+                                    .map(
+                                      (k) => DropdownMenuItem(
+                                        value: k,
+                                        child: Text(k),
+                                      ),
+                                    ),
+                                if (!Reverb.presets.values.contains(reverb))
+                                  const DropdownMenuItem(
+                                    value: 'Custom',
+                                    child: Text('Custom'),
+                                  ),
+                              ],
+                              onChanged: (selected) {
+                                if (selected != null &&
+                                    Reverb.presets.containsKey(selected)) {
+                                  _player.action.setReverb(
+                                    Reverb.presets[selected]!,
+                                  );
+                                }
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 70,
+                            child: Text(
+                              'Room Size',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: reverb.roomSize.clamp(0.0, 1.0),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: 20,
+                              label: '${(reverb.roomSize * 100).toStringAsFixed(0)}%',
+                              onChanged: (v) {
+                                _player.action.configureReverb(roomSize: v);
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: 45,
+                            child: Text(
+                              '${(reverb.roomSize * 100).toStringAsFixed(0)}%',
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 70,
+                            child: Text(
+                              'Damping',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: reverb.damping.clamp(0.0, 1.0),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: 20,
+                              label: '${(reverb.damping * 100).toStringAsFixed(0)}%',
+                              onChanged: (v) {
+                                _player.action.configureReverb(damping: v);
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: 45,
+                            child: Text(
+                              '${(reverb.damping * 100).toStringAsFixed(0)}%',
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 70,
+                            child: Text(
+                              'Wet',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: reverb.wet.clamp(0.0, 1.0),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: 20,
+                              label: '${(reverb.wet * 100).toStringAsFixed(0)}%',
+                              onChanged: (v) {
+                                _player.action.configureReverb(wet: v);
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: 45,
+                            child: Text(
+                              '${(reverb.wet * 100).toStringAsFixed(0)}%',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
             const Divider(height: 24),
             Text(
               'Hardware & Output Device',

@@ -44,6 +44,34 @@ void main() {
       expect(CrossfeedMode.moffatBauer.index, equals(1));
       expect(CrossfeedMode.chuMoy.index, equals(2));
     });
+
+    test('Reverb model initializes defaults, presets and copyWith', () {
+      const defaultReverb = Reverb();
+      expect(defaultReverb.enabled, isFalse);
+      expect(defaultReverb.roomSize, equals(0.5));
+      expect(defaultReverb.damping, equals(0.5));
+      expect(defaultReverb.width, equals(1.0));
+      expect(defaultReverb.wet, equals(0.33));
+      expect(defaultReverb.dry, equals(1.0));
+
+      expect(Reverb.off.enabled, isFalse);
+      expect(Reverb.smallRoom.enabled, isTrue);
+      expect(Reverb.studio.enabled, isTrue);
+      expect(Reverb.concertHall.enabled, isTrue);
+      expect(Reverb.cathedral.enabled, isTrue);
+      expect(Reverb.plate.enabled, isTrue);
+      expect(Reverb.ambient.enabled, isTrue);
+
+      expect(Reverb.presets.containsKey('Concert Hall'), isTrue);
+      expect(Reverb.presets['Concert Hall'], equals(Reverb.concertHall));
+      expect(Reverb.presets['Small Room'], equals(Reverb.smallRoom));
+
+      final modified = Reverb.concertHall.copyWith(wet: 0.55, damping: 0.2);
+      expect(modified.enabled, isTrue);
+      expect(modified.wet, equals(0.55));
+      expect(modified.damping, equals(0.2));
+      expect(modified.roomSize, equals(Reverb.concertHall.roomSize));
+    });
   });
 
   group('DSP Controls and Engine Integration', () {
@@ -151,6 +179,26 @@ void main() {
       expect(player.state.spatializerEnabled, isFalse);
     });
 
+    test('Reverb controls and presets update state and native engine', () async {
+      expect(player.state.reverb.enabled, isFalse);
+
+      await player.action.setReverb(Reverb.concertHall);
+      expect(player.state.reverb.enabled, isTrue);
+      expect(player.state.reverb.roomSize, closeTo(0.80, 0.01));
+      expect(player.state.reverb.damping, closeTo(0.35, 0.01));
+      expect(player.state.reverb.wet, closeTo(0.40, 0.01));
+      expect(player.state.reverb.dry, closeTo(0.95, 0.01));
+
+      // Test configureReverb parameter override
+      await player.action.configureReverb(wet: 0.60);
+      expect(player.state.reverb.wet, closeTo(0.60, 0.01));
+      expect(player.state.reverb.roomSize, closeTo(0.80, 0.01));
+
+      // Test disable / off preset
+      await player.action.setReverb(Reverb.off);
+      expect(player.state.reverb.enabled, isFalse);
+    });
+
     test('Limiter toggle updates state', () async {
       expect(player.state.limiterEnabled, isTrue);
 
@@ -164,11 +212,12 @@ void main() {
     test('Playback with full DSP chain enabled streams smoothly without crashing', () async {
       await player.action.open(testWavFile.path);
 
-      // Configure complete DSP chain
+      // Configure complete DSP chain including Reverb
       await player.action.setReplayGain(gainDb: -10.0, peak: 0.95);
       await player.action.setPreamp(1.0);
       await player.action.setBalance(-0.2);
       await player.action.setCrossfeed(CrossfeedMode.moffatBauer);
+      await player.action.setReverb(Reverb.concertHall);
       await player.action.setLimiter(true);
 
       // Playback

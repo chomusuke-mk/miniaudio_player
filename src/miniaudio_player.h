@@ -141,6 +141,16 @@ extern "C"
 
     typedef struct
     {
+        int32_t enabled;   /**< 1 if reverb is enabled, 0 for bypass */
+        float room_size;   /**< Room size (0.0 to 1.0, controls decay time) */
+        float damping;     /**< High frequency damping (0.0 to 1.0) */
+        float width;       /**< Stereo width of reflections (0.0 to 1.0) */
+        float wet;         /**< Wet signal level (0.0 to 2.0) */
+        float dry;         /**< Dry signal level (0.0 to 2.0) */
+    } miniaudio_player_reverb_config_t;
+
+    typedef struct
+    {
         int64_t position_ms;                           /**< Current position in milliseconds */
         int64_t duration_ms;                           /**< Total duration in milliseconds */
         int32_t is_playing;                            /**< 1 if actively playing, 0 if paused/stopped */
@@ -164,6 +174,7 @@ extern "C"
         int32_t crossfeed_mode;                        /**< miniaudio_player_crossfeed_mode_t */
         int32_t spatializer_enabled;                   /**< 1 if stereo widener enabled, 0 otherwise */
         float spatializer_width;                       /**< Stereo widener width factor (1.0 to 2.0) */
+        miniaudio_player_reverb_config_t reverb;       /**< Reverb active configuration */
         int32_t limiter_enabled;                       /**< 1 if True-Peak limiter enabled, 0 otherwise */
     } miniaudio_player_status_t;
 
@@ -326,6 +337,15 @@ extern "C"
         miniaudio_player_t *player,
         int32_t enabled,
         float width);
+
+    MAP_API int32_t miniaudio_player_set_reverb(
+        miniaudio_player_t *player,
+        int32_t enabled,
+        float room_size,
+        float damping,
+        float width,
+        float wet,
+        float dry);
 
     MAP_API int32_t miniaudio_player_set_limiter(
         miniaudio_player_t *player,

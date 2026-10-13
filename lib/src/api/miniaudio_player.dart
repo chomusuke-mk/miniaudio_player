@@ -15,6 +15,7 @@ import 'audio_analysis_result.dart';
 import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
+import '../reverb.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
 const List<String> miniAudioPlayerSupportedExtensions = [
@@ -549,6 +550,8 @@ class MiniaudioPlayer implements Finalizable {
       StreamController<bool>.broadcast();
   final StreamController<double> _spatializerWidthController =
       StreamController<double>.broadcast();
+  final StreamController<Reverb> _reverbController =
+      StreamController<Reverb>.broadcast();
   final StreamController<bool> _limiterEnabledController =
       StreamController<bool>.broadcast();
 
@@ -583,6 +586,7 @@ class MiniaudioPlayer implements Finalizable {
   CrossfeedMode _crossfeed = CrossfeedMode.off;
   bool _spatializerEnabled = false;
   double _spatializerWidth = 1.0;
+  Reverb _reverb = Reverb.off;
   bool _limiterEnabled = true;
 
   // Previous status cache for change detection
@@ -730,6 +734,7 @@ class MiniaudioPlayer implements Finalizable {
       crossfeedController: _crossfeedController,
       spatializerEnabledController: _spatializerEnabledController,
       spatializerWidthController: _spatializerWidthController,
+      reverbController: _reverbController,
       limiterEnabledController: _limiterEnabledController,
     );
 
@@ -759,6 +764,7 @@ class MiniaudioPlayer implements Finalizable {
       getCrossfeed: () => _crossfeed,
       getSpatializerEnabled: () => _spatializerEnabled,
       getSpatializerWidth: () => _spatializerWidth,
+      getReverb: () => _reverb,
       getLimiterEnabled: () => _limiterEnabled,
     );
   }
@@ -1158,6 +1164,22 @@ class MiniaudioPlayer implements Finalizable {
       }
     }
 
+    final nativeReverb = status.reverb;
+    final reverb = Reverb(
+      enabled: nativeReverb.enabled != 0,
+      roomSize: nativeReverb.room_size,
+      damping: nativeReverb.damping,
+      width: nativeReverb.width,
+      wet: nativeReverb.wet,
+      dry: nativeReverb.dry,
+    );
+    if (_reverb != reverb || force) {
+      _reverb = reverb;
+      if (!_reverbController.isClosed) {
+        _reverbController.add(reverb);
+      }
+    }
+
     final limiterEnabled = status.limiter_enabled != 0;
     if (_limiterEnabled != limiterEnabled || force) {
       _limiterEnabled = limiterEnabled;
@@ -1291,6 +1313,7 @@ class MiniaudioPlayer implements Finalizable {
     await _crossfeedController.close();
     await _spatializerEnabledController.close();
     await _spatializerWidthController.close();
+    await _reverbController.close();
     await _limiterEnabledController.close();
   }
 }

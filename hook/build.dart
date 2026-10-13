@@ -28,6 +28,7 @@ void main(List<String> args) async {
     final List<String> sources = [
       'src/miniaudio_impl.c',
       'src/map_silence.c',
+      'src/map_reverb.c',
       'src/map_dsp.c',
       'src/map_source.c',
       'src/map_device.c',

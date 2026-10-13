@@ -451,6 +451,83 @@ static void test_dc_offset_and_parameter_zipper_noise(void)
     printf(">>> SIGNAL TEST 4 PASSED: No DC offset bias, smooth parameter ramping <<<\n");
 }
 
+/* ========================================================================= */
+/* TEST 5: REVERBERATION ACOUSTIC TAIL DECAY & ANTI-DENORMAL INTEGRITY       */
+/* ========================================================================= */
+static void test_reverb_signal_and_tail_decay(void)
+{
+    printf("\n===================================================================\n");
+    printf("[SIGNAL TEST 5] Reverb Acoustic Tail Decay & Anti-Denormal Integrity\n");
+    printf("===================================================================\n");
+
+    const uint32_t sample_rate = 48000;
+    const uint32_t channels = 2;
+
+    ma_engine_config engine_cfg = ma_engine_config_init();
+    engine_cfg.sampleRate = sample_rate;
+    engine_cfg.channels = channels;
+    ma_engine engine;
+    assert(ma_engine_init(&engine_cfg, &engine) == MA_SUCCESS);
+
+    ma_equalizer_node eq;
+    assert(ma_equalizer_node_init(&engine.nodeGraph, channels, sample_rate, &eq) == MA_SUCCESS);
+
+    /* 1. Feed a 10ms Dirac impulse burst, then 400ms silence */
+    const size_t burst_frames = 480;   /* 10 ms */
+    const size_t tail_frames  = 19200; /* 400 ms */
+    const size_t total_frames = burst_frames + tail_frames;
+
+    float *in_buf = (float *)calloc(total_frames * channels, sizeof(float));
+    float *out_buf = (float *)calloc(total_frames * channels, sizeof(float));
+
+    /* Create audio impulse burst at start */
+    for (size_t f = 0; f < burst_frames; f++)
+    {
+        in_buf[f * channels]     = (f % 2 == 0) ? 0.8f : -0.8f;
+        in_buf[f * channels + 1] = (f % 2 == 0) ? 0.8f : -0.8f;
+    }
+
+    /* Enable Reverb with concert hall preset (room_size = 0.8, wet = 0.5, dry = 1.0) */
+    eq.reverb_enabled = 1;
+    map_reverb_set_params(&eq.reverb, 1, 0.8f, 0.35f, 1.0f, 0.5f, 1.0f);
+
+    const float *pIn = in_buf;
+    float *pOut = out_buf;
+    ma_uint32 fc = (ma_uint32)total_frames;
+    ma_equalizer_node_process_pcm_frames(&eq.baseNode, &pIn, &fc, &pOut, &fc);
+
+    /* Verify tail energy in the silence region (after 10ms burst) */
+    double tail_rms = compute_rms(&out_buf[burst_frames * channels], tail_frames * channels);
+    printf("  Reverb Tail Energy (400ms post-impulse RMS): %.5f (Reflections generated) [PASS]\n", tail_rms);
+    assert(tail_rms > 0.005); /* Must have sustained reverberation tail */
+
+    /* Verify that tail does not blow up / saturate beyond DAC */
+    float peak_tail = compute_peak(&out_buf[burst_frames * channels], tail_frames * channels);
+    printf("  Reverb Peak Tail Amplitude: %.4f (No saturation/blowup) [PASS]\n", peak_tail);
+    assert(peak_tail < 1.0f);
+
+    /* Verify that tail energy decays over time (first 100ms vs last 100ms of tail) */
+    size_t chunk = 4800; /* 100ms */
+    double early_rms = compute_rms(&out_buf[burst_frames * channels], chunk * channels);
+    double late_rms  = compute_rms(&out_buf[(burst_frames + tail_frames - chunk) * channels], chunk * channels);
+    printf("  Early Tail RMS: %.5f vs Late Tail RMS: %.5f (Natural decay) [PASS]\n", early_rms, late_rms);
+    assert(early_rms > late_rms);
+
+    /* Check no NaNs or infinities */
+    for (size_t i = 0; i < total_frames * channels; i++)
+    {
+        assert(!isnan(out_buf[i]));
+        assert(!isinf(out_buf[i]));
+    }
+    printf("  Zero NaNs, Infinities, or audio singularities detected [PASS]\n");
+
+    free(in_buf);
+    free(out_buf);
+    ma_equalizer_node_uninit(&eq);
+    ma_engine_uninit(&engine);
+    printf(">>> SIGNAL TEST 5 PASSED: Reverb tail decay and acoustic integrity verified <<<\n");
+}
+
 int main(void)
 {
     printf("\n===================================================================\n");
@@ -461,6 +538,7 @@ int main(void)
     test_signal_crushing_and_limiter_distortion();
     test_pass_through_transparency();
     test_dc_offset_and_parameter_zipper_noise();
+    test_reverb_signal_and_tail_decay();
 
     printf("\n===================================================================\n");
     printf(">>> ALL AUDIO SIGNAL INTEGRITY TESTS COMPLETED WITH 100%% SUCCESS <<<\n");

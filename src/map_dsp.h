@@ -10,6 +10,7 @@
 #include "miniaudio_player.h"
 #include "map_common.h"
 #include "map_seqlock.h"
+#include "map_reverb.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -107,6 +108,9 @@ typedef struct
 
     int32_t spatializer_enabled;
     float spatializer_width;
+
+    int32_t reverb_enabled;
+    map_reverb_t reverb;
 
     float current_volume;
     float target_volume;

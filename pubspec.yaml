@@ -1,6 +1,6 @@
 name: miniaudio_player
-description: "Ultra-low-resource cross-platform audio player using miniaudio. Equalizer, pitch and rate are supported."
-version: 2.0.0
+description: "Ultra-low-resource cross-platform audio player and DSP engine using miniaudio. Features equalizer, reverb, limiter, crossfeed, pitch, rate, and real-time visualizer."
+version: 2.1.0
 repository: https://github.com/chomusuke-mk/miniaudio_player
 issue_tracker: https://github.com/chomusuke-mk/miniaudio_player/issues
 topics: 
@@ -8,6 +8,10 @@ topics:
   - miniaudio
   - sound
   - player
+
+screenshots:
+  - description: "Native audio player, 10-band ISO 266 equalizer, studio algorithmic reverb, real-time spectrum visualizer, and loudness analyzer."
+    path: "pictures/miniaudio_player.webp"
 
 environment:
   sdk: '>=3.6.0 <4.0.0'

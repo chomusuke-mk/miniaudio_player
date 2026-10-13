@@ -8,7 +8,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-android%20|%20ios%20|%20macos%20|%20windows%20|%20linux-blue.svg)](https://pub.dev/packages/miniaudio_player)
 [![Dart FFI](https://img.shields.io/badge/Dart-FFI%20Native%20Assets-0175C2.svg?logo=dart)](https://dart.dev/interop/c-interop)
-[![Tests](https://img.shields.io/badge/tests-176%20passing-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-189%20passing-brightgreen.svg)](#)
+[![Donate (Buy me a coffee)](https://img.shields.io/badge/Donate-Buy%20me%20a%20coffee-orange?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/chomusuke)
+[![Donate (Patreon)](https://img.shields.io/badge/Donate-Patreon-critical?logo=patreon&logoColor=white)](https://www.patreon.com/chomusuke_dev)
+[![Donate (Ko-fi)](https://img.shields.io/badge/Donate-Ko--fi-yellow?logo=kofi&logoColor=white)](https://ko-fi.com/chomusuke_dev)
 
 An **ultra-low-resource, high-performance cross-platform audio player and DSP engine** for Flutter and Dart. Powered by the industry-standard [miniaudio](https://miniaud.io/) C engine, [Sonic DSP](https://github.com/waywardgeek/sonic), and **Dart Native Assets** with 100% pure FFI bindings.
 
@@ -30,6 +33,7 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 - 🛡️ **Hardware-Grade Output Limiter (True-Peak Soft-Knee)**: True-Peak brickwall limiter operating before DAC handoff. Mathematically transparent in the linear zone ($|x| \le 0.95$ FS) with **0.00000% THD** and **141.4 dB SNR**, smoothly compressing digital overshoots (+3.5 dBFS capped safely at 0.996 FS) to eliminate digital clipping.
 - 🎧 **Binaural Headphone Crossfeed (Bauer bs2b)**: Acoustic speaker crosstalk emulation for fatigue-free headphone listening with standard Moffat-Bauer and Chu Moy presets.
 - 🎛️ **Standard ISO 266 10-Band Parametric Equalizer**: Native Direct Form II Transposed (DF2T) biquad cascade centered at standard preferred 1/1 octave frequencies (`31Hz` to `16kHz`) with analytical RBJ curves (**0.00 dB analytical error**) and built-in acoustic presets (_Rock_, _Pop_, _Jazz_, _Classical_, _Bass Boost_, _Flat_).
+- 🏛️ **Studio-Grade Algorithmic Reverb (Freeverb Topology)**: Native C stereophonic algorithmic reverb featuring 8 parallel lowpass feedback comb filters and 4 cascaded allpass filters per channel with stereo decorrelation. Includes studio acoustic presets (_Small Room_, _Studio_, _Concert Hall_, _Cathedral_, _Plate_, _Ambient_) and full dynamic control over room size, damping, stereo width, and wet/dry mix with **0 real-time heap allocations** and hardware anti-denormal protection.
 - 📈 **Real-Time Reactive Visualizer & Spectrum Analyzer**: 10-band hardware BPF filter bank embedded directly in the native C playback pipeline matching the ISO 266 equalizer, stereo VU meters (L/R), RMS, and peak metrics (< 0.5% CPU active, **0% idle CPU** via automatic on-demand streaming at ~30 fps).
 - 🔇 **Dynamic Silence Skipping & Edge Trimming**: Native C real-time silence detector upstream of time-stretching and EQ. Trims lead-in/lead-out silence for gapless music and dynamically skips conversational pauses for podcasts and audiobooks with a 5ms anti-click crossfade ramp and cumulative saved time tracking.
 - 🎚️ **Mono Downmix, Channel Balance & Stereo Spatializer**: Built-in channel routing for mono accessibility, precision stereo balance panning, and stereo field widening.
@@ -60,27 +64,27 @@ The native DSP pipeline inside `ma_equalizer_node_process_pcm_frames` is ordered
                                             │
                                             ▼
                     ┌───────────────────────────────────────────────┐
-                    │       2. Stereo Balance / Panning Pan         │
+                    │  2. 10-Band Biquad Cascade SIMD (DF2T, RBJ)   │
                     └───────────────────────┬───────────────────────┘
                                             │
                                             ▼
                     ┌───────────────────────────────────────────────┐
-                    │          3. Mono Downmixing (Optional)        │
+                    │ 3. Algorithmic Stereo Reverb (Freeverb 8C+4A) │
                     └───────────────────────┬───────────────────────┘
                                             │
                                             ▼
                     ┌───────────────────────────────────────────────┐
-                    │     4. Binaural Crossfeed (Bauer bs2b)        │
+                    │ 4. Binaural Crossfeed / Stereo Spatializer    │
                     └───────────────────────┬───────────────────────┘
                                             │
                                             ▼
                     ┌───────────────────────────────────────────────┐
-                    │         5. Stereo Spatializer / Widener       │
+                    │          5. Mono Downmixing (Optional)        │
                     └───────────────────────┬───────────────────────┘
                                             │
                                             ▼
                     ┌───────────────────────────────────────────────┐
-                    │  6. 10-Band Biquad Cascade SIMD (DF2T, RBJ)   │
+                    │       6. Stereo Balance / Panning Pan         │
                     └───────┬───────────────────────────────┬───────┘
                             │                               │
                             ▼                               ▼
@@ -178,6 +182,7 @@ For systems engineers, embedded developers, and performance specialists, `miniau
 | **Binaural Crossfeed (Bauer bs2b)**   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **Mono Downmix & Stereo Balance**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **Stereo Spatializer / Widener**      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Algorithmic Reverb (Freeverb)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **Real-Time Reactive Visualizer**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **Silence Detection & Skipping**      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **Audio Analysis (LUFS & Waveform)**  |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
@@ -257,29 +262,41 @@ void main() async {
 
 ---
 
-### 2. Complete DSP Chain (Limiter, Crossfeed, Mono, Balance & Spatializer)
+### 2. Complete DSP Chain (Limiter, Reverb, Crossfeed, Mono, Balance & Spatializer)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/limiter_crossfeed_mono_balance_preamp_spatializer.png" alt="Complete DSP Chain - Limiter, Crossfeed, Mono, Balance & Spatializer" width="480" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/limiter_crossfeed_mono_balance_preamp_spatializer_reverb.png" alt="Complete DSP Chain - Limiter, Reverb, Crossfeed, Mono, Balance & Spatializer" width="480" />
 </p>
 
 ```dart
 // 1. Hardware Output Limiter (True-Peak soft-knee protection against digital clipping)
 await player.action.setLimiter(true);
 
-// 2. Binaural Crossfeed (Bauer bs2b: reduces headphone fatigue)
+// 2. Studio-Grade Algorithmic Reverb (Freeverb with studio presets or custom acoustics)
+await player.action.setReverb(Reverb.concertHall);
+// Or customize dynamically:
+await player.action.configureReverb(
+  roomSize: 0.75,
+  damping: 0.30,
+  wet: 0.32,
+  dry: 0.68,
+  width: 1.0,
+  enabled: true,
+);
+
+// 3. Binaural Crossfeed (Bauer bs2b: reduces headphone fatigue)
 await player.action.setCrossfeed(CrossfeedMode.moffatBauer); // or CrossfeedMode.chuMoy
 
-// 3. Mono Downmixing (for single speakers or accessibility)
+// 4. Mono Downmixing (for single speakers or accessibility)
 await player.action.setMono(true);
 
-// 4. Stereo Balance Panning (-1.0 full left, 0.0 center, +1.0 full right)
+// 5. Stereo Balance Panning (-1.0 full left, 0.0 center, +1.0 full right)
 await player.action.setBalance(-0.25);
 
-// 5. Stereo Spatializer (widens the acoustic stereo image)
+// 6. Stereo Spatializer (widens the acoustic stereo image)
 await player.action.setSpatializer(enabled: true, width: 1.4);
 
-// 6. Preamp Gain & ReplayGain Normalization with anti-clipping defense
+// 7. Preamp Gain & ReplayGain Normalization with anti-clipping defense
 await player.action.setPreamp(2.0); // +2.0 dB manual preamp
 await player.action.setReplayGain(
   gainDb: -4.5,
@@ -516,12 +533,14 @@ print('Track Duration: ${player.state.duration}');
 print('Bitrate: ${player.state.audioBitrate} kbps');
 print('Active Device: ${player.state.audioDevice.displayName}');
 print('Limiter Enabled: ${player.state.limiterEnabled}');
+print('Reverb: ${player.state.reverb}');
 
 // Reactive broadcast streams:
 player.stream.position.listen((pos) => print('Position: $pos'));
 player.stream.playing.listen((playing) => print('Playing: $playing'));
 player.stream.completed.listen((done) => print('Playback finished!'));
 player.stream.equalizer.listen((eq) => print('Equalizer updated: $eq'));
+player.stream.reverb.listen((reverb) => print('Reverb updated: $reverb'));
 player.stream.audioDevice.listen((dev) => print('Device switched: ${dev.displayName}'));
 ```
 
@@ -631,6 +650,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 | **libogg**                | Xiph.Org Foundation                             | BSD 3-Clause                                   | `src/decoders/libogg/`      | Ogg container bitstream and framing parsing.                                                    |
 | **libopus** (Opus & SILK) | Xiph.Org Foundation, Skype Limited, Arm Limited | BSD 3-Clause                                   | `src/decoders/libopus/`     | High-definition Opus audio decoding pipeline.                                                   |
 | **Helix AAC Decoder**     | RealNetworks, Inc.                              | RealNetworks Public Source License (RPSL v1.0) | `src/decoders/helix-aac/`   | Fixed-point HE-AAC audio decoder.                                                               |
+| **Freeverb**              | Jezar at Dreampoint                             | Public Domain                                  | `src/map_reverb.c`          | Studio-grade algorithmic stereo reverberation model.                                            |
 
 ### ⚖️ Permissive Licensing & Commercial Use
 

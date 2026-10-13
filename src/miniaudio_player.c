@@ -1542,6 +1542,28 @@ MAP_API int32_t miniaudio_player_set_spatializer(miniaudio_player_t *player, int
     return MAP_SUCCESS;
 }
 
+MAP_API int32_t miniaudio_player_set_reverb(
+    miniaudio_player_t *player,
+    int32_t enabled,
+    float room_size,
+    float damping,
+    float width,
+    float wet,
+    float dry)
+{
+    if (player == NULL) return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+    ma_spinlock_lock(&player->eq_node.lock);
+
+    player->eq_node.reverb_enabled = (enabled != 0) ? 1 : 0;
+    map_reverb_set_params(&player->eq_node.reverb, enabled, room_size, damping, width, wet, dry);
+
+    ma_spinlock_unlock(&player->eq_node.lock);
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
 MAP_API int32_t miniaudio_player_set_limiter(miniaudio_player_t *player, int32_t enabled)
 {
     if (player == NULL) return MAP_ERROR_INVALID_ARGS;
@@ -1827,6 +1849,12 @@ MAP_API int32_t miniaudio_player_get_status(
     out_status->crossfeed_mode = mut_player->eq_node.crossfeed_mode;
     out_status->spatializer_enabled = mut_player->eq_node.spatializer_enabled;
     out_status->spatializer_width = mut_player->eq_node.spatializer_width;
+    out_status->reverb.enabled = mut_player->eq_node.reverb_enabled;
+    out_status->reverb.room_size = mut_player->eq_node.reverb.room_size;
+    out_status->reverb.damping = mut_player->eq_node.reverb.damping;
+    out_status->reverb.width = mut_player->eq_node.reverb.width;
+    out_status->reverb.wet = mut_player->eq_node.reverb.wet;
+    out_status->reverb.dry = mut_player->eq_node.reverb.dry;
     out_status->limiter_enabled = mut_player->eq_node.limiter_enabled;
 
     ma_mutex_unlock(&mut_player->lock);

@@ -702,6 +702,12 @@ void ma_equalizer_node_process_pcm_frames(
         }
     }
 
+    /* 2.5. Reverb: Algorithmic Stereo Room Simulation (Freeverb) */
+    if (pEq->reverb_enabled)
+    {
+        map_reverb_process_frames(&pEq->reverb, ppFramesOut[0], frameCount, pEq->channels);
+    }
+
     /* 3. Spatial Processing (Crossfeed or Spatializer) */
     if (pEq->channels >= 2)
     {
@@ -1309,6 +1315,8 @@ ma_result ma_equalizer_node_init(
     map_bs2b_init(&pNode->bs2b, sampleRate, MAP_BS2B_DEFAULT_CLEVEL);
     pNode->spatializer_enabled = 0;
     pNode->spatializer_width = 1.0f;
+    pNode->reverb_enabled = 0;
+    map_reverb_init(&pNode->reverb, sampleRate);
     pNode->current_volume = 1.0f;
     pNode->target_volume = 1.0f;
     pNode->smooth_factor = 1.0f - expf(-1.0f / ((float)sampleRate * 0.005f));
@@ -1335,6 +1343,7 @@ void ma_equalizer_node_uninit(ma_equalizer_node *pNode)
         ma_peak2_uninit(&pNode->peaks[i], NULL);
     }
     ma_hishelf2_uninit(&pNode->hishelf, NULL);
+    map_reverb_uninit(&pNode->reverb);
 }
 
 ma_result ma_equalizer_node_set_band(
@@ -1542,6 +1551,9 @@ ma_result ma_equalizer_node_set_sample_rate(ma_equalizer_node *pEq, ma_uint32 ne
     {
         pEq->smooth_factor = 0.005f;
     }
+
+    /* 5. Update reverb sample rate (re-scale delay lengths with zero heap allocation) */
+    map_reverb_set_sample_rate(&pEq->reverb, newSampleRate);
 
     pEq->sampleRate = newSampleRate;
 

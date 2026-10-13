@@ -31,6 +31,7 @@ functions:
       - 'miniaudio_player_set_mono'
       - 'miniaudio_player_set_crossfeed'
       - 'miniaudio_player_set_spatializer'
+      - 'miniaudio_player_set_reverb'
       - 'miniaudio_player_set_limiter'
       - 'miniaudio_player_free_audio_analysis'
 comments:

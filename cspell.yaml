@@ -5,6 +5,7 @@ words:
   - absval
   - advapi
   - ALLOCA
+  - allpass
   - allprojects
   - alsa
   - ALSA
@@ -84,6 +85,7 @@ words:
   - declspec
   - decoderctls
   - deconstitution
+  - decorrelation
   - decstate
   - deinterleave
   - demixing
@@ -111,6 +113,7 @@ words:
   - downmix
   - downmixes
   - downmixing
+  - Dreampoint
   - DTFT
   - Durbin
   - EARC
@@ -157,6 +160,8 @@ words:
   - FPCR
   - FPSCR
   - fread
+  - freeverb
+  - Freeverb
   - Frykholm
   - fseeki
   - ftelli
@@ -206,9 +211,11 @@ words:
   - isqrt
   - itheta
   - jetbrains
+  - Jezar
   - kbps
   - Koen
   - kotlin
+  - LBCF
   - lbrr
   - LBRR
   - Leitgeb
@@ -230,6 +237,7 @@ words:
   - llret
   - logcat
   - loshelf
+  - lowpass
   - lpcs
   - LRINT
   - LRINTF
@@ -425,12 +433,14 @@ words:
   - Thiago
   - thrads
   - threesize
+  - thresholding
   - throughs
   - timestamping
   - toneishness
   - TPDF
   - tvbr
   - TWID
+  - typedef
   - ubsan
   - udata
   - unawaited
@@ -460,6 +470,7 @@ words:
   - VSHR
   - wasapi
   - WASAPI
+  - webp
   - Werror
   - Wextra
   - wfopen

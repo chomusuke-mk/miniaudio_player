@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.1.0
+
+### 🎵 Audio Engine Features & Public API
+
+#### 🏛️ Studio-Grade Algorithmic Reverb (Freeverb Topology) & Acoustic Presets
+
+- **Algorithmic Reverberation Engine**: Implemented a studio-grade stereophonic algorithmic reverb in native C (`src/map_reverb.c`, `src/map_reverb.h`) based on the classic Freeverb/Schroeder architecture:
+  - 8 parallel Lowpass Feedback Comb Filters (LBCF) with tunable feedback and lowpass damping per channel.
+  - 4 cascaded Allpass Filters (APF) per channel for high-density diffusion without metallic ringing.
+  - Stereophonic decorrelation with a 23-sample spatial offset between left and right delay lines.
+- **Strict Real-Time $\mathcal{O}(1)$ Determinism & Zero Allocations**:
+  - Pre-allocated 163,840-sample static buffer (640 KB aligned to 64 bytes) during initialization.
+  - Guarantees **0 dynamic heap allocations (`malloc`/`free`) in the real-time audio thread**, safely handling sample rates up to 192 kHz.
+- **Hardware Anti-Denormal Guards (Flush-to-Zero)**:
+  - Flush-to-zero thresholding (`fabsf(v) < 1e-20f ? 0.0f : v`) embedded inside all comb and allpass delay filter loops, completely preventing CPU microcode stalls when reverb tails decay into silence.
+- **Anti-Zipper Parameter Smoothing**:
+  - Sample-accurate linear interpolation across audio buffers for `roomSize`, `damping`, `width`, `wet`, and `dry` parameters, ensuring smooth, click-free parameter transitions.
+- **Studio-Grade Acoustic Presets (`Reverb` factory presets & `Reverb.presets` map)**:
+  - `Reverb.off`: Transparent bypass with zero processing overhead.
+  - `Reverb.smallRoom`: Intimate, dry room with rapid early reflections (`roomSize: 0.35, damping: 0.60, wet: 0.18, dry: 0.82, width: 0.70`).
+  - `Reverb.studio`: Controlled recording studio acoustics (`roomSize: 0.50, damping: 0.40, wet: 0.22, dry: 0.78, width: 0.85`).
+  - `Reverb.concertHall`: Expansive, balanced symphonic hall (`roomSize: 0.75, damping: 0.30, wet: 0.32, dry: 0.68, width: 1.00`).
+  - `Reverb.cathedral`: Monumental sanctuary with extended airy tail (`roomSize: 0.90, damping: 0.15, wet: 0.42, dry: 0.58, width: 1.00`).
+  - `Reverb.plate`: Bright, dense electromechanical plate reverberator (`roomSize: 0.65, damping: 0.10, wet: 0.28, dry: 0.72, width: 0.90`).
+  - `Reverb.ambient`: Atmospheric, enveloping diffuse sonic wash (`roomSize: 0.85, damping: 0.50, wet: 0.38, dry: 0.62, width: 1.00`).
+- **Complete Dart API & Reactive Integration**:
+  - Imperative action: `player.action.setReverb(Reverb)` and granular `player.action.configureReverb({roomSize, damping, wet, dry, width, enabled})`.
+  - Synchronous state inspection: `player.state.reverb`.
+  - Real-time broadcast telemetry stream: `player.stream.reverb`.
+  - Immutable model: `Reverb` with `copyWith()`, `presetName`, and backwards-compatible alias `typedef ReverbConfig = Reverb`.
+
+#### 🎚️ Optimized DSP Chain Acoustic Ordering
+
+- Positioned the reverb engine at **Step 2.5** in `src/map_dsp.c` (Post-Equalizer, Pre-Spatializer/Crossfeed, Pre-Mono/Balance, Pre-Visualizer, Pre-Limiter):
+  - **Post-EQ**: Prevents uncontrolled low-frequency mud or harsh resonance peaks from exciting the reverberation tank.
+  - **Pre-Spatializer & Crossfeed**: Allows the natural diffuse reverberant soundstage to be shaped by binaural headphone crosstalk (`bs2b`) or stereophonic widening.
+  - **Pre-Visualizer**: Ensures the real-time spectrum analyzer and VU meters capture physical acoustic room decay.
+  - **Pre-Limiter**: Guarantees all energy accumulation from dense reflections and resonant feedback is safely caught by the True-Peak Soft-Knee Limiter, completely preventing digital clipping.
+
+---
+
 ## 2.0.0
 
 ### 🎵 Audio Engine Features & Public API

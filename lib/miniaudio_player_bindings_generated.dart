@@ -340,6 +340,19 @@ external int miniaudio_player_set_replay_gain(
   int prevent_clipping,
 );
 
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32, ffi.Float,
+        ffi.Float, ffi.Float, ffi.Float, ffi.Float)>(isLeaf: true)
+external int miniaudio_player_set_reverb(
+  ffi.Pointer<miniaudio_player_t> player,
+  int enabled,
+  double room_size,
+  double damping,
+  double width,
+  double wet,
+  double dry,
+);
+
 /// ========================================================================= */
 /// /* Silence Detection & Skipping Controls                                     */
 /// /* =========================================================================
@@ -767,6 +780,49 @@ enum miniaudio_player_result_t {
       };
 }
 
+final class miniaudio_player_reverb_config_t extends ffi.Struct {
+  /// < 1 if reverb is enabled, 0 for bypass
+  @ffi.Int32()
+  external int enabled;
+
+  /// < Room size (0.0 to 1.0, controls decay time)
+  @ffi.Float()
+  external double room_size;
+
+  /// < High frequency damping (0.0 to 1.0)
+  @ffi.Float()
+  external double damping;
+
+  /// < Stereo width of reflections (0.0 to 1.0)
+  @ffi.Float()
+  external double width;
+
+  /// < Wet signal level (0.0 to 2.0)
+  @ffi.Float()
+  external double wet;
+
+  /// < Dry signal level (0.0 to 2.0)
+  @ffi.Float()
+  external double dry;
+
+  static ffi.Pointer<miniaudio_player_reverb_config_t> $allocate(
+    ffi.Allocator $allocator, {
+    required int enabled,
+    required double room_size,
+    required double damping,
+    required double width,
+    required double wet,
+    required double dry,
+  }) =>
+      $allocator<miniaudio_player_reverb_config_t>()
+        ..ref.enabled = enabled
+        ..ref.room_size = room_size
+        ..ref.damping = damping
+        ..ref.width = width
+        ..ref.wet = wet
+        ..ref.dry = dry;
+}
+
 final class miniaudio_player_silence_config_t extends ffi.Struct {
   /// < miniaudio_player_silence_mode_t
   @ffi.Int32()
@@ -908,6 +964,9 @@ final class miniaudio_player_status_t extends ffi.Struct {
   /// < Stereo widener width factor (1.0 to 2.0)
   @ffi.Float()
   external double spatializer_width;
+
+  /// < Reverb active configuration
+  external miniaudio_player_reverb_config_t reverb;
 
   /// < 1 if True-Peak limiter enabled, 0 otherwise
   @ffi.Int32()

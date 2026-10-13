@@ -7,6 +7,7 @@ import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
+import '../reverb.dart';
 
 /// Reactive broadcast streams for observing playback and DSP state changes.
 class PlayerStream {
@@ -34,6 +35,7 @@ class PlayerStream {
   final StreamController<CrossfeedMode> _crossfeedController;
   final StreamController<bool> _spatializerEnabledController;
   final StreamController<double> _spatializerWidthController;
+  final StreamController<Reverb> _reverbController;
   final StreamController<bool> _limiterEnabledController;
 
   PlayerStream({
@@ -61,6 +63,7 @@ class PlayerStream {
     required StreamController<CrossfeedMode> crossfeedController,
     required StreamController<bool> spatializerEnabledController,
     required StreamController<double> spatializerWidthController,
+    required StreamController<Reverb> reverbController,
     required StreamController<bool> limiterEnabledController,
   })  : _positionController = positionController,
         _durationController = durationController,
@@ -86,6 +89,7 @@ class PlayerStream {
         _crossfeedController = crossfeedController,
         _spatializerEnabledController = spatializerEnabledController,
         _spatializerWidthController = spatializerWidthController,
+        _reverbController = reverbController,
         _limiterEnabledController = limiterEnabledController;
 
   /// Broadcast stream of the current playback position.
@@ -163,6 +167,9 @@ class PlayerStream {
 
   /// Broadcast stream of stereo widener width factor changes.
   Stream<double> get spatializerWidth => _spatializerWidthController.stream;
+
+  /// Broadcast stream of reverb configuration changes.
+  Stream<Reverb> get reverb => _reverbController.stream;
 
   /// Broadcast stream of limiter enabled changes.
   Stream<bool> get limiterEnabled => _limiterEnabledController.stream;

@@ -5,6 +5,7 @@ import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
+import '../reverb.dart';
 
 /// Synchronous snapshot of the current player and DSP states.
 class PlayerState {
@@ -33,6 +34,7 @@ class PlayerState {
   final CrossfeedMode Function() _getCrossfeed;
   final bool Function() _getSpatializerEnabled;
   final double Function() _getSpatializerWidth;
+  final Reverb Function() _getReverb;
   final bool Function() _getLimiterEnabled;
 
   PlayerState({
@@ -61,6 +63,7 @@ class PlayerState {
     required CrossfeedMode Function() getCrossfeed,
     required bool Function() getSpatializerEnabled,
     required double Function() getSpatializerWidth,
+    required Reverb Function() getReverb,
     required bool Function() getLimiterEnabled,
   })  : _getPosition = getPosition,
         _getDuration = getDuration,
@@ -87,6 +90,7 @@ class PlayerState {
         _getCrossfeed = getCrossfeed,
         _getSpatializerEnabled = getSpatializerEnabled,
         _getSpatializerWidth = getSpatializerWidth,
+        _getReverb = getReverb,
         _getLimiterEnabled = getLimiterEnabled;
 
   /// Current playback position.
@@ -172,6 +176,9 @@ class PlayerState {
 
   /// Current stereo widener width factor (1.0 to 2.0).
   double get spatializerWidth => _getSpatializerWidth();
+
+  /// Current studio reverberation configuration.
+  Reverb get reverb => _getReverb();
 
   /// Whether the True-Peak soft-knee output limiter protector is active.
   bool get limiterEnabled => _getLimiterEnabled();
