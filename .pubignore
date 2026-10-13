@@ -36,3 +36,4 @@ migrate_working_dir/
 # Pub specific ignores
 /assets/
 /cspell.yaml
+/pictures/miniaudio_player.svg

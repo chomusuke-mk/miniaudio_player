@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/banner.svg" alt="miniaudio_player banner" width="100%" />
 </p>
 
-# miniaudio_player
+# <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/icon.png" alt="miniaudio_player icon" width="40" height="40" align="center" /> miniaudio_player
 
 [![pub package](https://img.shields.io/pub/v/miniaudio_player.svg?logo=dart&color=blue)](https://pub.dev/packages/miniaudio_player)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
