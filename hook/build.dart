@@ -134,6 +134,7 @@ void main(List<String> args) async {
         'src/decoders/include/opus',
         'src/decoders/include/ogg',
         'src/decoders/libogg',
+        'src/decoders/libopus',
         'src/decoders/libopus/opus_src',
         'src/decoders/libopus/celt',
         'src/decoders/libopus/silk',

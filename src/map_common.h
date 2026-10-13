@@ -37,6 +37,9 @@
 #elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #include <emmintrin.h>
 #include <xmmintrin.h>
+#if defined(__SSE4_1__)
+#include <smmintrin.h>
+#endif
 #define MAP_HAS_SSE2 1
 #define MAP_HAS_SSE  1
 #ifndef __SSE2__
