@@ -17,7 +17,8 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/1-visualizer.png" alt="miniaudio_player Demo - Real-Time Playback & Reactive Visualizer" width="550" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/simple_player.png" alt="miniaudio_player - Audio Player Controls" width="480" /><br/>
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/visualizer.png" alt="miniaudio_player - Real-Time Reactive Visualizer" width="480" />
 </p>
 
 ---
@@ -224,6 +225,10 @@ dart pub add miniaudio_player
 
 ### 1. Basic Playback & Global Configuration
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/simple_player.png" alt="Basic Audio Playback Controls" width="480" />
+</p>
+
 ```dart
 import 'package:miniaudio_player/miniaudio_player.dart';
 
@@ -255,7 +260,7 @@ void main() async {
 ### 2. Complete DSP Chain (Limiter, Crossfeed, Mono, Balance & Spatializer)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/3-effects.png" alt="DSP & Audio Processing Chain - Limiter Guard & Binaural Crossfeed" width="550" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/limiter_crossfeed_mono_balance_preamp_spatializer.png" alt="Complete DSP Chain - Limiter, Crossfeed, Mono, Balance & Spatializer" width="480" />
 </p>
 
 ```dart
@@ -291,7 +296,7 @@ await player.action.setReplayGain(
 Shape frequency response in real time across the 10 ISO 266 standard octave bands (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`) from `-24.0 dB` to `+24.0 dB`:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/4-advanced-effects.png" alt="10-Band Parametric Equalizer, Spatializer & Device Routing" width="550" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/equalizer.png" alt="Standard ISO 266 10-Band Parametric Equalizer" width="480" />
 </p>
 
 ```dart
@@ -326,7 +331,7 @@ await player.action.setEqualizer(customEq);
 Build dynamic spectrum analyzers, frequency visualizers, and stereo VU meters. Subscribing to the stream automatically enables native C filtering, and unsubscribing keeps **idle CPU strictly at 0%**:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/1-visualizer.png" alt="Real-Time Reactive Visualizer - 10-Band BPF Filter Bank & Stereo VU Meters" width="550" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/visualizer.png" alt="Real-Time Reactive Visualizer - 10-Band BPF Filter Bank & Stereo VU Meters" width="480" />
 </p>
 
 ```dart
@@ -359,7 +364,7 @@ await subscription.cancel();
 Eliminate pauses and silent gaps in real time without audio glitches or pops, protected by a smooth 5ms anti-click crossfade:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/2-replaygain+silence.png" alt="Smart Silence Skipping & Waveform / ReplayGain Analysis" width="550" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/silence_skipping.png" alt="Smart Silence Skipping Controls" width="480" />
 </p>
 
 ```dart
@@ -396,6 +401,10 @@ player.stream.silenceSavedDuration.listen((saved) {
 ### 6. Unified Single-Pass Audio Analysis (Loudness & Waveform)
 
 Analyze a track's acoustic properties, ITU-R BS.1770-4 / EBU R128 loudness, and visual waveform envelope in a **single decoding pass** on a background native OS worker thread (zero Dart Isolates, 0 ms UI blocking, preserving 60/120 fps):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/waveform_and_replaygain.png" alt="Unified Audio Analysis - Waveform & ReplayGain" width="480" />
+</p>
 
 ```dart
 // 1. Non-blocking asynchronous analysis (native background OS thread)
@@ -443,6 +452,10 @@ if (analysis.waveform != null) {
 ### 7. Audio Output Device Selection & Dynamic Routing
 
 Enumerate and switch hardware audio devices dynamically at runtime across Android, Windows, Linux, macOS, and iOS with **zero configuration** and **no MethodChannels**:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/buffer_size_output_device.png" alt="Hardware Audio Output Device & Buffer Size Selection" width="500" />
+</p>
 
 ```dart
 // 1. Enumerate available audio playback devices
@@ -529,6 +542,10 @@ StreamBuilder<Duration>(
 ---
 
 ### 9. High-Fidelity Speed & Pitch Control (Sonic DSP)
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/volume_rate_pitch.png" alt="Playback Adjustments - Volume, Rate & Pitch Control" width="480" />
+</p>
 
 ```dart
 // Playback rate: 0.25x (slow) to 4.0x (fast) without changing pitch
