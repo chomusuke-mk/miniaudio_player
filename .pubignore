@@ -32,6 +32,7 @@ migrate_working_dir/
 /temp/
 /ARCHITECTURE.md
 /.agents/
+/PROBLEMS.md
 
 # Pub specific ignores
 /assets/

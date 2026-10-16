@@ -1,5 +1,64 @@
 # Changelog
 
+## 3.0.0
+
+### 🌐 Network Streaming, AudioSource Architecture & In-Memory Playback
+
+#### 🎵 Unified Polymorphic Audio Loading Architecture (`AudioSource`)
+
+- **Sealed `AudioSource` Hierarchy**: Introduced a strongly-typed, flexible abstraction for all audio playback sources:
+  - `AudioSource.file(String filePath)`: Local filesystem playback.
+  - `AudioSource.asset(String assetKey, {String? package})`: Flutter app bundle assets loaded directly into memory without temporary disk copying.
+  - `AudioSource.memory(Uint8List bytes)`: In-memory byte buffer playback directly from RAM with zero disk I/O.
+  - `AudioSource.network(Uri uri, {Map<String, String>? headers, bool enableCache, Duration bufferAhead})`: Progressive remote HTTP/HTTPS streaming with byte-range remote seeking.
+  - `AudioSource.liveStream(Uri uri, {Map<String, String>? headers, Duration jitterBuffer})`: Boundless live web audio streams (Internet Radio, Icecast, Shoutcast) with sliding jitter buffer protection.
+  - `AudioSource.uri(dynamic uriOrPath)`: Dynamic polymorphic URI parser supporting `http://`, `https://`, `asset://`, `file://`, and local filesystem paths.
+- **Polymorphic `player.action.open(...)`**:
+  - Accepts any `AudioSource`, `Uri`, `String` (with automatic scheme detection), or `Uint8List` byte buffer with optional `autoPlay`.
+- **Granular Imperative Action Methods**:
+  - `player.action.openFile(String filePath, {bool autoPlay})`: Direct local file playback.
+  - `player.action.openMemory(Uint8List bytes, {bool autoPlay})`: Direct in-memory buffer playback.
+  - `player.action.openAsset(String assetPath, {String? package, AssetBytesLoader? loader, bool autoPlay})`: Direct asset loading.
+  - `player.action.openUrl(dynamic urlOrUri, {Map<String, String>? headers, bool isLive, Duration bufferAhead, bool autoPlay})`: Progressive streaming and live web audio.
+
+#### 🌊 Progressive HTTP/HTTPS Network Streaming (`NetworkAudioStreamer`)
+
+- **Native C Ring Buffer (`map_stream_buffer_t`)**:
+  - Implemented lock-free circular stream buffering in native C (`src/map_source.c`, `src/map_source.h`, `src/miniaudio_player.c`) with `data_ready_event` synchronization.
+  - Background asynchronous chunk feeding (`miniaudio_player_stream_feed`) ensures the real-time audio thread never blocks on network I/O.
+- **Arbitrary Remote Byte-Range Seeking**:
+  - Full support for `Range: bytes=X-` seeking on HTTP servers with stream buffer flushing (`miniaudio_player_stream_flush`).
+- **Resilient Network Handling**:
+  - Transparent HTTP redirect following (301, 302, 307, 308).
+  - Custom HTTP request headers for authenticated endpoints, CDN tokens, and custom User-Agents.
+  - Clean error propagation with new native error code `MapResult.errorAccessDenied` (`-11`) for HTTP 401/403 responses.
+
+#### 📻 Continuous Live Audio Streams (Internet Radio / Icecast / Shoutcast)
+
+- **Dedicated Live Stream Mode**:
+  - Configurable sliding jitter buffer (`bufferAhead` / `jitterBuffer`) designed to absorb packet latency and network jitter.
+  - Seamless unbounded playback without fixed duration bounds (`duration == Duration.zero`).
+
+#### ⚡ Direct In-Memory Audio Playback (`openMemory` & `miniaudio_player_open_memory`)
+
+- **Zero-I/O In-Memory Decoding**:
+  - Plays audio files directly from RAM byte buffers via `miniaudio_player_open_memory`.
+  - Zero temporary files, zero disk wear, instant startup.
+
+#### 📦 Direct Flutter Asset Playback & Global Asset Loader Hook
+
+- **Global Asset Loader Integration**:
+  - Configurable `MiniaudioPlayerGlobalConfig.assetLoader` hook (e.g. `(key) => (await rootBundle.load(key)).buffer.asUint8List()`).
+  - Reads assets straight into RAM and streams them directly into the audio pipeline, completely removing the need to copy assets to application cache directories on disk.
+
+#### 📊 Real-Time Buffering Telemetry
+
+- **Buffering Stream & State**:
+  - Monitored synchronously via `player.state.buffering` and reactively via `player.stream.buffering`.
+  - Telemetry snapshots reflect internal native stream buffer fill and underrun states.
+
+---
+
 ## 2.1.0
 
 ### 🎵 Audio Engine Features & Public API

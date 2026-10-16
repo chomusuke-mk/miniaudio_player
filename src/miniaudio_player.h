@@ -232,6 +232,89 @@ extern "C"
         miniaudio_player_t *player,
         const char *file_path);
 
+    /**
+     * @brief Opens and prepares an audio source directly from an in-memory byte buffer.
+     * @param player Player instance handle.
+     * @param data Pointer to encoded audio bytes in memory.
+     * @param size Size of the byte buffer in bytes.
+     * @param take_ownership 1 if native engine should free(data) on close, 0 if caller retains ownership.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_open_memory(
+        miniaudio_player_t *player,
+        const void *data,
+        size_t size,
+        int32_t take_ownership);
+
+    /**
+     * @brief Opens and prepares a streaming audio source fed chunk-by-chunk.
+     * @param player Player instance handle.
+     * @param initial_data Pointer to initial pre-buffered encoded audio chunk.
+     * @param initial_data_size Size of the initial chunk in bytes.
+     * @param total_size Total file size in bytes (-1 if unknown / live stream).
+     * @param is_live 1 for continuous live stream, 0 for finite remote file.
+     * @param buffer_capacity_bytes Capacity of the internal ring buffer in bytes (e.g. 2MB - 4MB).
+     * @param encoding_format Encoding format hint (0 for auto-sniffing).
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_open_stream(
+        miniaudio_player_t *player,
+        const uint8_t *initial_data,
+        size_t initial_data_size,
+        int64_t total_size,
+        int32_t is_live,
+        uint32_t buffer_capacity_bytes,
+        int32_t encoding_format);
+
+    /**
+     * @brief Feeds encoded audio chunks into an active stream data source.
+     * @param player Player instance handle.
+     * @param data Pointer to encoded audio chunk.
+     * @param size Number of bytes in chunk.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_stream_feed(
+        miniaudio_player_t *player,
+        const uint8_t *data,
+        size_t size);
+
+    /**
+     * @brief Flushes the stream buffer (used on remote seek).
+     * @param player Player instance handle.
+     * @param new_stream_offset New byte offset in the remote file.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_stream_flush(
+        miniaudio_player_t *player,
+        int64_t new_stream_offset);
+
+    /**
+     * @brief Signals that the stream has reached EOF (no more bytes will be fed).
+     * @param player Player instance handle.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_stream_end(
+        miniaudio_player_t *player);
+
+    typedef struct miniaudio_stream_status
+    {
+        size_t buffer_capacity;
+        size_t buffer_fill;
+        float fill_percentage;
+        int32_t is_buffering;
+        int32_t is_eof;
+    } miniaudio_stream_status_t;
+
+    /**
+     * @brief Queries status of the streaming buffer.
+     * @param player Player instance handle.
+     * @param out_status Output pointer for stream status.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_stream_get_status(
+        miniaudio_player_t *player,
+        miniaudio_stream_status_t *out_status);
+
     /* ========================================================================= */
     /* Playback Controls                                                         */
     /* ========================================================================= */

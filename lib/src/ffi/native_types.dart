@@ -17,6 +17,7 @@ abstract final class MapResult {
   static const int errorSeekFailed = -8;
   static const int errorNodeFailed = -9;
   static const int errorUnsupported = -10;
+  static const int errorAccessDenied = -11;
 
   static String describe(int code) {
     switch (code) {
@@ -42,6 +43,8 @@ abstract final class MapResult {
         return 'DSP audio node operation failed';
       case errorUnsupported:
         return 'Unsupported audio format or operation';
+      case errorAccessDenied:
+        return 'Access denied or permission failure';
       default:
         return 'Unknown native error code ($code)';
     }

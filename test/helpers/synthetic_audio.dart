@@ -356,6 +356,215 @@ class SyntheticAudioGenerator {
     return bytes.length == (44 + subChunk2Size);
   }
 
+  /// Injects corrupted random bytes into a valid WAV byte buffer mid-stream
+  /// while preserving the 44-byte RIFF header.
+  static Uint8List corruptWav(
+    Uint8List original, {
+    int? corruptionOffset,
+    int? corruptionLength,
+    int seed = 42,
+  }) {
+    if (original.length < 44) {
+      throw ArgumentError.value(
+        original.length,
+        'original',
+        'WAV buffer must be at least 44 bytes to preserve RIFF header',
+      );
+    }
+    final result = Uint8List.fromList(original);
+    final int safeOffset = corruptionOffset ?? (44 + (original.length - 44) ~/ 2);
+    final int clampedOffset = safeOffset.clamp(44, original.length);
+    final int safeLength = corruptionLength ?? min(2048, original.length - clampedOffset);
+    final int effectiveLength = min(safeLength, original.length - clampedOffset);
+
+    final random = Random(seed);
+    for (int i = 0; i < effectiveLength; i++) {
+      result[clampedOffset + i] = random.nextInt(256);
+    }
+    return result;
+  }
+
+  /// Procedurally generates a valid WAV file with corrupted mid-stream audio frames.
+  static Uint8List generateWavWithCorruptFrames({
+    int sampleRate = 44100,
+    int channels = 1,
+    Duration duration = const Duration(seconds: 2),
+    double corruptAtRatio = 0.5,
+    int corruptLengthBytes = 2048,
+    int seed = 42,
+  }) {
+    final cleanBytes = generateWavBytes(
+      durationSeconds: duration.inMicroseconds / 1000000.0,
+      sampleRate: sampleRate,
+      numChannels: channels,
+    );
+    final dataLength = cleanBytes.length - 44;
+    final blockAlign = channels * 2;
+    final rawOffset = 44 + (dataLength * corruptAtRatio.clamp(0.0, 1.0)).toInt();
+    final alignedOffset = (rawOffset ~/ blockAlign) * blockAlign;
+
+    return corruptWav(
+      cleanBytes,
+      corruptionOffset: alignedOffset,
+      corruptionLength: corruptLengthBytes,
+      seed: seed,
+    );
+  }
+
+  /// Injects bit-flips across arbitrary audio byte buffers (MP3, FLAC, OGG, WAV, etc.)
+  /// while preserving headers up to [startOffset].
+  static Uint8List injectBitFlips(
+    Uint8List data, {
+    double flipProbability = 0.001,
+    int startOffset = 0,
+    int? endOffset,
+    int seed = 42,
+  }) {
+    final result = Uint8List.fromList(data);
+    final int effectiveStart = startOffset.clamp(0, data.length);
+    final int effectiveEnd = (endOffset ?? data.length).clamp(effectiveStart, data.length);
+
+    if (effectiveEnd <= effectiveStart) return result;
+
+    final random = Random(seed);
+    int flipsApplied = 0;
+
+    for (int i = effectiveStart; i < effectiveEnd; i++) {
+      if (random.nextDouble() < flipProbability) {
+        final bitMask = 1 << random.nextInt(8);
+        result[i] ^= bitMask;
+        flipsApplied++;
+      }
+    }
+
+    // Guarantee at least 1 bit flip if range is non-empty
+    if (flipsApplied == 0 && effectiveEnd > effectiveStart) {
+      final targetIdx = effectiveStart + random.nextInt(effectiveEnd - effectiveStart);
+      result[targetIdx] ^= (1 << random.nextInt(8));
+    }
+
+    return result;
+  }
+
+  /// Generates a valid WAV with corrupted chunk sizes (claims 10 MB, actual file is 100 KB).
+  static Uint8List generateWavWithCorruptHeaderChunkLength({
+    int sampleRate = 44100,
+    int channels = 1,
+    Duration duration = const Duration(milliseconds: 500),
+    int fakeChunkSize = 10485796, // 10 MB + 36
+    int fakeDataSize = 10485760,  // 10 MB
+  }) {
+    final bytes = generateWavBytes(
+      durationSeconds: duration.inMicroseconds / 1000000.0,
+      sampleRate: sampleRate,
+      numChannels: channels,
+    );
+    final result = Uint8List.fromList(bytes);
+    final byteData = ByteData.sublistView(result);
+    // Overwrite RIFF ChunkSize (bytes 4..7)
+    byteData.setUint32(4, fakeChunkSize, Endian.little);
+    // Overwrite data SubChunk2Size (bytes 40..43)
+    byteData.setUint32(40, fakeDataSize, Endian.little);
+    return result;
+  }
+
+  /// Generates a 32-bit floating-point WAV containing IEEE 754 NaN, Infinity, and Denormals.
+  static Uint8List generateFloat32WavWithNaN({
+    int sampleRate = 44100,
+    int channels = 1,
+    Duration duration = const Duration(seconds: 1),
+    bool injectInfinity = true,
+    bool injectDenormals = true,
+  }) {
+    final int numSamples = (duration.inMicroseconds / 1000000.0 * sampleRate).toInt();
+    const int bitsPerSample = 32;
+    const int bytesPerSample = 4;
+    final int subChunk2Size = numSamples * channels * bytesPerSample;
+    final int chunkSize = 36 + subChunk2Size;
+    final int byteRate = sampleRate * channels * bytesPerSample;
+    final int blockAlign = channels * bytesPerSample;
+
+    final ByteData byteData = ByteData(44 + subChunk2Size);
+
+    // RIFF Header
+    byteData.setUint8(0, 0x52); byteData.setUint8(1, 0x49);
+    byteData.setUint8(2, 0x46); byteData.setUint8(3, 0x46);
+    byteData.setUint32(4, chunkSize, Endian.little);
+    byteData.setUint8(8, 0x57); byteData.setUint8(9, 0x41);
+    byteData.setUint8(10, 0x56); byteData.setUint8(11, 0x45);
+
+    // fmt Subchunk (AudioFormat = 3: IEEE Float)
+    byteData.setUint8(12, 0x66); byteData.setUint8(13, 0x6D);
+    byteData.setUint8(14, 0x74); byteData.setUint8(15, 0x20);
+    byteData.setUint32(16, 16, Endian.little);
+    byteData.setUint16(20, 3, Endian.little); // 3 = IEEE Float
+    byteData.setUint16(22, channels, Endian.little);
+    byteData.setUint32(24, sampleRate, Endian.little);
+    byteData.setUint32(28, byteRate, Endian.little);
+    byteData.setUint16(32, blockAlign, Endian.little);
+    byteData.setUint16(34, bitsPerSample, Endian.little);
+
+    // data Subchunk
+    byteData.setUint8(36, 0x64); byteData.setUint8(37, 0x61);
+    byteData.setUint8(38, 0x74); byteData.setUint8(39, 0x61);
+    byteData.setUint32(40, subChunk2Size, Endian.little);
+
+    int offset = 44;
+    for (int i = 0; i < numSamples; i++) {
+      final double sample = sin(2.0 * pi * 440.0 * i / sampleRate) * 0.5;
+      // Inject NaN at 25%
+      if (i == (numSamples * 0.25).toInt()) {
+        byteData.setUint32(offset, 0x7FC00000, Endian.little); // Quiet NaN
+      } else if (injectInfinity && i == (numSamples * 0.5).toInt()) {
+        byteData.setUint32(offset, 0x7F800000, Endian.little); // +Infinity
+      } else if (injectDenormals && i == (numSamples * 0.75).toInt()) {
+        byteData.setUint32(offset, 0x00000001, Endian.little); // Smallest subnormal
+      } else {
+        byteData.setFloat32(offset, sample, Endian.little);
+      }
+      offset += 4;
+    }
+    return byteData.buffer.asUint8List();
+  }
+
+  /// Creates a temporary WAV file containing corrupted mid-stream audio frames.
+  static Future<File> createTempCorruptedWavFile({
+    String fileName = 'corrupted_midstream.wav',
+    Duration duration = const Duration(seconds: 2),
+    double corruptAtRatio = 0.5,
+    int corruptLengthBytes = 2048,
+  }) async {
+    final bytes = generateWavWithCorruptFrames(
+      duration: duration,
+      corruptAtRatio: corruptAtRatio,
+      corruptLengthBytes: corruptLengthBytes,
+    );
+    final tempDir = await Directory.systemTemp.createTemp('miniaudio_corrupt_');
+    final file = File('${tempDir.path}/$fileName');
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
+  /// Creates a temporary file with injected bit-flips across arbitrary audio bytes.
+  static Future<File> createTempBitFlippedFile({
+    required Uint8List sourceBytes,
+    String fileName = 'bit_flipped.audio',
+    double flipProbability = 0.001,
+    int startOffset = 512,
+    int seed = 42,
+  }) async {
+    final bytes = injectBitFlips(
+      sourceBytes,
+      flipProbability: flipProbability,
+      startOffset: startOffset,
+      seed: seed,
+    );
+    final tempDir = await Directory.systemTemp.createTemp('miniaudio_bitflip_');
+    final file = File('${tempDir.path}/$fileName');
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
   /// Parses duration from valid RIFF WAV bytes.
   static Duration parseWavDuration(Uint8List bytes) {
     if (!isValidWav(bytes)) {
@@ -368,3 +577,7 @@ class SyntheticAudioGenerator {
     return Duration(microseconds: (seconds * 1000000).round());
   }
 }
+
+/// Typedef alias for contract compliance.
+typedef SyntheticAudio = SyntheticAudioGenerator;
+

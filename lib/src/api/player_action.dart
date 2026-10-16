@@ -2,6 +2,8 @@
 
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -9,27 +11,105 @@ import '../../miniaudio_player_bindings_generated.dart' as native;
 import '../equalizer.dart';
 import '../ffi/native_types.dart';
 import 'audio_device.dart';
+import 'audio_source.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
 import 'silence_skip_config.dart';
 import 'dsp_config.dart';
 import '../reverb.dart';
+import '../network/network_audio_streamer.dart';
 
 /// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
 class PlayerAction {
   final MiniaudioPlayer _player;
   final void Function(Duration position) _onOptimisticSeek;
+  NetworkAudioStreamer? _activeStreamer;
 
   PlayerAction(
     this._player, {
     required void Function(Duration) onOptimisticSeek,
   }) : _onOptimisticSeek = onOptimisticSeek;
 
-  /// Prepares an audio file for playback.
+  void _stopActiveStreamer() {
+    _activeStreamer?.dispose();
+    _activeStreamer = null;
+  }
+
+  /// Disposes any active network streaming sessions.
+  void dispose() {
+    _stopActiveStreamer();
+  }
+
+  /// Prepares an audio source for playback.
+  ///
+  /// Accepts:
+  /// - An [AudioSource] instance ([FileAudioSource], [AssetAudioSource], [MemoryAudioSource], [NetworkAudioSource], [LiveStreamAudioSource]).
+  /// - A [String] path or URI (`file://...`, `asset://...`, `assets/...`, `http://...`, `https://...`, or standard file path).
+  /// - A [Uri] object.
+  /// - A [Uint8List] containing raw audio file bytes in memory.
   ///
   /// If [autoPlay] is `true`, playback starts immediately upon opening.
-  Future<void> open(String filePath, {bool autoPlay = false}) async {
+  Future<void> open(dynamic source, {bool autoPlay = false}) async {
     _player.ensureNotDisposed();
+
+    if (source is AudioSource) {
+      switch (source) {
+        case FileAudioSource s:
+          return openFile(s.filePath, autoPlay: autoPlay);
+        case AssetAudioSource s:
+          return openAsset(s.assetKey, autoPlay: autoPlay);
+        case MemoryAudioSource s:
+          return openMemory(s.bytes, autoPlay: autoPlay);
+        case NetworkAudioSource s:
+          return openUrl(
+            s.uri,
+            headers: s.headers,
+            bufferAhead: s.bufferAhead,
+            autoPlay: autoPlay,
+          );
+        case LiveStreamAudioSource s:
+          return openUrl(
+            s.uri,
+            headers: s.headers,
+            isLive: true,
+            bufferAhead: s.jitterBuffer,
+            autoPlay: autoPlay,
+          );
+      }
+    } else if (source is Uint8List) {
+      return openMemory(source, autoPlay: autoPlay);
+    } else if (source is Uri) {
+      final str = source.toString();
+      if (str.startsWith('http://') || str.startsWith('https://')) {
+        return openUrl(source, autoPlay: autoPlay);
+      } else if (str.startsWith('asset://') || str.startsWith('assets/')) {
+        return openAsset(str, autoPlay: autoPlay);
+      } else if (source.isScheme('file')) {
+        return openFile(source.toFilePath(), autoPlay: autoPlay);
+      } else {
+        return openFile(str, autoPlay: autoPlay);
+      }
+    } else if (source is String) {
+      final trimmed = source.trim();
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        return openUrl(Uri.parse(trimmed), autoPlay: autoPlay);
+      } else if (trimmed.startsWith('asset://') || trimmed.startsWith('assets/')) {
+        return openAsset(trimmed, autoPlay: autoPlay);
+      } else if (trimmed.startsWith('file://')) {
+        return openFile(Uri.parse(trimmed).toFilePath(), autoPlay: autoPlay);
+      } else {
+        return openFile(trimmed, autoPlay: autoPlay);
+      }
+    } else {
+      throw ArgumentError.value(source, 'source', 'Unsupported audio source type');
+    }
+  }
+
+  /// Opens a local filesystem audio file.
+  Future<void> openFile(String filePath, {bool autoPlay = false}) async {
+    _player.ensureNotDisposed();
+    _stopActiveStreamer();
+
     final path = filePath.startsWith('file://')
         ? Uri.parse(filePath).toFilePath()
         : filePath;
@@ -60,6 +140,128 @@ class PlayerAction {
     } finally {
       calloc.free(pathPtr);
     }
+  }
+
+  /// Opens an audio file directly from an in-memory byte buffer (RAM).
+  ///
+  /// Zero disk I/O, zero temporary files, instantaneous startup.
+  Future<void> openMemory(Uint8List bytes, {bool autoPlay = false}) async {
+    _player.ensureNotDisposed();
+    if (bytes.isEmpty) {
+      throw const MiniaudioPlayerException('Cannot open empty byte buffer');
+    }
+    _stopActiveStreamer();
+
+    final ptr = malloc.allocate<Uint8>(bytes.length);
+    ptr.asTypedList(bytes.length).setAll(0, bytes);
+
+    final res = native.miniaudio_player_open_memory(
+      _player.handle,
+      ptr.cast(),
+      bytes.length,
+      1, // Native C engine takes ownership and frees with free() on close
+    );
+    if (res != MapResult.success) {
+      malloc.free(ptr);
+      throw MiniaudioPlayerException(
+        'Failed to open audio from memory: ${MapResult.describe(res)}',
+        errorCode: res,
+      );
+    }
+
+    if (autoPlay) {
+      final playRes = native.miniaudio_player_play(_player.handle);
+      if (playRes != MapResult.success) {
+        throw MiniaudioPlayerException(
+          'Failed to start playback on autoPlay: ${MapResult.describe(playRes)}',
+          errorCode: playRes,
+        );
+      }
+    }
+
+    _player.pollAndEmit(force: true);
+  }
+
+  /// Opens an asset directly without copying to disk.
+  ///
+  /// Uses [loader] or [MiniaudioPlayerGlobalConfig.assetLoader] if defined,
+  /// otherwise falls back to filesystem candidate matching.
+  Future<void> openAsset(
+    String assetPath, {
+    String? package,
+    AssetBytesLoader? loader,
+    bool autoPlay = false,
+  }) async {
+    _player.ensureNotDisposed();
+    final cleanKey = assetPath.replaceFirst(RegExp(r'^asset(s)?://'), '');
+    final resolvedKey = package != null ? 'packages/$package/$cleanKey' : cleanKey;
+    Uint8List? bytes;
+
+    final effectiveLoader = loader ?? MiniaudioPlayerGlobalConfig.assetLoader;
+    if (effectiveLoader != null) {
+      try {
+        bytes = await effectiveLoader(resolvedKey);
+      } catch (e) {
+        throw MiniaudioPlayerException('Failed to load asset "$resolvedKey": $e');
+      }
+    } else {
+      final candidates = [
+        resolvedKey,
+        cleanKey,
+        'assets/$cleanKey',
+        'example/assets/$cleanKey',
+        'example/assets/music/$cleanKey',
+      ];
+      for (final candidate in candidates) {
+        final f = File(candidate);
+        if (f.existsSync()) {
+          bytes = await f.readAsBytes();
+          break;
+        }
+      }
+    }
+
+    if (bytes == null || bytes.isEmpty) {
+      throw MiniaudioPlayerException(
+        'Asset not found: "$resolvedKey". Configure MiniaudioPlayerGlobalConfig.assetLoader for Flutter assets.',
+        errorCode: MapResult.errorFileNotFound,
+      );
+    }
+
+    await openMemory(bytes, autoPlay: autoPlay);
+  }
+
+  /// Opens a remote audio URL (HTTP/HTTPS) or live stream with progressive streaming.
+  /// Accepts either a [Uri] or a [String].
+  Future<void> openUrl(
+    dynamic urlOrUri, {
+    Map<String, String>? headers,
+    bool isLive = false,
+    Duration bufferAhead = const Duration(seconds: 30),
+    bool autoPlay = false,
+  }) async {
+    _player.ensureNotDisposed();
+    _stopActiveStreamer();
+
+    final Uri uri;
+    if (urlOrUri is Uri) {
+      uri = urlOrUri;
+    } else if (urlOrUri is String) {
+      uri = Uri.parse(urlOrUri);
+    } else {
+      throw ArgumentError.value(urlOrUri, 'urlOrUri', 'Expected Uri or String');
+    }
+
+    final streamer = NetworkAudioStreamer(
+      _player,
+      uri: uri,
+      headers: headers,
+      isLive: isLive,
+      bufferAhead: bufferAhead,
+    );
+
+    _activeStreamer = streamer;
+    await streamer.start(autoPlay: autoPlay);
   }
 
   /// Starts or resumes audio playback.
@@ -106,6 +308,11 @@ class PlayerAction {
   Future<void> seek(Duration position) async {
     _player.ensureNotDisposed();
     _onOptimisticSeek(position);
+    if (_activeStreamer != null) {
+      await _activeStreamer!.seek(position);
+      _player.pollAndEmit(force: true);
+      return;
+    }
     final durationMs = native.miniaudio_player_get_duration_ms(_player.handle);
     var targetMs = position.inMilliseconds;
     if (targetMs < 0) targetMs = 0;

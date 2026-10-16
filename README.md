@@ -28,6 +28,11 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 
 ## ✨ Features at a Glance
 
+- 🌐 **Universal Polymorphic Audio Sources (`AudioSource`)**: Play audio seamlessly from local files (`AudioSource.file`), Flutter assets (`AudioSource.asset`), in-memory byte buffers (`AudioSource.memory`), remote HTTP/HTTPS URLs (`AudioSource.network`), or live internet streams (`AudioSource.liveStream`) with polymorphic `open(...)`.
+- 🌊 **Progressive HTTP/HTTPS Network Streaming**: Low-latency circular stream buffering in native C with non-blocking chunk decoding and support for arbitrary remote seeking via `Range: bytes=X-` headers.
+- 📻 **Continuous Live Audio Streams (Internet Radio / Icecast / Shoutcast)**: Boundless live stream playback with dynamic sliding jitter buffers to prevent dropouts and packet jitter.
+- ⚡ **Direct In-Memory Playback (RAM)**: Decodes and plays audio directly from memory byte buffers (`openMemory`) with zero temporary files, zero disk I/O, and instantaneous startup.
+- 📦 **Direct Flutter Asset Playback**: Zero-disk-copy asset loading via `MiniaudioPlayerGlobalConfig.assetLoader` directly streaming from RAM.
 - ⚡ **Strict Real-Time Determinism ($\mathcal{O}(1)$) & Zero Allocations**: Direct native C memory management guarantees **0 dynamic heap allocations in the real-time audio thread**, ensuring completely glitch-free audio playback even under intense UI activity or system load.
 - 🔀 **100% Pure FFI & Zero-Isolate Architecture**: Commands execute directly via FFI in sub-microseconds without message-passing latency or Dart VM isolate memory bloat. Automatic resource management via `NativeFinalizer` prevents native memory leaks.
 - 🛡️ **Hardware-Grade Output Limiter (True-Peak Soft-Knee)**: True-Peak brickwall limiter operating before DAC handoff. Mathematically transparent in the linear zone ($|x| \le 0.95$ FS) with **0.00000% THD** and **141.4 dB SNR**, smoothly compressing digital overshoots (+3.5 dBFS capped safely at 0.996 FS) to eliminate digital clipping.
@@ -42,7 +47,7 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 - 🔌 **Dynamic Audio Device Routing**: Real-time switching between audio output endpoints (speakers, wired headphones, Bluetooth A2DP/SCO) with automatic hotplug detection and seamless reconnection recovery across all supported platforms.
 - 🌐 **Background Playback & Standalone Isolate Support**: Fully compatible with background audio services (e.g. `audio_service`, `flutter_background_service`) and standalone Dart isolates thanks to a 100% pure FFI design.
 - 📦 **Extensive Audio Codec Support**: Built-in native decoding for MP3, WAV, FLAC, OGG, Opus, AAC, M4A (AAC & ALAC), AIFF, W64, and more without external system dependencies.
-- 🔄 **Dual State Paradigm**: Access synchronous instant state snapshots (`player.state.*`) or listen to reactive broadcast streams (`player.stream.*`).
+- 🔄 **Dual State Paradigm**: Access synchronous instant state snapshots (`player.state.*`) or listen to reactive broadcast streams (`player.stream.*`), including buffering status (`player.stream.buffering`).
 
 ---
 
@@ -176,7 +181,11 @@ For systems engineers, embedded developers, and performance specialists, `miniau
 | Audio Player Capability               |    Android [^1]    |   Windows [^2]   |       Linux       |    iOS    |   macOS   |
 | :------------------------------------ | :----------------: | :--------------: | :---------------: | :-------: | :-------: |
 | **Native Audio Backend**              | AAudio / OpenSL ES | WASAPI Pro Audio | PulseAudio / ALSA | CoreAudio | CoreAudio |
-| **Playback & Streaming**              |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Local File Playback**               |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Progressive Network Streaming**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Live Internet Radio (Icecast)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Direct In-Memory Playback (RAM)**   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Direct Zero-I/O Asset Playback**    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **10-Band Equalizer (ISO 266)**       |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **True-Peak Limiter (Soft-Knee)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 | **Binaural Crossfeed (Bauer bs2b)**   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
@@ -228,17 +237,30 @@ dart pub add miniaudio_player
 
 ## 💻 Usage Examples
 
-### 1. Basic Playback & Global Configuration
+### 1. Universal Audio Playback (Files, URLs, Streams, Assets & RAM)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/simple_player.png" alt="Basic Audio Playback Controls" width="480" />
 </p>
 
+`miniaudio_player` offers a flexible, polymorphic audio source architecture. You can pass raw strings, URIs, raw byte buffers (`Uint8List`), or strongly typed `AudioSource` objects to `player.action.open(...)`, or use explicit methods:
+
 ```dart
+import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() async {
-  // Optional: configure global defaults before instantiating players
+  // 1. Optional: Register global asset loader for zero-I/O Flutter asset playback
+  MiniaudioPlayerGlobalConfig.assetLoader = (key) async {
+    final byteData = await rootBundle.load(key);
+    return byteData.buffer.asUint8List(
+      byteData.offsetInBytes,
+      byteData.lengthInBytes,
+    );
+  };
+
+  // 2. Optional: Configure global defaults before instantiating players
   MiniaudioPlayer.config(
     defaultBufferSize: 0, // 0 = native device default
     logLevel: MiniaudioLogLevel.info,
@@ -246,14 +268,76 @@ void main() async {
 
   final player = MiniaudioPlayer();
 
-  // Open an audio file and start playback immediately
+  // ---------------------------------------------------------------------------
+  // A. Polymorphic open() - automatically resolves strings, URIs, assets, & bytes
+  // ---------------------------------------------------------------------------
+  // Local filesystem file:
   await player.action.open('/path/to/song.flac', autoPlay: true);
 
-  // Playback controls
+  // Flutter asset (loaded directly into RAM without temporary files):
+  await player.action.open('assets/music/track.mp3', autoPlay: true);
+
+  // Remote HTTP / HTTPS progressive stream:
+  await player.action.open('https://example.com/audio.mp3', autoPlay: true);
+
+  // In-memory byte buffer (zero disk I/O, instantaneous startup):
+  final Uint8List audioBytes = ...;
+  await player.action.open(audioBytes, autoPlay: true);
+
+  // ---------------------------------------------------------------------------
+  // B. Strongly Typed AudioSource instances
+  // ---------------------------------------------------------------------------
+  // Local file
+  await player.action.open(const AudioSource.file('/path/to/song.flac'));
+
+  // Flutter Asset
+  await player.action.open(const AudioSource.asset('assets/music/track.mp3'));
+
+  // In-Memory RAM buffer
+  await player.action.open(AudioSource.memory(audioBytes));
+
+  // Remote HTTP/HTTPS audio with custom headers and pre-buffering
+  await player.action.open(
+    AudioSource.network(
+      Uri.parse('https://example.com/audio.mp3'),
+      headers: {'Authorization': 'Bearer token'},
+      bufferAhead: const Duration(seconds: 30),
+    ),
+  );
+
+  // Live Internet Radio / Icecast / Shoutcast stream with sliding jitter buffer
+  await player.action.open(
+    AudioSource.liveStream(
+      Uri.parse('https://icecast.radiofrance.fr/fip-midfi.mp3'),
+      jitterBuffer: const Duration(seconds: 5),
+    ),
+    autoPlay: true,
+  );
+
+  // ---------------------------------------------------------------------------
+  // C. Dedicated Granular Methods
+  // ---------------------------------------------------------------------------
+  await player.action.openFile('/path/to/song.flac');
+  await player.action.openAsset('assets/music/track.mp3');
+  await player.action.openMemory(audioBytes);
+  await player.action.openUrl(
+    'https://example.com/stream',
+    isLive: true,
+    headers: {'User-Agent': 'MiniaudioPlayer/3.0'},
+  );
+
+  // ---------------------------------------------------------------------------
+  // D. Playback Controls & Telemetry
+  // ---------------------------------------------------------------------------
   await player.action.pause();
   await player.action.play();
-  await player.action.seek(const Duration(seconds: 45));
+  await player.action.seek(const Duration(seconds: 45)); // Byte-range seek supported over HTTP!
   await player.action.setVolume(0.85);
+
+  // Observe real-time buffering state:
+  player.stream.buffering.listen((isBuffering) {
+    print('Buffering: $isBuffering');
+  });
 
   // Clean up resources when finished (also safely garbage collected via NativeFinalizer)
   await player.dispose();
@@ -528,6 +612,7 @@ DropdownButton<AudioDevice>(
 ```dart
 // Synchronous snapshot access:
 print('Is Playing: ${player.state.playing}');
+print('Is Buffering: ${player.state.buffering}');
 print('Current Position: ${player.state.position}');
 print('Track Duration: ${player.state.duration}');
 print('Bitrate: ${player.state.audioBitrate} kbps');
@@ -538,6 +623,7 @@ print('Reverb: ${player.state.reverb}');
 // Reactive broadcast streams:
 player.stream.position.listen((pos) => print('Position: $pos'));
 player.stream.playing.listen((playing) => print('Playing: $playing'));
+player.stream.buffering.listen((buf) => print('Buffering: $buf'));
 player.stream.completed.listen((done) => print('Playback finished!'));
 player.stream.equalizer.listen((eq) => print('Equalizer updated: $eq'));
 player.stream.reverb.listen((reverb) => print('Reverb updated: $reverb'));

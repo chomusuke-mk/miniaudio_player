@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -61,8 +62,14 @@ enum MiniaudioLogLevel {
 /// Resolves the user-facing display name for the system default audio device.
 typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
 
+/// Optional resolver for loading Flutter bundle assets.
+typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
+
 /// Global configuration container for [MiniaudioPlayer].
 class MiniaudioPlayerGlobalConfig {
+  /// Optional global loader for resolving Flutter assets (e.g. `(key) => (await rootBundle.load(key)).buffer.asUint8List()`).
+  static AssetBytesLoader? assetLoader;
+
   /// Default period buffer size in frames applied when instantiating new players
   /// (0 = miniaudio device native default).
   int defaultBufferSize;
@@ -1275,6 +1282,7 @@ class MiniaudioPlayer implements Finalizable {
     if (_isDisposed) return;
     _isDisposed = true;
 
+    action.dispose();
     _finalizer.detach(this);
     _stopPositionTimer();
     _completedCallable.close();

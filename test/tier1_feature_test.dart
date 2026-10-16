@@ -465,6 +465,56 @@ void main() {
       await player.action.setRate(0.5);
       expect(player.state.rate, equals(0.5));
     });
+
+    test('6.6: position advances at 2x rate when playback speed is 2.0', () async {
+      await player.action.open(testWavFile.path);
+      await player.action.setRate(2.0);
+      await player.action.play();
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      player.pollAndEmit(force: true);
+
+      final posAt2x = player.state.position.inMilliseconds;
+      expect(posAt2x, greaterThanOrEqualTo(750));
+      expect(posAt2x, lessThanOrEqualTo(1400));
+      await player.action.stop();
+    });
+
+    test('6.7: position advances at 0.5x rate when playback speed is 0.5', () async {
+      await player.action.open(testWavFile.path);
+      await player.action.setRate(0.5);
+      await player.action.play();
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      player.pollAndEmit(force: true);
+
+      final posAtHalf = player.state.position.inMilliseconds;
+      expect(posAtHalf, greaterThanOrEqualTo(150));
+      expect(posAtHalf, lessThanOrEqualTo(400));
+      await player.action.stop();
+    });
+
+    test('6.8: changing rate dynamically mid-playback transitions position speed smoothly', () async {
+      await player.action.open(testWavFile.path);
+      await player.action.play();
+
+      // Play 300ms at 1.0x
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      player.pollAndEmit(force: true);
+      final pos1 = player.state.position.inMilliseconds;
+      expect(pos1, greaterThanOrEqualTo(150));
+
+      // Switch to 2.0x speed
+      await player.action.setRate(2.0);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      player.pollAndEmit(force: true);
+      final pos2 = player.state.position.inMilliseconds;
+      final delta = pos2 - pos1;
+      // In 300ms at 2x, delta should be around 600ms (at least 450ms)
+      expect(delta, greaterThanOrEqualTo(450));
+
+      await player.action.stop();
+    });
   });
 
   // =========================================================================

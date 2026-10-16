@@ -6,10 +6,17 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:path_provider/path_provider.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Register global Flutter asset loader for direct in-memory asset decoding (0 disk I/O)
+  MiniaudioPlayerGlobalConfig.assetLoader = (key) async {
+    final byteData = await rootBundle.load(key);
+    return byteData.buffer.asUint8List(
+      byteData.offsetInBytes,
+      byteData.lengthInBytes,
+    );
+  };
   MiniaudioPlayer.config(
     defaultBufferSize: 0,
     logLevel: MiniaudioLogLevel.verbose,
@@ -21,17 +28,45 @@ void main() {
 class AudioTrack {
   final String id;
   final String title;
-  final String? assetPath;
-  final String? filePath;
+  final AudioSource source;
   final bool isGenerated;
 
   const AudioTrack({
     required this.id,
     required this.title,
-    this.assetPath,
-    this.filePath,
+    required this.source,
     this.isGenerated = false,
   });
+
+  bool get isLive => source is LiveStreamAudioSource;
+
+  String get displayType {
+    if (isGenerated) return 'Sintetizado (RAM)';
+    if (source is AssetAudioSource) return 'Asset';
+    if (source is MemoryAudioSource) return 'Memoria RAM';
+    if (source is LiveStreamAudioSource) return 'Live Stream';
+    if (source is NetworkAudioSource) return 'URL / Red';
+    if (source is FileAudioSource) return 'Archivo';
+    return 'Audio';
+  }
+
+  IconData get icon {
+    if (isGenerated) return Icons.graphic_eq;
+    if (source is LiveStreamAudioSource) return Icons.radio;
+    if (source is NetworkAudioSource) return Icons.cloud_outlined;
+    if (source is MemoryAudioSource) return Icons.memory;
+    if (source is AssetAudioSource) return Icons.audiotrack;
+    return Icons.insert_drive_file_outlined;
+  }
+
+  Color get iconColor {
+    if (isGenerated) return Colors.amberAccent;
+    if (source is LiveStreamAudioSource) return Colors.redAccent;
+    if (source is NetworkAudioSource) return Colors.lightBlueAccent;
+    if (source is MemoryAudioSource) return Colors.purpleAccent;
+    if (source is AssetAudioSource) return Colors.tealAccent;
+    return Colors.greenAccent;
+  }
 
   @override
   bool operator ==(Object other) =>
@@ -112,6 +147,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _runAnalysis() async {
     final path = _samplePath;
     if (path == null || path.isEmpty) return;
+    final file = File(path);
+    if (!file.existsSync()) {
+      if (mounted) {
+        setState(() {
+          _analysisResult = null;
+          _isAnalyzing = false;
+        });
+      }
+      return;
+    }
     if (mounted) {
       setState(() {
         _isAnalyzing = true;
@@ -210,6 +255,52 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  Uint8List _generateSineWaveBytes() {
+    const sampleRate = 44100;
+    const durationSeconds = 10;
+    const numSamples = sampleRate * durationSeconds;
+    const dataSize = numSamples * 2;
+    final byteData = ByteData(44 + dataSize);
+
+    byteData.setUint8(0, 0x52); // R
+    byteData.setUint8(1, 0x49); // I
+    byteData.setUint8(2, 0x46); // F
+    byteData.setUint8(3, 0x46); // F
+    byteData.setUint32(4, 36 + dataSize, Endian.little);
+    byteData.setUint8(8, 0x57); // W
+    byteData.setUint8(9, 0x41); // A
+    byteData.setUint8(10, 0x56); // V
+    byteData.setUint8(11, 0x45); // E
+    byteData.setUint8(12, 0x66); // f
+    byteData.setUint8(13, 0x6D); // m
+    byteData.setUint8(14, 0x74); // t
+    byteData.setUint8(15, 0x20); // ' '
+    byteData.setUint32(16, 16, Endian.little);
+    byteData.setUint16(20, 1, Endian.little);
+    byteData.setUint16(22, 1, Endian.little);
+    byteData.setUint32(24, sampleRate, Endian.little);
+    byteData.setUint32(28, sampleRate * 2, Endian.little);
+    byteData.setUint16(32, 2, Endian.little);
+    byteData.setUint16(34, 16, Endian.little);
+    byteData.setUint8(36, 0x64); // d
+    byteData.setUint8(37, 0x61); // a
+    byteData.setUint8(38, 0x74); // t
+    byteData.setUint8(39, 0x61); // a
+    byteData.setUint32(40, dataSize, Endian.little);
+
+    for (int i = 0; i < numSamples; i++) {
+      final t = i / sampleRate;
+      final sampleVal = (sin(2 * pi * 440.0 * t) * 32767 * 0.7).toInt();
+      byteData.setInt16(
+        44 + i * 2,
+        sampleVal.clamp(-32768, 32767),
+        Endian.little,
+      );
+    }
+
+    return byteData.buffer.asUint8List();
+  }
+
   Future<void> _prepareAudioTracks() async {
     final List<AudioTrack> tracks = [];
     final Set<String> seenFilenames = {};
@@ -217,21 +308,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     void addTrack({
       required String id,
       required String title,
-      String? assetPath,
-      String? filePath,
+      required AudioSource source,
       bool isGenerated = false,
     }) {
-      final filename = (assetPath ?? filePath ?? id)
-          .split(RegExp(r'[/\\]'))
-          .last;
-      if (seenFilenames.contains(filename)) return;
-      seenFilenames.add(filename);
+      final key = title.toLowerCase();
+      if (seenFilenames.contains(key)) return;
+      seenFilenames.add(key);
       tracks.add(
         AudioTrack(
           id: id,
           title: title,
-          assetPath: assetPath,
-          filePath: filePath,
+          source: source,
           isGenerated: isGenerated,
         ),
       );
@@ -244,7 +331,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       for (final asset in assets) {
         if (asset.startsWith('assets/music/') && _isAudioFile(asset)) {
           final filename = asset.substring('assets/music/'.length);
-          addTrack(id: asset, title: filename, assetPath: asset);
+          addTrack(
+            id: asset,
+            title: filename,
+            source: AudioSource.asset(asset),
+          );
         }
       }
     } catch (e) {
@@ -264,45 +355,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
             addTrack(
               id: entity.path,
               title: filename,
-              filePath: entity.path,
-              assetPath: 'assets/music/$filename',
+              source: AudioSource.file(entity.path),
             );
           }
         }
       }
     }
 
-    // Fallback: If no assets found, use the autogenerated sine wave as fallback
-    if (tracks.isEmpty) {
-      tracks.add(
-        const AudioTrack(
-          id: 'fallback_generated',
-          title: 'Fallback Autogenerado (440Hz Sine)',
-          isGenerated: true,
-        ),
-      );
-    } else {
-      // Also provide the option to switch to the generated test tone
-      tracks.add(
-        const AudioTrack(
-          id: 'test_tone_generated',
-          title: 'Tono autogenerado (440Hz Sine)',
-          isGenerated: true,
-        ),
-      );
-    }
+    // 3. Pre-load remote network streams & in-memory synth demo tracks
+    addTrack(
+      id: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+      title: 'SoundHelix Song 1 (Remote MP3)',
+      source: AudioSource.network(
+        Uri.parse('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'),
+      ),
+    );
+
+    addTrack(
+      id: 'https://icecast.radiofrance.fr/fip-midfi.mp3',
+      title: 'Radio FIP (Icecast Live Stream)',
+      source: AudioSource.liveStream(
+        Uri.parse('https://icecast.radiofrance.fr/fip-midfi.mp3'),
+      ),
+    );
+
+    addTrack(
+      id: 'memory_synth_tone_440',
+      title: 'Tono 440Hz Sintetizado (RAM / openMemory)',
+      source: AudioSource.memory(_generateSineWaveBytes()),
+      isGenerated: true,
+    );
 
     _availableTracks = tracks;
     final initialTrack = tracks.first;
     _selectedTrack = initialTrack;
 
     try {
-      final path = await _resolveTrackPath(initialTrack);
-      _samplePath = path;
-      if (path.isNotEmpty) {
-        await _player.action.open(path);
-        _runAnalysis();
-      }
+      await _player.action.open(initialTrack.source);
+      _updateAnalysisPathForTrack(initialTrack);
     } catch (e, st) {
       debugPrint('Initial track open note: $e\n$st');
     } finally {
@@ -314,120 +404,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  Future<Directory> _getTempDirectory() async {
-    try {
-      return await getTemporaryDirectory();
-    } catch (_) {
-      return Directory.systemTemp;
-    }
-  }
-
-  Future<String> _resolveTrackPath(AudioTrack track) async {
-    if (track.isGenerated) {
-      return _generateFallbackAudio();
-    }
-
-    // 1. If explicit file path is provided and exists on disk
-    if (track.filePath != null && File(track.filePath!).existsSync()) {
-      return track.filePath!;
-    }
-
-    // 2. If asset path is provided, try extracting from Flutter rootBundle
-    if (track.assetPath != null) {
-      try {
-        final byteData = await rootBundle.load(track.assetPath!);
-        final tempDir = await _getTempDirectory();
-        final fileName = track.assetPath!.split(RegExp(r'[/\\]')).last;
-        final tempFile = File('${tempDir.path}/$fileName');
-        if (!tempFile.existsSync() ||
-            tempFile.lengthSync() != byteData.lengthInBytes) {
-          await tempFile.writeAsBytes(
-            byteData.buffer.asUint8List(
-              byteData.offsetInBytes,
-              byteData.lengthInBytes,
-            ),
-            flush: true,
-          );
+  void _updateAnalysisPathForTrack(AudioTrack track) {
+    String? localPath;
+    if (track.source is FileAudioSource) {
+      localPath = (track.source as FileAudioSource).filePath;
+    } else if (track.source is AssetAudioSource) {
+      final key = (track.source as AssetAudioSource).assetKey;
+      final clean = key.replaceFirst(RegExp(r'^assets/'), '');
+      final candidates = [
+        key,
+        'assets/$clean',
+        'example/assets/$clean',
+        'assets/music/$clean',
+        'example/assets/music/$clean',
+      ];
+      for (final c in candidates) {
+        if (File(c).existsSync()) {
+          localPath = c;
+          break;
         }
-        return tempFile.path;
-      } catch (e) {
-        debugPrint('Asset extraction error (${track.assetPath}): $e');
-        // Fall through to filesystem checks
       }
     }
 
-    // 3. Check filesystem locations
-    final filename = (track.assetPath ?? track.id).split(RegExp(r'[/\\]')).last;
-    final possiblePaths = [
-      'assets/music/$filename',
-      'example/assets/music/$filename',
-    ];
-    for (final path in possiblePaths) {
-      final file = File(path);
-      if (file.existsSync()) {
-        return file.path;
+    _samplePath = localPath ?? track.id;
+    if (localPath != null) {
+      _runAnalysis();
+    } else {
+      if (mounted) {
+        setState(() {
+          _analysisResult = null;
+        });
       }
-    }
-
-    // 4. Ultimate fallback: generate audio
-    return _generateFallbackAudio();
-  }
-
-  Future<String> _generateFallbackAudio() async {
-    try {
-      final tempDir = await _getTempDirectory();
-      final file = File('${tempDir.path}/miniaudio_demo_440hz_generated.wav');
-
-      if (!file.existsSync()) {
-        const sampleRate = 44100;
-        const durationSeconds = 10;
-        const numSamples = sampleRate * durationSeconds;
-        const dataSize = numSamples * 2;
-        final byteData = ByteData(44 + dataSize);
-
-        byteData.setUint8(0, 0x52); // R
-        byteData.setUint8(1, 0x49); // I
-        byteData.setUint8(2, 0x46); // F
-        byteData.setUint8(3, 0x46); // F
-        byteData.setUint32(4, 36 + dataSize, Endian.little);
-        byteData.setUint8(8, 0x57); // W
-        byteData.setUint8(9, 0x41); // A
-        byteData.setUint8(10, 0x56); // V
-        byteData.setUint8(11, 0x45); // E
-        byteData.setUint8(12, 0x66); // f
-        byteData.setUint8(13, 0x6D); // m
-        byteData.setUint8(14, 0x74); // t
-        byteData.setUint8(15, 0x20); // ' '
-        byteData.setUint32(16, 16, Endian.little);
-        byteData.setUint16(20, 1, Endian.little);
-        byteData.setUint16(22, 1, Endian.little);
-        byteData.setUint32(24, sampleRate, Endian.little);
-        byteData.setUint32(28, sampleRate * 2, Endian.little);
-        byteData.setUint16(32, 2, Endian.little);
-        byteData.setUint16(34, 16, Endian.little);
-        byteData.setUint8(36, 0x64); // d
-        byteData.setUint8(37, 0x61); // a
-        byteData.setUint8(38, 0x74); // t
-        byteData.setUint8(39, 0x61); // a
-        byteData.setUint32(40, dataSize, Endian.little);
-
-        for (int i = 0; i < numSamples; i++) {
-          final t = i / sampleRate;
-          final sampleVal = (sin(2 * pi * 440.0 * t) * 32767 * 0.7).toInt();
-          byteData.setInt16(
-            44 + i * 2,
-            sampleVal.clamp(-32768, 32767),
-            Endian.little,
-          );
-        }
-
-        await file.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
-      }
-
-      return file.path;
-    } catch (e) {
-      debugPrint('Error generating fallback audio: $e');
-      return '';
     }
   }
 
@@ -440,16 +447,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       final wasPlaying = _player.state.playing;
       await _player.action.stop();
-      final path = await _resolveTrackPath(track);
-      _samplePath = path;
       _analysisResult = null;
-      await _player.action.open(path);
-      _runAnalysis();
-      if (wasPlaying) {
-        await _player.action.play();
+      await _player.action.open(track.source, autoPlay: wasPlaying);
+      _updateAnalysisPathForTrack(track);
+    } catch (e, st) {
+      debugPrint('Error switching track: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al reproducir pista: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
-    } catch (e) {
-      debugPrint('Error switching track: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -457,6 +467,190 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
     }
+  }
+
+  void _showAddSourceDialog() {
+    final uriController = TextEditingController();
+    final titleController = TextEditingController();
+    bool isLive = false;
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.add_link, color: Colors.deepPurpleAccent),
+                  SizedBox(width: 8),
+                  Text('Añadir Fuente de Audio'),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Introduce una URL (HTTP/HTTPS), URI (file://, asset://), ruta de archivo local, o link de streaming de audio en vivo:',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: uriController,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        labelText: 'URL / URI / Ruta de archivo',
+                        hintText: 'https://... o /path/to/song.mp3',
+                        prefixIcon: const Icon(Icons.link),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () {
+                            uriController.clear();
+                            setDialogState(() {});
+                          },
+                        ),
+                      ),
+                      onChanged: (val) {
+                        final lower = val.toLowerCase();
+                        if (lower.contains('icecast') ||
+                            lower.contains('radio') ||
+                            lower.contains('stream') ||
+                            lower.endsWith('.m3u') ||
+                            lower.endsWith('.pls')) {
+                          if (!isLive) {
+                            setDialogState(() => isLive = true);
+                          }
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: titleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Título personalizado (opcional)',
+                        hintText: 'Ej. Mi Radio / Archivo...',
+                        prefixIcon: Icon(Icons.title),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Transmisión en vivo (Live Stream / Radio)',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      subtitle: const Text(
+                        'Streaming continuo sin duración fija (Icecast / Shoutcast)',
+                        style: TextStyle(fontSize: 11, color: Colors.white54),
+                      ),
+                      value: isLive,
+                      onChanged: (val) {
+                        setDialogState(() => isLive = val);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Ejemplos rápidos:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.deepPurpleAccent,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        ActionChip(
+                          avatar: const Icon(Icons.radio, size: 14, color: Colors.redAccent),
+                          label: const Text('Radio FIP (Icecast)', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            uriController.text = 'https://icecast.radiofrance.fr/fip-midfi.mp3';
+                            titleController.text = 'Radio FIP (Icecast Live)';
+                            setDialogState(() => isLive = true);
+                          },
+                        ),
+                        ActionChip(
+                          avatar: const Icon(Icons.cloud_download, size: 14, color: Colors.lightBlueAccent),
+                          label: const Text('SoundHelix MP3', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            uriController.text = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+                            titleController.text = 'SoundHelix Song 1 (Remote)';
+                            setDialogState(() => isLive = false);
+                          },
+                        ),
+                        ActionChip(
+                          avatar: const Icon(Icons.graphic_eq, size: 14, color: Colors.purpleAccent),
+                          label: const Text('Radio Swiss Jazz', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            uriController.text = 'http://stream.srg-ssr.ch/m/rsj/mp3_128';
+                            titleController.text = 'Radio Swiss Jazz (Live)';
+                            setDialogState(() => isLive = true);
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Añadir y Reproducir'),
+                  onPressed: () {
+                    final rawInput = uriController.text.trim();
+                    if (rawInput.isEmpty) return;
+
+                    final userTitle = titleController.text.trim();
+                    final title = userTitle.isNotEmpty
+                        ? userTitle
+                        : (rawInput.contains('/')
+                            ? rawInput.split('/').last.split('?').first
+                            : rawInput);
+
+                    final AudioSource source;
+                    if (isLive) {
+                      source = AudioSource.liveStream(Uri.parse(rawInput));
+                    } else if (rawInput.startsWith('http://') || rawInput.startsWith('https://')) {
+                      source = AudioSource.network(Uri.parse(rawInput));
+                    } else if (rawInput.startsWith('asset://') || rawInput.startsWith('assets/')) {
+                      final clean = rawInput.replaceFirst(RegExp(r'^asset(s)?://'), 'assets/');
+                      source = AudioSource.asset(clean);
+                    } else if (rawInput.startsWith('file://')) {
+                      source = AudioSource.file(Uri.parse(rawInput).toFilePath());
+                    } else {
+                      source = AudioSource.file(rawInput);
+                    }
+
+                    final newTrack = AudioTrack(
+                      id: rawInput,
+                      title: title.isEmpty ? rawInput : title,
+                      source: source,
+                    );
+
+                    Navigator.of(dialogCtx).pop();
+
+                    setState(() {
+                      _availableTracks.insert(0, newTrack);
+                    });
+                    _selectTrack(newTrack);
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -524,7 +718,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     initialValue: _selectedTrack,
                     isExpanded: true,
                     decoration: const InputDecoration(
-                      labelText: 'Pista de audio (Assets)',
+                      labelText: 'Pistas y Fuentes de Audio (Assets / Web / RAM)',
                       border: OutlineInputBorder(),
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 12,
@@ -533,25 +727,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       prefixIcon: Icon(Icons.library_music),
                     ),
                     items: _availableTracks.map((track) {
-                      final isFallback = track.isGenerated;
                       return DropdownMenuItem<AudioTrack>(
                         value: track,
                         child: Row(
                           children: [
                             Icon(
-                              isFallback
-                                  ? Icons.graphic_eq
-                                  : Icons.audiotrack,
+                              track.icon,
                               size: 18,
-                              color: isFallback
-                                  ? Colors.amberAccent
-                                  : Colors.tealAccent,
+                              color: track.iconColor,
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 track.title,
                                 overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: track.iconColor.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(
+                                  color: track.iconColor.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: Text(
+                                track.displayType,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: track.iconColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ],
@@ -567,8 +778,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           },
                   ),
                 ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.add),
+                  tooltip: 'Añadir URL, URI o archivo',
+                  onPressed: _showAddSourceDialog,
+                ),
                 if (_isLoadingTrack) ...[
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   const SizedBox(
                     width: 20,
                     height: 20,
@@ -585,7 +802,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               runSpacing: 4,
               children: [
                 Text(
-                  'Archivo: ${_samplePath?.split(RegExp(r"[/\\]")).last ?? ''}',
+                  'Fuente: ${_selectedTrack?.displayType ?? ""} • ${_samplePath?.split(RegExp(r"[/\\]")).last ?? ""}',
                   style: Theme.of(context).textTheme.bodySmall,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -604,6 +821,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       label: Text(
                         '$kbps kbps',
                         style: const TextStyle(fontSize: 10),
+                      ),
+                    );
+                  },
+                ),
+                StreamBuilder<bool>(
+                  stream: _player.stream.buffering,
+                  initialData: _player.state.buffering,
+                  builder: (context, snapshot) {
+                    final isBuffering = snapshot.data ?? false;
+                    if (!isBuffering) return const SizedBox.shrink();
+                    return const Chip(
+                      labelPadding: EdgeInsets.symmetric(horizontal: 4),
+                      visualDensity: VisualDensity.compact,
+                      avatar: SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.orangeAccent,
+                        ),
+                      ),
+                      label: Text(
+                        'BUFFERING...',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.orangeAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     );
                   },
@@ -633,6 +878,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               builder: (context, posSnapshot) {
                 final pos = posSnapshot.data ?? Duration.zero;
                 final dur = _player.state.duration;
+                final isLive = _selectedTrack?.isLive ?? (dur == Duration.zero && _player.state.playing);
                 final maxMs = dur.inMilliseconds > 0
                     ? dur.inMilliseconds.toDouble()
                     : 1.0;
@@ -644,20 +890,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 return Column(
                   children: [
                     Slider(
-                      value: (_dragPositionMs ?? currentMs).clamp(0.0, maxMs),
-                      max: maxMs,
-                      onChangeStart: (val) {
-                        setState(() => _dragPositionMs = val);
-                      },
-                      onChanged: (val) {
-                        setState(() => _dragPositionMs = val);
-                      },
-                      onChangeEnd: (val) {
-                        _player.action.seek(
-                          Duration(milliseconds: val.toInt()),
-                        );
-                        setState(() => _dragPositionMs = null);
-                      },
+                      value: isLive
+                          ? 0.0
+                          : (_dragPositionMs ?? currentMs).clamp(0.0, maxMs),
+                      max: isLive ? 1.0 : maxMs,
+                      onChangeStart: isLive
+                          ? null
+                          : (val) {
+                              setState(() => _dragPositionMs = val);
+                            },
+                      onChanged: isLive
+                          ? null
+                          : (val) {
+                              setState(() => _dragPositionMs = val);
+                            },
+                      onChangeEnd: isLive
+                          ? null
+                          : (val) {
+                              _player.action.seek(
+                                Duration(milliseconds: val.toInt()),
+                              );
+                              setState(() => _dragPositionMs = null);
+                            },
                     ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -674,12 +928,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        Flexible(
-                          child: Text(
-                            _formatDuration(dur),
-                            overflow: TextOverflow.ellipsis,
+                        if (isLive)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.redAccent),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.circle, color: Colors.redAccent, size: 8),
+                                SizedBox(width: 4),
+                                Text(
+                                  'LIVE STREAM',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.redAccent,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        else
+                          Flexible(
+                            child: Text(
+                              _formatDuration(dur),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ],

@@ -207,6 +207,44 @@ external int miniaudio_player_open_file(
   ffi.Pointer<ffi.Char> file_path,
 );
 
+/// @brief Opens and prepares an audio source directly from an in-memory byte buffer.
+/// @param player Player instance handle.
+/// @param data Pointer to encoded audio bytes in memory.
+/// @param size Size of the byte buffer in bytes.
+/// @param take_ownership 1 if native engine should free(data) on close, 0 if caller retains ownership.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Void>,
+        ffi.Size, ffi.Int32)>()
+external int miniaudio_player_open_memory(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<ffi.Void> data,
+  int size,
+  int take_ownership,
+);
+
+/// @brief Opens and prepares a streaming audio source fed chunk-by-chunk.
+/// @param player Player instance handle.
+/// @param initial_data Pointer to initial pre-buffered encoded audio chunk.
+/// @param initial_data_size Size of the initial chunk in bytes.
+/// @param total_size Total file size in bytes (-1 if unknown / live stream).
+/// @param is_live 1 for continuous live stream, 0 for finite remote file.
+/// @param buffer_capacity_bytes Capacity of the internal ring buffer in bytes (e.g. 2MB - 4MB).
+/// @param encoding_format Encoding format hint (0 for auto-sniffing).
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Uint8>,
+        ffi.Size, ffi.Int64, ffi.Int32, ffi.Uint32, ffi.Int32)>()
+external int miniaudio_player_open_stream(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<ffi.Uint8> initial_data,
+  int initial_data_size,
+  int total_size,
+  int is_live,
+  int buffer_capacity_bytes,
+  int encoding_format,
+);
+
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
 external int miniaudio_player_pause(
   ffi.Pointer<miniaudio_player_t> player,
@@ -396,6 +434,50 @@ external int miniaudio_player_set_volume(
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
 external int miniaudio_player_stop(
   ffi.Pointer<miniaudio_player_t> player,
+);
+
+/// @brief Signals that the stream has reached EOF (no more bytes will be fed).
+/// @param player Player instance handle.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
+external int miniaudio_player_stream_end(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
+/// @brief Feeds encoded audio chunks into an active stream data source.
+/// @param player Player instance handle.
+/// @param data Pointer to encoded audio chunk.
+/// @param size Number of bytes in chunk.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Uint8>, ffi.Size)>()
+external int miniaudio_player_stream_feed(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<ffi.Uint8> data,
+  int size,
+);
+
+/// @brief Flushes the stream buffer (used on remote seek).
+/// @param player Player instance handle.
+/// @param new_stream_offset New byte offset in the remote file.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int64)>()
+external int miniaudio_player_stream_flush(
+  ffi.Pointer<miniaudio_player_t> player,
+  int new_stream_offset,
+);
+
+/// @brief Queries status of the streaming buffer.
+/// @param player Player instance handle.
+/// @param out_status Output pointer for stream status.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_stream_status_t>)>()
+external int miniaudio_player_stream_get_status(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<miniaudio_stream_status_t> out_status,
 );
 
 /// ========================================================================= */
@@ -1022,6 +1104,40 @@ final class miniaudio_replay_gain_data_t extends ffi.Struct {
         ..ref.peak = peak
         ..ref.lufs = lufs;
 }
+
+final class miniaudio_stream_status extends ffi.Struct {
+  @ffi.Size()
+  external int buffer_capacity;
+
+  @ffi.Size()
+  external int buffer_fill;
+
+  @ffi.Float()
+  external double fill_percentage;
+
+  @ffi.Int32()
+  external int is_buffering;
+
+  @ffi.Int32()
+  external int is_eof;
+
+  static ffi.Pointer<miniaudio_stream_status> $allocate(
+    ffi.Allocator $allocator, {
+    required int buffer_capacity,
+    required int buffer_fill,
+    required double fill_percentage,
+    required int is_buffering,
+    required int is_eof,
+  }) =>
+      $allocator<miniaudio_stream_status>()
+        ..ref.buffer_capacity = buffer_capacity
+        ..ref.buffer_fill = buffer_fill
+        ..ref.fill_percentage = fill_percentage
+        ..ref.is_buffering = is_buffering
+        ..ref.is_eof = is_eof;
+}
+
+typedef miniaudio_stream_status_t = miniaudio_stream_status;
 
 final class miniaudio_waveform_data_t extends ffi.Struct {
   /// < Number of points in the array

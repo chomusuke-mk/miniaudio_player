@@ -375,4 +375,7 @@ static MA_INLINE float map_clamp_gain_db(float gainDB)
     return gainDB;
 }
 
+/* Resets the underlying decoding backend and converter for streaming byte-range seeks */
+ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset, ma_uint64 targetFrame);
+
 #endif /* MAP_COMMON_H */

@@ -12,6 +12,25 @@
 #include "map_common.h"
 #include "map_silence.h"
 
+typedef struct map_stream_buffer
+{
+    uint8_t *ring_buffer;
+    size_t capacity;
+    size_t read_pos;
+    size_t write_pos;
+    size_t fill_count;
+    int64_t total_size;       /* -1 if unknown / live stream */
+    ma_bool32 is_live;        /* 1 if live stream, 0 if finite remote file */
+    ma_bool32 is_eof;         /* 1 when stream has finished sending bytes */
+    ma_bool32 should_abort;   /* 1 if stream is aborted (flush / seek / teardown) */
+    ma_bool32 is_probing;     /* 1 during initial format probing (permits rewind to 0) */
+    size_t initial_bytes;     /* bytes provided during probing */
+    ma_mutex lock;
+    ma_event data_ready_event;
+    int64_t stream_offset;    /* Current byte offset within the total file */
+    ma_bool32 is_initialized;
+} map_stream_buffer_t;
+
 typedef struct
 {
     ma_data_source_base base;
@@ -32,6 +51,15 @@ typedef struct
     ma_uint32 rawBufferReadPos;  /* in frames */
     map_silence_detector silence;
 
+    /* Memory backing */
+    const void *memory_buffer;
+    size_t memory_size;
+    ma_bool32 owns_memory;
+
+    /* Stream backing */
+    map_stream_buffer_t stream_buffer;
+    ma_bool32 is_stream;
+
     /* Decoupled Asynchronous Decoder Worker & Lock-Free SPSC Ring Buffer (NP3-01) */
     ma_pcm_rb rb;
     ma_thread worker_thread;
@@ -43,6 +71,7 @@ typedef struct
     MA_ATOMIC(4, ma_uint32) decoder_eof;
     ma_uint64 totalFrames;
     ma_uint64 readCursorFrames;
+    double read_cursor_fraction;
     MA_ATOMIC(4, ma_uint32) underrun_count;
 } map_time_stretch_ds;
 
@@ -51,6 +80,43 @@ ma_result map_time_stretch_ds_init(
     const char *file_path,
     ma_uint32 targetChannels,
     ma_uint32 targetSampleRate);
+
+ma_result map_time_stretch_ds_init_memory(
+    map_time_stretch_ds *pDS,
+    const void *pData,
+    size_t dataSize,
+    ma_bool32 ownsMemory,
+    ma_uint32 targetChannels,
+    ma_uint32 targetSampleRate);
+
+ma_result map_time_stretch_ds_init_stream(
+    map_time_stretch_ds *pDS,
+    const uint8_t *initialData,
+    size_t initialDataSize,
+    int64_t totalSize,
+    ma_bool32 isLive,
+    size_t bufferCapacity,
+    int32_t encodingFormat,
+    ma_uint32 targetChannels,
+    ma_uint32 targetSampleRate);
+
+ma_result map_time_stretch_ds_stream_feed(
+    map_time_stretch_ds *pDS,
+    const uint8_t *data,
+    size_t size);
+
+ma_result map_time_stretch_ds_stream_flush(
+    map_time_stretch_ds *pDS,
+    int64_t newStreamOffset);
+
+ma_result map_time_stretch_ds_stream_end(
+    map_time_stretch_ds *pDS);
+
+void map_stream_buffer_abort(
+    map_stream_buffer_t *sb);
+
+void map_stream_buffer_uninit(
+    map_stream_buffer_t *sb);
 
 void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS);
 
