@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -16,6 +17,7 @@ import 'miniaudio_player.dart';
 import 'player_exception.dart';
 import 'silence_skip_config.dart';
 import 'dsp_config.dart';
+import 'track_metadata.dart';
 import '../reverb.dart';
 import '../network/network_audio_streamer.dart';
 
@@ -47,72 +49,123 @@ class PlayerAction {
   /// - A [String] path or URI (`file://...`, `asset://...`, `assets/...`, `http://...`, `https://...`, or standard file path).
   /// - A [Uri] object.
   /// - A [Uint8List] containing raw audio file bytes in memory.
-  ///
-  /// If [autoPlay] is `true`, playback starts immediately upon opening.
-  Future<void> open(dynamic source, {bool autoPlay = false}) async {
+  /// - A [FileSystemEntity] (e.g. [File]).
+  Future<void> open(
+    dynamic source, {
+    Map<String, String>? headers,
+    bool isLive = false,
+    Duration? bufferAhead,
+    Duration? bufferBehind,
+    Duration? bufferLocalDuration,
+    Duration? bufferNetworkDuration,
+    Duration? bufferLiveStreamDuration,
+    int? bufferLocalInSeconds,
+    int? bufferNetworkInSeconds,
+    int? bufferStreamsInSeconds,
+  }) async {
     _player.ensureNotDisposed();
+
+    final effectiveAhead = bufferAhead;
+    final effectiveBehind = bufferBehind;
 
     if (source is AudioSource) {
       switch (source) {
         case FileAudioSource s:
-          return openFile(s.filePath, autoPlay: autoPlay);
+          return openFile(s.filePath);
         case AssetAudioSource s:
-          return openAsset(s.assetKey, autoPlay: autoPlay);
+          return openAsset(s.assetKey);
         case MemoryAudioSource s:
-          return openMemory(s.bytes, autoPlay: autoPlay);
+          return openMemory(s.bytes);
         case NetworkAudioSource s:
           return openUrl(
             s.uri,
-            headers: s.headers,
-            bufferAhead: s.bufferAhead,
-            autoPlay: autoPlay,
+            headers: headers ?? s.headers,
+            bufferAhead: effectiveAhead ?? s.bufferAhead,
+            bufferBehind: effectiveBehind,
+            bufferNetworkDuration: bufferNetworkDuration,
+            bufferNetworkInSeconds: bufferNetworkInSeconds,
           );
         case LiveStreamAudioSource s:
           return openUrl(
             s.uri,
-            headers: s.headers,
+            headers: headers ?? s.headers,
             isLive: true,
-            bufferAhead: s.jitterBuffer,
-            autoPlay: autoPlay,
+            bufferAhead: effectiveAhead ?? s.jitterBuffer,
+            bufferBehind: effectiveBehind,
+            bufferLiveStreamDuration: bufferLiveStreamDuration,
+            bufferStreamsInSeconds: bufferStreamsInSeconds,
           );
       }
     } else if (source is Uint8List) {
-      return openMemory(source, autoPlay: autoPlay);
+      return openMemory(source);
     } else if (source is Uri) {
       final str = source.toString();
       if (str.startsWith('http://') || str.startsWith('https://')) {
-        return openUrl(source, autoPlay: autoPlay);
+        return openUrl(
+          source,
+          headers: headers,
+          isLive: isLive,
+          bufferAhead: effectiveAhead,
+          bufferBehind: effectiveBehind,
+          bufferNetworkDuration: bufferNetworkDuration,
+          bufferLiveStreamDuration: bufferLiveStreamDuration,
+          bufferNetworkInSeconds: bufferNetworkInSeconds,
+          bufferStreamsInSeconds: bufferStreamsInSeconds,
+        );
       } else if (str.startsWith('asset://') || str.startsWith('assets/')) {
-        return openAsset(str, autoPlay: autoPlay);
+        return openAsset(str);
       } else if (source.isScheme('file')) {
-        return openFile(source.toFilePath(), autoPlay: autoPlay);
+        return openFile(source.toFilePath());
       } else {
-        return openFile(str, autoPlay: autoPlay);
+        return openFile(str);
       }
     } else if (source is String) {
       final trimmed = source.trim();
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        return openUrl(Uri.parse(trimmed), autoPlay: autoPlay);
+        return openUrl(
+          Uri.parse(trimmed),
+          headers: headers,
+          isLive: isLive,
+          bufferAhead: effectiveAhead,
+          bufferBehind: effectiveBehind,
+          bufferNetworkDuration: bufferNetworkDuration,
+          bufferLiveStreamDuration: bufferLiveStreamDuration,
+          bufferNetworkInSeconds: bufferNetworkInSeconds,
+          bufferStreamsInSeconds: bufferStreamsInSeconds,
+        );
       } else if (trimmed.startsWith('asset://') || trimmed.startsWith('assets/')) {
-        return openAsset(trimmed, autoPlay: autoPlay);
+        return openAsset(trimmed);
       } else if (trimmed.startsWith('file://')) {
-        return openFile(Uri.parse(trimmed).toFilePath(), autoPlay: autoPlay);
+        return openFile(Uri.parse(trimmed).toFilePath());
       } else {
-        return openFile(trimmed, autoPlay: autoPlay);
+        return openFile(trimmed);
       }
+    } else if (source is FileSystemEntity) {
+      return openFile(source.path);
     } else {
       throw ArgumentError.value(source, 'source', 'Unsupported audio source type');
     }
   }
 
   /// Opens a local filesystem audio file.
-  Future<void> openFile(String filePath, {bool autoPlay = false}) async {
+  Future<void> openFile(String filePath) async {
     _player.ensureNotDisposed();
     _stopActiveStreamer();
 
     final path = filePath.startsWith('file://')
         ? Uri.parse(filePath).toFilePath()
         : filePath;
+    final file = File(path);
+    final totalBytes = file.existsSync() ? file.lengthSync() : -1;
+    List<int> headerBytes = const [];
+    if (file.existsSync()) {
+      try {
+        final raf = file.openSync(mode: FileMode.read);
+        headerBytes = raf.readSync(min(64, totalBytes > 0 ? totalBytes : 64));
+        raf.closeSync();
+      } catch (_) {}
+    }
+
     final pathPtr = path.toNativeUtf8();
     try {
       final res = native.miniaudio_player_open_file(
@@ -126,17 +179,26 @@ class PlayerAction {
         );
       }
 
-      if (autoPlay) {
-        final playRes = native.miniaudio_player_play(_player.handle);
-        if (playRes != MapResult.success) {
-          throw MiniaudioPlayerException(
-            'Failed to start playback on autoPlay: ${MapResult.describe(playRes)}',
-            errorCode: playRes,
-          );
-        }
-      }
-
       _player.pollAndEmit(force: true);
+
+      final codec = AudioCodec.detect(headerBytes);
+      final format = AudioFormat.fromCodec(codec);
+      final audioOffset = native.miniaudio_player_get_audio_data_offset(_player.handle);
+      final metadata = AudioTrackMetadata(
+        codec: codec,
+        format: format,
+        formatName: codec.name,
+        duration: _player.state.duration,
+        totalBytes: totalBytes,
+        bitrate: _player.state.audioBitrate,
+        sampleRate: _player.sampleRate,
+        channels: _player.channels,
+        isNetwork: false,
+        isLiveStream: false,
+        uri: Uri.file(path),
+        audioDataOffset: audioOffset > 0 ? audioOffset : 0,
+      );
+      _player.setTrackMetadata(metadata);
     } finally {
       calloc.free(pathPtr);
     }
@@ -145,7 +207,7 @@ class PlayerAction {
   /// Opens an audio file directly from an in-memory byte buffer (RAM).
   ///
   /// Zero disk I/O, zero temporary files, instantaneous startup.
-  Future<void> openMemory(Uint8List bytes, {bool autoPlay = false}) async {
+  Future<void> openMemory(Uint8List bytes, {Uri? uri}) async {
     _player.ensureNotDisposed();
     if (bytes.isEmpty) {
       throw const MiniaudioPlayerException('Cannot open empty byte buffer');
@@ -169,17 +231,26 @@ class PlayerAction {
       );
     }
 
-    if (autoPlay) {
-      final playRes = native.miniaudio_player_play(_player.handle);
-      if (playRes != MapResult.success) {
-        throw MiniaudioPlayerException(
-          'Failed to start playback on autoPlay: ${MapResult.describe(playRes)}',
-          errorCode: playRes,
-        );
-      }
-    }
-
     _player.pollAndEmit(force: true);
+
+    final codec = AudioCodec.detect(bytes.sublist(0, min(64, bytes.length)));
+    final format = AudioFormat.fromCodec(codec);
+    final audioOffset = native.miniaudio_player_get_audio_data_offset(_player.handle);
+    final metadata = AudioTrackMetadata(
+      codec: codec,
+      format: format,
+      formatName: codec.name,
+      duration: _player.state.duration,
+      totalBytes: bytes.length,
+      bitrate: _player.state.audioBitrate,
+      sampleRate: _player.sampleRate,
+      channels: _player.channels,
+      isNetwork: false,
+      isLiveStream: false,
+      uri: uri,
+      audioDataOffset: audioOffset > 0 ? audioOffset : 0,
+    );
+    _player.setTrackMetadata(metadata);
   }
 
   /// Opens an asset directly without copying to disk.
@@ -190,7 +261,6 @@ class PlayerAction {
     String assetPath, {
     String? package,
     AssetBytesLoader? loader,
-    bool autoPlay = false,
   }) async {
     _player.ensureNotDisposed();
     final cleanKey = assetPath.replaceFirst(RegExp(r'^asset(s)?://'), '');
@@ -228,7 +298,7 @@ class PlayerAction {
       );
     }
 
-    await openMemory(bytes, autoPlay: autoPlay);
+    await openMemory(bytes, uri: Uri.parse('asset://$resolvedKey'));
   }
 
   /// Opens a remote audio URL (HTTP/HTTPS) or live stream with progressive streaming.
@@ -237,8 +307,12 @@ class PlayerAction {
     dynamic urlOrUri, {
     Map<String, String>? headers,
     bool isLive = false,
-    Duration bufferAhead = const Duration(seconds: 30),
-    bool autoPlay = false,
+    Duration? bufferAhead,
+    Duration? bufferBehind,
+    Duration? bufferNetworkDuration,
+    Duration? bufferLiveStreamDuration,
+    int? bufferNetworkInSeconds,
+    int? bufferStreamsInSeconds,
   }) async {
     _player.ensureNotDisposed();
     _stopActiveStreamer();
@@ -252,21 +326,46 @@ class PlayerAction {
       throw ArgumentError.value(urlOrUri, 'urlOrUri', 'Expected Uri or String');
     }
 
+    final effectiveBufferAhead = bufferAhead ??
+        (isLive
+            ? (bufferLiveStreamDuration ??
+                (bufferStreamsInSeconds != null
+                    ? Duration(seconds: bufferStreamsInSeconds)
+                    : MiniaudioPlayerGlobalConfig().bufferLiveStreamDuration))
+            : (bufferNetworkDuration ??
+                (bufferNetworkInSeconds != null
+                    ? Duration(seconds: bufferNetworkInSeconds)
+                    : MiniaudioPlayerGlobalConfig().bufferNetworkDuration)));
+
+    final effectiveBufferBehind = bufferBehind ?? MiniaudioPlayerGlobalConfig().bufferBehindDuration;
+
     final streamer = NetworkAudioStreamer(
       _player,
       uri: uri,
       headers: headers,
       isLive: isLive,
-      bufferAhead: bufferAhead,
+      bufferAhead: effectiveBufferAhead,
+      bufferBehind: effectiveBufferBehind,
     );
 
     _activeStreamer = streamer;
-    await streamer.start(autoPlay: autoPlay);
+    try {
+      await streamer.start();
+    } catch (e) {
+      _stopActiveStreamer();
+      _player.pollAndEmit(force: true);
+      rethrow;
+    }
   }
 
   /// Starts or resumes audio playback.
   Future<void> play() async {
     _player.ensureNotDisposed();
+    if (_player.state.completed ||
+        (_player.state.duration > Duration.zero &&
+            _player.state.position >= _player.state.duration)) {
+      await seek(Duration.zero);
+    }
     final res = native.miniaudio_player_play(_player.handle);
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(

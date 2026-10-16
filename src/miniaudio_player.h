@@ -289,6 +289,29 @@ extern "C"
         int64_t new_stream_offset);
 
     /**
+     * @brief Computes the exact file byte offset corresponding to a seek position for active streams.
+     * For container formats like WAV with fixed frame alignments and headers, returns the exact byte
+     * offset in the file corresponding to position_ms, preventing frame misalignment and noise bursts.
+     * For MP3 / compressed streams, returns the proportional byte offset.
+     * @param player Player instance handle.
+     * @param position_ms Target seek position in milliseconds.
+     * @return Byte offset in the stream to request via HTTP Range, or -1 on error.
+     */
+    MAP_API int64_t miniaudio_player_stream_get_seek_byte(
+        const miniaudio_player_t *player,
+        int64_t position_ms);
+
+    /**
+     * @brief Returns the byte offset of the first audio sample/frame within the container/stream
+     * (skipping ID3v2 tags, album art images, RIFF/WAV metadata chunks, etc.).
+     * Used by streamers to optimize seeking to 0 and avoid re-downloading image metadata.
+     * @param player Player instance handle.
+     * @return Byte offset of audio data, or 0 if audio starts at byte 0.
+     */
+    MAP_API int64_t miniaudio_player_get_audio_data_offset(
+        const miniaudio_player_t *player);
+
+    /**
      * @brief Signals that the stream has reached EOF (no more bytes will be fed).
      * @param player Player instance handle.
      * @return MAP_SUCCESS or error code.
@@ -304,6 +327,28 @@ extern "C"
         int32_t is_buffering;
         int32_t is_eof;
     } miniaudio_stream_status_t;
+
+    typedef struct miniaudio_buffered_range
+    {
+        int64_t start_ms;
+        int64_t end_ms;
+        int64_t duration_ms;
+        float fill_percentage;
+        float stream_percentage;
+        int32_t is_buffering;
+        int32_t is_eof;
+    } miniaudio_buffered_range_t;
+
+    /**
+     * @brief Queries detailed buffered time range and progress metrics.
+     * Useful for UI rendering (e.g. video/audio preloaded progress bar).
+     * @param player Player instance handle.
+     * @param out_range Output pointer for buffered range metrics.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_get_buffered_range(
+        const miniaudio_player_t *player,
+        miniaudio_buffered_range_t *out_range);
 
     /**
      * @brief Queries status of the streaming buffer.
@@ -479,6 +524,8 @@ extern "C"
     MAP_API float miniaudio_player_get_rate(const miniaudio_player_t *player);
     MAP_API float miniaudio_player_get_pitch(const miniaudio_player_t *player);
     MAP_API uint32_t miniaudio_player_get_bitrate(const miniaudio_player_t *player);
+    MAP_API uint32_t miniaudio_player_get_sample_rate(const miniaudio_player_t *player);
+    MAP_API uint32_t miniaudio_player_get_channels(const miniaudio_player_t *player);
     MAP_API int32_t miniaudio_player_get_equalizer(
         const miniaudio_player_t *player,
         miniaudio_player_equalizer_params_t *out_equalizer);

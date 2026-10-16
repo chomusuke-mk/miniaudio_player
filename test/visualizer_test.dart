@@ -89,7 +89,8 @@ void main() {
       });
       addTearDown(() => sub.cancel());
 
-      await player.action.open(mp3.path, autoPlay: true);
+      await player.action.open(mp3.path);
+      await player.action.play();
 
       // Allow audio to stream and compute multiple buffer frames
       await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -180,7 +181,8 @@ void main() {
       });
       addTearDown(() => sub.cancel());
 
-      await player.action.open(mp3.path, autoPlay: true);
+      await player.action.open(mp3.path);
+      await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(player.state.visualizerEnabled, isTrue);

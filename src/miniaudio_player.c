@@ -182,6 +182,7 @@ struct miniaudio_player
     ma_uint32 channels;
     int64_t duration_ms;
     uint32_t bitrate;
+    int64_t audio_data_offset;
     miniaudio_player_completed_cb on_completed;
     void *user_data;
     ma_log log;
@@ -1049,8 +1050,10 @@ MAP_API int32_t miniaudio_player_open_file(
     }
     player->file_path = map_strdup(file_path);
 
-    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_file success: dur=%lld ms, bitrate=%u bps (%s)",
-                  (long long)player->duration_ms, player->bitrate, file_path);
+    player->audio_data_offset = map_decoder_get_audio_data_offset(&player->stretch_ds.decoder);
+
+    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_file success: dur=%lld ms, bitrate=%u bps, audio_offset=%lld (%s)",
+                  (long long)player->duration_ms, player->bitrate, (long long)player->audio_data_offset, file_path);
 
     ma_mutex_unlock(&player->lock);
     return MAP_SUCCESS;
@@ -1186,8 +1189,10 @@ MAP_API int32_t miniaudio_player_open_memory(
     }
     player->file_path = map_strdup("memory://");
 
-    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_memory success: dur=%lld ms, bitrate=%u bps, size=%zu",
-                  (long long)player->duration_ms, player->bitrate, size);
+    player->audio_data_offset = map_decoder_get_audio_data_offset(&player->stretch_ds.decoder);
+
+    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_memory success: dur=%lld ms, bitrate=%u bps, audio_offset=%lld, size=%zu",
+                  (long long)player->duration_ms, player->bitrate, (long long)player->audio_data_offset, size);
 
     ma_mutex_unlock(&player->lock);
     return MAP_SUCCESS;
@@ -1305,7 +1310,7 @@ MAP_API int32_t miniaudio_player_open_stream(
     }
 
     /* Fallback metadata sniffer for finite streams where decoder could not seek to EOF (e.g. CBR MP3, Vorbis) */
-    if (!is_live && player->duration_ms == 0 && initial_data != NULL && initial_data_size > 0)
+    if (!is_live && initial_data != NULL && initial_data_size > 0)
     {
         uint32_t sniffed_bitrate = 0;
         int64_t sniffed_duration_ms = 0;
@@ -1313,14 +1318,17 @@ MAP_API int32_t miniaudio_player_open_stream(
         if (map_sniff_stream_info(initial_data, initial_data_size, total_size,
                                   &sniffed_bitrate, &sniffed_duration_ms) && sniffed_duration_ms > 0)
         {
-            player->duration_ms = sniffed_duration_ms;
-            player->bitrate = sniffed_bitrate;
-            if (player->stretch_ds.sampleRate > 0)
+            if (player->duration_ms == 0 || (total_size > 0 && (int64_t)initial_data_size < total_size))
             {
-                player->stretch_ds.totalFrames = (ma_uint64)((double)player->duration_ms * (double)player->stretch_ds.sampleRate / 1000.0 + 0.5);
+                player->duration_ms = sniffed_duration_ms;
+                player->bitrate = sniffed_bitrate;
+                if (player->stretch_ds.sampleRate > 0)
+                {
+                    player->stretch_ds.totalFrames = (ma_uint64)((double)player->duration_ms * (double)player->stretch_ds.sampleRate / 1000.0 + 0.5);
+                }
+                map_log_print(MAP_LOG_LEVEL_INFO, "core", "sniffed stream metadata: dur=%lld ms, bitrate=%u bps, total_frames=%llu",
+                              (long long)player->duration_ms, player->bitrate, (unsigned long long)player->stretch_ds.totalFrames);
             }
-            map_log_print(MAP_LOG_LEVEL_INFO, "core", "sniffed stream metadata: dur=%lld ms, bitrate=%u bps, total_frames=%llu",
-                          (long long)player->duration_ms, player->bitrate, (unsigned long long)player->stretch_ds.totalFrames);
         }
     }
 
@@ -1344,8 +1352,10 @@ MAP_API int32_t miniaudio_player_open_stream(
     }
     player->file_path = map_strdup("stream://");
 
-    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_stream success: dur=%lld ms, bitrate=%u bps",
-                  (long long)player->duration_ms, player->bitrate);
+    player->audio_data_offset = map_decoder_get_audio_data_offset(&player->stretch_ds.decoder);
+
+    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_stream success: dur=%lld ms, bitrate=%u bps, audio_offset=%lld",
+                  (long long)player->duration_ms, player->bitrate, (long long)player->audio_data_offset);
 
     ma_mutex_unlock(&player->lock);
     return MAP_SUCCESS;
@@ -1375,11 +1385,113 @@ MAP_API int32_t miniaudio_player_stream_flush(
     if (player == NULL)
         return MAP_ERROR_INVALID_ARGS;
 
+    ma_mutex_lock(&player->lock);
     if (!player->sound_loaded || !player->stretch_ds.is_stream)
+    {
+        ma_mutex_unlock(&player->lock);
         return MAP_ERROR_INVALID_STATE;
+    }
+
+    ma_uint64 scheduledSeek = ma_atomic_load_64(&player->sound.seekTarget);
+    if (scheduledSeek != MA_SEEK_TARGET_NONE)
+    {
+        player->stretch_ds.readCursorFrames = scheduledSeek;
+        ma_node_set_time(&player->sound, scheduledSeek);
+        ma_atomic_exchange_64(&player->sound.seekTarget, MA_SEEK_TARGET_NONE);
+    }
+    ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
+    player->is_completed = 0;
 
     res = map_time_stretch_ds_stream_flush(&player->stretch_ds, new_stream_offset);
+    ma_mutex_unlock(&player->lock);
     return (res == MA_SUCCESS) ? MAP_SUCCESS : MAP_ERROR_DECODE_FAILED;
+}
+
+MAP_API int64_t miniaudio_player_stream_get_seek_byte(
+    const miniaudio_player_t *player,
+    int64_t position_ms)
+{
+    miniaudio_player_t *mut_player;
+    int64_t seek_byte = 0;
+
+    if (player == NULL)
+        return -1;
+
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+
+    if (!mut_player->sound_loaded || !mut_player->stretch_ds.is_stream)
+    {
+        ma_mutex_unlock(&mut_player->lock);
+        return -1;
+    }
+
+    if (position_ms < 0)
+        position_ms = 0;
+    if (mut_player->duration_ms > 0 && position_ms > mut_player->duration_ms)
+        position_ms = mut_player->duration_ms;
+
+    map_time_stretch_ds *pDS = &mut_player->stretch_ds;
+
+    ma_uint64 targetFrame = (ma_uint64)(((double)position_ms / 1000.0) * (double)pDS->sampleRate);
+    int64_t container_byte = map_decoder_get_stream_seek_byte(&pDS->decoder, targetFrame);
+    if (container_byte >= 0)
+    {
+        seek_byte = container_byte;
+        ma_uint32 bytesPerFrame = map_decoder_get_raw_bytes_per_frame(&pDS->decoder);
+        if (pDS->buffer.total_size > 0 && seek_byte >= pDS->buffer.total_size)
+        {
+            seek_byte = pDS->buffer.total_size - bytesPerFrame;
+            if (seek_byte < 0)
+            {
+                seek_byte = 0;
+            }
+        }
+        ma_mutex_unlock(&mut_player->lock);
+        return seek_byte;
+    }
+
+    if (position_ms <= 0)
+    {
+        seek_byte = mut_player->audio_data_offset;
+    }
+    else if (pDS->buffer.total_size > 0 && mut_player->duration_ms > 0)
+    {
+        int64_t audio_start = mut_player->audio_data_offset;
+        int64_t audio_bytes = (pDS->buffer.total_size > audio_start) ? (pDS->buffer.total_size - audio_start) : pDS->buffer.total_size;
+        seek_byte = audio_start + (position_ms * audio_bytes) / mut_player->duration_ms;
+        seek_byte = (seek_byte / 4) * 4;
+        if (seek_byte >= pDS->buffer.total_size)
+        {
+            seek_byte = pDS->buffer.total_size - 4;
+            if (seek_byte < 0)
+            {
+                seek_byte = 0;
+            }
+        }
+    }
+    else
+    {
+        seek_byte = mut_player->audio_data_offset;
+    }
+
+    ma_mutex_unlock(&mut_player->lock);
+    return seek_byte;
+}
+
+MAP_API int64_t miniaudio_player_get_audio_data_offset(const miniaudio_player_t *player)
+{
+    miniaudio_player_t *mut_player;
+    int64_t offset;
+    if (player == NULL)
+        return 0;
+
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    offset = mut_player->audio_data_offset;
+    ma_mutex_unlock(&mut_player->lock);
+
+    return (offset > 0) ? offset : 0;
 }
 
 MAP_API int32_t miniaudio_player_stream_end(
@@ -1400,22 +1512,85 @@ MAP_API int32_t miniaudio_player_stream_get_status(
     miniaudio_player_t *player,
     miniaudio_stream_status_t *out_status)
 {
-    map_stream_buffer_t *sb;
     if (player == NULL || out_status == NULL)
         return MAP_ERROR_INVALID_ARGS;
 
     if (!player->sound_loaded || !player->stretch_ds.is_stream)
         return MAP_ERROR_INVALID_STATE;
 
-    sb = &player->stretch_ds.stream_buffer;
-    ma_mutex_lock(&sb->lock);
-    out_status->buffer_capacity = sb->capacity;
-    out_status->buffer_fill = sb->fill_count;
-    out_status->fill_percentage = (sb->capacity > 0) ? (float)((double)sb->fill_count / (double)sb->capacity) : 0.0f;
-    out_status->is_buffering = (sb->fill_count == 0 && !sb->is_eof) ? 1 : 0;
-    out_status->is_eof = sb->is_eof ? 1 : 0;
-    ma_mutex_unlock(&sb->lock);
+    map_buffer_range_t r;
+    map_buffer_get_range(&player->stretch_ds.buffer, &r);
+    out_status->buffer_capacity = player->stretch_ds.buffer.capacity;
+    out_status->buffer_fill = (size_t)(r.end_byte - r.start_byte);
+    out_status->fill_percentage = r.fill_percentage;
+    out_status->is_buffering = r.is_buffering;
+    out_status->is_eof = r.is_eof;
 
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_get_buffered_range(
+    const miniaudio_player_t *player,
+    miniaudio_buffered_range_t *out_range)
+{
+    if (player == NULL || out_range == NULL)
+        return MAP_ERROR_INVALID_ARGS;
+
+    miniaudio_player_t *mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+
+    if (!mut_player->sound_loaded)
+    {
+        memset(out_range, 0, sizeof(*out_range));
+        ma_mutex_unlock(&mut_player->lock);
+        return MAP_SUCCESS;
+    }
+
+    out_range->duration_ms = mut_player->duration_ms;
+
+    if (mut_player->stretch_ds.is_stream)
+    {
+        map_buffer_range_t r;
+        map_buffer_get_range(&mut_player->stretch_ds.buffer, &r);
+
+        if (mut_player->duration_ms > 0 && r.total_bytes > 0)
+        {
+            out_range->start_ms = (r.start_byte * mut_player->duration_ms) / r.total_bytes;
+            out_range->end_ms = (r.end_byte * mut_player->duration_ms) / r.total_bytes;
+        }
+        else if (mut_player->bitrate > 0)
+        {
+            out_range->start_ms = (r.start_byte * 8000) / mut_player->bitrate;
+            out_range->end_ms = (r.end_byte * 8000) / mut_player->bitrate;
+        }
+        else
+        {
+            out_range->start_ms = 0;
+            out_range->end_ms = (r.end_byte > 0 && mut_player->duration_ms > 0) ? mut_player->duration_ms : 0;
+        }
+
+        if (out_range->end_ms > mut_player->duration_ms && mut_player->duration_ms > 0)
+        {
+            out_range->end_ms = mut_player->duration_ms;
+        }
+
+        out_range->fill_percentage = r.fill_percentage;
+        out_range->stream_percentage = r.stream_percentage;
+        out_range->is_buffering = r.is_buffering;
+        out_range->is_eof = r.is_eof;
+    }
+    else
+    {
+        /* Local file or memory buffer: 100% available in local storage */
+        out_range->start_ms = 0;
+        out_range->end_ms = mut_player->duration_ms;
+        out_range->fill_percentage = 1.0f;
+        out_range->stream_percentage = 1.0f;
+        out_range->is_buffering = 0;
+        out_range->is_eof = 1;
+    }
+
+    ma_mutex_unlock(&mut_player->lock);
     return MAP_SUCCESS;
 }
 
@@ -1442,6 +1617,7 @@ MAP_API int32_t miniaudio_player_play(miniaudio_player_t *player)
     if (player->is_completed || ma_sound_at_end(&player->sound))
     {
         ma_sound_seek_to_pcm_frame(&player->sound, 0);
+        ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
         player->is_completed = 0;
     }
 
@@ -1468,8 +1644,9 @@ MAP_API int32_t miniaudio_player_pause(miniaudio_player_t *player)
     ma_mutex_lock(&player->lock);
     if (!player->sound_loaded)
     {
+        player->state = MAP_PLAYBACK_STATE_PAUSED;
         ma_mutex_unlock(&player->lock);
-        return MAP_ERROR_INVALID_STATE;
+        return MAP_SUCCESS;
     }
 
     ma_sound_stop(&player->sound);
@@ -1488,8 +1665,11 @@ MAP_API int32_t miniaudio_player_stop(miniaudio_player_t *player)
     ma_mutex_lock(&player->lock);
     if (!player->sound_loaded)
     {
+        player->state = MAP_PLAYBACK_STATE_STOPPED;
+        player->is_completed = 0;
+        player->is_buffering = 0;
         ma_mutex_unlock(&player->lock);
-        return MAP_ERROR_INVALID_STATE;
+        return MAP_SUCCESS;
     }
 
     ma_sound_stop(&player->sound);
@@ -1536,6 +1716,12 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
         ma_mutex_unlock(&player->lock);
         map_log_print(MAP_LOG_LEVEL_ERROR, "core", "ma_sound_seek_to_second failed: %d", result);
         return MAP_ERROR_SEEK_FAILED;
+    }
+
+    if (player->stretch_ds.is_stream)
+    {
+        ma_uint64 targetFrame = (ma_uint64)(((double)position_ms / 1000.0) * (double)player->stretch_ds.sampleRate);
+        player->stretch_ds.readCursorFrames = targetFrame;
     }
 
     if (position_ms >= player->duration_ms && player->duration_ms > 0)
@@ -2073,7 +2259,9 @@ MAP_API int32_t miniaudio_player_get_status(
     out_status->equalizer = mut_player->eq_params;
     if (mut_player->sound_loaded && mut_player->stretch_ds.is_stream)
     {
-        out_status->is_buffering = (mut_player->stretch_ds.stream_buffer.fill_count == 0 && !mut_player->stretch_ds.stream_buffer.is_eof) ? 1 : 0;
+        map_buffer_range_t r;
+        map_buffer_get_range(&mut_player->stretch_ds.buffer, &r);
+        out_status->is_buffering = r.is_buffering;
     }
     else
     {
@@ -2115,7 +2303,8 @@ MAP_API int32_t miniaudio_player_get_status(
         }
         else if (mut_player->state == MAP_PLAYBACK_STATE_PLAYING)
         {
-            if (mut_player->is_completed || ma_sound_at_end(&mut_player->sound))
+            if (mut_player->is_completed || ma_sound_at_end(&mut_player->sound) ||
+                (mut_player->duration_ms > 0 && out_status->position_ms >= mut_player->duration_ms))
             {
                 mut_player->is_completed = 1;
                 mut_player->state = MAP_PLAYBACK_STATE_COMPLETED;
@@ -2294,6 +2483,20 @@ MAP_API uint32_t miniaudio_player_get_bitrate(const miniaudio_player_t *player)
     if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
         return 0;
     return status.bitrate;
+}
+
+MAP_API uint32_t miniaudio_player_get_sample_rate(const miniaudio_player_t *player)
+{
+    if (player == NULL)
+        return 0;
+    return player->sample_rate;
+}
+
+MAP_API uint32_t miniaudio_player_get_channels(const miniaudio_player_t *player)
+{
+    if (player == NULL)
+        return 0;
+    return player->channels;
 }
 
 MAP_API int32_t miniaudio_player_get_equalizer(

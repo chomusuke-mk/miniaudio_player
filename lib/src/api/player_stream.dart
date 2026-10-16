@@ -3,8 +3,10 @@
 import 'dart:async';
 
 import 'audio_device.dart';
+import 'buffered_range.dart';
 import 'dsp_config.dart';
 import 'silence_skip_config.dart';
+import 'track_metadata.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
 import '../reverb.dart';
@@ -16,6 +18,10 @@ class PlayerStream {
   final StreamController<bool> _playingController;
   final StreamController<bool> _bufferingController;
   final StreamController<bool> _completedController;
+  final StreamController<Duration> _bufferedPositionController;
+  final StreamController<double> _bufferedPercentageController;
+  final StreamController<BufferedRange> _bufferedRangeController;
+  final StreamController<AudioTrackMetadata?> _trackMetadataController;
   final StreamController<double> _volumeController;
   final StreamController<double> _rateController;
   final StreamController<double> _pitchController;
@@ -44,6 +50,10 @@ class PlayerStream {
     required StreamController<bool> playingController,
     required StreamController<bool> bufferingController,
     required StreamController<bool> completedController,
+    required StreamController<Duration> bufferedPositionController,
+    required StreamController<double> bufferedPercentageController,
+    required StreamController<BufferedRange> bufferedRangeController,
+    required StreamController<AudioTrackMetadata?> trackMetadataController,
     required StreamController<double> volumeController,
     required StreamController<double> rateController,
     required StreamController<double> pitchController,
@@ -70,6 +80,10 @@ class PlayerStream {
         _playingController = playingController,
         _bufferingController = bufferingController,
         _completedController = completedController,
+        _bufferedPositionController = bufferedPositionController,
+        _bufferedPercentageController = bufferedPercentageController,
+        _bufferedRangeController = bufferedRangeController,
+        _trackMetadataController = trackMetadataController,
         _volumeController = volumeController,
         _rateController = rateController,
         _pitchController = pitchController,
@@ -106,6 +120,18 @@ class PlayerStream {
 
   /// Broadcast stream of playback completion status.
   Stream<bool> get completed => _completedController.stream;
+
+  /// Broadcast stream of furthest continuous timestamp preloaded in RAM buffer.
+  Stream<Duration> get bufferedPosition => _bufferedPositionController.stream;
+
+  /// Broadcast stream of fraction (0.0 to 1.0) of track loaded (for preloaded bar).
+  Stream<double> get bufferedPercentage => _bufferedPercentageController.stream;
+
+  /// Broadcast stream of sliding-window circular buffer telemetry metrics.
+  Stream<BufferedRange> get bufferedRange => _bufferedRangeController.stream;
+
+  /// Broadcast stream of current track metadata.
+  Stream<AudioTrackMetadata?> get trackMetadata => _trackMetadataController.stream;
 
   /// Broadcast stream of volume level changes.
   Stream<double> get volume => _volumeController.stream;

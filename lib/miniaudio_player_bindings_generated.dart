@@ -93,6 +93,24 @@ external int miniaudio_player_get_buffer_size(
   ffi.Pointer<miniaudio_player_t> player,
 );
 
+/// @brief Queries detailed buffered time range and progress metrics.
+/// Useful for UI rendering (e.g. video/audio preloaded progress bar).
+/// @param player Player instance handle.
+/// @param out_range Output pointer for buffered range metrics.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<miniaudio_buffered_range_t>)>(isLeaf: true)
+external int miniaudio_player_get_buffered_range(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<miniaudio_buffered_range_t> out_range,
+);
+
+@ffi.Native<ffi.Uint32 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
+external int miniaudio_player_get_channels(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
 @ffi.Native<
     ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
         ffi.Pointer<miniaudio_device_info_t>)>(isLeaf: true)
@@ -140,6 +158,11 @@ external int miniaudio_player_get_position_ms(
 
 @ffi.Native<ffi.Float Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
 external double miniaudio_player_get_rate(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
+@ffi.Native<ffi.Uint32 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
+external int miniaudio_player_get_sample_rate(
   ffi.Pointer<miniaudio_player_t> player,
 );
 
@@ -468,6 +491,26 @@ external int miniaudio_player_stream_flush(
   int new_stream_offset,
 );
 
+/// @brief Computes the exact file byte offset corresponding to a seek position for active streams.
+/// For container formats like WAV with fixed frame alignments and headers, returns the exact byte
+/// offset in the file corresponding to position_ms, preventing frame misalignment and noise bursts.
+/// For MP3 / compressed streams, returns the proportional byte offset.
+/// @param player Player instance handle.
+/// @param position_ms Target seek position in milliseconds.
+/// @return Byte offset in the stream to request via HTTP Range, or -1 on error.
+@ffi.Native<ffi.Int64 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int64)>()
+external int miniaudio_player_stream_get_seek_byte(
+  ffi.Pointer<miniaudio_player_t> player,
+  int position_ms,
+);
+
+/// @brief Returns the byte offset of the first audio sample/frame within the container/stream
+/// (skipping ID3v2 tags, album art images, RIFF/WAV metadata chunks, etc.).
+@ffi.Native<ffi.Int64 Function(ffi.Pointer<miniaudio_player_t>)>()
+external int miniaudio_player_get_audio_data_offset(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
 /// @brief Queries status of the streaming buffer.
 /// @param player Player instance handle.
 /// @param out_status Output pointer for stream status.
@@ -569,6 +612,50 @@ final class miniaudio_audio_analysis_result_t extends ffi.Struct {
 
   external miniaudio_waveform_data_t waveform;
 }
+
+final class miniaudio_buffered_range extends ffi.Struct {
+  @ffi.Int64()
+  external int start_ms;
+
+  @ffi.Int64()
+  external int end_ms;
+
+  @ffi.Int64()
+  external int duration_ms;
+
+  @ffi.Float()
+  external double fill_percentage;
+
+  @ffi.Float()
+  external double stream_percentage;
+
+  @ffi.Int32()
+  external int is_buffering;
+
+  @ffi.Int32()
+  external int is_eof;
+
+  static ffi.Pointer<miniaudio_buffered_range> $allocate(
+    ffi.Allocator $allocator, {
+    required int start_ms,
+    required int end_ms,
+    required int duration_ms,
+    required double fill_percentage,
+    required double stream_percentage,
+    required int is_buffering,
+    required int is_eof,
+  }) =>
+      $allocator<miniaudio_buffered_range>()
+        ..ref.start_ms = start_ms
+        ..ref.end_ms = end_ms
+        ..ref.duration_ms = duration_ms
+        ..ref.fill_percentage = fill_percentage
+        ..ref.stream_percentage = stream_percentage
+        ..ref.is_buffering = is_buffering
+        ..ref.is_eof = is_eof;
+}
+
+typedef miniaudio_buffered_range_t = miniaudio_buffered_range;
 
 /// ========================================================================= */
 /// /* Player Status Snapshot (Single-Call FFI Marshalling)                      */

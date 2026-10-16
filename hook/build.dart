@@ -31,6 +31,7 @@ void main(List<String> args) async {
       'src/map_reverb.c',
       'src/map_dsp.c',
       'src/map_source.c',
+      'src/map_buffer.c',
       'src/map_device.c',
       'src/map_analysis.c',
       'src/map_sniffer.c',

@@ -85,18 +85,17 @@ void main() {
           switch (opType) {
             case 0: // open
               final sourceSelect = rng.nextInt(3);
-              final autoPlay = rng.nextBool();
               if (sourceSelect == 0) {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.open(shortWavFile.path, autoPlay: autoPlay), caughtErrors),
+                  safeDispatch(() => player.action.open(shortWavFile.path), caughtErrors),
                 );
               } else if (sourceSelect == 1) {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.open(mediumWavFile.path, autoPlay: autoPlay), caughtErrors),
+                  safeDispatch(() => player.action.open(mediumWavFile.path), caughtErrors),
                 );
               } else {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.openMemory(memoryWavBytes, autoPlay: autoPlay), caughtErrors),
+                  safeDispatch(() => player.action.openMemory(memoryWavBytes), caughtErrors),
                 );
               }
               break;
@@ -238,7 +237,10 @@ void main() {
               final cmd = rng.nextInt(7);
               switch (cmd) {
                 case 0:
-                  await safeDispatch(() => p.action.open(shortWavFile.path, autoPlay: true), caughtErrors);
+                  await safeDispatch(() async {
+                    await p.action.open(shortWavFile.path);
+                    await p.action.play();
+                  }, caughtErrors);
                   break;
                 case 1:
                   await safeDispatch(() => p.action.pause(), caughtErrors);
@@ -291,9 +293,9 @@ void main() {
           final microDelay = rng.nextInt(3000); // 0 to 3ms
 
           if (i % 2 == 0) {
-            unawaited(safeDispatch(() => player.action.open(shortWavFile.path, autoPlay: true), caughtErrors));
+            unawaited(safeDispatch(() => player.action.open(shortWavFile.path), caughtErrors));
           } else {
-            unawaited(safeDispatch(() => player.action.openMemory(memoryWavBytes, autoPlay: false), caughtErrors));
+            unawaited(safeDispatch(() => player.action.openMemory(memoryWavBytes), caughtErrors));
           }
 
           if (microDelay > 0) {

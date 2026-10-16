@@ -68,12 +68,14 @@ void main() {
       player.stream.completed.listen((completed) async {
         if (completed && currentTrackIndex < playlist.length - 1) {
           currentTrackIndex++;
-          await player.action.open(playlist[currentTrackIndex], autoPlay: true);
+          await player.action.open(playlist[currentTrackIndex]);
+          await player.action.play();
           completer.complete();
         }
       });
 
-      await player.action.open(playlist[0], autoPlay: true);
+      await player.action.open(playlist[0]);
+      await player.action.play();
       await completer.future.timeout(const Duration(seconds: 3));
 
       expect(currentTrackIndex, equals(1));
@@ -87,7 +89,8 @@ void main() {
         int playCount = 0;
 
         for (final path in playlist) {
-          await player.action.open(path, autoPlay: true);
+          await player.action.open(path);
+          await player.action.play();
           expect(player.state.playing, isTrue);
           await Future<void>.delayed(const Duration(milliseconds: 50));
           playCount++;
@@ -116,14 +119,16 @@ void main() {
     });
 
     test('A2.1: opening Track 2 while Track 1 is actively playing replaces track cleanly', () async {
-      await player.action.open(track1.path, autoPlay: true);
+      await player.action.open(track1.path);
+      await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(player.state.playing, isTrue);
       expect(player.state.position.inMilliseconds, greaterThan(100));
 
       // User hits "Next Track": opens Track 2 without stopping first
-      await player.action.open(track2.path, autoPlay: true);
+      await player.action.open(track2.path);
+      await player.action.play();
 
       expect(player.state.playing, isTrue);
       // Position must have reset for the new track
@@ -136,12 +141,14 @@ void main() {
     test(
       'A2.2: rapid track replacement across 4 files resolves to the last track',
       () async {
-        await player.action.open(track1.path, autoPlay: true);
+        await player.action.open(track1.path);
+        await player.action.play();
 
         // Fire successive open calls without awaiting in between
-        unawaited(player.action.open(track2.path, autoPlay: true));
-        unawaited(player.action.open(track3.path, autoPlay: true));
-        await player.action.open(shortTrack.path, autoPlay: true);
+        unawaited(player.action.open(track2.path));
+        unawaited(player.action.open(track3.path));
+        await player.action.open(shortTrack.path);
+        await player.action.play();
 
         expect(player.state.playing, isTrue);
         expect(player.state.duration.inMilliseconds, closeTo(150, 50));
@@ -283,7 +290,8 @@ void main() {
     });
 
     test('A4.2: rapid volume and rate slider scrubbing executes without corruption', () async {
-      await player.action.open(track1.path, autoPlay: true);
+      await player.action.open(track1.path);
+      await player.action.play();
 
       final futures = <Future<void>>[];
       for (int i = 1; i <= 10; i++) {
@@ -352,14 +360,16 @@ void main() {
     test(
       'A5.2: re-opening a file after stop restarts playback cleanly',
       () async {
-        await player.action.open(track1.path, autoPlay: true);
+        await player.action.open(track1.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
         await player.action.stop();
 
         expect(player.state.playing, isFalse);
         expect(player.state.position, equals(Duration.zero));
 
-        await player.action.open(track1.path, autoPlay: true);
+        await player.action.open(track1.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
 
         expect(player.state.playing, isTrue);

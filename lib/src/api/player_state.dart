@@ -1,8 +1,10 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'audio_device.dart';
+import 'buffered_range.dart';
 import 'dsp_config.dart';
 import 'silence_skip_config.dart';
+import 'track_metadata.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
 import '../reverb.dart';
@@ -14,6 +16,10 @@ class PlayerState {
   final bool Function() _getPlaying;
   final bool Function() _getBuffering;
   final bool Function() _getCompleted;
+  final Duration Function() _getBufferedPosition;
+  final double Function() _getBufferedPercentage;
+  final BufferedRange Function() _getBufferedRange;
+  final AudioTrackMetadata? Function() _getTrackMetadata;
   final double Function() _getVolume;
   final double Function() _getRate;
   final double Function() _getPitch;
@@ -43,6 +49,10 @@ class PlayerState {
     required bool Function() getPlaying,
     required bool Function() getBuffering,
     required bool Function() getCompleted,
+    required Duration Function() getBufferedPosition,
+    required double Function() getBufferedPercentage,
+    required BufferedRange Function() getBufferedRange,
+    required AudioTrackMetadata? Function() getTrackMetadata,
     required double Function() getVolume,
     required double Function() getRate,
     required double Function() getPitch,
@@ -70,6 +80,10 @@ class PlayerState {
         _getPlaying = getPlaying,
         _getBuffering = getBuffering,
         _getCompleted = getCompleted,
+        _getBufferedPosition = getBufferedPosition,
+        _getBufferedPercentage = getBufferedPercentage,
+        _getBufferedRange = getBufferedRange,
+        _getTrackMetadata = getTrackMetadata,
         _getVolume = getVolume,
         _getRate = getRate,
         _getPitch = getPitch,
@@ -107,6 +121,18 @@ class PlayerState {
 
   /// Whether audio reached the end of the track.
   bool get completed => _getCompleted();
+
+  /// Furthest continuous timestamp preloaded in RAM buffer.
+  Duration get bufferedPosition => _getBufferedPosition();
+
+  /// Fraction (0.0 to 1.0) of the total track loaded into the buffer (for preloaded bar).
+  double get bufferedPercentage => _getBufferedPercentage();
+
+  /// Comprehensive sliding-window circular buffer telemetry metrics.
+  BufferedRange get bufferedRange => _getBufferedRange();
+
+  /// Current audio track metadata, or `null` if no track is opened.
+  AudioTrackMetadata? get trackMetadata => _getTrackMetadata();
 
   /// Current volume level (default: 1.0).
   double get volume => _getVolume();

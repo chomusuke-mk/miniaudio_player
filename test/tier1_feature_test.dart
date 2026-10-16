@@ -86,9 +86,13 @@ void main() {
     );
 
     test(
-      '1.5: open with autoPlay: true starts playback automatically',
+      '1.5: open prepares track ready for playback without starting automatically',
       () async {
-        await player.action.open(testWavFile.path, autoPlay: true);
+        await player.action.open(testWavFile.path);
+        expect(player.state.playing, isFalse);
+        expect(player.state.duration, greaterThan(Duration.zero));
+
+        await player.action.play();
         expect(player.state.playing, isTrue);
 
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -116,7 +120,8 @@ void main() {
     test(
       '2.1: pause halts active playback and sets state.playing to false',
       () async {
-        await player.action.open(testWavFile.path, autoPlay: true);
+        await player.action.open(testWavFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.playing, isTrue);
 
@@ -126,7 +131,8 @@ void main() {
     );
 
     test('2.2: pause emits false on stream.playing', () async {
-      await player.action.open(testWavFile.path, autoPlay: true);
+      await player.action.open(testWavFile.path);
+      await player.action.play();
 
       final expectation = expectLater(
         player.stream.playing,
@@ -140,7 +146,8 @@ void main() {
     test(
       '2.3: pause preserves current playback position without rewinding',
       () async {
-        await player.action.open(testWavFile.path, autoPlay: true);
+        await player.action.open(testWavFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 300));
 
         await player.action.pause();
@@ -168,7 +175,8 @@ void main() {
     test(
       '2.5: calling play after pause resumes from the paused position',
       () async {
-        await player.action.open(testWavFile.path, autoPlay: true);
+        await player.action.open(testWavFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
 
         await player.action.pause();
@@ -203,7 +211,8 @@ void main() {
     });
 
     test('3.1: stop halts playback and sets state.playing to false', () async {
-      await player.action.open(testWavFile.path, autoPlay: true);
+      await player.action.open(testWavFile.path);
+      await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       await player.action.stop();
@@ -211,7 +220,8 @@ void main() {
     });
 
     test('3.2: stop rewinds state.position to Duration.zero', () async {
-      await player.action.open(testWavFile.path, autoPlay: true);
+      await player.action.open(testWavFile.path);
+      await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(player.state.position.inMilliseconds, greaterThan(100));
 
@@ -220,7 +230,8 @@ void main() {
     });
 
     test('3.3: stop emits Duration.zero on stream.position', () async {
-      await player.action.open(testWavFile.path, autoPlay: true);
+      await player.action.open(testWavFile.path);
+      await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       final expectation = expectLater(
@@ -249,7 +260,8 @@ void main() {
     test(
       '3.5: calling play after stop restarts playback from Duration.zero',
       () async {
-        await player.action.open(testWavFile.path, autoPlay: true);
+        await player.action.open(testWavFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
 
         await player.action.stop();
@@ -311,7 +323,8 @@ void main() {
     test(
       '4.3: seek forward while playing continues playback from new position',
       () async {
-        await player.action.open(testWavFile.path, autoPlay: true);
+        await player.action.open(testWavFile.path);
+        await player.action.play();
         const forwardTarget = Duration(seconds: 3);
 
         await player.action.seek(forwardTarget);
@@ -330,7 +343,8 @@ void main() {
     );
 
     test('4.4: seek backward while playing updates position and continues playback', () async {
-      await player.action.open(testWavFile.path, autoPlay: true);
+      await player.action.open(testWavFile.path);
+      await player.action.play();
       await player.action.seek(const Duration(seconds: 3));
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
@@ -761,7 +775,8 @@ void main() {
 
     test('10.4: dispose while playing halts playback cleanly and frees native resources', () async {
       final player = MiniaudioPlayer();
-      await player.action.open(testWavFile.path, autoPlay: true);
+      await player.action.open(testWavFile.path);
+      await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.playing, isTrue);
 

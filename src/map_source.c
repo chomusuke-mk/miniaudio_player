@@ -88,7 +88,7 @@ static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
                 ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFromDecoder);
             }
 
-            if (pDS->is_stream && !pDS->stream_buffer.is_eof)
+            if (pDS->is_stream && !pDS->buffer.is_eof)
             {
                 /* Transient interruption or waiting for network chunks; do NOT set EOF */
                 if (decRes != MA_SUCCESS || readFromDecoder == 0)
@@ -96,7 +96,7 @@ static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
                     ma_sleep(5);
                 }
             }
-            else if (decRes == MA_AT_END)
+            else if (decRes == MA_AT_END || (pDS->buffer.is_eof && readFromDecoder == 0))
             {
                 ma_atomic_store_32(&pDS->decoder_eof, 1);
             }
@@ -733,29 +733,38 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
         /* If streaming, signal abort first so worker doesn't stay blocked on network data while holding decoder_mutex */
         if (pDS->is_stream)
         {
-            ma_mutex_lock(&pDS->stream_buffer.lock);
-            pDS->stream_buffer.should_abort = MA_TRUE;
-            ma_event_signal(&pDS->stream_buffer.data_ready_event);
-            ma_mutex_unlock(&pDS->stream_buffer.lock);
+            map_buffer_abort(&pDS->buffer);
         }
 
         /* Acquire decoder_mutex first outside spinlock to avoid priority inversion */
         ma_mutex_lock(&pDS->decoder_mutex);
         if (pDS->is_stream)
         {
-            ma_mutex_lock(&pDS->stream_buffer.lock);
-            pDS->stream_buffer.should_abort = MA_FALSE;
-            ma_mutex_unlock(&pDS->stream_buffer.lock);
+            ma_mutex_lock(&pDS->buffer.lock);
+            pDS->buffer.should_abort = MA_FALSE;
+            ma_mutex_unlock(&pDS->buffer.lock);
         }
 
         total_frames = pDS->totalFrames;
         if (pDS->is_stream)
         {
+            if (pDS->readCursorFrames == frameIndex && !pDS->is_eof && !ma_atomic_load_32(&pDS->decoder_eof))
+            {
+                /* Already flushed and positioned at frameIndex by stream_flush; do not re-flush decoder */
+                ma_mutex_unlock(&pDS->decoder_mutex);
+                return MA_SUCCESS;
+            }
             pDS->readCursorFrames = frameIndex;
             ma_atomic_store_32(&pDS->decoder_eof, 0);
             pDS->is_eof = MA_FALSE;
-            map_decoder_reset_stream(&pDS->decoder, pDS->stream_buffer.stream_offset, frameIndex);
-            res = MA_SUCCESS;
+
+            /* Try full in-memory decoder frame seek first (if buffer contains target or file is fully in RAM) */
+            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
+            if (res != MA_SUCCESS)
+            {
+                map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
+                res = MA_SUCCESS;
+            }
         }
         else if (total_frames > 0 && frameIndex >= total_frames)
         {
@@ -775,6 +784,7 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
 
         /* Update internal stream state and ring buffer under spinlock */
         ma_spinlock_lock(&pDS->lock);
+        pDS->is_eof = (frameIndex >= total_frames && total_frames > 0) ? MA_TRUE : MA_FALSE;
         pDS->rawBufferCount = 0;
         pDS->rawBufferReadPos = 0;
         pDS->read_cursor_fraction = 0.0;
@@ -800,10 +810,21 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
 
         if (pDS->is_stream)
         {
+            if (pDS->readCursorFrames == frameIndex)
+            {
+                ma_spinlock_unlock(&pDS->lock);
+                return MA_SUCCESS;
+            }
             pDS->readCursorFrames = frameIndex;
             pDS->is_eof = MA_FALSE;
-            map_decoder_reset_stream(&pDS->decoder, pDS->stream_buffer.stream_offset, frameIndex);
-            res = MA_SUCCESS;
+
+            /* Try full in-memory decoder frame seek first (if buffer contains target or file is fully in RAM) */
+            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
+            if (res != MA_SUCCESS)
+            {
+                map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
+                res = MA_SUCCESS;
+            }
         }
         else if (total_frames > 0 && frameIndex >= total_frames)
         {
@@ -898,161 +919,6 @@ static ma_data_source_vtable g_map_time_stretch_ds_vtable = {
     0
 };
 
-static ma_result map_stream_on_read(
-    ma_decoder *pDecoder,
-    void *pBufferOut,
-    size_t bytesToRead,
-    size_t *pBytesRead)
-{
-    map_stream_buffer_t *sb = (map_stream_buffer_t *)pDecoder->pUserData;
-    size_t bytesRead = 0;
-    uint8_t *out = (uint8_t *)pBufferOut;
-
-    if (pBytesRead != NULL)
-    {
-        *pBytesRead = 0;
-    }
-    if (sb == NULL || pBufferOut == NULL || bytesToRead == 0)
-    {
-        return MA_INVALID_ARGS;
-    }
-
-    while (bytesRead < bytesToRead)
-    {
-        ma_mutex_lock(&sb->lock);
-
-        if (sb->should_abort)
-        {
-            ma_mutex_unlock(&sb->lock);
-            if (pBytesRead != NULL)
-            {
-                *pBytesRead = bytesRead;
-            }
-            return (bytesRead > 0) ? MA_SUCCESS : MA_INTERRUPT;
-        }
-
-        if (sb->fill_count > 0)
-        {
-            size_t toCopy = bytesToRead - bytesRead;
-            if (toCopy > sb->fill_count)
-            {
-                toCopy = sb->fill_count;
-            }
-
-            if (sb->read_pos + toCopy <= sb->capacity)
-            {
-                memcpy(out + bytesRead, sb->ring_buffer + sb->read_pos, toCopy);
-                sb->read_pos = (sb->read_pos + toCopy) % sb->capacity;
-            }
-            else
-            {
-                size_t firstPart = sb->capacity - sb->read_pos;
-                size_t secondPart = toCopy - firstPart;
-                memcpy(out + bytesRead, sb->ring_buffer + sb->read_pos, firstPart);
-                memcpy(out + bytesRead + firstPart, sb->ring_buffer, secondPart);
-                sb->read_pos = secondPart;
-            }
-
-            sb->fill_count -= toCopy;
-            sb->stream_offset += toCopy;
-            bytesRead += toCopy;
-
-            ma_mutex_unlock(&sb->lock);
-            break;
-        }
-        else
-        {
-            if (sb->is_eof || sb->is_probing)
-            {
-                ma_mutex_unlock(&sb->lock);
-                break;
-            }
-
-            ma_mutex_unlock(&sb->lock);
-            ma_event_wait(&sb->data_ready_event);
-        }
-    }
-
-    if (pBytesRead != NULL)
-    {
-        *pBytesRead = bytesRead;
-    }
-
-    if (bytesRead == 0 && sb->is_eof)
-    {
-        return MA_AT_END;
-    }
-
-    return (bytesRead > 0) ? MA_SUCCESS : MA_BUSY;
-}
-
-static ma_result map_stream_on_seek(
-    ma_decoder *pDecoder,
-    ma_int64 byteOffset,
-    ma_seek_origin origin)
-{
-    map_stream_buffer_t *sb = (map_stream_buffer_t *)pDecoder->pUserData;
-    if (sb == NULL)
-    {
-        return MA_INVALID_ARGS;
-    }
-
-    ma_mutex_lock(&sb->lock);
-
-    /* Format probing rewind handling */
-    if (sb->is_probing)
-    {
-        if (origin == ma_seek_origin_start && byteOffset == 0)
-        {
-            sb->read_pos = 0;
-            sb->stream_offset = 0;
-            sb->fill_count = sb->initial_bytes;
-            ma_mutex_unlock(&sb->lock);
-            return MA_SUCCESS;
-        }
-    }
-
-    int64_t targetOffset = 0;
-    if (origin == ma_seek_origin_start)
-    {
-        targetOffset = byteOffset;
-    }
-    else if (origin == ma_seek_origin_current)
-    {
-        targetOffset = sb->stream_offset + byteOffset;
-    }
-    else if (origin == ma_seek_origin_end)
-    {
-        if (sb->total_size < 0)
-        {
-            ma_mutex_unlock(&sb->lock);
-            return MA_NOT_IMPLEMENTED;
-        }
-        targetOffset = sb->total_size + byteOffset;
-    }
-
-    /* Relative seek forward within currently available buffer */
-    if (targetOffset >= sb->stream_offset && targetOffset <= sb->stream_offset + (int64_t)sb->fill_count)
-    {
-        size_t delta = (size_t)(targetOffset - sb->stream_offset);
-        sb->read_pos = (sb->read_pos + delta) % sb->capacity;
-        sb->fill_count -= delta;
-        sb->stream_offset = targetOffset;
-        ma_mutex_unlock(&sb->lock);
-        return MA_SUCCESS;
-    }
-
-    /* Arbitrary seeks backwards or beyond buffer are not supported on live streams */
-    if (sb->is_live)
-    {
-        ma_mutex_unlock(&sb->lock);
-        return MA_NOT_IMPLEMENTED;
-    }
-
-    ma_mutex_unlock(&sb->lock);
-    return MA_NOT_IMPLEMENTED;
-}
-
 static ma_result map_time_stretch_ds_finish_init(
     map_time_stretch_ds *pDS,
     ma_uint32 targetChannels,
@@ -1070,7 +936,15 @@ static ma_result map_time_stretch_ds_finish_init(
     pDS->read_cursor_fraction = 0.0;
     pDS->totalFrames = 0;
     ma_atomic_store_32(&pDS->underrun_count, 0);
-    ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &pDS->totalFrames);
+    if (!pDS->is_stream || !pDS->buffer.is_live)
+    {
+        ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &pDS->totalFrames);
+        if (pDS->is_stream)
+        {
+            ma_decoder_seek_to_pcm_frame(&pDS->decoder, 0);
+            map_buffer_seek(&pDS->buffer, 0);
+        }
+    }
 
     pDS->sonic = sonicCreateStream((int)targetSampleRate, (int)targetChannels);
     if (pDS->sonic == NULL)
@@ -1271,36 +1145,6 @@ ma_result map_time_stretch_ds_init_memory(
     return map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
 }
 
-void map_stream_buffer_abort(
-    map_stream_buffer_t *sb)
-{
-    if (sb == NULL || !sb->is_initialized)
-        return;
-
-    ma_mutex_lock(&sb->lock);
-    sb->should_abort = MA_TRUE;
-    ma_event_signal(&sb->data_ready_event);
-    ma_mutex_unlock(&sb->lock);
-}
-
-void map_stream_buffer_uninit(map_stream_buffer_t *sb)
-{
-    if (sb == NULL || !sb->is_initialized)
-        return;
-
-    map_stream_buffer_abort(sb);
-
-    ma_mutex_uninit(&sb->lock);
-    ma_event_uninit(&sb->data_ready_event);
-
-    if (sb->ring_buffer != NULL)
-    {
-        ma_free(sb->ring_buffer, NULL);
-        sb->ring_buffer = NULL;
-    }
-    sb->is_initialized = MA_FALSE;
-}
-
 ma_result map_time_stretch_ds_init_stream(
     map_time_stretch_ds *pDS,
     const uint8_t *initialData,
@@ -1324,45 +1168,29 @@ ma_result map_time_stretch_ds_init_stream(
 
     if (cap == 0)
     {
-        cap = 2 * 1024 * 1024; /* Default 2 MB ring buffer */
+        cap = 4 * 1024 * 1024; /* Default 4 MB ring buffer */
     }
     if (cap < initialDataSize)
     {
         cap = initialDataSize * 2;
     }
 
-    pDS->stream_buffer.ring_buffer = (uint8_t *)ma_malloc(cap, NULL);
-    if (pDS->stream_buffer.ring_buffer == NULL)
+    result = map_buffer_init(&pDS->buffer, cap, totalSize, isLive);
+    if (result != MA_SUCCESS)
     {
-        return MA_OUT_OF_MEMORY;
+        return result;
     }
 
-    if (ma_mutex_init(&pDS->stream_buffer.lock) != MA_SUCCESS)
+    /* Seed initial probe bytes */
+    pDS->buffer.is_probing = MA_TRUE;
+    pDS->buffer.initial_bytes = initialDataSize;
+    result = map_buffer_write(&pDS->buffer, 0, initialData, initialDataSize);
+    if (result != MA_SUCCESS)
     {
-        ma_free(pDS->stream_buffer.ring_buffer, NULL);
-        return MA_ERROR;
+        map_buffer_uninit(&pDS->buffer);
+        return result;
     }
 
-    if (ma_event_init(&pDS->stream_buffer.data_ready_event) != MA_SUCCESS)
-    {
-        ma_mutex_uninit(&pDS->stream_buffer.lock);
-        ma_free(pDS->stream_buffer.ring_buffer, NULL);
-        return MA_ERROR;
-    }
-
-    memcpy(pDS->stream_buffer.ring_buffer, initialData, initialDataSize);
-    pDS->stream_buffer.capacity = cap;
-    pDS->stream_buffer.read_pos = 0;
-    pDS->stream_buffer.write_pos = initialDataSize % cap;
-    pDS->stream_buffer.fill_count = initialDataSize;
-    pDS->stream_buffer.total_size = totalSize;
-    pDS->stream_buffer.is_live = isLive;
-    pDS->stream_buffer.is_eof = MA_FALSE;
-    pDS->stream_buffer.should_abort = MA_FALSE;
-    pDS->stream_buffer.is_probing = MA_TRUE;
-    pDS->stream_buffer.initial_bytes = initialDataSize;
-    pDS->stream_buffer.stream_offset = 0;
-    pDS->stream_buffer.is_initialized = MA_TRUE;
     pDS->is_stream = MA_TRUE;
 
     decoder_cfg = ma_decoder_config_init(ma_format_f32, targetChannels, targetSampleRate);
@@ -1378,18 +1206,25 @@ ma_result map_time_stretch_ds_init_stream(
         decoder_cfg.customBackendCount = custom_count;
     }
 
-    result = ma_decoder_init(map_stream_on_read, map_stream_on_seek, &pDS->stream_buffer, &decoder_cfg, &pDS->decoder);
-
-    pDS->stream_buffer.is_probing = MA_FALSE;
+    result = map_decoder_init_ex(
+        map_buffer_decoder_read,
+        map_buffer_decoder_seek,
+        map_buffer_decoder_tell,
+        &pDS->buffer,
+        &decoder_cfg,
+        &pDS->decoder);
 
     if (result != MA_SUCCESS)
     {
-        map_stream_buffer_uninit(&pDS->stream_buffer);
+        pDS->buffer.is_probing = MA_FALSE;
+        map_buffer_uninit(&pDS->buffer);
         pDS->is_stream = MA_FALSE;
         return result;
     }
 
-    return map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
+    result = map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
+    pDS->buffer.is_probing = MA_FALSE;
+    return result;
 }
 
 ma_result map_time_stretch_ds_stream_feed(
@@ -1400,37 +1235,7 @@ ma_result map_time_stretch_ds_stream_feed(
     if (pDS == NULL || !pDS->is_stream || data == NULL || size == 0)
         return MA_INVALID_ARGS;
 
-    map_stream_buffer_t *sb = &pDS->stream_buffer;
-    ma_mutex_lock(&sb->lock);
-
-    if (sb->fill_count + size > sb->capacity)
-    {
-        /* Buffer is full */
-        ma_mutex_unlock(&sb->lock);
-        return MA_OUT_OF_MEMORY;
-    }
-
-    if (sb->write_pos + size <= sb->capacity)
-    {
-        memcpy(sb->ring_buffer + sb->write_pos, data, size);
-        sb->write_pos = (sb->write_pos + size) % sb->capacity;
-    }
-    else
-    {
-        size_t firstPart = sb->capacity - sb->write_pos;
-        size_t secondPart = size - firstPart;
-        memcpy(sb->ring_buffer + sb->write_pos, data, firstPart);
-        memcpy(sb->ring_buffer, data + firstPart, secondPart);
-        sb->write_pos = secondPart;
-    }
-
-    sb->fill_count += size;
-
-    /* Signal decode worker thread that new data is available */
-    ma_event_signal(&sb->data_ready_event);
-    ma_mutex_unlock(&sb->lock);
-
-    return MA_SUCCESS;
+    return map_buffer_feed(&pDS->buffer, data, size);
 }
 
 ma_result map_time_stretch_ds_stream_flush(
@@ -1440,13 +1245,8 @@ ma_result map_time_stretch_ds_stream_flush(
     if (pDS == NULL || !pDS->is_stream)
         return MA_INVALID_ARGS;
 
-    map_stream_buffer_t *sb = &pDS->stream_buffer;
-
-    /* Step 1: Signal abort to interrupt any active map_stream_on_read */
-    ma_mutex_lock(&sb->lock);
-    sb->should_abort = MA_TRUE;
-    ma_event_signal(&sb->data_ready_event);
-    ma_mutex_unlock(&sb->lock);
+    /* Step 1: Signal abort to interrupt any active map_buffer_decoder_read */
+    map_buffer_abort(&pDS->buffer);
 
     /* Step 2: Acquire decoder_mutex. Because should_abort is MA_TRUE, 
      * worker is guaranteed to exit ma_decoder_read_pcm_frames with MA_INTERRUPT. */
@@ -1454,15 +1254,8 @@ ma_result map_time_stretch_ds_stream_flush(
     {
         ma_mutex_lock(&pDS->decoder_mutex);
 
-        /* Step 3: Now that worker is NOT decoding, safely reset stream buffer */
-        ma_mutex_lock(&sb->lock);
-        sb->read_pos = 0;
-        sb->write_pos = 0;
-        sb->fill_count = 0;
-        sb->stream_offset = newStreamOffset;
-        sb->is_eof = MA_FALSE;
-        sb->should_abort = MA_FALSE; /* Clear abort flag ONLY after acquiring decoder_mutex */
-        ma_mutex_unlock(&sb->lock);
+        /* Step 3: Now that worker is NOT decoding, safely flush buffer window */
+        map_buffer_flush(&pDS->buffer, newStreamOffset);
 
         /* Step 4: Reset decoder backend and data converter */
         map_decoder_reset_stream(&pDS->decoder, newStreamOffset, pDS->readCursorFrames);
@@ -1487,15 +1280,7 @@ ma_result map_time_stretch_ds_stream_flush(
     }
     else
     {
-        ma_mutex_lock(&sb->lock);
-        sb->read_pos = 0;
-        sb->write_pos = 0;
-        sb->fill_count = 0;
-        sb->stream_offset = newStreamOffset;
-        sb->is_eof = MA_FALSE;
-        sb->should_abort = MA_FALSE;
-        ma_mutex_unlock(&sb->lock);
-
+        map_buffer_flush(&pDS->buffer, newStreamOffset);
         map_decoder_reset_stream(&pDS->decoder, newStreamOffset, pDS->readCursorFrames);
 
         ma_spinlock_lock(&pDS->lock);
@@ -1522,13 +1307,7 @@ ma_result map_time_stretch_ds_stream_end(
     if (pDS == NULL || !pDS->is_stream)
         return MA_INVALID_ARGS;
 
-    map_stream_buffer_t *sb = &pDS->stream_buffer;
-    ma_mutex_lock(&sb->lock);
-    sb->is_eof = MA_TRUE;
-    ma_event_signal(&sb->data_ready_event);
-    ma_mutex_unlock(&sb->lock);
-
-    return MA_SUCCESS;
+    return map_buffer_end(&pDS->buffer);
 }
 
 void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
@@ -1542,7 +1321,7 @@ void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
         ma_event_signal(&pDS->worker_event);
         if (pDS->is_stream)
         {
-            map_stream_buffer_abort(&pDS->stream_buffer);
+            map_buffer_abort(&pDS->buffer);
         }
         ma_thread_wait(&pDS->worker_thread);
         ma_event_uninit(&pDS->worker_event);
@@ -1579,7 +1358,7 @@ void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
 
     if (pDS->is_stream)
     {
-        map_stream_buffer_uninit(&pDS->stream_buffer);
+        map_buffer_uninit(&pDS->buffer);
         pDS->is_stream = MA_FALSE;
     }
 

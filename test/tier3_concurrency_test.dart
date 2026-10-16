@@ -76,11 +76,13 @@ void main() {
     });
 
     test('C1.2: independent playback positions advance in parallel', () async {
-      await playerA.action.open(fileA.path, autoPlay: true);
+      await playerA.action.open(fileA.path);
+      await playerA.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       // Start playerB later
-      await playerB.action.open(fileB.path, autoPlay: true);
+      await playerB.action.open(fileB.path);
+      await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       // playerA should be ahead of playerB
@@ -185,8 +187,10 @@ void main() {
     test(
       'C3.1: pausing Player A does not interrupt Player B playback',
       () async {
-        await playerA.action.open(fileA.path, autoPlay: true);
-        await playerB.action.open(fileB.path, autoPlay: true);
+        await playerA.action.open(fileA.path);
+        await playerA.action.play();
+        await playerB.action.open(fileB.path);
+        await playerB.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
         await playerA.action.pause();
@@ -200,8 +204,10 @@ void main() {
     );
 
     test('C3.2: stopping Player A rewinds only Player A to zero', () async {
-      await playerA.action.open(fileA.path, autoPlay: true);
-      await playerB.action.open(fileB.path, autoPlay: true);
+      await playerA.action.open(fileA.path);
+      await playerA.action.play();
+      await playerB.action.open(fileB.path);
+      await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       await playerA.action.stop();
@@ -213,8 +219,10 @@ void main() {
     });
 
     test('C3.3: seeking Player A does not shift Player B position', () async {
-      await playerA.action.open(fileA.path, autoPlay: true);
-      await playerB.action.open(fileB.path, autoPlay: true);
+      await playerA.action.open(fileA.path);
+      await playerA.action.play();
+      await playerB.action.open(fileB.path);
+      await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 150));
 
       const seekTarget = Duration(seconds: 4);
@@ -246,8 +254,10 @@ void main() {
     });
 
     test('C4.1: disposing Player A mid-playback leaves Player B running uninterrupted', () async {
-      await playerA.action.open(fileA.path, autoPlay: true);
-      await playerB.action.open(fileB.path, autoPlay: true);
+      await playerA.action.open(fileA.path);
+      await playerA.action.play();
+      await playerB.action.open(fileB.path);
+      await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(playerA.state.playing, isTrue);
@@ -288,10 +298,10 @@ void main() {
       players.addAll([p1, p2, p3, p4]);
 
       await Future.wait([
-        p1.action.open(fileA.path, autoPlay: true),
-        p2.action.open(fileB.path, autoPlay: true),
-        p3.action.open(fileC.path, autoPlay: true),
-        p4.action.open(fileD.path, autoPlay: true),
+        p1.action.open(fileA.path).then((_) => p1.action.play()),
+        p2.action.open(fileB.path).then((_) => p2.action.play()),
+        p3.action.open(fileC.path).then((_) => p3.action.play()),
+        p4.action.open(fileD.path).then((_) => p4.action.play()),
       ]);
 
       expect(p1.state.playing, isTrue);

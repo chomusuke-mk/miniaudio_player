@@ -47,7 +47,8 @@ void main() {
         });
         addTearDown(() => sub.cancel());
 
-        await player.action.open(audioFile.path, autoPlay: true);
+        await player.action.open(audioFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
         expect(player.state.playing, isTrue);
 
@@ -109,7 +110,8 @@ void main() {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path, autoPlay: true);
+        await player.action.open(audioFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
         const subscriberCount = 16;
@@ -214,7 +216,8 @@ void main() {
         });
         addTearDown(() => sub.cancel());
 
-        await player.action.open(audioFile.path, autoPlay: true);
+        await player.action.open(audioFile.path);
+        await player.action.play();
 
         // Wait until real music produces significant energy
         await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -295,7 +298,8 @@ void main() {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path, autoPlay: true);
+        await player.action.open(audioFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
         // Case A: With active stream listener
@@ -376,7 +380,8 @@ void main() {
         for (int iteration = 0; iteration < 8; iteration++) {
           final p = MiniaudioPlayer();
           final sub = p.stream.visualizer.listen((_) {});
-          await p.action.open(audioFile.path, autoPlay: true);
+          await p.action.open(audioFile.path);
+          await p.action.play();
 
           // Fast toggle during initial buffer fill
           await p.action.setVisualizerEnabled(false);
@@ -401,7 +406,8 @@ void main() {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path, autoPlay: true);
+        await player.action.open(audioFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
         // 1. Force visualizer disabled before any listeners exist
@@ -465,7 +471,8 @@ void main() {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path, autoPlay: true);
+        await player.action.open(audioFile.path);
+        await player.action.play();
         final sub = player.stream.visualizer.listen((_) {});
         addTearDown(() => sub.cancel());
 

@@ -236,7 +236,8 @@ void main() {
     test(
       'B2.3: seeking to exact Duration.zero succeeds and sets position to 0',
       () async {
-        await player.action.open(standardWavFile.path, autoPlay: true);
+        await player.action.open(standardWavFile.path);
+        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
         await player.action.seek(Duration.zero);
@@ -284,7 +285,8 @@ void main() {
     });
 
     test('B3.1: rapid burst of 20 seek operations without awaiting does not deadlock or crash', () async {
-      await player.action.open(standardWavFile.path, autoPlay: true);
+      await player.action.open(standardWavFile.path);
+      await player.action.play();
 
       // Simulate aggressive user scrubbing the slider
       final futures = <Future<void>>[];

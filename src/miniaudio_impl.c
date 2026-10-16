@@ -22,6 +22,8 @@
 #endif
 
 #include "map_common.h"
+#include "decoders/aac/miniaudio_aac.h"
+#include "decoders/minimp4/minimp4.h"
 
 ma_result map_thread_create(ma_thread *pThread, map_thread_entry_proc entryProc, void *pData)
 {
@@ -72,7 +74,20 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
         if (pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_wav)
         {
             ma_wav *pWav = (ma_wav *)pDecoder->pBackend;
+            ma_uint32 bytesPerFrame = ma_dr_wav_get_bytes_per_pcm_frame(&pWav->dr);
             pWav->dr.readCursorInPCMFrames = targetFrame;
+            if (bytesPerFrame > 0 && pWav->dr.totalPCMFrameCount > targetFrame)
+            {
+                pWav->dr.bytesRemaining = (pWav->dr.totalPCMFrameCount - targetFrame) * bytesPerFrame;
+            }
+            else if (pWav->dr.totalPCMFrameCount == 0 && pWav->dr.dataChunkDataSize > 0)
+            {
+                pWav->dr.bytesRemaining = pWav->dr.dataChunkDataSize;
+            }
+            else
+            {
+                pWav->dr.bytesRemaining = 0;
+            }
             return MA_SUCCESS;
         }
 #endif
@@ -84,8 +99,160 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             pVorbis->push.framesRemaining = 0;
             return MA_SUCCESS;
         }
+
+        if (ma_decoding_backend_aac != NULL && pDecoder->pBackendVTable == ma_decoding_backend_aac)
+        {
+            ma_aac *pAac = (ma_aac *)pDecoder->pBackend;
+            if (pAac->container == MA_AAC_CONTAINER_MP4)
+            {
+                ma_aac_flush_decoder(pAac);
+                unsigned nominalFrameSamples = (pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024;
+                pAac->mp4CurrentSample = (ma_uint32)(targetFrame / nominalFrameSamples);
+                pAac->currentPCMFrame = targetFrame;
+                pAac->bufferFrames = 0;
+                pAac->bufferIndex = 0;
+                return MA_SUCCESS;
+            }
+            else if (pAac->container == MA_AAC_CONTAINER_ADTS)
+            {
+                ma_aac_flush_decoder(pAac);
+                pAac->bufferFrames = 0;
+                pAac->bufferIndex = 0;
+                pAac->currentPCMFrame = targetFrame;
+                return MA_SUCCESS;
+            }
+        }
     }
 
     return MA_SUCCESS;
 }
 
+ma_uint32 map_decoder_get_raw_bytes_per_frame(ma_decoder *pDecoder)
+{
+    if (pDecoder == NULL)
+    {
+        return 1;
+    }
+
+#if !defined(MA_NO_WAV)
+    if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_wav)
+    {
+        ma_wav *pWav = (ma_wav *)pDecoder->pBackend;
+        ma_uint32 bpf = ma_dr_wav_get_bytes_per_pcm_frame(&pWav->dr);
+        return (bpf > 0) ? bpf : 1;
+    }
+#endif
+
+    return 1;
+}
+
+int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetFrame)
+{
+    if (pDecoder == NULL)
+    {
+        return -1;
+    }
+
+#if !defined(MA_NO_WAV)
+    if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_wav)
+    {
+        ma_wav *pWav = (ma_wav *)pDecoder->pBackend;
+        ma_uint32 bytesPerFrame = ma_dr_wav_get_bytes_per_pcm_frame(&pWav->dr);
+        if (pWav->dr.totalPCMFrameCount > 0 && targetFrame > pWav->dr.totalPCMFrameCount)
+        {
+            targetFrame = pWav->dr.totalPCMFrameCount;
+        }
+        return (int64_t)(pWav->dr.dataChunkDataPos + targetFrame * bytesPerFrame);
+    }
+#endif
+
+#if !defined(MA_NO_MP3)
+    if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_mp3)
+    {
+        ma_mp3 *pMp3 = (ma_mp3 *)pDecoder->pBackend;
+        if (targetFrame == 0)
+        {
+            return (int64_t)pMp3->dr.streamStartOffset;
+        }
+    }
+#endif
+
+#if !defined(MA_NO_FLAC)
+    if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_flac)
+    {
+        ma_flac *pFlac = (ma_flac *)pDecoder->pBackend;
+        if (targetFrame == 0 && pFlac->dr != NULL)
+        {
+            return (int64_t)pFlac->dr->firstFLACFramePosInBytes;
+        }
+    }
+#endif
+
+    if (ma_decoding_backend_aac != NULL && pDecoder->pBackend != NULL && pDecoder->pBackendVTable == ma_decoding_backend_aac)
+    {
+        ma_aac *pAac = (ma_aac *)pDecoder->pBackend;
+        if (pAac->container == MA_AAC_CONTAINER_MP4 && pAac->pMp4 != NULL)
+        {
+            MP4D_demux_t *pMp4 = (MP4D_demux_t *)pAac->pMp4;
+            unsigned nominalFrameSamples = (pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024;
+            unsigned sampleIdx = (unsigned)(targetFrame / nominalFrameSamples);
+            unsigned frameBytes = 0, ts = 0, dur = 0;
+            if (sampleIdx < pMp4->track[pAac->mp4AudioTrack].sample_count)
+            {
+                MP4D_file_offset_t offset = MP4D_frame_offset(pMp4, pAac->mp4AudioTrack, sampleIdx, &frameBytes, &ts, &dur);
+                if (offset > 0)
+                {
+                    return (int64_t)offset;
+                }
+            }
+        }
+        else if (pAac->container == MA_AAC_CONTAINER_ADTS)
+        {
+            unsigned nominalFrameSamples = (pAac->bufferFrames > 0) ? pAac->bufferFrames : 1024;
+            unsigned sampleIdx = (unsigned)(targetFrame / nominalFrameSamples);
+            if (sampleIdx < pAac->adtsFrameCount && pAac->adtsFrameOffsets != NULL)
+            {
+                return (int64_t)pAac->adtsFrameOffsets[sampleIdx];
+            }
+        }
+    }
+
+    return -1;
+}
+
+int64_t map_decoder_get_audio_data_offset(ma_decoder *pDecoder)
+{
+    if (pDecoder == NULL)
+    {
+        return 0;
+    }
+    int64_t off = map_decoder_get_stream_seek_byte(pDecoder, 0);
+    return (off > 0) ? off : 0;
+}
+
+ma_result map_decoder_init_ex(
+    ma_decoder_read_proc onRead,
+    ma_decoder_seek_proc onSeek,
+    ma_decoder_tell_proc onTell,
+    void *pUserData,
+    const ma_decoder_config *pConfig,
+    ma_decoder *pDecoder)
+{
+    ma_decoder_config config;
+    ma_result result;
+
+    if (pDecoder == NULL)
+    {
+        return MA_INVALID_ARGS;
+    }
+
+    config = ma_decoder_config_init_copy(pConfig);
+
+    result = ma_decoder__preinit(onRead, onSeek, onTell, pUserData, &config, pDecoder);
+    if (result != MA_SUCCESS)
+    {
+        return result;
+    }
+
+    return ma_decoder_init__internal(onRead, onSeek, pUserData, &config, pDecoder);
+}

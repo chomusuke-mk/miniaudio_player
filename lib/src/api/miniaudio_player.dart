@@ -16,6 +16,8 @@ import 'audio_analysis_result.dart';
 import 'dsp_config.dart';
 import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
+import 'buffered_range.dart';
+import 'track_metadata.dart';
 import '../reverb.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
@@ -87,11 +89,43 @@ class MiniaudioPlayerGlobalConfig {
   /// Defaults to `"System Default ($resolvedName)"` (or `"System Default"` if empty).
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
 
+  /// Buffer duration ahead of playback cursor (default: 15s).
+  Duration bufferAheadDuration;
+
+  /// Buffer duration retained behind playback cursor in circular RAM cache (default: 15s).
+  Duration bufferBehindDuration;
+
+  /// Default buffer duration for local files (default: 30s).
+  Duration bufferLocalDuration;
+
+  /// Default buffer duration for progressive network streams (default: 30s).
+  Duration bufferNetworkDuration;
+
+  /// Default buffer duration for continuous live streams (default: 15s).
+  Duration bufferLiveStreamDuration;
+
+  /// Optional buffer cap in MB for local files.
+  int? bufferSizeLocalMB;
+
+  /// Optional buffer cap in MB for progressive network streams.
+  int? bufferSizeNetworkMB;
+
+  /// Optional buffer cap in MB for live streams.
+  int? bufferSizeLiveStreamMB;
+
   MiniaudioPlayerGlobalConfig({
     this.defaultBufferSize = 0,
     this.logLevel = MiniaudioLogLevel.none,
     this.defaultAudioDevice = AudioDevice.auto,
     DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
+    this.bufferAheadDuration = const Duration(seconds: 15),
+    this.bufferBehindDuration = const Duration(seconds: 15),
+    this.bufferLocalDuration = const Duration(seconds: 30),
+    this.bufferNetworkDuration = const Duration(seconds: 30),
+    this.bufferLiveStreamDuration = const Duration(seconds: 15),
+    this.bufferSizeLocalMB,
+    this.bufferSizeNetworkMB,
+    this.bufferSizeLiveStreamMB,
   }) : defaultDeviceDisplayNameResolver = defaultDeviceDisplayNameResolver ??
             _defaultDeviceDisplayNameResolver;
 
@@ -108,6 +142,9 @@ class MiniaudioPlayerGlobalConfig {
 class MiniaudioPlayer implements Finalizable {
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
+
+  /// Currently active global player configuration.
+  static MiniaudioPlayerGlobalConfig get globalConfig => _globalConfig;
 
   static final StreamController<List<AudioDevice>> _audioDevicesController =
       StreamController<List<AudioDevice>>.broadcast(
@@ -180,6 +217,18 @@ class MiniaudioPlayer implements Finalizable {
     MiniaudioLogLevel? logLevel,
     AudioDevice? defaultAudioDevice,
     DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
+    Duration? bufferAheadDuration,
+    Duration? bufferBehindDuration,
+    Duration? bufferLocalDuration,
+    Duration? bufferNetworkDuration,
+    Duration? bufferLiveStreamDuration,
+    int? bufferLocalInSeconds,
+    int? bufferNetworkInSeconds,
+    int? bufferLiveStreamInSeconds,
+    int? bufferStreamsInSeconds,
+    int? bufferSizeLocalMB,
+    int? bufferSizeNetworkMB,
+    int? bufferSizeLiveStreamMB,
   }) {
     if (defaultBufferSize != null) {
       if (defaultBufferSize < 0) {
@@ -205,6 +254,38 @@ class MiniaudioPlayer implements Finalizable {
     if (defaultDeviceDisplayNameResolver != null) {
       _globalConfig.defaultDeviceDisplayNameResolver =
           defaultDeviceDisplayNameResolver;
+    }
+    if (bufferAheadDuration != null) {
+      _globalConfig.bufferAheadDuration = bufferAheadDuration;
+    }
+    if (bufferBehindDuration != null) {
+      _globalConfig.bufferBehindDuration = bufferBehindDuration;
+    }
+    if (bufferLocalDuration != null) {
+      _globalConfig.bufferLocalDuration = bufferLocalDuration;
+    } else if (bufferLocalInSeconds != null) {
+      _globalConfig.bufferLocalDuration = Duration(seconds: bufferLocalInSeconds);
+    }
+    if (bufferNetworkDuration != null) {
+      _globalConfig.bufferNetworkDuration = bufferNetworkDuration;
+    } else if (bufferNetworkInSeconds != null) {
+      _globalConfig.bufferNetworkDuration = Duration(seconds: bufferNetworkInSeconds);
+    }
+    if (bufferLiveStreamDuration != null) {
+      _globalConfig.bufferLiveStreamDuration = bufferLiveStreamDuration;
+    } else if (bufferLiveStreamInSeconds != null) {
+      _globalConfig.bufferLiveStreamDuration = Duration(seconds: bufferLiveStreamInSeconds);
+    } else if (bufferStreamsInSeconds != null) {
+      _globalConfig.bufferLiveStreamDuration = Duration(seconds: bufferStreamsInSeconds);
+    }
+    if (bufferSizeLocalMB != null) {
+      _globalConfig.bufferSizeLocalMB = bufferSizeLocalMB;
+    }
+    if (bufferSizeNetworkMB != null) {
+      _globalConfig.bufferSizeNetworkMB = bufferSizeNetworkMB;
+    }
+    if (bufferSizeLiveStreamMB != null) {
+      _globalConfig.bufferSizeLiveStreamMB = bufferSizeLiveStreamMB;
     }
     return _globalConfig;
   }
@@ -520,6 +601,14 @@ class MiniaudioPlayer implements Finalizable {
       StreamController<bool>.broadcast();
   final StreamController<bool> _completedController =
       StreamController<bool>.broadcast();
+  final StreamController<Duration> _bufferedPositionController =
+      StreamController<Duration>.broadcast();
+  final StreamController<double> _bufferedPercentageController =
+      StreamController<double>.broadcast();
+  final StreamController<BufferedRange> _bufferedRangeController =
+      StreamController<BufferedRange>.broadcast();
+  final StreamController<AudioTrackMetadata?> _trackMetadataController =
+      StreamController<AudioTrackMetadata?>.broadcast();
   final StreamController<double> _volumeController =
       StreamController<double>.broadcast();
   final StreamController<double> _rateController =
@@ -568,6 +657,13 @@ class MiniaudioPlayer implements Finalizable {
   bool _playing = false;
   bool _buffering = false;
   bool _completed = false;
+  Duration _bufferedPosition = Duration.zero;
+  double _bufferedPercentage = 0.0;
+  BufferedRange _bufferedRange = const BufferedRange();
+  AudioTrackMetadata? _trackMetadata;
+  BufferedRange? _lastBufferedRange;
+  AudioTrackMetadata? _lastTrackMetadata;
+  Pointer<native.miniaudio_buffered_range_t>? _bufferedRangePtr;
   double _volume = 1.0;
   double _rate = 1.0;
   double _pitch = 1.0;
@@ -691,6 +787,7 @@ class MiniaudioPlayer implements Finalizable {
       _finalizer.attach(this, _playerHandle.cast(), detach: this);
 
       _statusPtr = calloc<native.miniaudio_player_status_t>();
+      _bufferedRangePtr = calloc<native.miniaudio_buffered_range_t>();
 
       final devPtr = calloc<native.miniaudio_device_info_t>();
       try {
@@ -710,6 +807,12 @@ class MiniaudioPlayer implements Finalizable {
       onOptimisticSeek: (pos) {
         _position = pos;
         _lastPosition = pos;
+        if (_completed && (_duration == Duration.zero || pos < _duration)) {
+          _completed = false;
+          if (!_completedController.isClosed) {
+            _completedController.add(false);
+          }
+        }
         if (!_positionController.isClosed) {
           _positionController.add(_position);
         }
@@ -722,6 +825,10 @@ class MiniaudioPlayer implements Finalizable {
       playingController: _playingController,
       bufferingController: _bufferingController,
       completedController: _completedController,
+      bufferedPositionController: _bufferedPositionController,
+      bufferedPercentageController: _bufferedPercentageController,
+      bufferedRangeController: _bufferedRangeController,
+      trackMetadataController: _trackMetadataController,
       volumeController: _volumeController,
       rateController: _rateController,
       pitchController: _pitchController,
@@ -751,6 +858,10 @@ class MiniaudioPlayer implements Finalizable {
       getPlaying: () => _playing,
       getBuffering: () => _buffering,
       getCompleted: () => _completed,
+      getBufferedPosition: () => _bufferedPosition,
+      getBufferedPercentage: () => _bufferedPercentage,
+      getBufferedRange: () => _bufferedRange,
+      getTrackMetadata: () => _trackMetadata,
       getVolume: () => _volume,
       getRate: () => _rate,
       getPitch: () => _pitch,
@@ -811,6 +922,33 @@ class MiniaudioPlayer implements Finalizable {
 
   /// Internal handle to the native miniaudio player.
   Pointer<native.miniaudio_player_t> get handle => _playerHandle;
+
+  /// Native audio sampling rate in Hz of the currently active source (or engine default).
+  int get sampleRate {
+    if (_isDisposed || _playerHandle == nullptr) return 0;
+    return native.miniaudio_player_get_sample_rate(_playerHandle);
+  }
+
+  /// Channel count of the currently active source (e.g. 1 for mono, 2 for stereo).
+  int get channels {
+    if (_isDisposed || _playerHandle == nullptr) return 0;
+    return native.miniaudio_player_get_channels(_playerHandle);
+  }
+
+  /// Buffer duration to preload ahead of current playback position.
+  Duration get bufferAheadDuration => _globalConfig.bufferAheadDuration;
+
+  /// Buffer duration to retain behind current playback position.
+  Duration get bufferBehindDuration => _globalConfig.bufferBehindDuration;
+
+  /// Default buffer window for local files.
+  Duration get bufferLocalDuration => _globalConfig.bufferLocalDuration;
+
+  /// Default buffer window for progressive network audio.
+  Duration get bufferNetworkDuration => _globalConfig.bufferNetworkDuration;
+
+  /// Default buffer window for continuous live streams.
+  Duration get bufferLiveStreamDuration => _globalConfig.bufferLiveStreamDuration;
 
   /// Ensures that the player has not been disposed.
   void ensureNotDisposed() {
@@ -894,7 +1032,21 @@ class MiniaudioPlayer implements Finalizable {
   }
 
   void _onNativeCompleted(Pointer<Void> _) {
-    if (_isDisposed) return;
+    if (_isDisposed || _playerHandle == nullptr) return;
+
+    // Check actual native status to guard against race conditions where the track
+    // has already been rewound, sought, or restarted while this asynchronous
+    // NativeCallable was queued on Dart's event loop.
+    if (_statusPtr != null) {
+      final res = native.miniaudio_player_get_status(_playerHandle, _statusPtr!);
+      if (res == MapResult.success) {
+        if (_statusPtr!.ref.state == MapPlaybackState.playing &&
+            _statusPtr!.ref.is_completed == 0) {
+          return;
+        }
+      }
+    }
+
     _stopPositionTimer();
     final wasPlaying = _playing;
     final wasCompleted = _completed;
@@ -963,9 +1115,10 @@ class MiniaudioPlayer implements Finalizable {
     final status = _statusPtr!.ref;
     final position = Duration(milliseconds: status.position_ms);
     final duration = Duration(milliseconds: status.duration_ms);
-    final isPlaying = status.is_playing != 0;
+    final bool reachedEnd = duration > Duration.zero && position >= duration;
+    final isCompleted = (status.is_completed != 0) || reachedEnd;
+    final isPlaying = (status.is_playing != 0) && !isCompleted;
     final isBuffering = status.is_buffering != 0;
-    final isCompleted = status.is_completed != 0;
     final state = status.state;
     final bitrate = status.bitrate;
     final device = status.device.toAudioDevice();
@@ -1195,6 +1348,39 @@ class MiniaudioPlayer implements Finalizable {
       }
     }
 
+    if (_bufferedRangePtr != null) {
+      if (native.miniaudio_player_get_buffered_range(
+              _playerHandle, _bufferedRangePtr!) ==
+          MapResult.success) {
+        final brRef = _bufferedRangePtr!.ref;
+        final br = BufferedRange(
+          start: Duration(milliseconds: brRef.start_ms),
+          end: Duration(milliseconds: brRef.end_ms),
+          duration: Duration(milliseconds: brRef.duration_ms),
+          fillPercentage: brRef.fill_percentage,
+          streamPercentage: brRef.stream_percentage,
+          isBuffering: brRef.is_buffering != 0,
+          isEof: brRef.is_eof != 0,
+        );
+        _bufferedPosition = br.end;
+        _bufferedPercentage = br.streamPercentage;
+        _bufferedRange = br;
+
+        if (_lastBufferedRange != br || force) {
+          _lastBufferedRange = br;
+          if (!_bufferedRangeController.isClosed) {
+            _bufferedRangeController.add(br);
+          }
+          if (!_bufferedPositionController.isClosed) {
+            _bufferedPositionController.add(br.end);
+          }
+          if (!_bufferedPercentageController.isClosed) {
+            _bufferedPercentageController.add(br.streamPercentage);
+          }
+        }
+      }
+    }
+
     return true;
   }
 
@@ -1277,6 +1463,30 @@ class MiniaudioPlayer implements Finalizable {
   /// Alias for [audioBitrate].
   int get bitrate => _audioBitrate;
 
+  /// Furthest continuous timestamp preloaded in RAM buffer.
+  Duration get bufferedPosition => _bufferedPosition;
+
+  /// Fraction (0.0 to 1.0) of the total track loaded into the buffer (for preloaded bar).
+  double get bufferedPercentage => _bufferedPercentage;
+
+  /// Comprehensive sliding-window circular buffer telemetry metrics.
+  BufferedRange get bufferedRange => _bufferedRange;
+
+  /// Current audio track metadata, or `null` if no track is opened.
+  AudioTrackMetadata? get trackMetadata => _trackMetadata;
+
+  /// Updates current track metadata and notifies listeners.
+  void setTrackMetadata(AudioTrackMetadata? metadata) {
+    if (_isDisposed) return;
+    _trackMetadata = metadata;
+    if (_lastTrackMetadata != metadata) {
+      _lastTrackMetadata = metadata;
+      if (!_trackMetadataController.isClosed) {
+        _trackMetadataController.add(metadata);
+      }
+    }
+  }
+
   /// Destroys the player instance and frees native C memory.
   Future<void> dispose() async {
     if (_isDisposed) return;
@@ -1297,11 +1507,20 @@ class MiniaudioPlayer implements Finalizable {
       _statusPtr = null;
     }
 
+    if (_bufferedRangePtr != null) {
+      calloc.free(_bufferedRangePtr!);
+      _bufferedRangePtr = null;
+    }
+
     await _positionController.close();
     await _durationController.close();
     await _playingController.close();
     await _bufferingController.close();
     await _completedController.close();
+    await _bufferedPositionController.close();
+    await _bufferedPercentageController.close();
+    await _bufferedRangeController.close();
+    await _trackMetadataController.close();
     await _volumeController.close();
     await _rateController.close();
     await _pitchController.close();

@@ -303,6 +303,45 @@ ma_bool32 map_sniff_ogg_vorbis_stream_info(
     return MA_FALSE;
 }
 
+ma_bool32 map_sniff_ogg_opus_stream_info(
+    const uint8_t *data,
+    size_t data_size,
+    int64_t total_size,
+    uint32_t *out_bitrate,
+    int64_t *out_duration_ms)
+{
+    if (data == NULL || data_size < 40 || out_bitrate == NULL || out_duration_ms == NULL)
+    {
+        return MA_FALSE;
+    }
+
+    if (memcmp(data, "OggS", 4) != 0)
+    {
+        return MA_FALSE;
+    }
+
+    size_t scan_limit = data_size > 4096 ? 4096 : data_size;
+    for (size_t i = 0; i + 19 <= scan_limit; i++)
+    {
+        if (memcmp(data + i, "OpusHead", 8) == 0)
+        {
+            uint8_t channels = data[i + 9];
+            uint32_t br = (channels >= 2) ? 128000 : 64000;
+            *out_bitrate = br;
+            if (total_size > 0)
+            {
+                *out_duration_ms = (int64_t)(((uint64_t)total_size * 8000ULL) / (uint64_t)br);
+            }
+            else
+            {
+                *out_duration_ms = 0;
+            }
+            return MA_TRUE;
+        }
+    }
+    return MA_FALSE;
+}
+
 ma_bool32 map_sniff_stream_info(
     const uint8_t *data,
     size_t data_size,
@@ -315,6 +354,10 @@ ma_bool32 map_sniff_stream_info(
         return MA_TRUE;
     }
     if (map_sniff_ogg_vorbis_stream_info(data, data_size, total_size, out_bitrate, out_duration_ms))
+    {
+        return MA_TRUE;
+    }
+    if (map_sniff_ogg_opus_stream_info(data, data_size, total_size, out_bitrate, out_duration_ms))
     {
         return MA_TRUE;
     }

@@ -15,3 +15,5 @@ export 'src/api/dsp_config.dart';
 export 'src/equalizer.dart';
 export 'src/reverb.dart';
 export 'src/api/audio_source.dart';
+export 'src/api/buffered_range.dart';
+export 'src/api/track_metadata.dart';

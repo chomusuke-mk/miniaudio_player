@@ -341,7 +341,8 @@ void main() {
             : 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=64&initial_burst=32768';
 
         futures.add(() async {
-          await p.action.openUrl(url, autoPlay: true);
+          await p.action.openUrl(url);
+          await p.action.play();
           await Future<void>.delayed(const Duration(milliseconds: 300));
           await p.action.setVolume(0.8);
           await p.action.pause();
@@ -360,7 +361,8 @@ void main() {
 
       for (int i = 0; i < 40; i++) {
         final p = MiniaudioPlayer();
-        await p.action.openMemory(wavBytes, autoPlay: true);
+        await p.action.openMemory(wavBytes);
+        await p.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 10));
         await p.dispose();
       }

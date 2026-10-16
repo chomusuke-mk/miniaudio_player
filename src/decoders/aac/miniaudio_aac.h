@@ -83,6 +83,7 @@ extern "C"
     MA_API ma_result ma_aac_get_data_format(ma_aac *pAac, ma_format *pFormat, ma_uint32 *pChannels, ma_uint32 *pSampleRate, ma_channel *pChannelMap, size_t channelMapCap);
     MA_API ma_result ma_aac_get_cursor_in_pcm_frames(ma_aac *pAac, ma_uint64 *pCursor);
     MA_API ma_result ma_aac_get_length_in_pcm_frames(ma_aac *pAac, ma_uint64 *pLength);
+    MA_API void ma_aac_flush_decoder(ma_aac *pAac);
 
     /* Decoding backend vtable */
     extern ma_decoding_backend_vtable *ma_decoding_backend_aac;

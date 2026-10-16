@@ -448,8 +448,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final wasPlaying = _player.state.playing;
       await _player.action.stop();
       _analysisResult = null;
-      await _player.action.open(track.source, autoPlay: wasPlaying);
+      await _player.action.open(track.source);
       _updateAnalysisPathForTrack(track);
+      if (wasPlaying) {
+        await _player.action.play();
+      }
     } catch (e, st) {
       debugPrint('Error switching track: $e\n$st');
       if (mounted) {

@@ -87,6 +87,9 @@
 #ifndef MA_PI_F
 #define MA_PI_F 3.14159265358979323846264f
 #endif
+#ifndef MA_SEEK_TARGET_NONE
+#define MA_SEEK_TARGET_NONE         (~(ma_uint64)0)
+#endif
 
 /* Portable atomic helper operations across translation units */
 #if defined(__GNUC__) || defined(__clang__)
@@ -96,11 +99,20 @@
 #ifndef ma_atomic_store_32
 #define ma_atomic_store_32(ptr, val)     __atomic_store_n((ma_uint32 *)(ptr), (ma_uint32)(val), __ATOMIC_SEQ_CST)
 #endif
+#ifndef ma_atomic_load_64
+#define ma_atomic_load_64(ptr)           __atomic_load_n((const ma_uint64 *)(ptr), __ATOMIC_SEQ_CST)
+#endif
+#ifndef ma_atomic_store_64
+#define ma_atomic_store_64(ptr, val)     __atomic_store_n((ma_uint64 *)(ptr), (ma_uint64)(val), __ATOMIC_SEQ_CST)
+#endif
 #ifndef ma_atomic_fetch_add_32
 #define ma_atomic_fetch_add_32(ptr, val) __atomic_fetch_add((ma_uint32 *)(ptr), (ma_uint32)(val), __ATOMIC_SEQ_CST)
 #endif
 #ifndef ma_atomic_exchange_32
 #define ma_atomic_exchange_32(ptr, val)  __atomic_exchange_n((ma_uint32 *)(ptr), (ma_uint32)(val), __ATOMIC_SEQ_CST)
+#endif
+#ifndef ma_atomic_exchange_64
+#define ma_atomic_exchange_64(ptr, val)  __atomic_exchange_n((ma_uint64 *)(ptr), (ma_uint64)(val), __ATOMIC_SEQ_CST)
 #endif
 #ifndef ma_atomic_bool32_set
 #define ma_atomic_bool32_set(ptr, val)   __atomic_store_n((ma_bool32 *)(ptr), (ma_bool32)(val), __ATOMIC_SEQ_CST)
@@ -113,11 +125,20 @@
 #ifndef ma_atomic_store_32
 #define ma_atomic_store_32(ptr, val)     _InterlockedExchange((volatile long *)(ptr), (long)(val))
 #endif
+#ifndef ma_atomic_load_64
+#define ma_atomic_load_64(ptr)           (*(volatile const ma_uint64 *)(ptr))
+#endif
+#ifndef ma_atomic_store_64
+#define ma_atomic_store_64(ptr, val)     _InterlockedExchange64((volatile __int64 *)(ptr), (__int64)(val))
+#endif
 #ifndef ma_atomic_fetch_add_32
 #define ma_atomic_fetch_add_32(ptr, val) _InterlockedExchangeAdd((volatile long *)(ptr), (long)(val))
 #endif
 #ifndef ma_atomic_exchange_32
 #define ma_atomic_exchange_32(ptr, val)  _InterlockedExchange((volatile long *)(ptr), (long)(val))
+#endif
+#ifndef ma_atomic_exchange_64
+#define ma_atomic_exchange_64(ptr, val)  _InterlockedExchange64((volatile __int64 *)(ptr), (__int64)(val))
 #endif
 #ifndef ma_atomic_bool32_set
 #define ma_atomic_bool32_set(ptr, val)   _InterlockedExchange((volatile long *)(ptr), (long)(val))
@@ -377,5 +398,23 @@ static MA_INLINE float map_clamp_gain_db(float gainDB)
 
 /* Resets the underlying decoding backend and converter for streaming byte-range seeks */
 ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset, ma_uint64 targetFrame);
+
+/* Returns the uncompressed bytes per PCM frame for container-based streams (e.g. WAV), or 1 if compressed/unknown */
+ma_uint32 map_decoder_get_raw_bytes_per_frame(ma_decoder *pDecoder);
+
+/* Computes container byte offset for seeking stream (e.g. WAV dataChunkDataPos + frame * bpf), or -1 if not container */
+int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetFrame);
+
+/* Returns the byte offset of the first audio sample/frame within the container/stream (skipping ID3v2, RIFF chunks, etc.) */
+int64_t map_decoder_get_audio_data_offset(ma_decoder *pDecoder);
+
+/* Initializes decoder with custom tell callback support */
+ma_result map_decoder_init_ex(
+    ma_decoder_read_proc onRead,
+    ma_decoder_seek_proc onSeek,
+    ma_decoder_tell_proc onTell,
+    void *pUserData,
+    const ma_decoder_config *pConfig,
+    ma_decoder *pDecoder);
 
 #endif /* MAP_COMMON_H */

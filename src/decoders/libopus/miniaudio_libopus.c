@@ -10,6 +10,7 @@
 #include <string.h> /* For memset(). */
 #include <stdlib.h>
 #include <assert.h>
+#include "../../map_source.h"
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -182,6 +183,19 @@ MA_API ma_result ma_libopus_init(ma_read_proc onRead, ma_seek_proc onSeek, ma_te
         libopusCallbacks.seek = ma_libopus_of_callback__seek;
         libopusCallbacks.close = NULL;
         libopusCallbacks.tell = ma_libopus_of_callback__tell;
+
+        if (pOpus->pReadSeekTellUserData != NULL)
+        {
+            ma_decoder *pDecoder = (ma_decoder *)pOpus->pReadSeekTellUserData;
+            if (pDecoder->pUserData != NULL)
+            {
+                map_buffer_t *sb = (map_buffer_t *)pDecoder->pUserData;
+                if (sb->is_initialized)
+                {
+                    libopusCallbacks.seek = NULL;
+                }
+            }
+        }
 
         pOpus->of = op_open_callbacks(pOpus, &libopusCallbacks, NULL, 0, &libopusResult);
         if (pOpus->of == NULL)
@@ -404,6 +418,16 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
 
 #if !defined(MA_NO_LIBOPUS)
     {
+        if (pOpus->of == NULL)
+        {
+            return MA_INVALID_OPERATION;
+        }
+
+        if (!op_seekable((OggOpusFile *)pOpus->of))
+        {
+            return MA_SUCCESS;
+        }
+
         ogg_int64_t total = op_pcm_total((OggOpusFile *)pOpus->of, -1);
         if (total > 0 && (ogg_int64_t)frameIndex >= total)
         {

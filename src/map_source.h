@@ -11,25 +11,7 @@
 #include "sonic.h"
 #include "map_common.h"
 #include "map_silence.h"
-
-typedef struct map_stream_buffer
-{
-    uint8_t *ring_buffer;
-    size_t capacity;
-    size_t read_pos;
-    size_t write_pos;
-    size_t fill_count;
-    int64_t total_size;       /* -1 if unknown / live stream */
-    ma_bool32 is_live;        /* 1 if live stream, 0 if finite remote file */
-    ma_bool32 is_eof;         /* 1 when stream has finished sending bytes */
-    ma_bool32 should_abort;   /* 1 if stream is aborted (flush / seek / teardown) */
-    ma_bool32 is_probing;     /* 1 during initial format probing (permits rewind to 0) */
-    size_t initial_bytes;     /* bytes provided during probing */
-    ma_mutex lock;
-    ma_event data_ready_event;
-    int64_t stream_offset;    /* Current byte offset within the total file */
-    ma_bool32 is_initialized;
-} map_stream_buffer_t;
+#include "map_buffer.h"
 
 typedef struct
 {
@@ -56,8 +38,8 @@ typedef struct
     size_t memory_size;
     ma_bool32 owns_memory;
 
-    /* Stream backing */
-    map_stream_buffer_t stream_buffer;
+    /* High-Level Buffer backing */
+    map_buffer_t buffer;
     ma_bool32 is_stream;
 
     /* Decoupled Asynchronous Decoder Worker & Lock-Free SPSC Ring Buffer (NP3-01) */
@@ -112,11 +94,6 @@ ma_result map_time_stretch_ds_stream_flush(
 ma_result map_time_stretch_ds_stream_end(
     map_time_stretch_ds *pDS);
 
-void map_stream_buffer_abort(
-    map_stream_buffer_t *sb);
-
-void map_stream_buffer_uninit(
-    map_stream_buffer_t *sb);
 
 void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS);
 

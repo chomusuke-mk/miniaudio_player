@@ -344,5 +344,75 @@ void main() {
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 20)));
   });
+
+  // =========================================================================
+  // Group 6: Progressive HTTP WAV Streaming & Frame Alignment Seeking
+  // =========================================================================
+  group('Progressive HTTP WAV Streaming & Seeking', () {
+    late MiniaudioPlayer player;
+
+    setUp(() => player = MiniaudioPlayer());
+    tearDown(() async => await player.dispose());
+
+    test('6.1: Streaming 24-bit stereo WAV with seeks maintains frame alignment without noise stalls', () async {
+      final wavUrl = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
+      await player.action.openUrl(wavUrl);
+      expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(9000));
+
+      await player.action.play();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(player.state.playing, isTrue);
+
+      // Seek to 2 seconds
+      await player.action.seek(const Duration(seconds: 2));
+      expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(1900));
+
+      // Wait for playback to resume and buffer to stay healthy
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(player.state.playing, isTrue);
+      expect(player.state.buffering, isFalse);
+      expect(player.state.position.inMilliseconds, greaterThan(2000));
+
+      await player.action.stop();
+    }, timeout: const Timeout(Duration(seconds: 15)));
+  });
+
+  // =========================================================================
+  // Group 7: Remote Stream Auto-Rewind and Replay upon Completion
+  // =========================================================================
+  group('Remote Stream Replay on Play Action', () {
+    late MiniaudioPlayer player;
+
+    setUp(() => player = MiniaudioPlayer());
+    tearDown(() async => await player.dispose());
+
+    test('7.1: Calling play() after stream reaches EOF restarts playback from beginning', () async {
+      final wavUrl = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
+      await player.action.openUrl(wavUrl);
+      await player.action.play();
+
+      // Seek near end so it completes quickly (duration is 10s)
+      await player.action.seek(const Duration(milliseconds: 9800));
+
+      // Wait for completion (duration is ~10000ms)
+      int waitMs = 0;
+      while (!player.state.completed && waitMs < 4000) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        waitMs += 100;
+      }
+      expect(player.state.completed, isTrue);
+
+      // Call play() on completed stream - should auto-rewind to 0 and re-stream
+      await player.action.play();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      expect(player.state.playing, isTrue);
+      expect(player.state.completed, isFalse);
+      expect(player.state.position.inMilliseconds, lessThan(3000));
+
+      await player.action.stop();
+    }, timeout: const Timeout(Duration(seconds: 15)));
+  });
 }
+
 
