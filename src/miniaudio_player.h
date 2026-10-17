@@ -47,7 +47,9 @@ extern "C"
         MAP_ERROR_INVALID_STATE = -7,
         MAP_ERROR_SEEK_FAILED = -8,
         MAP_ERROR_NODE_FAILED = -9,
-        MAP_ERROR_UNSUPPORTED = -10
+        MAP_ERROR_UNSUPPORTED = -10,
+        MAP_ERROR_ACCESS_DENIED = -11,
+        MAP_ERROR_BUSY = -12
     } miniaudio_player_result_t;
 
     typedef enum
@@ -57,7 +59,8 @@ extern "C"
         MAP_PLAYBACK_STATE_PAUSED = 2,
         MAP_PLAYBACK_STATE_COMPLETED = 3,
         MAP_PLAYBACK_STATE_BUFFERING = 4,
-        MAP_PLAYBACK_STATE_ERROR = 5
+        MAP_PLAYBACK_STATE_ERROR = 5,
+        MAP_PLAYBACK_STATE_OPENING = 6
     } miniaudio_player_playback_state_t;
 
     /* ========================================================================= */
@@ -223,6 +226,19 @@ extern "C"
     /* ========================================================================= */
 
     /**
+     * @brief Transitions the player into OPENING state and resets stale playback telemetry.
+     *
+     * Stops any actively playing sound, unloads the prior data source, resets position,
+     * duration, bitrate, and completion flags, and transitions state to MAP_PLAYBACK_STATE_OPENING.
+     * Subsequent calls to miniaudio_player_play() or miniaudio_player_seek() will return
+     * MAP_ERROR_INVALID_STATE until a new sound is successfully opened.
+     *
+     * @param player Pointer to the miniaudio player instance.
+     * @return MAP_SUCCESS on success, or MAP_ERROR_INVALID_ARGS if player is NULL.
+     */
+    MAP_API int32_t miniaudio_player_begin_open(miniaudio_player_t *player);
+
+    /**
      * @brief Opens and prepares a local audio file for playback.
      * @param player Player instance handle.
      * @param file_path UTF-8 null-terminated file path.
@@ -267,6 +283,30 @@ extern "C"
         int32_t encoding_format);
 
     /**
+     * @brief Opens and prepares a streaming audio source with optional tail probe data (e.g. MP4 moov atom).
+     * @param player Player instance handle.
+     * @param initial_data Pointer to initial pre-buffered encoded audio chunk.
+     * @param initial_data_size Size of the initial chunk in bytes.
+     * @param tail_data Pointer to tail chunk loaded via byte range (or NULL).
+     * @param tail_data_size Size of tail chunk in bytes (or 0).
+     * @param total_size Total file size in bytes (-1 if unknown / live stream).
+     * @param is_live 1 for continuous live stream, 0 for finite remote file.
+     * @param buffer_capacity_bytes Capacity of the internal ring buffer in bytes (e.g. 2MB - 4MB).
+     * @param encoding_format Encoding format hint (0 for auto-sniffing).
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_open_stream_ex(
+        miniaudio_player_t *player,
+        const uint8_t *initial_data,
+        size_t initial_data_size,
+        const uint8_t *tail_data,
+        size_t tail_data_size,
+        int64_t total_size,
+        int32_t is_live,
+        uint32_t buffer_capacity_bytes,
+        int32_t encoding_format);
+
+    /**
      * @brief Feeds encoded audio chunks into an active stream data source.
      * @param player Player instance handle.
      * @param data Pointer to encoded audio chunk.
@@ -286,6 +326,31 @@ extern "C"
      */
     MAP_API int32_t miniaudio_player_stream_flush(
         miniaudio_player_t *player,
+        int64_t new_stream_offset);
+
+    /* Stream seek return codes */
+    #define MAP_STREAM_SEEK_CACHE_MISS 0
+    #define MAP_STREAM_SEEK_CACHE_HIT 1
+    #define MAP_STREAM_SEEK_CACHE_HIT_PREFETCH 2
+
+    /**
+     * @brief Atomically seeks an active stream data source to position_ms and new_stream_offset.
+     * Evaluates in-RAM buffer caching under mutex protection:
+     * - If new_stream_offset is within current buffered sliding window or full file is in RAM, adjusts
+     *   read cursor and resets decoder in RAM (returns MAP_STREAM_SEEK_CACHE_HIT = 1).
+     * - If new_stream_offset hits Pinned Head but remainder of file is not contiguous to EOF,
+     *   resets sliding window and signals that background prefetch from head_size is needed
+     *   (returns MAP_STREAM_SEEK_CACHE_HIT_PREFETCH = 2).
+     * - If new_stream_offset is outside cached window, flushes stream buffer to new_stream_offset,
+     *   resets decoder, and signals caller that an HTTP Range request is needed (returns MAP_STREAM_SEEK_CACHE_MISS = 0).
+     * @param player Player instance handle.
+     * @param position_ms Target seek position in milliseconds.
+     * @param new_stream_offset Byte offset in remote stream.
+     * @return 1 on full in-memory cache hit, 2 on pinned head cache hit requiring prefetch, 0 on cache miss (network range request required), or negative error code.
+     */
+    MAP_API int32_t miniaudio_player_stream_seek(
+        miniaudio_player_t *player,
+        int64_t position_ms,
         int64_t new_stream_offset);
 
     /**
@@ -319,6 +384,14 @@ extern "C"
     MAP_API int32_t miniaudio_player_stream_end(
         miniaudio_player_t *player);
 
+    /**
+     * @brief Returns the byte size of the pinned head buffer in RAM.
+     * @param player Player instance handle.
+     * @return Number of pinned head bytes, or 0 if not streaming / not available.
+     */
+    MAP_API int64_t miniaudio_player_stream_get_pinned_head_size(
+        const miniaudio_player_t *player);
+
     typedef struct miniaudio_stream_status
     {
         size_t buffer_capacity;
@@ -326,6 +399,9 @@ extern "C"
         float fill_percentage;
         int32_t is_buffering;
         int32_t is_eof;
+        int64_t read_cursor_byte;
+        int64_t range_start;
+        int64_t range_end;
     } miniaudio_stream_status_t;
 
     typedef struct miniaudio_buffered_range

@@ -65587,7 +65587,9 @@ MA_API ma_result ma_stbvorbis_init(ma_read_proc onRead, ma_seek_proc onSeek, ma_
         result = ma_stbvorbis_post_init(pVorbis);
         if (result != MA_SUCCESS) {
             stb_vorbis_close(pVorbis->stb);
+            pVorbis->stb = NULL;
             ma_free(pVorbis->push.pData, pAllocationCallbacks);
+            pVorbis->push.pData = NULL;
             return result;
         }
 
@@ -65733,11 +65735,15 @@ MA_API void ma_stbvorbis_uninit(ma_stbvorbis* pVorbis, const ma_allocation_callb
 
     #if !defined(MA_NO_VORBIS)
     {
-        stb_vorbis_close(pVorbis->stb);
+        if (pVorbis->stb != NULL) {
+            stb_vorbis_close(pVorbis->stb);
+            pVorbis->stb = NULL;
+        }
 
         /* We'll have to clear some memory if we're using push mode. */
-        if (pVorbis->usingPushMode) {
+        if (pVorbis->usingPushMode && pVorbis->push.pData != NULL) {
             ma_free(pVorbis->push.pData, pAllocationCallbacks);
+            pVorbis->push.pData = NULL;
         }
     }
     #else
@@ -65760,7 +65766,7 @@ MA_API ma_result ma_stbvorbis_read_pcm_frames(ma_stbvorbis* pVorbis, void* pFram
         return MA_INVALID_ARGS;
     }
 
-    if (pVorbis == NULL) {
+    if (pVorbis == NULL || pVorbis->stb == NULL) {
         return MA_INVALID_ARGS;
     }
 
@@ -65942,6 +65948,7 @@ MA_API ma_result ma_stbvorbis_seek_to_pcm_frame(ma_stbvorbis* pVorbis, ma_uint64
                 backwards. This will hopefully be removed once we get our own Vorbis decoder implemented.
                 */
                 stb_vorbis_close(pVorbis->stb);
+                pVorbis->stb = NULL;
                 ma_free(pVorbis->push.pData, &pVorbis->allocationCallbacks);
 
                 MA_ZERO_OBJECT(&pVorbis->push);

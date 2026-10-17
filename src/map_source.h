@@ -82,6 +82,19 @@ ma_result map_time_stretch_ds_init_stream(
     ma_uint32 targetChannels,
     ma_uint32 targetSampleRate);
 
+ma_result map_time_stretch_ds_init_stream_ex(
+    map_time_stretch_ds *pDS,
+    const uint8_t *initialData,
+    size_t initialDataSize,
+    const uint8_t *tailData,
+    size_t tailDataSize,
+    int64_t totalSize,
+    ma_bool32 isLive,
+    size_t bufferCapacity,
+    int32_t encodingFormat,
+    ma_uint32 targetChannels,
+    ma_uint32 targetSampleRate);
+
 ma_result map_time_stretch_ds_stream_feed(
     map_time_stretch_ds *pDS,
     const uint8_t *data,

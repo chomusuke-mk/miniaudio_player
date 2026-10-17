@@ -10,6 +10,7 @@ import 'track_metadata.dart';
 import 'visualizer_data.dart';
 import '../equalizer.dart';
 import '../reverb.dart';
+import 'player_state.dart' show PlaybackState;
 
 /// Reactive broadcast streams for observing playback and DSP state changes.
 class PlayerStream {
@@ -18,6 +19,8 @@ class PlayerStream {
   final StreamController<bool> _playingController;
   final StreamController<bool> _bufferingController;
   final StreamController<bool> _completedController;
+  final StreamController<bool> _openingController;
+  final StreamController<PlaybackState> _playbackStateController;
   final StreamController<Duration> _bufferedPositionController;
   final StreamController<double> _bufferedPercentageController;
   final StreamController<BufferedRange> _bufferedRangeController;
@@ -50,6 +53,8 @@ class PlayerStream {
     required StreamController<bool> playingController,
     required StreamController<bool> bufferingController,
     required StreamController<bool> completedController,
+    required StreamController<bool> openingController,
+    required StreamController<PlaybackState> playbackStateController,
     required StreamController<Duration> bufferedPositionController,
     required StreamController<double> bufferedPercentageController,
     required StreamController<BufferedRange> bufferedRangeController,
@@ -80,6 +85,8 @@ class PlayerStream {
         _playingController = playingController,
         _bufferingController = bufferingController,
         _completedController = completedController,
+        _openingController = openingController,
+        _playbackStateController = playbackStateController,
         _bufferedPositionController = bufferedPositionController,
         _bufferedPercentageController = bufferedPercentageController,
         _bufferedRangeController = bufferedRangeController,
@@ -120,6 +127,12 @@ class PlayerStream {
 
   /// Broadcast stream of playback completion status.
   Stream<bool> get completed => _completedController.stream;
+
+  /// Broadcast stream emitting whether the player is currently opening or preparing an audio source.
+  Stream<bool> get opening => _openingController.stream;
+
+  /// Broadcast stream emitting high-level playback lifecycle state changes.
+  Stream<PlaybackState> get playbackState => _playbackStateController.stream;
 
   /// Broadcast stream of furthest continuous timestamp preloaded in RAM buffer.
   Stream<Duration> get bufferedPosition => _bufferedPositionController.stream;

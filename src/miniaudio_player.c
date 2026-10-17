@@ -197,6 +197,15 @@ struct miniaudio_player
     int32_t device_changed;
 };
 
+static int map_mutex_trylock(ma_mutex *pMutex)
+{
+#if defined(_WIN32)
+    return (WaitForSingleObject((HANDLE)*pMutex, 0) == WAIT_OBJECT_0) ? 0 : -1;
+#else
+    return pthread_mutex_trylock((pthread_mutex_t *)pMutex);
+#endif
+}
+
 /* End-of-sound callback executed on audio device thread */
 static void miniaudio_player_on_sound_end(void *pUserData, ma_sound *pSound)
 {
@@ -208,7 +217,11 @@ static void miniaudio_player_on_sound_end(void *pUserData, ma_sound *pSound)
     if (player == NULL)
         return;
 
-    ma_mutex_lock(&player->lock);
+    if (map_mutex_trylock(&player->lock) != 0)
+    {
+        /* Player is currently being modified, opened, or destroyed on another thread */
+        return;
+    }
     if (player->is_completed)
     {
         /* Idempotent guard: already completed, prevent duplicate triggers */
@@ -889,6 +902,42 @@ MAP_API int32_t miniaudio_player_destroy(miniaudio_player_t *player)
 /* Media Loading API                                                         */
 /* ========================================================================= */
 
+MAP_API int32_t miniaudio_player_begin_open(miniaudio_player_t *player)
+{
+    if (player == NULL)
+        return MAP_ERROR_INVALID_ARGS;
+
+    map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "begin_open: transition to OPENING");
+
+    ma_mutex_lock(&player->lock);
+
+    /* Unload any previous sound */
+    if (player->sound_loaded)
+    {
+        ma_sound_set_end_callback(&player->sound, NULL, NULL);
+        ma_sound_stop(&player->sound);
+        ma_sound_uninit(&player->sound);
+        map_time_stretch_ds_uninit(&player->stretch_ds);
+        player->sound_loaded = MA_FALSE;
+    }
+
+    if (player->file_path != NULL)
+    {
+        free(player->file_path);
+        player->file_path = NULL;
+    }
+
+    player->state = MAP_PLAYBACK_STATE_OPENING;
+    player->is_completed = 0;
+    player->is_buffering = 0;
+    player->duration_ms = 0;
+    player->bitrate = 0;
+    player->audio_data_offset = 0;
+
+    ma_mutex_unlock(&player->lock);
+    return MAP_SUCCESS;
+}
+
 MAP_API int32_t miniaudio_player_open_file(
     miniaudio_player_t *player,
     const char *file_path)
@@ -912,6 +961,9 @@ MAP_API int32_t miniaudio_player_open_file(
         if (wpath == NULL)
         {
             map_log_print(MAP_LOG_LEVEL_ERROR, "core", "open_file failed (invalid path): %s", file_path);
+            ma_mutex_lock(&player->lock);
+            player->state = MAP_PLAYBACK_STATE_ERROR;
+            ma_mutex_unlock(&player->lock);
             return MAP_ERROR_FILE_NOT_FOUND;
         }
         f = _wfopen(wpath, L"rb");
@@ -923,12 +975,18 @@ MAP_API int32_t miniaudio_player_open_file(
     if (f == NULL)
     {
         map_log_print(MAP_LOG_LEVEL_ERROR, "core", "open_file failed (not found): %s", file_path);
+        ma_mutex_lock(&player->lock);
+        player->state = MAP_PLAYBACK_STATE_ERROR;
+        ma_mutex_unlock(&player->lock);
         return MAP_ERROR_FILE_NOT_FOUND;
     }
     if (fseek(f, 0, SEEK_END) != 0)
     {
         fclose(f);
         map_log_print(MAP_LOG_LEVEL_ERROR, "core", "open_file failed (fseek error): %s", file_path);
+        ma_mutex_lock(&player->lock);
+        player->state = MAP_PLAYBACK_STATE_ERROR;
+        ma_mutex_unlock(&player->lock);
         return MAP_ERROR_DECODE_FAILED;
     }
     file_size = ftell(f);
@@ -937,6 +995,9 @@ MAP_API int32_t miniaudio_player_open_file(
     if (file_size <= 0)
     {
         map_log_print(MAP_LOG_LEVEL_ERROR, "core", "open_file failed (empty file): %s", file_path);
+        ma_mutex_lock(&player->lock);
+        player->state = MAP_PLAYBACK_STATE_ERROR;
+        ma_mutex_unlock(&player->lock);
         return MAP_ERROR_DECODE_FAILED;
     }
 
@@ -951,6 +1012,13 @@ MAP_API int32_t miniaudio_player_open_file(
         map_time_stretch_ds_uninit(&player->stretch_ds);
         player->sound_loaded = MA_FALSE;
     }
+
+    player->state = MAP_PLAYBACK_STATE_OPENING;
+    player->duration_ms = 0;
+    player->bitrate = 0;
+    player->audio_data_offset = 0;
+    player->is_completed = 0;
+    player->is_buffering = 0;
 
     /* Initialize time stretch data source wrapping ma_decoder and sonic */
     result = map_time_stretch_ds_init(
@@ -1087,6 +1155,13 @@ MAP_API int32_t miniaudio_player_open_memory(
         player->sound_loaded = MA_FALSE;
     }
 
+    player->state = MAP_PLAYBACK_STATE_OPENING;
+    player->duration_ms = 0;
+    player->bitrate = 0;
+    player->audio_data_offset = 0;
+    player->is_completed = 0;
+    player->is_buffering = 0;
+
     /* Initialize time stretch data source wrapping ma_decoder from memory */
     result = map_time_stretch_ds_init_memory(
         &player->stretch_ds,
@@ -1198,10 +1273,12 @@ MAP_API int32_t miniaudio_player_open_memory(
     return MAP_SUCCESS;
 }
 
-MAP_API int32_t miniaudio_player_open_stream(
+MAP_API int32_t miniaudio_player_open_stream_ex(
     miniaudio_player_t *player,
     const uint8_t *initial_data,
     size_t initial_data_size,
+    const uint8_t *tail_data,
+    size_t tail_data_size,
     int64_t total_size,
     int32_t is_live,
     uint32_t buffer_capacity_bytes,
@@ -1215,8 +1292,8 @@ MAP_API int32_t miniaudio_player_open_stream(
         return MAP_ERROR_INVALID_ARGS;
     }
 
-    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_stream: initial_size=%zu, total_size=%lld, is_live=%d, cap=%u",
-                  initial_data_size, (long long)total_size, is_live, buffer_capacity_bytes);
+    map_log_print(MAP_LOG_LEVEL_INFO, "core", "open_stream_ex: initial_size=%zu, tail_size=%zu, total_size=%lld, is_live=%d, cap=%u",
+                  initial_data_size, tail_data_size, (long long)total_size, is_live, buffer_capacity_bytes);
 
     ma_mutex_lock(&player->lock);
 
@@ -1230,11 +1307,20 @@ MAP_API int32_t miniaudio_player_open_stream(
         player->sound_loaded = MA_FALSE;
     }
 
+    player->state = MAP_PLAYBACK_STATE_OPENING;
+    player->duration_ms = 0;
+    player->bitrate = 0;
+    player->audio_data_offset = 0;
+    player->is_completed = 0;
+    player->is_buffering = 0;
+
     /* Initialize time stretch data source wrapping streaming buffer */
-    result = map_time_stretch_ds_init_stream(
+    result = map_time_stretch_ds_init_stream_ex(
         &player->stretch_ds,
         initial_data,
         initial_data_size,
+        tail_data,
+        tail_data_size,
         total_size,
         is_live ? MA_TRUE : MA_FALSE,
         buffer_capacity_bytes,
@@ -1361,6 +1447,27 @@ MAP_API int32_t miniaudio_player_open_stream(
     return MAP_SUCCESS;
 }
 
+MAP_API int32_t miniaudio_player_open_stream(
+    miniaudio_player_t *player,
+    const uint8_t *initial_data,
+    size_t initial_data_size,
+    int64_t total_size,
+    int32_t is_live,
+    uint32_t buffer_capacity_bytes,
+    int32_t encoding_format)
+{
+    return miniaudio_player_open_stream_ex(
+        player,
+        initial_data,
+        initial_data_size,
+        NULL,
+        0,
+        total_size,
+        is_live,
+        buffer_capacity_bytes,
+        encoding_format);
+}
+
 MAP_API int32_t miniaudio_player_stream_feed(
     miniaudio_player_t *player,
     const uint8_t *data,
@@ -1374,6 +1481,8 @@ MAP_API int32_t miniaudio_player_stream_feed(
         return MAP_ERROR_INVALID_STATE;
 
     res = map_time_stretch_ds_stream_feed(&player->stretch_ds, data, size);
+    if (res == MA_BUSY)
+        return MAP_ERROR_BUSY;
     return (res == MA_SUCCESS) ? MAP_SUCCESS : MAP_ERROR_DECODE_FAILED;
 }
 
@@ -1405,6 +1514,212 @@ MAP_API int32_t miniaudio_player_stream_flush(
     res = map_time_stretch_ds_stream_flush(&player->stretch_ds, new_stream_offset);
     ma_mutex_unlock(&player->lock);
     return (res == MA_SUCCESS) ? MAP_SUCCESS : MAP_ERROR_DECODE_FAILED;
+}
+
+MAP_API int32_t miniaudio_player_stream_seek(
+    miniaudio_player_t *player,
+    int64_t position_ms,
+    int64_t new_stream_offset)
+{
+    if (player == NULL)
+        return MAP_ERROR_INVALID_ARGS;
+
+    ma_mutex_lock(&player->lock);
+    if (!player->sound_loaded || !player->stretch_ds.is_stream)
+    {
+        ma_mutex_unlock(&player->lock);
+        return MAP_ERROR_INVALID_STATE;
+    }
+
+    if (position_ms < 0)
+        position_ms = 0;
+    if (player->duration_ms > 0 && position_ms >= player->duration_ms)
+    {
+        ma_sound_stop(&player->sound);
+        ma_atomic_exchange_32(&player->sound.atEnd, MA_TRUE);
+        player->is_completed = 1;
+        player->state = MAP_PLAYBACK_STATE_COMPLETED;
+        ma_mutex_unlock(&player->lock);
+        return 1;
+    }
+
+    map_time_stretch_ds *pDS = &player->stretch_ds;
+    ma_uint64 targetFrame = (ma_uint64)(((double)position_ms / 1000.0) * (double)pDS->sampleRate);
+
+    /* Atomic state reset for sound node and playback completion */
+    ma_atomic_exchange_64(&player->sound.seekTarget, MA_SEEK_TARGET_NONE);
+    ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
+    player->is_completed = 0;
+    if (player->state == MAP_PLAYBACK_STATE_COMPLETED)
+    {
+        player->state = MAP_PLAYBACK_STATE_PAUSED;
+    }
+    else if (player->state == MAP_PLAYBACK_STATE_PLAYING)
+    {
+        if (!ma_sound_is_playing(&player->sound))
+        {
+            ma_sound_start(&player->sound);
+        }
+    }
+
+    /* Set sound node graph clock and data source frame cursor */
+    ma_node_set_time(&player->sound, targetFrame);
+    pDS->readCursorFrames = targetFrame;
+
+    /* Check if target stream byte offset is already contained within pinned head, sliding RAM buffer, or pinned tail */
+    int is_cache_hit = 0;
+    ma_bool32 prefetch_needed = MA_FALSE;
+
+    ma_mutex_lock(&pDS->buffer.lock);
+    ma_bool32 in_head = (pDS->buffer.head_data != NULL &&
+                         new_stream_offset >= 0 &&
+                         (size_t)new_stream_offset < pDS->buffer.head_size);
+    ma_bool32 in_sliding = (new_stream_offset >= pDS->buffer.range_start &&
+                            new_stream_offset < pDS->buffer.range_end);
+    ma_bool32 in_tail = (pDS->buffer.tail_data != NULL &&
+                         new_stream_offset >= pDS->buffer.tail_start &&
+                         new_stream_offset < (pDS->buffer.tail_start + (int64_t)pDS->buffer.tail_size));
+    ma_bool32 full_file_in_ram = (pDS->buffer.total_size > 0 &&
+                                  ((pDS->buffer.range_start == 0 &&
+                                    pDS->buffer.range_end >= pDS->buffer.total_size) ||
+                                   (pDS->buffer.head_data != NULL &&
+                                    (size_t)pDS->buffer.total_size <= pDS->buffer.head_size)));
+    if (in_head || in_sliding || in_tail)
+    {
+        is_cache_hit = 1;
+        if (!full_file_in_ram)
+        {
+            pDS->buffer.read_cursor = new_stream_offset;
+        }
+        else
+        {
+            /* In-RAM: keep read_cursor at 0 so dr_mp3 seeks from start without skipping frames past EOF */
+            pDS->buffer.read_cursor = 0;
+        }
+        if (full_file_in_ram)
+        {
+            pDS->buffer.is_eof = MA_TRUE;
+        }
+        else if ((pDS->buffer.total_size > 0 && new_stream_offset < pDS->buffer.total_size) ||
+                 new_stream_offset < pDS->buffer.range_end ||
+                 (pDS->buffer.head_data != NULL && (size_t)new_stream_offset < pDS->buffer.head_size))
+        {
+            pDS->buffer.is_eof = MA_FALSE;
+        }
+
+        if (in_head)
+        {
+            ma_bool32 full_file_in_head = (pDS->buffer.total_size > 0 &&
+                                           (size_t)pDS->buffer.total_size <= pDS->buffer.head_size);
+            ma_bool32 contiguous_to_eof = (pDS->buffer.total_size > 0 &&
+                                           pDS->buffer.range_start <= (int64_t)pDS->buffer.head_size &&
+                                           pDS->buffer.range_end >= pDS->buffer.total_size);
+
+            if (!full_file_in_head && !contiguous_to_eof)
+            {
+                prefetch_needed = MA_TRUE;
+                /* If sliding window does not seamlessly join head_data, reset sliding window
+                 * to head_size so incoming prefetch chunks append cleanly without leaving an evicted gap. */
+                ma_bool32 contiguous = (pDS->buffer.range_start <= (int64_t)pDS->buffer.head_size &&
+                                        pDS->buffer.range_end >= (int64_t)pDS->buffer.head_size);
+                if (!contiguous)
+                {
+                    pDS->buffer.range_start = (int64_t)pDS->buffer.head_size;
+                    pDS->buffer.range_end = (int64_t)pDS->buffer.head_size;
+                }
+            }
+        }
+    }
+    ma_mutex_unlock(&pDS->buffer.lock);
+
+    if (is_cache_hit)
+    {
+        /* Cache HIT: Seek directly in RAM without reopening HTTP network stream */
+        if (pDS->has_worker)
+        {
+            /* Latent deadlock resolution: abort any worker blocked in map_buffer_read */
+            map_buffer_abort(&pDS->buffer);
+
+            ma_mutex_lock(&pDS->decoder_mutex);
+
+            /* Clear abort flag so decoder can read from RAM cache */
+            ma_mutex_lock(&pDS->buffer.lock);
+            pDS->buffer.should_abort = MA_FALSE;
+            ma_mutex_unlock(&pDS->buffer.lock);
+            if (full_file_in_ram)
+            {
+                map_decoder_reset_stream(&pDS->decoder, 0, 0);
+                ma_decoder_seek_to_pcm_frame(&pDS->decoder, 0);
+                ma_result sres = ma_decoder_seek_to_pcm_frame(&pDS->decoder, targetFrame);
+                if (sres != MA_SUCCESS)
+                {
+                    map_decoder_reset_stream(&pDS->decoder, new_stream_offset, targetFrame);
+                }
+            }
+            else
+            {
+                map_decoder_reset_stream(&pDS->decoder, new_stream_offset, targetFrame);
+            }
+
+            ma_spinlock_lock(&pDS->lock);
+            pDS->rawBufferCount = 0;
+            pDS->rawBufferReadPos = 0;
+            pDS->read_cursor_fraction = 0.0;
+            map_silence_detector_reset(&pDS->silence, MA_TRUE);
+            ma_pcm_rb_reset(&pDS->rb);
+            if (pDS->sonic != NULL)
+            {
+                sonicResetStream(pDS->sonic);
+            }
+            ma_atomic_store_32(&pDS->decoder_eof, 0);
+            pDS->is_eof = MA_FALSE;
+            ma_spinlock_unlock(&pDS->lock);
+
+            ma_mutex_unlock(&pDS->decoder_mutex);
+            ma_event_signal(&pDS->worker_event);
+        }
+        else
+        {
+            if (full_file_in_ram)
+            {
+                map_decoder_reset_stream(&pDS->decoder, 0, 0);
+                ma_decoder_seek_to_pcm_frame(&pDS->decoder, 0);
+                ma_result sres = ma_decoder_seek_to_pcm_frame(&pDS->decoder, targetFrame);
+                if (sres != MA_SUCCESS)
+                {
+                    map_decoder_reset_stream(&pDS->decoder, new_stream_offset, targetFrame);
+                }
+            }
+            else
+            {
+                map_decoder_reset_stream(&pDS->decoder, new_stream_offset, targetFrame);
+            }
+
+            ma_spinlock_lock(&pDS->lock);
+            pDS->rawBufferCount = 0;
+            pDS->rawBufferReadPos = 0;
+            pDS->read_cursor_fraction = 0.0;
+            map_silence_detector_reset(&pDS->silence, MA_TRUE);
+            ma_pcm_rb_reset(&pDS->rb);
+            if (pDS->sonic != NULL)
+            {
+                sonicResetStream(pDS->sonic);
+            }
+            ma_atomic_store_32(&pDS->decoder_eof, 0);
+            pDS->is_eof = MA_FALSE;
+            ma_spinlock_unlock(&pDS->lock);
+        }
+
+        ma_mutex_unlock(&player->lock);
+        return prefetch_needed ? MAP_STREAM_SEEK_CACHE_HIT_PREFETCH : MAP_STREAM_SEEK_CACHE_HIT;
+    }
+    else
+    {
+        /* Cache MISS: Flush buffer and reset decoder to new stream offset */
+        map_time_stretch_ds_stream_flush(pDS, new_stream_offset);
+        ma_mutex_unlock(&player->lock);
+        return MAP_STREAM_SEEK_CACHE_MISS;
+    }
 }
 
 MAP_API int64_t miniaudio_player_stream_get_seek_byte(
@@ -1508,6 +1823,17 @@ MAP_API int32_t miniaudio_player_stream_end(
     return (res == MA_SUCCESS) ? MAP_SUCCESS : MAP_ERROR_DECODE_FAILED;
 }
 
+MAP_API int64_t miniaudio_player_stream_get_pinned_head_size(const miniaudio_player_t *player)
+{
+    if (player == NULL || !player->sound_loaded || !player->stretch_ds.is_stream)
+        return 0;
+
+    ma_mutex_lock((ma_mutex *)&player->stretch_ds.buffer.lock);
+    int64_t hs = (int64_t)player->stretch_ds.buffer.head_size;
+    ma_mutex_unlock((ma_mutex *)&player->stretch_ds.buffer.lock);
+    return hs;
+}
+
 MAP_API int32_t miniaudio_player_stream_get_status(
     miniaudio_player_t *player,
     miniaudio_stream_status_t *out_status)
@@ -1525,6 +1851,9 @@ MAP_API int32_t miniaudio_player_stream_get_status(
     out_status->fill_percentage = r.fill_percentage;
     out_status->is_buffering = r.is_buffering;
     out_status->is_eof = r.is_eof;
+    out_status->read_cursor_byte = r.read_cursor_byte;
+    out_status->range_start = r.start_byte;
+    out_status->range_end = r.end_byte;
 
     return MAP_SUCCESS;
 }
@@ -1607,7 +1936,7 @@ MAP_API int32_t miniaudio_player_play(miniaudio_player_t *player)
     map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "play command");
 
     ma_mutex_lock(&player->lock);
-    if (!player->sound_loaded)
+    if (!player->sound_loaded || player->state == MAP_PLAYBACK_STATE_OPENING)
     {
         ma_mutex_unlock(&player->lock);
         return MAP_ERROR_INVALID_STATE;
@@ -1642,6 +1971,12 @@ MAP_API int32_t miniaudio_player_pause(miniaudio_player_t *player)
     map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "pause command");
 
     ma_mutex_lock(&player->lock);
+    if (player->state == MAP_PLAYBACK_STATE_OPENING)
+    {
+        /* Sound is still opening; keep OPENING state */
+        ma_mutex_unlock(&player->lock);
+        return MAP_SUCCESS;
+    }
     if (!player->sound_loaded)
     {
         player->state = MAP_PLAYBACK_STATE_PAUSED;
@@ -1663,6 +1998,15 @@ MAP_API int32_t miniaudio_player_stop(miniaudio_player_t *player)
     map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "stop command");
 
     ma_mutex_lock(&player->lock);
+    if (player->state == MAP_PLAYBACK_STATE_OPENING)
+    {
+        /* Stop explicitly cancels opening and returns to STOPPED */
+        player->state = MAP_PLAYBACK_STATE_STOPPED;
+        player->is_completed = 0;
+        player->is_buffering = 0;
+        ma_mutex_unlock(&player->lock);
+        return MAP_SUCCESS;
+    }
     if (!player->sound_loaded)
     {
         player->state = MAP_PLAYBACK_STATE_STOPPED;
@@ -1677,6 +2021,25 @@ MAP_API int32_t miniaudio_player_stop(miniaudio_player_t *player)
     if (player->sound.pDataSource != NULL)
     {
         ma_data_source_seek_to_pcm_frame(player->sound.pDataSource, 0);
+    }
+    if (player->stretch_ds.is_stream)
+    {
+        map_time_stretch_ds *pDS = &player->stretch_ds;
+        ma_mutex_lock(&pDS->buffer.lock);
+        pDS->buffer.read_cursor = 0;
+        ma_mutex_unlock(&pDS->buffer.lock);
+
+        ma_spinlock_lock(&pDS->lock);
+        ma_pcm_rb_reset(&pDS->rb);
+        pDS->rawBufferCount = 0;
+        pDS->rawBufferReadPos = 0;
+        pDS->read_cursor_fraction = 0.0;
+        map_silence_detector_reset(&pDS->silence, MA_TRUE);
+        if (pDS->sonic != NULL)
+        {
+            sonicResetStream(pDS->sonic);
+        }
+        ma_spinlock_unlock(&pDS->lock);
     }
     ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
     player->is_completed = 0;
@@ -1696,7 +2059,7 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
     map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "seek to %lld ms", (long long)position_ms);
 
     ma_mutex_lock(&player->lock);
-    if (!player->sound_loaded)
+    if (!player->sound_loaded || player->state == MAP_PLAYBACK_STATE_OPENING)
     {
         ma_mutex_unlock(&player->lock);
         return MAP_ERROR_INVALID_STATE;
@@ -2295,11 +2658,27 @@ MAP_API int32_t miniaudio_player_get_status(
             out_status->position_ms = mut_player->duration_ms;
         }
 
-        if (mut_player->state == MAP_PLAYBACK_STATE_STOPPED)
+        if (mut_player->state == MAP_PLAYBACK_STATE_OPENING)
         {
             out_status->is_completed = 0;
             out_status->is_playing = 0;
+            out_status->is_buffering = 0;
+            out_status->position_ms = 0;
+            out_status->state = MAP_PLAYBACK_STATE_OPENING;
+        }
+        else if (mut_player->state == MAP_PLAYBACK_STATE_STOPPED)
+        {
+            out_status->is_completed = 0;
+            out_status->is_playing = 0;
+            out_status->is_buffering = 0;
             out_status->state = MAP_PLAYBACK_STATE_STOPPED;
+        }
+        else if (mut_player->state == MAP_PLAYBACK_STATE_PAUSED)
+        {
+            out_status->is_completed = 0;
+            out_status->is_playing = 0;
+            out_status->is_buffering = 0;
+            out_status->state = MAP_PLAYBACK_STATE_PAUSED;
         }
         else if (mut_player->state == MAP_PLAYBACK_STATE_PLAYING)
         {
@@ -2310,6 +2689,7 @@ MAP_API int32_t miniaudio_player_get_status(
                 mut_player->state = MAP_PLAYBACK_STATE_COMPLETED;
                 out_status->is_completed = 1;
                 out_status->is_playing = 0;
+                out_status->is_buffering = 0;
                 out_status->state = MAP_PLAYBACK_STATE_COMPLETED;
                 out_status->position_ms = mut_player->duration_ms;
             }
@@ -2324,6 +2704,7 @@ MAP_API int32_t miniaudio_player_get_status(
         {
             out_status->is_completed = 1;
             out_status->is_playing = 0;
+            out_status->is_buffering = 0;
             out_status->state = MAP_PLAYBACK_STATE_COMPLETED;
             out_status->position_ms = mut_player->duration_ms;
         }

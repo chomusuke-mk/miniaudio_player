@@ -88,24 +88,34 @@ static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
                 ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFromDecoder);
             }
 
-            if (pDS->is_stream && !pDS->buffer.is_eof)
+            if (pDS->is_stream)
             {
-                /* Transient interruption or waiting for network chunks; do NOT set EOF */
-                if (decRes != MA_SUCCESS || readFromDecoder == 0)
+                ma_bool32 is_buffer_exhausted = MA_FALSE;
+                ma_mutex_lock(&pDS->buffer.lock);
+                if (pDS->buffer.is_eof)
                 {
+                    if (pDS->buffer.total_size > 0 && pDS->buffer.read_cursor >= pDS->buffer.total_size)
+                    {
+                        is_buffer_exhausted = MA_TRUE;
+                    }
+                    else if (pDS->buffer.total_size <= 0 && pDS->buffer.read_cursor >= pDS->buffer.range_end)
+                    {
+                        is_buffer_exhausted = MA_TRUE;
+                    }
+                }
+                ma_mutex_unlock(&pDS->buffer.lock);
+
+                if (decRes == MA_AT_END || (is_buffer_exhausted && readFromDecoder == 0))
+                {
+                    ma_atomic_store_32(&pDS->decoder_eof, 1);
+                }
+                else if (readFromDecoder == 0)
+                {
+                    /* Waiting for more network chunks from HTTP provider */
                     ma_sleep(5);
                 }
             }
-            else if (decRes == MA_AT_END || (pDS->buffer.is_eof && readFromDecoder == 0))
-            {
-                ma_atomic_store_32(&pDS->decoder_eof, 1);
-            }
-            else if (decRes == MA_INTERRUPT || decRes == MA_BUSY)
-            {
-                /* Transient interruption (e.g. stream_flush) or waiting for network; do NOT set EOF */
-                ma_sleep(5);
-            }
-            else if (decRes != MA_SUCCESS && readFromDecoder == 0)
+            else if (decRes == MA_AT_END || (decRes != MA_SUCCESS && readFromDecoder == 0))
             {
                 ma_atomic_store_32(&pDS->decoder_eof, 1);
             }
@@ -195,10 +205,13 @@ static ma_result map_time_stretch_ds_read_filtered(
             }
             if (ma_atomic_load_32(&pDS->decoder_eof))
             {
-                pDS->is_eof = MA_TRUE;
-                if (pFramesRead != NULL) *pFramesRead = 0;
-                if (pRealFramesRead != NULL) *pRealFramesRead = 0;
-                return MA_AT_END;
+                if (ma_pcm_rb_available_read(&pDS->rb) == 0)
+                {
+                    pDS->is_eof = MA_TRUE;
+                    if (pFramesRead != NULL) *pFramesRead = 0;
+                    if (pRealFramesRead != NULL) *pRealFramesRead = 0;
+                    return MA_AT_END;
+                }
             }
 
             /* Transient buffer lag / starvation: synthesize silence without blocking RT thread */
@@ -276,7 +289,10 @@ static ma_result map_time_stretch_ds_read_filtered(
                 }
                 else if (ma_atomic_load_32(&pDS->decoder_eof))
                 {
-                    pDS->is_eof = MA_TRUE;
+                    if (ma_pcm_rb_available_read(&pDS->rb) == 0)
+                    {
+                        pDS->is_eof = MA_TRUE;
+                    }
                 }
                 else
                 {
@@ -630,13 +646,16 @@ ma_result map_time_stretch_ds_read(
             }
             if (ma_atomic_load_32(&pDS->decoder_eof))
             {
-                pDS->is_eof = MA_TRUE;
-                sonicFlushStream(pDS->sonic);
-                if (sonicSamplesAvailable(pDS->sonic) == 0)
+                if (ma_pcm_rb_available_read(&pDS->rb) == 0)
                 {
-                    break;
+                    pDS->is_eof = MA_TRUE;
+                    sonicFlushStream(pDS->sonic);
+                    if (sonicSamplesAvailable(pDS->sonic) == 0)
+                    {
+                        break;
+                    }
+                    continue;
                 }
-                continue;
             }
         }
 
@@ -748,19 +767,37 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
         total_frames = pDS->totalFrames;
         if (pDS->is_stream)
         {
-            if (pDS->readCursorFrames == frameIndex && !pDS->is_eof && !ma_atomic_load_32(&pDS->decoder_eof))
+            if (frameIndex != 0 && pDS->readCursorFrames == frameIndex && !pDS->is_eof && !ma_atomic_load_32(&pDS->decoder_eof))
             {
                 /* Already flushed and positioned at frameIndex by stream_flush; do not re-flush decoder */
                 ma_mutex_unlock(&pDS->decoder_mutex);
                 return MA_SUCCESS;
             }
+            if (frameIndex == 0)
+            {
+                pDS->buffer.read_cursor = 0;
+            }
             pDS->readCursorFrames = frameIndex;
             ma_atomic_store_32(&pDS->decoder_eof, 0);
             pDS->is_eof = MA_FALSE;
 
-            /* Try full in-memory decoder frame seek first (if buffer contains target or file is fully in RAM) */
-            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
-            if (res != MA_SUCCESS)
+            /* Try full in-memory decoder frame seek ONLY if file is fully in RAM from byte 0 */
+            ma_bool32 full_file_in_ram = (pDS->buffer.total_size > 0 &&
+                                          ((pDS->buffer.range_start == 0 &&
+                                            pDS->buffer.range_end >= pDS->buffer.total_size) ||
+                                           (pDS->buffer.head_data != NULL &&
+                                            (size_t)pDS->buffer.total_size <= pDS->buffer.head_size)));
+            if (full_file_in_ram)
+            {
+                pDS->buffer.is_eof = MA_TRUE;
+                res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
+                if (res != MA_SUCCESS)
+                {
+                    map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
+                    res = MA_SUCCESS;
+                }
+            }
+            else
             {
                 map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
                 res = MA_SUCCESS;
@@ -810,17 +847,35 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
 
         if (pDS->is_stream)
         {
-            if (pDS->readCursorFrames == frameIndex)
+            if (frameIndex != 0 && pDS->readCursorFrames == frameIndex)
             {
                 ma_spinlock_unlock(&pDS->lock);
                 return MA_SUCCESS;
             }
+            if (frameIndex == 0)
+            {
+                pDS->buffer.read_cursor = 0;
+            }
             pDS->readCursorFrames = frameIndex;
             pDS->is_eof = MA_FALSE;
 
-            /* Try full in-memory decoder frame seek first (if buffer contains target or file is fully in RAM) */
-            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
-            if (res != MA_SUCCESS)
+            /* Try full in-memory decoder frame seek ONLY if file is fully in RAM from byte 0 */
+            ma_bool32 full_file_in_ram = (pDS->buffer.total_size > 0 &&
+                                          ((pDS->buffer.range_start == 0 &&
+                                            pDS->buffer.range_end >= pDS->buffer.total_size) ||
+                                           (pDS->buffer.head_data != NULL &&
+                                            (size_t)pDS->buffer.total_size <= pDS->buffer.head_size)));
+            if (full_file_in_ram)
+            {
+                pDS->buffer.is_eof = MA_TRUE;
+                res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
+                if (res != MA_SUCCESS)
+                {
+                    map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
+                    res = MA_SUCCESS;
+                }
+            }
+            else
             {
                 map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
                 res = MA_SUCCESS;
@@ -939,11 +994,6 @@ static ma_result map_time_stretch_ds_finish_init(
     if (!pDS->is_stream || !pDS->buffer.is_live)
     {
         ma_decoder_get_length_in_pcm_frames(&pDS->decoder, &pDS->totalFrames);
-        if (pDS->is_stream)
-        {
-            ma_decoder_seek_to_pcm_frame(&pDS->decoder, 0);
-            map_buffer_seek(&pDS->buffer, 0);
-        }
     }
 
     pDS->sonic = sonicCreateStream((int)targetSampleRate, (int)targetChannels);
@@ -1145,10 +1195,12 @@ ma_result map_time_stretch_ds_init_memory(
     return map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
 }
 
-ma_result map_time_stretch_ds_init_stream(
+ma_result map_time_stretch_ds_init_stream_ex(
     map_time_stretch_ds *pDS,
     const uint8_t *initialData,
     size_t initialDataSize,
+    const uint8_t *tailData,
+    size_t tailDataSize,
     int64_t totalSize,
     ma_bool32 isLive,
     size_t bufferCapacity,
@@ -1191,6 +1243,12 @@ ma_result map_time_stretch_ds_init_stream(
         return result;
     }
 
+    /* Seed optional tail probe bytes (e.g. MP4 moov atom located at EOF) */
+    if (tailData != NULL && tailDataSize > 0)
+    {
+        map_buffer_set_tail(&pDS->buffer, tailData, tailDataSize);
+    }
+
     pDS->is_stream = MA_TRUE;
 
     decoder_cfg = ma_decoder_config_init(ma_format_f32, targetChannels, targetSampleRate);
@@ -1225,6 +1283,31 @@ ma_result map_time_stretch_ds_init_stream(
     result = map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
     pDS->buffer.is_probing = MA_FALSE;
     return result;
+}
+
+ma_result map_time_stretch_ds_init_stream(
+    map_time_stretch_ds *pDS,
+    const uint8_t *initialData,
+    size_t initialDataSize,
+    int64_t totalSize,
+    ma_bool32 isLive,
+    size_t bufferCapacity,
+    int32_t encodingFormat,
+    ma_uint32 targetChannels,
+    ma_uint32 targetSampleRate)
+{
+    return map_time_stretch_ds_init_stream_ex(
+        pDS,
+        initialData,
+        initialDataSize,
+        NULL,
+        0,
+        totalSize,
+        isLive,
+        bufferCapacity,
+        encodingFormat,
+        targetChannels,
+        targetSampleRate);
 }
 
 ma_result map_time_stretch_ds_stream_feed(

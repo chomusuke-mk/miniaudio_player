@@ -30,6 +30,4 @@ migrate_working_dir/
 /build/
 /coverage/
 /temp/
-/ARCHITECTURE.md
 /.agents/
-/PROBLEMS.md

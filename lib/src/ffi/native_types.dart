@@ -18,6 +18,7 @@ abstract final class MapResult {
   static const int errorNodeFailed = -9;
   static const int errorUnsupported = -10;
   static const int errorAccessDenied = -11;
+  static const int errorBusy = -12;
 
   static String describe(int code) {
     switch (code) {
@@ -45,6 +46,8 @@ abstract final class MapResult {
         return 'Unsupported audio format or operation';
       case errorAccessDenied:
         return 'Access denied or permission failure';
+      case errorBusy:
+        return 'Buffer full or device busy';
       default:
         return 'Unknown native error code ($code)';
     }
@@ -59,6 +62,7 @@ abstract final class MapPlaybackState {
   static const int completed = 3;
   static const int buffering = 4;
   static const int error = 5;
+  static const int opening = 6;
 
   static String describe(int state) {
     switch (state) {
@@ -74,6 +78,8 @@ abstract final class MapPlaybackState {
         return 'Buffering';
       case error:
         return 'Error';
+      case opening:
+        return 'Opening';
       default:
         return 'Unknown state ($state)';
     }

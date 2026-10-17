@@ -18,6 +18,7 @@ import 'silence_skip_config.dart';
 import 'visualizer_data.dart';
 import 'buffered_range.dart';
 import 'track_metadata.dart';
+import '../network/network_audio_streamer.dart';
 import '../reverb.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
@@ -124,7 +125,7 @@ class MiniaudioPlayerGlobalConfig {
     this.bufferNetworkDuration = const Duration(seconds: 30),
     this.bufferLiveStreamDuration = const Duration(seconds: 15),
     this.bufferSizeLocalMB,
-    this.bufferSizeNetworkMB,
+    this.bufferSizeNetworkMB = 8,
     this.bufferSizeLiveStreamMB,
   }) : defaultDeviceDisplayNameResolver = defaultDeviceDisplayNameResolver ??
             _defaultDeviceDisplayNameResolver;
@@ -601,6 +602,10 @@ class MiniaudioPlayer implements Finalizable {
       StreamController<bool>.broadcast();
   final StreamController<bool> _completedController =
       StreamController<bool>.broadcast();
+  final StreamController<bool> _openingController =
+      StreamController<bool>.broadcast();
+  final StreamController<PlaybackState> _playbackStateController =
+      StreamController<PlaybackState>.broadcast();
   final StreamController<Duration> _bufferedPositionController =
       StreamController<Duration>.broadcast();
   final StreamController<double> _bufferedPercentageController =
@@ -657,6 +662,8 @@ class MiniaudioPlayer implements Finalizable {
   bool _playing = false;
   bool _buffering = false;
   bool _completed = false;
+  bool _opening = false;
+  PlaybackState _playbackState = PlaybackState.stopped;
   Duration _bufferedPosition = Duration.zero;
   double _bufferedPercentage = 0.0;
   BufferedRange _bufferedRange = const BufferedRange();
@@ -703,8 +710,16 @@ class MiniaudioPlayer implements Finalizable {
   SilenceSkipConfig? _lastSilenceConfig;
   Duration? _lastSilenceSavedDuration;
   bool? _lastVisualizerEnabled;
+  bool? _lastOpening;
+  PlaybackState? _lastPlaybackState;
 
   bool _isDisposed = false;
+
+  /// Broadcast stream of opening state (`true` while preparing audio source, `false` otherwise).
+  Stream<bool> get opening => stream.opening;
+
+  /// Broadcast stream of current playback lifecycle state.
+  Stream<PlaybackState> get playbackState => stream.playbackState;
 
   static final _finalizer = NativeFinalizer(
     Native.addressOf<
@@ -720,6 +735,9 @@ class MiniaudioPlayer implements Finalizable {
 
   /// Synchronous state snapshot interface.
   late final PlayerState state;
+
+  /// Active network audio streamer instance, if an HTTP/HTTPS source is loaded.
+  NetworkAudioStreamer? get streamer => action.activeStreamer;
 
   /// Creates a [MiniaudioPlayer] instance initialized with
   /// [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
@@ -825,6 +843,8 @@ class MiniaudioPlayer implements Finalizable {
       playingController: _playingController,
       bufferingController: _bufferingController,
       completedController: _completedController,
+      openingController: _openingController,
+      playbackStateController: _playbackStateController,
       bufferedPositionController: _bufferedPositionController,
       bufferedPercentageController: _bufferedPercentageController,
       bufferedRangeController: _bufferedRangeController,
@@ -858,6 +878,8 @@ class MiniaudioPlayer implements Finalizable {
       getPlaying: () => _playing,
       getBuffering: () => _buffering,
       getCompleted: () => _completed,
+      getOpening: () => _opening,
+      getPlaybackState: () => _playbackState,
       getBufferedPosition: () => _bufferedPosition,
       getBufferedPercentage: () => _bufferedPercentage,
       getBufferedRange: () => _bufferedRange,
@@ -1000,6 +1022,108 @@ class MiniaudioPlayer implements Finalizable {
     setManualVisualizerOverride(enabled);
   }
 
+  /// Synchronously transitions player into Opening state and flushes all stale telemetry.
+  void notifyOpening() {
+    if (_isDisposed) return;
+    _stopPositionTimer();
+    _opening = true;
+    _lastOpening = true;
+    _playbackState = PlaybackState.opening;
+    _lastPlaybackState = PlaybackState.opening;
+    _playing = false;
+    _lastIsPlaying = false;
+    _buffering = false;
+    _lastIsBuffering = false;
+    _completed = false;
+    _position = Duration.zero;
+    _lastPosition = Duration.zero;
+    _duration = Duration.zero;
+    _lastDuration = Duration.zero;
+    _bufferedPosition = Duration.zero;
+    _bufferedPercentage = 0.0;
+    _bufferedRange = const BufferedRange();
+    _lastBufferedRange = const BufferedRange();
+    _trackMetadata = null;
+    _lastTrackMetadata = null;
+
+    if (!_openingController.isClosed) {
+      _openingController.add(true);
+    }
+    if (!_playbackStateController.isClosed) {
+      _playbackStateController.add(PlaybackState.opening);
+    }
+    if (!_playingController.isClosed) {
+      _playingController.add(false);
+    }
+    if (!_bufferingController.isClosed) {
+      _bufferingController.add(false);
+    }
+    if (!_completedController.isClosed) {
+      _completedController.add(false);
+    }
+    if (!_positionController.isClosed) {
+      _positionController.add(Duration.zero);
+    }
+    if (!_durationController.isClosed) {
+      _durationController.add(Duration.zero);
+    }
+    if (!_bufferedPositionController.isClosed) {
+      _bufferedPositionController.add(Duration.zero);
+    }
+    if (!_bufferedPercentageController.isClosed) {
+      _bufferedPercentageController.add(0.0);
+    }
+    if (!_bufferedRangeController.isClosed) {
+      _bufferedRangeController.add(const BufferedRange());
+    }
+    if (!_trackMetadataController.isClosed) {
+      _trackMetadataController.add(null);
+    }
+  }
+
+  /// Notifies that opening completed successfully.
+  void notifyOpenCompleted() {
+    if (_isDisposed) return;
+    _opening = false;
+    _lastOpening = false;
+    if (_playbackState == PlaybackState.opening) {
+      _playbackState = PlaybackState.stopped;
+      _lastPlaybackState = PlaybackState.stopped;
+    }
+    if (!_openingController.isClosed) {
+      _openingController.add(false);
+    }
+    if (!_playbackStateController.isClosed &&
+        _playbackState == PlaybackState.stopped) {
+      _playbackStateController.add(PlaybackState.stopped);
+    }
+    pollAndEmit(force: true);
+  }
+
+  void notifyOpenComplete() => notifyOpenCompleted();
+
+  /// Notifies that opening failed due to an error.
+  void notifyOpenFailed([Object? error]) {
+    if (_isDisposed) return;
+    _stopPositionTimer();
+    try {
+      if (_playerHandle != nullptr) {
+        native.miniaudio_player_stop(_playerHandle);
+      }
+    } catch (_) {}
+    _opening = false;
+    _lastOpening = false;
+    _playbackState = PlaybackState.error;
+    _lastPlaybackState = PlaybackState.error;
+    if (!_openingController.isClosed) {
+      _openingController.add(false);
+    }
+    if (!_playbackStateController.isClosed) {
+      _playbackStateController.add(PlaybackState.error);
+    }
+    pollAndEmit(force: true);
+  }
+
   /// Notifies the player that playback was stopped manually.
   ///
   /// Resets internal completion and playback flags, rewinds position,
@@ -1009,6 +1133,11 @@ class MiniaudioPlayer implements Finalizable {
     _stopPositionTimer();
     final wasPlaying = _playing;
     final wasCompleted = _completed;
+    final wasOpening = _opening;
+    _opening = false;
+    _lastOpening = false;
+    _playbackState = PlaybackState.stopped;
+    _lastPlaybackState = PlaybackState.stopped;
     _playing = false;
     _completed = false;
     _lastIsPlaying = false;
@@ -1020,6 +1149,12 @@ class MiniaudioPlayer implements Finalizable {
       _visualizerController.add(VisualizerData.empty());
     }
 
+    if (!_openingController.isClosed && wasOpening) {
+      _openingController.add(false);
+    }
+    if (!_playbackStateController.isClosed) {
+      _playbackStateController.add(PlaybackState.stopped);
+    }
     if (!_playingController.isClosed && wasPlaying) {
       _playingController.add(false);
     }
@@ -1053,6 +1188,8 @@ class MiniaudioPlayer implements Finalizable {
     _playing = false;
     _completed = true;
     _lastIsPlaying = false;
+    _playbackState = PlaybackState.completed;
+    _lastPlaybackState = PlaybackState.completed;
     _position = _duration;
     _lastPosition = _duration;
     _visualizer = VisualizerData.empty();
@@ -1061,6 +1198,9 @@ class MiniaudioPlayer implements Finalizable {
       _visualizerController.add(VisualizerData.empty());
     }
 
+    if (!_playbackStateController.isClosed) {
+      _playbackStateController.add(PlaybackState.completed);
+    }
     if (!_playingController.isClosed && wasPlaying) {
       _playingController.add(false);
     }
@@ -1180,6 +1320,51 @@ class MiniaudioPlayer implements Finalizable {
       }
     } else {
       _completed = isCompleted;
+    }
+
+    // Resolve unified opening state
+    final bool isOpening = _opening;
+
+    // Map unified PlaybackState
+    PlaybackState currentPlaybackState;
+    if (isOpening) {
+      currentPlaybackState = PlaybackState.opening;
+    } else if (state == MapPlaybackState.error || _playbackState == PlaybackState.error) {
+      currentPlaybackState = PlaybackState.error;
+    } else if (isCompleted) {
+      currentPlaybackState = PlaybackState.completed;
+    } else if (state == MapPlaybackState.paused) {
+      currentPlaybackState = PlaybackState.paused;
+    } else if (state == MapPlaybackState.stopped) {
+      currentPlaybackState = PlaybackState.stopped;
+    } else if (isPlaying) {
+      currentPlaybackState = PlaybackState.playing;
+    } else if (isBuffering || state == MapPlaybackState.buffering) {
+      currentPlaybackState = PlaybackState.buffering;
+    } else if (state == MapPlaybackState.playing) {
+      currentPlaybackState = PlaybackState.playing;
+    } else {
+      currentPlaybackState = PlaybackState.stopped;
+    }
+
+    final bool openingChanged = _lastOpening == null || isOpening != _lastOpening;
+    final bool playbackStateChanged =
+        _lastPlaybackState == null || currentPlaybackState != _lastPlaybackState;
+
+    if (openingChanged) {
+      _lastOpening = isOpening;
+      _opening = isOpening;
+      if (!_openingController.isClosed) {
+        _openingController.add(isOpening);
+      }
+    }
+
+    if (playbackStateChanged) {
+      _lastPlaybackState = currentPlaybackState;
+      _playbackState = currentPlaybackState;
+      if (!_playbackStateController.isClosed) {
+        _playbackStateController.add(currentPlaybackState);
+      }
     }
 
     if (duration != _lastDuration || force) {
@@ -1517,6 +1702,8 @@ class MiniaudioPlayer implements Finalizable {
     await _playingController.close();
     await _bufferingController.close();
     await _completedController.close();
+    await _openingController.close();
+    await _playbackStateController.close();
     await _bufferedPositionController.close();
     await _bufferedPercentageController.close();
     await _bufferedRangeController.close();

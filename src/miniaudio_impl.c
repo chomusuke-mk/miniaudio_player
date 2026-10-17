@@ -55,6 +55,7 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             ma_mp3 *pMP3 = (ma_mp3 *)pDecoder->pBackend;
             ma_dr_mp3_reset(&pMP3->dr);
             pMP3->dr.streamStartOffset = (ma_uint64)(newStreamOffset > 0 ? newStreamOffset : 0);
+            pMP3->dr.streamCursor = pMP3->dr.streamStartOffset;
             pMP3->dr.currentPCMFrame = targetFrame;
             return MA_SUCCESS;
         }

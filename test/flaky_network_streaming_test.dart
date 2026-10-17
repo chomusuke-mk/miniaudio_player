@@ -121,6 +121,32 @@ void main() {
 
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 15)));
+
+    test('1.4: Strict monotonic clock hold during network stall', () async {
+      final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.wav?chunk_size=32768&stall_ms=1200&initial_burst=65536';
+      await player.action.openUrl(stallUrl);
+      await player.action.play();
+
+      // Wait for initial burst (~400ms audio) to completely drain and enter network stall
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+      player.pollAndEmit(force: true);
+      final pos2 = player.state.position.inMilliseconds;
+      expect(pos2, greaterThan(0));
+
+      // During active network stall and silence synthesis, clock is strictly frozen
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      player.pollAndEmit(force: true);
+      final pos3 = player.state.position.inMilliseconds;
+      expect(pos3, equals(pos2), reason: 'Clock must freeze during network starvation silence synthesis');
+
+      // Wait for next 32KB chunk to arrive after the 1200ms stall and resume playback advancement
+      await Future<void>.delayed(const Duration(milliseconds: 1000));
+      player.pollAndEmit(force: true);
+      final pos4 = player.state.position.inMilliseconds;
+      expect(pos4, greaterThan(pos3), reason: 'Clock must resume advancing once network data arrives');
+
+      await player.action.stop();
+    }, timeout: const Timeout(Duration(seconds: 15)));
   });
 
   // =========================================================================
@@ -317,6 +343,17 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 600));
       expect(player.state.position.inMilliseconds, greaterThan(5500));
+      expect(player.state.playing, isTrue);
+
+      // Seek backward to 2 seconds (backward seek relative to prior seek)
+      await player.action.seek(const Duration(seconds: 2));
+      expect(player.state.position.inMilliseconds, lessThan(4000));
+      expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(1500));
+
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      final posAfterBackwardSeek = player.state.position.inMilliseconds;
+      expect(posAfterBackwardSeek, greaterThan(1500));
+      expect(posAfterBackwardSeek, lessThan(5000));
       expect(player.state.playing, isTrue);
 
       await player.action.stop();

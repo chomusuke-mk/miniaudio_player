@@ -34,6 +34,8 @@ class NetworkAudioStreamer {
   StreamSubscription<List<int>>? _responseSub;
   StreamIterator<List<int>>? _currentIterator;
   Timer? _backpressureTimer;
+  Timer? _prefetchTimer;
+  Completer<void>? _probeCompleter;
 
   bool _isDisposed = false;
   int _totalContentLength = -1;
@@ -42,9 +44,33 @@ class NetworkAudioStreamer {
   int _seekGeneration = 0;
   bool _isPausedByBackpressure = false;
   bool _isStreamEnded = false;
+  bool _hasPinnedHead = false;
+  int _pinnedHeadSize = 256 * 1024;
+  int _readCursorByte = 0;
+  int _rangeStart = 0;
+  int _rangeEnd = 0;
+  int _aheadHeadroomBytes = 0;
+  Timer? _reconnectTimer;
+  int _reconnectRetries = 0;
+  static const int _maxReconnectRetries = 5;
+
+  /// Current byte offset reached in the decoder read cursor.
+  int get readCursorByte => _readCursorByte;
+
+  /// Earliest continuous byte offset held in the native buffer.
+  int get rangeStart => _rangeStart;
+
+  /// Furthest continuous byte offset held in the native buffer.
+  int get rangeEnd => _rangeEnd;
+
+  /// Lookahead forward headroom in bytes ahead of the reading cursor.
+  int get aheadHeadroomBytes => _aheadHeadroomBytes;
 
   /// Whether HTTP Range requests are supported by the server.
   bool get isRangeSupported => _isRangeSupported;
+
+  /// Whether initial chunks/headers are retained in RAM for instant zero-cost replay.
+  bool get hasPinnedHead => !_isDisposed && _hasPinnedHead;
 
   /// Current byte offset reached in the network stream.
   int get currentStreamOffset => _currentStreamOffset;
@@ -60,6 +86,15 @@ class NetworkAudioStreamer {
 
   /// Whether the network download stream has completed (reached EOF).
   bool get isStreamEnded => _isStreamEnded;
+
+  bool _isStopped = false;
+
+  /// Whether the streamer is currently stopped via stop().
+  bool get isStopped => _isStopped;
+
+  /// Whether the backpressure monitoring timer is currently active.
+  bool get isBackpressureActive =>
+      _backpressureTimer != null && _backpressureTimer!.isActive;
 
   NetworkAudioStreamer(
     this._player, {
@@ -79,6 +114,7 @@ class NetworkAudioStreamer {
   Future<void> start() async {
     _player.ensureNotDisposed();
     _isStreamEnded = false;
+    _isStopped = false;
 
     _client = HttpClient()
       ..userAgent = _defaultUserAgent
@@ -94,7 +130,6 @@ class NetworkAudioStreamer {
       if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
         req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
       }
-      req.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
       res = await req.close();
     } catch (e) {
       _disposeClient();
@@ -124,18 +159,19 @@ class NetworkAudioStreamer {
 
     // 2. Pre-buffer initial chunk for format probing in C using subscription
     var targetProbeSize = 65536;
-    var probeCompleter = Completer<void>();
+    _probeCompleter = Completer<void>();
     final initialBuilder = BytesBuilder(copy: false);
     var streamDone = false;
 
     _responseSub = res.listen(
       (chunk) async {
-        if (!probeCompleter.isCompleted) {
+        final pc = _probeCompleter;
+        if (pc != null && !pc.isCompleted) {
           initialBuilder.add(chunk);
           if (initialBuilder.length >= targetProbeSize) {
             _responseSub?.pause();
-            if (!probeCompleter.isCompleted) {
-              probeCompleter.complete();
+            if (!pc.isCompleted) {
+              pc.complete();
             }
           }
         } else {
@@ -150,16 +186,18 @@ class NetworkAudioStreamer {
         }
       },
       onError: (err) {
-        if (!probeCompleter.isCompleted) {
-          probeCompleter.completeError(err);
+        final pc = _probeCompleter;
+        if (pc != null && !pc.isCompleted) {
+          pc.completeError(err);
         } else if (_seekGeneration == 0) {
           _onStreamError(err);
         }
       },
       onDone: () {
         streamDone = true;
-        if (!probeCompleter.isCompleted) {
-          probeCompleter.complete();
+        final pc = _probeCompleter;
+        if (pc != null && !pc.isCompleted) {
+          pc.complete();
         } else if (_seekGeneration == 0) {
           _onStreamDone();
         }
@@ -168,7 +206,7 @@ class NetworkAudioStreamer {
     );
 
     try {
-      await probeCompleter.future;
+      await _probeCompleter!.future;
     } catch (e) {
       _disposeClient();
       throw MiniaudioPlayerException(
@@ -200,12 +238,20 @@ class NetworkAudioStreamer {
         calculatedCap = MiniaudioPlayer.globalConfig.bufferSizeLiveStreamMB! * 1024 * 1024;
       } else if (!isLiveStream && MiniaudioPlayer.globalConfig.bufferSizeNetworkMB != null) {
         calculatedCap = MiniaudioPlayer.globalConfig.bufferSizeNetworkMB! * 1024 * 1024;
+      } else if (!isLiveStream) {
+        calculatedCap = max(calculatedCap, 8 * 1024 * 1024);
       }
 
       if (_totalContentLength > 0 && calculatedCap > 0 && _totalContentLength <= calculatedCap) {
         calculatedCap = max(calculatedCap, _totalContentLength + 65536);
       }
       final bufferCap = max(max(256 * 1024, probeBytes.length * 2), calculatedCap);
+
+      final isMp4 = probeBytes.length >= 8 &&
+          probeBytes[4] == 0x66 &&
+          probeBytes[5] == 0x74 &&
+          probeBytes[6] == 0x79 &&
+          probeBytes[7] == 0x70;
 
       final initPtr = malloc.allocate<Uint8>(probeBytes.length);
       initPtr.asTypedList(probeBytes.length).setAll(0, probeBytes);
@@ -223,21 +269,82 @@ class NetworkAudioStreamer {
         malloc.free(initPtr);
       }
 
+      // If MP4 container failed format probing (likely non-faststart with 'moov' atom at EOF):
+      // Perform Tail Probing by fetching the last ~256 KB via HTTP Byte-Range request.
+      if (openRes == MapResult.errorDecodeFailed && isMp4 && !isLiveStream && _totalContentLength > probeBytes.length) {
+        final tailSize = min(256 * 1024, _totalContentLength - probeBytes.length);
+        final tailStart = _totalContentLength - tailSize;
+        try {
+          final tailReq = await _client!.getUrl(_uri);
+          if (_headers != null) {
+            _headers.forEach((k, v) => tailReq.headers.set(k, v));
+          }
+          if (tailReq.headers.value(HttpHeaders.userAgentHeader) == null) {
+            tailReq.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+          }
+          tailReq.headers.set(HttpHeaders.rangeHeader, 'bytes=$tailStart-${_totalContentLength - 1}');
+          final tailRes = await tailReq.close();
+          if (tailRes.statusCode == 206) {
+            final tailBytes = await tailRes
+                .fold<BytesBuilder>(BytesBuilder(copy: false), (b, d) => b..add(d))
+                .then((b) => b.takeBytes());
+
+            if (tailBytes.isNotEmpty) {
+              final headPtr = malloc.allocate<Uint8>(probeBytes.length);
+              final tailPtr = malloc.allocate<Uint8>(tailBytes.length);
+              headPtr.asTypedList(probeBytes.length).setAll(0, probeBytes);
+              tailPtr.asTypedList(tailBytes.length).setAll(0, tailBytes);
+              try {
+                openRes = native.miniaudio_player_open_stream_ex(
+                  _player.handle,
+                  headPtr.cast(),
+                  probeBytes.length,
+                  tailPtr.cast(),
+                  tailBytes.length,
+                  _totalContentLength,
+                  0,
+                  bufferCap,
+                  encodingFormat,
+                );
+              } finally {
+                malloc.free(headPtr);
+                malloc.free(tailPtr);
+              }
+            }
+          }
+        } catch (_) {
+          // Range request failed or interrupted; will fall back below
+        }
+      }
+
       if (openRes == MapResult.success) {
+        _hasPinnedHead = true;
+        _pinnedHeadSize = min(256 * 1024, probeBytes.length);
+        if (_totalContentLength > 0 && _totalContentLength < _pinnedHeadSize) {
+          _pinnedHeadSize = _totalContentLength;
+        }
+        if (streamDone || (_totalContentLength > 0 && probeBytes.length >= _totalContentLength)) {
+          _isStreamEnded = true;
+        }
         break;
       }
 
-      // If decode failed and we can buffer more for format detection (e.g. large ID3/OpusTags cover art)
-      if (openRes == MapResult.errorDecodeFailed && !isLiveStream && !streamDone && targetProbeSize < 2 * 1024 * 1024) {
-        targetProbeSize = min(targetProbeSize + 512 * 1024, 2 * 1024 * 1024);
-        probeCompleter = Completer<void>();
-        _responseSub?.resume();
-        try {
-          await probeCompleter.future;
-        } catch (_) {
-          break;
+      // If decode failed and we can buffer more for format detection (e.g. large ID3/OpusTags cover art or non-range MP4)
+      if (openRes == MapResult.errorDecodeFailed && !isLiveStream && !streamDone) {
+        final maxProbe = (_totalContentLength > 0 && _totalContentLength <= bufferCap)
+            ? _totalContentLength
+            : min(bufferCap, 8 * 1024 * 1024);
+        if (targetProbeSize < maxProbe) {
+          targetProbeSize = min(targetProbeSize + 1024 * 1024, maxProbe);
+          _probeCompleter = Completer<void>();
+          _responseSub?.resume();
+          try {
+            await _probeCompleter!.future;
+          } catch (_) {
+            break;
+          }
+          continue;
         }
-        continue;
       }
 
       break;
@@ -280,6 +387,7 @@ class NetworkAudioStreamer {
 
   void _listenToResponse(HttpClientResponse res, int seekGen) {
     if (_isDisposed) return;
+    _startBackpressureMonitor();
     _responseSub = res.listen(
       (chunk) async {
         _responseSub?.pause();
@@ -342,7 +450,14 @@ class NetworkAudioStreamer {
         }
 
         if (feedRes == MapResult.success) {
+          _reconnectRetries = 0;
           _currentStreamOffset += sliceLen;
+          if (seekGen == 0 && _pinnedHeadSize < 256 * 1024) {
+            _pinnedHeadSize = min(256 * 1024, _currentStreamOffset);
+            if (_totalContentLength > 0 && _totalContentLength < _pinnedHeadSize) {
+              _pinnedHeadSize = _totalContentLength;
+            }
+          }
           offset += sliceLen;
         } else {
           break;
@@ -362,19 +477,90 @@ class NetworkAudioStreamer {
 
   void _onStreamDone() {
     if (_isDisposed) return;
+    if (!_isLive && _totalContentLength > 0 && _currentStreamOffset < _totalContentLength) {
+      if (_reconnectRetries < _maxReconnectRetries) {
+        final retryDelayMs = (100 * (1 << _reconnectRetries)).clamp(100, 2000);
+        _reconnectRetries++;
+        final thisSeekGen = _seekGeneration;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = Timer(Duration(milliseconds: retryDelayMs), () {
+          if (_isDisposed || _seekGeneration != thisSeekGen) return;
+          _reconnectStream(thisSeekGen);
+        });
+        return;
+      }
+      return;
+    }
+    if (_isLive) {
+      return;
+    }
     _isStreamEnded = true;
     native.miniaudio_player_stream_end(_player.handle);
   }
 
+  Future<void> _reconnectStream(int seekGen) async {
+    if (_isDisposed || _seekGeneration != seekGen || _client == null) return;
+    if (_totalContentLength > 0 && _currentStreamOffset >= _totalContentLength) return;
+
+    try {
+      final req = await _client!.getUrl(_uri);
+      if (_isDisposed || _seekGeneration != seekGen) return;
+
+      if (_headers != null) {
+        _headers.forEach((k, v) => req.headers.set(k, v));
+      }
+      if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
+        req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+      }
+
+      req.headers.set(HttpHeaders.rangeHeader, 'bytes=$_currentStreamOffset-');
+
+      final res = await req.close();
+      if (_isDisposed || _seekGeneration != seekGen) {
+        try {
+          res.drain<void>().ignore();
+        } catch (_) {}
+        return;
+      }
+
+      if (res.statusCode == 206) {
+        _listenToResponse(res, seekGen);
+      } else if (res.statusCode == 200) {
+        _currentStreamOffset = 0;
+        native.miniaudio_player_stream_flush(_player.handle, 0);
+        _listenToResponse(res, seekGen);
+      } else {
+        _onStreamDone();
+      }
+    } catch (e) {
+      if (_seekGeneration == seekGen && !_isDisposed) {
+        _onStreamDone();
+      }
+    }
+  }
+
   void _startBackpressureMonitor() {
+    if (_isDisposed || _isStopped) return;
+    if (_backpressureTimer != null && _backpressureTimer!.isActive) {
+      return;
+    }
     _backpressureTimer?.cancel();
-    _backpressureTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_isDisposed) return;
+    _backpressureTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (_isDisposed || _isStopped) {
+        timer.cancel();
+        return;
+      }
       final statusPtr = calloc<native.miniaudio_stream_status_t>();
       try {
         if (native.miniaudio_player_stream_get_status(_player.handle, statusPtr) ==
             MapResult.success) {
           final fillPct = statusPtr.ref.fill_percentage;
+          _readCursorByte = statusPtr.ref.read_cursor_byte;
+          _rangeStart = statusPtr.ref.range_start;
+          _rangeEnd = statusPtr.ref.range_end;
+          final aheadHeadroomBytes = statusPtr.ref.range_end - statusPtr.ref.read_cursor_byte;
+          _aheadHeadroomBytes = aheadHeadroomBytes;
+
           if (fillPct > 0.85 && _responseSub != null && !_responseSub!.isPaused) {
             _responseSub!.pause();
             _isPausedByBackpressure = true;
@@ -392,27 +578,69 @@ class NetworkAudioStreamer {
   /// Handles seeking by using in-RAM cache when available, or opening a new HTTP Byte-Range connection.
   Future<void> seek(Duration position) async {
     if (_isDisposed) return;
+    if (_isLive && _totalContentLength <= 0) {
+      if (_isStopped) {
+        _isStopped = false;
+        _isStreamEnded = false;
+        _isPausedByBackpressure = false;
+        _prefetchTimer?.cancel();
+        _prefetchTimer = null;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
+        final thisSeekGen = ++_seekGeneration;
+        _responseSub?.cancel();
+        _responseSub = null;
+        try {
+          _currentIterator?.cancel();
+        } catch (_) {}
+        _currentIterator = null;
 
-    // Check if the seek position is already held within the buffered RAM window:
-    final buffered = _player.state.bufferedRange;
-    final isWithinBufferedWindow = buffered.end > buffered.start &&
-        position >= buffered.start &&
-        position <= buffered.end;
+        _startBackpressureMonitor();
 
-    // Check if entire audio file is retained in RAM:
-    final isEntireFileCached = _isStreamEnded &&
-        _totalContentLength > 0 &&
-        buffered.start == Duration.zero &&
-        buffered.streamPercentage >= 0.99;
-
-    if (isWithinBufferedWindow || isEntireFileCached) {
-      native.miniaudio_player_seek(_player.handle, position.inMilliseconds);
+        final client = _ensureClient();
+        try {
+          final req = await client.getUrl(_uri);
+          if (_isDisposed || _seekGeneration != thisSeekGen) {
+            return;
+          }
+          if (_headers != null) {
+            _headers.forEach((k, v) => req.headers.set(k, v));
+          }
+          if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
+            req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+          }
+          final res = await req.close();
+          if (_isDisposed || _seekGeneration != thisSeekGen) {
+            try {
+              res.drain<void>().ignore();
+            } catch (_) {}
+            return;
+          }
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            _currentStreamOffset = 0;
+            native.miniaudio_player_stream_flush(_player.handle, 0);
+            _listenToResponse(res, thisSeekGen);
+          } else {
+            try {
+              res.drain<void>().ignore();
+            } catch (_) {}
+            _onStreamError(
+              MiniaudioPlayerException(
+                'HTTP ${res.statusCode} (${res.reasonPhrase}) while reconnecting to live stream $_uri',
+                errorCode: res.statusCode,
+              ),
+            );
+          }
+        } catch (e) {
+          if (!_isDisposed && _seekGeneration == thisSeekGen) {
+            _onStreamError(e);
+          }
+        }
+      } else {
+        // In live streams with unknown total length, seek within circular buffer only
+        native.miniaudio_player_seek(_player.handle, position.inMilliseconds);
+      }
       _player.pollAndEmit(force: true);
-      return;
-    }
-
-    if (_isLive || _totalContentLength <= 0) {
-      // In live streams, seeking outside the circular buffer window cannot reach un-buffered future audio
       return;
     }
 
@@ -432,56 +660,195 @@ class NetworkAudioStreamer {
       targetByte = audioStart + ((position.inMilliseconds * audioBytes) ~/ durationMs);
       targetByte = (targetByte ~/ 4) * 4;
     }
-    if (targetByte >= _totalContentLength) {
+    if (targetByte >= _totalContentLength && _totalContentLength > 4) {
       targetByte = _totalContentLength - 4;
     }
     if (targetByte < 0) targetByte = 0;
 
-    // Cancel current active response and any running iterator
+    // Reset backpressure paused state on seek
+    _isPausedByBackpressure = false;
+
+    // Concurrency safety: increment seek generation, cancel active network streams,
+    // and cancel any pending prefetch timer synchronously on ALL seeks (both Cache HIT and Cache MISS)
+    // to prevent stale in-flight HTTP downloads from poisoning the buffer ranges or triggering false EOF.
+    _prefetchTimer?.cancel();
+    _prefetchTimer = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     final thisSeekGen = ++_seekGeneration;
     _isStreamEnded = false;
+    _isStopped = false;
     _responseSub?.cancel();
     _responseSub = null;
     try {
-      await _currentIterator?.cancel();
+      _currentIterator?.cancel();
     } catch (_) {}
     _currentIterator = null;
 
-    // 1. Update native cursor to seek target
-    native.miniaudio_player_seek(_player.handle, position.inMilliseconds);
-    // 2. Flush native C stream to new byte offset and reset decoder
-    native.miniaudio_player_stream_flush(_player.handle, targetByte);
+    // Restart backpressure monitor on regular seeks
+    _startBackpressureMonitor();
 
-    // 3. Reopen Range request
-    final req = await _client!.getUrl(_uri);
-    if (_headers != null) {
-      _headers.forEach((k, v) => req.headers.set(k, v));
-    }
-    if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
-      req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
-    }
-    req.headers.set(HttpHeaders.rangeHeader, 'bytes=$targetByte-');
+    // 1. Atomic native seek & cache evaluation
+    final cacheRes = native.miniaudio_player_stream_seek(
+      _player.handle,
+      position.inMilliseconds,
+      targetByte,
+    );
 
-    final res = await req.close();
-    if (_isDisposed || _seekGeneration != thisSeekGen) {
+    if (cacheRes == 1) {
+      // In-RAM full cache HIT: audio was already buffered in sliding window or fully in pinned head
+      _player.pollAndEmit(force: true);
       return;
     }
 
-
-    if (res.statusCode == 200 || res.statusCode == 206) {
-      if (res.statusCode == 206) {
-        _currentStreamOffset = targetByte;
-      } else {
-        _currentStreamOffset = 0;
-        native.miniaudio_player_stream_flush(_player.handle, 0);
-      }
-      _listenToResponse(res, thisSeekGen);
+    if (cacheRes == 2) {
+      // Pinned Head cache HIT: audio is ready in RAM; seek returns immediately with 0 ms latency.
+      _player.pollAndEmit(force: true);
+      _schedulePinnedHeadPrefetch(thisSeekGen);
+      return;
     }
+
+    // 2. Cache MISS (cacheRes == 0): reopen HTTP Byte-Range connection from targetByte
+    try {
+      final client = _ensureClient();
+      final req = await client.getUrl(_uri);
+      if (_headers != null) {
+        _headers.forEach((k, v) => req.headers.set(k, v));
+      }
+      if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
+        req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+      }
+      req.headers.set(HttpHeaders.rangeHeader, 'bytes=$targetByte-');
+
+      final res = await req.close();
+      if (_isDisposed || _seekGeneration != thisSeekGen) {
+        try {
+          res.drain<void>().ignore();
+        } catch (_) {}
+        return;
+      }
+
+      if (res.statusCode == 200 || res.statusCode == 206) {
+        if (res.statusCode == 206) {
+          _currentStreamOffset = targetByte;
+        } else {
+          _currentStreamOffset = 0;
+          native.miniaudio_player_stream_flush(_player.handle, 0);
+        }
+        _listenToResponse(res, thisSeekGen);
+      }
+    } catch (e) {
+      if (_isDisposed || _seekGeneration != thisSeekGen) {
+        return;
+      }
+      _onStreamError(e);
+    }
+  }
+
+  HttpClient _ensureClient() {
+    return _client ??= HttpClient()
+      ..userAgent = _defaultUserAgent
+      ..autoUncompress = false;
+  }
+
+  void _schedulePinnedHeadPrefetch(int seekGen) {
+    _prefetchTimer?.cancel();
+    // 50ms debounce ensures seek(0) returns 0 immediate range requests,
+    // and prevents network thrashing during rapid seeking
+    _prefetchTimer = Timer(const Duration(milliseconds: 50), () async {
+      if (_isDisposed || _seekGeneration != seekGen) {
+        return;
+      }
+      _startBackpressureMonitor();
+
+      int headSize = _pinnedHeadSize;
+      try {
+        final nativeHead =
+            _miniaudioPlayerStreamGetPinnedHeadSize(_player.handle);
+        if (nativeHead > 0) {
+          headSize = nativeHead;
+        }
+      } catch (_) {}
+      if (_totalContentLength > 0 && _totalContentLength < headSize) {
+        headSize = _totalContentLength;
+      }
+
+      if (_totalContentLength > 0 && headSize >= _totalContentLength) {
+        return;
+      }
+
+      try {
+        final client = _ensureClient();
+        final req = await client.getUrl(_uri);
+        if (_isDisposed || _seekGeneration != seekGen) return;
+
+        if (_headers != null) {
+          _headers.forEach((k, v) => req.headers.set(k, v));
+        }
+        if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
+          req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+        }
+
+        if (_isRangeSupported) {
+          req.headers.set(HttpHeaders.rangeHeader, 'bytes=$headSize-');
+        }
+
+        final res = await req.close();
+        if (_isDisposed || _seekGeneration != seekGen) {
+          try {
+            res.drain<void>().ignore();
+          } catch (_) {}
+          return;
+        }
+
+        if (res.statusCode == 206) {
+          _currentStreamOffset = headSize;
+          _listenToResponse(res, seekGen);
+        } else if (res.statusCode == 200) {
+          _currentStreamOffset = 0;
+          native.miniaudio_player_stream_flush(_player.handle, 0);
+          _listenToResponse(res, seekGen);
+        }
+      } catch (e) {
+        if (_seekGeneration == seekGen && !_isDisposed) {
+          _onStreamError(e);
+        }
+      }
+    });
+  }
+
+  /// Cancels in-flight network requests and prefetch timers, but preserves pinned head.
+  Future<void> stop() async {
+    _isStopped = true;
+    _prefetchTimer?.cancel();
+    _prefetchTimer = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _backpressureTimer?.cancel();
+    _backpressureTimer = null;
+    _seekGeneration++;
+    _responseSub?.cancel();
+    _responseSub = null;
+    try {
+      _currentIterator?.cancel();
+    } catch (_) {}
+    _currentIterator = null;
+    _disposeClient();
+    _readCursorByte = 0;
+    _currentStreamOffset = _pinnedHeadSize;
+    _isPausedByBackpressure = false;
+    _isStreamEnded = false;
   }
 
   /// Detects the miniaudio encoding format hint purely from magic bytes and MIME,
   /// avoiding file extensions or path matching.
   static int _detectEncodingFormat(List<int> bytes, String? contentType) {
+    if (bytes.length >= 8) {
+      // ftyp (MP4 / M4A / AAC / ALAC container)
+      if (bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70) {
+        return 0; // custom backend (miniaudio_aac / minimp4)
+      }
+    }
     if (bytes.length >= 4) {
       // RIFF (WAV)
       if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46) {
@@ -507,7 +874,9 @@ class NetworkAudioStreamer {
     }
 
     final mime = (contentType ?? '').toLowerCase();
-    if (mime.contains('audio/mpeg') || mime.contains('audio/mp3')) {
+    if (mime.contains('audio/mp4') || mime.contains('audio/m4a') || mime.contains('audio/x-m4a') || mime.contains('audio/aac')) {
+      return 0; // custom backend
+    } else if (mime.contains('audio/mpeg') || mime.contains('audio/mp3')) {
       return 3; // ma_encoding_format_mp3
     } else if (mime.contains('audio/wav') || mime.contains('audio/x-wav')) {
       return 1; // ma_encoding_format_wav
@@ -525,6 +894,11 @@ class NetworkAudioStreamer {
   void dispose() {
     if (_isDisposed) return;
     _isDisposed = true;
+    _hasPinnedHead = false;
+    _prefetchTimer?.cancel();
+    _prefetchTimer = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _seekGeneration++;
     _backpressureTimer?.cancel();
     _backpressureTimer = null;
@@ -534,6 +908,11 @@ class NetworkAudioStreamer {
       _currentIterator?.cancel();
     } catch (_) {}
     _currentIterator = null;
+    if (_probeCompleter != null && !_probeCompleter!.isCompleted) {
+      _probeCompleter!.completeError(
+        const MiniaudioPlayerException('Streamer disposed before probe completion'),
+      );
+    }
     _disposeClient();
   }
 
@@ -544,3 +923,11 @@ class NetworkAudioStreamer {
     _client = null;
   }
 }
+
+@Native<Int64 Function(Pointer<native.miniaudio_player_t>)>(
+  symbol: 'miniaudio_player_stream_get_pinned_head_size',
+  isLeaf: true,
+)
+external int _miniaudioPlayerStreamGetPinnedHeadSize(
+  Pointer<native.miniaudio_player_t> player,
+);

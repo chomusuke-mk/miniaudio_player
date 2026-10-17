@@ -9,6 +9,39 @@ import 'visualizer_data.dart';
 import '../equalizer.dart';
 import '../reverb.dart';
 
+/// Represents the high-level playback and lifecycle states of [MiniaudioPlayer].
+enum PlaybackState {
+  /// The player is stopped, rewound to start, or has no active media.
+  stopped,
+
+  /// The player is actively preparing, resolving, probing, or loading an audio source.
+  opening,
+
+  /// Audio frames are actively rendering through the output audio device.
+  playing,
+
+  /// Playback is paused at the current position.
+  paused,
+
+  /// Playback reached the end of the track.
+  completed,
+
+  /// Playback is stalled waiting for network data or buffer replenishment.
+  buffering,
+
+  /// An unrecoverable decoding, I/O, or native engine error occurred.
+  error;
+
+  /// Convenience boolean predicates
+  bool get isStopped => this == PlaybackState.stopped;
+  bool get isOpening => this == PlaybackState.opening;
+  bool get isPlaying => this == PlaybackState.playing;
+  bool get isPaused => this == PlaybackState.paused;
+  bool get isCompleted => this == PlaybackState.completed;
+  bool get isBuffering => this == PlaybackState.buffering;
+  bool get isError => this == PlaybackState.error;
+}
+
 /// Synchronous snapshot of the current player and DSP states.
 class PlayerState {
   final Duration Function() _getPosition;
@@ -16,6 +49,8 @@ class PlayerState {
   final bool Function() _getPlaying;
   final bool Function() _getBuffering;
   final bool Function() _getCompleted;
+  final bool Function() _getOpening;
+  final PlaybackState Function() _getPlaybackState;
   final Duration Function() _getBufferedPosition;
   final double Function() _getBufferedPercentage;
   final BufferedRange Function() _getBufferedRange;
@@ -49,6 +84,8 @@ class PlayerState {
     required bool Function() getPlaying,
     required bool Function() getBuffering,
     required bool Function() getCompleted,
+    required bool Function() getOpening,
+    required PlaybackState Function() getPlaybackState,
     required Duration Function() getBufferedPosition,
     required double Function() getBufferedPercentage,
     required BufferedRange Function() getBufferedRange,
@@ -80,6 +117,8 @@ class PlayerState {
         _getPlaying = getPlaying,
         _getBuffering = getBuffering,
         _getCompleted = getCompleted,
+        _getOpening = getOpening,
+        _getPlaybackState = getPlaybackState,
         _getBufferedPosition = getBufferedPosition,
         _getBufferedPercentage = getBufferedPercentage,
         _getBufferedRange = getBufferedRange,
@@ -121,6 +160,12 @@ class PlayerState {
 
   /// Whether audio reached the end of the track.
   bool get completed => _getCompleted();
+
+  /// Whether the player is currently opening or preparing an audio source.
+  bool get opening => _getOpening();
+
+  /// Comprehensive playback state enum representing the current lifecycle phase.
+  PlaybackState get playbackState => _getPlaybackState();
 
   /// Furthest continuous timestamp preloaded in RAM buffer.
   Duration get bufferedPosition => _getBufferedPosition();

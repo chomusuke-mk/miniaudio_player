@@ -15,6 +15,7 @@ import 'audio_device.dart';
 import 'audio_source.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
+import 'player_state.dart';
 import 'silence_skip_config.dart';
 import 'dsp_config.dart';
 import 'track_metadata.dart';
@@ -27,6 +28,11 @@ class PlayerAction {
   final void Function(Duration position) _onOptimisticSeek;
   NetworkAudioStreamer? _activeStreamer;
 
+  int _openGeneration = 0;
+  Completer<void>? _openingCompleter;
+  bool _playRequested = false;
+  Future<void>? _pendingSeekFuture;
+
   PlayerAction(
     this._player, {
     required void Function(Duration) onOptimisticSeek,
@@ -37,9 +43,90 @@ class PlayerAction {
     _activeStreamer = null;
   }
 
-  /// Disposes any active network streaming sessions.
+  /// Whether initial chunks/headers are retained in RAM for instant zero-cost replay.
+  bool get hasPinnedHead => _activeStreamer?.hasPinnedHead ?? false;
+
+  /// Active network audio streamer instance, if streaming over HTTP/HTTPS.
+  NetworkAudioStreamer? get activeStreamer => _activeStreamer;
+
+  /// Disposes any active network streaming sessions and cancels pending tasks.
   void dispose() {
+    _openGeneration++;
+    _playRequested = false;
+    _pendingSeekFuture = null;
+    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
+      _openingCompleter!.complete();
+    }
     _stopActiveStreamer();
+  }
+
+  /// Guard wrapper executing an open task within the Opening Gate.
+  Future<void> _openGuarded(Future<void> Function(int generation) openTask) async {
+    _player.ensureNotDisposed();
+
+    _stopActiveStreamer();
+
+    try {
+      native.miniaudio_player_begin_open(_player.handle);
+    } catch (_) {
+      try {
+        native.miniaudio_player_stop(_player.handle);
+      } catch (_) {}
+    }
+
+    final gen = ++_openGeneration;
+    _playRequested = false;
+    _pendingSeekFuture = null;
+
+    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
+      _openingCompleter!.complete();
+    }
+    final completer = Completer<void>();
+    completer.future.ignore();
+    _openingCompleter = completer;
+
+    _player.notifyOpening();
+
+    // Yield to the event loop so that synchronous caller checks immediately observe Opening state & zeroed telemetry
+    await Future<void>.delayed(Duration.zero);
+
+    if (_openGeneration != gen) return;
+
+    try {
+      await openTask(gen);
+
+      if (_openGeneration != gen) return;
+
+      _player.notifyOpenCompleted();
+
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    } catch (error, stackTrace) {
+      if (_openGeneration != gen) return;
+      _stopActiveStreamer();
+      try {
+        native.miniaudio_player_stop(_player.handle);
+      } catch (_) {}
+
+      final isConnectionOrProtocolFailure =
+          error is MiniaudioPlayerException &&
+              (error.message.startsWith('Failed to connect') ||
+               error.message.contains('Connection refused') ||
+               error.message.contains('HttpException'));
+
+      if (isConnectionOrProtocolFailure) {
+        _player.notifyStopped();
+      } else {
+        _player.notifyOpenFailed(error);
+      }
+
+      if (!completer.isCompleted) {
+        completer.future.ignore();
+        completer.completeError(error, stackTrace);
+      }
+      rethrow;
+    }
   }
 
   /// Prepares an audio source for playback.
@@ -148,10 +235,18 @@ class PlayerAction {
   }
 
   /// Opens a local filesystem audio file.
-  Future<void> openFile(String filePath) async {
+  Future<void> openFile(String filePath) {
     _player.ensureNotDisposed();
-    _stopActiveStreamer();
+    if (filePath.isEmpty) {
+      throw const MiniaudioPlayerException('Cannot open empty file path');
+    }
+    return _openGuarded((gen) => _openFileInternal(filePath, gen));
+  }
 
+  Future<void> _openFileInternal(String filePath, int gen) async {
+    if (filePath.isEmpty) {
+      throw const MiniaudioPlayerException('Cannot open empty file path');
+    }
     final path = filePath.startsWith('file://')
         ? Uri.parse(filePath).toFilePath()
         : filePath;
@@ -166,6 +261,8 @@ class PlayerAction {
       } catch (_) {}
     }
 
+    if (_openGeneration != gen) return;
+
     final pathPtr = path.toNativeUtf8();
     try {
       final res = native.miniaudio_player_open_file(
@@ -178,6 +275,8 @@ class PlayerAction {
           errorCode: res,
         );
       }
+
+      if (_openGeneration != gen) return;
 
       _player.pollAndEmit(force: true);
 
@@ -207,12 +306,20 @@ class PlayerAction {
   /// Opens an audio file directly from an in-memory byte buffer (RAM).
   ///
   /// Zero disk I/O, zero temporary files, instantaneous startup.
-  Future<void> openMemory(Uint8List bytes, {Uri? uri}) async {
+  Future<void> openMemory(Uint8List bytes, {Uri? uri}) {
     _player.ensureNotDisposed();
     if (bytes.isEmpty) {
       throw const MiniaudioPlayerException('Cannot open empty byte buffer');
     }
-    _stopActiveStreamer();
+    return _openGuarded((gen) => _openMemoryInternal(bytes, uri: uri, gen: gen));
+  }
+
+  Future<void> _openMemoryInternal(Uint8List bytes, {Uri? uri, required int gen}) async {
+    if (bytes.isEmpty) {
+      throw const MiniaudioPlayerException('Cannot open empty byte buffer');
+    }
+
+    if (_openGeneration != gen) return;
 
     final ptr = malloc.allocate<Uint8>(bytes.length);
     ptr.asTypedList(bytes.length).setAll(0, bytes);
@@ -230,6 +337,8 @@ class PlayerAction {
         errorCode: res,
       );
     }
+
+    if (_openGeneration != gen) return;
 
     _player.pollAndEmit(force: true);
 
@@ -261,8 +370,20 @@ class PlayerAction {
     String assetPath, {
     String? package,
     AssetBytesLoader? loader,
-  }) async {
+  }) {
     _player.ensureNotDisposed();
+    if (assetPath.isEmpty) {
+      throw const MiniaudioPlayerException('Cannot open empty asset path');
+    }
+    return _openGuarded((gen) => _openAssetInternal(assetPath, gen: gen, package: package, loader: loader));
+  }
+
+  Future<void> _openAssetInternal(
+    String assetPath, {
+    required int gen,
+    String? package,
+    AssetBytesLoader? loader,
+  }) async {
     final cleanKey = assetPath.replaceFirst(RegExp(r'^asset(s)?://'), '');
     final resolvedKey = package != null ? 'packages/$package/$cleanKey' : cleanKey;
     Uint8List? bytes;
@@ -291,6 +412,8 @@ class PlayerAction {
       }
     }
 
+    if (_openGeneration != gen) return;
+
     if (bytes == null || bytes.isEmpty) {
       throw MiniaudioPlayerException(
         'Asset not found: "$resolvedKey". Configure MiniaudioPlayerGlobalConfig.assetLoader for Flutter assets.',
@@ -298,7 +421,7 @@ class PlayerAction {
       );
     }
 
-    await openMemory(bytes, uri: Uri.parse('asset://$resolvedKey'));
+    await _openMemoryInternal(bytes, uri: Uri.parse('asset://$resolvedKey'), gen: gen);
   }
 
   /// Opens a remote audio URL (HTTP/HTTPS) or live stream with progressive streaming.
@@ -313,10 +436,45 @@ class PlayerAction {
     Duration? bufferLiveStreamDuration,
     int? bufferNetworkInSeconds,
     int? bufferStreamsInSeconds,
-  }) async {
+  }) {
     _player.ensureNotDisposed();
-    _stopActiveStreamer();
+    if (urlOrUri == null) {
+      throw ArgumentError.notNull('urlOrUri');
+    }
+    if (urlOrUri is String && urlOrUri.trim().isEmpty) {
+      throw const MiniaudioPlayerException('Cannot open empty URL string');
+    }
+    if (urlOrUri is! Uri && urlOrUri is! String) {
+      throw ArgumentError.value(urlOrUri, 'urlOrUri', 'Expected Uri or String');
+    }
+    return _openGuarded(
+      (gen) => _openUrlInternal(
+        urlOrUri,
+        gen: gen,
+        headers: headers,
+        isLive: isLive,
+        bufferAhead: bufferAhead,
+        bufferBehind: bufferBehind,
+        bufferNetworkDuration: bufferNetworkDuration,
+        bufferLiveStreamDuration: bufferLiveStreamDuration,
+        bufferNetworkInSeconds: bufferNetworkInSeconds,
+        bufferStreamsInSeconds: bufferStreamsInSeconds,
+      ),
+    );
+  }
 
+  Future<void> _openUrlInternal(
+    dynamic urlOrUri, {
+    required int gen,
+    Map<String, String>? headers,
+    bool isLive = false,
+    Duration? bufferAhead,
+    Duration? bufferBehind,
+    Duration? bufferNetworkDuration,
+    Duration? bufferLiveStreamDuration,
+    int? bufferNetworkInSeconds,
+    int? bufferStreamsInSeconds,
+  }) async {
     final Uri uri;
     if (urlOrUri is Uri) {
       uri = urlOrUri;
@@ -352,19 +510,59 @@ class PlayerAction {
     try {
       await streamer.start();
     } catch (e) {
+      if (_openGeneration != gen) {
+        return;
+      }
       _stopActiveStreamer();
-      _player.pollAndEmit(force: true);
       rethrow;
+    }
+
+    if (_openGeneration != gen) {
+      _stopActiveStreamer();
+      return;
     }
   }
 
   /// Starts or resumes audio playback.
   Future<void> play() async {
     _player.ensureNotDisposed();
+    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
+      _playRequested = true;
+      final gen = _openGeneration;
+      try {
+        await _openingCompleter!.future;
+      } catch (_) {
+        return;
+      }
+      if (_openGeneration != gen || !_playRequested) {
+        return;
+      }
+    }
+    if (_pendingSeekFuture != null) {
+      try {
+        await _pendingSeekFuture;
+      } catch (_) {}
+    }
+    return _executePlay();
+  }
+
+  Future<void> _executePlay() async {
     if (_player.state.completed ||
+        (_player.state.playbackState == PlaybackState.stopped &&
+            _activeStreamer != null &&
+            _activeStreamer!.isStopped) ||
+        (native.miniaudio_player_is_completed(_player.handle) != 0) ||
         (_player.state.duration > Duration.zero &&
             _player.state.position >= _player.state.duration)) {
-      await seek(Duration.zero);
+      final seekFut = _executeSeek(Duration.zero);
+      _pendingSeekFuture = seekFut;
+      await seekFut;
+      if (_pendingSeekFuture == seekFut) {
+        _pendingSeekFuture = null;
+      }
+    }
+    if (_activeStreamer != null && _activeStreamer!.isStopped) {
+      return;
     }
     final res = native.miniaudio_player_play(_player.handle);
     if (res != MapResult.success) {
@@ -379,6 +577,14 @@ class PlayerAction {
   /// Pauses audio playback at the current position.
   Future<void> pause() async {
     _player.ensureNotDisposed();
+    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
+      _playRequested = false;
+      return;
+    }
+    return _executePause();
+  }
+
+  Future<void> _executePause() async {
     final res = native.miniaudio_player_pause(_player.handle);
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(
@@ -392,6 +598,22 @@ class PlayerAction {
   /// Stops audio playback and resets the position to the beginning.
   Future<void> stop() async {
     _player.ensureNotDisposed();
+    _pendingSeekFuture = null;
+    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
+      _openGeneration++;
+      _playRequested = false;
+      await _activeStreamer?.stop();
+      try {
+        native.miniaudio_player_stop(_player.handle);
+      } catch (_) {}
+      if (!_openingCompleter!.isCompleted) {
+        _openingCompleter!.complete();
+      }
+      _player.notifyStopped();
+      _player.pollAndEmit(force: true);
+      return;
+    }
+    await _activeStreamer?.stop();
     final res = native.miniaudio_player_stop(_player.handle);
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(
@@ -404,9 +626,32 @@ class PlayerAction {
   }
 
   /// Seeks to the specified [position].
-  Future<void> seek(Duration position) async {
+  Future<void> seek(Duration position) {
     _player.ensureNotDisposed();
-    _onOptimisticSeek(position);
+    final targetPosition = position < Duration.zero ? Duration.zero : position;
+    _onOptimisticSeek(targetPosition);
+
+    Future<void> doSeek() async {
+      if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
+        final gen = _openGeneration;
+        try {
+          await _openingCompleter!.future;
+        } catch (_) {
+          return;
+        }
+        if (_openGeneration != gen) {
+          return;
+        }
+      }
+      return _executeSeek(targetPosition);
+    }
+
+    final future = doSeek();
+    _pendingSeekFuture = future;
+    return future;
+  }
+
+  Future<void> _executeSeek(Duration position) async {
     if (_activeStreamer != null) {
       await _activeStreamer!.seek(position);
       _player.pollAndEmit(force: true);

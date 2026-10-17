@@ -41,6 +41,12 @@ ma_result map_buffer_init(
     mb->should_abort = MA_FALSE;
     mb->is_probing = MA_TRUE;
     mb->initial_bytes = 0;
+    mb->head_data = NULL;
+    mb->head_size = 0;
+    mb->head_capacity = 0;
+    mb->tail_data = NULL;
+    mb->tail_size = 0;
+    mb->tail_start = 0;
 
     if (ma_mutex_init(&mb->lock) != MA_SUCCESS)
     {
@@ -75,10 +81,99 @@ void map_buffer_uninit(map_buffer_t *mb)
         free(mb->data);
         mb->data = NULL;
     }
+    if (mb->head_data != NULL)
+    {
+        free(mb->head_data);
+        mb->head_data = NULL;
+        mb->head_size = 0;
+        mb->head_capacity = 0;
+    }
+    if (mb->tail_data != NULL)
+    {
+        free(mb->tail_data);
+        mb->tail_data = NULL;
+        mb->tail_size = 0;
+        mb->tail_start = 0;
+    }
     ma_mutex_unlock(&mb->lock);
 
     ma_event_uninit(&mb->data_ready_event);
     ma_mutex_uninit(&mb->lock);
+}
+
+ma_result map_buffer_set_head(
+    map_buffer_t *mb,
+    const uint8_t *head_data,
+    size_t head_size)
+{
+    if (mb == NULL || !mb->is_initialized)
+        return MA_INVALID_ARGS;
+
+    ma_mutex_lock(&mb->lock);
+
+    if (mb->head_data != NULL)
+    {
+        free(mb->head_data);
+        mb->head_data = NULL;
+        mb->head_size = 0;
+        mb->head_capacity = 0;
+    }
+
+    if (head_data != NULL && head_size > 0)
+    {
+        size_t cap = head_size;
+        if (cap < MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY)
+        {
+            cap = MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY;
+        }
+        mb->head_data = (uint8_t *)malloc(cap);
+        if (mb->head_data != NULL)
+        {
+            memcpy(mb->head_data, head_data, head_size);
+            mb->head_size = head_size;
+            mb->head_capacity = cap;
+        }
+    }
+
+    ma_mutex_unlock(&mb->lock);
+    return MA_SUCCESS;
+}
+
+ma_result map_buffer_set_tail(
+    map_buffer_t *mb,
+    const uint8_t *tail_data,
+    size_t tail_size)
+{
+    if (mb == NULL || !mb->is_initialized)
+        return MA_INVALID_ARGS;
+
+    ma_mutex_lock(&mb->lock);
+
+    if (mb->tail_data != NULL)
+    {
+        free(mb->tail_data);
+        mb->tail_data = NULL;
+        mb->tail_size = 0;
+        mb->tail_start = 0;
+    }
+
+    if (tail_data != NULL && tail_size > 0 && mb->total_size > 0)
+    {
+        mb->tail_data = (uint8_t *)malloc(tail_size);
+        if (mb->tail_data != NULL)
+        {
+            memcpy(mb->tail_data, tail_data, tail_size);
+            mb->tail_size = tail_size;
+            mb->tail_start = mb->total_size - (int64_t)tail_size;
+            if (mb->tail_start < 0)
+            {
+                mb->tail_start = 0;
+            }
+        }
+    }
+
+    ma_mutex_unlock(&mb->lock);
+    return MA_SUCCESS;
 }
 
 void map_buffer_abort(map_buffer_t *mb)
@@ -107,6 +202,47 @@ ma_result map_buffer_write(
     {
         ma_mutex_unlock(&mb->lock);
         return MA_INTERRUPT;
+    }
+
+    /* Backpressure protection: For progressive file streams, never allow the writer to overrun
+     * and overwrite unread audio data at or ahead of read_cursor. */
+    if (!mb->is_probing && !mb->is_live)
+    {
+        if ((offset + (int64_t)size) - mb->read_cursor > (int64_t)mb->capacity)
+        {
+            ma_mutex_unlock(&mb->lock);
+            return MA_BUSY;
+        }
+    }
+
+    /* Populate Pinned Head if incoming chunk extends contiguous prefix within head_capacity */
+    if (offset >= 0 && offset <= (int64_t)mb->head_size && 
+        (offset < (int64_t)MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY || 
+         (mb->head_capacity > 0 && offset < (int64_t)mb->head_capacity)))
+    {
+        /* Lazy allocate head_data if needed, capped to MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY */
+        if (mb->head_data == NULL)
+        {
+            size_t target_cap = MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY;
+            mb->head_data = (uint8_t *)malloc(target_cap);
+            if (mb->head_data != NULL)
+            {
+                mb->head_capacity = target_cap;
+                mb->head_size = 0;
+            }
+        }
+
+        if (mb->head_data != NULL && (size_t)offset < mb->head_capacity)
+        {
+            size_t head_off = (size_t)offset;
+            size_t max_copy = mb->head_capacity - head_off;
+            size_t head_to_copy = (size < max_copy) ? size : max_copy;
+            memcpy(mb->head_data + head_off, pData, head_to_copy);
+            if (head_off + head_to_copy > mb->head_size)
+            {
+                mb->head_size = head_off + head_to_copy;
+            }
+        }
     }
 
     /* High-performance vectorized copy into circular ring buffer */
@@ -154,7 +290,12 @@ ma_result map_buffer_write(
         /* Enforce sliding window capacity constraint */
         if (mb->range_end - mb->range_start > (int64_t)mb->capacity)
         {
-            mb->range_start = mb->range_end - (int64_t)mb->capacity;
+            int64_t new_start = mb->range_end - (int64_t)mb->capacity;
+            if (!mb->is_live && new_start > mb->read_cursor)
+            {
+                new_start = mb->read_cursor;
+            }
+            mb->range_start = new_start;
         }
     }
 
@@ -220,13 +361,36 @@ ma_result map_buffer_read(
             ma_mutex_unlock(&mb->lock);
             return MA_AT_END;
         }
-        if (mb->is_eof && req_offset >= mb->range_end)
+        if (mb->is_eof && req_offset >= mb->range_end &&
+            !(mb->tail_data != NULL && req_offset >= mb->tail_start && req_offset < (mb->tail_start + (int64_t)mb->tail_size)) &&
+            !(mb->head_data != NULL && req_offset >= 0 && (size_t)req_offset < mb->head_size))
         {
             ma_mutex_unlock(&mb->lock);
             return MA_AT_END;
         }
 
-        /* Check if requested byte is contained within cached sliding window */
+        /* Tier 1 (Pinned Head) */
+        if (mb->head_data != NULL && req_offset >= 0 && (size_t)req_offset < mb->head_size)
+        {
+            size_t available = mb->head_size - (size_t)req_offset;
+            size_t to_copy = (bytesToRead < available) ? bytesToRead : available;
+
+            memcpy(out, mb->head_data + req_offset, to_copy);
+
+            if (offset < 0)
+            {
+                mb->read_cursor += (int64_t)to_copy;
+            }
+            if (pBytesRead != NULL)
+            {
+                *pBytesRead = to_copy;
+            }
+
+            ma_mutex_unlock(&mb->lock);
+            return MA_SUCCESS;
+        }
+
+        /* Tier 2 (Sliding Body) */
         if (req_offset >= mb->range_start && req_offset < mb->range_end)
         {
             size_t available = (size_t)(mb->range_end - req_offset);
@@ -257,8 +421,31 @@ ma_result map_buffer_read(
             return MA_SUCCESS;
         }
 
-        /* Check if requested byte was evicted backwards (seeking outside retained window) */
-        if (req_offset < mb->range_start)
+        /* Tier 3 (Pinned Tail) */
+        if (mb->tail_data != NULL && req_offset >= mb->tail_start &&
+            req_offset < (mb->tail_start + (int64_t)mb->tail_size))
+        {
+            size_t available = (size_t)((mb->tail_start + (int64_t)mb->tail_size) - req_offset);
+            size_t to_copy = (bytesToRead < available) ? bytesToRead : available;
+            size_t tail_idx = (size_t)(req_offset - mb->tail_start);
+
+            memcpy(out, mb->tail_data + tail_idx, to_copy);
+
+            if (offset < 0)
+            {
+                mb->read_cursor += (int64_t)to_copy;
+            }
+            if (pBytesRead != NULL)
+            {
+                *pBytesRead = to_copy;
+            }
+
+            ma_mutex_unlock(&mb->lock);
+            return MA_SUCCESS;
+        }
+
+        /* Eviction check: if req_offset < mb->range_start && (req_offset < 0 || (size_t)req_offset >= mb->head_size) */
+        if (req_offset < mb->range_start && (req_offset < 0 || (size_t)req_offset >= mb->head_size))
         {
             ma_mutex_unlock(&mb->lock);
             return MA_NOT_IMPLEMENTED;
@@ -297,8 +484,10 @@ ma_result map_buffer_seek(
         mb->is_eof = MA_FALSE;
     }
 
-    /* If target is within currently retained window, instant cache hit! */
-    if (target_offset >= mb->range_start && target_offset <= mb->range_end)
+    /* If target is in pinned head, sliding body, or pinned tail, instant cache hit! */
+    if ((mb->head_data != NULL && target_offset >= 0 && (size_t)target_offset <= mb->head_size) ||
+        (target_offset >= mb->range_start && target_offset <= mb->range_end) ||
+        (mb->tail_data != NULL && target_offset >= mb->tail_start && target_offset <= (mb->tail_start + (int64_t)mb->tail_size)))
     {
         ma_event_signal(&mb->data_ready_event);
         ma_mutex_unlock(&mb->lock);
@@ -413,7 +602,7 @@ ma_result map_buffer_decoder_seek(
     /* Format probing seek handling: initial_bytes are fully available in [0..initial_bytes] */
     if (mb->is_probing)
     {
-        int64_t targetOffset = 0;
+        int64_t targetOffset = -1;
         if (origin == ma_seek_origin_start)
         {
             targetOffset = byteOffset;
@@ -422,17 +611,46 @@ ma_result map_buffer_decoder_seek(
         {
             targetOffset = mb->read_cursor + byteOffset;
         }
-        else if (origin == ma_seek_origin_end && mb->total_size > 0)
+        else if (origin == ma_seek_origin_end)
         {
+            if (mb->total_size <= 0)
+            {
+                ma_mutex_unlock(&mb->lock);
+                return MA_BAD_SEEK;
+            }
             targetOffset = mb->total_size + byteOffset;
         }
+        else
+        {
+            ma_mutex_unlock(&mb->lock);
+            return MA_INVALID_ARGS;
+        }
 
-        if (targetOffset >= 0 && (size_t)targetOffset <= mb->initial_bytes)
+        if (targetOffset >= 0 && ((size_t)targetOffset <= mb->initial_bytes ||
+                                  (mb->head_data != NULL && (size_t)targetOffset <= mb->head_size)))
         {
             mb->read_cursor = targetOffset;
             ma_mutex_unlock(&mb->lock);
             return MA_SUCCESS;
         }
+
+        if (mb->tail_data != NULL && targetOffset >= mb->tail_start && targetOffset <= (mb->tail_start + (int64_t)mb->tail_size))
+        {
+            mb->read_cursor = targetOffset;
+            ma_mutex_unlock(&mb->lock);
+            return MA_SUCCESS;
+        }
+
+        /* Allow seeking to EOF (total_size) when total_size is known */
+        if (mb->total_size > 0 && targetOffset == mb->total_size)
+        {
+            mb->read_cursor = targetOffset;
+            ma_mutex_unlock(&mb->lock);
+            return MA_SUCCESS;
+        }
+
+        ma_mutex_unlock(&mb->lock);
+        return MA_BAD_SEEK;
     }
 
     if (origin == ma_seek_origin_start)
@@ -448,13 +666,20 @@ ma_result map_buffer_decoder_seek(
         if (mb->total_size <= 0)
         {
             ma_mutex_unlock(&mb->lock);
-            return MA_NOT_IMPLEMENTED;
+            return MA_BAD_SEEK;
         }
         target = mb->total_size + (int64_t)byteOffset;
     }
+    else
+    {
+        ma_mutex_unlock(&mb->lock);
+        return MA_INVALID_ARGS;
+    }
 
-    /* Relative seek forward or backward within currently available buffer */
-    if (target >= mb->range_start && target <= mb->range_end)
+    /* Relative seek forward or backward within pinned head, sliding body, or pinned tail */
+    if ((mb->head_data != NULL && target >= 0 && (size_t)target <= mb->head_size) ||
+        (target >= mb->range_start && target <= mb->range_end) ||
+        (mb->tail_data != NULL && target >= mb->tail_start && target <= (mb->tail_start + (int64_t)mb->tail_size)))
     {
         mb->read_cursor = target;
         ma_mutex_unlock(&mb->lock);
@@ -462,7 +687,7 @@ ma_result map_buffer_decoder_seek(
     }
 
     ma_mutex_unlock(&mb->lock);
-    return MA_NOT_IMPLEMENTED;
+    return MA_BAD_SEEK;
 }
 
 ma_result map_buffer_decoder_tell(

@@ -218,6 +218,11 @@ external int miniaudio_player_is_visualizer_enabled(
   ffi.Pointer<miniaudio_player_t> player,
 );
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>()
+external int miniaudio_player_begin_open(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
 /// @brief Opens and prepares a local audio file for playback.
 /// @param player Player instance handle.
 /// @param file_path UTF-8 null-terminated file path.
@@ -262,6 +267,30 @@ external int miniaudio_player_open_stream(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<ffi.Uint8> initial_data,
   int initial_data_size,
+  int total_size,
+  int is_live,
+  int buffer_capacity_bytes,
+  int encoding_format,
+);
+
+/// Opens and prepares a streaming audio source with optional tail probe data (e.g. MP4 moov atom).
+@ffi.Native<
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>,
+        ffi.Pointer<ffi.Uint8>,
+        ffi.Size,
+        ffi.Pointer<ffi.Uint8>,
+        ffi.Size,
+        ffi.Int64,
+        ffi.Int32,
+        ffi.Uint32,
+        ffi.Int32)>()
+external int miniaudio_player_open_stream_ex(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<ffi.Uint8> initial_data,
+  int initial_data_size,
+  ffi.Pointer<ffi.Uint8> tail_data,
+  int tail_data_size,
   int total_size,
   int is_live,
   int buffer_capacity_bytes,
@@ -488,6 +517,23 @@ external int miniaudio_player_stream_feed(
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int64)>()
 external int miniaudio_player_stream_flush(
   ffi.Pointer<miniaudio_player_t> player,
+  int new_stream_offset,
+);
+
+/// @brief Atomically seeks an active stream data source to position_ms and new_stream_offset.
+/// Evaluates in-RAM buffer caching under mutex protection:
+/// - If new_stream_offset is within current buffered sliding window, adjusts read cursor and
+///   resets decoder in RAM without flushing or requiring a new HTTP connection (returns 1, Cache HIT).
+/// - If new_stream_offset is outside cached window, flushes stream buffer to new_stream_offset,
+///   resets decoder, and signals caller that an HTTP Range request is needed (returns 0, Cache MISS).
+/// @param player Player instance handle.
+/// @param position_ms Target seek position in milliseconds.
+/// @param new_stream_offset Byte offset in remote stream.
+/// @return 1 on in-memory cache hit, 0 on cache miss (network range request required), or negative error code.
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int64, ffi.Int64)>()
+external int miniaudio_player_stream_seek(
+  ffi.Pointer<miniaudio_player_t> player,
+  int position_ms,
   int new_stream_offset,
 );
 
@@ -855,7 +901,8 @@ enum miniaudio_player_playback_state_t {
   MAP_PLAYBACK_STATE_PAUSED(2),
   MAP_PLAYBACK_STATE_COMPLETED(3),
   MAP_PLAYBACK_STATE_BUFFERING(4),
-  MAP_PLAYBACK_STATE_ERROR(5);
+  MAP_PLAYBACK_STATE_ERROR(5),
+  MAP_PLAYBACK_STATE_OPENING(6);
 
   final int value;
   const miniaudio_player_playback_state_t(this.value);
@@ -868,6 +915,7 @@ enum miniaudio_player_playback_state_t {
         3 => MAP_PLAYBACK_STATE_COMPLETED,
         4 => MAP_PLAYBACK_STATE_BUFFERING,
         5 => MAP_PLAYBACK_STATE_ERROR,
+        6 => MAP_PLAYBACK_STATE_OPENING,
         _ => throw ArgumentError(
             'Unknown value for miniaudio_player_playback_state_t: $value'),
       };
@@ -1208,6 +1256,15 @@ final class miniaudio_stream_status extends ffi.Struct {
   @ffi.Int32()
   external int is_eof;
 
+  @ffi.Int64()
+  external int read_cursor_byte;
+
+  @ffi.Int64()
+  external int range_start;
+
+  @ffi.Int64()
+  external int range_end;
+
   static ffi.Pointer<miniaudio_stream_status> $allocate(
     ffi.Allocator $allocator, {
     required int buffer_capacity,
@@ -1215,13 +1272,19 @@ final class miniaudio_stream_status extends ffi.Struct {
     required double fill_percentage,
     required int is_buffering,
     required int is_eof,
+    int read_cursor_byte = 0,
+    int range_start = 0,
+    int range_end = 0,
   }) =>
       $allocator<miniaudio_stream_status>()
         ..ref.buffer_capacity = buffer_capacity
         ..ref.buffer_fill = buffer_fill
         ..ref.fill_percentage = fill_percentage
         ..ref.is_buffering = is_buffering
-        ..ref.is_eof = is_eof;
+        ..ref.is_eof = is_eof
+        ..ref.read_cursor_byte = read_cursor_byte
+        ..ref.range_start = range_start
+        ..ref.range_end = range_end;
 }
 
 typedef miniaudio_stream_status_t = miniaudio_stream_status;

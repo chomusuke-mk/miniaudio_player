@@ -31,6 +31,8 @@ typedef struct map_buffer_range
     int32_t is_eof;           /**< 1 if provider reached stream EOF */
 } map_buffer_range_t;
 
+#define MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY (256 * 1024)
+
 /**
  * @brief High-level abstract bidirectional sliding-window circular buffer.
  */
@@ -47,10 +49,32 @@ typedef struct map_buffer
     ma_bool32 should_abort;   /**< 1 to abort any waiting decoder readers */
     ma_bool32 is_probing;     /**< 1 during initial header format sniffing */
     size_t initial_bytes;     /**< Bytes provided during initial probe */
+    uint8_t *head_data;       /**< Pinned head buffer holding initial headers/magic bytes */
+    size_t head_size;         /**< Number of valid bytes currently retained in pinned head */
+    size_t head_capacity;     /**< Allocated capacity of pinned head buffer */
+    uint8_t *tail_data;       /**< Optional tail bytes loaded for probing EOF metadata (e.g. MP4 moov) */
+    size_t tail_size;         /**< Number of tail bytes */
+    int64_t tail_start;       /**< Offset of tail bytes (total_size - tail_size) */
     ma_mutex lock;            /**< Mutex protecting buffer bounds and state */
     ma_event data_ready_event;/**< Event signaling available data to decoder thread */
     ma_bool32 is_initialized; /**< 1 if buffer is valid and initialized */
 } map_buffer_t;
+
+/**
+ * @brief Sets or updates pinned head data (e.g. format probe headers).
+ */
+ma_result map_buffer_set_head(
+    map_buffer_t *mb,
+    const uint8_t *head_data,
+    size_t head_size);
+
+/**
+ * @brief Sets optional tail probe data (e.g. MP4 moov box located at EOF).
+ */
+ma_result map_buffer_set_tail(
+    map_buffer_t *mb,
+    const uint8_t *tail_data,
+    size_t tail_size);
 
 /**
  * @brief Initializes a new unified high-level buffer.
