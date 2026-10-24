@@ -1,7 +1,7 @@
 /**
  * @file map_buffer.h
- * @brief Unified Two-Tier Audio Buffer: Bidirectional circular sliding window cache,
- *        decoupled stream ingest, and low-level decoder abstraction.
+ * @brief Unified Tripartite Audio Buffer: Decoupled Head, Pure Audio Ring, and Tail buffers,
+ *        boundary detection, .metaBytes synthesis, and decoder abstraction.
  */
 
 #ifndef MAP_BUFFER_H
@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include "miniaudio.h"
 #include "map_common.h"
+#include "map_sniffer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,27 +35,92 @@ typedef struct map_buffer_range
 #define MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY (256 * 1024)
 
 /**
- * @brief High-level abstract bidirectional sliding-window circular buffer.
+ * @brief Tripartite buffer separating Head (setup/metadata), Pure Audio Ring, and Tail.
  */
 typedef struct map_buffer
 {
-    uint8_t *data;            /**< Contiguous memory block of `capacity` bytes */
-    size_t capacity;          /**< Total ring buffer capacity in bytes */
-    int64_t range_start;      /**< Earliest byte offset present in ring buffer */
-    int64_t range_end;        /**< Furthest byte offset loaded in ring buffer */
-    int64_t read_cursor;      /**< Absolute byte offset requested by decoder */
+    /* ---------------------------------------------------------------------- */
+    /* 1. Pure Audio Ring Buffer: [audio_start .. audio_end)                  */
+    /*    Indexed as: (abs_offset - audio_start) % capacity                   */
+    /* ---------------------------------------------------------------------- */
+    union {
+        uint8_t *data;
+        uint8_t *ring_data;
+    };
+    union {
+        size_t capacity;
+        size_t ring_capacity;
+    };
+    union {
+        int64_t range_start;
+        int64_t ring_start_offset;
+    };
+    union {
+        int64_t range_end;
+        int64_t ring_end_offset;
+    };
+    union {
+        int64_t read_cursor;
+        int64_t read_pos;
+    };
+
     int64_t total_size;       /**< Total stream size in bytes (-1 for live streams) */
     ma_bool32 is_live;        /**< 1 for continuous livestreams, 0 for finite files */
     ma_bool32 is_eof;         /**< 1 when provider has finished sending data */
     ma_bool32 should_abort;   /**< 1 to abort any waiting decoder readers */
     ma_bool32 is_probing;     /**< 1 during initial header format sniffing */
     size_t initial_bytes;     /**< Bytes provided during initial probe */
-    uint8_t *head_data;       /**< Pinned head buffer holding initial headers/magic bytes */
-    size_t head_size;         /**< Number of valid bytes currently retained in pinned head */
-    size_t head_capacity;     /**< Allocated capacity of pinned head buffer */
-    uint8_t *tail_data;       /**< Optional tail bytes loaded for probing EOF metadata (e.g. MP4 moov) */
-    size_t tail_size;         /**< Number of tail bytes */
-    int64_t tail_start;       /**< Offset of tail bytes (total_size - tail_size) */
+
+    /* ---------------------------------------------------------------------- */
+    /* 2. Pinned Head Buffer: [0 .. audio_start)                              */
+    /* ---------------------------------------------------------------------- */
+    uint8_t *head_data;       /**< Dynamic pinned buffer holding headers & initial tags */
+    union {
+        size_t head_size;     /**< Valid bytes written into head_data */
+        size_t head_written;
+    };
+    size_t head_capacity;     /**< Allocated capacity of head_data */
+
+    /* ---------------------------------------------------------------------- */
+    /* 3. Tail Buffer: [audio_end .. total_size)                              */
+    /* ---------------------------------------------------------------------- */
+    uint8_t *tail_data;       /**< Buffer holding trailing tags (ID3v1, APEv2) or boxes (moov) */
+    union {
+        size_t tail_size;     /**< Valid bytes written into tail_data */
+        size_t tail_written;
+    };
+    union {
+        int64_t tail_start;   /**< Absolute start offset of tail bytes */
+        int64_t tail_base_offset;
+    };
+    size_t tail_capacity;     /**< Allocated capacity of tail_data */
+
+    /* ---------------------------------------------------------------------- */
+    /* 4. Boundaries and Container Detection State                            */
+    /* ---------------------------------------------------------------------- */
+    int64_t audio_start;      /**< Absolute offset where pure audio begins */
+    int64_t audio_end;        /**< Absolute offset where pure audio ends (-1 if unknown) */
+    ma_bool32 head_locked;    /**< 1 once audio_start is determined */
+    ma_bool32 tail_locked;    /**< 1 once audio_end is determined */
+    ma_bool32 is_decoding_audio; /**< 1 after ma_decoder_init; activates EOF at audio_end */
+    map_container_format_t container_format;
+
+    /* Offsets for synthesized container headers */
+    int64_t wav_data_size_field_offset; /**< Offset of uint32 data chunk size in WAV */
+    int64_t mp4_mdat_atom_offset;       /**< Offset of mdat atom header in MP4 */
+    uint32_t mp4_mdat_header_size;      /**< 8 or 16 bytes */
+    int32_t head_has_mpeg_frame;        /**< 1 if Xing/Info MPEG frame is in Head */
+
+    /* ---------------------------------------------------------------------- */
+    /* 5. Livestream ICY Metadata & Versioning                                */
+    /* ---------------------------------------------------------------------- */
+    uint8_t *icy_meta_data;   /**< Latest ICY metadata block */
+    size_t icy_meta_size;
+    uint32_t meta_version;    /**< Increments whenever Head, Tail, or ICY updates */
+
+    /* ---------------------------------------------------------------------- */
+    /* 6. Synchronization                                                     */
+    /* ---------------------------------------------------------------------- */
     ma_mutex lock;            /**< Mutex protecting buffer bounds and state */
     ma_event data_ready_event;/**< Event signaling available data to decoder thread */
     ma_bool32 is_initialized; /**< 1 if buffer is valid and initialized */
@@ -75,6 +141,58 @@ ma_result map_buffer_set_tail(
     map_buffer_t *mb,
     const uint8_t *tail_data,
     size_t tail_size);
+
+/**
+ * @brief Probes tail bytes to detect trailing tags (ID3v1, APEv2, Lyrics3) and lock audio_end.
+ */
+ma_result map_buffer_probe_tail(
+    map_buffer_t *mb,
+    const uint8_t *tail_data,
+    size_t tail_size,
+    int64_t tail_offset);
+
+/**
+ * @brief Marks that audio frame decoding has begun, activating EOF protection at audio_end.
+ */
+void map_buffer_set_decoding_audio(
+    map_buffer_t *mb,
+    ma_bool32 decoding);
+
+/**
+ * @brief Overrides or sets audio_start boundary.
+ */
+void map_buffer_set_audio_start(
+    map_buffer_t *mb,
+    int64_t audio_start);
+
+/**
+ * @brief Ingests or updates ICY metadata chunk in livestreams.
+ */
+ma_result map_buffer_set_icy_meta(
+    map_buffer_t *mb,
+    const uint8_t *data,
+    size_t size);
+
+/**
+ * @brief Returns the current metadata version counter (0 if none available yet).
+ */
+uint32_t map_buffer_get_meta_version(
+    const map_buffer_t *mb);
+
+/**
+ * @brief Computes the exact byte length of the synthesized .metaBytes container.
+ */
+size_t map_buffer_get_meta_bytes_size(
+    const map_buffer_t *mb);
+
+/**
+ * @brief Copies synthesized .metaBytes into out_buffer up to max_len.
+ * @return Number of bytes actually written.
+ */
+size_t map_buffer_copy_meta_bytes(
+    const map_buffer_t *mb,
+    uint8_t *out_buffer,
+    size_t max_len);
 
 /**
  * @brief Initializes a new unified high-level buffer.
@@ -124,7 +242,7 @@ ma_result map_buffer_feed(
 
 /**
  * @brief Reads bytes from the buffer at the current read cursor or specified offset.
- * Serves in O(1) directly from RAM if present within [range_start, range_end).
+ * Serves directly from RAM if present within [range_start, range_end), Head, or Tail.
  * Waits with timeout if data is not yet available, or returns MA_BUSY / MA_AT_END.
  */
 ma_result map_buffer_read(
@@ -136,8 +254,6 @@ ma_result map_buffer_read(
 
 /**
  * @brief Seeks the low-level read cursor.
- * If target_offset is within [range_start, range_end), it's an instantaneous cache hit in RAM!
- * If outside, repositions the window to prepare for new range ingestion.
  */
 ma_result map_buffer_seek(
     map_buffer_t *mb,

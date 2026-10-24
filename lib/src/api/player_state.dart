@@ -1,5 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:typed_data';
+
 import 'audio_device.dart';
 import 'buffered_range.dart';
 import 'dsp_config.dart';
@@ -77,6 +79,7 @@ class PlayerState {
   final double Function() _getSpatializerWidth;
   final Reverb Function() _getReverb;
   final bool Function() _getLimiterEnabled;
+  final Uint8List? Function()? _getMetaBytes;
 
   PlayerState({
     required Duration Function() getPosition,
@@ -112,6 +115,7 @@ class PlayerState {
     required double Function() getSpatializerWidth,
     required Reverb Function() getReverb,
     required bool Function() getLimiterEnabled,
+    Uint8List? Function()? getMetaBytes,
   })  : _getPosition = getPosition,
         _getDuration = getDuration,
         _getPlaying = getPlaying,
@@ -144,7 +148,8 @@ class PlayerState {
         _getSpatializerEnabled = getSpatializerEnabled,
         _getSpatializerWidth = getSpatializerWidth,
         _getReverb = getReverb,
-        _getLimiterEnabled = getLimiterEnabled;
+        _getLimiterEnabled = getLimiterEnabled,
+        _getMetaBytes = getMetaBytes;
 
   /// Current playback position.
   Duration get position => _getPosition();
@@ -253,4 +258,12 @@ class PlayerState {
 
   /// Whether the True-Peak soft-knee output limiter protector is active.
   bool get limiterEnabled => _getLimiterEnabled();
+
+  /// Clean synthesized container bytes containing all format headers, initial and trailing
+  /// metadata tags (ID3v2, ID3v1, APEv2, Vorbis Comments, FLAC PICTURE, MP4 ilst/udta, etc.)
+  /// with 0 seconds of audio samples, ready to be parsed in-memory by pub.dev packages
+  /// (e.g. `audio_metadata_reader`, `id3tag`, etc.) without touching disk or network.
+  ///
+  /// Returns `null` if no media is loaded or if initial headers have not been received yet.
+  Uint8List? get metaBytes => _getMetaBytes?.call();
 }

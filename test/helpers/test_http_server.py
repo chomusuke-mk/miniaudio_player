@@ -67,6 +67,12 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
         path = os.path.join(base_dir, clean_name)
         if os.path.isfile(path):
             return path
+        alt1 = os.path.join("test/fixtures/tripartite", clean_name)
+        if os.path.isfile(alt1):
+            return alt1
+        alt2 = os.path.join("example/assets/music", clean_name)
+        if os.path.isfile(alt2):
+            return alt2
         return None
 
     def _get_mime(self, path):
@@ -404,6 +410,64 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
                                 break
                             chunk_header = f"{len(data):X}\r\n".encode("ascii")
                             self.wfile.write(chunk_header + data + b"\r\n")
+                            self.wfile.flush()
+                            time.sleep(delay)
+            except (BrokenPipeError, ConnectionResetError, socket.error):
+                pass
+            return
+
+        # 8. ICY Metadata Livestream endpoint (/icy/<filename>?metaint=8192)
+        if path.startswith("/icy/"):
+            filename = path[len("/icy/"):]
+            filepath = self._resolve_music_path(filename)
+            if not filepath:
+                self.send_response(HTTPStatus.NOT_FOUND)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+
+            self._record_request(path, False)
+            mime = self._get_mime(filepath)
+            metaint = int(query.get("metaint", [8192])[0])
+            wants_icy = self.headers.get("Icy-MetaData") == "1" or self.headers.get("icy-metadata") == "1"
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", mime)
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("Connection", "close")
+            if wants_icy:
+                self.send_header("icy-metaint", str(metaint))
+                self.send_header("icy-name", "Test ICY Station")
+            self.end_headers()
+
+            titles = [
+                "StreamTitle='First ICY Track - Awesome Artist';",
+                "StreamTitle='Second ICY Track - Cool Band';",
+                "StreamTitle='Third ICY Track - Electronic Beats';",
+            ]
+            title_idx = 0
+
+            delay = 0.02
+            try:
+                while True:
+                    with open(filepath, "rb") as f:
+                        while True:
+                            audio_chunk = f.read(metaint)
+                            if not audio_chunk:
+                                break
+                            self.wfile.write(audio_chunk)
+                            if wants_icy:
+                                title_str = titles[title_idx % len(titles)]
+                                title_idx += 1
+                                raw_meta = title_str.encode("utf-8")
+                                pad_len = (16 - (len(raw_meta) % 16)) % 16
+                                if pad_len > 0:
+                                    raw_meta += b"\x00" * pad_len
+                                if len(raw_meta) == 0:
+                                    self.wfile.write(b"\x00")
+                                else:
+                                    length_byte = bytes([len(raw_meta) // 16])
+                                    self.wfile.write(length_byte + raw_meta)
                             self.wfile.flush()
                             time.sleep(delay)
             except (BrokenPipeError, ConnectionResetError, socket.error):

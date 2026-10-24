@@ -28,9 +28,10 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 
 ## ✨ Features at a Glance
 
-- 🌐 **Universal Polymorphic Audio Sources (`AudioSource`)**: Play audio seamlessly from local files (`AudioSource.file`), Flutter assets (`AudioSource.asset`), in-memory byte buffers (`AudioSource.memory`), remote HTTP/HTTPS URLs (`AudioSource.network`), or live internet streams (`AudioSource.liveStream`) with polymorphic `open(...)`.
-- 🌊 **Progressive HTTP/HTTPS Network Streaming**: Low-latency circular stream buffering in native C with non-blocking chunk decoding and support for arbitrary remote seeking via `Range: bytes=X-` headers.
-- 📻 **Continuous Live Audio Streams (Internet Radio / Icecast / Shoutcast)**: Boundless live stream playback with dynamic sliding jitter buffers to prevent dropouts and packet jitter.
+- 🎛️ **High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)**: First-class dual-deck orchestrator with an explicit Finite State Machine (`EnginePhase`), serialized FIFO command dispatch, continuous Equal-Power & Linear crossfades (`CrossfadeConfig`), Fisher-Yates shuffle & exact un-shuffle, loop modes (`LoopMode.off`, `LoopMode.one`, `LoopMode.all`), generic zero-copy domain item wrapping (`EngineItem<T>`), per-track ReplayGain normalization, and proactive Infinite Mix prefetching (`InfiniteMixProvider<T>`).
+- 🌐 **Universal Polymorphic Audio Sources (`AudioSource`)**: Play audio seamlessly from local files (`AudioSource.file`), Flutter assets (`AudioSource.asset`), in-memory byte buffers (`AudioSource.memory`), remote Web audio files over HTTP/HTTPS (`AudioSource.network`), or continuous live internet streams (`AudioSource.liveStream`) with strict separation between `open(...)` and `play()`.
+- 🌊 **Web Audio Files & Progressive HTTP/HTTPS Network Streaming**: Low-latency circular stream buffering in native C with non-blocking chunk decoding, custom HTTP headers, redirect following, and arbitrary remote seeking via `Range: bytes=X-` headers.
+- 📻 **Continuous Live Audio Streams (Internet Radio / Icecast / Shoutcast)**: Boundless live stream playback with dynamic sliding jitter buffers to prevent dropouts and packet jitter, plus livestream-aware crossfade transitions in `MiniaudioEngine<T>`.
 - ⚡ **Direct In-Memory Playback (RAM)**: Decodes and plays audio directly from memory byte buffers (`openMemory`) with zero temporary files, zero disk I/O, and instantaneous startup.
 - 📦 **Direct Flutter Asset Playback**: Zero-disk-copy asset loading via `MiniaudioPlayerGlobalConfig.assetLoader` directly streaming from RAM.
 - ⚡ **Strict Real-Time Determinism ($\mathcal{O}(1)$) & Zero Allocations**: Direct native C memory management guarantees **0 dynamic heap allocations in the real-time audio thread**, ensuring completely glitch-free audio playback even under intense UI activity or system load.
@@ -47,7 +48,7 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mil
 - 🔌 **Dynamic Audio Device Routing**: Real-time switching between audio output endpoints (speakers, wired headphones, Bluetooth A2DP/SCO) with automatic hotplug detection and seamless reconnection recovery across all supported platforms.
 - 🌐 **Background Playback & Standalone Isolate Support**: Fully compatible with background audio services (e.g. `audio_service`, `flutter_background_service`) and standalone Dart isolates thanks to a 100% pure FFI design.
 - 📦 **Extensive Audio Codec Support**: Built-in native decoding for MP3, WAV, FLAC, OGG, Opus, AAC, M4A (AAC & ALAC), AIFF, W64, and more without external system dependencies.
-- 🔄 **Dual State Paradigm**: Access synchronous instant state snapshots (`player.state.*`) or listen to reactive broadcast streams (`player.stream.*`), including buffering status (`player.stream.buffering`).
+- 🔄 **Tripartite Facade Paradigm (`.action`, `.state`, `.stream`)**: Both `MiniaudioPlayer` (single-track) and `MiniaudioEngine<T>` (multi-track queue & crossfade) expose `.action` for commands, `.state` for synchronous instant snapshots, and `.stream` for reactive broadcast telemetry.
 
 ---
 
@@ -178,26 +179,29 @@ For systems engineers, embedded developers, and performance specialists, `miniau
 
 ## 📊 Platform Support Matrix
 
-| Audio Player Capability               |    Android [^1]    |   Windows [^2]   |       Linux       |    iOS    |   macOS   |
-| :------------------------------------ | :----------------: | :--------------: | :---------------: | :-------: | :-------: |
-| **Native Audio Backend**              | AAudio / OpenSL ES | WASAPI Pro Audio | PulseAudio / ALSA | CoreAudio | CoreAudio |
-| **Local File Playback**               |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Progressive Network Streaming**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Live Internet Radio (Icecast)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Direct In-Memory Playback (RAM)**   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Direct Zero-I/O Asset Playback**    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **10-Band Equalizer (ISO 266)**       |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **True-Peak Limiter (Soft-Knee)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Binaural Crossfeed (Bauer bs2b)**   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Mono Downmix & Stereo Balance**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Stereo Spatializer / Widener**      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Algorithmic Reverb (Freeverb)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Real-Time Reactive Visualizer**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Silence Detection & Skipping**      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Audio Analysis (LUFS & Waveform)**  |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Speed & Pitch Scaling (Sonic DSP)** |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Dynamic Device Routing**            |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
-| **Background Playback & Isolates**    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| Audio Player & Engine Capability                     |    Android [^1]    |   Windows [^2]   |       Linux       |    iOS    |   macOS   |
+| :--------------------------------------------------- | :----------------: | :--------------: | :---------------: | :-------: | :-------: |
+| **Native Audio Backend**                             | AAudio / OpenSL ES | WASAPI Pro Audio | PulseAudio / ALSA | CoreAudio | CoreAudio |
+| **Local File Playback (`AudioSource.file`)**         |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Web Audio Files (HTTP/HTTPS & Byte-Range Seek)**   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Live Audio Streams (Icecast / Shoutcast / Radio)** |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Direct In-Memory Playback (`Uint8List` RAM)**      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Direct Zero-I/O Asset Playback**                   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Dual-Deck Queue & Crossfade (`MiniaudioEngine`)**  |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Shuffle, Loop Modes & Proactive Infinite Mix**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Per-Track ReplayGain & Loudness Normalization**    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **10-Band Equalizer (ISO 266)**                      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **True-Peak Limiter (Soft-Knee)**                    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Binaural Crossfeed (Bauer bs2b)**                  |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Mono Downmix & Stereo Balance**                    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Stereo Spatializer / Widener**                     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Algorithmic Reverb (Freeverb)**                    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Real-Time Reactive Visualizer**                    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Silence Detection & Skipping**                     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Audio Analysis (LUFS & Waveform)**                 |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Speed & Pitch Scaling (Sonic DSP)**                |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Dynamic Device Routing**                           |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
+| **Background Playback & Isolates**                   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |
 
 [^1]: **Android**: Device discovery uses an autonomous pure C JNI bridge with zero MethodChannels and no Kotlin glue code. Binaries are compiled with `-Wl,-z,max-page-size=16384` for Android 15+ 16 KB memory page compatibility and ARM NEON SIMD.
 
@@ -237,13 +241,13 @@ dart pub add miniaudio_player
 
 ## 💻 Usage Examples
 
-### 1. Universal Audio Playback (Files, URLs, Streams, Assets & RAM)
+### 1. Universal Single-Track Playback (`MiniaudioPlayer`: Files, Web URLs, Live Streams, Assets & RAM)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/simple_player.png" alt="Basic Audio Playback Controls" width="480" />
 </p>
 
-`miniaudio_player` offers a flexible, polymorphic audio source architecture. You can pass raw strings, URIs, raw byte buffers (`Uint8List`), or strongly typed `AudioSource` objects to `player.action.open(...)`, or use explicit methods:
+`miniaudio_player` offers a flexible, polymorphic audio source architecture with a clean separation between preparing a source (`open*`) and starting playback (`play()`). You can pass raw strings, URIs, raw byte buffers (`Uint8List`), or strongly typed `AudioSource` objects to `player.action.open(...)`, or use explicit methods:
 
 ```dart
 import 'dart:typed_data';
@@ -269,34 +273,41 @@ void main() async {
   final player = MiniaudioPlayer();
 
   // ---------------------------------------------------------------------------
-  // A. Polymorphic open() - automatically resolves strings, URIs, assets, & bytes
+  // A. Polymorphic open() + play() — resolves files, Web URLs, assets & bytes
   // ---------------------------------------------------------------------------
   // Local filesystem file:
-  await player.action.open('/path/to/song.flac', autoPlay: true);
+  await player.action.open('/path/to/song.flac');
+  await player.action.play();
 
   // Flutter asset (loaded directly into RAM without temporary files):
-  await player.action.open('assets/music/track.mp3', autoPlay: true);
+  await player.action.open('assets/music/track.mp3');
+  await player.action.play();
 
-  // Remote HTTP / HTTPS progressive stream:
-  await player.action.open('https://example.com/audio.mp3', autoPlay: true);
+  // Remote HTTP / HTTPS Web audio file (progressive stream + byte-range seek):
+  await player.action.open('https://example.com/audio.mp3');
+  await player.action.play();
 
   // In-memory byte buffer (zero disk I/O, instantaneous startup):
   final Uint8List audioBytes = ...;
-  await player.action.open(audioBytes, autoPlay: true);
+  await player.action.open(audioBytes);
+  await player.action.play();
 
   // ---------------------------------------------------------------------------
   // B. Strongly Typed AudioSource instances
   // ---------------------------------------------------------------------------
   // Local file
   await player.action.open(const AudioSource.file('/path/to/song.flac'));
+  await player.action.play();
 
   // Flutter Asset
   await player.action.open(const AudioSource.asset('assets/music/track.mp3'));
+  await player.action.play();
 
   // In-Memory RAM buffer
   await player.action.open(AudioSource.memory(audioBytes));
+  await player.action.play();
 
-  // Remote HTTP/HTTPS audio with custom headers and pre-buffering
+  // Remote Web audio file (HTTP/HTTPS) with custom headers and pre-buffering
   await player.action.open(
     AudioSource.network(
       Uri.parse('https://example.com/audio.mp3'),
@@ -304,6 +315,7 @@ void main() async {
       bufferAhead: const Duration(seconds: 30),
     ),
   );
+  await player.action.play();
 
   // Live Internet Radio / Icecast / Shoutcast stream with sliding jitter buffer
   await player.action.open(
@@ -311,8 +323,8 @@ void main() async {
       Uri.parse('https://icecast.radiofrance.fr/fip-midfi.mp3'),
       jitterBuffer: const Duration(seconds: 5),
     ),
-    autoPlay: true,
   );
+  await player.action.play();
 
   // ---------------------------------------------------------------------------
   // C. Dedicated Granular Methods
@@ -323,8 +335,9 @@ void main() async {
   await player.action.openUrl(
     'https://example.com/stream',
     isLive: true,
-    headers: {'User-Agent': 'MiniaudioPlayer/3.0'},
+    headers: {'User-Agent': 'MiniaudioPlayer/4.0'},
   );
+  await player.action.play();
 
   // ---------------------------------------------------------------------------
   // D. Playback Controls & Telemetry
@@ -346,7 +359,140 @@ void main() async {
 
 ---
 
-### 2. Complete DSP Chain (Limiter, Reverb, Crossfeed, Mono, Balance & Spatializer)
+### 2. High-Level Dual-Deck Queue, Crossfade & Infinite Mix Engine (`MiniaudioEngine<T>`)
+
+For full-featured music players and streaming apps, `MiniaudioEngine<T>` orchestrates two internal `MiniaudioPlayer` decks through a deterministic **Finite State Machine (`EnginePhase`)** and a serialized FIFO command queue. It provides built-in queue management, Fisher-Yates shuffle with exact un-shuffle restoration, Equal-Power / Linear crossfades, per-track ReplayGain normalization, and proactive Infinite Mix prefetching while preserving your domain objects by direct memory reference (`T? data`):
+
+```dart
+import 'package:miniaudio_player/miniaudio_player.dart';
+
+// Example domain entity from your app's in-memory graph or store:
+class Track {
+  final int id;
+  final String title;
+  final String artist;
+  final String pathOrUrl;
+  final double? replayGainDb;
+  final double? replayPeak;
+
+  const Track({
+    required this.id,
+    required this.title,
+    required this.artist,
+    required this.pathOrUrl,
+    this.replayGainDb,
+    this.replayPeak,
+  });
+}
+
+Future<void> runEngineExample(List<Track> albumTracks) async {
+  // 1. Instantiate MiniaudioEngine<Track> with dual-deck crossfade & Infinite Mix
+  final engine = MiniaudioEngine<Track>(
+    crossfadeConfig: const CrossfadeConfig(
+      duration: Duration(seconds: 4),              // Auto end-of-track crossfade
+      manualDuration: Duration(milliseconds: 500), // Manual skip/next/prev crossfade
+      curve: CrossfadeCurve.equalPower,            // Constant acoustic power
+    ),
+    initialVolume: 1.0,                            // 0.0..2.0 (1.0 = unity gain)
+    volumeNormalization: true,                     // Automatic per-track ReplayGain
+    infiniteMixEnabled: true,
+    infiniteMixBatchSize: 5,
+    infiniteMixProvider: (count, currentQueue) async {
+      // Return recommended EngineItem<Track>s when approaching the end of the queue:
+      return [];
+    },
+  );
+
+  // 2. Wrap domain models in EngineItem<Track> (local files, Web URLs, or LiveStreams)
+  //    Direct pointer identity is preserved: identical(engine.state.currentData, albumTracks[0]) == true
+  final items = [
+    for (final track in albumTracks)
+      EngineItem<Track>.file(
+        track.pathOrUrl,
+        data: track,
+        replayGainDb: track.replayGainDb,
+        replayPeak: track.replayPeak,
+      ),
+    // Mix Web audio files and Live Internet Radio seamlessly in the same queue:
+    EngineItem<Track>.network(
+      Uri.parse('https://example.com/bonus_track.flac'),
+      data: const Track(
+        id: 999,
+        title: 'Bonus Web Track',
+        artist: 'Remote Artist',
+        pathOrUrl: 'https://example.com/bonus_track.flac',
+      ),
+    ),
+    EngineItem<Track>.liveStream(
+      Uri.parse('https://icecast.radiofrance.fr/fip-midfi.mp3'),
+      data: const Track(
+        id: 1000,
+        title: 'FIP Live Radio',
+        artist: 'Radio France',
+        pathOrUrl: 'https://icecast.radiofrance.fr/fip-midfi.mp3',
+      ),
+    ),
+  ];
+
+  // 3. Open the queue (prepares initial track without auto-playing) & start playback
+  await engine.action.openQueue(
+    items,
+    startIndex: 0,
+    shuffle: false,
+  );
+  await engine.action.play();
+
+  // 4. Queue Navigation & Dynamic Mutations
+  await engine.action.next();              // Smooth manual crossfade (or promotes active auto-crossfade!)
+  await engine.action.previous();          // Restarts at 0:00 if > 3s, or crossfades to previous track
+  await engine.action.skipToIndex(2);      // Jumps directly to index 2, preserving play/pause state
+  await engine.action.insertNext(items[0]); // Inserts right after current track (invalidates stale auto-fade)
+  await engine.action.append([items[1]]);  // Appends to end of queue
+  await engine.action.reorder(3, 1);       // Reorders queue items in O(N)
+  await engine.action.removeAt(2);         // Removes item at index 2
+  await engine.action.clearQueue(keepCurrent: true); // Keeps currently playing track at index 0
+
+  // 5. Shuffle (Fisher-Yates) & Loop Modes (LoopMode / Loop alias)
+  await engine.action.setShuffle(true);    // Pins current track at index 0 & shuffles remaining
+  await engine.action.setShuffle(false);   // Restores exact original queue order
+  await engine.action.setLoopMode(LoopMode.all); // LoopMode.off, LoopMode.one, LoopMode.all
+  await engine.action.cycleLoopMode();     // Cycles off -> all -> one -> off
+
+  // 6. Runtime Crossfade, ReplayGain & Full Studio DSP Suite (synced across both decks)
+  await engine.action.setCrossfadeConfig(
+    const CrossfadeConfig(
+      duration: Duration(seconds: 6),
+      manualDuration: Duration(milliseconds: 600),
+      curve: CrossfadeCurve.equalPower,
+    ),
+  );
+  await engine.action.setVolumeNormalization(true);
+  await engine.action.setEqualizer(Equalizer.rock);
+  await engine.action.setReverb(Reverb.concertHall);
+  await engine.action.setCrossfeed(CrossfeedMode.moffatBauer);
+  await engine.action.setLimiter(true);
+
+  // 7. Synchronous State (.state) & Reactive Broadcast Streams (.stream)
+  print('Phase: ${engine.state.phase}'); // idle, loading, playing, paused, autoCrossfading, manualCrossfading, completed, error
+  print('Now Playing: ${engine.state.currentData?.title}');
+  print('Queue Length: ${engine.state.queue.length} (Index: ${engine.state.currentIndex})');
+  print('Has Next: ${engine.state.hasNext}, Has Previous: ${engine.state.hasPrevious}');
+
+  engine.stream.currentData.listen((track) {
+    print('Active track changed: ${track?.title} by ${track?.artist}');
+  });
+
+  engine.stream.phase.listen((phase) {
+    print('Engine FSM phase: $phase');
+  });
+
+  await engine.dispose();
+}
+```
+
+---
+
+### 3. Complete DSP Chain (Limiter, Reverb, Crossfeed, Mono, Balance & Spatializer)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/limiter_crossfeed_mono_balance_preamp_spatializer_reverb.png" alt="Complete DSP Chain - Limiter, Reverb, Crossfeed, Mono, Balance & Spatializer" width="480" />
@@ -392,7 +538,7 @@ await player.action.setReplayGain(
 
 ---
 
-### 3. Standard ISO 266 10-Band Parametric Equalizer
+### 4. Standard ISO 266 10-Band Parametric Equalizer
 
 Shape frequency response in real time across the 10 ISO 266 standard octave bands (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`) from `-24.0 dB` to `+24.0 dB`:
 
@@ -427,7 +573,7 @@ await player.action.setEqualizer(customEq);
 
 ---
 
-### 4. Real-Time Reactive Visualizer & Spectrum Analyzer
+### 5. Real-Time Reactive Visualizer & Spectrum Analyzer
 
 Build dynamic spectrum analyzers, frequency visualizers, and stereo VU meters. Subscribing to the stream automatically enables native C filtering, and unsubscribing keeps **idle CPU strictly at 0%**:
 
@@ -460,7 +606,7 @@ await subscription.cancel();
 
 ---
 
-### 5. Native Silence Detection & Dynamic Skipping
+### 6. Native Silence Detection & Dynamic Skipping
 
 Eliminate pauses and silent gaps in real time without audio glitches or pops, protected by a smooth 5ms anti-click crossfade:
 
@@ -499,7 +645,7 @@ player.stream.silenceSavedDuration.listen((saved) {
 
 ---
 
-### 6. Unified Single-Pass Audio Analysis (Loudness & Waveform)
+### 7. Unified Single-Pass Audio Analysis (Loudness & Waveform)
 
 Analyze a track's acoustic properties, ITU-R BS.1770-4 / EBU R128 loudness, and visual waveform envelope in a **single decoding pass** on a background native OS worker thread (zero Dart Isolates, 0 ms UI blocking, preserving 60/120 fps):
 
@@ -550,7 +696,7 @@ if (analysis.waveform != null) {
 
 ---
 
-### 7. Audio Output Device Selection & Dynamic Routing
+### 8. Audio Output Device Selection & Dynamic Routing
 
 Enumerate and switch hardware audio devices dynamically at runtime across Android, Windows, Linux, macOS, and iOS with **zero configuration** and **no MethodChannels**:
 
@@ -605,9 +751,9 @@ DropdownButton<AudioDevice>(
 
 ---
 
-### 8. Reactive Streams & Synchronous State
+### 9. Reactive Streams & Synchronous State
 
-`miniaudio_player` offers both real-time broadcast streams and synchronous getters for effortless UI binding:
+Both `MiniaudioPlayer` and `MiniaudioEngine<T>` offer real-time broadcast streams and synchronous getters for effortless UI binding:
 
 ```dart
 // Synchronous snapshot access:
@@ -646,7 +792,7 @@ StreamBuilder<Duration>(
 
 ---
 
-### 9. High-Fidelity Speed & Pitch Control (Sonic DSP)
+### 10. High-Fidelity Speed & Pitch Control (Sonic DSP)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/assets/volume_rate_pitch.png" alt="Playback Adjustments - Volume, Rate & Pitch Control" width="480" />
@@ -662,9 +808,9 @@ await player.action.setPitch(1.2);
 
 ---
 
-### 10. Optional: Running Inside a Background Isolate
+### 11. Optional: Running Inside a Background Isolate
 
-Because `miniaudio_player` uses 100% pure Dart FFI without platform channel restrictions, it can be instantiated inside a standalone background Dart Isolate or headless background service (`audio_service`, `flutter_background_service`, `Isolate.spawn`):
+Because `miniaudio_player` uses 100% pure Dart FFI without platform channel restrictions, both `MiniaudioPlayer` and `MiniaudioEngine<T>` can be instantiated inside a standalone background Dart Isolate or headless background service (`audio_service`, `flutter_background_service`, `Isolate.spawn`):
 
 ```dart
 import 'dart:isolate';
@@ -688,7 +834,8 @@ void audioWorkerIsolate(SendPort sendPort) async {
     if (message is Map) {
       switch (message['command']) {
         case 'open':
-          await player.action.open(message['path'] as String, autoPlay: true);
+          await player.action.open(message['path'] as String);
+          await player.action.play();
           break;
         case 'pause':
           await player.action.pause();

@@ -143,12 +143,10 @@ void main() {
 
       // Wait into the 1500ms stall: audio thread must be synthesizing silence without deadlocking
       await Future<void>.delayed(const Duration(milliseconds: 700));
-      player.pollAndEmit(force: true);
 
       // Verify clock is held during silence synthesis
       final heldPos1 = player.state.position.inMilliseconds;
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      player.pollAndEmit(force: true);
       final heldPos2 = player.state.position.inMilliseconds;
       expect(heldPos2, equals(heldPos1), reason: 'Clock must freeze during starvation silence synthesis');
 
@@ -158,7 +156,6 @@ void main() {
 
       // Wait for stall to resolve and next chunk to resume clock
       await Future<void>.delayed(const Duration(milliseconds: 1000));
-      player.pollAndEmit(force: true);
       final resumedPos = player.state.position.inMilliseconds;
       expect(resumedPos, greaterThan(heldPos2), reason: 'Clock resumes advancement after network data arrives');
 

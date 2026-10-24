@@ -5,34 +5,22 @@ description: |
 
   Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
 output: 'lib/miniaudio_player_bindings_generated.dart'
+preamble: |
+  // ignore_for_file: unused_field
 headers:
   entry-points:
     - 'src/miniaudio_player.h'
+    - 'src/map_event_dispatcher.h'
   include-directives:
     - 'src/miniaudio_player.h'
+    - 'src/map_event_dispatcher.h'
 ffi-native:
 functions:
   leaf:
     include:
       - 'miniaudio_player_get_.*'
       - 'miniaudio_player_is_.*'
-      - 'miniaudio_player_set_volume'
-      - 'miniaudio_player_set_rate'
-      - 'miniaudio_player_set_pitch'
-      - 'miniaudio_player_set_equalizer.*'
       - 'miniaudio_player_set_log_level'
-      - 'miniaudio_player_set_buffer_size'
-      - 'miniaudio_player_set_silence_config'
-      - 'miniaudio_player_set_visualizer_enabled'
-      - 'miniaudio_player_set_replay_gain'
-      - 'miniaudio_player_clear_replay_gain'
-      - 'miniaudio_player_set_preamp'
-      - 'miniaudio_player_set_balance'
-      - 'miniaudio_player_set_mono'
-      - 'miniaudio_player_set_crossfeed'
-      - 'miniaudio_player_set_spatializer'
-      - 'miniaudio_player_set_reverb'
-      - 'miniaudio_player_set_limiter'
       - 'miniaudio_player_free_audio_analysis'
 comments:
   style: any
@@ -40,6 +28,10 @@ comments:
 type-map:
   structs:
     'miniaudio_player':
+      lib: 'ffi'
+      c-type: 'Opaque'
+      dart-type: 'Opaque'
+    'map_event_dispatcher':
       lib: 'ffi'
       c-type: 'Opaque'
       dart-type: 'Opaque'

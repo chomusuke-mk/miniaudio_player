@@ -4,6 +4,7 @@
  */
 
 #include "map_dsp.h"
+#include "map_event_dispatcher.h"
 
 #if defined(MAP_HAS_SSE2)
 static MA_INLINE __m128 map_mm_abs_ps(__m128 v)
@@ -1061,6 +1062,11 @@ void ma_equalizer_node_process_pcm_frames(
         map_seqlock_write_begin(&pEq->vis_seqlock);
         pEq->visualizer_data = local_vis;
         map_seqlock_write_end(&pEq->vis_seqlock);
+
+        if (pEq->pDispatcher != NULL)
+        {
+            map_event_dispatcher_post_visualizer(pEq->pDispatcher, &local_vis);
+        }
     }
 
     /* 7. Master Volume Fader (Post-visualizer, with sample-rate adapted smoothing) */
@@ -1344,6 +1350,16 @@ void ma_equalizer_node_uninit(ma_equalizer_node *pNode)
     }
     ma_hishelf2_uninit(&pNode->hishelf, NULL);
     map_reverb_uninit(&pNode->reverb);
+}
+
+void ma_equalizer_node_set_dispatcher(
+    ma_equalizer_node *pNode,
+    struct map_event_dispatcher *pDispatcher)
+{
+    if (pNode != NULL)
+    {
+        pNode->pDispatcher = pDispatcher;
+    }
 }
 
 ma_result ma_equalizer_node_set_band(

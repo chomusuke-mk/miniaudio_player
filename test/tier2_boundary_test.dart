@@ -164,7 +164,7 @@ void main() {
     );
 
     test(
-      'B1.7: pollAndEmit(force: true) does not re-emit completed true',
+      'B1.7: Completed state does not re-emit duplicate completed true events',
       () async {
         await player.action.open(shortWavFile.path);
         await player.action.play();
@@ -178,9 +178,8 @@ void main() {
         final completedEvents = <bool>[];
         final sub = player.stream.completed.listen(completedEvents.add);
 
-        // Force poll while completed
-        player.pollAndEmit(force: true);
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // Wait to verify reactive dispatcher does not re-emit completed
+        await Future<void>.delayed(const Duration(milliseconds: 100));
         await sub.cancel();
 
         expect(completedEvents.where((e) => e == true), isEmpty);

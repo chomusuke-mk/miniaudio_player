@@ -55,7 +55,12 @@ typedef struct
     ma_uint64 readCursorFrames;
     double read_cursor_fraction;
     MA_ATOMIC(4, ma_uint32) underrun_count;
+    struct map_event_dispatcher *pDispatcher;
 } map_time_stretch_ds;
+
+void map_time_stretch_ds_set_dispatcher(
+    map_time_stretch_ds *pDS,
+    struct map_event_dispatcher *pDispatcher);
 
 ma_result map_time_stretch_ds_init(
     map_time_stretch_ds *pDS,

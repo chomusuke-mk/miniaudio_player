@@ -585,11 +585,10 @@ class MiniaudioPlayer implements Finalizable {
   }
 
   Pointer<native.miniaudio_player_t> _playerHandle = nullptr;
-  Pointer<native.miniaudio_player_status_t>? _statusPtr;
   late final NativeCallable<native.miniaudio_player_completed_cbFunction>
       _completedCallable;
-
-  Timer? _positionTimer;
+  late final NativeCallable<native.miniaudio_player_event_cbFunction>
+      _eventCallable;
 
   // Stream controllers (broadcast)
   final StreamController<Duration> _positionController =
@@ -655,6 +654,8 @@ class MiniaudioPlayer implements Finalizable {
       StreamController<Reverb>.broadcast();
   final StreamController<bool> _limiterEnabledController =
       StreamController<bool>.broadcast();
+  final StreamController<Uint8List?> _metaBytesController =
+      StreamController<Uint8List?>.broadcast();
 
   // Cached synchronous state snapshot
   Duration _position = Duration.zero;
@@ -664,13 +665,14 @@ class MiniaudioPlayer implements Finalizable {
   bool _completed = false;
   bool _opening = false;
   PlaybackState _playbackState = PlaybackState.stopped;
+  int _cachedMetaVersion = 0;
+  Uint8List? _cachedMetaBytes;
   Duration _bufferedPosition = Duration.zero;
   double _bufferedPercentage = 0.0;
   BufferedRange _bufferedRange = const BufferedRange();
   AudioTrackMetadata? _trackMetadata;
   BufferedRange? _lastBufferedRange;
   AudioTrackMetadata? _lastTrackMetadata;
-  Pointer<native.miniaudio_buffered_range_t>? _bufferedRangePtr;
   double _volume = 1.0;
   double _rate = 1.0;
   double _pitch = 1.0;
@@ -688,7 +690,6 @@ class MiniaudioPlayer implements Finalizable {
   /// explicit manual overrides and reactive stream listeners.
   bool get _isVisualizerActive =>
       _manualVisualizerOverride ?? _hasVisualizerListeners;
-  Duration _currentTimerInterval = const Duration(milliseconds: 50);
   double _preamp = 0.0;
   ReplayGainConfig _replayGain = const ReplayGainConfig();
   double _balance = 0.0;
@@ -699,19 +700,7 @@ class MiniaudioPlayer implements Finalizable {
   Reverb _reverb = Reverb.off;
   bool _limiterEnabled = true;
 
-  // Previous status cache for change detection
-  Duration? _lastPosition;
-  Duration? _lastDuration;
-  bool? _lastIsPlaying;
-  bool? _lastIsBuffering;
-  int? _lastState;
-  int? _lastBitrate;
-  AudioDevice? _lastDevice;
-  SilenceSkipConfig? _lastSilenceConfig;
-  Duration? _lastSilenceSavedDuration;
-  bool? _lastVisualizerEnabled;
-  bool? _lastOpening;
-  PlaybackState? _lastPlaybackState;
+  bool? _lastVisualizerEnabled = false;
 
   bool _isDisposed = false;
 
@@ -750,12 +739,10 @@ class MiniaudioPlayer implements Finalizable {
       onListen: () {
         _hasVisualizerListeners = true;
         _updateNativeVisualizerState();
-        if (_playing) _startPositionTimer();
       },
       onCancel: () {
         _hasVisualizerListeners = false;
         _updateNativeVisualizerState();
-        if (_playing) _startPositionTimer();
       },
     );
 
@@ -804,8 +791,14 @@ class MiniaudioPlayer implements Finalizable {
 
       _finalizer.attach(this, _playerHandle.cast(), detach: this);
 
-      _statusPtr = calloc<native.miniaudio_player_status_t>();
-      _bufferedRangePtr = calloc<native.miniaudio_buffered_range_t>();
+      _eventCallable =
+          NativeCallable<native.miniaudio_player_event_cbFunction>.listener(
+              _onNativeEvent);
+      native.miniaudio_player_set_event_callback(
+        _playerHandle,
+        _eventCallable.nativeFunction,
+        nullptr,
+      );
 
       final devPtr = calloc<native.miniaudio_device_info_t>();
       try {
@@ -820,22 +813,7 @@ class MiniaudioPlayer implements Finalizable {
       calloc.free(outResult);
     }
 
-    action = PlayerAction(
-      this,
-      onOptimisticSeek: (pos) {
-        _position = pos;
-        _lastPosition = pos;
-        if (_completed && (_duration == Duration.zero || pos < _duration)) {
-          _completed = false;
-          if (!_completedController.isClosed) {
-            _completedController.add(false);
-          }
-        }
-        if (!_positionController.isClosed) {
-          _positionController.add(_position);
-        }
-      },
-    );
+    action = PlayerAction(this);
 
     stream = PlayerStream(
       positionController: _positionController,
@@ -870,6 +848,7 @@ class MiniaudioPlayer implements Finalizable {
       spatializerWidthController: _spatializerWidthController,
       reverbController: _reverbController,
       limiterEnabledController: _limiterEnabledController,
+      metaBytesController: _metaBytesController,
     );
 
     state = PlayerState(
@@ -906,6 +885,7 @@ class MiniaudioPlayer implements Finalizable {
       getSpatializerWidth: () => _spatializerWidth,
       getReverb: () => _reverb,
       getLimiterEnabled: () => _limiterEnabled,
+      getMetaBytes: _getMetaBytes,
     );
   }
 
@@ -995,12 +975,6 @@ class MiniaudioPlayer implements Finalizable {
         _visualizerController.add(VisualizerData.empty());
       }
     }
-    if (_lastVisualizerEnabled != shouldEnable) {
-      _lastVisualizerEnabled = shouldEnable;
-      if (!_visualizerEnabledController.isClosed) {
-        _visualizerEnabledController.add(shouldEnable);
-      }
-    }
   }
 
   /// Sets or clears the explicit manual visualizer override.
@@ -1011,9 +985,6 @@ class MiniaudioPlayer implements Finalizable {
   void setManualVisualizerOverride(bool? override) {
     _manualVisualizerOverride = override;
     _updateNativeVisualizerState();
-    if (_playing) {
-      _startPositionTimer();
-    }
   }
 
   /// Sets whether the visualizer DSP is manually forced enabled or disabled.
@@ -1025,26 +996,18 @@ class MiniaudioPlayer implements Finalizable {
   /// Synchronously transitions player into Opening state and flushes all stale telemetry.
   void notifyOpening() {
     if (_isDisposed) return;
-    _stopPositionTimer();
     _opening = true;
-    _lastOpening = true;
     _playbackState = PlaybackState.opening;
-    _lastPlaybackState = PlaybackState.opening;
     _playing = false;
-    _lastIsPlaying = false;
     _buffering = false;
-    _lastIsBuffering = false;
     _completed = false;
     _position = Duration.zero;
-    _lastPosition = Duration.zero;
     _duration = Duration.zero;
-    _lastDuration = Duration.zero;
     _bufferedPosition = Duration.zero;
     _bufferedPercentage = 0.0;
     _bufferedRange = const BufferedRange();
     _lastBufferedRange = const BufferedRange();
-    _trackMetadata = null;
-    _lastTrackMetadata = null;
+    resetMetadata();
 
     if (!_openingController.isClosed) {
       _openingController.add(true);
@@ -1084,11 +1047,21 @@ class MiniaudioPlayer implements Finalizable {
   /// Notifies that opening completed successfully.
   void notifyOpenCompleted() {
     if (_isDisposed) return;
+    if (_playerHandle != nullptr) {
+      final durMs = native.miniaudio_player_get_duration_ms(_playerHandle);
+      if (durMs > 0) {
+        final dur = Duration(milliseconds: durMs);
+        if (_duration != dur) {
+          _duration = dur;
+          if (!_durationController.isClosed) {
+            _durationController.add(dur);
+          }
+        }
+      }
+    }
     _opening = false;
-    _lastOpening = false;
     if (_playbackState == PlaybackState.opening) {
       _playbackState = PlaybackState.stopped;
-      _lastPlaybackState = PlaybackState.stopped;
     }
     if (!_openingController.isClosed) {
       _openingController.add(false);
@@ -1097,7 +1070,80 @@ class MiniaudioPlayer implements Finalizable {
         _playbackState == PlaybackState.stopped) {
       _playbackStateController.add(PlaybackState.stopped);
     }
-    pollAndEmit(force: true);
+    _getMetaBytes();
+  }
+
+  /// Explicitly resets cached metadata to null and emits null on the metadata stream.
+  void resetMetadata() {
+    _cachedMetaBytes = null;
+    _cachedMetaVersion = 0;
+    _trackMetadata = null;
+    _lastTrackMetadata = null;
+    if (!_metaBytesController.isClosed) {
+      _metaBytesController.add(null);
+    }
+    if (!_trackMetadataController.isClosed) {
+      _trackMetadataController.add(null);
+    }
+  }
+
+  /// Synthesizes or retrieves cached metadata container bytes for safe parsing by pub.dev libraries.
+  Uint8List? _getMetaBytes() {
+    if (_isDisposed || _playerHandle == nullptr) {
+      return _cachedMetaBytes;
+    }
+    final currentVer =
+        native.miniaudio_player_get_meta_bytes_version(_playerHandle);
+    if (currentVer != _cachedMetaVersion) {
+      _cachedMetaVersion = currentVer;
+      final size = native.miniaudio_player_get_meta_bytes_size(_playerHandle);
+      if (size > 0) {
+        final ptr = calloc<Uint8>(size);
+        try {
+          final copied = native.miniaudio_player_copy_meta_bytes(
+            _playerHandle,
+            ptr,
+            size,
+          );
+          if (copied > 0) {
+            _cachedMetaBytes = Uint8List.fromList(ptr.asTypedList(copied));
+          } else {
+            _cachedMetaBytes = null;
+          }
+        } finally {
+          calloc.free(ptr);
+        }
+      } else {
+        _cachedMetaBytes = null;
+      }
+      if (!_metaBytesController.isClosed) {
+        _metaBytesController.add(_cachedMetaBytes);
+      }
+    }
+    return _cachedMetaBytes;
+  }
+
+  /// Checks if native metadata has updated and updates cached copy if so.
+  void checkMetaBytesUpdated() {
+    if (_isDisposed || _playerHandle == nullptr) return;
+    final currentVer =
+        native.miniaudio_player_get_meta_bytes_version(_playerHandle);
+    if (currentVer != _cachedMetaVersion) {
+      _getMetaBytes();
+    }
+  }
+
+  /// Ingests dynamic ICY livestream metadata received over network.
+  void setIcyMeta(Uint8List data) => action.setIcyMeta(data);
+
+  /// Probes tail metadata (ID3v1, APEv2, MP4 moov, etc.) directly into buffer Tail.
+  void probeTail(Uint8List data, int tailOffset) =>
+      action.probeTail(data, tailOffset);
+
+  /// Returns the current number of bytes retained in the pinned Head cache.
+  int get pinnedHeadSize {
+    if (_isDisposed || _playerHandle == nullptr) return 0;
+    return native.miniaudio_player_stream_get_pinned_head_size(_playerHandle);
   }
 
   void notifyOpenComplete() => notifyOpenCompleted();
@@ -1105,23 +1151,19 @@ class MiniaudioPlayer implements Finalizable {
   /// Notifies that opening failed due to an error.
   void notifyOpenFailed([Object? error]) {
     if (_isDisposed) return;
-    _stopPositionTimer();
     try {
       if (_playerHandle != nullptr) {
         native.miniaudio_player_stop(_playerHandle);
       }
     } catch (_) {}
     _opening = false;
-    _lastOpening = false;
     _playbackState = PlaybackState.error;
-    _lastPlaybackState = PlaybackState.error;
     if (!_openingController.isClosed) {
       _openingController.add(false);
     }
     if (!_playbackStateController.isClosed) {
       _playbackStateController.add(PlaybackState.error);
     }
-    pollAndEmit(force: true);
   }
 
   /// Notifies the player that playback was stopped manually.
@@ -1130,19 +1172,14 @@ class MiniaudioPlayer implements Finalizable {
   /// and cancels active polling timers.
   void notifyStopped() {
     if (_isDisposed) return;
-    _stopPositionTimer();
     final wasPlaying = _playing;
     final wasCompleted = _completed;
     final wasOpening = _opening;
     _opening = false;
-    _lastOpening = false;
     _playbackState = PlaybackState.stopped;
-    _lastPlaybackState = PlaybackState.stopped;
     _playing = false;
     _completed = false;
-    _lastIsPlaying = false;
     _position = Duration.zero;
-    _lastPosition = Duration.zero;
     _visualizer = VisualizerData.empty();
 
     if (!_visualizerController.isClosed && _isVisualizerActive) {
@@ -1169,29 +1206,16 @@ class MiniaudioPlayer implements Finalizable {
   void _onNativeCompleted(Pointer<Void> _) {
     if (_isDisposed || _playerHandle == nullptr) return;
 
-    // Check actual native status to guard against race conditions where the track
-    // has already been rewound, sought, or restarted while this asynchronous
-    // NativeCallable was queued on Dart's event loop.
-    if (_statusPtr != null) {
-      final res = native.miniaudio_player_get_status(_playerHandle, _statusPtr!);
-      if (res == MapResult.success) {
-        if (_statusPtr!.ref.state == MapPlaybackState.playing &&
-            _statusPtr!.ref.is_completed == 0) {
-          return;
-        }
-      }
+    if (native.miniaudio_player_is_playing(_playerHandle) != 0) {
+      return;
     }
 
-    _stopPositionTimer();
     final wasPlaying = _playing;
     final wasCompleted = _completed;
     _playing = false;
     _completed = true;
-    _lastIsPlaying = false;
     _playbackState = PlaybackState.completed;
-    _lastPlaybackState = PlaybackState.completed;
     _position = _duration;
-    _lastPosition = _duration;
     _visualizer = VisualizerData.empty();
 
     if (!_visualizerController.isClosed && _isVisualizerActive) {
@@ -1212,365 +1236,307 @@ class MiniaudioPlayer implements Finalizable {
     }
   }
 
-  void _startPositionTimer() {
-    final isVisActive = _isVisualizerActive;
-    final interval = isVisActive
-        ? const Duration(milliseconds: 33)
-        : const Duration(milliseconds: 50);
+  void _onNativeEvent(
+      Pointer<Void> userData, Pointer<native.map_event> eventPtr) {
+    if (_isDisposed) return;
 
-    if (_positionTimer != null && _positionTimer!.isActive) {
-      if (_currentTimerInterval == interval) return;
-      _positionTimer!.cancel();
-    }
-    _currentTimerInterval = interval;
-    _positionTimer = Timer.periodic(interval, (_) {
-      if (_isDisposed || _playerHandle == nullptr) {
-        _stopPositionTimer();
+    final event = eventPtr.ref;
+    final type = event.type;
+
+    if (type == native.map_event_type_t.MAP_EVENT_STATE.value) {
+      final stateInt = event.data.state;
+      final PlaybackState newState;
+      switch (stateInt) {
+        case MapPlaybackState.stopped:
+          newState = PlaybackState.stopped;
+          break;
+        case MapPlaybackState.playing:
+          newState = PlaybackState.playing;
+          break;
+        case MapPlaybackState.paused:
+          newState = PlaybackState.paused;
+          break;
+        case MapPlaybackState.completed:
+          newState = PlaybackState.completed;
+          break;
+        case MapPlaybackState.buffering:
+          newState = PlaybackState.buffering;
+          break;
+        case MapPlaybackState.error:
+          newState = PlaybackState.error;
+          break;
+        case MapPlaybackState.opening:
+          newState = PlaybackState.opening;
+          break;
+        default:
+          newState = PlaybackState.stopped;
+          break;
+      }
+      if (_playbackState == PlaybackState.error && newState == PlaybackState.stopped) {
         return;
       }
-      pollAndEmit(force: false);
-    });
-  }
-
-  void _stopPositionTimer() {
-    _positionTimer?.cancel();
-    _positionTimer = null;
-    _visualizer = VisualizerData.empty();
-    if (!_visualizerController.isClosed && _isVisualizerActive) {
-      _visualizerController.add(VisualizerData.empty());
-    }
-  }
-
-  /// Queries the native miniaudio player snapshot and emits changes to broadcast streams.
-  bool pollAndEmit({bool force = false}) {
-    if (_isDisposed || _statusPtr == null || _playerHandle == nullptr) {
-      return false;
-    }
-
-    final res = native.miniaudio_player_get_status(_playerHandle, _statusPtr!);
-    if (res != MapResult.success) {
-      return false;
-    }
-
-    final status = _statusPtr!.ref;
-    final position = Duration(milliseconds: status.position_ms);
-    final duration = Duration(milliseconds: status.duration_ms);
-    final bool reachedEnd = duration > Duration.zero && position >= duration;
-    final isCompleted = (status.is_completed != 0) || reachedEnd;
-    final isPlaying = (status.is_playing != 0) && !isCompleted;
-    final isBuffering = status.is_buffering != 0;
-    final state = status.state;
-    final bitrate = status.bitrate;
-    final device = status.device.toAudioDevice();
-    final silenceConfig = SilenceSkipConfig.fromNative(status.silence);
-    final silenceSavedDuration = Duration(milliseconds: status.silence_saved_ms);
-
-    final bool deviceChanged = _lastDevice == null ||
-        _lastDevice!.id != device.id ||
-        _lastDevice!.name != device.name ||
-        _lastDevice!.isAuto != device.isAuto ||
-        _lastDevice!.resolvedName != device.resolvedName;
-
-    if (deviceChanged) {
-      _lastDevice = device;
-      _audioDevice = device;
-      if (!_audioDeviceController.isClosed) {
-        _audioDeviceController.add(device);
+      final bool isOpening = newState == PlaybackState.opening;
+      if (isOpening != _opening) {
+        _opening = isOpening;
+        if (!_openingController.isClosed) {
+          _openingController.add(isOpening);
+        }
       }
-    }
-
-    final bool playingChanged =
-        _lastIsPlaying == null || isPlaying != _lastIsPlaying;
-    final bool bufferingChanged =
-        _lastIsBuffering == null || isBuffering != _lastIsBuffering;
-    final bool stateIntChanged = _lastState == null || state != _lastState;
-    final bool wasActivelyPlaying = _playing || (_lastIsPlaying == true);
-
-    if (playingChanged || bufferingChanged || stateIntChanged || force) {
-      _lastIsPlaying = isPlaying;
-      _lastIsBuffering = isBuffering;
-      _lastState = state;
-      _playing = isPlaying;
-      _buffering = isBuffering;
-
-      if ((playingChanged || force) && !_playingController.isClosed) {
-        _playingController.add(isPlaying);
-      }
-      if ((bufferingChanged || force) && !_bufferingController.isClosed) {
-        _bufferingController.add(isBuffering);
-      }
-
-      if (isPlaying) {
-        _startPositionTimer();
-      } else {
-        _stopPositionTimer();
-      }
-    }
-
-    // Terminal completed stream events are edge-triggered and decoupled from [force].
-    if (!_completed && isCompleted && wasActivelyPlaying) {
-      _completed = true;
-      if (!_completedController.isClosed) {
-        _completedController.add(true);
-      }
-    } else if (_completed && !isCompleted) {
-      _completed = false;
-      if (!_completedController.isClosed) {
-        _completedController.add(false);
-      }
-    } else {
-      _completed = isCompleted;
-    }
-
-    // Resolve unified opening state
-    final bool isOpening = _opening;
-
-    // Map unified PlaybackState
-    PlaybackState currentPlaybackState;
-    if (isOpening) {
-      currentPlaybackState = PlaybackState.opening;
-    } else if (state == MapPlaybackState.error || _playbackState == PlaybackState.error) {
-      currentPlaybackState = PlaybackState.error;
-    } else if (isCompleted) {
-      currentPlaybackState = PlaybackState.completed;
-    } else if (state == MapPlaybackState.paused) {
-      currentPlaybackState = PlaybackState.paused;
-    } else if (state == MapPlaybackState.stopped) {
-      currentPlaybackState = PlaybackState.stopped;
-    } else if (isPlaying) {
-      currentPlaybackState = PlaybackState.playing;
-    } else if (isBuffering || state == MapPlaybackState.buffering) {
-      currentPlaybackState = PlaybackState.buffering;
-    } else if (state == MapPlaybackState.playing) {
-      currentPlaybackState = PlaybackState.playing;
-    } else {
-      currentPlaybackState = PlaybackState.stopped;
-    }
-
-    final bool openingChanged = _lastOpening == null || isOpening != _lastOpening;
-    final bool playbackStateChanged =
-        _lastPlaybackState == null || currentPlaybackState != _lastPlaybackState;
-
-    if (openingChanged) {
-      _lastOpening = isOpening;
-      _opening = isOpening;
-      if (!_openingController.isClosed) {
-        _openingController.add(isOpening);
-      }
-    }
-
-    if (playbackStateChanged) {
-      _lastPlaybackState = currentPlaybackState;
-      _playbackState = currentPlaybackState;
-      if (!_playbackStateController.isClosed) {
-        _playbackStateController.add(currentPlaybackState);
-      }
-    }
-
-    if (duration != _lastDuration || force) {
-      _lastDuration = duration;
-      _duration = duration;
-      if (!_durationController.isClosed) {
-        _durationController.add(duration);
-      }
-    }
-
-    if (bitrate != _lastBitrate || force) {
-      _lastBitrate = bitrate;
-      _audioBitrate = bitrate;
-      if (!_audioBitrateController.isClosed) {
-        _audioBitrateController.add(bitrate);
-      }
-    }
-
-    final bool positionChanged =
-        _lastPosition == null || position != _lastPosition;
-
-    if (positionChanged || force) {
-      _lastPosition = position;
-      _position = position;
-      if (!_positionController.isClosed) {
-        _positionController.add(position);
-      }
-    }
-
-    final bool silenceConfigChanged =
-        _lastSilenceConfig == null || _lastSilenceConfig != silenceConfig;
-    if (silenceConfigChanged || force) {
-      final wasEnabled = _lastSilenceConfig?.mode != SilenceSkipMode.disabled;
-      final isEnabled = silenceConfig.mode != SilenceSkipMode.disabled;
-      _lastSilenceConfig = silenceConfig;
-      _silenceConfig = silenceConfig;
-
-      if ((wasEnabled != isEnabled || force) &&
-          !_skipSilenceController.isClosed) {
-        _skipSilenceController.add(isEnabled);
-      }
-      if (!_silenceConfigController.isClosed) {
-        _silenceConfigController.add(silenceConfig);
-      }
-    }
-
-    if (_lastSilenceSavedDuration != silenceSavedDuration || force) {
-      _lastSilenceSavedDuration = silenceSavedDuration;
-      _silenceSavedDuration = silenceSavedDuration;
-      if (!_silenceSavedDurationController.isClosed) {
-        _silenceSavedDurationController.add(silenceSavedDuration);
-      }
-    }
-
-    if (_isVisualizerActive) {
-      final visData = status.visualizer;
-      final visBands = List<double>.generate(
-        10,
-        (i) => visData.bands[i],
-        growable: false,
-      );
-      final currentVis = isPlaying
-          ? VisualizerData(
-              bands: visBands,
-              rms: visData.rms,
-              peak: visData.peak,
-              left: visData.left,
-              right: visData.right,
-            )
-          : VisualizerData.empty();
-      _visualizer = currentVis;
-      if (!_visualizerController.isClosed && _hasVisualizerListeners) {
-        _visualizerController.add(currentVis);
-      }
-    } else {
-      _visualizer = VisualizerData.empty();
-    }
-
-    final preamp = status.preamp_db;
-    if (_preamp != preamp || force) {
-      _preamp = preamp;
-      if (!_preampController.isClosed) {
-        _preampController.add(preamp);
-      }
-    }
-
-    final nativeRg = status.replay_gain;
-    final rg = ReplayGainConfig(
-      gainDb: nativeRg.gain_db,
-      peak: nativeRg.peak,
-      preampDb: nativeRg.preamp_db,
-      preventClipping: nativeRg.prevent_clipping != 0,
-      enabled: nativeRg.enabled != 0,
-    );
-    if (_replayGain != rg || force) {
-      _replayGain = rg;
-      if (!_replayGainController.isClosed) {
-        _replayGainController.add(rg);
-      }
-    }
-
-    final balance = status.balance;
-    if (_balance != balance || force) {
-      _balance = balance;
-      if (!_balanceController.isClosed) {
-        _balanceController.add(balance);
-      }
-    }
-
-    final mono = status.mono_enabled != 0;
-    if (_mono != mono || force) {
-      _mono = mono;
-      if (!_monoController.isClosed) {
-        _monoController.add(mono);
-      }
-    }
-
-    final crossfeedMode = (status.crossfeed_mode >= 0 &&
-            status.crossfeed_mode < CrossfeedMode.values.length)
-        ? CrossfeedMode.values[status.crossfeed_mode]
-        : CrossfeedMode.off;
-    if (_crossfeed != crossfeedMode || force) {
-      _crossfeed = crossfeedMode;
-      if (!_crossfeedController.isClosed) {
-        _crossfeedController.add(crossfeedMode);
-      }
-    }
-
-    final spatializerEnabled = status.spatializer_enabled != 0;
-    if (_spatializerEnabled != spatializerEnabled || force) {
-      _spatializerEnabled = spatializerEnabled;
-      if (!_spatializerEnabledController.isClosed) {
-        _spatializerEnabledController.add(spatializerEnabled);
-      }
-    }
-
-    final spatializerWidth = status.spatializer_width;
-    if (_spatializerWidth != spatializerWidth || force) {
-      _spatializerWidth = spatializerWidth;
-      if (!_spatializerWidthController.isClosed) {
-        _spatializerWidthController.add(spatializerWidth);
-      }
-    }
-
-    final nativeReverb = status.reverb;
-    final reverb = Reverb(
-      enabled: nativeReverb.enabled != 0,
-      roomSize: nativeReverb.room_size,
-      damping: nativeReverb.damping,
-      width: nativeReverb.width,
-      wet: nativeReverb.wet,
-      dry: nativeReverb.dry,
-    );
-    if (_reverb != reverb || force) {
-      _reverb = reverb;
-      if (!_reverbController.isClosed) {
-        _reverbController.add(reverb);
-      }
-    }
-
-    final limiterEnabled = status.limiter_enabled != 0;
-    if (_limiterEnabled != limiterEnabled || force) {
-      _limiterEnabled = limiterEnabled;
-      if (!_limiterEnabledController.isClosed) {
-        _limiterEnabledController.add(limiterEnabled);
-      }
-    }
-
-    if (_bufferedRangePtr != null) {
-      if (native.miniaudio_player_get_buffered_range(
-              _playerHandle, _bufferedRangePtr!) ==
-          MapResult.success) {
-        final brRef = _bufferedRangePtr!.ref;
-        final br = BufferedRange(
-          start: Duration(milliseconds: brRef.start_ms),
-          end: Duration(milliseconds: brRef.end_ms),
-          duration: Duration(milliseconds: brRef.duration_ms),
-          fillPercentage: brRef.fill_percentage,
-          streamPercentage: brRef.stream_percentage,
-          isBuffering: brRef.is_buffering != 0,
-          isEof: brRef.is_eof != 0,
-        );
-        _bufferedPosition = br.end;
-        _bufferedPercentage = br.streamPercentage;
-        _bufferedRange = br;
-
-        if (_lastBufferedRange != br || force) {
-          _lastBufferedRange = br;
-          if (!_bufferedRangeController.isClosed) {
-            _bufferedRangeController.add(br);
-          }
-          if (!_bufferedPositionController.isClosed) {
-            _bufferedPositionController.add(br.end);
-          }
-          if (!_bufferedPercentageController.isClosed) {
-            _bufferedPercentageController.add(br.streamPercentage);
+      if (newState == PlaybackState.stopped || newState == PlaybackState.playing) {
+        if (_completed) {
+          _completed = false;
+          if (!_completedController.isClosed) {
+            _completedController.add(false);
           }
         }
       }
+      if (newState == PlaybackState.stopped) {
+        if (_playing) {
+          _playing = false;
+          if (!_playingController.isClosed) {
+            _playingController.add(false);
+          }
+        }
+        if (_position != Duration.zero) {
+          _position = Duration.zero;
+          if (!_positionController.isClosed) {
+            _positionController.add(Duration.zero);
+          }
+        }
+      }
+      if (_playbackState != newState) {
+        _playbackState = newState;
+        if (!_playbackStateController.isClosed) {
+          _playbackStateController.add(newState);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_POSITION.value) {
+      final pos = Duration(milliseconds: event.data.position_ms);
+      if (_position != pos) {
+        _position = pos;
+        if (!_positionController.isClosed) {
+          _positionController.add(pos);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_DURATION.value) {
+      final dur = Duration(milliseconds: event.data.duration_ms);
+      if (_duration != dur) {
+        _duration = dur;
+        if (!_durationController.isClosed) {
+          _durationController.add(dur);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_IS_PLAYING.value) {
+      final isPlaying = event.data.is_playing != 0;
+      if (_playing != isPlaying) {
+        _playing = isPlaying;
+        if (!_playingController.isClosed) {
+          _playingController.add(isPlaying);
+        }
+        if (!isPlaying) {
+          _visualizer = VisualizerData.empty();
+          if (!_visualizerController.isClosed && _isVisualizerActive) {
+            _visualizerController.add(VisualizerData.empty());
+          }
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_IS_BUFFERING.value) {
+      final isBuffering = event.data.is_buffering != 0;
+      if (_buffering != isBuffering) {
+        _buffering = isBuffering;
+        if (!_bufferingController.isClosed) {
+          _bufferingController.add(isBuffering);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_IS_COMPLETED.value) {
+      final isCompleted = event.data.is_completed != 0;
+      if (_completed != isCompleted) {
+        _completed = isCompleted;
+        if (!_completedController.isClosed) {
+          _completedController.add(isCompleted);
+        }
+        if (isCompleted) {
+          _playing = false;
+          if (!_playingController.isClosed) {
+            _playingController.add(false);
+          }
+          _playbackState = PlaybackState.completed;
+          if (!_playbackStateController.isClosed) {
+            _playbackStateController.add(PlaybackState.completed);
+          }
+          _position = _duration;
+          if (!_positionController.isClosed) {
+            _positionController.add(_duration);
+          }
+          _visualizer = VisualizerData.empty();
+          if (!_visualizerController.isClosed && _isVisualizerActive) {
+            _visualizerController.add(VisualizerData.empty());
+          }
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_VOLUME.value) {
+      notifyVolumeChanged(double.parse(event.data.volume.toStringAsPrecision(7)));
+    } else if (type == native.map_event_type_t.MAP_EVENT_RATE.value) {
+      notifyRateChanged(double.parse(event.data.rate.toStringAsPrecision(7)));
+    } else if (type == native.map_event_type_t.MAP_EVENT_PITCH.value) {
+      notifyPitchChanged(double.parse(event.data.pitch.toStringAsPrecision(7)));
+    } else if (type == native.map_event_type_t.MAP_EVENT_BITRATE.value) {
+      final br = event.data.bitrate;
+      if (_audioBitrate != br) {
+        _audioBitrate = br;
+        if (!_audioBitrateController.isClosed) {
+          _audioBitrateController.add(br);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_BUFFER_SIZE.value) {
+      notifyBufferSizeChanged(event.data.buffer_size);
+    } else if (type == native.map_event_type_t.MAP_EVENT_DEVICE.value) {
+      notifyDeviceChanged(event.data.device.toAudioDevice());
+    } else if (type == native.map_event_type_t.MAP_EVENT_VISUALIZER.value) {
+      if (_isVisualizerActive) {
+        final visData = event.data.visualizer;
+        final visBands = List<double>.generate(
+          10,
+          (i) => visData.bands[i],
+          growable: false,
+        );
+        final currentVis = _playing
+            ? VisualizerData(
+                bands: visBands,
+                rms: visData.rms,
+                peak: visData.peak,
+                left: visData.left,
+                right: visData.right,
+              )
+            : VisualizerData.empty();
+        _visualizer = currentVis;
+        if (!_visualizerController.isClosed && _hasVisualizerListeners) {
+          _visualizerController.add(currentVis);
+        }
+      } else {
+        _visualizer = VisualizerData.empty();
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_VISUALIZER_ENABLED.value) {
+      final ve = event.data.visualizer_enabled != 0;
+      if (_lastVisualizerEnabled != ve) {
+        _lastVisualizerEnabled = ve;
+        if (!_visualizerEnabledController.isClosed) {
+          _visualizerEnabledController.add(ve);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_BUFFERED_RANGE.value) {
+      final brRef = event.data.buffered_range;
+      final br = BufferedRange(
+        start: Duration(milliseconds: brRef.start_ms),
+        end: Duration(milliseconds: brRef.end_ms),
+        duration: Duration(milliseconds: brRef.duration_ms),
+        fillPercentage: brRef.fill_percentage,
+        streamPercentage: brRef.stream_percentage,
+        isBuffering: brRef.is_buffering != 0,
+        isEof: brRef.is_eof != 0,
+      );
+      _bufferedPosition = br.end;
+      _bufferedPercentage = br.streamPercentage;
+      _bufferedRange = br;
+      if (_lastBufferedRange == null || _lastBufferedRange != br) {
+        _lastBufferedRange = br;
+        if (!_bufferedRangeController.isClosed) {
+          _bufferedRangeController.add(br);
+        }
+        if (!_bufferedPositionController.isClosed) {
+          _bufferedPositionController.add(br.end);
+        }
+        if (!_bufferedPercentageController.isClosed) {
+          _bufferedPercentageController.add(br.streamPercentage);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_SILENCE_CONFIG.value) {
+      notifySilenceConfigChanged(
+        SilenceSkipConfig.fromNative(event.data.silence_config),
+      );
+    } else if (type == native.map_event_type_t.MAP_EVENT_SILENCE_SAVED.value) {
+      final ss = Duration(milliseconds: event.data.silence_saved_ms);
+      if (_silenceSavedDuration != ss) {
+        _silenceSavedDuration = ss;
+        if (!_silenceSavedDurationController.isClosed) {
+          _silenceSavedDurationController.add(ss);
+        }
+      }
+    } else if (type == native.map_event_type_t.MAP_EVENT_EQUALIZER.value) {
+      final eqData = event.data.equalizer;
+      notifyEqualizerChanged(
+        Equalizer(
+          hz31: eqData.hz31,
+          hz63: eqData.hz63,
+          hz125: eqData.hz125,
+          hz250: eqData.hz250,
+          hz500: eqData.hz500,
+          hz1k: eqData.hz1k,
+          hz2k: eqData.hz2k,
+          hz4k: eqData.hz4k,
+          hz8k: eqData.hz8k,
+          hz16k: eqData.hz16k,
+        ),
+      );
+    } else if (type == native.map_event_type_t.MAP_EVENT_PREAMP.value) {
+      notifyPreampChanged(double.parse(event.data.preamp_db.toStringAsPrecision(7)));
+    } else if (type == native.map_event_type_t.MAP_EVENT_REPLAY_GAIN.value) {
+      final rgData = event.data.replay_gain;
+      notifyReplayGainChanged(
+        ReplayGainConfig(
+          gainDb: double.parse(rgData.gain_db.toStringAsPrecision(7)),
+          peak: double.parse(rgData.peak.toStringAsPrecision(7)),
+          preampDb: double.parse(rgData.preamp_db.toStringAsPrecision(7)),
+          preventClipping: rgData.prevent_clipping != 0,
+          enabled: rgData.enabled != 0,
+        ),
+      );
+    } else if (type == native.map_event_type_t.MAP_EVENT_BALANCE.value) {
+      notifyBalanceChanged(double.parse(event.data.balance.toStringAsPrecision(7)));
+    } else if (type == native.map_event_type_t.MAP_EVENT_MONO.value) {
+      notifyMonoChanged(event.data.mono_enabled != 0);
+    } else if (type == native.map_event_type_t.MAP_EVENT_CROSSFEED.value) {
+      final cfInt = event.data.crossfeed_mode;
+      final cf = switch (cfInt) {
+        1 => CrossfeedMode.moffatBauer,
+        2 => CrossfeedMode.chuMoy,
+        _ => CrossfeedMode.off,
+      };
+      notifyCrossfeedChanged(cf);
+    } else if (type == native.map_event_type_t.MAP_EVENT_SPATIALIZER.value) {
+      final sp = event.data.spatializer;
+      notifySpatializerChanged(
+        enabled: sp.enabled != 0,
+        width: double.parse(sp.width.toStringAsPrecision(7)),
+      );
+    } else if (type == native.map_event_type_t.MAP_EVENT_REVERB.value) {
+      final rv = event.data.reverb;
+      notifyReverbChanged(
+        Reverb(
+          enabled: rv.enabled != 0,
+          roomSize: double.parse(rv.room_size.toStringAsPrecision(7)),
+          damping: double.parse(rv.damping.toStringAsPrecision(7)),
+          width: double.parse(rv.width.toStringAsPrecision(7)),
+          wet: double.parse(rv.wet.toStringAsPrecision(7)),
+          dry: double.parse(rv.dry.toStringAsPrecision(7)),
+        ),
+      );
+    } else if (type == native.map_event_type_t.MAP_EVENT_LIMITER.value) {
+      notifyLimiterChanged(event.data.limiter_enabled != 0);
+    } else if (type == native.map_event_type_t.MAP_EVENT_ERROR.value) {
+      if (_playbackState != PlaybackState.error) {
+        _playbackState = PlaybackState.error;
+        if (!_playbackStateController.isClosed) {
+          _playbackStateController.add(PlaybackState.error);
+        }
+      }
     }
-
-    return true;
+    checkMetaBytesUpdated();
   }
 
   void notifyVolumeChanged(double volume) {
     if (_isDisposed) return;
+    if (_volume == volume) return;
     _volume = volume;
     if (!_volumeController.isClosed) {
       _volumeController.add(volume);
@@ -1579,6 +1545,7 @@ class MiniaudioPlayer implements Finalizable {
 
   void notifyRateChanged(double rate) {
     if (_isDisposed) return;
+    if (_rate == rate) return;
     _rate = rate;
     if (!_rateController.isClosed) {
       _rateController.add(rate);
@@ -1587,6 +1554,7 @@ class MiniaudioPlayer implements Finalizable {
 
   void notifyPitchChanged(double pitch) {
     if (_isDisposed) return;
+    if (_pitch == pitch) return;
     _pitch = pitch;
     if (!_pitchController.isClosed) {
       _pitchController.add(pitch);
@@ -1595,6 +1563,7 @@ class MiniaudioPlayer implements Finalizable {
 
   void notifyBufferSizeChanged(int bufferSize) {
     if (_isDisposed) return;
+    if (_bufferSize == bufferSize) return;
     _bufferSize = bufferSize;
     if (!_bufferSizeController.isClosed) {
       _bufferSizeController.add(bufferSize);
@@ -1603,6 +1572,7 @@ class MiniaudioPlayer implements Finalizable {
 
   void notifyEqualizerChanged(Equalizer equalizer) {
     if (_isDisposed) return;
+    if (_equalizer == equalizer) return;
     _equalizer = equalizer;
     if (!_equalizerController.isClosed) {
       _equalizerController.add(equalizer);
@@ -1611,8 +1581,8 @@ class MiniaudioPlayer implements Finalizable {
 
   void notifyDeviceChanged(AudioDevice device) {
     if (_isDisposed) return;
+    if (_audioDevice == device) return;
     _audioDevice = device;
-    _lastDevice = device;
     if (!_audioDeviceController.isClosed) {
       _audioDeviceController.add(device);
     }
@@ -1620,10 +1590,10 @@ class MiniaudioPlayer implements Finalizable {
 
   void notifySilenceConfigChanged(SilenceSkipConfig config) {
     if (_isDisposed) return;
+    if (_silenceConfig == config) return;
     final wasEnabled = _silenceConfig.mode != SilenceSkipMode.disabled;
     final isEnabled = config.mode != SilenceSkipMode.disabled;
     _silenceConfig = config;
-    _lastSilenceConfig = config;
 
     if (wasEnabled != isEnabled && !_skipSilenceController.isClosed) {
       _skipSilenceController.add(isEnabled);
@@ -1633,8 +1603,87 @@ class MiniaudioPlayer implements Finalizable {
     }
   }
 
+  void notifyReplayGainChanged(ReplayGainConfig config) {
+    if (_isDisposed) return;
+    if (_replayGain == config) return;
+    _replayGain = config;
+    if (!_replayGainController.isClosed) {
+      _replayGainController.add(config);
+    }
+  }
+
+  void notifyPreampChanged(double preampDb) {
+    if (_isDisposed) return;
+    if (_preamp == preampDb) return;
+    _preamp = preampDb;
+    if (!_preampController.isClosed) {
+      _preampController.add(preampDb);
+    }
+  }
+
+  void notifyBalanceChanged(double balance) {
+    if (_isDisposed) return;
+    if (_balance == balance) return;
+    _balance = balance;
+    if (!_balanceController.isClosed) {
+      _balanceController.add(balance);
+    }
+  }
+
+  void notifyMonoChanged(bool mono) {
+    if (_isDisposed) return;
+    if (_mono == mono) return;
+    _mono = mono;
+    if (!_monoController.isClosed) {
+      _monoController.add(mono);
+    }
+  }
+
+  void notifyCrossfeedChanged(CrossfeedMode crossfeed) {
+    if (_isDisposed) return;
+    if (_crossfeed == crossfeed) return;
+    _crossfeed = crossfeed;
+    if (!_crossfeedController.isClosed) {
+      _crossfeedController.add(crossfeed);
+    }
+  }
+
+  void notifySpatializerChanged({required bool enabled, required double width}) {
+    if (_isDisposed) return;
+    if (_spatializerEnabled != enabled) {
+      _spatializerEnabled = enabled;
+      if (!_spatializerEnabledController.isClosed) {
+        _spatializerEnabledController.add(enabled);
+      }
+    }
+    if (_spatializerWidth != width) {
+      _spatializerWidth = width;
+      if (!_spatializerWidthController.isClosed) {
+        _spatializerWidthController.add(width);
+      }
+    }
+  }
+
+  void notifyLimiterChanged(bool enabled) {
+    if (_isDisposed) return;
+    if (_limiterEnabled == enabled) return;
+    _limiterEnabled = enabled;
+    if (!_limiterEnabledController.isClosed) {
+      _limiterEnabledController.add(enabled);
+    }
+  }
+
+  void notifyReverbChanged(Reverb reverb) {
+    if (_isDisposed) return;
+    if (_reverb == reverb) return;
+    _reverb = reverb;
+    if (!_reverbController.isClosed) {
+      _reverbController.add(reverb);
+    }
+  }
+
   /// Sets the active audio output device.
-  Future<bool> setDevice(AudioDevice device) => action.setDevice(device);
+  Future<void> setDevice(AudioDevice device) => action.setDevice(device);
 
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
@@ -1677,24 +1726,18 @@ class MiniaudioPlayer implements Finalizable {
     if (_isDisposed) return;
     _isDisposed = true;
 
+    resetMetadata();
+
     action.dispose();
     _finalizer.detach(this);
-    _stopPositionTimer();
+    _eventCallable.close();
     _completedCallable.close();
 
     if (_playerHandle != nullptr) {
+      native.miniaudio_player_set_event_callback(
+          _playerHandle, nullptr, nullptr);
       native.miniaudio_player_destroy(_playerHandle);
       _playerHandle = nullptr;
-    }
-
-    if (_statusPtr != null) {
-      calloc.free(_statusPtr!);
-      _statusPtr = null;
-    }
-
-    if (_bufferedRangePtr != null) {
-      calloc.free(_bufferedRangePtr!);
-      _bufferedRangePtr = null;
     }
 
     await _positionController.close();
@@ -1729,5 +1772,6 @@ class MiniaudioPlayer implements Finalizable {
     await _spatializerWidthController.close();
     await _reverbController.close();
     await _limiterEnabledController.close();
+    await _metaBytesController.close();
   }
 }

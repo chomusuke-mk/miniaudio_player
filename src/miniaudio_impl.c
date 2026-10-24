@@ -49,6 +49,16 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
     /* 2. Reset backend if present */
     if (pDecoder->pBackend != NULL)
     {
+        ma_uint64 internalTargetFrame = targetFrame;
+        ma_uint32 internalSampleRate = 0;
+        if (ma_data_source_get_data_format(pDecoder->pBackend, NULL, NULL, &internalSampleRate, NULL, 0) == MA_SUCCESS)
+        {
+            if (internalSampleRate > 0 && pDecoder->outputSampleRate > 0 && internalSampleRate != pDecoder->outputSampleRate)
+            {
+                internalTargetFrame = ma_calculate_frame_count_after_resampling(internalSampleRate, pDecoder->outputSampleRate, targetFrame);
+            }
+        }
+
 #if !defined(MA_NO_MP3)
         if (pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_mp3)
         {
@@ -56,7 +66,7 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             ma_dr_mp3_reset(&pMP3->dr);
             pMP3->dr.streamStartOffset = (ma_uint64)(newStreamOffset > 0 ? newStreamOffset : 0);
             pMP3->dr.streamCursor = pMP3->dr.streamStartOffset;
-            pMP3->dr.currentPCMFrame = targetFrame;
+            pMP3->dr.currentPCMFrame = internalTargetFrame;
             return MA_SUCCESS;
         }
 #endif
@@ -66,7 +76,7 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             ma_flac *pFlac = (ma_flac *)pDecoder->pBackend;
             if (pFlac->dr != NULL)
             {
-                pFlac->dr->currentPCMFrame = targetFrame;
+                pFlac->dr->currentPCMFrame = internalTargetFrame;
             }
             return MA_SUCCESS;
         }
@@ -76,10 +86,10 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
         {
             ma_wav *pWav = (ma_wav *)pDecoder->pBackend;
             ma_uint32 bytesPerFrame = ma_dr_wav_get_bytes_per_pcm_frame(&pWav->dr);
-            pWav->dr.readCursorInPCMFrames = targetFrame;
-            if (bytesPerFrame > 0 && pWav->dr.totalPCMFrameCount > targetFrame)
+            pWav->dr.readCursorInPCMFrames = internalTargetFrame;
+            if (bytesPerFrame > 0 && pWav->dr.totalPCMFrameCount > internalTargetFrame)
             {
-                pWav->dr.bytesRemaining = (pWav->dr.totalPCMFrameCount - targetFrame) * bytesPerFrame;
+                pWav->dr.bytesRemaining = (pWav->dr.totalPCMFrameCount - internalTargetFrame) * bytesPerFrame;
             }
             else if (pWav->dr.totalPCMFrameCount == 0 && pWav->dr.dataChunkDataSize > 0)
             {
@@ -98,6 +108,10 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             pVorbis->push.dataSize = 0;
             pVorbis->push.framesConsumed = 0;
             pVorbis->push.framesRemaining = 0;
+            if (pVorbis->stb != NULL)
+            {
+                stb_vorbis_flush_pushdata(pVorbis->stb);
+            }
             return MA_SUCCESS;
         }
 
@@ -108,8 +122,8 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             {
                 ma_aac_flush_decoder(pAac);
                 unsigned nominalFrameSamples = (pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024;
-                pAac->mp4CurrentSample = (ma_uint32)(targetFrame / nominalFrameSamples);
-                pAac->currentPCMFrame = targetFrame;
+                pAac->mp4CurrentSample = (ma_uint32)(internalTargetFrame / nominalFrameSamples);
+                pAac->currentPCMFrame = internalTargetFrame;
                 pAac->bufferFrames = 0;
                 pAac->bufferIndex = 0;
                 return MA_SUCCESS;
@@ -119,7 +133,7 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
                 ma_aac_flush_decoder(pAac);
                 pAac->bufferFrames = 0;
                 pAac->bufferIndex = 0;
-                pAac->currentPCMFrame = targetFrame;
+                pAac->currentPCMFrame = internalTargetFrame;
                 return MA_SUCCESS;
             }
         }
@@ -154,16 +168,27 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
         return -1;
     }
 
+    ma_uint64 internalTargetFrame = targetFrame;
+    ma_uint32 internalSampleRate = 0;
+    if (pDecoder->pBackend != NULL &&
+        ma_data_source_get_data_format(pDecoder->pBackend, NULL, NULL, &internalSampleRate, NULL, 0) == MA_SUCCESS)
+    {
+        if (internalSampleRate > 0 && pDecoder->outputSampleRate > 0 && internalSampleRate != pDecoder->outputSampleRate)
+        {
+            internalTargetFrame = ma_calculate_frame_count_after_resampling(internalSampleRate, pDecoder->outputSampleRate, targetFrame);
+        }
+    }
+
 #if !defined(MA_NO_WAV)
     if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_wav)
     {
         ma_wav *pWav = (ma_wav *)pDecoder->pBackend;
         ma_uint32 bytesPerFrame = ma_dr_wav_get_bytes_per_pcm_frame(&pWav->dr);
-        if (pWav->dr.totalPCMFrameCount > 0 && targetFrame > pWav->dr.totalPCMFrameCount)
+        if (pWav->dr.totalPCMFrameCount > 0 && internalTargetFrame > pWav->dr.totalPCMFrameCount)
         {
-            targetFrame = pWav->dr.totalPCMFrameCount;
+            internalTargetFrame = pWav->dr.totalPCMFrameCount;
         }
-        return (int64_t)(pWav->dr.dataChunkDataPos + targetFrame * bytesPerFrame);
+        return (int64_t)(pWav->dr.dataChunkDataPos + internalTargetFrame * bytesPerFrame);
     }
 #endif
 
@@ -171,7 +196,7 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
     if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_mp3)
     {
         ma_mp3 *pMp3 = (ma_mp3 *)pDecoder->pBackend;
-        if (targetFrame == 0)
+        if (internalTargetFrame == 0)
         {
             return (int64_t)pMp3->dr.streamStartOffset;
         }
@@ -182,7 +207,7 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
     if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_flac)
     {
         ma_flac *pFlac = (ma_flac *)pDecoder->pBackend;
-        if (targetFrame == 0 && pFlac->dr != NULL)
+        if (internalTargetFrame == 0 && pFlac->dr != NULL)
         {
             return (int64_t)pFlac->dr->firstFLACFramePosInBytes;
         }
@@ -196,7 +221,7 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
         {
             MP4D_demux_t *pMp4 = (MP4D_demux_t *)pAac->pMp4;
             unsigned nominalFrameSamples = (pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024;
-            unsigned sampleIdx = (unsigned)(targetFrame / nominalFrameSamples);
+            unsigned sampleIdx = (unsigned)(internalTargetFrame / nominalFrameSamples);
             unsigned frameBytes = 0, ts = 0, dur = 0;
             if (sampleIdx < pMp4->track[pAac->mp4AudioTrack].sample_count)
             {
@@ -210,7 +235,7 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
         else if (pAac->container == MA_AAC_CONTAINER_ADTS)
         {
             unsigned nominalFrameSamples = (pAac->bufferFrames > 0) ? pAac->bufferFrames : 1024;
-            unsigned sampleIdx = (unsigned)(targetFrame / nominalFrameSamples);
+            unsigned sampleIdx = (unsigned)(internalTargetFrame / nominalFrameSamples);
             if (sampleIdx < pAac->adtsFrameCount && pAac->adtsFrameOffsets != NULL)
             {
                 return (int64_t)pAac->adtsFrameOffsets[sampleIdx];

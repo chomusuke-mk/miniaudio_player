@@ -119,9 +119,15 @@ typedef struct
     float band_gains[10];
 
     int32_t limiter_enabled;
+
+    struct map_event_dispatcher *pDispatcher;
 } ma_equalizer_node;
 
 float map_calculate_effective_preamp(const miniaudio_player_replay_gain_config_t *rg, float standalone_preamp_db);
+
+void ma_equalizer_node_set_dispatcher(
+    ma_equalizer_node *pNode,
+    struct map_event_dispatcher *pDispatcher);
 
 ma_result ma_equalizer_node_init(
     ma_node_graph *pNodeGraph,

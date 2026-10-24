@@ -31,3 +31,8 @@ migrate_working_dir/
 /coverage/
 /temp/
 /.agents/
+
+/NEEDS.md
+/NEED_TESTING.md
+/BUFFER_AND_METABYTES_SPEC.md
+/docs/WEB.md

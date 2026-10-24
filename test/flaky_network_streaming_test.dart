@@ -129,19 +129,16 @@ void main() {
 
       // Wait for initial burst (~400ms audio) to completely drain and enter network stall
       await Future<void>.delayed(const Duration(milliseconds: 650));
-      player.pollAndEmit(force: true);
       final pos2 = player.state.position.inMilliseconds;
       expect(pos2, greaterThan(0));
 
       // During active network stall and silence synthesis, clock is strictly frozen
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      player.pollAndEmit(force: true);
       final pos3 = player.state.position.inMilliseconds;
       expect(pos3, equals(pos2), reason: 'Clock must freeze during network starvation silence synthesis');
 
       // Wait for next 32KB chunk to arrive after the 1200ms stall and resume playback advancement
       await Future<void>.delayed(const Duration(milliseconds: 1000));
-      player.pollAndEmit(force: true);
       final pos4 = player.state.position.inMilliseconds;
       expect(pos4, greaterThan(pos3), reason: 'Clock must resume advancing once network data arrives');
 

@@ -170,7 +170,11 @@ void main() {
 
       // Restart playback from pinned head
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      int elapsed = 0;
+      while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        elapsed += 50;
+      }
 
       expect(player.state.playing, isTrue, reason: 'Playback must resume from Pinned Head');
       expect(player.state.completed, isFalse, reason: 'Completed must remain false while playing');

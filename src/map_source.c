@@ -4,6 +4,7 @@
  */
 
 #include "map_source.h"
+#include "map_event_dispatcher.h"
 
 static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
 {
@@ -324,9 +325,12 @@ static ma_result map_time_stretch_ds_read_filtered(
 
             if (framesFetched == 0)
             {
-                pDS->is_eof = MA_TRUE;
+                if (!pDS->has_worker || ma_atomic_load_32(&pDS->decoder_eof))
+                {
+                    pDS->is_eof = MA_TRUE;
+                }
                 /* If we reached EOF while holding silence, discard the held silence (lead-out trim) */
-                if (pDet->state == MAP_SILENCE_STATE_HOLDING)
+                if (pDS->is_eof && pDet->state == MAP_SILENCE_STATE_HOLDING)
                 {
                     pDet->silence_saved_frames += (pDet->hold_frames_count - pDet->hold_frames_read_pos);
                     pDet->hold_frames_count = 0;
@@ -688,6 +692,10 @@ ma_result map_time_stretch_ds_read(
                     memset(pOut + totalFramesOut * pDS->channels, 0, (frameCount - totalFramesOut) * pDS->channels * sizeof(float));
                 }
                 totalFramesOut = frameCount;
+                if (pDS->pDispatcher != NULL && pDS->is_stream)
+                {
+                    map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                }
             }
             break;
         }
@@ -722,6 +730,14 @@ ma_result map_time_stretch_ds_read(
     {
         pDS->readCursorFrames = pDS->totalFrames;
         pDS->read_cursor_fraction = 0.0;
+    }
+
+    if (pDS->pDispatcher != NULL && pDS->sampleRate > 0)
+    {
+        int64_t pos_ms = (int64_t)((pDS->readCursorFrames * 1000) / pDS->sampleRate);
+        map_event_dispatcher_post_position(pDS->pDispatcher, pos_ms);
+        int64_t saved_ms = map_silence_detector_get_saved_ms(&pDS->silence);
+        map_event_dispatcher_post_silence_saved(pDS->pDispatcher, saved_ms);
     }
 
     ma_spinlock_unlock(&pDS->lock);
@@ -775,7 +791,7 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
             }
             if (frameIndex == 0)
             {
-                pDS->buffer.read_cursor = 0;
+                pDS->buffer.read_cursor = (pDS->buffer.audio_start > 0) ? pDS->buffer.audio_start : 0;
             }
             pDS->readCursorFrames = frameIndex;
             ma_atomic_store_32(&pDS->decoder_eof, 0);
@@ -854,7 +870,7 @@ ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameI
             }
             if (frameIndex == 0)
             {
-                pDS->buffer.read_cursor = 0;
+                pDS->buffer.read_cursor = (pDS->buffer.audio_start > 0) ? pDS->buffer.audio_start : 0;
             }
             pDS->readCursorFrames = frameIndex;
             pDS->is_eof = MA_FALSE;
@@ -1119,7 +1135,9 @@ ma_result map_time_stretch_ds_init(
     if (pDS == NULL || file_path == NULL)
         return MA_INVALID_ARGS;
 
+    struct map_event_dispatcher *saved_disp1 = pDS->pDispatcher;
     memset(pDS, 0, sizeof(*pDS));
+    pDS->pDispatcher = saved_disp1;
 
     decoder_cfg = ma_decoder_config_init(ma_format_f32, targetChannels, targetSampleRate);
     decoder_cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
@@ -1169,7 +1187,9 @@ ma_result map_time_stretch_ds_init_memory(
     if (pDS == NULL || pData == NULL || dataSize == 0)
         return MA_INVALID_ARGS;
 
+    struct map_event_dispatcher *saved_disp2 = pDS->pDispatcher;
     memset(pDS, 0, sizeof(*pDS));
+    pDS->pDispatcher = saved_disp2;
 
     pDS->memory_buffer = pData;
     pDS->memory_size = dataSize;
@@ -1216,7 +1236,9 @@ ma_result map_time_stretch_ds_init_stream_ex(
     if (pDS == NULL || initialData == NULL || initialDataSize == 0)
         return MA_INVALID_ARGS;
 
+    struct map_event_dispatcher *saved_disp3 = pDS->pDispatcher;
     memset(pDS, 0, sizeof(*pDS));
+    pDS->pDispatcher = saved_disp3;
 
     if (cap == 0)
     {
@@ -1282,6 +1304,7 @@ ma_result map_time_stretch_ds_init_stream_ex(
 
     result = map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
     pDS->buffer.is_probing = MA_FALSE;
+    map_buffer_set_decoding_audio(&pDS->buffer, MA_TRUE);
     return result;
 }
 
@@ -1449,4 +1472,14 @@ void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
     ma_spinlock_unlock(&pDS->lock);
 
     ma_data_source_uninit(&pDS->base);
+}
+
+void map_time_stretch_ds_set_dispatcher(
+    map_time_stretch_ds *pDS,
+    struct map_event_dispatcher *pDispatcher)
+{
+    if (pDS != NULL)
+    {
+        pDS->pDispatcher = pDispatcher;
+    }
 }

@@ -1,5 +1,65 @@
 # Changelog
 
+## 4.0.0
+
+### 🎛️ High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)
+
+#### 🏗️ Tripartite Facade Architecture (`.action`, `.state`, `.stream`)
+
+- **`MiniaudioEngine<T>`**: Introduced a first-class, domain-agnostic, dual-deck playback orchestrator on top of `MiniaudioPlayer` that mirrors the familiar tripartite facade pattern:
+  - `engine.action` (`EngineAction<T>`): Asynchronous transport, queue navigation, queue mutation, shuffle, loop, crossfade, ReplayGain normalization, Infinite Mix, and full studio DSP controls.
+  - `engine.state` (`EngineState<T>`): Instantaneous synchronous snapshot getters for playback phase, active queue, current/next item and user payload (`currentData`, `nextData`), crossfade status, and all underlying deck telemetry.
+  - `engine.stream` (`EngineStream<T>`): Granular reactive broadcast streams multiplexed seamlessly from the active deck and queue state without flicker during deck swaps.
+- **Encapsulated Internal Subsystems**:
+  - `InternalQueueManager<T>` and `InternalCrossfadeController` are strictly package-private (`lib/src/engine/`) and orchestrated exclusively through `MiniaudioEngine<T>`.
+
+#### 🔄 Deterministic Finite State Machine (`EnginePhase`) & Serialized FIFO Dispatch
+
+- **Explicit 8-State Lifecycle (`EnginePhase`)**:
+  - `idle`, `loading`, `playing`, `paused`, `autoCrossfading`, `manualCrossfading`, `completed`, and `error`.
+- **Serialized Asynchronous Command Queue (`_serialize`)**:
+  - All state-mutating operations (`openQueue`, `play`, `pause`, `stop`, `seek`, `next`, `previous`, `skipToIndex`, queue edits) execute sequentially in FIFO order.
+  - Eliminates overlapping transition race conditions, zombie background decks, and dirty state bugs when rapidly alternating `next() <-> previous()` during an active crossfade.
+- **Zero-Redundant-Seek Deck Preparation**:
+  - Opening a source on an active or standby deck (`_prepareDeck`) never issues redundant post-open `seek(Duration.zero)` calls, preventing HTTP stream reconnections on Web audio files and preserving sliding jitter buffers on live streams.
+
+#### 🌊 Continuous 25ms Dual-Deck Crossfade (`CrossfadeConfig` & `CrossfadeCurve`)
+
+- **Equal-Power & Linear Crossfade Curves**:
+  - `CrossfadeCurve.equalPower`: Constant-power trigonometric curve ($\cos(\frac{\pi}{2}t)$ fade-out, $\sin(\frac{\pi}{2}t)$ fade-in) preventing mid-transition volume dips on uncorrelated tracks.
+  - `CrossfadeCurve.linear`: Linear amplitude ramp ($1 - t$ fade-out, $t$ fade-in) across the full `0.0..2.0` gain range.
+- **Automatic & Manual Crossfade Coordination**:
+  - Configurable `CrossfadeConfig(duration, manualDuration, curve)` with independent durations for natural end-of-track transitions (`duration`) and user-triggered skips (`manualDuration`).
+  - **Auto-to-Manual Promotion**: Calling `engine.action.next()` while an automatic crossfade is already in flight promotes the tentative transition in-place and caps its remaining duration to `manualDuration` without reopening or restarting the incoming track.
+  - **Reactive Queue Invalidation**: Mutations that change the upcoming track (`insertNext`, `reorder`, `removeAt`, `setShuffle`, `setLoopMode`) automatically abort any stale tentative `autoCrossfading` transition and restore the active deck to master volume.
+
+#### 📋 Generic Zero-Copy Queue Management (`EngineItem<T>`, `LoopMode` & Infinite Mix)
+
+- **Reference-Preserving Generic Item (`EngineItem<T>`)**:
+  - Wraps any `AudioSource` (`FileAudioSource`, `NetworkAudioSource`, `LiveStreamAudioSource`, `MemoryAudioSource`, `AssetAudioSource`) alongside a direct reference to user domain model `T? data` (`identical(item.data, originalModel) == true`) and optional per-track `replayGainDb` and `replayPeak`.
+  - Track duration is resolved dynamically from the native C decoder (`engine.state.duration`) rather than duplicated on `EngineItem<T>`.
+- **Fisher-Yates Shuffle & Exact Un-Shuffle Restoration**:
+  - `setShuffle(true)` / `toggleShuffle()` pins the currently active track at index `0`, shuffles remaining items uniformly, and avoids immediate back-to-back duplicate sources.
+  - `setShuffle(false)` restores the exact original queue ordering while keeping the cursor anchored on the currently playing item.
+- **Loop Modes (`LoopMode` / `Loop` alias)**:
+  - `LoopMode.off`, `LoopMode.one` (single-track repeat without crossfading into another track), and `LoopMode.all` (cyclic queue wrap-around).
+- **Proactive Infinite Mix Lookahead (`InfiniteMixProvider<T>`)**:
+  - Asynchronous callback invoked proactively as soon as the queue enters its final track (when `LoopMode.off` and `infiniteMixEnabled` are active), ensuring newly fetched tracks are ready in time for seamless end-of-track automatic crossfading.
+
+#### 🌐 Strict `open` / `play` Separation (Breaking Change for Web Compatibility)
+
+- **Removed `autoPlay` Parameters**:
+  - Removed `autoPlay` from `open`, `openQueue`, `openSources`, `openFile`, `openUrl`, `openMemory`, `openAsset`, and `skipToIndex` across `MiniaudioEngine<T>` and `MiniaudioPlayer`.
+  - Opening a source or queue now strictly prepares the audio pipeline (`EnginePhase.paused`); playback starts only when `action.play()` is explicitly called (or is preserved across `next()`, `previous()`, and `skipToIndex()` when already playing).
+
+#### 📻 Web Audio Files & Live Stream Queue Integration
+
+- **Mixed Queue Support**:
+  - Seamlessly mix local files, remote Web audio files (`http://` / `https://` with byte-range seeking), continuous live internet radio streams (`LiveStreamAudioSource`), Flutter assets, and in-memory `Uint8List` buffers in the same `MiniaudioEngine<T>` queue.
+  - Automatic end-of-track crossfade is safely bypassed while playing unbounded live streams (`state.isLiveStream == true`), while manual transitions (`next()`, `previous()`, `skipToIndex()`) crossfade smoothly into or out of live radio streams.
+
+---
+
 ## 3.0.0
 
 ### 🌐 Network Streaming, AudioSource Architecture & In-Memory Playback
@@ -14,12 +74,12 @@
   - `AudioSource.liveStream(Uri uri, {Map<String, String>? headers, Duration jitterBuffer})`: Boundless live web audio streams (Internet Radio, Icecast, Shoutcast) with sliding jitter buffer protection.
   - `AudioSource.uri(dynamic uriOrPath)`: Dynamic polymorphic URI parser supporting `http://`, `https://`, `asset://`, `file://`, and local filesystem paths.
 - **Polymorphic `player.action.open(...)`**:
-  - Accepts any `AudioSource`, `Uri`, `String` (with automatic scheme detection), or `Uint8List` byte buffer with optional `autoPlay`.
+  - Accepts any `AudioSource`, `Uri`, `String` (with automatic scheme detection), or `Uint8List` byte buffer.
 - **Granular Imperative Action Methods**:
-  - `player.action.openFile(String filePath, {bool autoPlay})`: Direct local file playback.
-  - `player.action.openMemory(Uint8List bytes, {bool autoPlay})`: Direct in-memory buffer playback.
-  - `player.action.openAsset(String assetPath, {String? package, AssetBytesLoader? loader, bool autoPlay})`: Direct asset loading.
-  - `player.action.openUrl(dynamic urlOrUri, {Map<String, String>? headers, bool isLive, Duration bufferAhead, bool autoPlay})`: Progressive streaming and live web audio.
+  - `player.action.openFile(String filePath)`: Direct local file playback.
+  - `player.action.openMemory(Uint8List bytes)`: Direct in-memory buffer playback.
+  - `player.action.openAsset(String assetPath, {String? package, AssetBytesLoader? loader})`: Direct asset loading.
+  - `player.action.openUrl(dynamic urlOrUri, {Map<String, String>? headers, bool isLive, Duration bufferAhead})`: Progressive streaming and live web audio.
 
 #### 🌊 Progressive HTTP/HTTPS Network Streaming (`NetworkAudioStreamer`)
 

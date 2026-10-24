@@ -330,7 +330,7 @@ void main() {
 
       // Fire rapid consecutive seeks across unbuffered track regions
       for (int i = 1; i <= 4; i++) {
-        final targetMs = i * 10000;
+        final targetMs = i * 15000;
         await player.action.seek(Duration(milliseconds: targetMs));
         await Future<void>.delayed(const Duration(milliseconds: 40));
       }

@@ -25,7 +25,6 @@ import '../network/network_audio_streamer.dart';
 /// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
 class PlayerAction {
   final MiniaudioPlayer _player;
-  final void Function(Duration position) _onOptimisticSeek;
   NetworkAudioStreamer? _activeStreamer;
 
   int _openGeneration = 0;
@@ -33,10 +32,7 @@ class PlayerAction {
   bool _playRequested = false;
   Future<void>? _pendingSeekFuture;
 
-  PlayerAction(
-    this._player, {
-    required void Function(Duration) onOptimisticSeek,
-  }) : _onOptimisticSeek = onOptimisticSeek;
+  PlayerAction(this._player);
 
   void _stopActiveStreamer() {
     _activeStreamer?.dispose();
@@ -63,6 +59,8 @@ class PlayerAction {
   /// Guard wrapper executing an open task within the Opening Gate.
   Future<void> _openGuarded(Future<void> Function(int generation) openTask) async {
     _player.ensureNotDisposed();
+
+    _player.resetMetadata();
 
     _stopActiveStreamer();
 
@@ -98,6 +96,7 @@ class PlayerAction {
       if (_openGeneration != gen) return;
 
       _player.notifyOpenCompleted();
+      await Future<void>.delayed(Duration.zero);
 
       if (!completer.isCompleted) {
         completer.complete();
@@ -105,9 +104,6 @@ class PlayerAction {
     } catch (error, stackTrace) {
       if (_openGeneration != gen) return;
       _stopActiveStreamer();
-      try {
-        native.miniaudio_player_stop(_player.handle);
-      } catch (_) {}
 
       final isConnectionOrProtocolFailure =
           error is MiniaudioPlayerException &&
@@ -116,6 +112,9 @@ class PlayerAction {
                error.message.contains('HttpException'));
 
       if (isConnectionOrProtocolFailure) {
+        try {
+          native.miniaudio_player_stop(_player.handle);
+        } catch (_) {}
         _player.notifyStopped();
       } else {
         _player.notifyOpenFailed(error);
@@ -278,7 +277,7 @@ class PlayerAction {
 
       if (_openGeneration != gen) return;
 
-      _player.pollAndEmit(force: true);
+      await Future<void>.delayed(Duration.zero);
 
       final codec = AudioCodec.detect(headerBytes);
       final format = AudioFormat.fromCodec(codec);
@@ -340,7 +339,7 @@ class PlayerAction {
 
     if (_openGeneration != gen) return;
 
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
 
     final codec = AudioCodec.detect(bytes.sublist(0, min(64, bytes.length)));
     final format = AudioFormat.fromCodec(codec);
@@ -497,6 +496,12 @@ class PlayerAction {
 
     final effectiveBufferBehind = bufferBehind ?? MiniaudioPlayerGlobalConfig().bufferBehindDuration;
 
+    final int? prevNetworkCapMB = MiniaudioPlayer.globalConfig.bufferSizeNetworkMB;
+    final bool overrideCap = !isLive && bufferAhead != null && bufferAhead < const Duration(seconds: 5);
+    if (overrideCap) {
+      MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 0;
+    }
+
     final streamer = NetworkAudioStreamer(
       _player,
       uri: uri,
@@ -515,12 +520,18 @@ class PlayerAction {
       }
       _stopActiveStreamer();
       rethrow;
+    } finally {
+      if (overrideCap) {
+        MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = prevNetworkCapMB;
+      }
     }
 
     if (_openGeneration != gen) {
       _stopActiveStreamer();
       return;
     }
+
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Starts or resumes audio playback.
@@ -571,7 +582,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Pauses audio playback at the current position.
@@ -592,7 +603,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Stops audio playback and resets the position to the beginning.
@@ -610,7 +621,7 @@ class PlayerAction {
         _openingCompleter!.complete();
       }
       _player.notifyStopped();
-      _player.pollAndEmit(force: true);
+      await Future<void>.delayed(Duration.zero);
       return;
     }
     await _activeStreamer?.stop();
@@ -621,15 +632,13 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.notifyStopped();
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Seeks to the specified [position].
   Future<void> seek(Duration position) {
     _player.ensureNotDisposed();
     final targetPosition = position < Duration.zero ? Duration.zero : position;
-    _onOptimisticSeek(targetPosition);
 
     Future<void> doSeek() async {
       if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
@@ -654,7 +663,7 @@ class PlayerAction {
   Future<void> _executeSeek(Duration position) async {
     if (_activeStreamer != null) {
       await _activeStreamer!.seek(position);
-      _player.pollAndEmit(force: true);
+      await Future<void>.delayed(Duration.zero);
       return;
     }
     final durationMs = native.miniaudio_player_get_duration_ms(_player.handle);
@@ -670,7 +679,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets the audio volume level (default: 1.0, 0.0 to 2.0).
@@ -694,7 +703,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.notifyVolumeChanged(clampedVolume);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets the playback speed multiplier (default: 1.0, 0.1 to 4.0).
@@ -714,7 +723,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.notifyRateChanged(clampedRate);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets the audio pitch multiplier (default: 1.0, 0.5 to 2.0).
@@ -734,7 +743,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.notifyPitchChanged(clampedPitch);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets the internal buffer size in frames (0 = native miniaudio default).
@@ -754,8 +763,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    final actualBufferSize = native.miniaudio_player_get_buffer_size(_player.handle);
-    _player.notifyBufferSizeChanged(actualBufferSize);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Applies a 10-band [Equalizer] configuration.
@@ -782,7 +790,7 @@ class PlayerAction {
           errorCode: res,
         );
       }
-      _player.notifyEqualizerChanged(equalizer);
+      await Future<void>.delayed(Duration.zero);
     } finally {
       calloc.free(eqPtr);
     }
@@ -790,12 +798,9 @@ class PlayerAction {
 
   /// Sets the active audio output device.
   ///
-  /// Returns `true` if the device was successfully set, or `false` if the device
-  /// was unavailable / disconnected and the player fell back to the default output.
-  ///
   /// Supports [AudioDevice.auto] for automatic system default routing, or any
   /// [AudioDevice] obtained via [MiniaudioPlayer.getAudioDevices].
-  Future<bool> setDevice(AudioDevice device) async {
+  Future<void> setDevice(AudioDevice device) async {
     _player.ensureNotDisposed();
     final isAutoTarget = device.isAuto ||
         device.id.isEmpty ||
@@ -811,49 +816,13 @@ class PlayerAction {
         _player.handle,
         devIdPtr != null ? devIdPtr.cast() : nullptr,
       );
-      final devPtr = calloc<native.miniaudio_device_info_t>();
-      bool success = res == MapResult.success;
-      try {
-        if (native.miniaudio_player_get_current_device(_player.handle, devPtr) ==
-            MapResult.success) {
-          final activeDev = devPtr.ref.toAudioDevice();
-          var eventDev = activeDev;
-          if (isAutoTarget) {
-            final resolved = activeDev.resolvedName?.isNotEmpty == true
-                ? activeDev.resolvedName
-                : (device.resolvedName?.isNotEmpty == true
-                    ? device.resolvedName
-                    : null);
-            eventDev = AudioDevice(
-              id: '',
-              name: 'SYSTEM DEFAULT',
-              resolvedName: resolved,
-              isAuto: true,
-            );
-          } else if (activeDev.id == device.id && device.name.isNotEmpty) {
-            eventDev = AudioDevice(
-              id: activeDev.id,
-              name: device.name,
-              isAuto: false,
-              type: device.type,
-            );
-          }
-          _player.notifyDeviceChanged(eventDev);
-          if (isAutoTarget) {
-            success = activeDev.isAuto;
-          } else {
-            success = !activeDev.isAuto && activeDev.id == device.id;
-          }
-        } else if (!success) {
-          throw MiniaudioPlayerException(
-            'Failed to set audio device: ${MapResult.describe(res)}',
-            errorCode: res,
-          );
-        }
-      } finally {
-        calloc.free(devPtr);
+      if (res != MapResult.success) {
+        throw MiniaudioPlayerException(
+          'Failed to set audio device: ${MapResult.describe(res)}',
+          errorCode: res,
+        );
       }
-      return success;
+      await Future<void>.delayed(Duration.zero);
     } finally {
       if (devIdPtr != null) calloc.free(devIdPtr);
     }
@@ -914,14 +883,7 @@ class PlayerAction {
           errorCode: res,
         );
       }
-
-      final normalizedConfig = SilenceSkipConfig(
-        mode: config.mode,
-        thresholdDb: threshold,
-        minSilenceDuration: Duration(milliseconds: minMs),
-        padding: Duration(milliseconds: padMs),
-      );
-      _player.notifySilenceConfigChanged(normalizedConfig);
+      await Future<void>.delayed(Duration.zero);
     } finally {
       calloc.free(configPtr);
     }
@@ -952,6 +914,7 @@ class PlayerAction {
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player.ensureNotDisposed();
     _player.setManualVisualizerOverride(enabled);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Clears any manual visualizer override, reverting to reactive on-demand
@@ -959,6 +922,7 @@ class PlayerAction {
   Future<void> clearVisualizerOverride() async {
     _player.ensureNotDisposed();
     _player.setManualVisualizerOverride(null);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets replay gain normalization for the track.
@@ -975,10 +939,11 @@ class PlayerAction {
     bool preventClipping = true,
   }) async {
     _player.ensureNotDisposed();
+    final effectivePeak = (peak != null && peak > 0.0) ? peak : 0.0;
     final res = native.miniaudio_player_set_replay_gain(
       _player.handle,
       gainDb,
-      peak ?? 0.0,
+      effectivePeak,
       preampDb,
       preventClipping ? 1 : 0,
     );
@@ -988,7 +953,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Clears replay gain normalization back to unity gain (0.0 dB).
@@ -1001,12 +966,15 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets standalone manual preamp gain in decibels applied prior to the equalizer.
   Future<void> setPreamp(double preampDb) async {
     _player.ensureNotDisposed();
+    if (preampDb.isNaN || preampDb.isInfinite) {
+      throw ArgumentError.value(preampDb, 'preampDb', 'Preamp must be finite');
+    }
     final res = native.miniaudio_player_set_preamp(_player.handle, preampDb);
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(
@@ -1014,20 +982,24 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets stereo channel balance (-1.0 for full left, 0.0 for center, +1.0 for full right).
   Future<void> setBalance(double pan) async {
     _player.ensureNotDisposed();
-    final res = native.miniaudio_player_set_balance(_player.handle, pan.clamp(-1.0, 1.0));
+    if (pan.isNaN || pan.isInfinite) {
+      throw ArgumentError.value(pan, 'pan', 'Balance must be finite');
+    }
+    final clamped = pan.clamp(-1.0, 1.0);
+    final res = native.miniaudio_player_set_balance(_player.handle, clamped);
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(
         'Failed to set balance: ${MapResult.describe(res)}',
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets whether mono downmix is enabled for accessibility or single speakers.
@@ -1040,7 +1012,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Configures headphone binaural crossfeed (Bauer bs2b).
@@ -1053,16 +1025,20 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Configures the stereo widener / spatializer.
   Future<void> setSpatializer({required bool enabled, double width = 1.3}) async {
     _player.ensureNotDisposed();
+    if (width.isNaN || width.isInfinite) {
+      throw ArgumentError.value(width, 'width', 'Spatializer width must be finite');
+    }
+    final clampedWidth = width.clamp(1.0, 2.0);
     final res = native.miniaudio_player_set_spatializer(
       _player.handle,
       enabled ? 1 : 0,
-      width.clamp(1.0, 2.0),
+      clampedWidth,
     );
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(
@@ -1070,7 +1046,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Enables or disables the True-Peak soft-knee output limiter protector.
@@ -1083,7 +1059,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Configures studio-grade algorithmic reverberation.
@@ -1092,14 +1068,22 @@ class PlayerAction {
   /// [Reverb.concertHall], [Reverb.cathedral], [Reverb.plate], [Reverb.ambient] or [Reverb.off].
   Future<void> setReverb(Reverb config) async {
     _player.ensureNotDisposed();
+    final clamped = Reverb(
+      enabled: config.enabled,
+      roomSize: config.roomSize.clamp(0.0, 1.0),
+      damping: config.damping.clamp(0.0, 1.0),
+      width: config.width.clamp(0.0, 1.0),
+      wet: config.wet.clamp(0.0, 2.0),
+      dry: config.dry.clamp(0.0, 2.0),
+    );
     final res = native.miniaudio_player_set_reverb(
       _player.handle,
-      config.enabled ? 1 : 0,
-      config.roomSize.clamp(0.0, 1.0),
-      config.damping.clamp(0.0, 1.0),
-      config.width.clamp(0.0, 1.0),
-      config.wet.clamp(0.0, 2.0),
-      config.dry.clamp(0.0, 2.0),
+      clamped.enabled ? 1 : 0,
+      clamped.roomSize,
+      clamped.damping,
+      clamped.width,
+      clamped.wet,
+      clamped.dry,
     );
     if (res != MapResult.success) {
       throw MiniaudioPlayerException(
@@ -1107,7 +1091,7 @@ class PlayerAction {
         errorCode: res,
       );
     }
-    _player.pollAndEmit(force: true);
+    await Future<void>.delayed(Duration.zero);
   }
 
   /// Updates specific parameters of the active reverb effect while preserving others.
@@ -1129,5 +1113,46 @@ class PlayerAction {
       dry: dry,
     );
     await setReverb(updated);
+  }
+
+  /// Sets dynamic ICY livestream metadata received over network.
+  void setIcyMeta(Uint8List data) {
+    _player.ensureNotDisposed();
+    if (data.isEmpty) return;
+    final ptr = calloc<Uint8>(data.length);
+    try {
+      ptr.asTypedList(data.length).setAll(0, data);
+      final res = native.miniaudio_player_set_icy_meta(
+        _player.handle,
+        ptr,
+        data.length,
+      );
+      if (res == MapResult.success) {
+        _player.checkMetaBytesUpdated();
+      }
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  /// Probes tail metadata (ID3v1, APEv2, MP4 moov, etc.) directly into buffer Tail.
+  void probeTail(Uint8List data, int tailOffset) {
+    _player.ensureNotDisposed();
+    if (data.isEmpty) return;
+    final ptr = calloc<Uint8>(data.length);
+    try {
+      ptr.asTypedList(data.length).setAll(0, data);
+      final res = native.miniaudio_player_probe_tail(
+        _player.handle,
+        ptr,
+        data.length,
+        tailOffset,
+      );
+      if (res == MapResult.success) {
+        _player.checkMetaBytesUpdated();
+      }
+    } finally {
+      calloc.free(ptr);
+    }
   }
 }

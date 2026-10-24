@@ -92,9 +92,6 @@ void main() {
         // Allow initial playback and observe starvation
         await Future<void>.delayed(const Duration(milliseconds: 600));
 
-        // Poll engine state
-        player.pollAndEmit(force: true);
-
         // Underflow synthesized silence must NOT be counted as skipped audio silence
         final savedDuringStarvation = player.state.silenceSavedDuration;
         expect(
@@ -124,7 +121,6 @@ void main() {
 
         // Wait until buffering state is active
         await Future<void>.delayed(const Duration(milliseconds: 400));
-        player.pollAndEmit(force: true);
 
         // 1. Toggle ON -> OFF -> ON during active starvation
         await player.action.setSkipSilence(false);
@@ -147,7 +143,6 @@ void main() {
 
         // Let engine process frames without deadlocks
         await Future<void>.delayed(const Duration(milliseconds: 300));
-        player.pollAndEmit(force: true);
 
         expect(player.state.silenceConfig.mode, equals(SilenceSkipMode.all));
         expect(player.state.silenceConfig.thresholdDb, equals(-40.0));
@@ -168,7 +163,6 @@ void main() {
         await player.action.play();
 
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        player.pollAndEmit(force: true);
 
         // Issue seek into 30-second offset while data feed is stalled
         final targetPosition = const Duration(seconds: 30);
@@ -179,7 +173,6 @@ void main() {
 
         // Allow Range response to deliver frames and verify engine remains responsive
         await Future<void>.delayed(const Duration(milliseconds: 400));
-        player.pollAndEmit(force: true);
 
         expect(player.state.playing, isTrue);
 
@@ -228,7 +221,6 @@ void main() {
 
         // Allow audio to play and drop
         await Future<void>.delayed(const Duration(milliseconds: 600));
-        player.pollAndEmit(force: true);
 
         // 3. Verify DSP signal integrity: zero NaNs, zero Infinities, bounded RMS
         expect(capturedVisualizerData, isNotEmpty);

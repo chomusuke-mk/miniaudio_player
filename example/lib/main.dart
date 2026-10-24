@@ -669,9 +669,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.dispose();
   }
 
-  String _formatDuration(Duration duration) {
+  String _formatDuration(Duration duration, {bool forceHours = false}) {
+    final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (hours > 0 || forceHours) {
+      return '$hours:$minutes:$seconds';
+    }
     return '$minutes:$seconds';
   }
 
@@ -927,6 +931,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                       milliseconds: _dragPositionMs!.toInt(),
                                     )
                                   : pos,
+                              forceHours: dur.inHours > 0,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -1788,20 +1793,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         onChanged: (newDev) async {
                           if (newDev != null) {
                             try {
-                              final success = await _player.action.setDevice(
+                              await _player.action.setDevice(
                                 newDev,
                               );
-                              if (!success && context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Device "${newDev.name}" is unavailable or disconnected. Falling back to default.',
-                                    ),
-                                    backgroundColor: Colors.orange,
-                                    duration: const Duration(seconds: 3),
-                                  ),
-                                );
-                              }
                             } catch (e) {
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(

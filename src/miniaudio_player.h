@@ -152,6 +152,29 @@ extern "C"
         float dry;         /**< Dry signal level (0.0 to 2.0) */
     } miniaudio_player_reverb_config_t;
 
+    typedef struct miniaudio_stream_status
+    {
+        size_t buffer_capacity;
+        size_t buffer_fill;
+        float fill_percentage;
+        int32_t is_buffering;
+        int32_t is_eof;
+        int64_t read_cursor_byte;
+        int64_t range_start;
+        int64_t range_end;
+    } miniaudio_stream_status_t;
+
+    typedef struct miniaudio_buffered_range
+    {
+        int64_t start_ms;
+        int64_t end_ms;
+        int64_t duration_ms;
+        float fill_percentage;
+        float stream_percentage;
+        int32_t is_buffering;
+        int32_t is_eof;
+    } miniaudio_buffered_range_t;
+
     typedef struct
     {
         int64_t position_ms;                           /**< Current position in milliseconds */
@@ -180,6 +203,9 @@ extern "C"
         miniaudio_player_reverb_config_t reverb;       /**< Reverb active configuration */
         int32_t limiter_enabled;                       /**< 1 if True-Peak limiter enabled, 0 otherwise */
     } miniaudio_player_status_t;
+
+    struct map_event;
+    typedef void (*miniaudio_player_event_cb)(void *user_data, const struct map_event *event);
 
     /* ========================================================================= */
     /* Player Configuration & Callbacks                                          */
@@ -220,6 +246,19 @@ extern "C"
      * @return MAP_SUCCESS on clean termination.
      */
     MAP_API int32_t miniaudio_player_destroy(miniaudio_player_t *player);
+
+    /**
+     * @brief Registers an asynchronous reactive event callback.
+     * Dispatches native state and telemetry events to Dart isolate via NativeCallable.listener.
+     * @param player Player instance handle.
+     * @param callback Event callback function.
+     * @param user_data User pointer passed to callback.
+     * @return MAP_SUCCESS on success, or error code.
+     */
+    MAP_API int32_t miniaudio_player_set_event_callback(
+        miniaudio_player_t *player,
+        miniaudio_player_event_cb callback,
+        void *user_data);
 
     /* ========================================================================= */
     /* Media Loading                                                             */
@@ -392,29 +431,6 @@ extern "C"
     MAP_API int64_t miniaudio_player_stream_get_pinned_head_size(
         const miniaudio_player_t *player);
 
-    typedef struct miniaudio_stream_status
-    {
-        size_t buffer_capacity;
-        size_t buffer_fill;
-        float fill_percentage;
-        int32_t is_buffering;
-        int32_t is_eof;
-        int64_t read_cursor_byte;
-        int64_t range_start;
-        int64_t range_end;
-    } miniaudio_stream_status_t;
-
-    typedef struct miniaudio_buffered_range
-    {
-        int64_t start_ms;
-        int64_t end_ms;
-        int64_t duration_ms;
-        float fill_percentage;
-        float stream_percentage;
-        int32_t is_buffering;
-        int32_t is_eof;
-    } miniaudio_buffered_range_t;
-
     /**
      * @brief Queries detailed buffered time range and progress metrics.
      * Useful for UI rendering (e.g. video/audio preloaded progress bar).
@@ -435,6 +451,46 @@ extern "C"
     MAP_API int32_t miniaudio_player_stream_get_status(
         miniaudio_player_t *player,
         miniaudio_stream_status_t *out_status);
+
+    /**
+     * @brief Returns monotonic version counter for metadata.
+     * Increments whenever Head, Tail, or ICY metadata updates. Returns 0 if none available.
+     */
+    MAP_API uint32_t miniaudio_player_get_meta_bytes_version(
+        const miniaudio_player_t *player);
+
+    /**
+     * @brief Returns the exact size in bytes of synthesized .metaBytes.
+     * Returns 0 if head metadata is not yet ready.
+     */
+    MAP_API size_t miniaudio_player_get_meta_bytes_size(
+        const miniaudio_player_t *player);
+
+    /**
+     * @brief Copies synthesized .metaBytes into out_buffer up to max_len bytes.
+     * Returns actual bytes copied.
+     */
+    MAP_API size_t miniaudio_player_copy_meta_bytes(
+        const miniaudio_player_t *player,
+        uint8_t *out_buffer,
+        size_t max_len);
+
+    /**
+     * @brief Ingests an ICY metadata chunk (e.g. from network streamer).
+     */
+    MAP_API int32_t miniaudio_player_set_icy_meta(
+        miniaudio_player_t *player,
+        const uint8_t *data,
+        size_t size);
+
+    /**
+     * @brief Probes tail bytes to detect trailing tags and lock audio_end in network streams.
+     */
+    MAP_API int32_t miniaudio_player_probe_tail(
+        miniaudio_player_t *player,
+        const uint8_t *tail_data,
+        size_t tail_size,
+        int64_t tail_offset);
 
     /* ========================================================================= */
     /* Playback Controls                                                         */

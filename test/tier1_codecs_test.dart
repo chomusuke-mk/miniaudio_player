@@ -676,7 +676,7 @@ void main() {
       );
     });
 
-    test('player.action.setDevice returns Future<bool> and updates audioDevice in state and reactive stream', () async {
+    test('player.action.setDevice returns Future<void> and updates audioDevice in state and reactive stream', () async {
       final devices = await MiniaudioPlayer.getAudioDevices();
       expect(devices, isNotEmpty);
 
@@ -689,8 +689,7 @@ void main() {
       final sub = player.stream.audioDevice.listen(events.add);
 
       // Switch to AudioDevice.auto
-      final bool autoSuccess = await player.action.setDevice(AudioDevice.auto);
-      expect(autoSuccess, isTrue);
+      await player.action.setDevice(AudioDevice.auto);
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       expect(player.state.audioDevice, isNotNull);
@@ -701,27 +700,24 @@ void main() {
       final hardwareDevices = devices.where((d) => !d.isAuto).toList();
       if (hardwareDevices.isNotEmpty) {
         final target = hardwareDevices.first;
-        final bool hwSuccess = await player.setDevice(target);
-        expect(hwSuccess, isTrue);
+        await player.setDevice(target);
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
         expect(player.state.audioDevice.name, isNotEmpty);
         expect(player.state.audioDevice.isAuto, isFalse);
       }
 
-      // Switch to a disconnected / non-existent device: must return false and fall back to default
+      // Switch to a disconnected / non-existent device: falls back to default
       const disconnectedDev = AudioDevice(
         id: 'deadbeef0123456789abcdefdeadbeef',
         name: 'Unplugged Headphones',
         isAuto: false,
       );
-      final bool dcSuccess = await player.action.setDevice(disconnectedDev);
-      expect(dcSuccess, isFalse);
+      await player.action.setDevice(disconnectedDev);
       expect(player.state.audioDevice.isAuto, isTrue);
 
       // Switch back to AudioDevice.auto
-      final bool backSuccess = await player.action.setDevice(AudioDevice.auto);
-      expect(backSuccess, isTrue);
+      await player.action.setDevice(AudioDevice.auto);
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       await sub.cancel();

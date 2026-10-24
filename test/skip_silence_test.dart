@@ -203,7 +203,6 @@ void main() {
       // Wait until playback reaches and skips the silence pause
       for (int i = 0; i < 25; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        player.pollAndEmit(force: true);
         if (player.state.silenceSavedDuration.inMilliseconds >= 400) break;
       }
 

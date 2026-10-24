@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'audio_device.dart';
 import 'buffered_range.dart';
@@ -46,6 +47,7 @@ class PlayerStream {
   final StreamController<double> _spatializerWidthController;
   final StreamController<Reverb> _reverbController;
   final StreamController<bool> _limiterEnabledController;
+  final StreamController<Uint8List?>? _metaBytesController;
 
   PlayerStream({
     required StreamController<Duration> positionController,
@@ -80,6 +82,7 @@ class PlayerStream {
     required StreamController<double> spatializerWidthController,
     required StreamController<Reverb> reverbController,
     required StreamController<bool> limiterEnabledController,
+    StreamController<Uint8List?>? metaBytesController,
   })  : _positionController = positionController,
         _durationController = durationController,
         _playingController = playingController,
@@ -111,7 +114,8 @@ class PlayerStream {
         _spatializerEnabledController = spatializerEnabledController,
         _spatializerWidthController = spatializerWidthController,
         _reverbController = reverbController,
-        _limiterEnabledController = limiterEnabledController;
+        _limiterEnabledController = limiterEnabledController,
+        _metaBytesController = metaBytesController;
 
   /// Broadcast stream of the current playback position.
   Stream<Duration> get position => _positionController.stream;
@@ -212,4 +216,10 @@ class PlayerStream {
 
   /// Broadcast stream of limiter enabled changes.
   Stream<bool> get limiterEnabled => _limiterEnabledController.stream;
+
+  /// Broadcast stream of clean synthesized container bytes containing all format headers,
+  /// initial and trailing metadata tags (ID3v2, ID3v1, APEv2, Vorbis Comments, FLAC PICTURE,
+  /// MP4 ilst/udta, ICY metadata, etc.) with 0 seconds of audio samples.
+  Stream<Uint8List?> get metaBytes =>
+      _metaBytesController?.stream ?? const Stream.empty();
 }

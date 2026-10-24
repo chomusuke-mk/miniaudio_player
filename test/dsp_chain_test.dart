@@ -231,5 +231,129 @@ void main() {
       await player.action.pause();
       expect(player.state.playing, isFalse);
     });
+
+    test('DSP actions emit directly on their respective streams', () async {
+      ReplayGainConfig? streamRg;
+      double? streamPreamp;
+      double? streamBalance;
+      bool? streamMono;
+      CrossfeedMode? streamCrossfeed;
+      bool? streamSpatializerEnabled;
+      double? streamSpatializerWidth;
+      bool? streamLimiter;
+      Reverb? streamReverb;
+
+      final subs = [
+        player.stream.replayGain.listen((v) => streamRg = v),
+        player.stream.preamp.listen((v) => streamPreamp = v),
+        player.stream.balance.listen((v) => streamBalance = v),
+        player.stream.mono.listen((v) => streamMono = v),
+        player.stream.crossfeed.listen((v) => streamCrossfeed = v),
+        player.stream.spatializerEnabled.listen((v) => streamSpatializerEnabled = v),
+        player.stream.spatializerWidth.listen((v) => streamSpatializerWidth = v),
+        player.stream.limiterEnabled.listen((v) => streamLimiter = v),
+        player.stream.reverb.listen((v) => streamReverb = v),
+      ];
+
+      await player.action.setReplayGain(gainDb: -6.0, peak: 0.9);
+      await player.action.setPreamp(2.5);
+      await player.action.setBalance(0.4);
+      await player.action.setMono(true);
+      await player.action.setCrossfeed(CrossfeedMode.chuMoy);
+      await player.action.setSpatializer(enabled: true, width: 1.5);
+      await player.action.setLimiter(false);
+      await player.action.setReverb(Reverb.cathedral);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(streamRg?.gainDb, equals(-6.0));
+      expect(streamRg?.peak, equals(0.9));
+      expect(streamPreamp, equals(2.5));
+      expect(streamBalance, equals(0.4));
+      expect(streamMono, isTrue);
+      expect(streamCrossfeed, equals(CrossfeedMode.chuMoy));
+      expect(streamSpatializerEnabled, isTrue);
+      expect(streamSpatializerWidth, equals(1.5));
+      expect(streamLimiter, isFalse);
+      expect(streamReverb, equals(Reverb.cathedral));
+
+      for (final s in subs) {
+        await s.cancel();
+      }
+    });
+
+    test('DSP actions do NOT flood unrelated streams', () async {
+      await player.action.open(testWavFile.path);
+
+      int positionEvents = 0;
+      int playingEvents = 0;
+      int preampEvents = 0;
+      int reverbEvents = 0;
+      int balanceEvents = 0;
+
+      final subs = [
+        player.stream.position.listen((_) => positionEvents++),
+        player.stream.playing.listen((_) => playingEvents++),
+        player.stream.preamp.listen((_) => preampEvents++),
+        player.stream.reverb.listen((_) => reverbEvents++),
+        player.stream.balance.listen((_) => balanceEvents++),
+      ];
+
+      // Mutate only balance
+      await player.action.setBalance(0.3);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(balanceEvents, equals(1));
+      expect(positionEvents, equals(0), reason: 'position should not emit on balance change');
+      expect(playingEvents, equals(0), reason: 'playing should not emit on balance change');
+      expect(preampEvents, equals(0), reason: 'preamp should not emit on balance change');
+      expect(reverbEvents, equals(0), reason: 'reverb should not emit on balance change');
+
+      for (final s in subs) {
+        await s.cancel();
+      }
+    });
+
+    test('Distinct deduplication prevents duplicate emissions for identical values', () async {
+      int volumeEvents = 0;
+      int balanceEvents = 0;
+      int preampEvents = 0;
+      int limiterEvents = 0;
+
+      final subs = [
+        player.stream.volume.listen((_) => volumeEvents++),
+        player.stream.balance.listen((_) => balanceEvents++),
+        player.stream.preamp.listen((_) => preampEvents++),
+        player.stream.limiterEnabled.listen((_) => limiterEvents++),
+      ];
+
+      // Initial changes
+      await player.action.setVolume(0.7);
+      await player.action.setBalance(-0.5);
+      await player.action.setPreamp(1.2);
+      await player.action.setLimiter(false);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(volumeEvents, equals(1));
+      expect(balanceEvents, equals(1));
+      expect(preampEvents, equals(1));
+      expect(limiterEvents, equals(1));
+
+      // Setting identical values MUST NOT emit duplicate events
+      await player.action.setVolume(0.7);
+      await player.action.setBalance(-0.5);
+      await player.action.setPreamp(1.2);
+      await player.action.setLimiter(false);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(volumeEvents, equals(1), reason: 'volume stream should deduplicate identical values');
+      expect(balanceEvents, equals(1), reason: 'balance stream should deduplicate identical values');
+      expect(preampEvents, equals(1), reason: 'preamp stream should deduplicate identical values');
+      expect(limiterEvents, equals(1), reason: 'limiter stream should deduplicate identical values');
+
+      for (final s in subs) {
+        await s.cancel();
+      }
+    });
   });
 }

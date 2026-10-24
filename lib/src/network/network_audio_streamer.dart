@@ -50,9 +50,19 @@ class NetworkAudioStreamer {
   int _rangeStart = 0;
   int _rangeEnd = 0;
   int _aheadHeadroomBytes = 0;
+  AudioCodec _detectedCodec = AudioCodec.unknown;
   Timer? _reconnectTimer;
   int _reconnectRetries = 0;
   static const int _maxReconnectRetries = 5;
+
+  void _log(int level, String message) {
+    if (MiniaudioPlayer.globalConfig.logLevel.value >= level) {
+      final tag = level == MapLogLevel.error
+          ? 'ERROR'
+          : (level == MapLogLevel.warning ? 'WARN' : 'DEBUG');
+      stderr.writeln('[miniaudio_player][$tag][network] $message');
+    }
+  }
 
   /// Current byte offset reached in the decoder read cursor.
   int get readCursorByte => _readCursorByte;
@@ -120,26 +130,37 @@ class NetworkAudioStreamer {
       ..userAgent = _defaultUserAgent
       ..autoUncompress = false;
 
-    // 1. Send initial request
-    final HttpClientResponse res;
-    try {
-      final req = await _client!.getUrl(_uri);
-      if (_headers != null) {
-        _headers.forEach((k, v) => req.headers.set(k, v));
+    // 1. Send initial request (with retry for transient 429/503 rate limits)
+    HttpClientResponse res;
+    int openRetries = 0;
+    while (true) {
+      try {
+        final req = await _client!.getUrl(_uri);
+        _applyCommonHeaders(req);
+        res = await req.close();
+      } catch (e) {
+        _disposeClient();
+        throw MiniaudioPlayerException(
+          'Failed to connect to $_uri: $e',
+          errorCode: MapResult.errorFileNotFound,
+        );
       }
-      if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
-        req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+
+      if ((res.statusCode == 429 || res.statusCode == 503) && openRetries < 3) {
+        openRetries++;
+        _log(MapLogLevel.warning, 'HTTP ${res.statusCode} (${res.reasonPhrase}) while opening $_uri (retry $openRetries/3)');
+        try {
+          await res.drain<void>();
+        } catch (_) {}
+        final retryAfter = int.tryParse(res.headers.value(HttpHeaders.retryAfterHeader) ?? '') ?? 1;
+        await Future<void>.delayed(Duration(milliseconds: min(2000, max(500, retryAfter * 1000))));
+        continue;
       }
-      res = await req.close();
-    } catch (e) {
-      _disposeClient();
-      throw MiniaudioPlayerException(
-        'Failed to connect to $_uri: $e',
-        errorCode: MapResult.errorFileNotFound,
-      );
+      break;
     }
 
     if (res.statusCode >= 400) {
+      _log(MapLogLevel.error, 'HTTP ${res.statusCode} (${res.reasonPhrase}) while opening $_uri');
       _disposeClient();
       throw MiniaudioPlayerException(
         'HTTP ${res.statusCode} (${res.reasonPhrase}) while opening $_uri',
@@ -163,7 +184,12 @@ class NetworkAudioStreamer {
     final initialBuilder = BytesBuilder(copy: false);
     var streamDone = false;
 
-    _responseSub = res.listen(
+    final icyMetaint = int.tryParse(res.headers.value('icy-metaint') ?? '') ?? 0;
+    final Stream<List<int>> audioStream = icyMetaint > 0
+        ? res.transform(_createIcyDemuxTransformer(icyMetaint))
+        : res;
+
+    _responseSub = audioStream.listen(
       (chunk) async {
         final pc = _probeCompleter;
         if (pc != null && !pc.isCompleted) {
@@ -227,6 +253,7 @@ class NetworkAudioStreamer {
       final probeBytes = initialBuilder.toBytes();
       _currentStreamOffset = probeBytes.length;
       detectedCodec = AudioCodec.detect(probeBytes, mime: contentType);
+      _detectedCodec = detectedCodec;
       final encodingFormat = _detectEncodingFormat(probeBytes, contentType);
 
       final totalDuration = _bufferAhead + _bufferBehind;
@@ -276,12 +303,7 @@ class NetworkAudioStreamer {
         final tailStart = _totalContentLength - tailSize;
         try {
           final tailReq = await _client!.getUrl(_uri);
-          if (_headers != null) {
-            _headers.forEach((k, v) => tailReq.headers.set(k, v));
-          }
-          if (tailReq.headers.value(HttpHeaders.userAgentHeader) == null) {
-            tailReq.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
-          }
+          _applyCommonHeaders(tailReq);
           tailReq.headers.set(HttpHeaders.rangeHeader, 'bytes=$tailStart-${_totalContentLength - 1}');
           final tailRes = await tailReq.close();
           if (tailRes.statusCode == 206) {
@@ -318,6 +340,33 @@ class NetworkAudioStreamer {
       }
 
       if (openRes == MapResult.success) {
+        // If container metadata extends beyond initial probe (e.g. giant FLAC PICTURE or ID3 art),
+        // buffer up to audioDataOffset so the full Head metadata is retained in RAM.
+        final detectedAudioOffset =
+            native.miniaudio_player_get_audio_data_offset(_player.handle);
+        if (detectedAudioOffset > probeBytes.length &&
+            !isLiveStream &&
+            !streamDone) {
+          final maxProbe = (_totalContentLength > 0 &&
+                  _totalContentLength <= bufferCap)
+              ? _totalContentLength
+              : min(bufferCap, 8 * 1024 * 1024);
+          if (targetProbeSize < maxProbe &&
+              probeBytes.length < detectedAudioOffset) {
+            targetProbeSize = min(
+                max(detectedAudioOffset, targetProbeSize + 1024 * 1024),
+                maxProbe);
+            _probeCompleter = Completer<void>();
+            _responseSub?.resume();
+            try {
+              await _probeCompleter!.future;
+            } catch (_) {
+              break;
+            }
+            continue;
+          }
+        }
+
         _hasPinnedHead = true;
         _pinnedHeadSize = min(256 * 1024, probeBytes.length);
         if (_totalContentLength > 0 && _totalContentLength < _pinnedHeadSize) {
@@ -358,9 +407,19 @@ class NetworkAudioStreamer {
       );
     }
 
-    _player.pollAndEmit(force: true);
 
-    // 4. Set persistent track metadata for UI and seek inspection
+    // 4. If Range requests are supported and container can have tail metadata (e.g. Ogg EOS page, ID3v1, APEv2),
+    // probe the tail synchronously before unpausing stream to resolve exact duration and metadata.
+    if (_isRangeSupported &&
+        !isLiveStream &&
+        _totalContentLength > 65536 &&
+        _detectedCodec != AudioCodec.pcm &&
+        _detectedCodec != AudioCodec.aac &&
+        _detectedCodec != AudioCodec.alac) {
+      await _probeTailAsync();
+    }
+
+    // 5. Set persistent track metadata for UI and seek inspection
     final audioDataOffset = native.miniaudio_player_get_audio_data_offset(_player.handle);
     final trackMeta = AudioTrackMetadata(
       codec: detectedCodec,
@@ -378,7 +437,7 @@ class NetworkAudioStreamer {
     );
     _player.setTrackMetadata(trackMeta);
 
-    // 5. Start adaptive backpressure flow control and resume subscription if paused
+    // 6. Start adaptive backpressure flow control and resume subscription if paused
     _startBackpressureMonitor();
     if (_responseSub != null && _responseSub!.isPaused && !_isPausedByBackpressure) {
       _responseSub!.resume();
@@ -388,7 +447,11 @@ class NetworkAudioStreamer {
   void _listenToResponse(HttpClientResponse res, int seekGen) {
     if (_isDisposed) return;
     _startBackpressureMonitor();
-    _responseSub = res.listen(
+    final icyMetaint = int.tryParse(res.headers.value('icy-metaint') ?? '') ?? 0;
+    final Stream<List<int>> audioStream = icyMetaint > 0
+        ? res.transform(_createIcyDemuxTransformer(icyMetaint))
+        : res;
+    _responseSub = audioStream.listen(
       (chunk) async {
         _responseSub?.pause();
         try {
@@ -432,8 +495,9 @@ class NetworkAudioStreamer {
         );
 
         if (feedRes != MapResult.success) {
-          int retries = 0;
-          while (!_isDisposed && _seekGeneration == seekGen && retries < 200) {
+          _responseSub?.pause();
+          _isPausedByBackpressure = true;
+          while (!_isDisposed && _seekGeneration == seekGen) {
             await Future<void>.delayed(const Duration(milliseconds: 25));
             if (_isDisposed || _seekGeneration != seekGen) break;
 
@@ -445,7 +509,6 @@ class NetworkAudioStreamer {
             if (feedRes == MapResult.success) {
               break;
             }
-            retries++;
           }
         }
 
@@ -470,6 +533,7 @@ class NetworkAudioStreamer {
 
   void _onStreamError(Object error) {
     if (_isDisposed) return;
+    _log(MapLogLevel.error, 'Stream error on $_uri: $error');
     _isStreamEnded = true;
     // Signal end or error to C stream
     native.miniaudio_player_stream_end(_player.handle);
@@ -505,14 +569,7 @@ class NetworkAudioStreamer {
     try {
       final req = await _client!.getUrl(_uri);
       if (_isDisposed || _seekGeneration != seekGen) return;
-
-      if (_headers != null) {
-        _headers.forEach((k, v) => req.headers.set(k, v));
-      }
-      if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
-        req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
-      }
-
+      _applyCommonHeaders(req);
       req.headers.set(HttpHeaders.rangeHeader, 'bytes=$_currentStreamOffset-');
 
       final res = await req.close();
@@ -530,7 +587,16 @@ class NetworkAudioStreamer {
         native.miniaudio_player_stream_flush(_player.handle, 0);
         _listenToResponse(res, seekGen);
       } else {
-        _onStreamDone();
+        _log(MapLogLevel.error, 'HTTP ${res.statusCode} (${res.reasonPhrase}) while reconnecting to $_uri');
+        try {
+          res.drain<void>().ignore();
+        } catch (_) {}
+        _onStreamError(
+          MiniaudioPlayerException(
+            'HTTP ${res.statusCode} (${res.reasonPhrase}) while reconnecting to $_uri',
+            errorCode: res.statusCode,
+          ),
+        );
       }
     } catch (e) {
       if (_seekGeneration == seekGen && !_isDisposed) {
@@ -603,12 +669,7 @@ class NetworkAudioStreamer {
           if (_isDisposed || _seekGeneration != thisSeekGen) {
             return;
           }
-          if (_headers != null) {
-            _headers.forEach((k, v) => req.headers.set(k, v));
-          }
-          if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
-            req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
-          }
+          _applyCommonHeaders(req);
           final res = await req.close();
           if (_isDisposed || _seekGeneration != thisSeekGen) {
             try {
@@ -640,7 +701,6 @@ class NetworkAudioStreamer {
         // In live streams with unknown total length, seek within circular buffer only
         native.miniaudio_player_seek(_player.handle, position.inMilliseconds);
       }
-      _player.pollAndEmit(force: true);
       return;
     }
 
@@ -697,13 +757,11 @@ class NetworkAudioStreamer {
 
     if (cacheRes == 1) {
       // In-RAM full cache HIT: audio was already buffered in sliding window or fully in pinned head
-      _player.pollAndEmit(force: true);
       return;
     }
 
     if (cacheRes == 2) {
       // Pinned Head cache HIT: audio is ready in RAM; seek returns immediately with 0 ms latency.
-      _player.pollAndEmit(force: true);
       _schedulePinnedHeadPrefetch(thisSeekGen);
       return;
     }
@@ -711,21 +769,32 @@ class NetworkAudioStreamer {
     // 2. Cache MISS (cacheRes == 0): reopen HTTP Byte-Range connection from targetByte
     try {
       final client = _ensureClient();
-      final req = await client.getUrl(_uri);
-      if (_headers != null) {
-        _headers.forEach((k, v) => req.headers.set(k, v));
-      }
-      if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
-        req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
-      }
-      req.headers.set(HttpHeaders.rangeHeader, 'bytes=$targetByte-');
+      HttpClientResponse? res;
+      int seekRetries = 0;
+      while (true) {
+        final req = await client.getUrl(_uri);
+        _applyCommonHeaders(req);
+        req.headers.set(HttpHeaders.rangeHeader, 'bytes=$targetByte-');
 
-      final res = await req.close();
-      if (_isDisposed || _seekGeneration != thisSeekGen) {
-        try {
-          res.drain<void>().ignore();
-        } catch (_) {}
-        return;
+        res = await req.close();
+        if (_isDisposed || _seekGeneration != thisSeekGen) {
+          try {
+            res.drain<void>().ignore();
+          } catch (_) {}
+          return;
+        }
+
+        if ((res.statusCode == 429 || res.statusCode == 503) && seekRetries < 3) {
+          seekRetries++;
+          _log(MapLogLevel.warning, 'HTTP ${res.statusCode} (${res.reasonPhrase}) on seek to byte $targetByte on $_uri (retry $seekRetries/3)');
+          try {
+            await res.drain<void>();
+          } catch (_) {}
+          final retryAfter = int.tryParse(res.headers.value(HttpHeaders.retryAfterHeader) ?? '') ?? 1;
+          await Future<void>.delayed(Duration(milliseconds: min(2000, max(500, retryAfter * 1000))));
+          continue;
+        }
+        break;
       }
 
       if (res.statusCode == 200 || res.statusCode == 206) {
@@ -736,6 +805,17 @@ class NetworkAudioStreamer {
           native.miniaudio_player_stream_flush(_player.handle, 0);
         }
         _listenToResponse(res, thisSeekGen);
+      } else {
+        _log(MapLogLevel.error, 'HTTP ${res.statusCode} (${res.reasonPhrase}) on seek to byte $targetByte on $_uri');
+        try {
+          res.drain<void>().ignore();
+        } catch (_) {}
+        _onStreamError(
+          MiniaudioPlayerException(
+            'HTTP ${res.statusCode} (${res.reasonPhrase}) on seek to $_uri',
+            errorCode: res.statusCode,
+          ),
+        );
       }
     } catch (e) {
       if (_isDisposed || _seekGeneration != thisSeekGen) {
@@ -781,13 +861,7 @@ class NetworkAudioStreamer {
         final client = _ensureClient();
         final req = await client.getUrl(_uri);
         if (_isDisposed || _seekGeneration != seekGen) return;
-
-        if (_headers != null) {
-          _headers.forEach((k, v) => req.headers.set(k, v));
-        }
-        if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
-          req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
-        }
+        _applyCommonHeaders(req);
 
         if (_isRangeSupported) {
           req.headers.set(HttpHeaders.rangeHeader, 'bytes=$headSize-');
@@ -808,6 +882,11 @@ class NetworkAudioStreamer {
           _currentStreamOffset = 0;
           native.miniaudio_player_stream_flush(_player.handle, 0);
           _listenToResponse(res, seekGen);
+        } else {
+          _log(MapLogLevel.warning, 'HTTP ${res.statusCode} (${res.reasonPhrase}) on pinned head prefetch for $_uri');
+          try {
+            res.drain<void>().ignore();
+          } catch (_) {}
         }
       } catch (e) {
         if (_seekGeneration == seekGen && !_isDisposed) {
@@ -914,6 +993,108 @@ class NetworkAudioStreamer {
       );
     }
     _disposeClient();
+  }
+
+  void _applyCommonHeaders(HttpClientRequest req) {
+    if (_headers != null) {
+      _headers.forEach((k, v) => req.headers.set(k, v));
+    }
+    if (req.headers.value(HttpHeaders.userAgentHeader) == null) {
+      req.headers.set(HttpHeaders.userAgentHeader, _defaultUserAgent);
+    }
+    if (req.headers.value('Icy-MetaData') == null &&
+        req.headers.value('icy-metadata') == null) {
+      req.headers.set('Icy-MetaData', '1');
+    }
+  }
+
+  StreamTransformer<List<int>, List<int>> _createIcyDemuxTransformer(
+      int icyMetaint) {
+    int remainingAudio = icyMetaint;
+    int remainingMeta = 0;
+    bool readingLength = false;
+    final metaBuilder = BytesBuilder(copy: false);
+
+    return StreamTransformer<List<int>, List<int>>.fromHandlers(
+      handleData: (chunk, sink) {
+        int offset = 0;
+        while (offset < chunk.length) {
+          if (remainingAudio > 0) {
+            final takeAudio = min(remainingAudio, chunk.length - offset);
+            sink.add(chunk.sublist(offset, offset + takeAudio));
+            offset += takeAudio;
+            remainingAudio -= takeAudio;
+            if (remainingAudio == 0) {
+              readingLength = true;
+            }
+          } else if (readingLength) {
+            final l = chunk[offset++];
+            readingLength = false;
+            if (l > 0) {
+              remainingMeta = l * 16;
+              metaBuilder.clear();
+            } else {
+              remainingAudio = icyMetaint;
+            }
+          } else if (remainingMeta > 0) {
+            final takeMeta = min(remainingMeta, chunk.length - offset);
+            metaBuilder.add(chunk.sublist(offset, offset + takeMeta));
+            offset += takeMeta;
+            remainingMeta -= takeMeta;
+            if (remainingMeta == 0) {
+              final metaBytes = metaBuilder.takeBytes();
+              _player.setIcyMeta(metaBytes);
+              remainingAudio = icyMetaint;
+            }
+          }
+        }
+      },
+      handleDone: (sink) => sink.close(),
+      handleError: (error, stackTrace, sink) =>
+          sink.addError(error, stackTrace),
+    );
+  }
+
+  Future<void> _probeTailAsync() async {
+    if (_isDisposed ||
+        !_isRangeSupported ||
+        _isLive ||
+        _detectedCodec == AudioCodec.pcm ||
+        _detectedCodec == AudioCodec.aac ||
+        _detectedCodec == AudioCodec.alac ||
+        _totalContentLength <= 65536) {
+      return;
+    }
+    if (_isDisposed || _client == null) return;
+
+    final tailSize = min(65536, _totalContentLength);
+    final tailStart = _totalContentLength - tailSize;
+    try {
+      final req = await _client!.getUrl(_uri);
+      _applyCommonHeaders(req);
+      req.headers.set(
+        HttpHeaders.rangeHeader,
+        'bytes=$tailStart-${_totalContentLength - 1}',
+      );
+      final res = await req.close();
+      if (res.statusCode == 206) {
+        final tailBytes = await res
+            .fold<BytesBuilder>(BytesBuilder(copy: false), (b, d) => b..add(d))
+            .then((b) => b.takeBytes());
+        if (!_isDisposed && tailBytes.isNotEmpty) {
+          _player.probeTail(tailBytes, tailStart);
+        }
+      } else {
+        if (res.statusCode == 429 || res.statusCode == 503) {
+          _log(MapLogLevel.warning, 'HTTP ${res.statusCode} (${res.reasonPhrase}) on tail probe for $_uri');
+        }
+        try {
+          res.drain<void>().ignore();
+        } catch (_) {}
+      }
+    } catch (_) {
+      // Ignored if network tail probe fails or interrupted; stream will fetch normally at EOF
+    }
   }
 
   void _disposeClient() {

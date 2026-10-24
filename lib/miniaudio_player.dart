@@ -17,3 +17,11 @@ export 'src/reverb.dart';
 export 'src/api/audio_source.dart';
 export 'src/api/buffered_range.dart';
 export 'src/api/track_metadata.dart';
+export 'src/api/loop_mode.dart';
+export 'src/api/crossfade_config.dart';
+export 'src/api/engine_item.dart';
+export 'src/api/engine_state.dart';
+export 'src/api/engine_stream.dart';
+export 'src/api/engine_action.dart';
+export 'src/api/miniaudio_engine.dart';
+

@@ -486,7 +486,6 @@ void main() {
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      player.pollAndEmit(force: true);
 
       final posAt2x = player.state.position.inMilliseconds;
       expect(posAt2x, greaterThanOrEqualTo(750));
@@ -500,7 +499,6 @@ void main() {
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      player.pollAndEmit(force: true);
 
       final posAtHalf = player.state.position.inMilliseconds;
       expect(posAtHalf, greaterThanOrEqualTo(150));
@@ -514,14 +512,12 @@ void main() {
 
       // Play 300ms at 1.0x
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      player.pollAndEmit(force: true);
       final pos1 = player.state.position.inMilliseconds;
       expect(pos1, greaterThanOrEqualTo(150));
 
       // Switch to 2.0x speed
       await player.action.setRate(2.0);
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      player.pollAndEmit(force: true);
       final pos2 = player.state.position.inMilliseconds;
       final delta = pos2 - pos1;
       // In 300ms at 2x, delta should be around 600ms (at least 450ms)
