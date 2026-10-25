@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../equalizer.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
+import 'audio_source.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'engine_item.dart';
@@ -157,6 +158,7 @@ class EngineAction<T> {
   /// playback. Call [play] to start playback.
   Future<void> openAsset(
     String assetKey, {
+    String? package,
     T? data,
     double? replayGainDb,
     double? replayPeak,
@@ -164,6 +166,30 @@ class EngineAction<T> {
       open(
         EngineItem<T>.asset(
           assetKey,
+          package: package,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+        ),
+      );
+
+  /// Opens an open native file descriptor [fd] (`fd://<fd>`) as a 1-item queue
+  /// without starting playback. Call [play] to start playback.
+  Future<void> openFd(
+    int fd, {
+    bool ownFd = true,
+    Duration? bufferAhead,
+    T? data,
+    double? replayGainDb,
+    double? replayPeak,
+  }) =>
+      open(
+        EngineItem<T>(
+          source: AudioSource.fd(
+            fd,
+            ownFd: ownFd,
+            bufferAhead: bufferAhead,
+          ),
           data: data,
           replayGainDb: replayGainDb,
           replayPeak: replayPeak,

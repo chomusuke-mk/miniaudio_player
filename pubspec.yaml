@@ -30,8 +30,8 @@ dependencies:
 
 flutter:
   assets:
-    - assets/web/miniaudio_player.wasm.br
-    - assets/web/miniaudio_player.wasm
+    - assets/miniaudio_player.wasm.br
+    - assets/miniaudio_player.wasm
 
 dev_dependencies:
   ffigen: ^23.0.0

@@ -62,9 +62,7 @@ class EngineItem<T> {
     int? id,
     int position = 0,
   }) {
-    final normalizedPath = filePath.startsWith('file://')
-        ? Uri.parse(filePath).toFilePath()
-        : filePath;
+    final normalizedPath = FileByteProvider.normalizeFileUriOrPath(filePath);
     return EngineItem<T>(
       source: FileAudioSource(normalizedPath),
       data: data,
@@ -127,8 +125,8 @@ class EngineItem<T> {
   }
 
   /// Creates an [EngineItem] from a [Uri], automatically selecting
-  /// [LiveStreamAudioSource], [NetworkAudioSource], [AssetAudioSource], or
-  /// [FileAudioSource].
+  /// [FileAudioSource], [ResolvingAudioSource], [AssetAudioSource],
+  /// [MemoryAudioSource], [LiveStreamAudioSource], or [NetworkAudioSource].
   factory EngineItem.uri(
     Uri uri, {
     Map<String, String>? headers,
@@ -140,59 +138,19 @@ class EngineItem<T> {
     int? id,
     int position = 0,
   }) {
-    final scheme = uri.scheme.toLowerCase();
-    if (scheme == 'http' || scheme == 'https') {
-      return isLive
-          ? EngineItem<T>.liveStream(
-              uri,
-              headers: headers,
-              jitterBuffer: bufferAhead,
-              data: data,
-              replayGainDb: replayGainDb,
-              replayPeak: replayPeak,
-              id: id,
-              position: position,
-            )
-          : EngineItem<T>.network(
-              uri,
-              headers: headers,
-              bufferAhead: bufferAhead,
-              data: data,
-              replayGainDb: replayGainDb,
-              replayPeak: replayPeak,
-              id: id,
-              position: position,
-            );
-    }
-    if (scheme == 'asset' || scheme == 'assets' || scheme == 'flutter-asset') {
-      final raw = uri.toString().replaceFirst(
-            RegExp(r'^(flutter-)?asset(s)?:///?', caseSensitive: false),
-            '',
-          );
-      final normalized = raw.startsWith('assets/') ? raw : 'assets/$raw';
-      return EngineItem<T>.asset(
-        normalized,
-        data: data,
-        replayGainDb: replayGainDb,
-        replayPeak: replayPeak,
-        id: id,
-        position: position,
-      );
-    }
-    if (scheme == 'file' || scheme.isEmpty) {
-      return EngineItem<T>.file(
-        scheme == 'file' ? uri.toFilePath() : uri.toString(),
-        data: data,
-        replayGainDb: replayGainDb,
-        replayPeak: replayPeak,
-        id: id,
-        position: position,
-      );
-    }
-    throw ArgumentError.value(
+    final resolved = AudioSource.uri(
       uri,
-      'uri',
-      'Unsupported URI scheme: ${uri.scheme}',
+      headers: headers,
+      isLive: isLive,
+      bufferAhead: bufferAhead,
+    );
+    return EngineItem<T>(
+      source: resolved,
+      data: data,
+      replayGainDb: replayGainDb,
+      replayPeak: replayPeak,
+      id: id,
+      position: position,
     );
   }
 
@@ -218,6 +176,7 @@ class EngineItem<T> {
   /// Creates an [EngineItem] backed by a bundled application [assetKey].
   factory EngineItem.asset(
     String assetKey, {
+    String? package,
     T? data,
     double? replayGainDb,
     double? replayPeak,
@@ -225,7 +184,7 @@ class EngineItem<T> {
     int position = 0,
   }) {
     return EngineItem<T>(
-      source: AssetAudioSource(assetKey),
+      source: AssetAudioSource(assetKey, package: package),
       data: data,
       replayGainDb: replayGainDb,
       replayPeak: replayPeak,
@@ -352,6 +311,9 @@ class EngineItem<T> {
   /// Whether this item represents an infinite live stream (`LiveStreamAudioSource`).
   bool get isLiveStream =>
       source is LiveStreamAudioSource ||
+      (source is NetworkAudioSource && (source as NetworkAudioSource).isLive) ||
+      (source is ResolvingAudioSource &&
+          (source as ResolvingAudioSource).isLive) ||
       (source is CustomAudioSource &&
           (source as CustomAudioSource).provider.isLiveStream);
 
@@ -362,23 +324,33 @@ class EngineItem<T> {
       (source is CustomAudioSource &&
           (source as CustomAudioSource).provider.isNetwork);
 
-  /// Returns the local filesystem path if [source] is a [FileAudioSource], or `null` otherwise.
-  String? get filePath =>
-      source is FileAudioSource ? (source as FileAudioSource).filePath : null;
+  /// Returns the local filesystem path if [source] is a [FileAudioSource] or a
+  /// [ResolvingAudioSource] with a deduced canonical path, or `null` otherwise.
+  String? get filePath {
+    final s = source;
+    if (s is FileAudioSource) return s.filePath;
+    if (s is ResolvingAudioSource) return s.canonicalFilePath;
+    return null;
+  }
 
-  /// Returns the network [Uri] if [source] is a [NetworkAudioSource] or [LiveStreamAudioSource].
+  /// Returns the [Uri] associated with [source], if available.
   Uri? get uri {
     final s = source;
     if (s is NetworkAudioSource) return s.uri;
     if (s is LiveStreamAudioSource) return s.uri;
+    if (s is ResolvingAudioSource) return s.uri;
+    if (s is MemoryAudioSource) return s.uri;
     if (s is CustomAudioSource) return s.provider.uri;
     if (s is FileAudioSource && s.filePath.isNotEmpty) {
+      if (UriCapabilityResolver.isWindowsFilePath(s.filePath)) {
+        return Uri.file(s.filePath, windows: true);
+      }
       return Uri.file(s.filePath);
     }
     return null;
   }
 
-  /// Canonical key identifying the underlying audio resource.
+  /// Canonical key identifying the underlying audio resource (Precaución 5).
   ///
   /// Used internally by the queue and crossfade engine to detect adjacent
   /// duplicate sources (preventing a track from crossfading into itself or
@@ -386,10 +358,17 @@ class EngineItem<T> {
   String get sourceKey {
     final s = source;
     return switch (s) {
-      FileAudioSource() => 'file:${s.filePath}',
+      FileAudioSource() =>
+        'file:${UriCapabilityResolver.canonicalizeLocalPathForKey(s.filePath)}',
+      ResolvingAudioSource() => s.canonicalFilePath != null &&
+              s.canonicalFilePath!.isNotEmpty
+          ? 'file:${UriCapabilityResolver.canonicalizeLocalPathForKey(s.canonicalFilePath!)}'
+          : 'uri:${s.uri}',
       LiveStreamAudioSource() => 'live:${s.uri}',
       NetworkAudioSource() => s.isLive ? 'live:${s.uri}' : 'net:${s.uri}',
-      AssetAudioSource() => 'asset:${s.assetKey}',
+      AssetAudioSource() => s.package != null && s.package!.isNotEmpty
+          ? 'asset:packages/${s.package}/${s.assetKey}'
+          : 'asset:${s.assetKey}',
       MemoryAudioSource() => 'mem:${identityHashCode(s.bytes)}',
       CustomAudioSource() => 'custom:${s.provider.sourceId}',
     };
@@ -400,6 +379,8 @@ class EngineItem<T> {
     final s = source;
     return switch (s) {
       FileAudioSource() => s.filePath.trim().isNotEmpty,
+      ResolvingAudioSource() =>
+        !s.rejectedByPathTraversal && s.uri.toString().trim().isNotEmpty,
       NetworkAudioSource() => s.uri.toString().trim().isNotEmpty,
       AssetAudioSource() => s.assetKey.trim().isNotEmpty,
       MemoryAudioSource() => s.bytes.isNotEmpty,

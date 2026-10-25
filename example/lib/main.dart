@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert' show base64Encode;
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -10,15 +11,14 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Register global Flutter asset loader for direct in-memory asset decoding (0 disk I/O)
-  MiniaudioPlayerGlobalConfig.assetLoader = (key) async {
-    final byteData = await rootBundle.load(key);
-    return byteData.buffer.asUint8List(
-      byteData.offsetInBytes,
-      byteData.lengthInBytes,
-    );
-  };
   MiniaudioPlayer.config(
+    assetLoader: (key) async {
+      final byteData = await rootBundle.load(key);
+      return byteData.buffer.asUint8List(
+        byteData.offsetInBytes,
+        byteData.lengthInBytes,
+      );
+    },
     defaultBufferSize: 0,
     logLevel: MiniaudioLogLevel.verbose,
     defaultAudioDevice: AudioDevice.auto,
@@ -42,17 +42,19 @@ class AudioTrack {
   bool get isLive => source is LiveStreamAudioSource;
 
   String get displayType {
-    if (isGenerated) return 'Sintetizado (RAM)';
-    if (source is AssetAudioSource) return 'Asset';
+    if (isGenerated) return 'data: URI';
+    if (source is ResolvingAudioSource) return 'content / fd';
+    if (source is AssetAudioSource) return 'asset://';
     if (source is MemoryAudioSource) return 'Memoria RAM';
-    if (source is LiveStreamAudioSource) return 'Live Stream';
-    if (source is NetworkAudioSource) return 'URL / Red';
-    if (source is FileAudioSource) return 'Archivo';
-    return 'Audio';
+    if (source is LiveStreamAudioSource) return 'icy:// (Live)';
+    if (source is NetworkAudioSource) return 'https://';
+    if (source is FileAudioSource) return 'file://';
+    return 'URI';
   }
 
   IconData get icon {
     if (isGenerated) return Icons.graphic_eq;
+    if (source is ResolvingAudioSource) return Icons.alt_route;
     if (source is LiveStreamAudioSource) return Icons.radio;
     if (source is NetworkAudioSource) return Icons.cloud_outlined;
     if (source is MemoryAudioSource) return Icons.memory;
@@ -62,6 +64,7 @@ class AudioTrack {
 
   Color get iconColor {
     if (isGenerated) return Colors.amberAccent;
+    if (source is ResolvingAudioSource) return Colors.orangeAccent;
     if (source is LiveStreamAudioSource) return Colors.redAccent;
     if (source is NetworkAudioSource) return Colors.lightBlueAccent;
     if (source is MemoryAudioSource) return Colors.purpleAccent;
@@ -326,7 +329,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     }
 
-    // 1. Scan Flutter AssetManifest strictly under assets/music/
+    // 1. Load Flutter assets directly using first-class asset:// URIs (0 disk I/O)
     try {
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
       final assets = manifest.listAssets();
@@ -334,9 +337,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (asset.startsWith('assets/music/') && _isAudioFile(asset)) {
           final filename = asset.substring('assets/music/'.length);
           addTrack(
-            id: asset,
+            id: 'asset://$asset',
             title: filename,
-            source: AudioSource.asset(asset),
+            source: AudioSource.uri('asset://$asset'),
           );
         }
       }
@@ -344,49 +347,48 @@ class _PlayerScreenState extends State<PlayerScreen> {
       debugPrint('AssetManifest query note: $e');
     }
 
-    // 2. Scan strictly assets/music on the local filesystem (native desktop/mobile only)
-    if (!kIsWeb) {
-      final searchDirs = [
-        Directory('assets/music'),
-        Directory('example/assets/music'),
+    // Fallback bundled assets if manifest is unavailable in test environments
+    if (tracks.isEmpty) {
+      const fallbackAssets = [
+        'assets/music/salida.mp3',
+        'assets/music/salida.flac',
+        'assets/music/salida.wav',
+        'assets/music/salida.ogg',
+        'assets/music/cbr_noxing.mp3',
       ];
-      for (final dir in searchDirs) {
-        if (dir.existsSync()) {
-          for (final entity in dir.listSync()) {
-            if (entity is File && _isAudioFile(entity.path)) {
-              final filename = entity.path.split(RegExp(r'[/\\]')).last;
-              addTrack(
-                id: entity.path,
-                title: filename,
-                source: AudioSource.file(entity.path),
-              );
-            }
-          }
-        }
+      for (final asset in fallbackAssets) {
+        final filename = asset.split('/').last;
+        addTrack(
+          id: 'asset://$asset',
+          title: filename,
+          source: AudioSource.uri('asset://$asset'),
+        );
       }
     }
 
-    // 3. Pre-load remote network streams & in-memory synth demo tracks
+    // 2. Remote progressive HTTP stream (promoted to NetworkAudioSource)
     addTrack(
       id: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
       title: 'SoundHelix Song 1 (Remote MP3)',
-      source: AudioSource.network(
-        Uri.parse('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'),
+      source: AudioSource.uri(
+        'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
       ),
     );
 
+    // 3. Live Icecast stream using native icy:// URI scheme (promoted to LiveStreamAudioSource)
     addTrack(
-      id: 'https://icecast.radiofrance.fr/fip-midfi.mp3',
+      id: 'icy://icecast.radiofrance.fr/fip-midfi.mp3',
       title: 'Radio FIP (Icecast Live Stream)',
-      source: AudioSource.liveStream(
-        Uri.parse('https://icecast.radiofrance.fr/fip-midfi.mp3'),
-      ),
+      source: AudioSource.uri('icy://icecast.radiofrance.fr/fip-midfi.mp3'),
     );
 
+    // 4. In-memory synthesized audio via RFC 2397 data: URI (promoted to MemoryAudioSource)
+    final synthWav = _generateSineWaveBytes();
+    final synthBase64 = base64Encode(synthWav);
     addTrack(
-      id: 'memory_synth_tone_440',
-      title: 'Tono 440Hz Sintetizado (RAM / openMemory)',
-      source: AudioSource.memory(_generateSineWaveBytes()),
+      id: 'data:audio/wav;base64,...',
+      title: 'Tono 440Hz Sintetizado (data: URI)',
+      source: AudioSource.uri('data:audio/wav;base64,$synthBase64'),
       isGenerated: true,
     );
 
@@ -419,29 +421,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       return;
     }
+
+    // Deduce local path from AudioSource or URI using capability resolver
     String? localPath;
     if (track.source is FileAudioSource) {
       localPath = (track.source as FileAudioSource).filePath;
-    } else if (track.source is AssetAudioSource) {
-      final key = (track.source as AssetAudioSource).assetKey;
-      final clean = key.replaceFirst(RegExp(r'^assets/'), '');
-      final candidates = [
-        key,
-        'assets/$clean',
-        'example/assets/$clean',
-        'assets/music/$clean',
-        'example/assets/music/$clean',
-      ];
-      for (final c in candidates) {
-        if (File(c).existsSync()) {
-          localPath = c;
-          break;
-        }
+    } else {
+      final uri = track.source.uri ?? Uri.tryParse(track.id);
+      if (uri != null) {
+        final deduction = UriCapabilityResolver.deduceLocalPathFromUri(uri);
+        localPath = deduction.canonicalPath ??
+            UriCapabilityResolver.resolveDirectlyReadableCandidate(
+              deduction.candidatePaths,
+            );
       }
     }
 
-    _samplePath = localPath ?? track.id;
-    if (localPath != null) {
+    // For desktop dev, if the asset exists in the local workspace directory, allow waveform analysis
+    if (localPath == null && track.source is AssetAudioSource) {
+      final key = (track.source as AssetAudioSource).assetKey;
+      if (File(key).existsSync()) {
+        localPath = key;
+      } else if (File('example/$key').existsSync()) {
+        localPath = 'example/$key';
+      }
+    }
+
+    _samplePath = localPath ?? (track.source.uri?.toString() ?? track.id);
+    if (localPath != null && File(localPath).existsSync()) {
       _runAnalysis();
     } else {
       if (mounted) {
@@ -509,7 +516,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Introduce una URL (HTTP/HTTPS de archivo remoto o radio en vivo), URI (file://, asset://), o ruta de archivo local. El motor detecta automáticamente si es transmisión en vivo o archivo remoto:',
+                      'Introduce cualquier URI admitida (HTTP/HTTPS, icy://, asset://, file://, data: RFC 2397, content:// o fd://). El motor resuelve y promueve las capacidades automáticamente:',
                       style: TextStyle(fontSize: 13, color: Colors.white70),
                     ),
                     const SizedBox(height: 12),
@@ -517,8 +524,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       controller: uriController,
                       autofocus: true,
                       decoration: InputDecoration(
-                        labelText: 'URL / URI / Ruta de archivo',
-                        hintText: 'https://... o /path/to/song.mp3',
+                        labelText: 'URI / URL / Ruta de archivo',
+                        hintText: 'icy://..., asset://..., file://..., https://...',
                         prefixIcon: const Icon(Icons.link),
                         border: const OutlineInputBorder(),
                         suffixIcon: IconButton(
@@ -542,7 +549,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Ejemplos rápidos:',
+                      'Esquemas de ejemplo:',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -556,16 +563,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       children: [
                         ActionChip(
                           avatar: const Icon(Icons.radio, size: 14, color: Colors.redAccent),
-                          label: const Text('Radio FIP (Icecast)', style: TextStyle(fontSize: 11)),
+                          label: const Text('Radio (icy://)', style: TextStyle(fontSize: 11)),
                           onPressed: () {
-                            uriController.text = 'https://icecast.radiofrance.fr/fip-midfi.mp3';
-                            titleController.text = 'Radio FIP (Icecast Live)';
+                            uriController.text = 'icy://icecast.radiofrance.fr/fip-midfi.mp3';
+                            titleController.text = 'Radio FIP (icy://)';
+                            setDialogState(() {});
+                          },
+                        ),
+                        ActionChip(
+                          avatar: const Icon(Icons.audiotrack, size: 14, color: Colors.tealAccent),
+                          label: const Text('Asset (asset://)', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            uriController.text = 'asset://assets/music/salida.mp3';
+                            titleController.text = 'Salida MP3 (asset://)';
                             setDialogState(() {});
                           },
                         ),
                         ActionChip(
                           avatar: const Icon(Icons.cloud_download, size: 14, color: Colors.lightBlueAccent),
-                          label: const Text('SoundHelix MP3', style: TextStyle(fontSize: 11)),
+                          label: const Text('SoundHelix (https://)', style: TextStyle(fontSize: 11)),
                           onPressed: () {
                             uriController.text = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
                             titleController.text = 'SoundHelix Song 1 (Remote)';

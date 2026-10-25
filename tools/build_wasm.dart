@@ -18,7 +18,7 @@ void main(List<String> args) async {
 
   // Ensure output dirs exist
   final buildDir = Directory('build/web');
-  final assetsDir = Directory('assets/web');
+  final assetsDir = Directory('assets');
   if (!buildDir.existsSync()) buildDir.createSync(recursive: true);
   if (!assetsDir.existsSync()) assetsDir.createSync(recursive: true);
 
@@ -234,8 +234,8 @@ void main(List<String> args) async {
     print('wasm-opt skipped: $e');
   }
 
-  // Copy uncompressed wasm to assets/web
-  wasmFile.copySync('assets/web/miniaudio_player.wasm');
+  // Copy uncompressed wasm to assets
+  wasmFile.copySync('assets/miniaudio_player.wasm');
 
   // Compress with brotli
   print('3. Compressing with Brotli (-q 11)...');
@@ -247,14 +247,14 @@ void main(List<String> args) async {
     '-f',
     'build/web/miniaudio_player.wasm',
     '-o',
-    'assets/web/miniaudio_player.wasm.br',
+    'assets/miniaudio_player.wasm.br',
   ]);
   if (brotliResult.exitCode != 0) {
     print('brotli failed: ${brotliResult.stderr}');
     exit(1);
   }
 
-  final brFile = File('assets/web/miniaudio_player.wasm.br');
+  final brFile = File('assets/miniaudio_player.wasm.br');
   print(
       'Brotli compressed size: ${(brFile.lengthSync() / 1024).toStringAsFixed(1)} KB');
   print('=== WebAssembly build completed successfully! ===');

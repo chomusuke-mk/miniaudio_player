@@ -303,7 +303,7 @@ class UnifiedAudioLoader {
       await _probeCompleter!.future;
     } catch (e) {
       _state = UnifiedLoaderState.error;
-      await _cancelActiveStream();
+      await _cancelActiveStream(closeProvider: true);
       throw MiniaudioPlayerException(
         'Connection interrupted while buffering stream from ${provider.sourceId}: $e',
         errorCode: MapResult.errorGeneric,
@@ -312,7 +312,7 @@ class UnifiedAudioLoader {
 
     if (initialBuilder.isEmpty) {
       _state = UnifiedLoaderState.error;
-      await _cancelActiveStream();
+      await _cancelActiveStream(closeProvider: true);
       throw const MiniaudioPlayerException(
         'Empty audio stream received',
         errorCode: MapResult.errorDecodeFailed,
@@ -441,10 +441,10 @@ class UnifiedAudioLoader {
         if ((!_isLive &&
                 _totalContentLength > 0 &&
                 probeBytes.length >= _totalContentLength) ||
-            (streamDone && !_isLive && _totalContentLength <= 0)) {
+            (streamDone && (!_isLive || !provider.isNetwork) && _totalContentLength <= 0)) {
           _isStreamEnded = true;
           _player.backend.streamEnd();
-        } else if (streamDone) {
+        } else if (streamDone && provider.isNetwork) {
           _responseSub = null;
           _scheduleReconnect(gen, isLive: _isLive);
         }
@@ -474,7 +474,7 @@ class UnifiedAudioLoader {
 
     if (openRes != MapResult.success) {
       _state = UnifiedLoaderState.error;
-      await _cancelActiveStream();
+      await _cancelActiveStream(closeProvider: true);
       throw MiniaudioPlayerException(
         'Failed to initialize audio engine for ${provider.sourceId}: ${MapResult.describe(openRes)}',
         errorCode: openRes,
@@ -720,7 +720,7 @@ class UnifiedAudioLoader {
   void _onStreamDone() {
     if (_isDisposed || _isStopped) return;
     _responseSub = null;
-    if (_isLive || _totalContentLength <= 0) {
+    if ((_isLive || _totalContentLength <= 0) && provider.isNetwork) {
       _scheduleReconnect(_seekGeneration, isLive: true);
       return;
     }
@@ -761,7 +761,11 @@ class UnifiedAudioLoader {
     try {
       final res = await provider.open(offset: targetByte);
       if (_isDisposed || _isStopped || _seekGeneration != seekGen) {
-        await provider.close();
+        if (_isDisposed) {
+          await provider.close();
+        } else {
+          await provider.abortActiveStream();
+        }
         return;
       }
       if (_isLive) {
@@ -907,7 +911,11 @@ class UnifiedAudioLoader {
       _player.notifyBuffering(true);
       final res = await provider.open(offset: targetByte);
       if (_isDisposed || _seekGeneration != thisSeekGen) {
-        await provider.close();
+        if (_isDisposed) {
+          await provider.close();
+        } else {
+          await provider.abortActiveStream();
+        }
         return;
       }
       _currentStreamOffset = targetByte;
@@ -933,7 +941,7 @@ class UnifiedAudioLoader {
     _isPausedByBackpressure = false;
   }
 
-  Future<void> _cancelActiveStream() async {
+  Future<void> _cancelActiveStream({bool closeProvider = false}) async {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     final sub = _responseSub;
@@ -941,7 +949,11 @@ class UnifiedAudioLoader {
     try {
       await sub?.cancel();
     } catch (_) {}
-    await provider.close();
+    if (closeProvider) {
+      await provider.close();
+    } else {
+      await provider.abortActiveStream();
+    }
   }
 
   /// Disposes the loader and closes the underlying [provider].
@@ -955,7 +967,7 @@ class UnifiedAudioLoader {
         const MiniaudioPlayerException('Loader disposed before probe completion'),
       );
     }
-    await _cancelActiveStream();
+    await _cancelActiveStream(closeProvider: true);
   }
 
   static int _detectEncodingFormat(List<int> bytes, String? contentType) {

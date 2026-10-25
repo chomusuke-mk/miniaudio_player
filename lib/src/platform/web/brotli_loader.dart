@@ -4,13 +4,13 @@ import 'package:web/web.dart' as web;
 /// Helper utility resolving and loading miniaudio WebAssembly assets.
 class BrotliWasmLoader {
   static const List<String> candidatePaths = [
-    'assets/packages/miniaudio_player/assets/web/miniaudio_player.wasm.br',
-    'assets/assets/web/miniaudio_player.wasm.br',
-    'packages/miniaudio_player/assets/web/miniaudio_player.wasm.br',
-    'assets/web/miniaudio_player.wasm.br',
-    'assets/packages/miniaudio_player/assets/web/miniaudio_player.wasm',
-    'assets/assets/web/miniaudio_player.wasm',
-    'assets/web/miniaudio_player.wasm',
+    'assets/packages/miniaudio_player/assets/miniaudio_player.wasm.br',
+    'assets/assets/miniaudio_player.wasm.br',
+    'packages/miniaudio_player/assets/miniaudio_player.wasm.br',
+    'assets/miniaudio_player.wasm.br',
+    'assets/packages/miniaudio_player/assets/miniaudio_player.wasm',
+    'assets/assets/miniaudio_player.wasm',
+    'assets/miniaudio_player.wasm',
   ];
 
   /// Resolves the valid URL for the WebAssembly binary on the current host.
