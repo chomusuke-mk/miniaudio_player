@@ -16,6 +16,12 @@ MAP_API int32_t miniaudio_player_analyze_audio(
     const miniaudio_audio_analysis_config_t *config,
     miniaudio_audio_analysis_result_t *out_result);
 
+MAP_API int32_t miniaudio_player_analyze_audio_memory(
+    const void *data,
+    size_t data_size,
+    const miniaudio_audio_analysis_config_t *config,
+    miniaudio_audio_analysis_result_t *out_result);
+
 MAP_API int32_t miniaudio_player_analyze_audio_async(
     const char *file_path,
     const miniaudio_audio_analysis_config_t *config,

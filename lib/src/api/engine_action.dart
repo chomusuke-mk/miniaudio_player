@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import '../equalizer.dart';
-import '../network/network_audio_streamer.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'crossfade_config.dart';
@@ -24,7 +23,7 @@ class EngineAction<T> {
   EngineAction(this._engine);
 
   /// Active network audio streamer instance on the currently active deck, if any.
-  NetworkAudioStreamer? get activeStreamer => _engine.activeStreamer;
+  dynamic get activeStreamer => _engine.activeStreamer;
 
   // --------------------------------------------------------------------------
   // Single-Source & Queue Opening

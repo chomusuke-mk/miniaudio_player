@@ -1,6 +1,4 @@
-import '../../miniaudio_player_bindings_generated.dart' as native;
-
-/// Operational modes for silence detection and skipping.
+// Operational modes for silence detection and skipping.
 enum SilenceSkipMode {
   /// Silence skipping is disabled (standard playback).
   disabled(0),
@@ -109,17 +107,18 @@ class SilenceSkipConfig {
     );
   }
 
-  /// Creates a [SilenceSkipConfig] from native struct fields.
-  factory SilenceSkipConfig.fromNative(
-    native.miniaudio_player_silence_config_t nativeConfig,
-  ) {
+  /// Creates a [SilenceSkipConfig] from raw fields.
+  factory SilenceSkipConfig.fromRaw({
+    required int mode,
+    required double thresholdDb,
+    required int minSilenceDurationMs,
+    required int paddingMs,
+  }) {
     return SilenceSkipConfig(
-      mode: SilenceSkipMode.fromValue(nativeConfig.mode),
-      thresholdDb: nativeConfig.threshold_db,
-      minSilenceDuration: Duration(
-        milliseconds: nativeConfig.min_silence_duration_ms,
-      ),
-      padding: Duration(milliseconds: nativeConfig.padding_ms),
+      mode: SilenceSkipMode.fromValue(mode),
+      thresholdDb: thresholdDb,
+      minSilenceDuration: Duration(milliseconds: minSilenceDurationMs),
+      padding: Duration(milliseconds: paddingMs),
     );
   }
 

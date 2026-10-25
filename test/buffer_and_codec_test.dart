@@ -238,27 +238,30 @@ void main() {
       }
     });
 
-    test('Global config accepts second-based and integer-second buffer settings', () {
+    test('Global config accepts typed Duration buffer settings', () {
       MiniaudioPlayer.config(
-        bufferAheadDuration: const Duration(seconds: 25),
-        bufferBehindDuration: const Duration(seconds: 10),
-        bufferLocalInSeconds: 8,
-        bufferNetworkInSeconds: 30,
-        bufferLiveStreamInSeconds: 15,
+        bufferLocalDuration: const Duration(seconds: 8),
+        bufferNetworkDuration: const Duration(seconds: 30),
+        bufferLiveStreamDuration: const Duration(seconds: 15),
+        bufferBehindLocalDuration: const Duration(seconds: 4),
+        bufferBehindNetworkDuration: const Duration(seconds: 12),
+        bufferBehindLiveStreamDuration: const Duration(seconds: 6),
       );
 
-      expect(MiniaudioPlayer.globalConfig.bufferAheadDuration.inSeconds, equals(25));
-      expect(MiniaudioPlayer.globalConfig.bufferBehindDuration.inSeconds, equals(10));
       expect(MiniaudioPlayer.globalConfig.bufferLocalDuration.inSeconds, equals(8));
       expect(MiniaudioPlayer.globalConfig.bufferNetworkDuration.inSeconds, equals(30));
       expect(MiniaudioPlayer.globalConfig.bufferLiveStreamDuration.inSeconds, equals(15));
+      expect(MiniaudioPlayer.globalConfig.bufferBehindLocalDuration.inSeconds, equals(4));
+      expect(MiniaudioPlayer.globalConfig.bufferBehindNetworkDuration.inSeconds, equals(12));
+      expect(MiniaudioPlayer.globalConfig.bufferBehindLiveStreamDuration.inSeconds, equals(6));
 
       // Player instance delegates cleanly to global config
-      expect(player.bufferAheadDuration.inSeconds, equals(25));
-      expect(player.bufferBehindDuration.inSeconds, equals(10));
       expect(player.bufferLocalDuration.inSeconds, equals(8));
       expect(player.bufferNetworkDuration.inSeconds, equals(30));
       expect(player.bufferLiveStreamDuration.inSeconds, equals(15));
+      expect(player.bufferBehindLocalDuration.inSeconds, equals(4));
+      expect(player.bufferBehindNetworkDuration.inSeconds, equals(12));
+      expect(player.bufferBehindLiveStreamDuration.inSeconds, equals(6));
     });
 
     test('BufferedRange telemetry calculation and getters', () {

@@ -22,9 +22,14 @@
 #endif
 
 #include "map_common.h"
+#include "map_buffer.h"
 #include "decoders/aac/miniaudio_aac.h"
 #include "decoders/minimp4/minimp4.h"
+#if !defined(MA_NO_LIBOPUS)
+#include "decoders/libopus/miniaudio_libopus.h"
+#endif
 
+#if !defined(MA_NO_THREADING)
 ma_result map_thread_create(ma_thread *pThread, map_thread_entry_proc entryProc, void *pData)
 {
     return ma_thread_create(pThread, ma_thread_priority_normal, 0, (ma_thread_entry_proc)entryProc, pData, NULL);
@@ -34,6 +39,7 @@ void map_thread_wait(ma_thread *pThread)
 {
     ma_thread_wait(pThread);
 }
+#endif
 
 ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset, ma_uint64 targetFrame)
 {
@@ -64,9 +70,17 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
         {
             ma_mp3 *pMP3 = (ma_mp3 *)pDecoder->pBackend;
             ma_dr_mp3_reset(&pMP3->dr);
+            if (newStreamOffset == 0 && pDecoder->pUserData != NULL)
+            {
+                map_buffer_t *mb = (map_buffer_t *)pDecoder->pUserData;
+                if (mb->is_initialized && mb->audio_start > 0)
+                {
+                    mb->read_cursor = mb->audio_start;
+                }
+            }
             pMP3->dr.streamStartOffset = (ma_uint64)(newStreamOffset > 0 ? newStreamOffset : 0);
             pMP3->dr.streamCursor = pMP3->dr.streamStartOffset;
-            pMP3->dr.currentPCMFrame = internalTargetFrame;
+            pMP3->dr.currentPCMFrame = (newStreamOffset == 0) ? 0 : internalTargetFrame;
             return MA_SUCCESS;
         }
 #endif
@@ -76,7 +90,7 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             ma_flac *pFlac = (ma_flac *)pDecoder->pBackend;
             if (pFlac->dr != NULL)
             {
-                pFlac->dr->currentPCMFrame = internalTargetFrame;
+                pFlac->dr->currentPCMFrame = (newStreamOffset == 0) ? 0 : internalTargetFrame;
             }
             return MA_SUCCESS;
         }
@@ -86,8 +100,21 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
         {
             ma_wav *pWav = (ma_wav *)pDecoder->pBackend;
             ma_uint32 bytesPerFrame = ma_dr_wav_get_bytes_per_pcm_frame(&pWav->dr);
+            if (bytesPerFrame == 0)
+            {
+                bytesPerFrame = 1;
+            }
+            if (pWav->dr.totalPCMFrameCount > 0 && internalTargetFrame > pWav->dr.totalPCMFrameCount)
+            {
+                internalTargetFrame = pWav->dr.totalPCMFrameCount;
+            }
+            int64_t exactOffset = (int64_t)pWav->dr.dataChunkDataPos + (int64_t)(internalTargetFrame * bytesPerFrame);
+            if (pWav->onSeek != NULL)
+            {
+                pWav->onSeek(pWav->pReadSeekTellUserData, exactOffset, ma_seek_origin_start);
+            }
             pWav->dr.readCursorInPCMFrames = internalTargetFrame;
-            if (bytesPerFrame > 0 && pWav->dr.totalPCMFrameCount > internalTargetFrame)
+            if (pWav->dr.totalPCMFrameCount > internalTargetFrame)
             {
                 pWav->dr.bytesRemaining = (pWav->dr.totalPCMFrameCount - internalTargetFrame) * bytesPerFrame;
             }
@@ -108,6 +135,113 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             pVorbis->push.dataSize = 0;
             pVorbis->push.framesConsumed = 0;
             pVorbis->push.framesRemaining = 0;
+
+            /* Fast Ogg page-header hop when seeking within a contiguous cached buffer:
+             * Instead of brute-force decoding Vorbis frames from byte 0, hop OggS page
+             * headers (27 + nseg bytes each) to position the stream at the last header
+             * page (for target 0) or 2 pages before internalTargetFrame so
+             * stb_vorbis_flush_pushdata resyncs CRC on that page and only decodes
+             * ~1 page (< 0.1 ms) to reach internalTargetFrame. */
+            if (newStreamOffset == 0 && pDecoder->pUserData != NULL)
+            {
+                map_buffer_t *mb = (map_buffer_t *)pDecoder->pUserData;
+                if (mb->is_initialized && mb->container_format == MAP_CONTAINER_OGG_VORBIS &&
+                    mb->range_start <= mb->audio_start && mb->audio_start > 0)
+                {
+                    int64_t page_off = 0;
+                    int64_t prev2_off = -1, prev1_off = -1;
+                    uint64_t prev2_granule = 0, prev1_granule = 0;
+                    int64_t last_hdr_off = -1;
+                    uint8_t hdr[27];
+                    uint8_t segs[255];
+                    size_t got = 0;
+
+                    while (page_off + 27 <= mb->range_end)
+                    {
+                        if (map_buffer_read(mb, page_off, hdr, 27, &got) != MA_SUCCESS || got != 27)
+                            break;
+                        if (hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S' || hdr[4] != 0)
+                            break;
+                        uint8_t nseg = hdr[26];
+                        if (nseg > 0)
+                        {
+                            if (map_buffer_read(mb, page_off + 27, segs, nseg, &got) != MA_SUCCESS || got != nseg)
+                                break;
+                        }
+                        int64_t body_len = 0;
+                        for (uint8_t i = 0; i < nseg; i++)
+                        {
+                            body_len += segs[i];
+                        }
+                        int64_t next_off = page_off + 27 + (int64_t)nseg + body_len;
+                        uint64_t gpos = (uint64_t)hdr[6] |
+                                        ((uint64_t)hdr[7] << 8) |
+                                        ((uint64_t)hdr[8] << 16) |
+                                        ((uint64_t)hdr[9] << 24) |
+                                        ((uint64_t)hdr[10] << 32) |
+                                        ((uint64_t)hdr[11] << 40) |
+                                        ((uint64_t)hdr[12] << 48) |
+                                        ((uint64_t)hdr[13] << 56);
+
+                        if (page_off < mb->audio_start)
+                        {
+                            last_hdr_off = page_off;
+                        }
+
+                        if (internalTargetFrame == 0 && page_off >= mb->audio_start)
+                        {
+                            break;
+                        }
+
+                        if (page_off >= mb->audio_start && gpos != (uint64_t)-1 && gpos >= internalTargetFrame)
+                        {
+                            break;
+                        }
+
+                        if (nseg > 0 && segs[nseg - 1] < 255 && gpos != (uint64_t)-1)
+                        {
+                            prev2_off = prev1_off;
+                            prev2_granule = prev1_granule;
+                            prev1_off = page_off;
+                            prev1_granule = (page_off < mb->audio_start) ? 0 : gpos;
+                        }
+                        page_off = next_off;
+                    }
+
+                    if (internalTargetFrame == 0 && last_hdr_off >= 0)
+                    {
+                        mb->read_cursor = last_hdr_off;
+                        pVorbis->cursor = 0;
+                        if (pVorbis->stb != NULL)
+                        {
+                            stb_vorbis_flush_pushdata(pVorbis->stb);
+                        }
+                        return MA_SUCCESS;
+                    }
+                    else if (prev2_off >= 0 && prev2_granule <= internalTargetFrame)
+                    {
+                        mb->read_cursor = prev2_off;
+                        pVorbis->cursor = prev2_granule;
+                        if (pVorbis->stb != NULL)
+                        {
+                            stb_vorbis_flush_pushdata(pVorbis->stb);
+                        }
+                        return MA_SUCCESS;
+                    }
+                    else if (last_hdr_off >= 0)
+                    {
+                        mb->read_cursor = last_hdr_off;
+                        pVorbis->cursor = 0;
+                        if (pVorbis->stb != NULL)
+                        {
+                            stb_vorbis_flush_pushdata(pVorbis->stb);
+                        }
+                        return MA_SUCCESS;
+                    }
+                }
+            }
+
+            pVorbis->cursor = (newStreamOffset == 0) ? 0 : internalTargetFrame;
             if (pVorbis->stb != NULL)
             {
                 stb_vorbis_flush_pushdata(pVorbis->stb);
@@ -115,15 +249,25 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             return MA_SUCCESS;
         }
 
+#if !defined(MA_NO_LIBOPUS)
+        if (ma_decoding_backend_libopus != NULL && pDecoder->pBackendVTable == ma_decoding_backend_libopus)
+        {
+            ma_libopus *pOpus = (ma_libopus *)pDecoder->pBackend;
+            return ma_libopus_reset_stream(pOpus, newStreamOffset, internalTargetFrame);
+        }
+#endif
+
         if (ma_decoding_backend_aac != NULL && pDecoder->pBackendVTable == ma_decoding_backend_aac)
         {
             ma_aac *pAac = (ma_aac *)pDecoder->pBackend;
             if (pAac->container == MA_AAC_CONTAINER_MP4)
             {
                 ma_aac_flush_decoder(pAac);
-                unsigned nominalFrameSamples = (pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024;
-                pAac->mp4CurrentSample = (ma_uint32)(internalTargetFrame / nominalFrameSamples);
-                pAac->currentPCMFrame = internalTargetFrame;
+                unsigned nominalFrameSamples = (pAac->samplesPerFrame > 0)
+                    ? pAac->samplesPerFrame
+                    : ((pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024);
+                pAac->mp4CurrentSample = (newStreamOffset == 0) ? 0 : (ma_uint32)(internalTargetFrame / nominalFrameSamples);
+                pAac->currentPCMFrame = (newStreamOffset == 0) ? 0 : internalTargetFrame;
                 pAac->bufferFrames = 0;
                 pAac->bufferIndex = 0;
                 return MA_SUCCESS;
@@ -131,9 +275,23 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
             else if (pAac->container == MA_AAC_CONTAINER_ADTS)
             {
                 ma_aac_flush_decoder(pAac);
+                unsigned nominalFrameSamples = (pAac->samplesPerFrame > 0) ? pAac->samplesPerFrame : 1024;
+                unsigned sampleIdx = (newStreamOffset == 0) ? 0 : (unsigned)(internalTargetFrame / nominalFrameSamples);
                 pAac->bufferFrames = 0;
                 pAac->bufferIndex = 0;
-                pAac->currentPCMFrame = internalTargetFrame;
+                pAac->adtsCurrentFrame = sampleIdx;
+                pAac->currentPCMFrame = (newStreamOffset == 0) ? 0 : internalTargetFrame;
+                if (pAac->onSeek != NULL)
+                {
+                    if (newStreamOffset > 0)
+                    {
+                        pAac->onSeek(pAac->pReadSeekTellUserData, newStreamOffset, ma_seek_origin_start);
+                    }
+                    else
+                    {
+                        pAac->onSeek(pAac->pReadSeekTellUserData, (ma_int64)pAac->adtsDataStartOffset, ma_seek_origin_start);
+                    }
+                }
                 return MA_SUCCESS;
             }
         }
@@ -220,7 +378,9 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
         if (pAac->container == MA_AAC_CONTAINER_MP4 && pAac->pMp4 != NULL)
         {
             MP4D_demux_t *pMp4 = (MP4D_demux_t *)pAac->pMp4;
-            unsigned nominalFrameSamples = (pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024;
+            unsigned nominalFrameSamples = (pAac->samplesPerFrame > 0)
+                ? pAac->samplesPerFrame
+                : ((pAac->codec == MA_AAC_CODEC_ALAC) ? 4096 : 1024);
             unsigned sampleIdx = (unsigned)(internalTargetFrame / nominalFrameSamples);
             unsigned frameBytes = 0, ts = 0, dur = 0;
             if (sampleIdx < pMp4->track[pAac->mp4AudioTrack].sample_count)
@@ -234,7 +394,9 @@ int64_t map_decoder_get_stream_seek_byte(ma_decoder *pDecoder, ma_uint64 targetF
         }
         else if (pAac->container == MA_AAC_CONTAINER_ADTS)
         {
-            unsigned nominalFrameSamples = (pAac->bufferFrames > 0) ? pAac->bufferFrames : 1024;
+            unsigned nominalFrameSamples = (pAac->samplesPerFrame > 0)
+                ? pAac->samplesPerFrame
+                : ((pAac->bufferFrames > 0) ? pAac->bufferFrames : 1024);
             unsigned sampleIdx = (unsigned)(internalTargetFrame / nominalFrameSamples);
             if (sampleIdx < pAac->adtsFrameCount && pAac->adtsFrameOffsets != NULL)
             {
@@ -278,6 +440,34 @@ ma_result map_decoder_init_ex(
     if (result != MA_SUCCESS)
     {
         return result;
+    }
+
+    /* If the stream starts with an ISO BMFF / MP4 'ftyp' box, only attempt custom
+     * backends (AAC / ALAC / Opus-in-MP4). Never fall through to dr_mp3, which could
+     * false-match random 0xFF bytes inside an mdat payload when 'moov' is at EOF. */
+    if (onRead != NULL && onSeek != NULL)
+    {
+        unsigned char magic[8];
+        size_t bytesRead = 0;
+        if (onRead(pDecoder, magic, 8, &bytesRead) == MA_SUCCESS && bytesRead == 8)
+        {
+            onSeek(pDecoder, 0, ma_seek_origin_start);
+            if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p')
+            {
+                result = ma_decoder_init_custom__internal(&config, pDecoder);
+                if (result != MA_SUCCESS)
+                {
+                    onSeek(pDecoder, 0, ma_seek_origin_start);
+                    ma_data_source_uninit(&pDecoder->ds);
+                    return result;
+                }
+                return ma_decoder__postinit(&config, pDecoder);
+            }
+        }
+        else
+        {
+            onSeek(pDecoder, 0, ma_seek_origin_start);
+        }
     }
 
     return ma_decoder_init__internal(onRead, onSeek, pUserData, &config, pDecoder);

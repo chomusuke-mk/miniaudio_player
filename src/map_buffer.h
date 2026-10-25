@@ -18,6 +18,19 @@ extern "C" {
 #endif
 
 /**
+ * @brief Explicit Finite State Machine for the high-level tripartite buffer (map_buffer_t).
+ */
+typedef enum map_buffer_state
+{
+    MAP_BUFFER_STATE_UNINITIALIZED = 0, /**< Buffer memory not allocated or already uninitialized */
+    MAP_BUFFER_STATE_PROBING_HEAD  = 1, /**< Accumulating initial prefix to lock audio_start and init decoder */
+    MAP_BUFFER_STATE_READY         = 2, /**< Healthy buffered window available for reading */
+    MAP_BUFFER_STATE_BUFFERING     = 3, /**< Reader cursor reached range_end while stream is not at EOF */
+    MAP_BUFFER_STATE_EOF           = 4, /**< Producer finished delivering all stream bytes */
+    MAP_BUFFER_STATE_ABORTED       = 5  /**< Buffer read/write aborted for seek flush or teardown */
+} map_buffer_state_t;
+
+/**
  * @brief Telemetry snapshot of the high-level buffer cache.
  */
 typedef struct map_buffer_range
@@ -39,6 +52,8 @@ typedef struct map_buffer_range
  */
 typedef struct map_buffer
 {
+    map_buffer_state_t state; /**< Explicit FSM state of the buffer */
+
     /* ---------------------------------------------------------------------- */
     /* 1. Pure Audio Ring Buffer: [audio_start .. audio_end)                  */
     /*    Indexed as: (abs_offset - audio_start) % capacity                   */
@@ -70,6 +85,7 @@ typedef struct map_buffer
     ma_bool32 should_abort;   /**< 1 to abort any waiting decoder readers */
     ma_bool32 is_probing;     /**< 1 during initial header format sniffing */
     size_t initial_bytes;     /**< Bytes provided during initial probe */
+    ma_bool32 is_buffering;   /**< 1 if decoder is starved waiting on data_ready_event */
 
     /* ---------------------------------------------------------------------- */
     /* 2. Pinned Head Buffer: [0 .. audio_start)                              */
@@ -110,6 +126,7 @@ typedef struct map_buffer
     int64_t mp4_mdat_atom_offset;       /**< Offset of mdat atom header in MP4 */
     uint32_t mp4_mdat_header_size;      /**< 8 or 16 bytes */
     int32_t head_has_mpeg_frame;        /**< 1 if Xing/Info MPEG frame is in Head */
+    uint32_t bytes_per_frame;           /**< PCM frame size in bytes (e.g. 6 for 24-bit stereo WAV), or 1 */
 
     /* ---------------------------------------------------------------------- */
     /* 5. Livestream ICY Metadata & Versioning                                */
@@ -265,6 +282,33 @@ ma_result map_buffer_seek(
 ma_result map_buffer_flush(
     map_buffer_t *mb,
     int64_t new_offset);
+
+/**
+ * @brief Attempts to seek to target_offset within the existing RAM ring buffer.
+ * @param mb Buffer instance.
+ * @param target_offset Desired stream byte offset.
+ * @param out_seek_from_start Set to MA_TRUE if the ring holds contiguous audio from audio_start.
+ * @return 1 on RAM cache HIT, 0 on cache MISS (flushes ring window to target_offset and enters BUFFERING).
+ */
+int32_t map_buffer_try_seek_cached(
+    map_buffer_t *mb,
+    int64_t target_offset,
+    ma_bool32 *out_seek_from_start);
+
+/**
+ * @brief Clears the abort flag on the buffer after decoder synchronization.
+ */
+void map_buffer_clear_abort(map_buffer_t *mb);
+
+/**
+ * @brief Returns MA_TRUE if the buffer is actively starving for producer bytes (not EOF).
+ */
+ma_bool32 map_buffer_is_starving(const map_buffer_t *mb);
+
+/**
+ * @brief Explicitly sets or clears the buffering state on the buffer.
+ */
+void map_buffer_set_buffering(map_buffer_t *mb, ma_bool32 buffering);
 
 /**
  * @brief Signals that provider has sent all bytes (EOF).

@@ -492,6 +492,12 @@ extern "C"
         size_t tail_size,
         int64_t tail_offset);
 
+    MAP_API int32_t miniaudio_player_read_pcm_frames(
+        miniaudio_player_t *player,
+        void *frames_out,
+        uint32_t frame_count,
+        uint32_t *out_frames_read);
+
     /* ========================================================================= */
     /* Playback Controls                                                         */
     /* ========================================================================= */
@@ -721,6 +727,21 @@ extern "C"
      */
     MAP_API int32_t miniaudio_player_analyze_audio(
         const char *file_path,
+        const miniaudio_audio_analysis_config_t *config,
+        miniaudio_audio_analysis_result_t *out_result);
+
+    /**
+     * @brief Measures ITU-R BS.1770 LUFS loudness and waveform points directly from an in-memory buffer.
+     *
+     * @param data Audio data in memory.
+     * @param data_size Size of data buffer in bytes.
+     * @param config Analysis configuration flags and parameters.
+     * @param[out] out_result Result structure pointer.
+     * @return MAP_SUCCESS or error code.
+     */
+    MAP_API int32_t miniaudio_player_analyze_audio_memory(
+        const void *data,
+        size_t data_size,
         const miniaudio_audio_analysis_config_t *config,
         miniaudio_audio_analysis_result_t *out_result);
 

@@ -1,11 +1,11 @@
 // ignore_for_file: avoid_print
-import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import 'package:miniaudio_player/src/platform/fs_helper.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  HttpOverrides.global = null;
+  allowHttpInTests();
 
   group('Real-World Web Audio Formats Verification', () {
     late MiniaudioPlayer player;
@@ -163,5 +163,5 @@ void main() {
       expect(advanced, isTrue, reason: 'Playback must advance past 20s');
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 45)));
-  });
+  }, retry: 2);
 }

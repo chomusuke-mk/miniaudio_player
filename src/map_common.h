@@ -31,7 +31,10 @@
 #include <elf.h>
 #endif
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(__wasm_simd128__)
+#include <wasm_simd128.h>
+#define MAP_HAS_WASM_SIMD 1
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #define MAP_HAS_NEON 1
 #elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
@@ -157,15 +160,19 @@ typedef void* ma_thread_result;
 #endif
 typedef ma_thread_result (MA_THREADCALL * map_thread_entry_proc)(void* pData);
 
+#if !defined(MA_NO_THREADING)
 ma_result map_thread_create(ma_thread *pThread, map_thread_entry_proc entryProc, void *pData);
 void map_thread_wait(ma_thread *pThread);
+#endif
 
 #if !defined(MINIAUDIO_IMPLEMENTATION)
+#if !defined(MA_NO_THREADING)
 #ifndef ma_thread_create
 #define ma_thread_create(pThread, priority, stackSize, entryProc, pData, pAlloc) map_thread_create(pThread, entryProc, pData)
 #endif
 #ifndef ma_thread_wait
 #define ma_thread_wait(pThread) map_thread_wait(pThread)
+#endif
 #endif
 
 #if defined(_WIN32)
@@ -186,7 +193,25 @@ static MA_INLINE void ma_sleep(ma_uint32 milliseconds)
 #endif
 #endif
 
-/* Systematic Subnormal (Denormal) Hardware Flushing */
+/* Systematic Subnormal (Denormal) Hardware and Software Flushing */
+static MA_INLINE float map_flush_denormal_f32(float x)
+{
+    union { float f; uint32_t u; } v;
+    v.f = x;
+    /* If absolute exponent is below ~1.08e-19 (0x20000000), force to 0.0f without branching */
+    uint32_t is_normal = ((v.u & 0x7FFFFFFFU) >= 0x20000000U);
+    v.u &= (0U - is_normal);
+    return v.f;
+}
+
+#if defined(MAP_HAS_WASM_SIMD)
+static MA_INLINE v128_t map_wasm_flush_denormal_v128(v128_t v, v128_t v_thresh)
+{
+    v128_t mask = wasm_f32x4_ge(wasm_f32x4_abs(v), v_thresh);
+    return wasm_v128_and(v, mask);
+}
+#endif
+
 static MA_INLINE unsigned int map_disable_denormals(void)
 {
     unsigned int prevState = 0;
@@ -317,6 +342,34 @@ static MA_INLINE float map_frame_peak(const float *frame, ma_uint32 channels)
         max2 = vpmax_f32(max2, max2);
         return vget_lane_f32(max2, 0);
 #endif
+    }
+#elif defined(MAP_HAS_WASM_SIMD)
+    else if (channels == 4)
+    {
+        v128_t v = wasm_f32x4_abs(wasm_v128_load(frame));
+        v = wasm_f32x4_pmax(v, wasm_i32x4_shuffle(v, v, 2, 3, 0, 1));
+        v = wasm_f32x4_pmax(v, wasm_i32x4_shuffle(v, v, 1, 0, 3, 2));
+        return wasm_f32x4_extract_lane(v, 0);
+    }
+    else if (channels == 6) /* 5.1 Surround */
+    {
+        v128_t v = wasm_f32x4_abs(wasm_v128_load(frame));
+        v = wasm_f32x4_pmax(v, wasm_i32x4_shuffle(v, v, 2, 3, 0, 1));
+        v = wasm_f32x4_pmax(v, wasm_i32x4_shuffle(v, v, 1, 0, 3, 2));
+        float m0 = wasm_f32x4_extract_lane(v, 0);
+        float s4 = fabsf(frame[4]);
+        float s5 = fabsf(frame[5]);
+        float tail = (s4 > s5) ? s4 : s5;
+        return (m0 > tail) ? m0 : tail;
+    }
+    else if (channels == 8) /* 7.1 Surround */
+    {
+        v128_t v0 = wasm_f32x4_abs(wasm_v128_load(frame));
+        v128_t v1 = wasm_f32x4_abs(wasm_v128_load(frame + 4));
+        v128_t v = wasm_f32x4_pmax(v0, v1);
+        v = wasm_f32x4_pmax(v, wasm_i32x4_shuffle(v, v, 2, 3, 0, 1));
+        v = wasm_f32x4_pmax(v, wasm_i32x4_shuffle(v, v, 1, 0, 3, 2));
+        return wasm_f32x4_extract_lane(v, 0);
     }
 #elif defined(MAP_HAS_SSE)
     else if (channels == 4)

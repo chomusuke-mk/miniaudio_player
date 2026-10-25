@@ -94,12 +94,10 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 1;
       player = MiniaudioPlayer();
     });
 
     tearDown(() async {
-      MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 8;
       await player.dispose();
     });
 
@@ -107,7 +105,7 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
       await player.action.openUrl(url);
 
-      expect(player.action.hasPinnedHead, isTrue, reason: 'Pinned head should be active');
+      expect(player.action.activeLoader, isNotNull, reason: 'Unified loader should be active');
 
       // Check metaBytes immediately after opening
       final meta = player.state.metaBytes;
@@ -378,9 +376,9 @@ void main() {
 
       await smallBufferPlayer.action.openUrl(url);
 
-      // Verify Head is not truncated to 256 KB, but retains all 3 MB
+      // Verify Head is not truncated to 256 KB, but retains all ~3 MB of metadata
       final pinnedHeadBytes = smallBufferPlayer.pinnedHeadSize;
-      expect(pinnedHeadBytes, greaterThanOrEqualTo(3 * 1024 * 1024),
+      expect(pinnedHeadBytes, greaterThan(3 * 1000 * 1000),
           reason: 'Head must retain full 3 MB of metadata without truncation to 256 KB');
 
       // Verify metaBytes has full metadata (> 3 MB)

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -148,5 +149,79 @@ void main() {
     // Re-listening should smoothly recreate the native callback
     final sub3 = stream.listen((_) {});
     await sub3.cancel();
+  });
+
+  test('cbr_noxing.mp3 memory playback, seek and duration', () async {
+    final file = File('example/assets/music/cbr_noxing.mp3');
+    expect(file.existsSync(), isTrue);
+    final bytes = await file.readAsBytes();
+
+    final player = MiniaudioPlayer();
+    try {
+      await player.action.openMemory(bytes);
+      expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
+
+      await player.action.play();
+      expect(player.state.playing, isTrue);
+
+      await player.action.seek(const Duration(milliseconds: 2000));
+      expect(player.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
+
+      await player.action.seek(const Duration(milliseconds: 4000));
+      expect(player.state.position.inMilliseconds, inInclusiveRange(3900, 4100));
+
+      await player.action.seek(Duration.zero);
+      expect(player.state.position.inMilliseconds, inInclusiveRange(0, 200));
+
+      // Wait a moment while playing and verify it advances smoothly without jumping to end
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(player.state.position.inMilliseconds, inInclusiveRange(300, 1000));
+      expect(player.state.playing, isTrue);
+
+      // Seek to 3.5 seconds during active playback
+      await player.action.seek(const Duration(milliseconds: 3500));
+      expect(player.state.position.inMilliseconds, inInclusiveRange(3400, 3600));
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // Must NOT jump to EOF (10031ms)
+      expect(player.state.position.inMilliseconds, inInclusiveRange(3800, 4500));
+      expect(player.state.playing, isTrue);
+
+      await player.action.pause();
+      expect(player.state.playing, isFalse);
+    } finally {
+      await player.dispose();
+    }
+  });
+
+  test('switching memory tracks does not crash and updates correctly', () async {
+    final file1 = File('example/assets/music/cbr_noxing.mp3');
+    final file2 = File('example/assets/music/salida.mp3');
+    expect(file1.existsSync(), isTrue);
+    expect(file2.existsSync(), isTrue);
+
+    final bytes1 = await file1.readAsBytes();
+    final bytes2 = await file2.readAsBytes();
+
+    final player = MiniaudioPlayer();
+    try {
+      // 1. Open track 1
+      await player.action.openMemory(bytes1);
+      expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
+      await player.action.play();
+      expect(player.state.playing, isTrue);
+
+      // 2. Switch directly to track 2 while playing (previously caused crash/segfault)
+      await player.action.openMemory(bytes2);
+      expect(player.state.duration.inMilliseconds, inInclusiveRange(65000, 72000));
+      await player.action.play();
+      expect(player.state.playing, isTrue);
+
+      // 3. Switch back to track 1
+      await player.action.openMemory(bytes1);
+      expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
+    } finally {
+      await player.dispose();
+    }
   });
 }

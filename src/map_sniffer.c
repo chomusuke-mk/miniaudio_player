@@ -449,6 +449,11 @@ static uint64_t map_rd_be64(const uint8_t *p)
     return ((uint64_t)map_rd_be32(p) << 32) | (uint64_t)map_rd_be32(p + 4);
 }
 
+static uint16_t map_rd_le16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
 static uint32_t map_rd_le32(const uint8_t *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -477,6 +482,7 @@ void map_boundary_info_reset(map_boundary_info_t *info)
     info->mp4_mdat_atom_offset = -1;
     info->mp4_mdat_header_size = 0;
     info->head_has_mpeg_frame = 0;
+    info->bytes_per_frame = 1;
     info->needed_bytes = 0;
 }
 
@@ -817,6 +823,18 @@ static map_boundary_status_t map_sniff_detect_wav(
             ds64_data = map_rd_le64(c + 16);
         }
 
+        if (memcmp(c, "fmt ", 4) == 0 && size >= 14)
+        {
+            if (p + 22 <= (int64_t)avail)
+            {
+                uint16_t block_align = map_rd_le16(c + 20);
+                if (block_align > 0)
+                {
+                    out->bytes_per_frame = (uint32_t)block_align;
+                }
+            }
+        }
+
         if (memcmp(c, "data", 4) == 0)
         {
             uint64_t data_size = size;
@@ -1095,4 +1113,52 @@ map_boundary_status_t map_sniffer_detect_tail_boundary(
 
     *out_audio_end = end;
     return status;
+}
+
+ma_bool32 map_sniffer_extract_tail_duration_ms(
+    map_container_format_t container,
+    uint32_t sample_rate,
+    const uint8_t *tail,
+    size_t tail_len,
+    int64_t *out_duration_ms)
+{
+    if (out_duration_ms == NULL || tail == NULL || tail_len < 27)
+    {
+        return MA_FALSE;
+    }
+
+    if (container != MAP_CONTAINER_OGG_VORBIS && container != MAP_CONTAINER_OGG_OPUS)
+    {
+        return MA_FALSE;
+    }
+
+    uint32_t srate = (container == MAP_CONTAINER_OGG_OPUS) ? 48000 : sample_rate;
+    if (srate == 0)
+    {
+        return MA_FALSE;
+    }
+
+    size_t scan_start = tail_len - 27;
+    for (size_t j = scan_start;; j--)
+    {
+        if (memcmp(tail + j, "OggS", 4) == 0 && tail[j + 4] == 0)
+        {
+            uint64_t granule_pos = map_rd_le64(tail + j + 6);
+            if (granule_pos > 0 && granule_pos != (uint64_t)-1)
+            {
+                int64_t dur_ms = (int64_t)((granule_pos * 1000ULL) / (uint64_t)srate);
+                if (dur_ms > 0)
+                {
+                    *out_duration_ms = dur_ms;
+                    return MA_TRUE;
+                }
+            }
+        }
+        if (j == 0)
+        {
+            break;
+        }
+    }
+
+    return MA_FALSE;
 }

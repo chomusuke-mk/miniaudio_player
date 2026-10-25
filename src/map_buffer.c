@@ -378,6 +378,7 @@ ma_result map_buffer_init(
         return MA_OUT_OF_MEMORY;
     }
 
+    mb->state = MAP_BUFFER_STATE_PROBING_HEAD;
     mb->capacity = capacity_bytes;
     mb->range_start = 0;
     mb->range_end = 0;
@@ -409,6 +410,8 @@ ma_result map_buffer_init(
     mb->mp4_mdat_atom_offset = -1;
     mb->mp4_mdat_header_size = 0;
     mb->head_has_mpeg_frame = 0;
+    mb->bytes_per_frame = 1;
+    mb->is_buffering = MA_FALSE;
 
     mb->icy_meta_data = NULL;
     mb->icy_meta_size = 0;
@@ -441,6 +444,7 @@ void map_buffer_uninit(map_buffer_t *mb)
     map_buffer_abort(mb);
 
     ma_mutex_lock(&mb->lock);
+    mb->state = MAP_BUFFER_STATE_UNINITIALIZED;
     mb->is_initialized = MA_FALSE;
 
     if (mb->data != NULL)
@@ -482,7 +486,79 @@ void map_buffer_abort(map_buffer_t *mb)
 
     ma_mutex_lock(&mb->lock);
     mb->should_abort = MA_TRUE;
+    mb->state = MAP_BUFFER_STATE_ABORTED;
     ma_event_signal(&mb->data_ready_event);
+    ma_mutex_unlock(&mb->lock);
+}
+
+void map_buffer_clear_abort(map_buffer_t *mb)
+{
+    if (mb == NULL || !mb->is_initialized)
+        return;
+
+    ma_mutex_lock(&mb->lock);
+    mb->should_abort = MA_FALSE;
+    if (mb->state == MAP_BUFFER_STATE_ABORTED)
+    {
+        if (mb->is_eof)
+        {
+            mb->state = MAP_BUFFER_STATE_EOF;
+        }
+        else if (mb->is_buffering)
+        {
+            mb->state = MAP_BUFFER_STATE_BUFFERING;
+        }
+        else
+        {
+            mb->state = MAP_BUFFER_STATE_READY;
+        }
+    }
+    ma_mutex_unlock(&mb->lock);
+}
+
+ma_bool32 map_buffer_is_starving(const map_buffer_t *mb)
+{
+    if (mb == NULL || !mb->is_initialized)
+        return MA_FALSE;
+
+    map_buffer_t *mut = (map_buffer_t *)mb;
+    ma_mutex_lock(&mut->lock);
+    ma_bool32 starving = (!mb->is_eof &&
+                          (mb->state == MAP_BUFFER_STATE_BUFFERING ||
+                           mb->is_buffering ||
+                           (mb->read_cursor >= mb->range_end && mb->read_cursor >= mb->audio_start)))
+                         ? MA_TRUE
+                         : MA_FALSE;
+    if (starving)
+    {
+        mut->is_buffering = MA_TRUE;
+        if (!mut->is_probing)
+        {
+            mut->state = MAP_BUFFER_STATE_BUFFERING;
+        }
+    }
+    ma_mutex_unlock(&mut->lock);
+    return starving;
+}
+
+void map_buffer_set_buffering(map_buffer_t *mb, ma_bool32 buffering)
+{
+    if (mb == NULL || !mb->is_initialized)
+        return;
+
+    ma_mutex_lock(&mb->lock);
+    mb->is_buffering = buffering;
+    if (!mb->is_probing)
+    {
+        if (buffering && !mb->is_eof)
+        {
+            mb->state = MAP_BUFFER_STATE_BUFFERING;
+        }
+        else if (!buffering && mb->state == MAP_BUFFER_STATE_BUFFERING)
+        {
+            mb->state = mb->is_eof ? MAP_BUFFER_STATE_EOF : MAP_BUFFER_STATE_READY;
+        }
+    }
     ma_mutex_unlock(&mb->lock);
 }
 
@@ -493,6 +569,14 @@ void map_buffer_set_decoding_audio(map_buffer_t *mb, ma_bool32 decoding)
 
     ma_mutex_lock(&mb->lock);
     mb->is_decoding_audio = decoding;
+    if (decoding)
+    {
+        mb->is_probing = MA_FALSE;
+        if (mb->state == MAP_BUFFER_STATE_PROBING_HEAD)
+        {
+            mb->state = mb->is_eof ? MAP_BUFFER_STATE_EOF : MAP_BUFFER_STATE_READY;
+        }
+    }
     ma_mutex_unlock(&mb->lock);
 }
 
@@ -951,6 +1035,7 @@ ma_result map_buffer_set_head(
                 mb->mp4_mdat_atom_offset = binfo.mp4_mdat_atom_offset;
                 mb->mp4_mdat_header_size = binfo.mp4_mdat_header_size;
                 mb->head_has_mpeg_frame = binfo.head_has_mpeg_frame;
+                mb->bytes_per_frame = (binfo.bytes_per_frame > 0) ? binfo.bytes_per_frame : 1;
                 if (binfo.audio_end > 0)
                 {
                     mb->tail_locked = MA_TRUE;
@@ -992,9 +1077,10 @@ ma_result map_buffer_set_tail(
 
         if (st == MAP_BOUNDARY_FOUND && detected_audio_end > 0)
         {
-            if (mb->container_format == MAP_CONTAINER_MP4 && mb->audio_end > 0 && mb->audio_end < mb->total_size)
+            if ((mb->container_format == MAP_CONTAINER_MP4 || mb->container_format == MAP_CONTAINER_WAV) &&
+                mb->audio_end > 0 && mb->audio_end < mb->total_size)
             {
-                /* For MP4 non-fast-start, audio_end was already determined by mdat in head */
+                /* For MP4 non-fast-start and WAV with trailing chunks, audio_end was already determined in head */
                 detected_audio_end = mb->audio_end;
             }
             mb->audio_end = detected_audio_end;
@@ -1023,6 +1109,7 @@ ma_result map_buffer_set_tail(
                 memcpy(mb->tail_data, tail_data, tail_size);
                 mb->tail_size = tail_size;
                 mb->tail_start = tail_offset;
+                mb->meta_version++;
             }
         }
     }
@@ -1043,7 +1130,7 @@ ma_result map_buffer_probe_tail(
     ma_mutex_lock(&mb->lock);
 
     /* If tail is already locked and valid (e.g. MP4 moov loaded at init), do not overwrite with smaller probe */
-    if (mb->tail_locked && (mb->container_format == MAP_CONTAINER_MP4 || (mb->tail_size > 0 && mb->tail_size >= tail_size)))
+    if (mb->tail_locked && mb->tail_size > 0 && (mb->container_format == MAP_CONTAINER_MP4 || mb->tail_size >= tail_size))
     {
         ma_event_signal(&mb->data_ready_event);
         ma_mutex_unlock(&mb->lock);
@@ -1064,9 +1151,10 @@ ma_result map_buffer_probe_tail(
 
         if (st == MAP_BOUNDARY_FOUND && detected_audio_end > 0)
         {
-            if (mb->container_format == MAP_CONTAINER_MP4 && mb->audio_end > 0 && mb->audio_end < mb->total_size)
+            if ((mb->container_format == MAP_CONTAINER_MP4 || mb->container_format == MAP_CONTAINER_WAV) &&
+                mb->audio_end > 0 && mb->audio_end < mb->total_size)
             {
-                /* For MP4 non-fast-start, audio_end was already determined by mdat in head */
+                /* For MP4 non-fast-start and WAV with trailing chunks, audio_end was already determined in head */
                 detected_audio_end = mb->audio_end;
             }
             mb->audio_end = detected_audio_end;
@@ -1096,6 +1184,73 @@ ma_result map_buffer_probe_tail(
     return MA_SUCCESS;
 }
 
+static void map_buffer_scan_tail_from_ring_locked(map_buffer_t *mb)
+{
+    if (mb->tail_locked || mb->total_size <= 0 || !map_container_needs_tail_scan(mb->container_format))
+    {
+        return;
+    }
+
+    size_t scan_len = 64 * 1024;
+    if ((int64_t)scan_len > mb->total_size)
+    {
+        scan_len = (size_t)mb->total_size;
+    }
+    int64_t scan_off = mb->total_size - (int64_t)scan_len;
+
+    if (mb->range_end >= mb->total_size && scan_off >= mb->range_start)
+    {
+        uint8_t *tmp = (uint8_t *)malloc(scan_len);
+        if (tmp != NULL)
+        {
+            for (size_t i = 0; i < scan_len; i++)
+            {
+                int64_t p = scan_off + (int64_t)i;
+                int64_t rel = p - mb->audio_start;
+                if (rel < 0)
+                {
+                    rel = p;
+                }
+                tmp[i] = mb->data[(size_t)(rel % (int64_t)mb->capacity)];
+            }
+
+            int64_t detected_audio_end = -1;
+            map_boundary_status_t st = map_sniffer_detect_tail_boundary(
+                mb->container_format,
+                tmp,
+                scan_len,
+                scan_off,
+                mb->total_size,
+                mb->audio_start,
+                &detected_audio_end);
+
+            if (st == MAP_BOUNDARY_FOUND && detected_audio_end > 0)
+            {
+                mb->audio_end = detected_audio_end;
+                mb->tail_locked = MA_TRUE;
+
+                size_t tail_chunk_start = (size_t)(detected_audio_end - scan_off);
+                if (tail_chunk_start < scan_len)
+                {
+                    size_t actual_tail = scan_len - tail_chunk_start;
+                    if (map_buffer_grow_tail(mb, actual_tail) == MA_SUCCESS)
+                    {
+                        memcpy(mb->tail_data, tmp + tail_chunk_start, actual_tail);
+                        mb->tail_size = actual_tail;
+                        mb->tail_start = detected_audio_end;
+                    }
+                }
+                if (mb->range_end > detected_audio_end)
+                {
+                    mb->range_end = detected_audio_end;
+                }
+                mb->meta_version++;
+            }
+            free(tmp);
+        }
+    }
+}
+
 ma_result map_buffer_write(
     map_buffer_t *mb,
     int64_t offset,
@@ -1107,19 +1262,24 @@ ma_result map_buffer_write(
 
     ma_mutex_lock(&mb->lock);
 
-    if (mb->should_abort)
+    if (mb->should_abort || mb->state == MAP_BUFFER_STATE_ABORTED)
     {
         ma_mutex_unlock(&mb->lock);
         return MA_INTERRUPT;
     }
 
-    /* Backpressure protection: For progressive file streams, never allow writer to overrun read_cursor */
-    if (!mb->is_probing && !mb->is_live)
+    /* Backpressure protection: For progressive file streams, never allow writer to overrun ring read_cursor */
+    if (!mb->is_probing && !mb->is_live && mb->head_locked)
     {
-        if ((offset + (int64_t)size) - mb->read_cursor > (int64_t)mb->capacity)
+        int64_t write_end = offset + (int64_t)size;
+        if (write_end > mb->audio_start)
         {
-            ma_mutex_unlock(&mb->lock);
-            return MA_BUSY;
+            int64_t ring_read_pos = (mb->read_cursor > mb->audio_start) ? mb->read_cursor : mb->audio_start;
+            if (write_end - ring_read_pos > (int64_t)mb->capacity)
+            {
+                ma_mutex_unlock(&mb->lock);
+                return MA_BUSY;
+            }
         }
     }
 
@@ -1157,28 +1317,47 @@ ma_result map_buffer_write(
             mb->mp4_mdat_atom_offset = binfo.mp4_mdat_atom_offset;
             mb->mp4_mdat_header_size = binfo.mp4_mdat_header_size;
             mb->head_has_mpeg_frame = binfo.head_has_mpeg_frame;
+            mb->bytes_per_frame = (binfo.bytes_per_frame > 0) ? binfo.bytes_per_frame : 1;
             if (binfo.audio_end > 0)
             {
                 mb->tail_locked = MA_TRUE;
             }
             mb->meta_version++;
 
-            /* If head_data already ingested bytes past audio_start, move excess into audio ring */
+            /* Strictly enforce tripartite boundary: Head = [0 .. audio_start), Ring = [audio_start .. audio_end), Tail = [audio_end .. total_size) */
             if (mb->head_size > (size_t)mb->audio_start)
             {
-                size_t excess = mb->head_size - (size_t)mb->audio_start;
-                map_buffer_ring_write_internal(mb, mb->audio_start, mb->head_data + mb->audio_start, excess);
-                size_t max_pinned = (size_t)mb->audio_start + MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY;
-                if (mb->head_size > max_pinned)
+                size_t orig_head_size = mb->head_size;
+                if (mb->tail_locked && mb->audio_end > mb->audio_start && (int64_t)orig_head_size > mb->audio_end)
                 {
-                    mb->head_size = max_pinned;
+                    size_t ring_bytes = (size_t)(mb->audio_end - mb->audio_start);
+                    size_t tail_bytes = orig_head_size - (size_t)mb->audio_end;
+                    map_buffer_ring_write_internal(mb, mb->audio_start, mb->head_data + mb->audio_start, ring_bytes);
+                    if (map_buffer_grow_tail(mb, tail_bytes) == MA_SUCCESS)
+                    {
+                        memcpy(mb->tail_data, mb->head_data + mb->audio_end, tail_bytes);
+                        mb->tail_size = tail_bytes;
+                        mb->tail_start = mb->audio_end;
+                    }
                 }
+                else
+                {
+                    size_t excess = orig_head_size - (size_t)mb->audio_start;
+                    map_buffer_ring_write_internal(mb, mb->audio_start, mb->head_data + mb->audio_start, excess);
+                }
+                mb->head_size = (size_t)mb->audio_start;
+            }
+            else
+            {
+                mb->range_start = mb->audio_start;
+                mb->range_end = mb->audio_start;
             }
         }
         else if (status == MAP_BOUNDARY_UNSUPPORTED &&
-                 (mb->head_size >= MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY || mb->is_eof))
+                 (mb->head_size >= MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY || mb->is_eof ||
+                  (mb->total_size > 0 && (int64_t)mb->head_size >= mb->total_size)))
         {
-            /* Generic/raw container fallback: lock at byte 0 and mirror into ring */
+            /* Generic/raw container fallback: lock at byte 0 and move all bytes into ring */
             mb->head_locked = MA_TRUE;
             mb->container_format = MAP_CONTAINER_UNKNOWN;
             mb->audio_start = 0;
@@ -1186,10 +1365,7 @@ ma_result map_buffer_write(
             mb->meta_version++;
 
             map_buffer_ring_write_internal(mb, 0, mb->head_data, mb->head_size);
-            if (mb->head_size > MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY)
-            {
-                mb->head_size = MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY;
-            }
+            mb->head_size = 0;
         }
         else
         {
@@ -1202,84 +1378,102 @@ ma_result map_buffer_write(
             return MA_SUCCESS;
         }
     }
-
-    /* Phase 2: audio_start is locked. Route incoming bytes into Head, Pure Audio Ring, or Tail */
-    int64_t cur_offset = offset;
-    const uint8_t *cur_ptr = pData;
-    size_t remaining = size;
-
-    /* Zone 1: HEAD [0 .. audio_start) */
-    if (cur_offset < mb->audio_start && remaining > 0)
+    else
     {
-        size_t head_avail = (size_t)(mb->audio_start - cur_offset);
-        size_t head_chunk = (remaining < head_avail) ? remaining : head_avail;
-        if (map_buffer_grow_head(mb, (size_t)(cur_offset + (int64_t)head_chunk)) == MA_SUCCESS)
-        {
-            memcpy(mb->head_data + cur_offset, cur_ptr, head_chunk);
-            if ((size_t)(cur_offset + (int64_t)head_chunk) > mb->head_size)
-            {
-                mb->head_size = (size_t)(cur_offset + (int64_t)head_chunk);
-            }
-        }
-        cur_offset += (int64_t)head_chunk;
-        cur_ptr += head_chunk;
-        remaining -= head_chunk;
-    }
+        /* Phase 2: audio_start is already locked. Route incoming bytes into Head, Pure Audio Ring, or Tail */
+        int64_t cur_offset = offset;
+        const uint8_t *cur_ptr = pData;
+        size_t remaining = size;
 
-    /* Zone 2: PURE AUDIO RING [audio_start .. audio_end) */
-    if (cur_offset >= mb->audio_start && remaining > 0 &&
-        (!mb->tail_locked || mb->audio_end <= 0 || cur_offset < mb->audio_end))
-    {
-        size_t audio_avail = (mb->tail_locked && mb->audio_end > 0)
-            ? (size_t)(mb->audio_end - cur_offset)
-            : remaining;
-        size_t audio_chunk = (remaining < audio_avail) ? remaining : audio_avail;
-        map_buffer_ring_write_internal(mb, cur_offset, cur_ptr, audio_chunk);
-
-        /* Retain initial audio prefix in pinned head up to 256 KB for instant seek(0) cache hits */
-        size_t pinned_target = (size_t)mb->audio_start + MAP_BUFFER_PINNED_HEAD_DEFAULT_CAPACITY;
-        if ((size_t)cur_offset < pinned_target)
+        /* Zone 1: HEAD [0 .. audio_start) */
+        if (cur_offset < mb->audio_start && remaining > 0)
         {
-            size_t pinned_avail = pinned_target - (size_t)cur_offset;
-            size_t pinned_chunk = (audio_chunk < pinned_avail) ? audio_chunk : pinned_avail;
-            if (map_buffer_grow_head(mb, (size_t)(cur_offset + (int64_t)pinned_chunk)) == MA_SUCCESS)
+            size_t head_avail = (size_t)(mb->audio_start - cur_offset);
+            size_t head_chunk = (remaining < head_avail) ? remaining : head_avail;
+            if (map_buffer_grow_head(mb, (size_t)(cur_offset + (int64_t)head_chunk)) == MA_SUCCESS)
             {
-                memcpy(mb->head_data + cur_offset, cur_ptr, pinned_chunk);
-                if ((size_t)(cur_offset + (int64_t)pinned_chunk) > mb->head_size)
+                memcpy(mb->head_data + cur_offset, cur_ptr, head_chunk);
+                if ((size_t)(cur_offset + (int64_t)head_chunk) > mb->head_size)
                 {
-                    mb->head_size = (size_t)(cur_offset + (int64_t)pinned_chunk);
+                    mb->head_size = (size_t)(cur_offset + (int64_t)head_chunk);
                 }
             }
+            cur_offset += (int64_t)head_chunk;
+            cur_ptr += head_chunk;
+            remaining -= head_chunk;
         }
 
-        cur_offset += (int64_t)audio_chunk;
-        cur_ptr += audio_chunk;
-        remaining -= audio_chunk;
+        /* Zone 2: PURE AUDIO RING [audio_start .. audio_end) */
+        if (cur_offset >= mb->audio_start && remaining > 0 &&
+            (!mb->tail_locked || mb->audio_end <= 0 || cur_offset < mb->audio_end))
+        {
+            size_t audio_avail = (mb->tail_locked && mb->audio_end > 0)
+                ? (size_t)(mb->audio_end - cur_offset)
+                : remaining;
+            size_t audio_chunk = (remaining < audio_avail) ? remaining : audio_avail;
+            map_buffer_ring_write_internal(mb, cur_offset, cur_ptr, audio_chunk);
+
+            cur_offset += (int64_t)audio_chunk;
+            cur_ptr += audio_chunk;
+            remaining -= audio_chunk;
+        }
+
+        /* Zone 3: TAIL [audio_end .. total_size) */
+        if (mb->tail_locked && mb->audio_end > 0 && cur_offset >= mb->audio_end && remaining > 0)
+        {
+            size_t tail_rel = (size_t)(cur_offset - mb->audio_end);
+            size_t needed = tail_rel + remaining;
+            if (map_buffer_grow_tail(mb, needed) == MA_SUCCESS)
+            {
+                memcpy(mb->tail_data + tail_rel, cur_ptr, remaining);
+                if (needed > mb->tail_size)
+                {
+                    mb->tail_size = needed;
+                }
+                mb->tail_start = mb->audio_end;
+                mb->meta_version++;
+            }
+            remaining = 0;
+        }
     }
 
-    /* Zone 3: TAIL [audio_end .. total_size) */
-    if (mb->tail_locked && mb->audio_end > 0 && cur_offset >= mb->audio_end && remaining > 0)
+    if (!mb->is_live && mb->total_size > 0 && mb->range_end >= mb->total_size && !mb->tail_locked)
     {
-        size_t tail_rel = (size_t)(cur_offset - mb->audio_end);
-        size_t needed = tail_rel + remaining;
-        if (map_buffer_grow_tail(mb, needed) == MA_SUCCESS)
-        {
-            memcpy(mb->tail_data + tail_rel, cur_ptr, remaining);
-            if (needed > mb->tail_size)
-            {
-                mb->tail_size = needed;
-            }
-            mb->tail_start = mb->audio_end;
-        }
-        remaining = 0;
+        map_buffer_scan_tail_from_ring_locked(mb);
     }
 
     if (mb->is_probing)
     {
-        mb->initial_bytes = (size_t)(mb->range_end - mb->range_start);
+        mb->initial_bytes = (size_t)mb->range_end;
     }
 
-    ma_event_signal(&mb->data_ready_event);
+    ma_bool32 should_signal_ready = MA_TRUE;
+    if (mb->is_buffering || mb->state == MAP_BUFFER_STATE_BUFFERING)
+    {
+        int64_t buffered_ahead = mb->range_end - mb->read_cursor;
+        int64_t rebuffer_threshold = mb->is_live ? (int64_t)(8 * 1024) : (int64_t)(32 * 1024);
+        if (mb->capacity > 0 && rebuffer_threshold > (int64_t)(mb->capacity / 2))
+        {
+            rebuffer_threshold = (int64_t)(mb->capacity / 2);
+        }
+        if (buffered_ahead >= rebuffer_threshold || mb->is_eof)
+        {
+            mb->is_buffering = MA_FALSE;
+            if (!mb->is_probing)
+            {
+                mb->state = mb->is_eof ? MAP_BUFFER_STATE_EOF : MAP_BUFFER_STATE_READY;
+            }
+        }
+        else if (!mb->is_probing && !mb->should_abort)
+        {
+            should_signal_ready = MA_FALSE;
+        }
+    }
+
+    if (should_signal_ready)
+    {
+        ma_event_signal(&mb->data_ready_event);
+    }
     ma_mutex_unlock(&mb->lock);
     return MA_SUCCESS;
 }
@@ -1297,6 +1491,12 @@ ma_result map_buffer_feed(
     if (!mb->head_locked)
     {
         off = (int64_t)mb->head_size;
+    }
+    else if (mb->tail_locked && mb->audio_end > 0 && mb->range_end >= mb->audio_end &&
+             mb->tail_start == mb->audio_end &&
+             (mb->total_size <= 0 || mb->audio_end + (int64_t)mb->tail_size < mb->total_size))
+    {
+        off = mb->audio_end + (int64_t)mb->tail_size;
     }
     ma_mutex_unlock(&mb->lock);
 
@@ -1325,7 +1525,7 @@ ma_result map_buffer_read(
     {
         ma_mutex_lock(&mb->lock);
 
-        if (mb->should_abort)
+        if (mb->should_abort || mb->state == MAP_BUFFER_STATE_ABORTED)
         {
             ma_mutex_unlock(&mb->lock);
             return MA_INTERRUPT;
@@ -1341,34 +1541,45 @@ ma_result map_buffer_read(
         }
 
         /* ------------------------------------------------------------------ */
-        /* TIER 1: Pinned Head [0 .. head_size)                               */
+        /* TIER 1: Head [0 .. audio_start)                                    */
         /* ------------------------------------------------------------------ */
         if (mb->head_data != NULL && req_offset >= 0 && (size_t)req_offset < mb->head_size)
         {
-            /* If actively decoding audio, don't read tail metadata if file <= head_size */
-            if (mb->tail_locked && mb->audio_end > 0 && req_offset >= mb->audio_end &&
-                mb->is_decoding_audio && mb->container_format != MAP_CONTAINER_MP4)
-            {
-                ma_mutex_unlock(&mb->lock);
-                return MA_AT_END;
-            }
-
             size_t avail = mb->head_size - (size_t)req_offset;
-            if (mb->tail_locked && mb->audio_end > 0 && req_offset + (int64_t)avail > mb->audio_end &&
-                mb->is_decoding_audio && mb->container_format != MAP_CONTAINER_MP4)
+            size_t head_copy = (bytesToRead < avail) ? bytesToRead : avail;
+            size_t ring_copy = 0;
+
+            /* If a header read spans across audio_start into the pure audio ring, fulfill contiguously */
+            if (mb->head_locked && bytesToRead > head_copy && mb->data != NULL &&
+                mb->range_start <= mb->audio_start && mb->range_end > mb->audio_start)
             {
-                avail = (size_t)(mb->audio_end - req_offset);
+                size_t needed = bytesToRead - head_copy;
+                size_t ring_avail = (size_t)(mb->range_end - mb->audio_start);
+                if (mb->tail_locked && mb->audio_end > 0 && mb->audio_start + (int64_t)ring_avail > mb->audio_end &&
+                    mb->is_decoding_audio && mb->container_format != MAP_CONTAINER_MP4)
+                {
+                    ring_avail = (mb->audio_end > mb->audio_start)
+                        ? (size_t)(mb->audio_end - mb->audio_start)
+                        : 0;
+                }
+                ring_copy = (needed < ring_avail) ? needed : ring_avail;
             }
 
-            size_t to_copy = (bytesToRead < avail) ? bytesToRead : avail;
-            memcpy(out, mb->head_data + req_offset, to_copy);
+            size_t total_to_copy = head_copy + ring_copy;
+            memcpy(out, mb->head_data + req_offset, head_copy);
+            if (ring_copy > 0)
+            {
+                size_t chunk1 = (mb->capacity < ring_copy) ? mb->capacity : ring_copy;
+                memcpy(out + head_copy, mb->data, chunk1);
+            }
+
             if (offset < 0)
             {
-                mb->read_cursor += (int64_t)to_copy;
+                mb->read_cursor += (int64_t)total_to_copy;
             }
             if (pBytesRead != NULL)
             {
-                *pBytesRead = to_copy;
+                *pBytesRead = total_to_copy;
             }
             ma_mutex_unlock(&mb->lock);
             return MA_SUCCESS;
@@ -1380,9 +1591,15 @@ ma_result map_buffer_read(
                 ma_mutex_unlock(&mb->lock);
                 return MA_AT_END;
             }
+            mb->is_buffering = MA_TRUE;
+            mb->state = MAP_BUFFER_STATE_BUFFERING;
             ma_mutex_unlock(&mb->lock);
+#if defined(__EMSCRIPTEN__)
+            return MA_BUSY;
+#else
             ma_event_wait(&mb->data_ready_event);
             continue;
+#endif
         }
 
         /* ------------------------------------------------------------------ */
@@ -1435,6 +1652,28 @@ ma_result map_buffer_read(
                 available = (size_t)(mb->audio_end - req_offset);
             }
             size_t to_copy = (bytesToRead < available) ? bytesToRead : available;
+            if (mb->bytes_per_frame > 1 && mb->is_decoding_audio && req_offset >= mb->audio_start)
+            {
+                to_copy = (to_copy / mb->bytes_per_frame) * mb->bytes_per_frame;
+            }
+
+            if (to_copy == 0)
+            {
+                if (mb->is_probing || mb->is_eof)
+                {
+                    ma_mutex_unlock(&mb->lock);
+                    return MA_AT_END;
+                }
+                mb->is_buffering = MA_TRUE;
+                mb->state = MAP_BUFFER_STATE_BUFFERING;
+                ma_mutex_unlock(&mb->lock);
+#if defined(__EMSCRIPTEN__)
+                return MA_BUSY;
+#else
+                ma_event_wait(&mb->data_ready_event);
+                continue;
+#endif
+            }
 
             int64_t rel_pos = req_offset - mb->audio_start;
             if (rel_pos < 0)
@@ -1483,8 +1722,14 @@ ma_result map_buffer_read(
         }
 
         /* Data not yet arrived (wait on event) */
+        mb->is_buffering = MA_TRUE;
+        mb->state = MAP_BUFFER_STATE_BUFFERING;
         ma_mutex_unlock(&mb->lock);
+#if defined(__EMSCRIPTEN__)
+        return MA_BUSY;
+#else
         ma_event_wait(&mb->data_ready_event);
+#endif
     }
 }
 
@@ -1503,12 +1748,8 @@ ma_result map_buffer_seek(
         target_offset = mb->total_size;
 
     mb->read_cursor = target_offset;
-    if ((mb->total_size > 0 && target_offset < mb->total_size) || target_offset < mb->range_end)
-    {
-        mb->is_eof = MA_FALSE;
-    }
 
-    /* Cache hit: pinned head, sliding body, or pinned tail */
+    /* Cache hit: head, ring window, or tail */
     if ((mb->head_data != NULL && target_offset >= 0 && (size_t)target_offset <= mb->head_size) ||
         (target_offset >= mb->range_start && target_offset <= mb->range_end) ||
         (mb->tail_data != NULL && target_offset >= mb->tail_start &&
@@ -1535,16 +1776,86 @@ ma_result map_buffer_flush(
     if (new_offset < 0)
         new_offset = 0;
 
+    int64_t ring_offset = (mb->head_locked && new_offset < mb->audio_start) ? mb->audio_start : new_offset;
     mb->read_cursor = new_offset;
-    mb->range_start = new_offset;
-    mb->range_end = new_offset;
+    mb->range_start = ring_offset;
+    mb->range_end = ring_offset;
     mb->is_eof = MA_FALSE;
     mb->should_abort = MA_FALSE;
+    mb->is_buffering = MA_TRUE;
+    mb->state = MAP_BUFFER_STATE_BUFFERING;
 
     ma_event_signal(&mb->data_ready_event);
     ma_mutex_unlock(&mb->lock);
 
     return MA_SUCCESS;
+}
+
+int32_t map_buffer_try_seek_cached(
+    map_buffer_t *mb,
+    int64_t target_offset,
+    ma_bool32 *out_seek_from_start)
+{
+    if (out_seek_from_start != NULL)
+    {
+        *out_seek_from_start = MA_FALSE;
+    }
+    if (mb == NULL || !mb->is_initialized)
+    {
+        return 0;
+    }
+
+    ma_mutex_lock(&mb->lock);
+
+    if (target_offset < 0)
+    {
+        target_offset = 0;
+    }
+
+    int64_t effective_audio_start = (mb->audio_start > 0) ? mb->audio_start : 0;
+    int64_t effective_audio_end = (mb->audio_end > 0) ? mb->audio_end : mb->total_size;
+    int64_t audio_target = (target_offset < effective_audio_start) ? effective_audio_start : target_offset;
+
+    ma_bool32 in_ring = (audio_target >= mb->range_start &&
+                         (audio_target < mb->range_end ||
+                          (mb->is_eof && audio_target <= mb->range_end) ||
+                          (effective_audio_end > 0 && mb->range_end >= effective_audio_end && audio_target <= effective_audio_end)));
+
+    ma_bool32 contiguous_from_start = (mb->range_start <= effective_audio_start);
+    ma_bool32 full_file_in_ram = (mb->total_size > 0 && contiguous_from_start &&
+                                  (mb->is_eof || (effective_audio_end > 0 && mb->range_end >= effective_audio_end)));
+
+    if (in_ring || full_file_in_ram)
+    {
+        ma_bool32 seek_from_start = (full_file_in_ram || contiguous_from_start);
+        if (out_seek_from_start != NULL)
+        {
+            *out_seek_from_start = seek_from_start;
+        }
+        mb->read_cursor = seek_from_start ? 0 : audio_target;
+        mb->should_abort = MA_FALSE;
+        mb->is_buffering = MA_FALSE;
+        if (full_file_in_ram)
+        {
+            mb->is_eof = MA_TRUE;
+        }
+        mb->state = mb->is_eof ? MAP_BUFFER_STATE_EOF : MAP_BUFFER_STATE_READY;
+        ma_event_signal(&mb->data_ready_event);
+        ma_mutex_unlock(&mb->lock);
+        return 1;
+    }
+
+    /* Cache MISS: flush ring window to audio_target and enter BUFFERING */
+    mb->read_cursor = audio_target;
+    mb->range_start = audio_target;
+    mb->range_end = audio_target;
+    mb->is_eof = MA_FALSE;
+    mb->should_abort = MA_FALSE;
+    mb->is_buffering = MA_TRUE;
+    mb->state = MAP_BUFFER_STATE_BUFFERING;
+    ma_event_signal(&mb->data_ready_event);
+    ma_mutex_unlock(&mb->lock);
+    return 0;
 }
 
 ma_result map_buffer_end(map_buffer_t *mb)
@@ -1554,69 +1865,14 @@ ma_result map_buffer_end(map_buffer_t *mb)
 
     ma_mutex_lock(&mb->lock);
 
-    /* If finite stream reaching EOF without tail locked, perform tail scan */
-    if (!mb->tail_locked && mb->total_size > 0 && map_container_needs_tail_scan(mb->container_format))
-    {
-        /* Check if tail bytes reside in ring buffer at end */
-        size_t scan_len = 64 * 1024;
-        if ((int64_t)scan_len > mb->total_size)
-        {
-            scan_len = (size_t)mb->total_size;
-        }
-        int64_t scan_off = mb->total_size - (int64_t)scan_len;
-
-        if (mb->range_end >= mb->total_size && scan_off >= mb->range_start)
-        {
-            uint8_t *tmp = (uint8_t *)malloc(scan_len);
-            if (tmp != NULL)
-            {
-                /* Read scan_len from ring buffer */
-                for (size_t i = 0; i < scan_len; i++)
-                {
-                    int64_t p = scan_off + (int64_t)i;
-                    int64_t rel = p - mb->audio_start;
-                    if (rel < 0) rel = p;
-                    tmp[i] = mb->data[(size_t)(rel % (int64_t)mb->capacity)];
-                }
-
-                int64_t detected_audio_end = -1;
-                map_boundary_status_t st = map_sniffer_detect_tail_boundary(
-                    mb->container_format,
-                    tmp,
-                    scan_len,
-                    scan_off,
-                    mb->total_size,
-                    mb->audio_start,
-                    &detected_audio_end);
-
-                if (st == MAP_BOUNDARY_FOUND && detected_audio_end > 0)
-                {
-                    mb->audio_end = detected_audio_end;
-                    mb->tail_locked = MA_TRUE;
-
-                    size_t tail_chunk_start = (size_t)(detected_audio_end - scan_off);
-                    if (tail_chunk_start < scan_len)
-                    {
-                        size_t actual_tail = scan_len - tail_chunk_start;
-                        if (map_buffer_grow_tail(mb, actual_tail) == MA_SUCCESS)
-                        {
-                            memcpy(mb->tail_data, tmp + tail_chunk_start, actual_tail);
-                            mb->tail_size = actual_tail;
-                            mb->tail_start = detected_audio_end;
-                        }
-                    }
-                    if (mb->range_end > detected_audio_end)
-                    {
-                        mb->range_end = detected_audio_end;
-                    }
-                    mb->meta_version++;
-                }
-                free(tmp);
-            }
-        }
-    }
+    map_buffer_scan_tail_from_ring_locked(mb);
 
     mb->is_eof = MA_TRUE;
+    mb->is_buffering = MA_FALSE;
+    if (!mb->is_probing && mb->state != MAP_BUFFER_STATE_ABORTED)
+    {
+        mb->state = MAP_BUFFER_STATE_EOF;
+    }
     ma_event_signal(&mb->data_ready_event);
     ma_mutex_unlock(&mb->lock);
 
@@ -1665,7 +1921,7 @@ ma_result map_buffer_get_range(
         out_range->stream_percentage = out_range->fill_percentage;
     }
 
-    out_range->is_buffering = (mb->read_cursor >= mb->range_end && !mb->is_eof) ? 1 : 0;
+    out_range->is_buffering = (!mb->is_eof && (mb->state == MAP_BUFFER_STATE_BUFFERING || mb->is_buffering)) ? 1 : 0;
     out_range->is_eof = mb->is_eof ? 1 : 0;
 
     ma_mutex_unlock(&mut->lock);
@@ -1698,7 +1954,7 @@ ma_result map_buffer_decoder_seek(
 
     ma_mutex_lock(&mb->lock);
 
-    /* Format probing seek handling: initial_bytes / head are fully available */
+    /* Format probing seek handling: initial_bytes / head / ring are available */
     if (mb->is_probing)
     {
         int64_t targetOffset = -1;
@@ -1726,7 +1982,8 @@ ma_result map_buffer_decoder_seek(
         }
 
         if (targetOffset >= 0 && ((size_t)targetOffset <= mb->initial_bytes ||
-                                  (mb->head_data != NULL && (size_t)targetOffset <= mb->head_size)))
+                                  (mb->head_data != NULL && (size_t)targetOffset <= mb->head_size) ||
+                                  (targetOffset >= mb->range_start && targetOffset <= mb->range_end)))
         {
             mb->read_cursor = targetOffset;
             ma_mutex_unlock(&mb->lock);
@@ -1775,7 +2032,7 @@ ma_result map_buffer_decoder_seek(
         return MA_INVALID_ARGS;
     }
 
-    /* Relative seek within pinned head, sliding body, or pinned tail */
+    /* Relative seek within head, ring window, or tail */
     if ((mb->head_data != NULL && target >= 0 && (size_t)target <= mb->head_size) ||
         (target >= mb->range_start && target <= mb->range_end) ||
         (mb->tail_data != NULL && target >= mb->tail_start &&

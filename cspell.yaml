@@ -83,6 +83,7 @@ words:
   - Cupertino
   - CVBR
   - Dartminiaudio
+  - DDART
   - dealloca
   - declspec
   - decoderctls
@@ -108,9 +109,13 @@ words:
   - desnormalizados
   - desync
   - devs
+  - DFLOAT
+  - DHAVE
   - DIVSCALAR
   - DJGPP
+  - DMINIAUDIO
   - documention
+  - DOPUS
   - Dougall
   - downmix
   - downmixes
@@ -118,6 +123,7 @@ words:
   - Dreampoint
   - DTFT
   - Durbin
+  - DVAR
   - EARC
   - EBADHEADER
   - EBADLINK
@@ -130,6 +136,10 @@ words:
   - EINVAL
   - electroacoustic
   - elif
+  - emcc
+  - EMCC
+  - emscripten
+  - emsdk
   - encoderctls
   - encstate
   - ener
@@ -154,6 +164,7 @@ words:
   - fivesize
   - flasheo
   - floorlist
+  - flto
   - fmaxf
   - fomit
   - formants
@@ -186,6 +197,8 @@ words:
   - Hammerton
   - hann
   - headret
+  - HEAPF
+  - HEAPU
   - hishelf
   - histeresis
   - histéresis
@@ -211,6 +224,7 @@ words:
   - ipart
   - ISHLD
   - isqrt
+  - Isrc
   - itheta
   - jetbrains
   - Jezar
@@ -276,6 +290,8 @@ words:
   - moffat
   - monofónica
   - morlat
+  - mrelaxed
+  - msimd
   - MSVC
   - MSVCRT
   - Muchachita
@@ -293,6 +309,7 @@ words:
   - nanosegundo
   - nbuffered
   - nlacing
+  - nontrapping
   - normalisation
   - normalise
   - Normalise
@@ -329,6 +346,7 @@ words:
   - println
   - PSHR
   - pthread
+  - PTHREADS
   - publically
   - pubspec
   - qalloc

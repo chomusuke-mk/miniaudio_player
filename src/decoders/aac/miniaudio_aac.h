@@ -60,6 +60,7 @@ extern "C"
         short shortBuffer[4096 * 2];
         ma_uint32 bufferFrames;
         ma_uint32 bufferIndex;
+        ma_uint32 samplesPerFrame;
 
         /* MP4 container state */
         void *pMp4;                /* MP4D_demux_t* */
@@ -71,6 +72,7 @@ extern "C"
         ma_uint64 adtsFileSize;
         ma_uint32 *adtsFrameOffsets;
         ma_uint32 adtsFrameCount;
+        ma_uint32 adtsFrameCapacity;
         ma_uint32 adtsCurrentFrame;
     } ma_aac;
 

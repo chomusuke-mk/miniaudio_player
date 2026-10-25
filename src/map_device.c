@@ -5,6 +5,38 @@
 
 #include "map_device.h"
 
+#if defined(MA_NO_DEVICE_IO)
+
+ma_bool32 map_is_device_id_default(const char *str)
+{
+    (void)str;
+    return MA_TRUE;
+}
+
+MAP_API int32_t miniaudio_player_get_devices(
+    miniaudio_device_info_t **out_devices,
+    uint32_t *out_count)
+{
+    if (out_devices != NULL) *out_devices = NULL;
+    if (out_count != NULL) *out_count = 0;
+    return MAP_SUCCESS;
+}
+
+MAP_API void miniaudio_player_free_devices(
+    miniaudio_device_info_t *devices,
+    uint32_t count)
+{
+    (void)devices;
+    (void)count;
+}
+
+MAP_API void miniaudio_player_set_jvm(void *jvm)
+{
+    (void)jvm;
+}
+
+#else
+
 /* Helper to check if a device ID string represents the automatic/default output */
 ma_bool32 map_is_device_id_default(const char *str)
 {
@@ -996,3 +1028,4 @@ MAP_API void miniaudio_player_free_devices(
         free(devices);
     }
 }
+#endif

@@ -32,7 +32,4 @@ migrate_working_dir/
 /temp/
 /.agents/
 
-/NEEDS.md
-/NEED_TESTING.md
-/BUFFER_AND_METABYTES_SPEC.md
-/docs/WEB.md
+/URI_IMPLEMENTATION.md

@@ -94,19 +94,17 @@ void main() {
         await player.action.stop();
       } catch (_) {}
       player.dispose();
-      MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 2;
     });
 
     test(
       'ADV-M4-1: stop() during high-speed streaming immediately aborts socket, zeroes data consumption, resets cursor to 0, and transitions to STOPPED',
       () async {
-        MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 16;
         final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
 
         await player.action.openUrl(url);
 
         expect(player.state.playbackState, equals(PlaybackState.stopped));
-        expect(player.action.hasPinnedHead, isTrue);
+        expect(player.action.activeLoader, isNotNull);
 
         await player.action.play();
         expect(player.state.playing, isTrue);
@@ -121,7 +119,7 @@ void main() {
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.playing, isFalse);
         expect(player.state.position, equals(Duration.zero));
-        expect(player.action.hasPinnedHead, isTrue);
+        expect(player.action.activeLoader, isNotNull);
 
         // Snapshot server stats
         final s0 = await getServerStats(serverPort!);
@@ -137,7 +135,7 @@ void main() {
             reason: 'Zero new HTTP requests should occur after stop()');
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.position, equals(Duration.zero));
-        expect(player.action.hasPinnedHead, isTrue);
+        expect(player.action.activeLoader, isNotNull);
       },
       timeout: const Timeout(Duration(seconds: 15)),
     );
@@ -163,7 +161,7 @@ void main() {
 
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.position, equals(Duration.zero));
-        expect(player.action.hasPinnedHead, isTrue);
+        expect(player.action.activeLoader, isNotNull);
 
         await resetServerStats(serverPort!);
 
@@ -199,16 +197,19 @@ void main() {
     );
 
     test(
-      'ADV-M4-3: play() after EOF completion triggers instant replay from RAM (0 network requests if fully cached, or pinned head prefetch if partially cached)',
+      'ADV-M4-3: play() after EOF completion triggers instant replay from RAM (0 network requests if fully cached, or range fetch if partially cached)',
       () async {
         // --- Sub-test 3A: Fully Cached Stream (WAV fully in RAM) ---
-        MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 8;
         final wavUrl = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
 
-        await player.action.openUrl(wavUrl);
+        await player.action.openUrl(
+          wavUrl,
+          bufferAhead: const Duration(seconds: 60),
+          bufferBehind: const Duration(seconds: 60),
+        );
         await player.action.play();
 
-        // Allow 2.64 MB to finish buffering into 8 MB buffer over loopback
+        // Allow 2.64 MB to finish buffering into buffer over loopback
         await Future<void>.delayed(const Duration(milliseconds: 300));
 
         // Seek near EOF to finish quickly (~10000ms duration)
@@ -241,10 +242,13 @@ void main() {
         await player.action.stop();
 
         // --- Sub-test 3B: Partially Cached Stream (ALAC with constrained buffer) ---
-        MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 1;
         final alacUrl = 'http://127.0.0.1:$serverPort/music/salida_alac.m4a';
 
-        await player.action.openUrl(alacUrl);
+        await player.action.openUrl(
+          alacUrl,
+          bufferAhead: const Duration(seconds: 3),
+          bufferBehind: const Duration(seconds: 1),
+        );
         await player.action.play();
 
         // Wrap the sliding body by seeking forward
@@ -435,7 +439,6 @@ void main() {
     test(
       'ADV-M4-6: Backpressure monitor and telemetry (_readCursorByte, _rangeEnd, _aheadHeadroomBytes) remain active and update dynamically upon stop-and-replay and EOF replay',
       () async {
-        MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 4;
         final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
         await player.action.openUrl(url);

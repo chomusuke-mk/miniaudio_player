@@ -693,6 +693,7 @@ ma_result map_event_dispatcher_init(
     ma_atomic_store_32(&disp->is_running, 1);
     ma_atomic_store_32(&disp->is_active_playback, 0);
 
+#if !defined(__EMSCRIPTEN__)
     res = map_thread_create(&disp->thread, map_event_dispatcher_worker, disp);
     if (res != MA_SUCCESS)
     {
@@ -703,6 +704,7 @@ ma_result map_event_dispatcher_init(
         ma_event_uninit(&disp->wakeup_event);
         return res;
     }
+#endif
 
     return MA_SUCCESS;
 }
@@ -712,12 +714,14 @@ void map_event_dispatcher_uninit(map_event_dispatcher_t *disp)
     if (disp == NULL)
         return;
 
+#if !defined(__EMSCRIPTEN__)
     if (ma_atomic_load_32(&disp->is_running))
     {
         ma_atomic_store_32(&disp->is_running, 0);
         ma_event_signal(&disp->wakeup_event);
         map_thread_wait(&disp->thread);
     }
+#endif
 
     ma_event_uninit(&disp->wakeup_event);
     ma_mutex_uninit(&disp->emit_lock);

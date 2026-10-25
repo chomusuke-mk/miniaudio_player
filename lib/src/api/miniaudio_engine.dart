@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import '../engine/internal_crossfade_controller.dart';
 import '../engine/internal_queue_manager.dart';
 import '../equalizer.dart';
-import '../network/network_audio_streamer.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'buffered_range.dart';
@@ -417,7 +416,7 @@ class MiniaudioEngine<T> {
   }
 
   /// Active network audio streamer on the currently active deck, if any.
-  NetworkAudioStreamer? get activeStreamer => _activePlayer.streamer;
+  dynamic get activeStreamer => _activePlayer.streamer;
 
   /// Whether this engine instance has been disposed.
   bool get isDisposed => _phase == EnginePhase.disposed;
@@ -1443,8 +1442,9 @@ class MiniaudioEngine<T> {
       outgoingRemaining: outgoingRemaining,
       targetDuration: targetDuration,
       incomingDuration: incoming.state.duration,
-      isOutgoingLive: outgoing.state.trackMetadata?.isLiveStream ?? false,
-      isIncomingLive: incoming.state.trackMetadata?.isLiveStream ?? false,
+      isOutgoingLive: _resolveIsLiveStream(),
+      isIncomingLive: item.isLiveStream ||
+          (incoming.state.trackMetadata?.isLiveStream ?? false),
     );
 
     // Swap active and standby roles BEFORE starting playback on incoming so
@@ -1630,7 +1630,8 @@ class MiniaudioEngine<T> {
       targetDuration: plannedDuration,
       incomingDuration: incoming.state.duration,
       isOutgoingLive: false,
-      isIncomingLive: incoming.state.trackMetadata?.isLiveStream ?? false,
+      isIncomingLive: next.isLiveStream ||
+          (incoming.state.trackMetadata?.isLiveStream ?? false),
     );
 
     try {
@@ -1674,8 +1675,10 @@ class MiniaudioEngine<T> {
 
     _autoTarget = null;
     _swapDecks();
-    _crossfade.capRemainingDuration(_crossfadeConfig.manualDuration);
     _setPhase(EnginePhase.manualCrossfading);
+    final promotedEpoch = _epoch;
+    _crossfade.updateOnComplete(() => _onCrossfadeComplete(promotedEpoch));
+    _crossfade.capRemainingDuration(_crossfadeConfig.manualDuration);
     _emitQueueAndCursorState();
     _emitActiveDeckSnapshot();
     return true;

@@ -302,6 +302,26 @@ external int miniaudio_player_analyze_audio_async(
   ffi.Pointer<ffi.Void> user_data,
 );
 
+/// @brief Measures ITU-R BS.1770 LUFS loudness and waveform points directly from an in-memory buffer.
+///
+/// @param data Audio data in memory.
+/// @param data_size Size of data buffer in bytes.
+/// @param config Analysis configuration flags and parameters.
+/// @param[out] out_result Result structure pointer.
+/// @return MAP_SUCCESS or error code.
+@ffi.Native<
+    ffi.Int32 Function(
+        ffi.Pointer<ffi.Void>,
+        ffi.Size,
+        ffi.Pointer<miniaudio_audio_analysis_config_t>,
+        ffi.Pointer<miniaudio_audio_analysis_result_t>)>()
+external int miniaudio_player_analyze_audio_memory(
+  ffi.Pointer<ffi.Void> data,
+  int data_size,
+  ffi.Pointer<miniaudio_audio_analysis_config_t> config,
+  ffi.Pointer<miniaudio_audio_analysis_result_t> out_result,
+);
+
 /// @brief Transitions the player into OPENING state and resets stale playback telemetry.
 ///
 /// Stops any actively playing sound, unloads the prior data source, resets position,
@@ -635,6 +655,16 @@ external int miniaudio_player_probe_tail(
   ffi.Pointer<ffi.Uint8> tail_data,
   int tail_size,
   int tail_offset,
+);
+
+@ffi.Native<
+    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Pointer<ffi.Void>,
+        ffi.Uint32, ffi.Pointer<ffi.Uint32>)>()
+external int miniaudio_player_read_pcm_frames(
+  ffi.Pointer<miniaudio_player_t> player,
+  ffi.Pointer<ffi.Void> frames_out,
+  int frame_count,
+  ffi.Pointer<ffi.Uint32> out_frames_read,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int64)>()

@@ -13,9 +13,23 @@
 #include "map_silence.h"
 #include "map_buffer.h"
 
+/**
+ * @brief Explicit Finite State Machine for the low-level decoder data source (map_time_stretch_ds).
+ */
+typedef enum map_source_state
+{
+    MAP_SOURCE_STATE_UNINITIALIZED = 0, /**< Data source not initialized */
+    MAP_SOURCE_STATE_IDLE          = 1, /**< Initialized and ready at start or seek position */
+    MAP_SOURCE_STATE_DECODING      = 2, /**< Worker / reader actively decoding frames from map_buffer_t */
+    MAP_SOURCE_STATE_DRAINING      = 3, /**< Decoder reached container EOF; draining remaining PCM frames from rb/sonic */
+    MAP_SOURCE_STATE_EOF           = 4, /**< All PCM frames drained; source is at end */
+    MAP_SOURCE_STATE_ERROR         = 5  /**< Fatal decoding error */
+} map_source_state_t;
+
 typedef struct
 {
     ma_data_source_base base;
+    map_source_state_t state;
     ma_decoder decoder;
     sonicStream sonic;
     ma_spinlock lock;
@@ -32,11 +46,6 @@ typedef struct
     ma_uint32 rawBufferCount;    /* in frames */
     ma_uint32 rawBufferReadPos;  /* in frames */
     map_silence_detector silence;
-
-    /* Memory backing */
-    const void *memory_buffer;
-    size_t memory_size;
-    ma_bool32 owns_memory;
 
     /* High-Level Buffer backing */
     map_buffer_t buffer;
@@ -61,20 +70,6 @@ typedef struct
 void map_time_stretch_ds_set_dispatcher(
     map_time_stretch_ds *pDS,
     struct map_event_dispatcher *pDispatcher);
-
-ma_result map_time_stretch_ds_init(
-    map_time_stretch_ds *pDS,
-    const char *file_path,
-    ma_uint32 targetChannels,
-    ma_uint32 targetSampleRate);
-
-ma_result map_time_stretch_ds_init_memory(
-    map_time_stretch_ds *pDS,
-    const void *pData,
-    size_t dataSize,
-    ma_bool32 ownsMemory,
-    ma_uint32 targetChannels,
-    ma_uint32 targetSampleRate);
 
 ma_result map_time_stretch_ds_init_stream(
     map_time_stretch_ds *pDS,
@@ -108,6 +103,23 @@ ma_result map_time_stretch_ds_stream_feed(
 ma_result map_time_stretch_ds_stream_flush(
     map_time_stretch_ds *pDS,
     int64_t newStreamOffset);
+
+/**
+ * @brief Seeks the low-level decoder data source and high-level buffer atomically.
+ * @return 1 on RAM cache HIT, 0 on cache MISS.
+ */
+int32_t map_time_stretch_ds_seek_stream(
+    map_time_stretch_ds *pDS,
+    ma_uint64 targetFrame,
+    int64_t newStreamOffset);
+
+void map_time_stretch_ds_set_speed(
+    map_time_stretch_ds *pDS,
+    float speed);
+
+void map_time_stretch_ds_set_pitch(
+    map_time_stretch_ds *pDS,
+    float pitch);
 
 ma_result map_time_stretch_ds_stream_end(
     map_time_stretch_ds *pDS);

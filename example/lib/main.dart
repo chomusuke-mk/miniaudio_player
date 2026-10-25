@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -145,6 +146,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _replayGainPreventClipping = true;
 
   Future<void> _runAnalysis() async {
+    if (kIsWeb) return;
     final path = _samplePath;
     if (path == null || path.isEmpty) return;
     final file = File(path);
@@ -342,21 +344,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
       debugPrint('AssetManifest query note: $e');
     }
 
-    // 2. Scan strictly assets/music on the local filesystem
-    final searchDirs = [
-      Directory('assets/music'),
-      Directory('example/assets/music'),
-    ];
-    for (final dir in searchDirs) {
-      if (dir.existsSync()) {
-        for (final entity in dir.listSync()) {
-          if (entity is File && _isAudioFile(entity.path)) {
-            final filename = entity.path.split(RegExp(r'[/\\]')).last;
-            addTrack(
-              id: entity.path,
-              title: filename,
-              source: AudioSource.file(entity.path),
-            );
+    // 2. Scan strictly assets/music on the local filesystem (native desktop/mobile only)
+    if (!kIsWeb) {
+      final searchDirs = [
+        Directory('assets/music'),
+        Directory('example/assets/music'),
+      ];
+      for (final dir in searchDirs) {
+        if (dir.existsSync()) {
+          for (final entity in dir.listSync()) {
+            if (entity is File && _isAudioFile(entity.path)) {
+              final filename = entity.path.split(RegExp(r'[/\\]')).last;
+              addTrack(
+                id: entity.path,
+                title: filename,
+                source: AudioSource.file(entity.path),
+              );
+            }
           }
         }
       }
@@ -405,6 +409,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _updateAnalysisPathForTrack(AudioTrack track) {
+    if (kIsWeb) {
+      _samplePath = null;
+      if (mounted) {
+        setState(() {
+          _analysisResult = null;
+          _isAnalyzing = false;
+        });
+      }
+      return;
+    }
     String? localPath;
     if (track.source is FileAudioSource) {
       localPath = (track.source as FileAudioSource).filePath;
@@ -475,7 +489,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _showAddSourceDialog() {
     final uriController = TextEditingController();
     final titleController = TextEditingController();
-    bool isLive = false;
 
     showDialog(
       context: context,
@@ -496,7 +509,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Introduce una URL (HTTP/HTTPS), URI (file://, asset://), ruta de archivo local, o link de streaming de audio en vivo:',
+                      'Introduce una URL (HTTP/HTTPS de archivo remoto o radio en vivo), URI (file://, asset://), o ruta de archivo local. El motor detecta automáticamente si es transmisión en vivo o archivo remoto:',
                       style: TextStyle(fontSize: 13, color: Colors.white70),
                     ),
                     const SizedBox(height: 12),
@@ -516,18 +529,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           },
                         ),
                       ),
-                      onChanged: (val) {
-                        final lower = val.toLowerCase();
-                        if (lower.contains('icecast') ||
-                            lower.contains('radio') ||
-                            lower.contains('stream') ||
-                            lower.endsWith('.m3u') ||
-                            lower.endsWith('.pls')) {
-                          if (!isLive) {
-                            setDialogState(() => isLive = true);
-                          }
-                        }
-                      },
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -539,23 +540,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         border: OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Transmisión en vivo (Live Stream / Radio)',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                      subtitle: const Text(
-                        'Streaming continuo sin duración fija (Icecast / Shoutcast)',
-                        style: TextStyle(fontSize: 11, color: Colors.white54),
-                      ),
-                      value: isLive,
-                      onChanged: (val) {
-                        setDialogState(() => isLive = val);
-                      },
-                    ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     const Text(
                       'Ejemplos rápidos:',
                       style: TextStyle(
@@ -575,7 +560,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           onPressed: () {
                             uriController.text = 'https://icecast.radiofrance.fr/fip-midfi.mp3';
                             titleController.text = 'Radio FIP (Icecast Live)';
-                            setDialogState(() => isLive = true);
+                            setDialogState(() {});
                           },
                         ),
                         ActionChip(
@@ -584,7 +569,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           onPressed: () {
                             uriController.text = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
                             titleController.text = 'SoundHelix Song 1 (Remote)';
-                            setDialogState(() => isLive = false);
+                            setDialogState(() {});
                           },
                         ),
                         ActionChip(
@@ -593,7 +578,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           onPressed: () {
                             uriController.text = 'http://stream.srg-ssr.ch/m/rsj/mp3_128';
                             titleController.text = 'Radio Swiss Jazz (Live)';
-                            setDialogState(() => isLive = true);
+                            setDialogState(() {});
                           },
                         ),
                       ],
@@ -620,19 +605,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             ? rawInput.split('/').last.split('?').first
                             : rawInput);
 
-                    final AudioSource source;
-                    if (isLive) {
-                      source = AudioSource.liveStream(Uri.parse(rawInput));
-                    } else if (rawInput.startsWith('http://') || rawInput.startsWith('https://')) {
-                      source = AudioSource.network(Uri.parse(rawInput));
-                    } else if (rawInput.startsWith('asset://') || rawInput.startsWith('assets/')) {
-                      final clean = rawInput.replaceFirst(RegExp(r'^asset(s)?://'), 'assets/');
-                      source = AudioSource.asset(clean);
-                    } else if (rawInput.startsWith('file://')) {
-                      source = AudioSource.file(Uri.parse(rawInput).toFilePath());
-                    } else {
-                      source = AudioSource.file(rawInput);
-                    }
+                    final AudioSource source = AudioSource.uri(rawInput);
 
                     final newTrack = AudioTrack(
                       id: rawInput,
@@ -884,95 +857,115 @@ class _PlayerScreenState extends State<PlayerScreen> {
               initialData: _player.state.position,
               builder: (context, posSnapshot) {
                 final pos = posSnapshot.data ?? Duration.zero;
-                final dur = _player.state.duration;
-                final isLive = _selectedTrack?.isLive ?? (dur == Duration.zero && _player.state.playing);
-                final maxMs = dur.inMilliseconds > 0
-                    ? dur.inMilliseconds.toDouble()
-                    : 1.0;
-                final currentMs = pos.inMilliseconds.toDouble().clamp(
-                  0.0,
-                  maxMs,
-                );
+                return StreamBuilder<Duration>(
+                  stream: _player.stream.bufferedPosition,
+                  initialData: _player.state.bufferedPosition,
+                  builder: (context, bufSnapshot) {
+                    final bufferedPos = bufSnapshot.data ?? _player.state.bufferedPosition;
+                    final dur = _player.state.duration;
+                    final isLive = (_player.state.trackMetadata?.isLiveStream ?? false) ||
+                        (_selectedTrack?.isLive ?? false);
+                    final maxMs = dur.inMilliseconds > 0
+                        ? dur.inMilliseconds.toDouble()
+                        : 1.0;
+                    final currentMs = pos.inMilliseconds.toDouble().clamp(
+                      0.0,
+                      maxMs,
+                    );
+                    final bufferedMs = bufferedPos.inMilliseconds.toDouble().clamp(
+                      0.0,
+                      maxMs,
+                    );
 
-                return Column(
-                  children: [
-                    Slider(
-                      value: isLive
-                          ? 0.0
-                          : (_dragPositionMs ?? currentMs).clamp(0.0, maxMs),
-                      max: isLive ? 1.0 : maxMs,
-                      onChangeStart: isLive
-                          ? null
-                          : (val) {
-                              setState(() => _dragPositionMs = val);
-                            },
-                      onChanged: isLive
-                          ? null
-                          : (val) {
-                              setState(() => _dragPositionMs = val);
-                            },
-                      onChangeEnd: isLive
-                          ? null
-                          : (val) {
-                              _player.action.seek(
-                                Duration(milliseconds: val.toInt()),
-                              );
-                              setState(() => _dragPositionMs = null);
-                            },
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    return Column(
                       children: [
-                        Flexible(
-                          child: Text(
-                            _formatDuration(
-                              _dragPositionMs != null
-                                  ? Duration(
-                                      milliseconds: _dragPositionMs!.toInt(),
-                                    )
-                                  : pos,
-                              forceHours: dur.inHours > 0,
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            secondaryActiveTrackColor: Colors.white70,
+                          ),
+                          child: Slider(
+                            value: isLive
+                                ? 0.0
+                                : (_dragPositionMs ?? currentMs).clamp(0.0, maxMs),
+                            secondaryTrackValue: (isLive || dur == Duration.zero)
+                                ? null
+                                : bufferedMs.clamp(0.0, maxMs),
+                            max: isLive ? 1.0 : maxMs,
+                            onChangeStart: isLive
+                                ? null
+                                : (val) {
+                                    setState(() => _dragPositionMs = val);
+                                  },
+                            onChanged: isLive
+                                ? null
+                                : (val) {
+                                    setState(() => _dragPositionMs = val);
+                                  },
+                            onChangeEnd: isLive
+                                ? null
+                                : (val) {
+                                    _player.action.seek(
+                                      Duration(milliseconds: val.toInt()),
+                                    );
+                                    setState(() => _dragPositionMs = null);
+                                  },
                           ),
                         ),
-                        if (isLive)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.redAccent.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: Colors.redAccent),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.circle, color: Colors.redAccent, size: 8),
-                                SizedBox(width: 4),
-                                Text(
-                                  'LIVE STREAM',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.redAccent,
-                                  ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                _formatDuration(
+                                  _dragPositionMs != null
+                                      ? Duration(
+                                          milliseconds: _dragPositionMs!.toInt(),
+                                        )
+                                      : pos,
+                                  forceHours: dur.inHours > 0,
                                 ),
-                              ],
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          )
-                        else
-                          Flexible(
-                            child: Text(
-                              _formatDuration(dur),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
+                            if (isLive)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.redAccent.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: Colors.redAccent),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.circle, color: Colors.redAccent, size: 8),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'LIVE STREAM',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.redAccent,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              Flexible(
+                                child: Text(
+                                  _formatDuration(dur, forceHours: dur.inHours > 0),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                        ),
                       ],
-                    ),
-                  ],
+                    );
+                  },
                 );
               },
             ),
@@ -992,17 +985,38 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       onPressed: () => _player.action.stop(),
                     ),
                     const SizedBox(width: 16),
-                    IconButton(
-                      iconSize: 48,
-                      icon: Icon(
-                        isPlaying ? Icons.pause_circle : Icons.play_circle,
-                      ),
-                      onPressed: () {
-                        if (isPlaying) {
-                          _player.action.pause();
-                        } else {
-                          _player.action.play();
-                        }
+                    StreamBuilder<bool>(
+                      stream: _player.stream.buffering,
+                      initialData: _player.state.buffering,
+                      builder: (context, bufSnap) {
+                        final isBuffering = bufSnap.data ?? false;
+                        return Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            if (isBuffering)
+                              const SizedBox(
+                                width: 54,
+                                height: 54,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.deepPurpleAccent,
+                                ),
+                              ),
+                            IconButton(
+                              iconSize: 48,
+                              icon: Icon(
+                                isPlaying ? Icons.pause_circle : Icons.play_circle,
+                              ),
+                              onPressed: () {
+                                if (isPlaying) {
+                                  _player.action.pause();
+                                } else {
+                                  _player.action.play();
+                                }
+                              },
+                            ),
+                          ],
+                        );
                       },
                     ),
                   ],

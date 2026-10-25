@@ -71,7 +71,7 @@ void main() {
     test('ADV-1: Rapid interleaved seek(0), seek(t), play, pause during active streaming', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
       await player.action.openUrl(url);
-      expect(player.action.hasPinnedHead, isTrue);
+      expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -145,9 +145,9 @@ void main() {
       await Future.wait(futures);
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
-      // Final seek to zero must succeed cleanly using pinned head
+      // Final seek to zero must succeed cleanly
       await player.action.seek(Duration.zero);
-      expect(player.action.hasPinnedHead, isTrue);
+      expect(player.action.activeLoader, isNotNull);
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 25)));
 

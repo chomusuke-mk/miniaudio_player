@@ -123,6 +123,7 @@ typedef struct map_boundary_info
     int64_t mp4_mdat_atom_offset;       /**< Offset of the 'mdat' atom header (MP4), or -1 */
     uint32_t mp4_mdat_header_size;      /**< 8 or 16 (largesize) */
     int32_t head_has_mpeg_frame;        /**< 1 if the Xing/Info/VBRI MPEG frame is retained at the end of HEAD */
+    uint32_t bytes_per_frame;           /**< PCM frame size in bytes (e.g. 6 for 24-bit stereo WAV), or 1 */
     int64_t needed_bytes;               /**< When NEED_MORE: minimum prefix length required to make progress */
 } map_boundary_info_t;
 
@@ -169,6 +170,23 @@ map_boundary_status_t map_sniffer_detect_tail_boundary(
 
 /** Returns 1 if the container may carry trailing tags that require a tail scan. */
 int map_container_needs_tail_scan(map_container_format_t container);
+
+/**
+ * @brief Extracts exact duration in milliseconds from trailing container pages (e.g., Ogg Vorbis / Opus granule_pos).
+ *
+ * @param container Container detected in the head scan.
+ * @param sample_rate Native container sample rate (or 48000 for Opus).
+ * @param tail Trailing bytes of the stream.
+ * @param tail_len Number of trailing bytes.
+ * @param out_duration_ms Output exact duration in milliseconds.
+ * @return MA_TRUE if exact duration was extracted from the tail, MA_FALSE otherwise.
+ */
+ma_bool32 map_sniffer_extract_tail_duration_ms(
+    map_container_format_t container,
+    uint32_t sample_rate,
+    const uint8_t *tail,
+    size_t tail_len,
+    int64_t *out_duration_ms);
 
 #ifdef __cplusplus
 }

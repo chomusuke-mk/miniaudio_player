@@ -22,6 +22,7 @@ extern "C"
         ma_tell_proc onTell;
         void *pReadSeekTellUserData;
         ma_format format;          /* Will be either f32 or s16. */
+        ma_uint64 currentPCMFrame;
         /*OggOpusFile**/ void *of; /* Typed as void* so we can avoid a dependency on opusfile in the header section. */
     } ma_libopus;
 
@@ -31,6 +32,7 @@ extern "C"
     MA_API void ma_libopus_uninit(ma_libopus *pOpus, const ma_allocation_callbacks *pAllocationCallbacks);
     MA_API ma_result ma_libopus_read_pcm_frames(ma_libopus *pOpus, void *pFramesOut, ma_uint64 frameCount, ma_uint64 *pFramesRead);
     MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frameIndex);
+    MA_API ma_result ma_libopus_reset_stream(ma_libopus *pOpus, ma_int64 newStreamOffset, ma_uint64 targetFrame);
     MA_API ma_result ma_libopus_get_data_format(ma_libopus *pOpus, ma_format *pFormat, ma_uint32 *pChannels, ma_uint32 *pSampleRate, ma_channel *pChannelMap, size_t channelMapCap);
     MA_API ma_result ma_libopus_get_cursor_in_pcm_frames(ma_libopus *pOpus, ma_uint64 *pCursor);
     MA_API ma_result ma_libopus_get_length_in_pcm_frames(ma_libopus *pOpus, ma_uint64 *pLength);

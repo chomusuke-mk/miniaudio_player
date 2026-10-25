@@ -82,43 +82,60 @@ static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
                 break;
             }
             decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pWriteBuf, writeFrames, &readFromDecoder);
-            ma_mutex_unlock(&pDS->decoder_mutex);
 
-            if (readFromDecoder > 0)
-            {
-                ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFromDecoder);
-            }
+            ma_bool32 was_aborted = MA_FALSE;
+            ma_bool32 is_buffer_eof = MA_FALSE;
+            ma_bool32 is_buffer_exhausted = MA_FALSE;
 
             if (pDS->is_stream)
             {
-                ma_bool32 is_buffer_exhausted = MA_FALSE;
                 ma_mutex_lock(&pDS->buffer.lock);
-                if (pDS->buffer.is_eof)
+                was_aborted = pDS->buffer.should_abort;
+                is_buffer_eof = pDS->buffer.is_eof;
+                if (is_buffer_eof)
                 {
-                    if (pDS->buffer.total_size > 0 && pDS->buffer.read_cursor >= pDS->buffer.total_size)
+                    int64_t end_limit = (pDS->buffer.tail_locked && pDS->buffer.audio_end > 0)
+                        ? pDS->buffer.audio_end
+                        : pDS->buffer.total_size;
+                    if (end_limit > 0 && pDS->buffer.read_cursor >= end_limit)
                     {
                         is_buffer_exhausted = MA_TRUE;
                     }
-                    else if (pDS->buffer.total_size <= 0 && pDS->buffer.read_cursor >= pDS->buffer.range_end)
+                    else if (end_limit <= 0 && pDS->buffer.read_cursor >= pDS->buffer.range_end)
                     {
                         is_buffer_exhausted = MA_TRUE;
                     }
                 }
                 ma_mutex_unlock(&pDS->buffer.lock);
+            }
 
-                if (decRes == MA_AT_END || (is_buffer_exhausted && readFromDecoder == 0))
+            if (!was_aborted)
+            {
+                if (readFromDecoder > 0)
                 {
+                    ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFromDecoder);
+                }
+
+                if (pDS->is_stream)
+                {
+                    if (is_buffer_eof && (decRes == MA_AT_END || (is_buffer_exhausted && readFromDecoder == 0)))
+                    {
+                        pDS->state = MAP_SOURCE_STATE_DRAINING;
+                        ma_atomic_store_32(&pDS->decoder_eof, 1);
+                    }
+                }
+                else if (decRes == MA_AT_END || (decRes != MA_SUCCESS && readFromDecoder == 0))
+                {
+                    pDS->state = MAP_SOURCE_STATE_DRAINING;
                     ma_atomic_store_32(&pDS->decoder_eof, 1);
                 }
-                else if (readFromDecoder == 0)
-                {
-                    /* Waiting for more network chunks from HTTP provider */
-                    ma_sleep(5);
-                }
             }
-            else if (decRes == MA_AT_END || (decRes != MA_SUCCESS && readFromDecoder == 0))
+            ma_mutex_unlock(&pDS->decoder_mutex);
+
+            if (!was_aborted && pDS->is_stream && !is_buffer_eof && readFromDecoder == 0)
             {
-                ma_atomic_store_32(&pDS->decoder_eof, 1);
+                /* Waiting for more chunks from provider */
+                ma_sleep(5);
             }
         }
         else
@@ -233,6 +250,21 @@ static ma_result map_time_stretch_ds_read_filtered(
             {
                 *pRealFramesRead = (pFramesRead != NULL) ? *pFramesRead : 0;
             }
+#if defined(__EMSCRIPTEN__)
+            if (decRes == MA_BUSY)
+            {
+                if (pFramesOut != NULL && framesToRead > 0)
+                {
+                    ma_uint64 done = (pFramesRead != NULL) ? *pFramesRead : 0;
+                    if (done < framesToRead)
+                    {
+                        memset(pFramesOut + done * channels, 0, (framesToRead - done) * channels * sizeof(float));
+                    }
+                }
+                if (pFramesRead != NULL) *pFramesRead = framesToRead;
+                return MA_SUCCESS;
+            }
+#endif
             return decRes;
         }
     }
@@ -314,10 +346,21 @@ static ma_result map_time_stretch_ds_read_filtered(
                 ma_uint64 rawRead = 0;
                 ma_result res = ma_decoder_read_pcm_frames(&pDS->decoder, pDS->rawBuffer, maxFrames, &rawRead);
                 framesFetched = (ma_uint32)rawRead;
+#if defined(__EMSCRIPTEN__)
+                if (res == MA_BUSY)
+                {
+                    /* Buffering in web: do not mark is_eof */
+                }
+                else if (res != MA_SUCCESS || rawRead == 0)
+                {
+                    pDS->is_eof = MA_TRUE;
+                }
+#else
                 if (res != MA_SUCCESS || rawRead == 0)
                 {
                     pDS->is_eof = MA_TRUE;
                 }
+#endif
             }
 
             pDS->rawBufferCount = framesFetched;
@@ -325,6 +368,18 @@ static ma_result map_time_stretch_ds_read_filtered(
 
             if (framesFetched == 0)
             {
+#if defined(__EMSCRIPTEN__)
+                if (!pDS->is_eof)
+                {
+                    ma_uint64 remaining = framesToRead - totalRead;
+                    if (pFramesOut != NULL && remaining > 0)
+                    {
+                        memset(pFramesOut + totalRead * channels, 0, remaining * channels * sizeof(float));
+                    }
+                    totalRead += remaining;
+                    break;
+                }
+#endif
                 if (!pDS->has_worker || ma_atomic_load_32(&pDS->decoder_eof))
                 {
                     pDS->is_eof = MA_TRUE;
@@ -683,6 +738,7 @@ ma_result map_time_stretch_ds_read(
             if (readRes == MA_AT_END || pDS->is_eof)
             {
                 pDS->is_eof = MA_TRUE;
+                pDS->state = MAP_SOURCE_STATE_EOF;
             }
             else
             {
@@ -692,7 +748,7 @@ ma_result map_time_stretch_ds_read(
                     memset(pOut + totalFramesOut * pDS->channels, 0, (frameCount - totalFramesOut) * pDS->channels * sizeof(float));
                 }
                 totalFramesOut = frameCount;
-                if (pDS->pDispatcher != NULL && pDS->is_stream)
+                if (pDS->pDispatcher != NULL && pDS->is_stream && map_buffer_is_starving(&pDS->buffer))
                 {
                     map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
                 }
@@ -755,170 +811,173 @@ ma_result map_time_stretch_ds_read(
     return MA_SUCCESS;
 }
 
-ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameIndex)
+static void map_time_stretch_ds_prefill_locked(map_time_stretch_ds *pDS, ma_uint32 maxPrefillFrames)
 {
-    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
-    ma_result res;
-    ma_uint64 total_frames;
-    if (pDS == NULL)
-        return MA_INVALID_ARGS;
+    if (pDS == NULL || !pDS->has_worker || maxPrefillFrames == 0)
+    {
+        return;
+    }
+
+    ma_uint32 prefillFrames = maxPrefillFrames;
+    void *pPrefillBuf = NULL;
+    if (ma_pcm_rb_acquire_write(&pDS->rb, &prefillFrames, &pPrefillBuf) == MA_SUCCESS && prefillFrames > 0)
+    {
+        ma_bool32 saved_probing = pDS->buffer.is_probing;
+        pDS->buffer.is_probing = MA_TRUE;
+        ma_uint64 readFrames = 0;
+        ma_result decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pPrefillBuf, prefillFrames, &readFrames);
+        pDS->buffer.is_probing = saved_probing;
+
+        if (readFrames > 0)
+        {
+            ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFrames);
+        }
+        if (pDS->buffer.is_eof && (decRes == MA_AT_END || (decRes == MA_SUCCESS && readFrames == 0)))
+        {
+            pDS->state = MAP_SOURCE_STATE_DRAINING;
+            ma_atomic_store_32(&pDS->decoder_eof, 1);
+        }
+    }
+}
+
+int32_t map_time_stretch_ds_seek_stream(
+    map_time_stretch_ds *pDS,
+    ma_uint64 targetFrame,
+    int64_t newStreamOffset)
+{
+    if (pDS == NULL || !pDS->is_stream)
+    {
+        return 0;
+    }
+
+    /* Step 1: Signal abort so worker wakes up immediately if blocked in map_buffer_read */
+    map_buffer_abort(&pDS->buffer);
 
     if (pDS->has_worker)
     {
-        /* If streaming, signal abort first so worker doesn't stay blocked on network data while holding decoder_mutex */
-        if (pDS->is_stream)
-        {
-            map_buffer_abort(&pDS->buffer);
-        }
-
-        /* Acquire decoder_mutex first outside spinlock to avoid priority inversion */
         ma_mutex_lock(&pDS->decoder_mutex);
-        if (pDS->is_stream)
-        {
-            ma_mutex_lock(&pDS->buffer.lock);
-            pDS->buffer.should_abort = MA_FALSE;
-            ma_mutex_unlock(&pDS->buffer.lock);
-        }
+    }
 
-        total_frames = pDS->totalFrames;
-        if (pDS->is_stream)
-        {
-            if (frameIndex != 0 && pDS->readCursorFrames == frameIndex && !pDS->is_eof && !ma_atomic_load_32(&pDS->decoder_eof))
-            {
-                /* Already flushed and positioned at frameIndex by stream_flush; do not re-flush decoder */
-                ma_mutex_unlock(&pDS->decoder_mutex);
-                return MA_SUCCESS;
-            }
-            if (frameIndex == 0)
-            {
-                pDS->buffer.read_cursor = (pDS->buffer.audio_start > 0) ? pDS->buffer.audio_start : 0;
-            }
-            pDS->readCursorFrames = frameIndex;
-            ma_atomic_store_32(&pDS->decoder_eof, 0);
-            pDS->is_eof = MA_FALSE;
+    /* Step 2: Check RAM cache and update buffer cursor/window atomically */
+    ma_bool32 seek_from_start = MA_FALSE;
+    int32_t is_cache_hit = map_buffer_try_seek_cached(&pDS->buffer, newStreamOffset, &seek_from_start);
 
-            /* Try full in-memory decoder frame seek ONLY if file is fully in RAM from byte 0 */
-            ma_bool32 full_file_in_ram = (pDS->buffer.total_size > 0 &&
-                                          ((pDS->buffer.range_start == 0 &&
-                                            pDS->buffer.range_end >= pDS->buffer.total_size) ||
-                                           (pDS->buffer.head_data != NULL &&
-                                            (size_t)pDS->buffer.total_size <= pDS->buffer.head_size)));
-            if (full_file_in_ram)
+    /* Step 3: Reset or seek decoder (with is_probing=MA_TRUE so main thread NEVER blocks on data_ready_event) */
+    pDS->readCursorFrames = targetFrame;
+    if (is_cache_hit)
+    {
+        ma_bool32 saved_probing = pDS->buffer.is_probing;
+        pDS->buffer.is_probing = MA_TRUE;
+        if (seek_from_start)
+        {
+            map_decoder_reset_stream(&pDS->decoder, 0, targetFrame);
+            if (targetFrame > 0)
             {
-                pDS->buffer.is_eof = MA_TRUE;
-                res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
-                if (res != MA_SUCCESS)
+                ma_result sres = ma_decoder_seek_to_pcm_frame(&pDS->decoder, targetFrame);
+                if (sres != MA_SUCCESS)
                 {
-                    map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
-                    res = MA_SUCCESS;
+                    int64_t fallback_off = (newStreamOffset < pDS->buffer.audio_start)
+                        ? pDS->buffer.audio_start
+                        : newStreamOffset;
+                    pDS->buffer.read_cursor = fallback_off;
+                    map_decoder_reset_stream(&pDS->decoder, fallback_off, targetFrame);
                 }
             }
-            else
-            {
-                map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
-                res = MA_SUCCESS;
-            }
-        }
-        else if (total_frames > 0 && frameIndex >= total_frames)
-        {
-            ma_decoder_seek_to_pcm_frame(&pDS->decoder, total_frames - 1);
-            ma_atomic_store_32(&pDS->decoder_eof, 1);
-            pDS->is_eof = MA_TRUE;
-            pDS->readCursorFrames = total_frames;
-            res = MA_SUCCESS;
         }
         else
         {
-            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
-            ma_atomic_store_32(&pDS->decoder_eof, 0);
-            pDS->is_eof = MA_FALSE;
-            pDS->readCursorFrames = frameIndex;
+            map_decoder_reset_stream(&pDS->decoder, newStreamOffset, targetFrame);
         }
-
-        /* Update internal stream state and ring buffer under spinlock */
-        ma_spinlock_lock(&pDS->lock);
-        pDS->is_eof = (frameIndex >= total_frames && total_frames > 0) ? MA_TRUE : MA_FALSE;
-        pDS->rawBufferCount = 0;
-        pDS->rawBufferReadPos = 0;
-        pDS->read_cursor_fraction = 0.0;
-        map_silence_detector_reset(&pDS->silence, frameIndex == 0);
-        ma_pcm_rb_reset(&pDS->rb);
-        if (pDS->sonic != NULL)
-        {
-            sonicResetStream(pDS->sonic);
-        }
-        ma_spinlock_unlock(&pDS->lock);
-
-        ma_mutex_unlock(&pDS->decoder_mutex);
-        ma_event_signal(&pDS->worker_event);
+        pDS->buffer.is_probing = saved_probing;
     }
     else
     {
-        ma_spinlock_lock(&pDS->lock);
-        pDS->rawBufferCount = 0;
-        pDS->rawBufferReadPos = 0;
-        pDS->read_cursor_fraction = 0.0;
-        map_silence_detector_reset(&pDS->silence, frameIndex == 0);
-        total_frames = pDS->totalFrames;
-
-        if (pDS->is_stream)
-        {
-            if (frameIndex != 0 && pDS->readCursorFrames == frameIndex)
-            {
-                ma_spinlock_unlock(&pDS->lock);
-                return MA_SUCCESS;
-            }
-            if (frameIndex == 0)
-            {
-                pDS->buffer.read_cursor = (pDS->buffer.audio_start > 0) ? pDS->buffer.audio_start : 0;
-            }
-            pDS->readCursorFrames = frameIndex;
-            pDS->is_eof = MA_FALSE;
-
-            /* Try full in-memory decoder frame seek ONLY if file is fully in RAM from byte 0 */
-            ma_bool32 full_file_in_ram = (pDS->buffer.total_size > 0 &&
-                                          ((pDS->buffer.range_start == 0 &&
-                                            pDS->buffer.range_end >= pDS->buffer.total_size) ||
-                                           (pDS->buffer.head_data != NULL &&
-                                            (size_t)pDS->buffer.total_size <= pDS->buffer.head_size)));
-            if (full_file_in_ram)
-            {
-                pDS->buffer.is_eof = MA_TRUE;
-                res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
-                if (res != MA_SUCCESS)
-                {
-                    map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
-                    res = MA_SUCCESS;
-                }
-            }
-            else
-            {
-                map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, frameIndex);
-                res = MA_SUCCESS;
-            }
-        }
-        else if (total_frames > 0 && frameIndex >= total_frames)
-        {
-            ma_decoder_seek_to_pcm_frame(&pDS->decoder, total_frames - 1);
-            pDS->is_eof = MA_TRUE;
-            pDS->readCursorFrames = total_frames;
-            res = MA_SUCCESS;
-        }
-        else
-        {
-            res = ma_decoder_seek_to_pcm_frame(&pDS->decoder, frameIndex);
-            pDS->is_eof = MA_FALSE;
-            pDS->readCursorFrames = frameIndex;
-        }
-
-        if (pDS->sonic != NULL)
-        {
-            sonicResetStream(pDS->sonic);
-        }
-        ma_spinlock_unlock(&pDS->lock);
+        map_decoder_reset_stream(&pDS->decoder, newStreamOffset, targetFrame);
     }
 
-    return res;
+    /* Step 4: Reset downstream PCM ring buffer, silence detector, and Sonic under spinlock */
+    ma_spinlock_lock(&pDS->lock);
+    pDS->rawBufferCount = 0;
+    pDS->rawBufferReadPos = 0;
+    pDS->read_cursor_fraction = 0.0;
+    map_silence_detector_reset(&pDS->silence, targetFrame == 0);
+    if (pDS->has_worker)
+    {
+        ma_pcm_rb_reset(&pDS->rb);
+    }
+    if (pDS->sonic != NULL)
+    {
+        sonicResetStream(pDS->sonic);
+    }
+    ma_atomic_store_32(&pDS->decoder_eof, 0);
+    pDS->is_eof = MA_FALSE;
+    pDS->state = MAP_SOURCE_STATE_DECODING;
+    ma_spinlock_unlock(&pDS->lock);
+
+    /* Step 5: On cache hit, prefill initial PCM frames synchronously so RT callback has zero underrun */
+    if (is_cache_hit && pDS->has_worker)
+    {
+        map_time_stretch_ds_prefill_locked(pDS, 2048);
+    }
+
+    if (pDS->has_worker)
+    {
+        ma_mutex_unlock(&pDS->decoder_mutex);
+        ma_event_signal(&pDS->worker_event);
+    }
+
+    return is_cache_hit;
+}
+
+void map_time_stretch_ds_set_speed(map_time_stretch_ds *pDS, float speed)
+{
+    if (pDS == NULL)
+        return;
+
+    ma_spinlock_lock(&pDS->lock);
+    pDS->speed = speed;
+    if (pDS->sonic != NULL)
+    {
+        sonicSetSpeed(pDS->sonic, speed);
+    }
+    ma_spinlock_unlock(&pDS->lock);
+}
+
+void map_time_stretch_ds_set_pitch(map_time_stretch_ds *pDS, float pitch)
+{
+    if (pDS == NULL)
+        return;
+
+    ma_spinlock_lock(&pDS->lock);
+    pDS->pitch = pitch;
+    if (pDS->sonic != NULL)
+    {
+        sonicSetPitch(pDS->sonic, pitch);
+    }
+    ma_spinlock_unlock(&pDS->lock);
+}
+
+ma_result map_time_stretch_ds_seek(ma_data_source *pDataSource, ma_uint64 frameIndex)
+{
+    map_time_stretch_ds *pDS = (map_time_stretch_ds *)pDataSource;
+    if (pDS == NULL || !pDS->is_stream)
+        return MA_INVALID_ARGS;
+
+    if (frameIndex != 0 && pDS->readCursorFrames == frameIndex && !pDS->is_eof && !ma_atomic_load_32(&pDS->decoder_eof))
+    {
+        return MA_SUCCESS;
+    }
+
+    int64_t seekByte = (frameIndex == 0)
+        ? ((pDS->buffer.audio_start > 0) ? pDS->buffer.audio_start : 0)
+        : map_decoder_get_stream_seek_byte(&pDS->decoder, frameIndex);
+    if (seekByte < 0)
+    {
+        seekByte = pDS->buffer.read_cursor;
+    }
+
+    map_time_stretch_ds_seek_stream(pDS, frameIndex, seekByte);
+    return MA_SUCCESS;
 }
 
 ma_result map_time_stretch_ds_get_data_format(
@@ -998,6 +1057,7 @@ static ma_result map_time_stretch_ds_finish_init(
     ma_data_source_config baseConfig;
     ma_result result;
 
+    pDS->state = MAP_SOURCE_STATE_IDLE;
     pDS->channels = targetChannels;
     pDS->sampleRate = targetSampleRate;
     pDS->speed = 1.0f;
@@ -1015,6 +1075,7 @@ static ma_result map_time_stretch_ds_finish_init(
     pDS->sonic = sonicCreateStream((int)targetSampleRate, (int)targetChannels);
     if (pDS->sonic == NULL)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         ma_decoder_uninit(&pDS->decoder);
         return MA_OUT_OF_MEMORY;
     }
@@ -1024,6 +1085,7 @@ static ma_result map_time_stretch_ds_finish_init(
     pDS->scratchBuffer = (float *)ma_aligned_malloc(pDS->scratchCapacity * sizeof(float), 64, NULL);
     if (pDS->scratchBuffer == NULL)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         sonicDestroyStream(pDS->sonic);
         ma_decoder_uninit(&pDS->decoder);
         return MA_OUT_OF_MEMORY;
@@ -1034,6 +1096,7 @@ static ma_result map_time_stretch_ds_finish_init(
     pDS->rawBuffer = (float *)ma_aligned_malloc(pDS->rawBufferCapacity * sizeof(float), 64, NULL);
     if (pDS->rawBuffer == NULL)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         ma_aligned_free(pDS->scratchBuffer, NULL);
         sonicDestroyStream(pDS->sonic);
         ma_decoder_uninit(&pDS->decoder);
@@ -1055,6 +1118,7 @@ static ma_result map_time_stretch_ds_finish_init(
     result = ma_data_source_init(&baseConfig, &pDS->base);
     if (result != MA_SUCCESS)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         map_silence_detector_uninit(&pDS->silence);
         ma_aligned_free(pDS->rawBuffer, NULL);
         ma_aligned_free(pDS->scratchBuffer, NULL);
@@ -1068,30 +1132,35 @@ static ma_result map_time_stretch_ds_finish_init(
     ma_atomic_store_32(&pDS->worker_is_sleeping, 0);
     ma_atomic_store_32(&pDS->worker_stop, 0);
     ma_atomic_store_32(&pDS->decoder_eof, 0);
+    pDS->state = MAP_SOURCE_STATE_DECODING;
 
+#if defined(__EMSCRIPTEN__)
+    /* En WebAssembly, el motor completo ya se ejecuta dentro de un Web Worker dedicado.
+     * Desactivar el sub-worker pthread evita depender de SharedArrayBuffer (COOP/COEP)
+     * y ahorra 163,840 floats (640 KB) del ring buffer intermedio por reproductor. */
+#else
     if (ma_pcm_rb_init(ma_format_f32, targetChannels, 65536, NULL, NULL, &pDS->rb) == MA_SUCCESS)
     {
         if (ma_mutex_init(&pDS->decoder_mutex) == MA_SUCCESS)
         {
             if (ma_event_init(&pDS->worker_event) == MA_SUCCESS)
             {
-                /* Prefill initial frames synchronously so startup is instantaneous (only for files/memory, NOT streams) */
-                if (!pDS->is_stream)
+                /* Synchronously prefill up to 4096 initial PCM frames while is_probing is true
+                 * so startup is instantaneous with zero initial underruns. */
+                ma_uint32 prefillFrames = 4096;
+                void *pPrefillBuf = NULL;
+                if (ma_pcm_rb_acquire_write(&pDS->rb, &prefillFrames, &pPrefillBuf) == MA_SUCCESS && prefillFrames > 0)
                 {
-                    ma_uint32 prefillFrames = 8192;
-                    void *pPrefillBuf = NULL;
-                    if (ma_pcm_rb_acquire_write(&pDS->rb, &prefillFrames, &pPrefillBuf) == MA_SUCCESS && prefillFrames > 0)
+                    ma_uint64 readFrames = 0;
+                    ma_result decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pPrefillBuf, prefillFrames, &readFrames);
+                    if (readFrames > 0)
                     {
-                        ma_uint64 readFrames = 0;
-                        ma_result decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pPrefillBuf, prefillFrames, &readFrames);
-                        if (readFrames > 0)
-                        {
-                            ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFrames);
-                        }
-                        if (decRes == MA_AT_END || (decRes == MA_SUCCESS && readFrames == 0) || decRes != MA_SUCCESS)
-                        {
-                            ma_atomic_store_32(&pDS->decoder_eof, 1);
-                        }
+                        ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFrames);
+                    }
+                    if (pDS->buffer.is_eof && (decRes == MA_AT_END || (decRes == MA_SUCCESS && readFrames == 0)))
+                    {
+                        pDS->state = MAP_SOURCE_STATE_DRAINING;
+                        ma_atomic_store_32(&pDS->decoder_eof, 1);
                     }
                 }
 
@@ -1117,102 +1186,10 @@ static ma_result map_time_stretch_ds_finish_init(
             ma_pcm_rb_uninit(&pDS->rb);
         }
     }
+#endif
 
     pDS->is_initialized = MA_TRUE;
     return MA_SUCCESS;
-}
-
-ma_result map_time_stretch_ds_init(
-    map_time_stretch_ds *pDS,
-    const char *file_path,
-    ma_uint32 targetChannels,
-    ma_uint32 targetSampleRate)
-{
-    ma_result result;
-    ma_decoder_config decoder_cfg;
-    ma_uint32 custom_count;
-
-    if (pDS == NULL || file_path == NULL)
-        return MA_INVALID_ARGS;
-
-    struct map_event_dispatcher *saved_disp1 = pDS->pDispatcher;
-    memset(pDS, 0, sizeof(*pDS));
-    pDS->pDispatcher = saved_disp1;
-
-    decoder_cfg = ma_decoder_config_init(ma_format_f32, targetChannels, targetSampleRate);
-    decoder_cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
-    custom_count = map_get_custom_decoder_count();
-    if (custom_count > 0)
-    {
-        decoder_cfg.ppCustomBackendVTables = g_map_custom_decoders;
-        decoder_cfg.customBackendCount = custom_count;
-    }
-
-#if defined(_WIN32)
-    {
-        wchar_t *wpath = map_utf8_to_wchar(file_path);
-        if (wpath != NULL)
-        {
-            result = ma_decoder_init_file_w(wpath, &decoder_cfg, &pDS->decoder);
-            free(wpath);
-        }
-        else
-        {
-            result = ma_decoder_init_file(file_path, &decoder_cfg, &pDS->decoder);
-        }
-    }
-#else
-    result = ma_decoder_init_file(file_path, &decoder_cfg, &pDS->decoder);
-#endif
-    if (result != MA_SUCCESS)
-    {
-        return result;
-    }
-
-    return map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
-}
-
-ma_result map_time_stretch_ds_init_memory(
-    map_time_stretch_ds *pDS,
-    const void *pData,
-    size_t dataSize,
-    ma_bool32 ownsMemory,
-    ma_uint32 targetChannels,
-    ma_uint32 targetSampleRate)
-{
-    ma_result result;
-    ma_decoder_config decoder_cfg;
-    ma_uint32 custom_count;
-
-    if (pDS == NULL || pData == NULL || dataSize == 0)
-        return MA_INVALID_ARGS;
-
-    struct map_event_dispatcher *saved_disp2 = pDS->pDispatcher;
-    memset(pDS, 0, sizeof(*pDS));
-    pDS->pDispatcher = saved_disp2;
-
-    pDS->memory_buffer = pData;
-    pDS->memory_size = dataSize;
-    pDS->owns_memory = ownsMemory;
-
-    decoder_cfg = ma_decoder_config_init(ma_format_f32, targetChannels, targetSampleRate);
-    decoder_cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
-    custom_count = map_get_custom_decoder_count();
-    if (custom_count > 0)
-    {
-        decoder_cfg.ppCustomBackendVTables = g_map_custom_decoders;
-        decoder_cfg.customBackendCount = custom_count;
-    }
-
-    result = ma_decoder_init_memory(pData, dataSize, &decoder_cfg, &pDS->decoder);
-    if (result != MA_SUCCESS)
-    {
-        pDS->memory_buffer = NULL;
-        pDS->owns_memory = MA_FALSE;
-        return result;
-    }
-
-    return map_time_stretch_ds_finish_init(pDS, targetChannels, targetSampleRate);
 }
 
 ma_result map_time_stretch_ds_init_stream_ex(
@@ -1239,19 +1216,35 @@ ma_result map_time_stretch_ds_init_stream_ex(
     struct map_event_dispatcher *saved_disp3 = pDS->pDispatcher;
     memset(pDS, 0, sizeof(*pDS));
     pDS->pDispatcher = saved_disp3;
+    pDS->state = MAP_SOURCE_STATE_UNINITIALIZED;
 
     if (cap == 0)
     {
         cap = 4 * 1024 * 1024; /* Default 4 MB ring buffer */
     }
-    if (cap < initialDataSize)
     {
-        cap = initialDataSize * 2;
+        map_boundary_info_t binfo;
+        size_t initialAudioSize = initialDataSize;
+        map_boundary_info_reset(&binfo);
+        if (map_sniffer_detect_head_boundary(initialData, initialDataSize, totalSize, &binfo) == MAP_BOUNDARY_FOUND &&
+            binfo.audio_start > 0 && (size_t)binfo.audio_start <= initialDataSize)
+        {
+            initialAudioSize = initialDataSize - (size_t)binfo.audio_start;
+        }
+        if (cap < initialAudioSize)
+        {
+            cap = initialAudioSize;
+        }
+        if (cap < 65536)
+        {
+            cap = 65536;
+        }
     }
 
     result = map_buffer_init(&pDS->buffer, cap, totalSize, isLive);
     if (result != MA_SUCCESS)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         return result;
     }
 
@@ -1261,8 +1254,15 @@ ma_result map_time_stretch_ds_init_stream_ex(
     result = map_buffer_write(&pDS->buffer, 0, initialData, initialDataSize);
     if (result != MA_SUCCESS)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         map_buffer_uninit(&pDS->buffer);
         return result;
+    }
+
+    /* If finite stream was already completely provided in initialData, mark buffer EOF before decoder init */
+    if (!isLive && totalSize > 0 && (int64_t)initialDataSize >= totalSize)
+    {
+        map_buffer_end(&pDS->buffer);
     }
 
     /* Seed optional tail probe bytes (e.g. MP4 moov atom located at EOF) */
@@ -1296,6 +1296,7 @@ ma_result map_time_stretch_ds_init_stream_ex(
 
     if (result != MA_SUCCESS)
     {
+        pDS->state = MAP_SOURCE_STATE_ERROR;
         pDS->buffer.is_probing = MA_FALSE;
         map_buffer_uninit(&pDS->buffer);
         pDS->is_stream = MA_FALSE;
@@ -1354,7 +1355,7 @@ ma_result map_time_stretch_ds_stream_flush(
     /* Step 1: Signal abort to interrupt any active map_buffer_decoder_read */
     map_buffer_abort(&pDS->buffer);
 
-    /* Step 2: Acquire decoder_mutex. Because should_abort is MA_TRUE, 
+    /* Step 2: Acquire decoder_mutex. Because should_abort is MA_TRUE,
      * worker is guaranteed to exit ma_decoder_read_pcm_frames with MA_INTERRUPT. */
     if (pDS->has_worker)
     {
@@ -1379,6 +1380,7 @@ ma_result map_time_stretch_ds_stream_flush(
         }
         ma_atomic_store_32(&pDS->decoder_eof, 0);
         pDS->is_eof = MA_FALSE;
+        pDS->state = MAP_SOURCE_STATE_DECODING;
         ma_spinlock_unlock(&pDS->lock);
 
         ma_mutex_unlock(&pDS->decoder_mutex);
@@ -1401,6 +1403,7 @@ ma_result map_time_stretch_ds_stream_flush(
         }
         ma_atomic_store_32(&pDS->decoder_eof, 0);
         pDS->is_eof = MA_FALSE;
+        pDS->state = MAP_SOURCE_STATE_DECODING;
         ma_spinlock_unlock(&pDS->lock);
     }
 
@@ -1455,19 +1458,13 @@ void map_time_stretch_ds_uninit(map_time_stretch_ds *pDS)
     }
     map_silence_detector_uninit(&pDS->silence);
 
-    if (pDS->owns_memory && pDS->memory_buffer != NULL)
-    {
-        free((void *)pDS->memory_buffer);
-        pDS->memory_buffer = NULL;
-    }
-    pDS->owns_memory = MA_FALSE;
-
     if (pDS->is_stream)
     {
         map_buffer_uninit(&pDS->buffer);
         pDS->is_stream = MA_FALSE;
     }
 
+    pDS->state = MAP_SOURCE_STATE_UNINITIALIZED;
     pDS->is_initialized = MA_FALSE;
     ma_spinlock_unlock(&pDS->lock);
 

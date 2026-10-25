@@ -276,6 +276,11 @@ class InternalCrossfadeController {
     _startTicker(_operationId);
   }
 
+  /// Updates the completion callback for the active gain ramp.
+  void updateOnComplete(void Function() onComplete) {
+    _onComplete = onComplete;
+  }
+
   /// Synchronously stops the gain envelope ticker without firing `_onComplete`.
   void cancel() {
     _operationId++;

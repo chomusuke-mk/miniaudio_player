@@ -335,7 +335,7 @@ void main() {
       if (!player.isDisposed) await player.dispose();
     });
 
-    test('N3.1: Connection refused (unbound port) throws MiniaudioPlayerException and resets state', () async {
+    test('N3.1: Connection refused (unbound port) throws MiniaudioPlayerException and transitions to PlaybackState.error', () async {
       // Connect to unused port
       const unusedPort = 59871;
       final refusedUrl = 'http://127.0.0.1:$unusedPort/music/test.mp3';
@@ -346,7 +346,7 @@ void main() {
       );
 
       expect(player.state.opening, isFalse);
-      expect(player.state.playbackState, equals(PlaybackState.stopped));
+      expect(player.state.playbackState, equals(PlaybackState.error));
     });
 
     test('N3.2: Corrupt headers endpoint (/corrupt/headers) fails safely without native segfault', () async {
@@ -359,7 +359,7 @@ void main() {
       }
 
       expect(player.state.opening, isFalse);
-      expect(player.state.playbackState, equals(PlaybackState.stopped));
+      expect(player.state.playbackState, equals(PlaybackState.error));
     });
 
     test('N3.3: Rapid switching between network streams cancels superseded HTTP requests', () async {

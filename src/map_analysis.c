@@ -8,17 +8,12 @@
 typedef map_biquad_df2t_t map_rg_biquad_t;
 #define map_rg_biquad_process map_biquad_df2t_process
 
-MAP_API int32_t miniaudio_player_analyze_audio(
-    const char *file_path,
+static int32_t map_analyze_decoder_internal(
+    ma_decoder *pDecoder,
+    uint64_t byte_size,
     const miniaudio_audio_analysis_config_t *config,
     miniaudio_audio_analysis_result_t *out_result)
 {
-    ma_decoder_config decoder_cfg;
-    ma_decoder decoder;
-    ma_result res;
-    ma_uint32 custom_count;
-    FILE *f = NULL;
-    long file_size = 0;
     uint32_t sample_rate = 0;
     uint32_t flags = MAP_ANALYSIS_FLAG_REPLAY_GAIN | MAP_ANALYSIS_FLAG_WAVEFORM;
     float target_lufs = -18.0f;
@@ -42,14 +37,6 @@ MAP_API int32_t miniaudio_player_analyze_audio(
     float *interval_energies = NULL;
     int ch;
 
-    if (file_path == NULL || file_path[0] == '\0' || out_result == NULL)
-    {
-        return MAP_ERROR_INVALID_ARGS;
-    }
-
-    memset(out_result, 0, sizeof(*out_result));
-    out_result->status = MAP_ERROR_GENERIC;
-
     if (config != NULL)
     {
         flags = config->flags;
@@ -66,82 +53,19 @@ MAP_API int32_t miniaudio_player_analyze_audio(
         waveform_points = 100;
     }
 
-    /* Validate file existence and non-zero size */
-#if defined(_WIN32)
-    wchar_t *wpath = map_utf8_to_wchar(file_path);
-    if (wpath == NULL)
-    {
-        out_result->status = MAP_ERROR_FILE_NOT_FOUND;
-        return MAP_ERROR_FILE_NOT_FOUND;
-    }
-    f = _wfopen(wpath, L"rb");
-#else
-    f = fopen(file_path, "rb");
-#endif
-    if (f == NULL)
-    {
-#if defined(_WIN32)
-        free(wpath);
-#endif
-        out_result->status = MAP_ERROR_FILE_NOT_FOUND;
-        return MAP_ERROR_FILE_NOT_FOUND;
-    }
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-#if defined(_WIN32)
-        free(wpath);
-#endif
-        out_result->status = MAP_ERROR_DECODE_FAILED;
-        return MAP_ERROR_DECODE_FAILED;
-    }
-    file_size = ftell(f);
-    fclose(f);
-
-    if (file_size <= 0)
-    {
-#if defined(_WIN32)
-        free(wpath);
-#endif
-        out_result->status = MAP_ERROR_DECODE_FAILED;
-        return MAP_ERROR_DECODE_FAILED;
-    }
-
-    /* Initialize decoder decoding directly to stereo float32 */
-    decoder_cfg = ma_decoder_config_init(ma_format_f32, 2, 0);
-    custom_count = map_get_custom_decoder_count();
-    if (custom_count > 0)
-    {
-        decoder_cfg.ppCustomBackendVTables = g_map_custom_decoders;
-        decoder_cfg.customBackendCount = custom_count;
-    }
-
-#if defined(_WIN32)
-    res = ma_decoder_init_file_w(wpath, &decoder_cfg, &decoder);
-    free(wpath);
-#else
-    res = ma_decoder_init_file(file_path, &decoder_cfg, &decoder);
-#endif
-
-    if (res != MA_SUCCESS)
-    {
-        out_result->status = MAP_ERROR_DECODE_FAILED;
-        return MAP_ERROR_DECODE_FAILED;
-    }
-
-    sample_rate = decoder.outputSampleRate;
+    sample_rate = pDecoder->outputSampleRate;
     if (sample_rate == 0)
     {
-        ma_decoder_uninit(&decoder);
+        ma_decoder_uninit(pDecoder);
         out_result->status = MAP_ERROR_DECODE_FAILED;
         return MAP_ERROR_DECODE_FAILED;
     }
 
     out_result->sample_rate = sample_rate;
-    out_result->channels = decoder.outputChannels;
+    out_result->channels = pDecoder->outputChannels;
 
     /* Get length in frames for waveform splitting */
-    ma_decoder_get_length_in_pcm_frames(&decoder, &total_pcm_frames);
+    ma_decoder_get_length_in_pcm_frames(pDecoder, &total_pcm_frames);
 
     /* Allocate waveform buffer if requested */
     if (flags & MAP_ANALYSIS_FLAG_WAVEFORM)
@@ -149,7 +73,7 @@ MAP_API int32_t miniaudio_player_analyze_audio(
         waveform_buf = (float *)calloc(waveform_points, sizeof(float));
         if (waveform_buf == NULL)
         {
-            ma_decoder_uninit(&decoder);
+            ma_decoder_uninit(pDecoder);
             out_result->status = MAP_ERROR_OUT_OF_MEMORY;
             return MAP_ERROR_OUT_OF_MEMORY;
         }
@@ -205,7 +129,7 @@ MAP_API int32_t miniaudio_player_analyze_audio(
         if (interval_energies == NULL)
         {
             if (waveform_buf != NULL) free(waveform_buf);
-            ma_decoder_uninit(&decoder);
+            ma_decoder_uninit(pDecoder);
             out_result->status = MAP_ERROR_OUT_OF_MEMORY;
             return MAP_ERROR_OUT_OF_MEMORY;
         }
@@ -214,7 +138,7 @@ MAP_API int32_t miniaudio_player_analyze_audio(
     double waveform_scale = (total_pcm_frames > 0) ? ((double)waveform_points / (double)total_pcm_frames) : 0.0;
 
     /* Single unified decoding stream loop */
-    while (ma_decoder_read_pcm_frames(&decoder, buffer, 4096, &frames_read) == MA_SUCCESS && frames_read > 0)
+    while (ma_decoder_read_pcm_frames(pDecoder, buffer, 4096, &frames_read) == MA_SUCCESS && frames_read > 0)
     {
         ma_uint64 f_idx;
         for (f_idx = 0; f_idx < frames_read; f_idx++)
@@ -281,14 +205,14 @@ MAP_API int32_t miniaudio_player_analyze_audio(
         total_frames_read += frames_read;
     }
 
-    ma_decoder_uninit(&decoder);
+    ma_decoder_uninit(pDecoder);
 
     /* Populate basic audio file info */
     out_result->duration_ms = (int64_t)((double)total_frames_read * 1000.0 / (double)sample_rate + 0.5);
     out_result->peak = max_peak;
-    if (out_result->duration_ms > 0)
+    if (out_result->duration_ms > 0 && byte_size > 0)
     {
-        out_result->bitrate = (uint32_t)(((uint64_t)file_size * 8000) / (uint64_t)out_result->duration_ms);
+        out_result->bitrate = (uint32_t)(((uint64_t)byte_size * 8000) / (uint64_t)out_result->duration_ms);
     }
 
     /* Finalize Waveform */
@@ -424,6 +348,128 @@ MAP_API int32_t miniaudio_player_analyze_audio(
     return MAP_SUCCESS;
 }
 
+MAP_API int32_t miniaudio_player_analyze_audio(
+    const char *file_path,
+    const miniaudio_audio_analysis_config_t *config,
+    miniaudio_audio_analysis_result_t *out_result)
+{
+    ma_decoder_config decoder_cfg;
+    ma_decoder decoder;
+    ma_result res;
+    ma_uint32 custom_count;
+    FILE *f = NULL;
+    long file_size = 0;
+
+    if (file_path == NULL || file_path[0] == '\0' || out_result == NULL)
+    {
+        return MAP_ERROR_INVALID_ARGS;
+    }
+
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->status = MAP_ERROR_GENERIC;
+
+    /* Validate file existence and non-zero size */
+#if defined(_WIN32)
+    wchar_t *wpath = map_utf8_to_wchar(file_path);
+    if (wpath == NULL)
+    {
+        out_result->status = MAP_ERROR_FILE_NOT_FOUND;
+        return MAP_ERROR_FILE_NOT_FOUND;
+    }
+    f = _wfopen(wpath, L"rb");
+#else
+    f = fopen(file_path, "rb");
+#endif
+    if (f == NULL)
+    {
+#if defined(_WIN32)
+        free(wpath);
+#endif
+        out_result->status = MAP_ERROR_FILE_NOT_FOUND;
+        return MAP_ERROR_FILE_NOT_FOUND;
+    }
+    if (fseek(f, 0, SEEK_END) != 0)
+    {
+        fclose(f);
+#if defined(_WIN32)
+        free(wpath);
+#endif
+        out_result->status = MAP_ERROR_DECODE_FAILED;
+        return MAP_ERROR_DECODE_FAILED;
+    }
+    file_size = ftell(f);
+    fclose(f);
+
+    if (file_size <= 0)
+    {
+#if defined(_WIN32)
+        free(wpath);
+#endif
+        out_result->status = MAP_ERROR_DECODE_FAILED;
+        return MAP_ERROR_DECODE_FAILED;
+    }
+
+    decoder_cfg = ma_decoder_config_init(ma_format_f32, 2, 0);
+    custom_count = map_get_custom_decoder_count();
+    if (custom_count > 0)
+    {
+        decoder_cfg.ppCustomBackendVTables = g_map_custom_decoders;
+        decoder_cfg.customBackendCount = custom_count;
+    }
+
+#if defined(_WIN32)
+    res = ma_decoder_init_file_w(wpath, &decoder_cfg, &decoder);
+    free(wpath);
+#else
+    res = ma_decoder_init_file(file_path, &decoder_cfg, &decoder);
+#endif
+
+    if (res != MA_SUCCESS)
+    {
+        out_result->status = MAP_ERROR_DECODE_FAILED;
+        return MAP_ERROR_DECODE_FAILED;
+    }
+
+    return map_analyze_decoder_internal(&decoder, (uint64_t)file_size, config, out_result);
+}
+
+MAP_API int32_t miniaudio_player_analyze_audio_memory(
+    const void *data,
+    size_t data_size,
+    const miniaudio_audio_analysis_config_t *config,
+    miniaudio_audio_analysis_result_t *out_result)
+{
+    ma_decoder_config decoder_cfg;
+    ma_decoder decoder;
+    ma_result res;
+    ma_uint32 custom_count;
+
+    if (data == NULL || data_size == 0 || out_result == NULL)
+    {
+        return MAP_ERROR_INVALID_ARGS;
+    }
+
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->status = MAP_ERROR_GENERIC;
+
+    decoder_cfg = ma_decoder_config_init(ma_format_f32, 2, 0);
+    custom_count = map_get_custom_decoder_count();
+    if (custom_count > 0)
+    {
+        decoder_cfg.ppCustomBackendVTables = g_map_custom_decoders;
+        decoder_cfg.customBackendCount = custom_count;
+    }
+
+    res = ma_decoder_init_memory(data, data_size, &decoder_cfg, &decoder);
+    if (res != MA_SUCCESS)
+    {
+        out_result->status = MAP_ERROR_DECODE_FAILED;
+        return MAP_ERROR_DECODE_FAILED;
+    }
+
+    return map_analyze_decoder_internal(&decoder, (uint64_t)data_size, config, out_result);
+}
+
 typedef struct
 {
     char *file_path;
@@ -470,6 +516,13 @@ MAP_API int32_t miniaudio_player_analyze_audio_async(
     miniaudio_audio_analysis_completed_cb on_completed,
     void *user_data)
 {
+#if defined(__EMSCRIPTEN__)
+    (void)file_path;
+    (void)config;
+    (void)on_completed;
+    (void)user_data;
+    return MAP_ERROR_UNSUPPORTED;
+#else
     map_audio_analysis_task_t *task;
     ma_thread thread;
     ma_result res;
@@ -523,6 +576,7 @@ MAP_API int32_t miniaudio_player_analyze_audio_async(
     }
 
     return MAP_SUCCESS;
+#endif
 }
 
 MAP_API void miniaudio_player_free_audio_analysis(

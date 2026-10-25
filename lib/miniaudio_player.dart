@@ -24,4 +24,5 @@ export 'src/api/engine_state.dart';
 export 'src/api/engine_stream.dart';
 export 'src/api/engine_action.dart';
 export 'src/api/miniaudio_engine.dart';
-
+export 'src/loader/audio_byte_provider.dart';
+export 'src/loader/unified_audio_loader.dart';

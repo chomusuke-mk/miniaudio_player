@@ -167,6 +167,47 @@ void map_bs2b_process_frames(map_bs2b_t *bs2b, float *pSamples, ma_uint32 frameC
     bs2b->lfs.asis[0] = (double)_mm_cvtss_f32(vasis);
     bs2b->lfs.asis[1] = (double)_mm_cvtss_f32(_mm_shuffle_ps(vasis, vasis, _MM_SHUFFLE(1, 1, 1, 1)));
 
+#elif defined(MAP_HAS_WASM_SIMD)
+    v128_t va0_lo = wasm_f32x4_splat(bs2b->a0_lo_f);
+    v128_t vb1_lo = wasm_f32x4_splat(bs2b->b1_lo_f);
+    v128_t va0_hi = wasm_f32x4_splat(bs2b->a0_hi_f);
+    v128_t va1_hi = wasm_f32x4_splat(bs2b->a1_hi_f);
+    v128_t vb1_hi = wasm_f32x4_splat(bs2b->b1_hi_f);
+    v128_t vgain  = wasm_f32x4_splat(bs2b->gain_f);
+    const v128_t v_thresh = wasm_f32x4_splat(1e-20f);
+
+    v128_t vlo   = wasm_f32x4_make((float)bs2b->lfs.lo[0],   (float)bs2b->lfs.lo[1],   0.0f, 0.0f);
+    v128_t vhi   = wasm_f32x4_make((float)bs2b->lfs.hi[0],   (float)bs2b->lfs.hi[1],   0.0f, 0.0f);
+    v128_t vasis = wasm_f32x4_make((float)bs2b->lfs.asis[0], (float)bs2b->lfs.asis[1], 0.0f, 0.0f);
+
+    for (f = 0; f < frameCount; f++)
+    {
+        float l = pSamples[f * channels];
+        float r = pSamples[f * channels + 1];
+        v128_t vin = wasm_f32x4_make(l, r, 0.0f, 0.0f);
+
+        vlo = wasm_f32x4_add(wasm_f32x4_mul(va0_lo, vin), wasm_f32x4_mul(vb1_lo, vlo));
+        vhi = wasm_f32x4_add(wasm_f32x4_add(wasm_f32x4_mul(va0_hi, vin), wasm_f32x4_mul(va1_hi, vasis)),
+                             wasm_f32x4_mul(vb1_hi, vhi));
+        vasis = vin;
+
+        v128_t vlo_swap = wasm_i32x4_shuffle(vlo, vlo, 1, 0, 2, 3);
+        v128_t vout = wasm_f32x4_mul(wasm_f32x4_add(vhi, vlo_swap), vgain);
+
+        vlo = wasm_v128_and(vlo, wasm_f32x4_ge(wasm_f32x4_abs(vlo), v_thresh));
+        vhi = wasm_v128_and(vhi, wasm_f32x4_ge(wasm_f32x4_abs(vhi), v_thresh));
+
+        pSamples[f * channels]     = wasm_f32x4_extract_lane(vout, 0);
+        pSamples[f * channels + 1] = wasm_f32x4_extract_lane(vout, 1);
+    }
+
+    bs2b->lfs.lo[0]   = (double)wasm_f32x4_extract_lane(vlo, 0);
+    bs2b->lfs.lo[1]   = (double)wasm_f32x4_extract_lane(vlo, 1);
+    bs2b->lfs.hi[0]   = (double)wasm_f32x4_extract_lane(vhi, 0);
+    bs2b->lfs.hi[1]   = (double)wasm_f32x4_extract_lane(vhi, 1);
+    bs2b->lfs.asis[0] = (double)wasm_f32x4_extract_lane(vasis, 0);
+    bs2b->lfs.asis[1] = (double)wasm_f32x4_extract_lane(vasis, 1);
+
 #elif defined(MAP_HAS_NEON)
     float32x2_t va0_lo = vdup_n_f32(bs2b->a0_lo_f);
     float32x2_t vb1_lo = vdup_n_f32(bs2b->b1_lo_f);
@@ -361,7 +402,12 @@ void ma_equalizer_node_process_pcm_frames(
             current_linear += (target_linear - current_linear) * sf;
             for (c = 0; c < ch; c++)
             {
+#if defined(__EMSCRIPTEN__)
+                /* Anti-denormal sub-audible DC bias (-500 dBFS) */
+                pOut[f * ch + c] = pIn[f * ch + c] * current_linear + 1e-25f;
+#else
                 pOut[f * ch + c] = pIn[f * ch + c] * current_linear;
+#endif
             }
         }
         if (fabsf(current_linear) < 1e-15f) current_linear = 0.0f;
@@ -500,6 +546,38 @@ void ma_equalizer_node_process_pcm_frames(
                         s1_r[i] = _mm_cvtss_f32(_mm_shuffle_ps(vs1, vs1, _MM_SHUFFLE(1, 1, 1, 1)));
                         s2_l[i] = _mm_cvtss_f32(vs2);
                         s2_r[i] = _mm_cvtss_f32(_mm_shuffle_ps(vs2, vs2, _MM_SHUFFLE(1, 1, 1, 1)));
+
+#elif defined(MAP_HAS_WASM_SIMD)
+                        v128_t vb0 = wasm_f32x4_splat(b0);
+                        v128_t vb1 = wasm_f32x4_splat(b1);
+                        v128_t vb2 = wasm_f32x4_splat(b2);
+                        v128_t va1 = wasm_f32x4_splat(a1);
+                        v128_t va2 = wasm_f32x4_splat(a2);
+                        v128_t vs1 = wasm_f32x4_make(s1_l[i], s1_r[i], 0.0f, 0.0f);
+                        v128_t vs2 = wasm_f32x4_make(s2_l[i], s2_r[i], 0.0f, 0.0f);
+                        const v128_t v_thresh = wasm_f32x4_splat(1e-20f);
+                        ma_uint32 k;
+
+                        for (k = 0; k < block_count; k++)
+                        {
+                            float *pFrame = &pSamples[(f_start + k) * 2];
+                            v128_t vin = wasm_f32x4_make(pFrame[0], pFrame[1], 0.0f, 0.0f);
+
+                            v128_t vy  = wasm_f32x4_add(wasm_f32x4_mul(vb0, vin), vs1);
+                            v128_t vr1 = wasm_f32x4_add(wasm_f32x4_sub(wasm_f32x4_mul(vb1, vin), wasm_f32x4_mul(va1, vy)), vs2);
+                            v128_t vr2 = wasm_f32x4_sub(wasm_f32x4_mul(vb2, vin), wasm_f32x4_mul(va2, vy));
+
+                            vs1 = wasm_v128_and(vr1, wasm_f32x4_ge(wasm_f32x4_abs(vr1), v_thresh));
+                            vs2 = wasm_v128_and(vr2, wasm_f32x4_ge(wasm_f32x4_abs(vr2), v_thresh));
+
+                            pFrame[0] = wasm_f32x4_extract_lane(vy, 0);
+                            pFrame[1] = wasm_f32x4_extract_lane(vy, 1);
+                        }
+
+                        s1_l[i] = wasm_f32x4_extract_lane(vs1, 0);
+                        s1_r[i] = wasm_f32x4_extract_lane(vs1, 1);
+                        s2_l[i] = wasm_f32x4_extract_lane(vs2, 0);
+                        s2_r[i] = wasm_f32x4_extract_lane(vs2, 1);
 
 #elif defined(MAP_HAS_NEON)
                         float32x2_t vb0 = vdup_n_f32(b0);
@@ -859,6 +937,33 @@ void ma_equalizer_node_process_pcm_frames(
         __m128 vs1_2 = _mm_load_ps(&s1[8]);
         __m128 vs2_2 = _mm_load_ps(&s2[8]);
         __m128 vsq_2 = _mm_setzero_ps();
+#elif defined(MAP_HAS_WASM_SIMD)
+        v128_t vb0_0 = wasm_v128_load(&b0[0]);
+        v128_t vb1_0 = wasm_v128_load(&b1[0]);
+        v128_t vb2_0 = wasm_v128_load(&b2[0]);
+        v128_t va1_0 = wasm_v128_load(&a1[0]);
+        v128_t va2_0 = wasm_v128_load(&a2[0]);
+        v128_t vs1_0 = wasm_v128_load(&s1[0]);
+        v128_t vs2_0 = wasm_v128_load(&s2[0]);
+        v128_t vsq_0 = wasm_f32x4_splat(0.0f);
+
+        v128_t vb0_1 = wasm_v128_load(&b0[4]);
+        v128_t vb1_1 = wasm_v128_load(&b1[4]);
+        v128_t vb2_1 = wasm_v128_load(&b2[4]);
+        v128_t va1_1 = wasm_v128_load(&a1[4]);
+        v128_t va2_1 = wasm_v128_load(&a2[4]);
+        v128_t vs1_1 = wasm_v128_load(&s1[4]);
+        v128_t vs2_1 = wasm_v128_load(&s2[4]);
+        v128_t vsq_1 = wasm_f32x4_splat(0.0f);
+
+        v128_t vb0_2 = wasm_v128_load(&b0[8]);
+        v128_t vb1_2 = wasm_v128_load(&b1[8]);
+        v128_t vb2_2 = wasm_v128_load(&b2[8]);
+        v128_t va1_2 = wasm_v128_load(&a1[8]);
+        v128_t va2_2 = wasm_v128_load(&a2[8]);
+        v128_t vs1_2 = wasm_v128_load(&s1[8]);
+        v128_t vs2_2 = wasm_v128_load(&s2[8]);
+        v128_t vsq_2 = wasm_f32x4_splat(0.0f);
 #elif defined(MAP_HAS_NEON)
         float32x4_t vb0_0 = vld1q_f32(&b0[0]);
         float32x4_t vb1_0 = vld1q_f32(&b1[0]);
@@ -936,6 +1041,35 @@ void ma_equalizer_node_process_pcm_frames(
                 vs2_2 = _mm_sub_ps(_mm_mul_ps(vb2_2, vx), _mm_mul_ps(va2_2, vy));
                 vsq_2 = _mm_add_ps(vsq_2, _mm_mul_ps(vy, vy));
             }
+#elif defined(MAP_HAS_WASM_SIMD)
+            v128_t vx = wasm_f32x4_splat(x);
+
+            /* Group 0: Bands 0..3 */
+            {
+                v128_t vy = wasm_f32x4_add(wasm_f32x4_mul(vb0_0, vx), vs1_0);
+                v128_t vt1 = wasm_f32x4_sub(wasm_f32x4_mul(vb1_0, vx), wasm_f32x4_mul(va1_0, vy));
+                vs1_0 = wasm_f32x4_add(vt1, vs2_0);
+                vs2_0 = wasm_f32x4_sub(wasm_f32x4_mul(vb2_0, vx), wasm_f32x4_mul(va2_0, vy));
+                vsq_0 = wasm_f32x4_add(vsq_0, wasm_f32x4_mul(vy, vy));
+            }
+
+            /* Group 1: Bands 4..7 */
+            {
+                v128_t vy = wasm_f32x4_add(wasm_f32x4_mul(vb0_1, vx), vs1_1);
+                v128_t vt1 = wasm_f32x4_sub(wasm_f32x4_mul(vb1_1, vx), wasm_f32x4_mul(va1_1, vy));
+                vs1_1 = wasm_f32x4_add(vt1, vs2_1);
+                vs2_1 = wasm_f32x4_sub(wasm_f32x4_mul(vb2_1, vx), wasm_f32x4_mul(va2_1, vy));
+                vsq_1 = wasm_f32x4_add(vsq_1, wasm_f32x4_mul(vy, vy));
+            }
+
+            /* Group 2: Bands 8..11 (10 & 11 are zero-padded) */
+            {
+                v128_t vy = wasm_f32x4_add(wasm_f32x4_mul(vb0_2, vx), vs1_2);
+                v128_t vt1 = wasm_f32x4_sub(wasm_f32x4_mul(vb1_2, vx), wasm_f32x4_mul(va1_2, vy));
+                vs1_2 = wasm_f32x4_add(vt1, vs2_2);
+                vs2_2 = wasm_f32x4_sub(wasm_f32x4_mul(vb2_2, vx), wasm_f32x4_mul(va2_2, vy));
+                vsq_2 = wasm_f32x4_add(vsq_2, wasm_f32x4_mul(vy, vy));
+            }
 #elif defined(MAP_HAS_NEON)
             float32x4_t vx = vdupq_n_f32(x);
 
@@ -985,6 +1119,18 @@ void ma_equalizer_node_process_pcm_frames(
         _mm_store_ps(&s1[8], vs1_2);
         _mm_store_ps(&s2[8], vs2_2);
         _mm_store_ps(&band_sq[8], vsq_2);
+#elif defined(MAP_HAS_WASM_SIMD)
+        wasm_v128_store(&s1[0], vs1_0);
+        wasm_v128_store(&s2[0], vs2_0);
+        wasm_v128_store(&band_sq[0], vsq_0);
+
+        wasm_v128_store(&s1[4], vs1_1);
+        wasm_v128_store(&s2[4], vs2_1);
+        wasm_v128_store(&band_sq[4], vsq_1);
+
+        wasm_v128_store(&s1[8], vs1_2);
+        wasm_v128_store(&s2[8], vs2_2);
+        wasm_v128_store(&band_sq[8], vsq_2);
 #elif defined(MAP_HAS_NEON)
         vst1q_f32(&s1[0], vs1_0);
         vst1q_f32(&s2[0], vs2_0);
@@ -1089,6 +1235,13 @@ void ma_equalizer_node_process_pcm_frames(
                 __m128 v_s = _mm_loadu_ps(&pSamples[s]);
                 _mm_storeu_ps(&pSamples[s], _mm_mul_ps(v_s, v_vol));
             }
+#elif defined(MAP_HAS_WASM_SIMD)
+            v128_t v_vol = wasm_f32x4_splat(tgt_vol);
+            for (; s + 3 < totalSamples; s += 4)
+            {
+                v128_t v_s = wasm_v128_load(&pSamples[s]);
+                wasm_v128_store(&pSamples[s], wasm_f32x4_mul(v_s, v_vol));
+            }
 #elif defined(MAP_HAS_NEON)
             float32x4_t v_vol = vdupq_n_f32(tgt_vol);
             for (; s + 3 < totalSamples; s += 4)
@@ -1150,6 +1303,31 @@ void ma_equalizer_node_process_pcm_frames(
                 vx = _mm_or_ps(_mm_and_ps(v_mask, v_sat), _mm_andnot_ps(v_mask, vx));
 #endif
                 _mm_storeu_ps(&pSamples[s], vx);
+            }
+        }
+#elif defined(MAP_HAS_WASM_SIMD)
+        v128_t v_thresh    = wasm_f32x4_splat(threshold);
+        v128_t v_range     = wasm_f32x4_splat(range);
+        v128_t v_inv_range = wasm_f32x4_splat(invRange);
+        v128_t v_one       = wasm_f32x4_splat(1.0f);
+        v128_t v_neg_mask  = wasm_u32x4_splat(0x80000000U);
+
+        for (; s + 3 < totalSamples; s += 4)
+        {
+            v128_t vx = wasm_v128_load(&pSamples[s]);
+            v128_t v_abs = wasm_f32x4_abs(vx);
+            v128_t v_mask = wasm_f32x4_gt(v_abs, v_thresh);
+
+            if (wasm_v128_any_true(v_mask))
+            {
+                v128_t v_excess = wasm_f32x4_mul(wasm_f32x4_sub(v_abs, v_thresh), v_inv_range);
+                v128_t v_sat = wasm_f32x4_add(
+                    v_thresh,
+                    wasm_f32x4_mul(v_range, wasm_f32x4_div(v_excess, wasm_f32x4_add(v_one, v_excess))));
+                v128_t v_sign = wasm_v128_and(vx, v_neg_mask);
+                v_sat = wasm_v128_or(v_sat, v_sign);
+                vx = wasm_v128_bitselect(v_sat, vx, v_mask);
+                wasm_v128_store(&pSamples[s], vx);
             }
         }
 #elif defined(MAP_HAS_NEON)

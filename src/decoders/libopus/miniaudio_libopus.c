@@ -192,7 +192,13 @@ MA_API ma_result ma_libopus_init(ma_read_proc onRead, ma_seek_proc onSeek, ma_te
                 map_buffer_t *sb = (map_buffer_t *)pDecoder->pUserData;
                 if (sb->is_initialized)
                 {
-                    libopusCallbacks.seek = NULL;
+                    ma_bool32 full_in_ram = (sb->total_size > 0 &&
+                                             sb->range_start <= sb->audio_start &&
+                                             sb->range_end >= sb->total_size);
+                    if (!full_in_ram)
+                    {
+                        libopusCallbacks.seek = NULL;
+                    }
                 }
             }
         }
@@ -366,7 +372,12 @@ MA_API ma_result ma_libopus_read_pcm_frames(ma_libopus *pOpus, void *pFramesOut,
                 libopusResult = op_read((OggOpusFile *)pOpus->of, (opus_int16 *)ma_offset_pcm_frames_ptr(pFramesOut, totalFramesRead, format, channels), (int)(framesToRead * channels), NULL);
             }
 
-            if (libopusResult < 0)
+            if (libopusResult == OP_HOLE)
+            {
+                /* Discontinuity after stream seek: continue decoding next valid Ogg page. */
+                continue;
+            }
+            else if (libopusResult < 0)
             {
                 result = MA_ERROR; /* Error while decoding. */
                 break;
@@ -374,6 +385,7 @@ MA_API ma_result ma_libopus_read_pcm_frames(ma_libopus *pOpus, void *pFramesOut,
             else
             {
                 totalFramesRead += libopusResult;
+                pOpus->currentPCMFrame += (ma_uint64)libopusResult;
 
                 if (libopusResult == 0)
                 {
@@ -425,6 +437,7 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
 
         if (!op_seekable((OggOpusFile *)pOpus->of))
         {
+            pOpus->currentPCMFrame = frameIndex;
             return MA_SUCCESS;
         }
 
@@ -451,6 +464,7 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
             }
         }
 
+        pOpus->currentPCMFrame = frameIndex;
         return MA_SUCCESS;
     }
 #else
@@ -462,6 +476,113 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
 
         return MA_NOT_IMPLEMENTED;
     }
+#endif
+}
+
+MA_API ma_result ma_libopus_reset_stream(ma_libopus *pOpus, ma_int64 newStreamOffset, ma_uint64 targetFrame)
+{
+    if (pOpus == NULL)
+    {
+        return MA_INVALID_ARGS;
+    }
+
+#if !defined(MA_NO_LIBOPUS)
+    pOpus->currentPCMFrame = targetFrame;
+
+    if (pOpus->of != NULL && op_seekable((OggOpusFile *)pOpus->of))
+    {
+        return ma_libopus_seek_to_pcm_frame(pOpus, targetFrame);
+    }
+
+    if (pOpus->pReadSeekTellUserData != NULL)
+    {
+        ma_decoder *pDecoder = (ma_decoder *)pOpus->pReadSeekTellUserData;
+        if (pDecoder->pUserData != NULL)
+        {
+            map_buffer_t *sb = (map_buffer_t *)pDecoder->pUserData;
+            if (sb->is_initialized)
+            {
+                int64_t targetOff = (newStreamOffset > sb->audio_start) ? newStreamOffset : sb->audio_start;
+                if (newStreamOffset == 0 && targetFrame > 0 && sb->range_start <= sb->audio_start && sb->range_end > sb->audio_start)
+                {
+                    int64_t page_off = 0;
+                    int64_t prev1_off = sb->audio_start;
+                    int64_t prev2_off = sb->audio_start;
+                    ma_bool32 found_page = MA_FALSE;
+
+                    while (page_off + 27 <= sb->range_end)
+                    {
+                        uint8_t hdr[27];
+                        size_t br = 0;
+                        if (map_buffer_read(sb, page_off, hdr, 27, &br) != MA_SUCCESS || br < 27)
+                        {
+                            break;
+                        }
+                        if (hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S')
+                        {
+                            break;
+                        }
+                        uint8_t nseg = hdr[26];
+                        if (page_off + 27 + (int64_t)nseg > sb->range_end)
+                        {
+                            break;
+                        }
+                        uint8_t segs[255];
+                        if (nseg > 0)
+                        {
+                            if (map_buffer_read(sb, page_off + 27, segs, nseg, &br) != MA_SUCCESS || br < nseg)
+                            {
+                                break;
+                            }
+                        }
+                        int64_t body_len = 0;
+                        for (uint8_t i = 0; i < nseg; i++)
+                        {
+                            body_len += segs[i];
+                        }
+                        int64_t next_off = page_off + 27 + (int64_t)nseg + body_len;
+                        if (next_off > sb->range_end)
+                        {
+                            break;
+                        }
+
+                        uint64_t gpos = ((uint64_t)hdr[6]) |
+                                        ((uint64_t)hdr[7] << 8) |
+                                        ((uint64_t)hdr[8] << 16) |
+                                        ((uint64_t)hdr[9] << 24) |
+                                        ((uint64_t)hdr[10] << 32) |
+                                        ((uint64_t)hdr[11] << 40) |
+                                        ((uint64_t)hdr[12] << 48) |
+                                        ((uint64_t)hdr[13] << 56);
+
+                        if (page_off >= sb->audio_start && gpos != (uint64_t)-1 && gpos >= targetFrame)
+                        {
+                            targetOff = prev2_off;
+                            found_page = MA_TRUE;
+                            break;
+                        }
+
+                        if (page_off >= sb->audio_start && gpos != (uint64_t)-1)
+                        {
+                            prev2_off = prev1_off;
+                            prev1_off = page_off;
+                        }
+                        page_off = next_off;
+                    }
+                    if (!found_page && prev1_off > sb->audio_start)
+                    {
+                        targetOff = prev1_off;
+                    }
+                }
+                map_buffer_seek(sb, targetOff);
+            }
+        }
+    }
+    return MA_SUCCESS;
+#else
+    (void)newStreamOffset;
+    (void)targetFrame;
+    return MA_NOT_IMPLEMENTED;
 #endif
 }
 
@@ -541,14 +662,17 @@ MA_API ma_result ma_libopus_get_cursor_in_pcm_frames(ma_libopus *pOpus, ma_uint6
 
 #if !defined(MA_NO_LIBOPUS)
     {
-        ogg_int64_t offset = op_pcm_tell((OggOpusFile *)pOpus->of);
-        if (offset < 0)
+        if (pOpus->of != NULL && op_seekable((OggOpusFile *)pOpus->of))
         {
-            return MA_INVALID_FILE;
+            ogg_int64_t offset = op_pcm_tell((OggOpusFile *)pOpus->of);
+            if (offset >= 0)
+            {
+                *pCursor = (ma_uint64)offset;
+                return MA_SUCCESS;
+            }
         }
 
-        *pCursor = (ma_uint64)offset;
-
+        *pCursor = pOpus->currentPCMFrame;
         return MA_SUCCESS;
     }
 #else

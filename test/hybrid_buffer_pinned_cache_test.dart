@@ -84,45 +84,49 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 1;
+      MiniaudioPlayer.config(
+        bufferNetworkDuration: const Duration(seconds: 6),
+        bufferBehindNetworkDuration: const Duration(seconds: 3),
+      );
       player = MiniaudioPlayer();
     });
 
     tearDown(() async {
-      MiniaudioPlayer.globalConfig.bufferSizeNetworkMB = 8;
+      MiniaudioPlayer.config(
+        bufferNetworkDuration: const Duration(seconds: 30),
+        bufferBehindNetworkDuration: const Duration(seconds: 5),
+      );
       await player.dispose();
     });
 
-    test('2.1: Initial stream open populates Pinned Head and exposes hasPinnedHead == true', () async {
+    test('2.1: Initial stream open populates Tripartite Head and activeLoader', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
       await player.action.openUrl(url);
 
-      expect(player.action.hasPinnedHead, isTrue);
+      expect(player.action.activeLoader, isNotNull);
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.stop();
     });
 
-    test('2.2: Streaming past buffer capacity retains Pinned Head; seek(Duration.zero) incurs 0 HTTP range requests', () async {
+    test('2.2: Streaming within bufferBehind window retains audio_start in RING; seek(Duration.zero) incurs 0 HTTP range requests', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
       await player.action.openUrl(url);
-      expect(player.action.hasPinnedHead, isTrue);
+      expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
-      // Allow audio streamer to fetch chunks past the 1 MB buffer capacity
-      // salida.wav is 13 MB, so the sliding window quickly advances past 0
       await Future<void>.delayed(const Duration(milliseconds: 1500));
 
       // Reset server stats to start counting from zero
       await resetServerStats(serverPort!);
 
-      // Seek to Duration.zero: must hit Pinned Head in RAM cache
+      // Seek to Duration.zero: hits RING in RAM cache because bufferBehind retains audio_start
       await player.action.seek(Duration.zero);
 
       final stats = await getServerStats(serverPort!);
       final rangeRequests = (stats['range_requests_by_path'] as Map<String, dynamic>?) ?? {};
       final salidaRanges = rangeRequests['/music/salida.wav'] as int? ?? 0;
 
-      expect(salidaRanges, equals(0), reason: 'seek(Duration.zero) should hit Pinned Head with 0 HTTP range requests');
+      expect(salidaRanges, equals(0), reason: 'seek(Duration.zero) within RING window should incur 0 HTTP range requests');
       expect(player.state.playing, isTrue);
 
       // Verify playback continues progressing
@@ -132,10 +136,10 @@ void main() {
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 20)));
 
-    test('2.3: Multiple sequential seeks to Duration.zero and within head retain 0 HTTP range requests', () async {
+    test('2.3: Multiple sequential seeks to Duration.zero and within RING retain 0 HTTP range requests', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
       await player.action.openUrl(url);
-      expect(player.action.hasPinnedHead, isTrue);
+      expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 1200));
@@ -144,7 +148,7 @@ void main() {
 
       // Seek 1: to zero
       await player.action.seek(Duration.zero);
-      // Seek 2: to 100ms (within pinned head)
+      // Seek 2: to 100ms (within RING)
       await player.action.seek(const Duration(milliseconds: 100));
       // Seek 3: back to zero
       await player.action.seek(Duration.zero);
@@ -153,14 +157,14 @@ void main() {
       final rangeRequests = (stats['range_requests_by_path'] as Map<String, dynamic>?) ?? {};
       final salidaRanges = rangeRequests['/music/salida.mp3'] as int? ?? 0;
 
-      expect(salidaRanges, equals(0), reason: 'All seeks within pinned head must hit RAM cache with 0 range requests');
+      expect(salidaRanges, equals(0), reason: 'All seeks within RING window must hit RAM cache with 0 range requests');
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 20)));
 
-    test('2.4: Out-of-window seek triggers Byte-Range, but subsequent seek(Duration.zero) hits Pinned Head with 0 new range requests', () async {
+    test('2.4: Out-of-window seek triggers Byte-Range, and subsequent seek(Duration.zero) re-fetches audio_start while preserving HEAD', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
       await player.action.openUrl(url);
-      expect(player.action.hasPinnedHead, isTrue);
+      expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 800));
@@ -176,25 +180,27 @@ void main() {
       var salidaRanges = rangeRequests['/music/salida.wav'] as int? ?? 0;
       expect(salidaRanges, greaterThan(0), reason: 'Out of window seek must issue a Range request');
 
-      // Now reset stats and seek back to Duration.zero
+      // Now reset stats and seek back to Duration.zero (which was evicted when seeking to 55s)
       await resetServerStats(serverPort!);
       await player.action.seek(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
 
       stats = await getServerStats(serverPort!);
       rangeRequests = (stats['range_requests_by_path'] as Map<String, dynamic>?) ?? {};
       salidaRanges = rangeRequests['/music/salida.wav'] as int? ?? 0;
-      expect(salidaRanges, equals(0), reason: 'Seeking back to Duration.zero must hit Pinned Head without new range requests');
+      expect(salidaRanges, equals(1), reason: 'Seeking back to evicted audio_start issues exactly 1 Range request while HEAD remains pinned');
+      expect(player.state.playing, isTrue);
 
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 25)));
 
-    test('2.5: Rapid consecutive seeks to Duration.zero and within pinned head resolve without deadlock', () async {
+    test('2.5: Rapid consecutive seeks to Duration.zero and within RING resolve without deadlock', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
       await player.action.openUrl(url);
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 500));
 
-      // Rapidly seek between Duration.zero and small head offsets back-to-back
+      // Rapidly seek between Duration.zero and small offsets back-to-back
       for (int i = 0; i < 8; i++) {
         await player.action.seek(Duration(milliseconds: (i % 2 == 0) ? 0 : 250));
         await Future<void>.delayed(const Duration(milliseconds: 60));

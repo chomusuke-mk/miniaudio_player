@@ -1,6 +1,7 @@
-import 'dart:io' show FileSystemEntity;
 import 'dart:typed_data';
 
+import '../loader/audio_byte_provider.dart';
+import '../platform/fs_helper.dart';
 import 'audio_source.dart';
 
 /// Callback signature for supplying additional items when Infinite Mix reaches
@@ -139,34 +140,38 @@ class EngineItem<T> {
     int? id,
     int position = 0,
   }) {
-    final str = uri.toString();
-    if (str.startsWith('http://') || str.startsWith('https://')) {
-      if (isLive) {
-        return EngineItem<T>.liveStream(
-          uri,
-          headers: headers,
-          jitterBuffer: bufferAhead,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-          id: id,
-          position: position,
-        );
-      }
-      return EngineItem<T>.network(
-        uri,
-        headers: headers,
-        bufferAhead: bufferAhead,
-        data: data,
-        replayGainDb: replayGainDb,
-        replayPeak: replayPeak,
-        id: id,
-        position: position,
-      );
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme == 'http' || scheme == 'https') {
+      return isLive
+          ? EngineItem<T>.liveStream(
+              uri,
+              headers: headers,
+              jitterBuffer: bufferAhead,
+              data: data,
+              replayGainDb: replayGainDb,
+              replayPeak: replayPeak,
+              id: id,
+              position: position,
+            )
+          : EngineItem<T>.network(
+              uri,
+              headers: headers,
+              bufferAhead: bufferAhead,
+              data: data,
+              replayGainDb: replayGainDb,
+              replayPeak: replayPeak,
+              id: id,
+              position: position,
+            );
     }
-    if (str.startsWith('asset://') || str.startsWith('assets/')) {
+    if (scheme == 'asset' || scheme == 'assets' || scheme == 'flutter-asset') {
+      final raw = uri.toString().replaceFirst(
+            RegExp(r'^(flutter-)?asset(s)?:///?', caseSensitive: false),
+            '',
+          );
+      final normalized = raw.startsWith('assets/') ? raw : 'assets/$raw';
       return EngineItem<T>.asset(
-        str,
+        normalized,
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
@@ -174,9 +179,9 @@ class EngineItem<T> {
         position: position,
       );
     }
-    if (uri.isScheme('file')) {
+    if (scheme == 'file' || scheme.isEmpty) {
       return EngineItem<T>.file(
-        uri.toFilePath(),
+        scheme == 'file' ? uri.toFilePath() : uri.toString(),
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
@@ -184,13 +189,10 @@ class EngineItem<T> {
         position: position,
       );
     }
-    return EngineItem<T>.file(
-      str,
-      data: data,
-      replayGainDb: replayGainDb,
-      replayPeak: replayPeak,
-      id: id,
-      position: position,
+    throw ArgumentError.value(
+      uri,
+      'uri',
+      'Unsupported URI scheme: ${uri.scheme}',
     );
   }
 
@@ -246,11 +248,13 @@ class EngineItem<T> {
     int? id,
     int position = 0,
   }) {
-    if (rawSource is EngineItem<T>) {
-      return rawSource.copyWith(
+    if (rawSource is EngineItem) {
+      final rawData = rawSource.data;
+      return EngineItem<T>(
+        source: rawSource.source,
         id: id ?? rawSource.id,
         position: position,
-        data: data ?? rawSource.data,
+        data: data ?? (rawData is T ? rawData : null),
         replayGainDb: replayGainDb ?? rawSource.replayGainDb,
         replayPeak: replayPeak ?? rawSource.replayPeak,
       );
@@ -258,6 +262,16 @@ class EngineItem<T> {
     if (rawSource is AudioSource) {
       return EngineItem<T>(
         source: rawSource,
+        data: data,
+        replayGainDb: replayGainDb,
+        replayPeak: replayPeak,
+        id: id,
+        position: position,
+      );
+    }
+    if (rawSource is AudioByteProvider) {
+      return EngineItem<T>(
+        source: CustomAudioSource(rawSource),
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
@@ -288,44 +302,24 @@ class EngineItem<T> {
         position: position,
       );
     }
-    if (rawSource is FileSystemEntity) {
-      return EngineItem<T>.file(
-        rawSource.path,
-        data: data,
-        replayGainDb: replayGainDb,
-        replayPeak: replayPeak,
-        id: id,
-        position: position,
-      );
+    if (isFsEntity(rawSource)) {
+      final path = getFsPath(rawSource);
+      if (path != null) {
+        return EngineItem<T>.file(
+          path,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+          id: id,
+          position: position,
+        );
+      }
     }
     if (rawSource is String) {
       final trimmed = rawSource.trim();
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        return EngineItem<T>.uri(
-          Uri.parse(trimmed),
-          headers: headers,
-          isLive: isLive,
-          bufferAhead: bufferAhead,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-          id: id,
-          position: position,
-        );
-      }
-      if (trimmed.startsWith('asset://') || trimmed.startsWith('assets/')) {
-        return EngineItem<T>.asset(
-          trimmed,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-          id: id,
-          position: position,
-        );
-      }
-      if (trimmed.startsWith('file://')) {
+      if (trimmed.isEmpty) {
         return EngineItem<T>.file(
-          Uri.parse(trimmed).toFilePath(),
+          '',
           data: data,
           replayGainDb: replayGainDb,
           replayPeak: replayPeak,
@@ -333,8 +327,14 @@ class EngineItem<T> {
           position: position,
         );
       }
-      return EngineItem<T>.file(
+      final resolved = AudioSource.uri(
         trimmed,
+        headers: headers,
+        isLive: isLive,
+        bufferAhead: bufferAhead,
+      );
+      return EngineItem<T>(
+        source: resolved,
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
@@ -350,11 +350,17 @@ class EngineItem<T> {
   }
 
   /// Whether this item represents an infinite live stream (`LiveStreamAudioSource`).
-  bool get isLiveStream => source is LiveStreamAudioSource;
+  bool get isLiveStream =>
+      source is LiveStreamAudioSource ||
+      (source is CustomAudioSource &&
+          (source as CustomAudioSource).provider.isLiveStream);
 
   /// Whether this item streams over HTTP/HTTPS (`NetworkAudioSource` or `LiveStreamAudioSource`).
   bool get isNetwork =>
-      source is NetworkAudioSource || source is LiveStreamAudioSource;
+      source is NetworkAudioSource ||
+      source is LiveStreamAudioSource ||
+      (source is CustomAudioSource &&
+          (source as CustomAudioSource).provider.isNetwork);
 
   /// Returns the local filesystem path if [source] is a [FileAudioSource], or `null` otherwise.
   String? get filePath =>
@@ -365,6 +371,7 @@ class EngineItem<T> {
     final s = source;
     if (s is NetworkAudioSource) return s.uri;
     if (s is LiveStreamAudioSource) return s.uri;
+    if (s is CustomAudioSource) return s.provider.uri;
     if (s is FileAudioSource && s.filePath.isNotEmpty) {
       return Uri.file(s.filePath);
     }
@@ -380,10 +387,11 @@ class EngineItem<T> {
     final s = source;
     return switch (s) {
       FileAudioSource() => 'file:${s.filePath}',
-      NetworkAudioSource() => 'net:${s.uri}',
       LiveStreamAudioSource() => 'live:${s.uri}',
+      NetworkAudioSource() => s.isLive ? 'live:${s.uri}' : 'net:${s.uri}',
       AssetAudioSource() => 'asset:${s.assetKey}',
       MemoryAudioSource() => 'mem:${identityHashCode(s.bytes)}',
+      CustomAudioSource() => 'custom:${s.provider.sourceId}',
     };
   }
 
@@ -393,9 +401,9 @@ class EngineItem<T> {
     return switch (s) {
       FileAudioSource() => s.filePath.trim().isNotEmpty,
       NetworkAudioSource() => s.uri.toString().trim().isNotEmpty,
-      LiveStreamAudioSource() => s.uri.toString().trim().isNotEmpty,
       AssetAudioSource() => s.assetKey.trim().isNotEmpty,
       MemoryAudioSource() => s.bytes.isNotEmpty,
+      CustomAudioSource() => s.provider.sourceId.trim().isNotEmpty,
     };
   }
 

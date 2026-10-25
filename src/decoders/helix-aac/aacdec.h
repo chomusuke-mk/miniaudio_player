@@ -66,7 +66,7 @@
 #
 #elif defined(__GNUC__) && defined(__APPLE__)
 #
-#elif defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM) || defined(_M_X64) || defined(_M_IX86) || defined(_WIN32) || defined(__linux__) || defined(__ANDROID__)
+#elif defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM) || defined(_M_X64) || defined(_M_IX86) || defined(_WIN32) || defined(__linux__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__wasm__)
 #
 #elif defined(_OPENWAVE_SIMULATOR) || defined(_OPENWAVE_ARMULATOR)
 #
