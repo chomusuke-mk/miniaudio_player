@@ -168,11 +168,14 @@ sealed class AudioSource {
       return AssetAudioSource(normalized);
     }
 
-    // icy:// and icyx:// -> Level 4 (LiveStreamAudioSource over http://)
-    if (lower.startsWith('icy://') || lower.startsWith('icyx://')) {
+    // icy://, icys:// and icyx:// -> Level 4 (LiveStreamAudioSource over http:// or https://)
+    if (lower.startsWith('icy://') ||
+        lower.startsWith('icys://') ||
+        lower.startsWith('icyx://')) {
+      final isSecure = lower.startsWith('icys://') || lower.startsWith('icyx://');
       final httpStr = str.replaceFirst(
-        RegExp(r'^icyx?://', caseSensitive: false),
-        'http://',
+        RegExp(r'^icy[sx]?://', caseSensitive: false),
+        isSecure ? 'https://' : 'http://',
       );
       final httpUri = Uri.parse(httpStr);
       return LiveStreamAudioSource(

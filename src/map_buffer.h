@@ -306,6 +306,11 @@ void map_buffer_clear_abort(map_buffer_t *mb);
 ma_bool32 map_buffer_is_starving(const map_buffer_t *mb);
 
 /**
+ * @brief Returns MA_TRUE if the buffer reached EOF and all buffered audio bytes have been consumed.
+ */
+ma_bool32 map_buffer_is_eof_and_exhausted(const map_buffer_t *mb);
+
+/**
  * @brief Explicitly sets or clears the buffering state on the buffer.
  */
 void map_buffer_set_buffering(map_buffer_t *mb, ma_bool32 buffering);

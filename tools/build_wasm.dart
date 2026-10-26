@@ -3,9 +3,12 @@ import 'dart:io';
 
 void main(List<String> args) async {
   print(
-      '=== Building miniaudio_player WebAssembly (wasm32 + SIMD128 + Brotli) ===');
+      '=== Building miniaudio_player WebAssembly (wasm32 + SIMD128) ===');
 
-  final emsdkPath = Platform.environment['EMSDK'] ?? (throw Exception('EMSDK environment variable is not set'));
+  final emsdkPath = Platform.environment['EMSDK'] ??
+      (Directory('/home/javier/develop/emsdk').existsSync()
+          ? '/home/javier/develop/emsdk'
+          : (throw Exception('EMSDK environment variable is not set')));
   final emccPath = Platform.environment['EMCC'] ??
       (File('$emsdkPath/upstream/emscripten/emcc').existsSync()
           ? '$emsdkPath/upstream/emscripten/emcc'
@@ -14,7 +17,6 @@ void main(List<String> args) async {
       (File('$emsdkPath/upstream/bin/wasm-opt').existsSync()
           ? '$emsdkPath/upstream/bin/wasm-opt'
           : 'wasm-opt');
-  final brotliPath = 'brotli';
 
   // Ensure output dirs exist
   final buildDir = Directory('build/web');
@@ -78,6 +80,7 @@ void main(List<String> args) async {
     '_free',
     '_map_wasm_get_staging_ptr',
     '_map_wasm_get_staging_capacity',
+    '_map_wasm_set_log_level',
     '_map_wasm_player_create',
     '_map_wasm_player_destroy',
     '_map_wasm_malloc',
@@ -114,6 +117,12 @@ void main(List<String> args) async {
     '_map_wasm_set_pitch',
     '_map_wasm_get_pitch',
     '_map_wasm_set_pan',
+    '_map_wasm_set_mono',
+    '_map_wasm_set_spatializer',
+    '_map_wasm_set_preamp',
+    '_map_wasm_set_replay_gain',
+    '_map_wasm_clear_replay_gain',
+    '_map_wasm_set_reverb',
     '_map_wasm_set_equalizer_band',
     '_map_wasm_set_equalizer_bands',
     '_map_wasm_set_equalizer_enabled',
@@ -147,6 +156,8 @@ void main(List<String> args) async {
     '-Isrc/decoders/aac',
     '-Isrc/decoders/alac',
     '-std=c99',
+    '-D_DEFAULT_SOURCE=1',
+    '-D_POSIX_C_SOURCE=200809L',
     '-O3',
     '-flto',
     '-msimd128',
@@ -234,28 +245,23 @@ void main(List<String> args) async {
     print('wasm-opt skipped: $e');
   }
 
-  // Copy uncompressed wasm to assets
+  // Copy optimized wasm to assets
+  print('3. Copying WebAssembly binary to assets/miniaudio_player.wasm...');
   wasmFile.copySync('assets/miniaudio_player.wasm');
+  print('Wasm asset size: ${(File('assets/miniaudio_player.wasm').lengthSync() / 1024).toStringAsFixed(1)} KB');
 
-  // Compress with brotli
-  print('3. Compressing with Brotli (-q 11)...');
-  final brotliResult = await Process.run(brotliPath, [
-    '-q',
-    '11',
-    '-w',
-    '24',
-    '-f',
-    'build/web/miniaudio_player.wasm',
-    '-o',
-    'assets/miniaudio_player.wasm.br',
-  ]);
-  if (brotliResult.exitCode != 0) {
-    print('brotli failed: ${brotliResult.stderr}');
-    exit(1);
+  // Update kMiniaudioJs in web_worker_blob.dart
+  final blobFile = File('lib/src/platform/web/web_worker_blob.dart');
+  if (blobFile.existsSync()) {
+    final jsContent = File('build/web/miniaudio_player.js').readAsStringSync();
+    final blobContent = blobFile.readAsStringSync();
+    final updatedBlob = blobContent.replaceFirst(
+      RegExp(r"const String kMiniaudioJs = r'''.*?''';", dotAll: true),
+      "const String kMiniaudioJs = r'''$jsContent''';",
+    );
+    blobFile.writeAsStringSync(updatedBlob);
+    print('4. Synced build/web/miniaudio_player.js into web_worker_blob.dart.');
   }
 
-  final brFile = File('assets/miniaudio_player.wasm.br');
-  print(
-      'Brotli compressed size: ${(brFile.lengthSync() / 1024).toStringAsFixed(1)} KB');
   print('=== WebAssembly build completed successfully! ===');
 }

@@ -21,9 +21,10 @@ typedef enum map_source_state
     MAP_SOURCE_STATE_UNINITIALIZED = 0, /**< Data source not initialized */
     MAP_SOURCE_STATE_IDLE          = 1, /**< Initialized and ready at start or seek position */
     MAP_SOURCE_STATE_DECODING      = 2, /**< Worker / reader actively decoding frames from map_buffer_t */
-    MAP_SOURCE_STATE_DRAINING      = 3, /**< Decoder reached container EOF; draining remaining PCM frames from rb/sonic */
-    MAP_SOURCE_STATE_EOF           = 4, /**< All PCM frames drained; source is at end */
-    MAP_SOURCE_STATE_ERROR         = 5  /**< Fatal decoding error */
+    MAP_SOURCE_STATE_BUFFERING     = 3, /**< Data source paused because underlying stream buffer is starved */
+    MAP_SOURCE_STATE_DRAINING      = 4, /**< Decoder reached container EOF; draining remaining PCM frames from rb/sonic */
+    MAP_SOURCE_STATE_EOF           = 5, /**< All PCM frames drained; source is at end */
+    MAP_SOURCE_STATE_ERROR         = 6  /**< Fatal decoding error */
 } map_source_state_t;
 
 typedef struct

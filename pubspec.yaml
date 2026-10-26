@@ -30,7 +30,6 @@ dependencies:
 
 flutter:
   assets:
-    - assets/miniaudio_player.wasm.br
     - assets/miniaudio_player.wasm
 
 dev_dependencies:

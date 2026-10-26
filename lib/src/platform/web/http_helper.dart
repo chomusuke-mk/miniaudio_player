@@ -55,6 +55,7 @@ Future<RawHttpResponse> sendHttpGetRequest(
     'content-type',
     'transfer-encoding',
     'retry-after',
+    'x-content-duration',
     'icy-metaint',
     'icy-name',
     'icy-genre',

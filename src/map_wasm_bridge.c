@@ -37,6 +37,11 @@ MAP_API void map_wasm_free(void *ptr)
     }
 }
 
+MAP_API void map_wasm_set_log_level(int32_t level)
+{
+    miniaudio_player_set_log_level(level);
+}
+
 MAP_API miniaudio_player_t *map_wasm_player_create(uint32_t sample_rate, uint32_t channels, uint32_t period_size)
 {
     miniaudio_player_config_t config;
@@ -262,6 +267,51 @@ MAP_API void map_wasm_set_pan(miniaudio_player_t *player, float pan)
     miniaudio_player_set_balance(player, pan);
 }
 
+MAP_API void map_wasm_set_mono(miniaudio_player_t *player, int32_t enabled)
+{
+    miniaudio_player_set_mono(player, enabled);
+}
+
+MAP_API void map_wasm_set_spatializer(miniaudio_player_t *player, int32_t enabled, float width)
+{
+    miniaudio_player_set_spatializer(player, enabled, width);
+}
+
+MAP_API void map_wasm_set_preamp(miniaudio_player_t *player, float preamp_db)
+{
+    miniaudio_player_set_preamp(player, preamp_db);
+}
+
+MAP_API void map_wasm_set_replay_gain(
+    miniaudio_player_t *player,
+    int32_t enabled,
+    float gain_db,
+    float peak,
+    float preamp_db,
+    int32_t prevent_clipping)
+{
+    if (player == NULL)
+        return;
+    if (enabled)
+    {
+        miniaudio_player_set_replay_gain(player, gain_db, peak, preamp_db, prevent_clipping);
+    }
+    else
+    {
+        miniaudio_player_clear_replay_gain(player);
+    }
+}
+
+MAP_API void map_wasm_clear_replay_gain(miniaudio_player_t *player)
+{
+    miniaudio_player_clear_replay_gain(player);
+}
+
+MAP_API void map_wasm_set_reverb(miniaudio_player_t *player, int32_t enabled, float room_size, float damping, float width, float wet, float dry)
+{
+    miniaudio_player_set_reverb(player, enabled, room_size, damping, width, wet, dry);
+}
+
 MAP_API void map_wasm_set_equalizer_band(miniaudio_player_t *player, uint32_t band, float gain_db)
 {
     miniaudio_player_set_equalizer_band(player, band, gain_db);
@@ -381,6 +431,12 @@ MAP_API uint32_t map_wasm_render_pcm_frames(
     if (to_render > MAP_WASM_MAX_RENDER_FRAMES)
         to_render = MAP_WASM_MAX_RENDER_FRAMES;
 
+    if (map_wasm_is_buffering(player))
+    {
+        memset(out_frames, 0, frame_count * 2 * sizeof(float));
+        return 0;
+    }
+
     uint32_t frames_read = 0;
     int32_t res = miniaudio_player_read_pcm_frames(player, g_interleaved_buffer, to_render, &frames_read);
     if (res != MAP_SUCCESS && frames_read == 0)
@@ -434,7 +490,7 @@ MAP_API void map_wasm_poll_telemetry(
     if (player == NULL || out_telemetry_f64 == NULL)
         return;
 
-    memset(out_telemetry_f64, 0, 32 * sizeof(double));
+    memset(out_telemetry_f64, 0, 48 * sizeof(double));
 
     miniaudio_player_status_t status;
     memset(&status, 0, sizeof(status));
@@ -475,6 +531,32 @@ MAP_API void map_wasm_poll_telemetry(
     out_telemetry_f64[29] = (double)status.visualizer.right;
     out_telemetry_f64[30] = (double)status.volume;
     out_telemetry_f64[31] = (double)status.rate;
+    out_telemetry_f64[32] = (double)status.pitch;
+    out_telemetry_f64[33] = (double)status.balance;
+    out_telemetry_f64[34] = status.mono_enabled ? 1.0 : 0.0;
+    out_telemetry_f64[35] = (double)status.crossfeed_mode;
+    out_telemetry_f64[36] = status.spatializer_enabled ? 1.0 : 0.0;
+    out_telemetry_f64[37] = (double)status.spatializer_width;
+    out_telemetry_f64[38] = status.reverb.enabled ? 1.0 : 0.0;
+    out_telemetry_f64[39] = status.limiter_enabled ? 1.0 : 0.0;
+    out_telemetry_f64[40] = (double)status.preamp_db;
+    out_telemetry_f64[41] = status.replay_gain.enabled ? 1.0 : 0.0;
+    out_telemetry_f64[42] = (double)status.replay_gain.gain_db;
+    out_telemetry_f64[43] = (double)status.replay_gain.peak;
+    out_telemetry_f64[44] = (double)status.replay_gain.preamp_db;
+    out_telemetry_f64[45] = status.replay_gain.prevent_clipping ? 1.0 : 0.0;
+    miniaudio_stream_status_t stream_status;
+    memset(&stream_status, 0, sizeof(stream_status));
+    if (miniaudio_player_stream_get_status(player, &stream_status) == MAP_SUCCESS)
+    {
+        out_telemetry_f64[46] = (double)stream_status.read_cursor_byte;
+        out_telemetry_f64[47] = (double)stream_status.buffer_capacity;
+    }
+    else
+    {
+        out_telemetry_f64[46] = -1.0;
+        out_telemetry_f64[47] = 0.0;
+    }
 }
 
 MAP_API int32_t map_wasm_analyze_audio_memory(

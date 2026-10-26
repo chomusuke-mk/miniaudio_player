@@ -300,6 +300,21 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
     return MA_SUCCESS;
 }
 
+ma_result map_decoder_unlatch_stream_eof(ma_decoder *pDecoder)
+{
+    if (pDecoder == NULL)
+        return MA_INVALID_ARGS;
+
+#if !defined(MA_NO_MP3)
+    if (pDecoder->pBackend != NULL && pDecoder->pBackendVTable == &g_ma_decoding_backend_vtable_mp3)
+    {
+        ma_mp3 *pMP3 = (ma_mp3 *)pDecoder->pBackend;
+        pMP3->dr.atEnd = MA_FALSE;
+    }
+#endif
+    return MA_SUCCESS;
+}
+
 ma_uint32 map_decoder_get_raw_bytes_per_frame(ma_decoder *pDecoder)
 {
     if (pDecoder == NULL)

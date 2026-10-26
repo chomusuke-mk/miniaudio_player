@@ -245,14 +245,43 @@ static ma_result map_time_stretch_ds_read_filtered(
         }
         else
         {
+            if (pDS->is_stream && (pDS->buffer.is_buffering || map_buffer_is_starving(&pDS->buffer)))
+            {
+                /* Transient buffer underrun in stream: synthesize silence without ending playback */
+                pDS->state = MAP_SOURCE_STATE_BUFFERING;
+                ma_atomic_fetch_add_32(&pDS->underrun_count, 1);
+                if (pDS->pDispatcher != NULL)
+                {
+                    map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                }
+                if (pFramesOut != NULL && framesToRead > 0)
+                {
+                    memset(pFramesOut, 0, framesToRead * channels * sizeof(float));
+                }
+                if (pFramesRead != NULL) *pFramesRead = framesToRead;
+                if (pRealFramesRead != NULL) *pRealFramesRead = 0;
+                return MA_SUCCESS;
+            }
+
             ma_result decRes = ma_decoder_read_pcm_frames(&pDS->decoder, pFramesOut, framesToRead, pFramesRead);
             if (pRealFramesRead != NULL)
             {
                 *pRealFramesRead = (pFramesRead != NULL) ? *pFramesRead : 0;
             }
-#if defined(__EMSCRIPTEN__)
-            if (decRes == MA_BUSY)
+
+            ma_bool32 is_exhausted = pDS->is_stream && map_buffer_is_eof_and_exhausted(&pDS->buffer);
+
+            if (pDS->is_stream && !is_exhausted &&
+                (decRes != MA_SUCCESS || (pFramesRead != NULL && *pFramesRead == 0)))
             {
+                /* Transient buffer underrun in stream: synthesize silence without ending playback */
+                pDS->state = MAP_SOURCE_STATE_BUFFERING;
+                ma_atomic_fetch_add_32(&pDS->underrun_count, 1);
+                pDS->buffer.is_buffering = MA_TRUE;
+                if (pDS->pDispatcher != NULL)
+                {
+                    map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                }
                 if (pFramesOut != NULL && framesToRead > 0)
                 {
                     ma_uint64 done = (pFramesRead != NULL) ? *pFramesRead : 0;
@@ -262,9 +291,10 @@ static ma_result map_time_stretch_ds_read_filtered(
                     }
                 }
                 if (pFramesRead != NULL) *pFramesRead = framesToRead;
+                if (pRealFramesRead != NULL) *pRealFramesRead = 0;
                 return MA_SUCCESS;
             }
-#endif
+
             return decRes;
         }
     }
@@ -343,24 +373,36 @@ static ma_result map_time_stretch_ds_read_filtered(
             }
             else
             {
-                ma_uint64 rawRead = 0;
-                ma_result res = ma_decoder_read_pcm_frames(&pDS->decoder, pDS->rawBuffer, maxFrames, &rawRead);
-                framesFetched = (ma_uint32)rawRead;
-#if defined(__EMSCRIPTEN__)
-                if (res == MA_BUSY)
+                if (pDS->is_stream && (pDS->buffer.is_buffering || map_buffer_is_starving(&pDS->buffer)))
                 {
-                    /* Buffering in web: do not mark is_eof */
+                    pDS->state = MAP_SOURCE_STATE_BUFFERING;
+                    framesFetched = 0;
+                    if (pDS->pDispatcher != NULL)
+                    {
+                        map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                    }
                 }
-                else if (res != MA_SUCCESS || rawRead == 0)
+                else
                 {
-                    pDS->is_eof = MA_TRUE;
+                    ma_uint64 rawRead = 0;
+                    ma_result res = ma_decoder_read_pcm_frames(&pDS->decoder, pDS->rawBuffer, maxFrames, &rawRead);
+                    framesFetched = (ma_uint32)rawRead;
+                    ma_bool32 is_exhausted = pDS->is_stream && map_buffer_is_eof_and_exhausted(&pDS->buffer);
+                    if (pDS->is_stream && !is_exhausted && (res != MA_SUCCESS || rawRead == 0))
+                    {
+                        /* Buffering in web/stream: do NOT mark is_eof! */
+                        pDS->state = MAP_SOURCE_STATE_BUFFERING;
+                        pDS->buffer.is_buffering = MA_TRUE;
+                        if (pDS->pDispatcher != NULL)
+                        {
+                            map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                        }
+                    }
+                    else if (res != MA_SUCCESS || rawRead == 0)
+                    {
+                        pDS->is_eof = MA_TRUE;
+                    }
                 }
-#else
-                if (res != MA_SUCCESS || rawRead == 0)
-                {
-                    pDS->is_eof = MA_TRUE;
-                }
-#endif
             }
 
             pDS->rawBufferCount = framesFetched;
@@ -368,10 +410,11 @@ static ma_result map_time_stretch_ds_read_filtered(
 
             if (framesFetched == 0)
             {
-#if defined(__EMSCRIPTEN__)
-                if (!pDS->is_eof)
+                ma_bool32 is_exhausted = pDS->is_stream && map_buffer_is_eof_and_exhausted(&pDS->buffer);
+                if (pDS->is_stream && !is_exhausted)
                 {
                     ma_uint64 remaining = framesToRead - totalRead;
+                    ma_atomic_fetch_add_32(&pDS->underrun_count, 1);
                     if (pFramesOut != NULL && remaining > 0)
                     {
                         memset(pFramesOut + totalRead * channels, 0, remaining * channels * sizeof(float));
@@ -379,7 +422,6 @@ static ma_result map_time_stretch_ds_read_filtered(
                     totalRead += remaining;
                     break;
                 }
-#endif
                 if (!pDS->has_worker || ma_atomic_load_32(&pDS->decoder_eof))
                 {
                     pDS->is_eof = MA_TRUE;
@@ -674,7 +716,7 @@ ma_result map_time_stretch_ds_read(
             totalFramesOut += directRead;
             realFramesOut += realRead;
             deltaTrackFrames += (double)(pDS->is_stream ? realRead : directRead);
-            if (res == MA_AT_END || pDS->is_eof)
+            if ((res == MA_AT_END || pDS->is_eof) && (!pDS->is_stream || map_buffer_is_eof_and_exhausted(&pDS->buffer)))
             {
                 pDS->is_eof = MA_TRUE;
                 break;
@@ -735,7 +777,7 @@ ma_result map_time_stretch_ds_read(
 
         if (realFromDecoder == 0 && (pDS->sonic == NULL || sonicSamplesAvailable(pDS->sonic) == 0))
         {
-            if (readRes == MA_AT_END || pDS->is_eof)
+            if ((readRes == MA_AT_END || pDS->is_eof) && (!pDS->is_stream || map_buffer_is_eof_and_exhausted(&pDS->buffer)))
             {
                 pDS->is_eof = MA_TRUE;
                 pDS->state = MAP_SOURCE_STATE_EOF;
@@ -1342,7 +1384,12 @@ ma_result map_time_stretch_ds_stream_feed(
     if (pDS == NULL || !pDS->is_stream || data == NULL || size == 0)
         return MA_INVALID_ARGS;
 
-    return map_buffer_feed(&pDS->buffer, data, size);
+    ma_result res = map_buffer_feed(&pDS->buffer, data, size);
+    if (res == MA_SUCCESS)
+    {
+        map_decoder_unlatch_stream_eof(&pDS->decoder);
+    }
+    return res;
 }
 
 ma_result map_time_stretch_ds_stream_flush(

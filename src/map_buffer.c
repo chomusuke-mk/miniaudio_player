@@ -541,6 +541,38 @@ ma_bool32 map_buffer_is_starving(const map_buffer_t *mb)
     return starving;
 }
 
+ma_bool32 map_buffer_is_eof_and_exhausted(const map_buffer_t *mb)
+{
+    if (mb == NULL || !mb->is_initialized)
+        return MA_FALSE;
+
+    map_buffer_t *mut = (map_buffer_t *)mb;
+    ma_mutex_lock(&mut->lock);
+
+    if (!mb->is_eof)
+    {
+        ma_mutex_unlock(&mut->lock);
+        return MA_FALSE;
+    }
+
+    int64_t end_limit = (mb->tail_locked && mb->audio_end > 0)
+        ? mb->audio_end
+        : mb->total_size;
+
+    ma_bool32 exhausted = MA_FALSE;
+    if (end_limit > 0 && mb->read_cursor >= end_limit)
+    {
+        exhausted = MA_TRUE;
+    }
+    else if (end_limit <= 0 && mb->read_cursor >= mb->range_end)
+    {
+        exhausted = MA_TRUE;
+    }
+
+    ma_mutex_unlock(&mut->lock);
+    return exhausted;
+}
+
 void map_buffer_set_buffering(map_buffer_t *mb, ma_bool32 buffering)
 {
     if (mb == NULL || !mb->is_initialized)

@@ -418,8 +418,12 @@ class NetworkByteProvider extends AudioByteProvider {
           headers: _buildRequestHeaders(offset: offset, length: length),
         );
       } catch (e) {
+        final errStr = e.toString();
+        final isCors = errStr.contains('Failed to fetch') || errStr.contains('CORS');
         throw MiniaudioPlayerException(
-          'Failed to connect to $_uri: $e',
+          isCors
+              ? 'Failed to connect to $_uri: CORS request blocked by browser policy. The remote server does not provide "Access-Control-Allow-Origin" headers.'
+              : 'Failed to connect to $_uri: $e',
           errorCode: MapResult.errorFileNotFound,
         );
       }
@@ -469,7 +473,8 @@ class NetworkByteProvider extends AudioByteProvider {
       }
 
       int totalBytes = res.contentLength;
-      bool isSeekable = res.headers['accept-ranges']?.toLowerCase() == 'bytes';
+      bool isSeekable = res.headers['accept-ranges']?.toLowerCase() == 'bytes' ||
+          (totalBytes > 0 && !_isLiveStream);
 
       final contentRange = res.headers['content-range'];
       if (statusCode == 206 && contentRange != null) {
@@ -481,6 +486,9 @@ class NetworkByteProvider extends AudioByteProvider {
             totalBytes = int.tryParse(totalStr) ?? totalBytes;
           }
         }
+      } else if (offset > 0 && statusCode == 200) {
+        // Server returned 200 instead of 206: range requests are not supported.
+        isSeekable = false;
       }
 
       final int icyMetaint =

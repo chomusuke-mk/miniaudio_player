@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show stderr;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -161,7 +160,8 @@ class UnifiedAudioLoader {
       final tag = level == 1
           ? 'ERROR'
           : (level == 2 ? 'WARN' : 'DEBUG');
-      stderr.writeln('[miniaudio_player][$tag][loader] $message');
+      // ignore: avoid_print
+      print('[miniaudio_player][$tag][loader] $message');
     }
   }
 
@@ -370,13 +370,13 @@ class UnifiedAudioLoader {
       if (isOgg &&
           !tailAlreadyProbed &&
           !_isLive &&
-          _isRangeSupported &&
           _totalContentLength > probeBytes.length) {
         final tailSize = min(65536, _totalContentLength - probeBytes.length);
         final tailStart = _totalContentLength - tailSize;
         preOpenTailBytes = await provider.probeTail(tailStart, tailSize);
         if (preOpenTailBytes != null && preOpenTailBytes.isNotEmpty) {
           tailAlreadyProbed = true;
+          _isRangeSupported = true;
         }
       }
 
@@ -394,13 +394,13 @@ class UnifiedAudioLoader {
       if (openRes == MapResult.errorDecodeFailed &&
           isMp4 &&
           !_isLive &&
-          _isRangeSupported &&
           _totalContentLength > probeBytes.length) {
         final tailSize = min(256 * 1024, _totalContentLength - probeBytes.length);
         final tailStart = _totalContentLength - tailSize;
         final tailBytes = await provider.probeTail(tailStart, tailSize);
         if (tailBytes != null && tailBytes.isNotEmpty) {
           tailAlreadyProbed = true;
+          _isRangeSupported = true;
           openRes = await _player.backend.openStreamEx(
             initialBytes: probeBytes,
             tailBytes: tailBytes,
@@ -528,13 +528,14 @@ class UnifiedAudioLoader {
   }
 
   Future<void> _probeTailMetadata() async {
-    if (_isDisposed || !_isRangeSupported || _isLive || _totalContentLength <= 0) {
+    if (_isDisposed || _isLive || _totalContentLength <= 0) {
       return;
     }
     final tailSize = min(65536, _totalContentLength);
     final tailStart = _totalContentLength - tailSize;
     final tailBytes = await provider.probeTail(tailStart, tailSize);
     if (!_isDisposed && tailBytes != null && tailBytes.isNotEmpty) {
+      _isRangeSupported = true;
       _player.probeTail(tailBytes, tailStart);
     }
   }
@@ -878,6 +879,7 @@ class UnifiedAudioLoader {
 
     final prevState = _state;
     _state = UnifiedLoaderState.seeking;
+    _isStreamEnded = false;
 
     // 1. Attempt atomic in-RAM seek in C first!
     // If it is a cache HIT (1), we do NOT cancel any active sequential stream at rangeEnd.
@@ -887,11 +889,11 @@ class UnifiedAudioLoader {
     );
 
     if (cacheRes == 1) {
+      _isStreamEnded = false;
       _refreshTelemetryFromBackend();
-      if (prevState == UnifiedLoaderState.stopped) {
-        _state = _isStreamEnded
-            ? UnifiedLoaderState.completed
-            : UnifiedLoaderState.streaming;
+      if (prevState == UnifiedLoaderState.stopped ||
+          prevState == UnifiedLoaderState.completed) {
+        _state = UnifiedLoaderState.streaming;
       } else {
         _state = prevState;
       }

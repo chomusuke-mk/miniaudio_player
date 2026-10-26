@@ -29,6 +29,7 @@ words:
   - autoplay
   - autovectoriza
   - Ayllón
+  - backpressure
   - Balster
   - bandlimited
   - bandpass
@@ -52,6 +53,7 @@ words:
   - bwexpander
   - cachés
   - calloc
+  - Cands
   - casteo
   - cbuilder
   - cdim
@@ -81,6 +83,7 @@ words:
   - CSIRO
   - cupertino
   - Cupertino
+  - customscheme
   - CVBR
   - Dartminiaudio
   - DDART
@@ -93,7 +96,10 @@ words:
   - deinterleave
   - demixing
   - DEMIXING
+  - Demux
+  - demuxed
   - demuxer
+  - demuxing
   - denormal
   - Denormal
   - denormalise
@@ -138,6 +144,7 @@ words:
   - elif
   - emcc
   - EMCC
+  - EMFILE
   - emscripten
   - emsdk
   - encoderctls
@@ -154,6 +161,7 @@ words:
   - Expansor
   - fabs
   - fabsf
+  - faststart
   - FCOEF
   - ffigen
   - filelengthi
@@ -207,6 +215,8 @@ words:
   - huffman
   - icdf
   - Icecast
+  - icys
+  - icyx
   - idempotencia
   - Idempotencia
   - Idempotente
@@ -273,6 +283,8 @@ words:
   - mdcts
   - memset
   - MESI
+  - metaint
+  - Metaint
   - mfence
   - mfloat
   - mfpu
@@ -289,6 +301,7 @@ words:
   - MMCSS
   - moffat
   - monofónica
+  - moov
   - morlat
   - mrelaxed
   - msimd
@@ -333,6 +346,7 @@ words:
   - phdr
   - PLTE
   - Pranckevicius
+  - pread
   - preajustes
   - preamplificación
   - preamplificador
@@ -396,6 +410,7 @@ words:
   - Rohit
   - SCHED
   - Schyler
+  - sdcardfs
   - seekability
   - seekbar
   - seekbars

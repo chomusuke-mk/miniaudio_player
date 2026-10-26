@@ -9,13 +9,15 @@ import '../../api/audio_analysis_result.dart';
 import '../../api/audio_device.dart';
 import '../../api/buffered_range.dart';
 import '../../api/dsp_config.dart';
+import '../../api/miniaudio_player.dart';
 import '../../api/player_exception.dart';
 import '../../api/player_state.dart';
 import '../../api/silence_skip_config.dart';
 import '../../api/visualizer_data.dart';
 import '../../equalizer.dart';
+import '../../reverb.dart';
 import '../platform_backend.dart';
-import 'brotli_loader.dart';
+import 'wasm_loader.dart';
 import 'web_interop.dart';
 import 'web_worker_blob.dart';
 
@@ -51,8 +53,10 @@ class _SharedWebAudioContext {
   }
 
   static void ensureResumed() {
-    if (_instance != null && _instance!.state == 'suspended') {
-      _instance!.resume();
+    if (_instance != null && _instance!.state != 'running' && _instance!.state != 'closed') {
+      try {
+        _instance!.resume();
+      } catch (_) {}
     }
   }
 }
@@ -80,6 +84,8 @@ final Finalizer<_WebPlayerCleanupToken> _webFinalizer =
     Finalizer<_WebPlayerCleanupToken>((token) => token.cleanup());
 
 class WebPlayerBackend implements PlayerBackend {
+  static final Set<WebPlayerBackend> activeBackends = {};
+
   web.AudioContext? _audioContext;
   web.AudioWorkletNode? _workletNode;
   web.Worker? _worker;
@@ -138,14 +144,21 @@ class WebPlayerBackend implements PlayerBackend {
       _channels = channels > 0 ? channels : 2;
       _audioContext = await _SharedWebAudioContext.acquire(sampleRate);
 
+      final workletOptions = web.AudioWorkletNodeOptions(
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [2.toJS].toJS,
+      );
       _workletNode = web.AudioWorkletNode(
         _audioContext!,
         'miniaudio-worklet-processor',
+        workletOptions,
       );
       _workletNode!.connect(_audioContext!.destination);
 
       final workerUrl = createEngineWorkerBlobUrl();
       _worker = web.Worker(workerUrl.toJS);
+      activeBackends.add(this);
 
       _cleanupToken = _WebPlayerCleanupToken(_worker!, _workletNode!);
       _webFinalizer.attach(this, _cleanupToken!, detach: this);
@@ -160,7 +173,7 @@ class WebPlayerBackend implements PlayerBackend {
         _handleWorkerMessage(e);
       }.toJS;
 
-      final wasmUrl = await BrotliWasmLoader.resolveWasmUrl();
+      final wasmUrl = await WasmLoader.resolveWasmUrl();
       _worker!.postMessage(
         WebWorkerCommand(
           type: 'init',
@@ -168,6 +181,7 @@ class WebPlayerBackend implements PlayerBackend {
           sampleRate: sampleRate,
           channels: channels,
           periodSize: periodSize,
+          logLevel: MiniaudioPlayer.globalConfig.logLevel.value,
         ),
       );
 
@@ -175,7 +189,9 @@ class WebPlayerBackend implements PlayerBackend {
         WebWorkerCommand(type: 'connectWorklet'),
         [channel.port1].toJS,
       );
-    } catch (e) {
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[miniaudio_player][ERROR][web] _asyncInit failed: $e\n$st');
       if (_initCompleter != null && !_initCompleter!.isCompleted) {
         _initCompleter!.completeError(e);
       }
@@ -211,6 +227,8 @@ class WebPlayerBackend implements PlayerBackend {
 
       case 'error':
         final err = msg.error ?? 'Unknown worker error';
+        // ignore: avoid_print
+        print('[miniaudio_player][ERROR][web] Worker error: $err');
         if (_openCompleter != null && !_openCompleter!.isCompleted) {
           _openCompleter!.completeError(MiniaudioPlayerException(err));
         }
@@ -240,7 +258,9 @@ class WebPlayerBackend implements PlayerBackend {
     _fillPercentage = bufFillPct.clamp(0.0, 1.0);
     _isBuffering = isBuffering;
     _isEof = isEof;
-    if (_durationMs > 0 && _totalSize > 0) {
+    if (raw.length > 46 && raw[46].toDartDouble >= 0) {
+      _readCursorByte = raw[46].toDartDouble.round();
+    } else if (_durationMs > 0 && _totalSize > 0) {
       _readCursorByte = ((posMs / _durationMs) * _totalSize).round().clamp(0, _totalSize);
     }
 
@@ -254,6 +274,22 @@ class WebPlayerBackend implements PlayerBackend {
     final double right = raw[29].toDartDouble;
     final double volume = raw[30].toDartDouble;
     final double rate = raw[31].toDartDouble;
+    final double pitch = raw.length > 32 ? raw[32].toDartDouble : 1.0;
+    final double balance = raw.length > 33 ? raw[33].toDartDouble : 0.0;
+    final bool mono = raw.length > 34 ? raw[34].toDartDouble != 0.0 : false;
+    final int crossfeedIndex = raw.length > 35 ? raw[35].toDartInt : 0;
+    final bool spatializer = raw.length > 36 ? raw[36].toDartDouble != 0.0 : false;
+    final double spatializerWidth = raw.length > 37 ? raw[37].toDartDouble : 1.0;
+    final bool reverbEnabled = raw.length > 38 ? raw[38].toDartDouble != 0.0 : false;
+    final bool limiter = raw.length > 39 ? raw[39].toDartDouble != 0.0 : false;
+    final double preampDb = raw.length > 40 ? raw[40].toDartDouble : 0.0;
+    final bool rgEnabled = raw.length > 41 ? raw[41].toDartDouble != 0.0 : false;
+    final double rgGainDb = raw.length > 42 ? raw[42].toDartDouble : 0.0;
+    final double rgPeak = raw.length > 43 ? raw[43].toDartDouble : 0.0;
+    final double rgPreampDb = raw.length > 44 ? raw[44].toDartDouble : 0.0;
+    final bool rgPreventClipping = raw.length > 45 ? raw[45].toDartDouble != 0.0 : true;
+
+    final bool visualizerEnabled = raw.length > 15 ? raw[15].toDartDouble != 0.0 : false;
 
     PlaybackState state;
     switch (stateInt) {
@@ -308,8 +344,28 @@ class WebPlayerBackend implements PlayerBackend {
         right: right,
       ),
     );
+    _listener?.onVisualizerEnabled(visualizerEnabled);
     _listener?.onVolume(volume);
     _listener?.onRate(rate);
+    _listener?.onPitch(pitch);
+    _listener?.onBalance(balance);
+    _listener?.onMono(mono);
+    if (crossfeedIndex >= 0 && crossfeedIndex < CrossfeedMode.values.length) {
+      _listener?.onCrossfeed(CrossfeedMode.values[crossfeedIndex]);
+    }
+    _listener?.onSpatializer(enabled: spatializer, width: spatializerWidth);
+    _listener?.onReverb(Reverb(enabled: reverbEnabled));
+    _listener?.onLimiter(limiter);
+    _listener?.onPreamp(preampDb);
+    _listener?.onReplayGain(
+      ReplayGainConfig(
+        enabled: rgEnabled,
+        gainDb: rgGainDb,
+        peak: rgPeak,
+        preampDb: rgPreampDb,
+        preventClipping: rgPreventClipping,
+      ),
+    );
   }
 
   Future<void> _ensureInitialized() async {
@@ -409,6 +465,7 @@ class WebPlayerBackend implements PlayerBackend {
       _rangeStart = newStreamOffset;
       _rangeEnd = newStreamOffset;
       _isEof = false;
+      _isBuffering = true;
     }
     _worker?.postMessage(
       WebWorkerCommand(
@@ -467,6 +524,7 @@ class WebPlayerBackend implements PlayerBackend {
 
   @override
   Future<void> play() async {
+    _SharedWebAudioContext.ensureResumed();
     await _ensureInitialized();
     _SharedWebAudioContext.ensureResumed();
     _worker?.postMessage(WebWorkerCommand(type: 'play'));
@@ -553,16 +611,25 @@ class WebPlayerBackend implements PlayerBackend {
     required double wet,
     required double dry,
   }) {
-    int preset = 1;
-    if (roomSize < 0.4) {
-      preset = 0;
-    } else if (roomSize > 0.75) {
-      preset = 2;
-    }
     _worker?.postMessage(
       WebWorkerCommand(
-        type: 'setReverb',
-        preset: enabled ? preset : -1,
+        type: 'setReverbConfig',
+        enabled: enabled,
+        roomSize: roomSize,
+        damping: damping,
+        width: width,
+        wet: wet,
+        dry: dry,
+      ),
+    );
+    _listener?.onReverb(
+      Reverb(
+        enabled: enabled,
+        roomSize: roomSize,
+        damping: damping,
+        width: width,
+        wet: wet,
+        dry: dry,
       ),
     );
   }
@@ -575,6 +642,7 @@ class WebPlayerBackend implements PlayerBackend {
         preset: mode.index,
       ),
     );
+    _listener?.onCrossfeed(mode);
   }
 
   @override
@@ -585,6 +653,7 @@ class WebPlayerBackend implements PlayerBackend {
         enabled: enabled,
       ),
     );
+    _listener?.onLimiter(enabled);
   }
 
   @override
@@ -597,6 +666,7 @@ class WebPlayerBackend implements PlayerBackend {
         minDurationMs: config.minSilenceDuration.inMilliseconds,
       ),
     );
+    _listener?.onSilenceConfig(config);
   }
 
   @override
@@ -607,13 +677,42 @@ class WebPlayerBackend implements PlayerBackend {
         enabled: enabled,
       ),
     );
+    _listener?.onVisualizerEnabled(enabled);
   }
 
   @override
-  void setPreamp(double preampDb) {}
+  void setPreamp(double preampDb) {
+    _worker?.postMessage(
+      WebWorkerCommand(
+        type: 'setPreamp',
+        preampDb: preampDb,
+      ),
+    );
+    _listener?.onPreamp(preampDb);
+  }
 
   @override
-  void setReplayGain(ReplayGainConfig config) {}
+  void setReplayGain(ReplayGainConfig config) {
+    if (config.enabled) {
+      _worker?.postMessage(
+        WebWorkerCommand(
+          type: 'setReplayGain',
+          enabled: true,
+          gainDb: config.gainDb,
+          peak: config.peak,
+          preampDb: config.preampDb,
+          preventClipping: config.preventClipping,
+        ),
+      );
+    } else {
+      _worker?.postMessage(
+        WebWorkerCommand(
+          type: 'clearReplayGain',
+        ),
+      );
+    }
+    _listener?.onReplayGain(config);
+  }
 
   @override
   void setBalance(double balance) {
@@ -623,13 +722,31 @@ class WebPlayerBackend implements PlayerBackend {
         pan: balance,
       ),
     );
+    _listener?.onBalance(balance);
   }
 
   @override
-  void setMono(bool enabled) {}
+  void setMono(bool enabled) {
+    _worker?.postMessage(
+      WebWorkerCommand(
+        type: 'setMono',
+        enabled: enabled,
+      ),
+    );
+    _listener?.onMono(enabled);
+  }
 
   @override
-  void setSpatializer({required bool enabled, required double width}) {}
+  void setSpatializer({required bool enabled, required double width}) {
+    _worker?.postMessage(
+      WebWorkerCommand(
+        type: 'setSpatializer',
+        enabled: enabled,
+        width: width,
+      ),
+    );
+    _listener?.onSpatializer(enabled: enabled, width: width);
+  }
 
   @override
   void setIcyMeta(Uint8List data) {}
@@ -671,6 +788,7 @@ class WebPlayerBackend implements PlayerBackend {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    activeBackends.remove(this);
     _webFinalizer.detach(this);
     _cleanupToken?.cleanup();
     _cleanupToken = null;
@@ -734,23 +852,101 @@ class WebPlatformService implements PlatformService {
     int waveformPoints = 100,
     double targetLufs = -18.0,
   }) async {
-    return AudioAnalysisResult(
-      duration: Duration.zero,
-      sampleRate: 48000,
-      channels: 2,
-      bitrate: 320000,
-      peak: 1.0,
-      replayGain: replayGain
-          ? const ReplayGainResult(gainDb: 0.0, peak: 1.0, lufs: -18.0)
-          : null,
-      waveform: waveform
-          ? WaveformResult(points: List.filled(waveformPoints, 0.5))
-          : null,
+    final workerUrl = createEngineWorkerBlobUrl();
+    final worker = web.Worker(workerUrl.toJS);
+    final completer = Completer<AudioAnalysisResult>();
+
+    worker.onmessage = (web.MessageEvent e) {
+      final msg = e.data as WebWorkerMessage;
+      if (msg.type == 'initialized') {
+        int flags = 0;
+        if (replayGain) flags |= 0x01;
+        if (waveform) flags |= 0x02;
+
+        worker.postMessage(
+          WebWorkerCommand(
+            type: 'analyzeAudioMemory',
+            id: 1,
+            bytes: bytes.toJS,
+            flags: flags,
+            targetLufs: targetLufs,
+            waveformPoints: waveformPoints,
+          ),
+        );
+      } else if (msg.type == 'analysisResult') {
+        try {
+          if (msg.status == 0 && msg.analysisResult != null) {
+            final res = msg.analysisResult!;
+            final durMs = res.durationMs.round();
+            final sr = res.sampleRate.round();
+            final ch = res.channels.round();
+            final br = res.bitrate.round();
+            final pk = res.peak;
+
+            ReplayGainResult? rg;
+            if (replayGain && res.hasReplayGain) {
+              rg = ReplayGainResult(
+                gainDb: res.replayGainGainDb,
+                peak: res.replayGainPeak,
+                lufs: res.replayGainLufs,
+              );
+            }
+
+            WaveformResult? wf;
+            if (waveform && res.waveform != null) {
+              final dartList = res.waveform!.toDart;
+              wf = WaveformResult(points: dartList.map((e) => e.toDouble()).toList());
+            }
+
+            completer.complete(
+              AudioAnalysisResult(
+                duration: Duration(milliseconds: durMs),
+                sampleRate: sr,
+                channels: ch,
+                bitrate: br,
+                peak: pk,
+                replayGain: rg,
+                waveform: wf,
+              ),
+            );
+          } else {
+            completer.completeError(
+              MiniaudioPlayerException(
+                msg.error ?? 'Audio memory analysis failed with status ${msg.status}',
+              ),
+            );
+          }
+        } finally {
+          worker.terminate();
+        }
+      } else if (msg.type == 'error') {
+        completer.completeError(
+          MiniaudioPlayerException(msg.error ?? 'Worker init error'),
+        );
+        worker.terminate();
+      }
+    }.toJS;
+
+    final wasmUrl = await WasmLoader.resolveWasmUrl();
+    worker.postMessage(
+      WebWorkerCommand(
+        type: 'init',
+        wasmUrl: wasmUrl,
+        sampleRate: 48000,
+        channels: 2,
+        periodSize: 2048,
+      ),
     );
+
+    return completer.future;
   }
 
   @override
-  void setLogLevel(int level) {}
+  void setLogLevel(int level) {
+    for (final b in WebPlayerBackend.activeBackends) {
+      b._worker?.postMessage(WebWorkerCommand(type: 'setLogLevel', logLevel: level));
+    }
+  }
 }
 
 PlayerBackend createPlayerBackend([dynamic player]) => WebPlayerBackend();

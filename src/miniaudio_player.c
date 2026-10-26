@@ -1652,6 +1652,8 @@ MAP_API int32_t miniaudio_player_stream_seek(
 
     ma_atomic_exchange_64(&player->sound.seekTarget, MA_SEEK_TARGET_NONE);
     ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
+    ma_atomic_store_32(&player->is_completed, 0);
+    map_event_dispatcher_post_completed(&player->dispatcher, 0);
     ma_node_set_time(&player->sound, targetFrame);
 
     int32_t seek_res = map_time_stretch_ds_seek_stream(pDS, targetFrame, new_stream_offset);
@@ -2005,6 +2007,8 @@ MAP_API int32_t miniaudio_player_play(miniaudio_player_t *player)
         ma_node_set_time(&player->sound, 0);
         map_time_stretch_ds_seek_stream(&player->stretch_ds, 0, player->audio_data_offset);
         ma_atomic_exchange_32(&player->sound.atEnd, MA_FALSE);
+        ma_atomic_store_32(&player->is_completed, 0);
+        map_event_dispatcher_post_completed(&player->dispatcher, 0);
         map_event_dispatcher_post_position(&player->dispatcher, 0);
     }
 

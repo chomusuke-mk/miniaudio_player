@@ -20,6 +20,7 @@ MAP_API uint8_t *map_wasm_get_staging_ptr(void);
 MAP_API uint32_t map_wasm_get_staging_capacity(void);
 
 /* Lifecycle */
+MAP_API void map_wasm_set_log_level(int32_t level);
 MAP_API miniaudio_player_t *map_wasm_player_create(uint32_t sample_rate, uint32_t channels, uint32_t period_size);
 MAP_API void map_wasm_player_destroy(miniaudio_player_t *player);
 
@@ -82,9 +83,21 @@ MAP_API float map_wasm_get_playback_rate(const miniaudio_player_t *player);
 MAP_API void map_wasm_set_pitch(miniaudio_player_t *player, float pitch);
 MAP_API float map_wasm_get_pitch(const miniaudio_player_t *player);
 MAP_API void map_wasm_set_pan(miniaudio_player_t *player, float pan);
+MAP_API void map_wasm_set_mono(miniaudio_player_t *player, int32_t enabled);
+MAP_API void map_wasm_set_spatializer(miniaudio_player_t *player, int32_t enabled, float width);
+MAP_API void map_wasm_set_preamp(miniaudio_player_t *player, float preamp_db);
+MAP_API void map_wasm_set_replay_gain(
+    miniaudio_player_t *player,
+    int32_t enabled,
+    float gain_db,
+    float peak,
+    float preamp_db,
+    int32_t prevent_clipping);
+MAP_API void map_wasm_clear_replay_gain(miniaudio_player_t *player);
 MAP_API void map_wasm_set_equalizer_band(miniaudio_player_t *player, uint32_t band, float gain_db);
 MAP_API void map_wasm_set_equalizer_bands(miniaudio_player_t *player, const float *gains_db, uint32_t count);
 MAP_API void map_wasm_set_equalizer_enabled(miniaudio_player_t *player, int32_t enabled);
+MAP_API void map_wasm_set_reverb(miniaudio_player_t *player, int32_t enabled, float room_size, float damping, float width, float wet, float dry);
 MAP_API void map_wasm_set_reverb_enabled(miniaudio_player_t *player, int32_t enabled);
 MAP_API void map_wasm_set_reverb_preset(miniaudio_player_t *player, int32_t preset);
 MAP_API void map_wasm_set_crossfeed_enabled(miniaudio_player_t *player, int32_t enabled);

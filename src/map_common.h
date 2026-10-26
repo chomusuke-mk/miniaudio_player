@@ -452,6 +452,9 @@ static MA_INLINE float map_clamp_gain_db(float gainDB)
 /* Resets the underlying decoding backend and converter for streaming byte-range seeks */
 ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset, ma_uint64 targetFrame);
 
+/* Unlatches EOF state in backend decoders (e.g. dr_mp3) when new stream bytes arrive */
+ma_result map_decoder_unlatch_stream_eof(ma_decoder *pDecoder);
+
 /* Returns the uncompressed bytes per PCM frame for container-based streams (e.g. WAV), or 1 if compressed/unknown */
 ma_uint32 map_decoder_get_raw_bytes_per_frame(ma_decoder *pDecoder);
 

@@ -13,11 +13,20 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MiniaudioPlayer.config(
     assetLoader: (key) async {
-      final byteData = await rootBundle.load(key);
-      return byteData.buffer.asUint8List(
-        byteData.offsetInBytes,
-        byteData.lengthInBytes,
-      );
+      try {
+        final byteData = await rootBundle.load(key);
+        return byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        );
+      } catch (_) {
+        final fallback = key.startsWith('assets/') ? key.substring('assets/'.length) : 'assets/$key';
+        final byteData = await rootBundle.load(fallback);
+        return byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        );
+      }
     },
     defaultBufferSize: 0,
     logLevel: MiniaudioLogLevel.verbose,
@@ -149,31 +158,51 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _replayGainPreventClipping = true;
 
   Future<void> _runAnalysis() async {
-    if (kIsWeb) return;
-    final path = _samplePath;
-    if (path == null || path.isEmpty) return;
-    final file = File(path);
-    if (!file.existsSync()) {
-      if (mounted) {
-        setState(() {
-          _analysisResult = null;
-          _isAnalyzing = false;
-        });
-      }
-      return;
-    }
+    final track = _selectedTrack;
+    if (track == null) return;
+
     if (mounted) {
       setState(() {
         _isAnalyzing = true;
       });
     }
+
     try {
-      final result = await MiniaudioPlayer.analyzeAudio(
-        path,
-        waveform: true,
-        replayGain: true,
-        waveformPoints: 72,
-      );
+      AudioAnalysisResult? result;
+
+      if (track.source is AssetAudioSource) {
+        final key = (track.source as AssetAudioSource).assetKey;
+        final byteData = await rootBundle.load(key);
+        final bytes = byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        );
+        result = await MiniaudioPlayer.analyzeAudioMemory(
+          bytes,
+          waveform: true,
+          replayGain: true,
+          waveformPoints: 72,
+        );
+      } else if (track.source is MemoryAudioSource) {
+        final bytes = (track.source as MemoryAudioSource).bytes;
+        result = await MiniaudioPlayer.analyzeAudioMemory(
+          bytes,
+          waveform: true,
+          replayGain: true,
+          waveformPoints: 72,
+        );
+      } else if (!kIsWeb) {
+        final path = _samplePath;
+        if (path != null && path.isNotEmpty && File(path).existsSync()) {
+          result = await MiniaudioPlayer.analyzeAudio(
+            path,
+            waveform: true,
+            replayGain: true,
+            waveformPoints: 72,
+          );
+        }
+      }
+
       if (mounted) {
         setState(() {
           _analysisResult = result;
@@ -366,12 +395,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
     }
 
-    // 2. Remote progressive HTTP stream (promoted to NetworkAudioSource)
+    // 2. Remote progressive HTTP streams (promoted to NetworkAudioSource with verified CORS support)
     addTrack(
-      id: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-      title: 'SoundHelix Song 1 (Remote MP3)',
+      id: 'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3',
+      title: 'Sample Track (Remote MP3, CORS)',
       source: AudioSource.uri(
-        'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3',
+      ),
+    );
+
+    addTrack(
+      id: 'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg',
+      title: 'Joy to the World (Wikimedia OGG, CORS)',
+      source: AudioSource.uri(
+        'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg',
       ),
     );
 
@@ -411,44 +448,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _updateAnalysisPathForTrack(AudioTrack track) {
-    if (kIsWeb) {
-      _samplePath = null;
-      if (mounted) {
-        setState(() {
-          _analysisResult = null;
-          _isAnalyzing = false;
-        });
-      }
-      return;
-    }
-
-    // Deduce local path from AudioSource or URI using capability resolver
     String? localPath;
-    if (track.source is FileAudioSource) {
-      localPath = (track.source as FileAudioSource).filePath;
-    } else {
-      final uri = track.source.uri ?? Uri.tryParse(track.id);
-      if (uri != null) {
-        final deduction = UriCapabilityResolver.deduceLocalPathFromUri(uri);
-        localPath = deduction.canonicalPath ??
-            UriCapabilityResolver.resolveDirectlyReadableCandidate(
-              deduction.candidatePaths,
-            );
+    if (!kIsWeb) {
+      if (track.source is FileAudioSource) {
+        localPath = (track.source as FileAudioSource).filePath;
+      } else {
+        final uri = track.source.uri ?? Uri.tryParse(track.id);
+        if (uri != null) {
+          final deduction = UriCapabilityResolver.deduceLocalPathFromUri(uri);
+          localPath = deduction.canonicalPath ??
+              UriCapabilityResolver.resolveDirectlyReadableCandidate(
+                deduction.candidatePaths,
+              );
+        }
       }
-    }
 
-    // For desktop dev, if the asset exists in the local workspace directory, allow waveform analysis
-    if (localPath == null && track.source is AssetAudioSource) {
-      final key = (track.source as AssetAudioSource).assetKey;
-      if (File(key).existsSync()) {
-        localPath = key;
-      } else if (File('example/$key').existsSync()) {
-        localPath = 'example/$key';
+      if (localPath == null && track.source is AssetAudioSource) {
+        final key = (track.source as AssetAudioSource).assetKey;
+        if (File(key).existsSync()) {
+          localPath = key;
+        } else if (File('example/$key').existsSync()) {
+          localPath = 'example/$key';
+        }
       }
     }
 
     _samplePath = localPath ?? (track.source.uri?.toString() ?? track.id);
-    if (localPath != null && File(localPath).existsSync()) {
+    if (track.source is AssetAudioSource ||
+        track.source is MemoryAudioSource ||
+        (!kIsWeb && localPath != null && File(localPath).existsSync())) {
       _runAnalysis();
     } else {
       if (mounted) {
@@ -581,19 +609,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         ),
                         ActionChip(
                           avatar: const Icon(Icons.cloud_download, size: 14, color: Colors.lightBlueAccent),
-                          label: const Text('SoundHelix (https://)', style: TextStyle(fontSize: 11)),
+                          label: const Text('Remote MP3 (CORS)', style: TextStyle(fontSize: 11)),
                           onPressed: () {
-                            uriController.text = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
-                            titleController.text = 'SoundHelix Song 1 (Remote)';
+                            uriController.text = 'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3';
+                            titleController.text = 'Sample Track (Remote MP3)';
                             setDialogState(() {});
                           },
                         ),
                         ActionChip(
-                          avatar: const Icon(Icons.graphic_eq, size: 14, color: Colors.purpleAccent),
-                          label: const Text('Radio Swiss Jazz', style: TextStyle(fontSize: 11)),
+                          avatar: const Icon(Icons.music_note, size: 14, color: Colors.amberAccent),
+                          label: const Text('Wikimedia OGG (CORS)', style: TextStyle(fontSize: 11)),
                           onPressed: () {
-                            uriController.text = 'http://stream.srg-ssr.ch/m/rsj/mp3_128';
-                            titleController.text = 'Radio Swiss Jazz (Live)';
+                            uriController.text = 'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg';
+                            titleController.text = 'Joy to the World (Wikimedia)';
+                            setDialogState(() {});
+                          },
+                        ),
+                        ActionChip(
+                          avatar: const Icon(Icons.radio, size: 14, color: Colors.purpleAccent),
+                          label: const Text('Radio FIP (icy://)', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            uriController.text = 'icy://icecast.radiofrance.fr/fip-midfi.mp3';
+                            titleController.text = 'Radio FIP (Icecast Live)';
                             setDialogState(() {});
                           },
                         ),
