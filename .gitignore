@@ -31,5 +31,3 @@ migrate_working_dir/
 /coverage/
 /temp/
 /.agents/
-
-/URI_IMPLEMENTATION.md

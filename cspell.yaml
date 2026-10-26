@@ -93,6 +93,7 @@ words:
   - deconstitution
   - decorrelation
   - decstate
+  - Deduplicator
   - deinterleave
   - demixing
   - DEMIXING
@@ -123,6 +124,7 @@ words:
   - documention
   - DOPUS
   - Dougall
+  - downloaders
   - downmix
   - downmixes
   - downmixing
@@ -167,6 +169,7 @@ words:
   - filelengthi
   - finalise
   - Finalizable
+  - finalizer
   - Finalizer
   - fishead
   - fivesize
@@ -187,6 +190,7 @@ words:
   - fseeki
   - ftelli
   - ftol
+  - ftyp
   - Gagiev
   - gapless
   - Gargaj
@@ -248,6 +252,7 @@ words:
   - Levinson
   - lgain
   - libart
+  - libminiaudio
   - libnativehelper
   - libogg
   - libopus
@@ -419,6 +424,7 @@ words:
   - seqlock
   - Seqlock
   - serialnos
+  - shoutcast
   - Shoutcast
   - SIGSEGV
   - sinc
@@ -443,8 +449,10 @@ words:
   - SROUND
   - stbv
   - STDLIB
+  - STREAMINFO
   - Subárbol
   - subgraves
+  - sublist
   - submix
   - Submix
   - SUBMIX
@@ -473,6 +481,8 @@ words:
   - timestamping
   - toneishness
   - TPDF
+  - trylock
+  - Trylocks
   - tvbr
   - TWID
   - typedef
@@ -480,6 +490,7 @@ words:
   - udata
   - unawaited
   - unclipped
+  - undecoded
   - Uninitializes
   - unobservably
   - unquant
@@ -503,6 +514,8 @@ words:
   - vorb
   - vorbisfile
   - VSHR
+  - Wakeup
+  - wakeups
   - wasapi
   - WASAPI
   - webp
@@ -513,12 +526,15 @@ words:
   - winmm
   - wmode
   - Wodo
+  - worklet
+  - Worklet
   - Wparentheses
   - wpath
   - writetrunc
   - Wsign
   - WSOLA
   - Wunused
+  - Xing
   - Xiph
   - xiphmont
   - Xlist
