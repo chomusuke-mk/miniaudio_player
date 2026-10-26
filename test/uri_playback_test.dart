@@ -47,7 +47,7 @@ void main() {
       final source = AudioSource.network(uri, headers: {'Auth': 'Bearer token'});
       expect(source, isA<NetworkAudioSource>());
       final netSource = source as NetworkAudioSource;
-      expect(netSource.url, equals(uri));
+      expect(netSource.uri, equals(uri));
       expect(netSource.headers?['Auth'], equals('Bearer token'));
       expect(netSource.isLive, isFalse);
     });
@@ -57,7 +57,7 @@ void main() {
       final source = AudioSource.liveStream(uri);
       expect(source, isA<LiveStreamAudioSource>());
       final liveSource = source as LiveStreamAudioSource;
-      expect(liveSource.url, equals(uri));
+      expect(liveSource.uri, equals(uri));
       expect(liveSource.isLive, isTrue);
     });
 
@@ -97,7 +97,7 @@ void main() {
       expect(mp3File.existsSync(), isTrue, reason: 'salida.mp3 must exist');
       final bytes = await mp3File.readAsBytes();
 
-      await player.action.openMemory(bytes);
+      await player.action.open(AudioSource.memory(bytes));
       expect(player.state.duration.inSeconds, greaterThan(0));
       expect(player.state.duration.inSeconds, inInclusiveRange(65, 75));
 
@@ -136,7 +136,7 @@ void main() {
       expect(wavFile.existsSync(), isTrue);
       final bytes = await wavFile.readAsBytes();
 
-      await player.action.openMemory(bytes);
+      await player.action.open(AudioSource.memory(bytes));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -151,7 +151,7 @@ void main() {
       expect(oggFile.existsSync(), isTrue);
       final bytes = await oggFile.readAsBytes();
 
-      await player.action.openMemory(bytes);
+      await player.action.open(AudioSource.memory(bytes));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -166,7 +166,7 @@ void main() {
       expect(opusFile.existsSync(), isTrue);
       final bytes = await opusFile.readAsBytes();
 
-      await player.action.openMemory(bytes);
+      await player.action.open(AudioSource.memory(bytes));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -178,7 +178,7 @@ void main() {
 
     test('adversarial: empty memory buffer throws MiniaudioPlayerException', () async {
       expect(
-        () => player.action.openMemory(Uint8List(0)),
+        () => player.action.open(AudioSource.memory(Uint8List(0))),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -188,7 +188,7 @@ void main() {
       final corruptBytes = Uint8List.fromList(List.generate(4096, (_) => rng.nextInt(256)));
 
       expect(
-        () => player.action.openMemory(corruptBytes),
+        () => player.action.open(AudioSource.memory(corruptBytes)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -198,7 +198,7 @@ void main() {
       final bytes = await mp3File.readAsBytes();
 
       for (var i = 0; i < 20; i++) {
-        await player.action.openMemory(bytes);
+        await player.action.open(AudioSource.memory(bytes));
         expect(player.state.duration.inSeconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -232,7 +232,7 @@ void main() {
         throw Exception('Asset not found: $key');
       };
 
-      await player.action.openAsset('assets/music/sample.mp3');
+      await player.action.open(AudioSource.asset('assets/music/sample.mp3'));
       expect(loaderCalled, isTrue);
       expect(player.state.duration.inSeconds, greaterThan(0));
 
@@ -246,7 +246,7 @@ void main() {
     test('resolves asset via file system candidate fallback when no loader configured', () async {
       MiniaudioPlayerGlobalConfig.assetLoader = null;
 
-      await player.action.openAsset('example/assets/music/salida.mp3');
+      await player.action.open(AudioSource.asset('example/assets/music/salida.mp3'));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -260,7 +260,7 @@ void main() {
       MiniaudioPlayerGlobalConfig.assetLoader = null;
 
       expect(
-        () => player.action.openAsset('non_existent_dir/no_audio_file.mp3'),
+        () => player.action.open(AudioSource.asset('non_existent_dir/no_audio_file.mp3')),
         throwsA(
           isA<MiniaudioPlayerException>().having(
             (e) => e.errorCode,
@@ -332,7 +332,7 @@ void main() {
 
     test('progressive HTTP playback with duration, play, pause and stop', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       expect(player.state.duration.inSeconds, inInclusiveRange(65, 75));
@@ -370,7 +370,7 @@ void main() {
 
     test('progressive HTTP playback of CBR MP3 without Xing header correctly detects duration and supports seeking', () async {
       final url = 'http://127.0.0.1:$serverPort/music/cbr_noxing.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
 
       // CBR sniffer should resolve duration to ~10 seconds instead of defaulting to 0
       expect(player.state.duration.inSeconds, inInclusiveRange(9, 11));
@@ -409,7 +409,7 @@ void main() {
 
     test('progressive HTTP playback of FLAC over network', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.flac';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       await player.action.play();
@@ -422,7 +422,7 @@ void main() {
     test('adversarial: HTTP 404 Not Found throws MiniaudioPlayerException with errorFileNotFound', () async {
       final url = 'http://127.0.0.1:$serverPort/error/404';
       expect(
-        () => player.action.openUrl(url),
+        () => player.action.open(AudioSource.uri(url)),
         throwsA(
           isA<MiniaudioPlayerException>().having(
             (e) => e.errorCode,
@@ -436,7 +436,7 @@ void main() {
     test('adversarial: HTTP 403 Forbidden throws MiniaudioPlayerException with errorAccessDenied', () async {
       final url = 'http://127.0.0.1:$serverPort/error/403';
       expect(
-        () => player.action.openUrl(url),
+        () => player.action.open(AudioSource.uri(url)),
         throwsA(
           isA<MiniaudioPlayerException>().having(
             (e) => e.errorCode,
@@ -450,14 +450,14 @@ void main() {
     test('adversarial: HTTP 500 Internal Server Error throws MiniaudioPlayerException', () async {
       final url = 'http://127.0.0.1:$serverPort/error/500';
       expect(
-        () => player.action.openUrl(url),
+        () => player.action.open(AudioSource.uri(url)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
 
     test('adversarial: HTTP 302 Redirection is followed transparently', () async {
       final url = 'http://127.0.0.1:$serverPort/redirect/302?target=/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       await player.action.play();
@@ -471,7 +471,7 @@ void main() {
       // Connect to unused local port 59991
       final unreachableUrl = 'http://127.0.0.1:59991/audio.mp3';
       expect(
-        () => player.action.openUrl(unreachableUrl),
+        () => player.action.open(AudioSource.uri(unreachableUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -479,14 +479,14 @@ void main() {
     test('adversarial: corrupt HTTP response headers throws MiniaudioPlayerException', () async {
       final url = 'http://127.0.0.1:$serverPort/corrupt/headers';
       expect(
-        () => player.action.openUrl(url),
+        () => player.action.open(AudioSource.uri(url)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
 
     test('adversarial: throttled slow network connection streams with buffering', () async {
       final slowUrl = 'http://127.0.0.1:$serverPort/slow/salida.mp3?delay=0.01&chunk=4096';
-      await player.action.openUrl(slowUrl);
+      await player.action.open(AudioSource.uri(slowUrl));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       await player.action.play();
@@ -499,14 +499,14 @@ void main() {
     test('adversarial: sudden socket closure during buffering throws cleanly', () async {
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=16384';
       expect(
-        () => player.action.openUrl(dropUrl),
+        () => player.action.open(AudioSource.uri(dropUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
 
     test('adversarial: sudden socket closure / connection drop mid-stream does not crash audio thread', () async {
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=131072';
-      await player.action.openUrl(dropUrl);
+      await player.action.open(AudioSource.uri(dropUrl));
 
       await player.action.play();
       // Let it play until server drops connection abruptly

@@ -177,7 +177,7 @@ void main() {
       final misnamed = File('${tempDir.path}/track_actually_mp3.wav');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.openFile(misnamed.path);
+      await player.action.open(AudioSource.file(misnamed.path));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -195,7 +195,7 @@ void main() {
       final extensionless = File('${tempDir.path}/audio_stream_payload');
       extensionless.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.openFile(extensionless.path);
+      await player.action.open(AudioSource.file(extensionless.path));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.flac));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -213,7 +213,7 @@ void main() {
       final misnamed = File('${tempDir.path}/opaque_blob.bin');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.openFile(misnamed.path);
+      await player.action.open(AudioSource.file(misnamed.path));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.aac));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -274,7 +274,7 @@ void main() {
       );
 
       expect(range.windowDuration, equals(const Duration(seconds: 20)));
-      expect(range.streamPercentage, closeTo(0.25, 0.001));
+      expect(range.percentage, closeTo(0.25, 0.001));
       expect(range.fillPercentage, closeTo(0.20, 0.001));
       expect(range.percentage, closeTo(0.25, 0.001));
       expect(range.contains(const Duration(seconds: 10)), isTrue);

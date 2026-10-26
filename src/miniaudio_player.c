@@ -2382,11 +2382,10 @@ MAP_API int32_t miniaudio_player_set_replay_gain(
     miniaudio_player_t *player,
     float gain_db,
     float peak,
-    float preamp_db,
     int32_t prevent_clipping)
 {
     if (player == NULL || isnan(gain_db) || isinf(gain_db) ||
-        isnan(peak) || isinf(peak) || isnan(preamp_db) || isinf(preamp_db))
+        isnan(peak) || isinf(peak))
     {
         return MAP_ERROR_INVALID_ARGS;
     }
@@ -2396,7 +2395,6 @@ MAP_API int32_t miniaudio_player_set_replay_gain(
 
     player->eq_node.rg_config.gain_db = gain_db;
     player->eq_node.rg_config.peak = (peak > 0.0f) ? peak : 0.0f;
-    player->eq_node.rg_config.preamp_db = preamp_db;
     player->eq_node.rg_config.prevent_clipping = prevent_clipping ? 1 : 0;
     player->eq_node.rg_config.enabled = 1;
 
@@ -2417,7 +2415,6 @@ MAP_API int32_t miniaudio_player_clear_replay_gain(miniaudio_player_t *player)
     player->eq_node.rg_config.enabled = 0;
     player->eq_node.rg_config.gain_db = 0.0f;
     player->eq_node.rg_config.peak = 0.0f;
-    player->eq_node.rg_config.preamp_db = 0.0f;
 
     ma_spinlock_unlock(&player->eq_node.lock);
     map_event_dispatcher_post_replay_gain(&player->dispatcher, &player->eq_node.rg_config);

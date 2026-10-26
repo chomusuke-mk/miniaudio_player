@@ -451,7 +451,6 @@ void main() {
 
         final newPlayer = MiniaudioPlayer();
         expect(newPlayer.state.bufferSize, equals(1024));
-        expect(newPlayer.bufferSize, equals(1024));
         newPlayer.dispose();
 
         // Restore old default
@@ -472,7 +471,6 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(player.state.bufferSize, equals(2048));
-      expect(player.bufferSize, equals(2048));
       expect(events, contains(2048));
 
       // Test setting buffer size back to 0 (Native Default)
@@ -480,7 +478,6 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(player.state.bufferSize, equals(0));
-      expect(player.bufferSize, equals(0));
       expect(events, contains(0));
 
       await sub.cancel();
@@ -510,7 +507,7 @@ void main() {
         ];
 
         final streamBitrates = <int>[];
-        final sub = player.stream.audioBitrate.listen(streamBitrates.add);
+        final sub = player.stream.bitrate.listen(streamBitrates.add);
 
         for (final file in testFiles) {
           if (!file.existsSync()) continue;
@@ -519,15 +516,15 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 60));
 
           // State getter & player direct getter
-          final bitrate = player.state.audioBitrate;
+          final bitrate = player.state.bitrate;
           expect(
             bitrate,
             greaterThan(0),
             reason: '${file.path} should report bitrate > 0',
           );
-          expect(player.audioBitrate, equals(bitrate));
           expect(player.state.bitrate, equals(bitrate));
-          expect(player.bitrate, equals(bitrate));
+          expect(player.state.bitrate, equals(bitrate));
+          expect(player.state.bitrate, equals(bitrate));
 
           // Stream verification
           expect(streamBitrates, contains(bitrate));
@@ -700,7 +697,7 @@ void main() {
       final hardwareDevices = devices.where((d) => !d.isAuto).toList();
       if (hardwareDevices.isNotEmpty) {
         final target = hardwareDevices.first;
-        await player.setDevice(target);
+        await player.action.setDevice(target);
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
         expect(player.state.audioDevice.name, isNotEmpty);

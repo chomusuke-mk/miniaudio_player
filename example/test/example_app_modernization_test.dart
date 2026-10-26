@@ -10,6 +10,11 @@ void main() {
     testWidgets(
       'Material 3 Dropdown Migration: All selectors use DropdownButtonFormField',
       (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
         await tester.pump();
         await tester.runAsync(() async {
@@ -17,21 +22,21 @@ void main() {
         });
         await tester.pump();
 
-        // Find all DropdownButtonFormField widgets
+        // Find all DropdownButtonFormField widgets (Buffer, Device, Crossfeed, SilenceSkip)
         final dropdownFormFields = find.byWidgetPredicate(
           (w) => w.runtimeType.toString().startsWith('DropdownButtonFormField'),
         );
         expect(
           dropdownFormFields,
-          findsNWidgets(6),
-          reason: 'All 6 selectors must use Material 3 DropdownButtonFormField',
+          findsNWidgets(4),
+          reason: 'All 4 hardware & DSP selectors must use Material 3 DropdownButtonFormField',
         );
 
         // Verify that every underlying DropdownButton is hosted within a DropdownButtonFormField
         final dropdownButtons = find.byWidgetPredicate(
           (w) => w.runtimeType.toString().startsWith('DropdownButton<'),
         );
-        expect(dropdownButtons, findsNWidgets(6));
+        expect(dropdownButtons, findsNWidgets(4));
 
         for (final element in dropdownButtons.evaluate()) {
           expect(
@@ -49,10 +54,17 @@ void main() {
         // Verify specific form fields exist
         expect(
           find.byWidgetPredicate(
-            (w) => w is DropdownButtonFormField<AudioTrack>,
+            (w) => w is DropdownButtonFormField<int>,
           ),
           findsOneWidget,
-          reason: 'Track selector must be a DropdownButtonFormField<AudioTrack>',
+          reason: 'Buffer selector must be a DropdownButtonFormField<int>',
+        );
+        expect(
+          find.byWidgetPredicate(
+            (w) => w is DropdownButtonFormField<AudioDevice>,
+          ),
+          findsOneWidget,
+          reason: 'Device selector must be a DropdownButtonFormField<AudioDevice>',
         );
       },
     );
@@ -60,6 +72,11 @@ void main() {
     testWidgets(
       'ReplayGain Decoupling: Set Volume Slider ActionChip is absent from ReplayGain card',
       (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
         await tester.pump();
         await tester.runAsync(() async {
@@ -74,8 +91,13 @@ void main() {
     );
 
     testWidgets(
-      'EQ Preset Dropdown: Displays selected preset and reflects active choice',
+      'EQ Preset Selection: Displays selected preset and reflects active choice',
       (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
         await tester.pump();
         await tester.runAsync(() async {
@@ -83,22 +105,34 @@ void main() {
         });
         await tester.pump();
 
-        // Locate the EQ Preset DropdownButtonFormField<String>
-        final eqDropdownFinder = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<String>,
-        );
-        expect(eqDropdownFinder, findsOneWidget);
+        final scrollable = find.byType(Scrollable).first;
 
-        final eqDropdown = tester.widget<DropdownButtonFormField<String>>(
-          eqDropdownFinder,
-        );
-        expect(eqDropdown.initialValue, equals('flat'));
+        // Locate Flat and Rock ChoiceChips in Equalizer card
+        final flatChipFinder = find.widgetWithText(ChoiceChip, 'Flat');
+        expect(flatChipFinder, findsOneWidget);
+        await tester.scrollUntilVisible(flatChipFinder, 200, scrollable: scrollable);
+
+        final flatChip = tester.widget<ChoiceChip>(flatChipFinder);
+        expect(flatChip.selected, isTrue);
+
+        final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
+        expect(rockChipFinder, findsOneWidget);
+        await tester.tap(rockChipFinder);
+        await tester.pump();
+
+        final rockChip = tester.widget<ChoiceChip>(rockChipFinder);
+        expect(rockChip.selected, isTrue);
       },
     );
 
     testWidgets(
       'Conditional Skip Silence: Subcontrols are visually dimmed and ignored when OFF',
       (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
         await tester.pump();
         await tester.runAsync(() async {
@@ -157,6 +191,11 @@ void main() {
     testWidgets(
       'Reactive Visualizer UI: Toggling OFF resets and dims visualizer card',
       (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
         await tester.pump();
         await tester.runAsync(() async {

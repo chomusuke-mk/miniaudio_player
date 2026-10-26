@@ -79,7 +79,7 @@ void main() {
           const aacPath = 'example/assets/music/salida.aac';
           final fileLen = File(aacPath).lengthSync();
 
-          await player.action.openFile(aacPath);
+          await player.action.open(AudioSource.file(aacPath));
           final durMs = player.state.duration.inMilliseconds;
           expect(durMs, greaterThan(15000));
 
@@ -134,7 +134,7 @@ void main() {
         ]) {
           final player = MiniaudioPlayer();
           try {
-            await player.action.openFile(path);
+            await player.action.open(AudioSource.file(path));
             expect(player.state.duration.inMilliseconds, greaterThan(15000));
 
             final targets = [
@@ -222,13 +222,13 @@ void main() {
         final player = MiniaudioPlayer();
         try {
           final url = 'http://127.0.0.1:${server.port}/track.mp3';
-          await player.action.openUrl(
+          await player.action.open(AudioSource.uri(
             url,
-            bufferAhead: const Duration(seconds: 4),
+            bufferAhead: const Duration(seconds: 4)),
             bufferBehind: const Duration(seconds: 2),
           );
 
-          final loader = player.streamer!;
+          final loader = player.action.activeLoader!;
           // Wait until backpressure pauses the stream at maxAheadBytes
           int waitedMs = 0;
           while (loader.state != UnifiedLoaderState.pausedByBackpressure &&
@@ -320,7 +320,7 @@ void main() {
           await player.action.setVisualizerEnabled(true);
 
           final url = 'http://127.0.0.1:${server.port}/space_force_24bit.wav';
-          await player.action.openUrl(url);
+          await player.action.open(AudioSource.uri(url));
 
           final int audioStart = player.backend.getAudioDataOffset();
           expect(audioStart, equals(44));

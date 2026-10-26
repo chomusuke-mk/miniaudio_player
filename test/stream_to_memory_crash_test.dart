@@ -13,7 +13,7 @@ void main() {
       final aiffBytes = await aiffFile.readAsBytes();
 
       const oggUrl = 'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg';
-      await player.action.openUrl(oggUrl);
+      await player.action.open(AudioSource.uri(oggUrl));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
       await player.action.seek(const Duration(milliseconds: 13987));
@@ -23,7 +23,7 @@ void main() {
       await player.action.stop();
 
       // Now switch to memory (salida.aiff)
-      await player.action.openMemory(aiffBytes);
+      await player.action.open(AudioSource.memory(aiffBytes));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 100));
       await player.action.stop();

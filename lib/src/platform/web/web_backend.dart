@@ -286,7 +286,6 @@ class WebPlayerBackend implements PlayerBackend {
     final bool rgEnabled = raw.length > 41 ? raw[41].toDartDouble != 0.0 : false;
     final double rgGainDb = raw.length > 42 ? raw[42].toDartDouble : 0.0;
     final double rgPeak = raw.length > 43 ? raw[43].toDartDouble : 0.0;
-    final double rgPreampDb = raw.length > 44 ? raw[44].toDartDouble : 0.0;
     final bool rgPreventClipping = raw.length > 45 ? raw[45].toDartDouble != 0.0 : true;
 
     final bool visualizerEnabled = raw.length > 15 ? raw[15].toDartDouble != 0.0 : false;
@@ -330,7 +329,7 @@ class WebPlayerBackend implements PlayerBackend {
         end: Duration(milliseconds: bufEndMs.round()),
         duration: Duration(milliseconds: durMs.round()),
         fillPercentage: bufFillPct.clamp(0.0, 1.0),
-        streamPercentage: streamPct.clamp(0.0, 1.0),
+        percentage: streamPct.clamp(0.0, 1.0),
         isBuffering: isBuffering,
         isEof: isEof,
       ),
@@ -362,7 +361,6 @@ class WebPlayerBackend implements PlayerBackend {
         enabled: rgEnabled,
         gainDb: rgGainDb,
         peak: rgPeak,
-        preampDb: rgPreampDb,
         preventClipping: rgPreventClipping,
       ),
     );
@@ -700,7 +698,6 @@ class WebPlayerBackend implements PlayerBackend {
           enabled: true,
           gainDb: config.gainDb,
           peak: config.peak,
-          preampDb: config.preampDb,
           preventClipping: config.preventClipping,
         ),
       );

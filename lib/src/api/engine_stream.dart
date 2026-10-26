@@ -66,6 +66,9 @@ class EngineStream<T> {
   final StreamController<bool> _isCrossfadingController;
   final StreamController<bool> _volumeNormalizationController;
   final StreamController<bool> _infiniteMixController;
+  final StreamController<double>? _defaultReplayGainController;
+  final StreamController<double?>? _forcedReplayGainController;
+  final StreamController<ReplayGainMode>? _replayGainModeController;
   final StreamController<Uint8List?>? _metaBytesController;
 
   /// Creates an [EngineStream] bound to internal broadcast controllers.
@@ -115,6 +118,9 @@ class EngineStream<T> {
     required StreamController<bool> isCrossfadingController,
     required StreamController<bool> volumeNormalizationController,
     required StreamController<bool> infiniteMixController,
+    StreamController<double>? defaultReplayGainController,
+    StreamController<double?>? forcedReplayGainController,
+    StreamController<ReplayGainMode>? replayGainModeController,
     StreamController<Uint8List?>? metaBytesController,
   })  : _phaseController = phaseController,
         _positionController = positionController,
@@ -161,6 +167,9 @@ class EngineStream<T> {
         _isCrossfadingController = isCrossfadingController,
         _volumeNormalizationController = volumeNormalizationController,
         _infiniteMixController = infiniteMixController,
+        _defaultReplayGainController = defaultReplayGainController,
+        _forcedReplayGainController = forcedReplayGainController,
+        _replayGainModeController = replayGainModeController,
         _metaBytesController = metaBytesController;
 
   // --------------------------------------------------------------------------
@@ -217,9 +226,6 @@ class EngineStream<T> {
   Stream<int> get bufferSize => _bufferSizeController.stream;
 
   /// Broadcast stream of audio nominal bitrate in bits per second (`bps`).
-  Stream<int> get audioBitrate => _audioBitrateController.stream;
-
-  /// Alias for [audioBitrate].
   Stream<int> get bitrate => _audioBitrateController.stream;
 
   /// Broadcast stream of 10-band graphic equalizer changes.
@@ -317,6 +323,18 @@ class EngineStream<T> {
   /// Broadcast stream emitting whether per-item ReplayGain normalization is enabled.
   Stream<bool> get volumeNormalization =>
       _volumeNormalizationController.stream;
+
+  /// Broadcast stream emitting the default fallback ReplayGain in decibels.
+  Stream<double> get defaultReplayGain =>
+      _defaultReplayGainController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting forced uniform ReplayGain changes (`null` when track metadata is active).
+  Stream<double?> get forcedReplayGain =>
+      _forcedReplayGainController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting [ReplayGainMode] transitions.
+  Stream<ReplayGainMode> get replayGainMode =>
+      _replayGainModeController?.stream ?? const Stream.empty();
 
   /// Broadcast stream emitting whether Infinite Mix proactive prefetching is enabled.
   Stream<bool> get infiniteMixEnabled => _infiniteMixController.stream;

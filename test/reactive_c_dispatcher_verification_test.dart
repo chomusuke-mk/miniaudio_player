@@ -38,7 +38,7 @@ void main() {
     test('Setters do not emit stream events before C confirms them', () async {
       final player = MiniaudioPlayer();
       try {
-        await player.action.openFile(sampleWav.path);
+        await player.action.open(AudioSource.file(sampleWav.path));
 
         // Volume
         final volumeEvents = <double>[];
@@ -109,7 +109,7 @@ void main() {
     test('Repeated identical setter calls are deduplicated in C and emit once', () async {
       final player = MiniaudioPlayer();
       try {
-        await player.action.openFile(sampleWav.path);
+        await player.action.open(AudioSource.file(sampleWav.path));
 
         // 1. Volume
         final volumeEvents = <double>[];
@@ -225,7 +225,7 @@ void main() {
     test('Compound DSP parameter deduplication (Preamp, ReplayGain, Equalizer, SilenceConfig)', () async {
       final player = MiniaudioPlayer();
       try {
-        await player.action.openFile(sampleWav.path);
+        await player.action.open(AudioSource.file(sampleWav.path));
 
         // Preamp
         final preampEvents = <double>[];
@@ -323,7 +323,7 @@ void main() {
     test('100 concurrent unawaited setter mutations resolve cleanly without deadlock', () async {
       final player = MiniaudioPlayer();
       try {
-        await player.action.openFile(sampleWav.path);
+        await player.action.open(AudioSource.file(sampleWav.path));
 
         final futures = <Future<void>>[];
         for (int i = 0; i < 100; i++) {
@@ -359,14 +359,14 @@ void main() {
       final player = MiniaudioPlayer();
       try {
         // Track 1
-        await player.action.openMemory(wav1Bytes);
+        await player.action.open(AudioSource.memory(wav1Bytes));
         expect(player.state.duration.inMilliseconds, inInclusiveRange(450, 550));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
         expect(player.state.playing, isTrue);
 
         // Track 2 replaces Track 1 mid-playback
-        await player.action.openMemory(wav2Bytes);
+        await player.action.open(AudioSource.memory(wav2Bytes));
         expect(player.state.duration.inMilliseconds, inInclusiveRange(950, 1050));
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.position, equals(Duration.zero));
@@ -390,10 +390,6 @@ void main() {
         // Signature check: must be Future<void>, not Future<bool>
         final Future<void> fut = player.action.setDevice(AudioDevice.auto);
         await fut;
-
-        // Player forwarder signature check:
-        final Future<void> playerFut = player.setDevice(AudioDevice.auto);
-        await playerFut;
 
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect(player.state.audioDevice.isAuto, isTrue);
@@ -420,7 +416,7 @@ void main() {
 
       await runZoned(() async {
         try {
-          await player.action.openFile(sampleWav.path);
+          await player.action.open(AudioSource.file(sampleWav.path));
           expect(player.state.duration, greaterThan(Duration.zero));
 
           await player.action.play();
@@ -467,7 +463,7 @@ void main() {
         final cSub = player.stream.completed.listen(completedEvents.add);
         final sSub = player.stream.playbackState.listen(stateEvents.add);
 
-        await player.action.openFile(shortFile.path);
+        await player.action.open(AudioSource.file(shortFile.path));
         await player.action.play();
 
         final stopwatch = Stopwatch()..start();
@@ -502,7 +498,7 @@ void main() {
 
       final player = MiniaudioPlayer();
       try {
-        await player.action.openFile(shortFile.path);
+        await player.action.open(AudioSource.file(shortFile.path));
         await player.action.play();
 
         final stopwatch = Stopwatch()..start();
@@ -532,7 +528,7 @@ void main() {
         final sub = player.stream.playbackState.listen(stateEvents.add);
 
         expect(
-          () => player.action.openFile('/tmp/this_file_does_not_exist_12345.wav'),
+          () => player.action.open(AudioSource.file('/tmp/this_file_does_not_exist_12345.wav')),
           throwsA(isA<MiniaudioPlayerException>()),
         );
 
@@ -541,7 +537,7 @@ void main() {
         expect(stateEvents, contains(PlaybackState.error));
 
         // Recovery: open valid in-memory audio
-        await player.action.openMemory(sampleWavBytes);
+        await player.action.open(AudioSource.memory(sampleWavBytes));
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.duration, greaterThan(Duration.zero));
 
@@ -560,7 +556,7 @@ void main() {
   group('Reactive C Event Dispatcher - Disposal Safety', () {
     test('Disposed player unbinds native callback safely and actions throw', () async {
       final player = MiniaudioPlayer();
-      await player.action.openMemory(sampleWavBytes);
+      await player.action.open(AudioSource.memory(sampleWavBytes));
       await player.dispose();
 
       expect(player.isDisposed, isTrue);

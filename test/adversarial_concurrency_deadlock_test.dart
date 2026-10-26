@@ -70,7 +70,7 @@ void main() {
 
     test('ADV-1: Rapid interleaved seek(0), seek(t), play, pause during active streaming', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -97,7 +97,7 @@ void main() {
     test('ADV-2: Deadlock stress test under artificial network stall (decoder blocked on data_ready_event)', () async {
       // Stream stalls for 1000ms after initial 32 KB burst
       final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=1000&initial_burst=32768';
-      await player.action.openUrl(stallUrl);
+      await player.action.open(AudioSource.uri(stallUrl));
 
       await player.action.play();
       // Allow playback to consume the burst and enter the 1000ms network stall
@@ -124,7 +124,7 @@ void main() {
     test('ADV-3: High seek contention with interleaved cache hits and misses during dropped connection', () async {
       // Connection drops abruptly after 64 KB
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=65536';
-      await player.action.openUrl(dropUrl);
+      await player.action.open(AudioSource.uri(dropUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -153,7 +153,7 @@ void main() {
 
     test('ADV-4: Burst fuzzing of 50 concurrent unawaited commands under flaky network', () async {
       final flakyUrl = 'http://127.0.0.1:$serverPort/flaky/music/salida.mp3';
-      await player.action.openUrl(flakyUrl);
+      await player.action.open(AudioSource.uri(flakyUrl));
 
       final rng = Random(1337);
       final unawaitedFutures = <Future<void>>[];
@@ -195,8 +195,8 @@ void main() {
         final stallUrl2 = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=800&initial_burst=32768';
 
         await Future.wait([
-          player.action.openUrl(stallUrl1),
-          player2.action.openUrl(stallUrl2),
+          player.action.open(AudioSource.uri(stallUrl1)),
+          player2.action.open(AudioSource.uri(stallUrl2)),
         ]);
 
         await Future.wait([

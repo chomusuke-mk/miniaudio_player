@@ -533,7 +533,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> idle
-    idle --> loading: openQueue() / play()
+    idle --> loading: open() / play()
     loading --> playing: Deck initialized & playback started
     loading --> error: All queue candidates failed
     playing --> paused: pause()
@@ -546,7 +546,7 @@ stateDiagram-v2
     playing --> idle: stop()
     paused --> idle: stop()
     idle --> disposed: dispose()
-    error --> idle: openQueue()
+    error --> idle: open()
 ```
 
 ### 7.3 Unified Loader State Machine (`UnifiedLoaderState`)

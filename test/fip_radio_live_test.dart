@@ -12,7 +12,7 @@ void main() {
       const fipUrl = 'https://icecast.radiofrance.fr/fip-midfi.mp3';
       
       // Open stream - should probe MP3 without failing with -203
-      await player.action.openUrl(fipUrl, isLive: true);
+      await player.action.open(AudioSource.uri(fipUrl, isLive: true));
       
       expect(player.state.duration, equals(Duration.zero));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));

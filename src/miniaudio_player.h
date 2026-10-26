@@ -130,7 +130,6 @@ extern "C"
     {
         float gain_db;            /**< Track gain in dB */
         float peak;               /**< Track peak (1.0 = 0 dBFS), 0.0 if unknown */
-        float preamp_db;          /**< Additional preamp gain in dB */
         int32_t prevent_clipping; /**< 1 to cap gain if boosted peak > 1.0 */
         int32_t enabled;          /**< 1 if ReplayGain is active, 0 for bypass */
     } miniaudio_player_replay_gain_config_t;
@@ -577,7 +576,6 @@ extern "C"
         miniaudio_player_t *player,
         float gain_db,
         float peak,
-        float preamp_db,
         int32_t prevent_clipping);
 
     MAP_API int32_t miniaudio_player_clear_replay_gain(

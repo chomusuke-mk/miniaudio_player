@@ -242,7 +242,7 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
           end: Duration(milliseconds: b.end_ms),
           duration: Duration(milliseconds: b.duration_ms),
           fillPercentage: b.fill_percentage.clamp(0.0, 1.0),
-          streamPercentage: b.stream_percentage.clamp(0.0, 1.0),
+          percentage: b.stream_percentage.clamp(0.0, 1.0),
           isBuffering: b.is_buffering != 0,
           isEof: b.is_eof != 0,
         ),
@@ -304,7 +304,6 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
         ReplayGainConfig(
           gainDb: _f32(rg.gain_db),
           peak: _f32(rg.peak),
-          preampDb: _f32(rg.preamp_db),
           preventClipping: rg.prevent_clipping != 0,
           enabled: rg.enabled != 0,
         ),
@@ -752,7 +751,6 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
         _playerHandle,
         config.gainDb,
         config.peak > 0 ? config.peak : 0.0,
-        config.preampDb,
         config.preventClipping ? 1 : 0,
       );
     }

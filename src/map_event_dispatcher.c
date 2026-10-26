@@ -477,7 +477,6 @@ void map_event_dispatcher_process_events(map_event_dispatcher_t *disp)
         if (rg.enabled != disp->last_emitted.replay_gain.enabled ||
             fabsf(rg.gain_db - disp->last_emitted.replay_gain.gain_db) >= 1e-3f ||
             fabsf(rg.peak - disp->last_emitted.replay_gain.peak) >= 1e-4f ||
-            fabsf(rg.preamp_db - disp->last_emitted.replay_gain.preamp_db) >= 1e-3f ||
             rg.prevent_clipping != disp->last_emitted.replay_gain.prevent_clipping)
         {
             disp->last_emitted.replay_gain = rg;

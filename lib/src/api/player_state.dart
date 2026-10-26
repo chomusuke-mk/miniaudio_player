@@ -197,9 +197,6 @@ class PlayerState {
   int get bufferSize => _getBufferSize();
 
   /// Current audio nominal bitrate in bits per second (bps), or 0 if uninitialized.
-  int get audioBitrate => _getAudioBitrate();
-
-  /// Alias for [audioBitrate].
   int get bitrate => _getAudioBitrate();
 
   /// Current 10-band equalizer settings (default: flat).
@@ -210,9 +207,6 @@ class PlayerState {
 
   /// Whether silence skipping is currently enabled.
   bool get skipSilence => _getSkipSilence();
-
-  /// Alias for [skipSilence].
-  bool get isSkipSilenceEnabled => _getSkipSilence();
 
   /// Current silence skipping operational mode.
   SilenceSkipMode get silenceSkipMode => _getSilenceSkipMode();
@@ -231,9 +225,6 @@ class PlayerState {
 
   /// Current manual preamp gain in decibels applied prior to equalizer (default: 0.0 dB).
   double get preamp => _getPreamp();
-
-  /// Alias for [preamp].
-  double get preampDb => _getPreamp();
 
   /// Current ReplayGain / EBU R128 track normalization configuration.
   ReplayGainConfig get replayGain => _getReplayGain();

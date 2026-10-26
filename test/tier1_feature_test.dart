@@ -151,6 +151,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 300));
 
         await player.action.pause();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
         final pausedPos = player.state.position;
         expect(pausedPos.inMilliseconds, greaterThan(100));
 

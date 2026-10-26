@@ -53,7 +53,7 @@ void main() {
 
         // 3. Confirm that the application reached mounted ready state
         expect(
-          find.text('miniaudio_player Demo'),
+          find.text('miniaudio_player'),
           findsOneWidget,
           reason: 'App failed to mount the main screen (_isReady remained false)',
         );

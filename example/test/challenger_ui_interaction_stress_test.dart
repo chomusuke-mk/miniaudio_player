@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
+import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
 
 Future<void> settleFrames(
   WidgetTester tester, {
@@ -53,9 +54,11 @@ void main() {
               viewport.size.height * viewport.dpr,
             );
             tester.view.devicePixelRatio = viewport.dpr;
-            addTearDown(() {
+            addTearDown(() async {
               tester.view.resetPhysicalSize();
               tester.view.resetDevicePixelRatio();
+              await tester.pumpWidget(const SizedBox());
+              await tester.pump();
             });
 
             await tester.pumpWidget(
@@ -77,7 +80,7 @@ void main() {
             await tester.pump();
 
             expect(
-              find.text('miniaudio_player Demo'),
+              find.text('miniaudio_player'),
               findsOneWidget,
               reason: 'App failed to mount ready screen on ${entry.key} @ ${scale}x',
             );
@@ -122,15 +125,17 @@ void main() {
     }
   });
 
-  group('Challenger Suite 2: DropdownButtonFormField Tap & Selection Interactions', () {
+  group('Challenger Suite 2: Dropdown & Control Tap & Selection Interactions', () {
     testWidgets(
-      'Verify all 6 DropdownButtonFormField widgets can be tapped and selected without exceptions',
+      'Verify all dropdowns and sleek overlays can be tapped and manipulated without exceptions',
       (tester) async {
         tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
         tester.view.devicePixelRatio = 3.0;
-        addTearDown(() {
+        addTearDown(() async {
           tester.view.resetPhysicalSize();
           tester.view.resetDevicePixelRatio();
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -142,23 +147,7 @@ void main() {
 
         final scrollable = find.byType(Scrollable).first;
 
-        // 1. Track Selector Dropdown
-        final trackDropdown = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<AudioTrack>,
-        );
-        expect(trackDropdown, findsOneWidget);
-        await tester.scrollUntilVisible(trackDropdown, 200, scrollable: scrollable);
-        await tester.tap(trackDropdown);
-        await settleFrames(tester, frames: 5);
-        final trackItems = find.byWidgetPredicate(
-          (w) => w is DropdownMenuItem<AudioTrack>,
-        );
-        expect(trackItems, findsWidgets);
-        await tester.tap(trackItems.last, warnIfMissed: false);
-        await settleFrames(tester, frames: 5);
-        expect(tester.takeException(), isNull);
-
-        // 2. Crossfeed Mode Dropdown
+        // 1. Crossfeed Mode Dropdown
         final crossfeedDropdown = find.byWidgetPredicate(
           (w) => w is DropdownButtonFormField<CrossfeedMode>,
         );
@@ -171,7 +160,7 @@ void main() {
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
-        // 3. Buffer Size Dropdown
+        // 2. Buffer Size Dropdown
         final bufDropdown = find.byWidgetPredicate(
           (w) => w is DropdownButtonFormField<int>,
         );
@@ -184,7 +173,7 @@ void main() {
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
-        // 4. Audio Device Dropdown
+        // 3. Audio Device Dropdown
         final devDropdown = find.byWidgetPredicate(
           (w) => w is DropdownButtonFormField<AudioDevice>,
         );
@@ -200,26 +189,14 @@ void main() {
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
-        // 5. EQ Preset Dropdown
-        final eqDropdown = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<String>,
-        );
-        expect(eqDropdown, findsOneWidget);
-        await tester.scrollUntilVisible(eqDropdown, 200, scrollable: scrollable);
-        await tester.tap(eqDropdown);
-        await settleFrames(tester, frames: 5);
-        final rockItem = find.text('Rock').last;
-        await tester.tap(rockItem, warnIfMissed: false);
+        // 4. EQ Preset ChoiceChip Selection
+        final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
+        await tester.scrollUntilVisible(rockChipFinder, 200, scrollable: scrollable);
+        await tester.tap(rockChipFinder);
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
-        // Verify EQ preset reflected in state
-        final updatedEqDropdown = tester.widget<DropdownButtonFormField<String>>(
-          eqDropdown,
-        );
-        expect(updatedEqDropdown.initialValue, equals('rock'));
-
-        // 6. Silence Skip Mode Dropdown
+        // 5. Silence Skip Mode Dropdown
         final skipCard = find.ancestor(
           of: find.text('Smart Silence Skipping'),
           matching: find.byType(Card),
@@ -244,6 +221,19 @@ void main() {
         await tester.tap(silenceItem, warnIfMissed: false);
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
+
+        // 6. Sleek CompactSliderControl Overlay Interaction
+        final sliderControls = find.byType(CompactSliderControl);
+        expect(sliderControls, findsWidgets);
+        await tester.scrollUntilVisible(sliderControls.first, 200, scrollable: scrollable);
+        await tester.tap(sliderControls.first);
+        await settleFrames(tester, frames: 5);
+        expect(tester.takeException(), isNull);
+
+        // Tap again to toggle closed
+        await tester.tap(sliderControls.first);
+        await settleFrames(tester, frames: 5);
+        expect(tester.takeException(), isNull);
       },
     );
   });
@@ -252,9 +242,11 @@ void main() {
     testWidgets('Skip Silence Switch: ON/OFF toggling and rapid toggle stress', (tester) async {
       tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
       tester.view.devicePixelRatio = 3.0;
-      addTearDown(() {
+      addTearDown(() async {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -311,9 +303,11 @@ void main() {
     testWidgets('Visualizer Switch: ON/OFF toggling and rapid toggle stress', (tester) async {
       tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
       tester.view.devicePixelRatio = 3.0;
-      addTearDown(() {
+      addTearDown(() async {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -367,9 +361,11 @@ void main() {
         const dpr = 2.0;
         tester.view.physicalSize = Size(viewportSize.width * dpr, viewportSize.height * dpr);
         tester.view.devicePixelRatio = dpr;
-        addTearDown(() {
+        addTearDown(() async {
           tester.view.resetPhysicalSize();
           tester.view.resetDevicePixelRatio();
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
         });
 
         await tester.pumpWidget(
@@ -388,7 +384,7 @@ void main() {
         });
         await tester.pump();
 
-        expect(find.text('miniaudio_player Demo'), findsOneWidget);
+        expect(find.text('miniaudio_player'), findsOneWidget);
         expect(tester.takeException(), isNull);
 
         final scrollable = find.byType(Scrollable).first;

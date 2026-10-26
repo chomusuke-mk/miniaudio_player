@@ -287,14 +287,13 @@ MAP_API void map_wasm_set_replay_gain(
     int32_t enabled,
     float gain_db,
     float peak,
-    float preamp_db,
     int32_t prevent_clipping)
 {
     if (player == NULL)
         return;
     if (enabled)
     {
-        miniaudio_player_set_replay_gain(player, gain_db, peak, preamp_db, prevent_clipping);
+        miniaudio_player_set_replay_gain(player, gain_db, peak, prevent_clipping);
     }
     else
     {
@@ -543,7 +542,7 @@ MAP_API void map_wasm_poll_telemetry(
     out_telemetry_f64[41] = status.replay_gain.enabled ? 1.0 : 0.0;
     out_telemetry_f64[42] = (double)status.replay_gain.gain_db;
     out_telemetry_f64[43] = (double)status.replay_gain.peak;
-    out_telemetry_f64[44] = (double)status.replay_gain.preamp_db;
+    out_telemetry_f64[44] = 0.0;
     out_telemetry_f64[45] = status.replay_gain.prevent_clipping ? 1.0 : 0.0;
     miniaudio_stream_status_t stream_status;
     memset(&stream_status, 0, sizeof(stream_status));

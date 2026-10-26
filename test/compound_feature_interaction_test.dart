@@ -86,7 +86,7 @@ void main() {
 
         // Open throttled stream with burst prebuffer (burst 64KB, then 4KB / 300ms starvation)
         final url = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=300&initial_burst=65536';
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
         await player.action.play();
 
         // Allow initial playback and observe starvation
@@ -116,7 +116,7 @@ void main() {
       'C2: Dynamically reconfiguring and toggling skip-silence while buffering does not crash or corrupt',
       () async {
         final url = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=300&initial_burst=65536';
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
         await player.action.play();
 
         // Wait until buffering state is active
@@ -159,7 +159,7 @@ void main() {
       'C3: Seeking during network stream starvation does not deadlock and resumes cleanly via Byte-Range',
       () async {
         final url = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=300&initial_burst=65536';
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
         await player.action.play();
 
         await Future<void>.delayed(const Duration(milliseconds: 500));
@@ -216,7 +216,7 @@ void main() {
 
         // 2. Open stream that abruptly drops socket after 128 KB
         final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=131072';
-        await player.action.openUrl(dropUrl);
+        await player.action.open(AudioSource.uri(dropUrl));
         await player.action.play();
 
         // Allow audio to play and drop

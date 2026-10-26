@@ -95,7 +95,7 @@ void main() {
                 );
               } else {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.openMemory(memoryWavBytes), caughtErrors),
+                  safeDispatch(() => player.action.open(AudioSource.memory(memoryWavBytes)), caughtErrors),
                 );
               }
               break;
@@ -295,7 +295,7 @@ void main() {
           if (i % 2 == 0) {
             unawaited(safeDispatch(() => player.action.open(shortWavFile.path), caughtErrors));
           } else {
-            unawaited(safeDispatch(() => player.action.openMemory(memoryWavBytes), caughtErrors));
+            unawaited(safeDispatch(() => player.action.open(AudioSource.memory(memoryWavBytes)), caughtErrors));
           }
 
           if (microDelay > 0) {

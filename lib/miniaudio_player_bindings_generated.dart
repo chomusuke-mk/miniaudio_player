@@ -794,13 +794,12 @@ external int miniaudio_player_set_rate(
 /// /* Advanced DSP Controls (ReplayGain, Preamp, Spatial, Balance, Limiter)     */
 /// /* =========================================================================
 @ffi.Native<
-    ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Float, ffi.Float,
-        ffi.Float, ffi.Int32)>()
+    ffi.Int32 Function(
+        ffi.Pointer<miniaudio_player_t>, ffi.Float, ffi.Float, ffi.Int32)>()
 external int miniaudio_player_set_replay_gain(
   ffi.Pointer<miniaudio_player_t> player,
   double gain_db,
   double peak,
-  double preamp_db,
   int prevent_clipping,
 );
 
@@ -1835,10 +1834,6 @@ final class miniaudio_player_replay_gain_config_t extends ffi.Struct {
   @ffi.Float()
   external double peak;
 
-  /// < Additional preamp gain in dB
-  @ffi.Float()
-  external double preamp_db;
-
   /// < 1 to cap gain if boosted peak > 1.0
   @ffi.Int32()
   external int prevent_clipping;
@@ -1851,14 +1846,12 @@ final class miniaudio_player_replay_gain_config_t extends ffi.Struct {
     ffi.Allocator $allocator, {
     required double gain_db,
     required double peak,
-    required double preamp_db,
     required int prevent_clipping,
     required int enabled,
   }) =>
       $allocator<miniaudio_player_replay_gain_config_t>()
         ..ref.gain_db = gain_db
         ..ref.peak = peak
-        ..ref.preamp_db = preamp_db
         ..ref.prevent_clipping = prevent_clipping
         ..ref.enabled = enabled;
 }

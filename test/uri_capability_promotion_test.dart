@@ -32,19 +32,19 @@ void main() {
     test('POSIX and Windows drive / UNC paths classify immediately as FileAudioSource (Precaución 4)', () {
       final posix = AudioSource.uri('/home/user/music/track.mp3');
       expect(posix, isA<FileAudioSource>());
-      expect((posix as FileAudioSource).filePath, equals('/home/user/music/track.mp3'));
+      expect((posix as FileAudioSource).path, equals('/home/user/music/track.mp3'));
 
       final winBackslash = AudioSource.uri(r'C:\Users\Audio\track.mp3');
       expect(winBackslash, isA<FileAudioSource>());
-      expect((winBackslash as FileAudioSource).filePath, equals(r'C:\Users\Audio\track.mp3'));
+      expect((winBackslash as FileAudioSource).path, equals(r'C:\Users\Audio\track.mp3'));
 
       final winSlash = AudioSource.uri('D:/Music/Lossless/song.flac');
       expect(winSlash, isA<FileAudioSource>());
-      expect((winSlash as FileAudioSource).filePath, equals('D:/Music/Lossless/song.flac'));
+      expect((winSlash as FileAudioSource).path, equals('D:/Music/Lossless/song.flac'));
 
       final winUnc = AudioSource.uri(r'\\NASServer\MusicShare\album\track.wav');
       expect(winUnc, isA<FileAudioSource>());
-      expect((winUnc as FileAudioSource).filePath, equals(r'\\NASServer\MusicShare\album\track.wav'));
+      expect((winUnc as FileAudioSource).path, equals(r'\\NASServer\MusicShare\album\track.wav'));
 
       final itemWin = EngineItem.fromDynamic(r'C:\Users\Audio\track.mp3');
       expect(itemWin.source, isA<FileAudioSource>());
@@ -55,14 +55,14 @@ void main() {
       final unixFile = AudioSource.uri('file:///storage/emulated/0/Music/my%20song.mp3');
       expect(unixFile, isA<FileAudioSource>());
       expect(
-        (unixFile as FileAudioSource).filePath,
+        (unixFile as FileAudioSource).path,
         equals('/storage/emulated/0/Music/my song.mp3'),
       );
 
       final winFileUri = AudioSource.uri('file:///C:/Users/Audio/my%20track.mp3');
       expect(winFileUri, isA<FileAudioSource>());
       expect(
-        (winFileUri as FileAudioSource).filePath,
+        (winFileUri as FileAudioSource).path,
         equals('C:/Users/Audio/my track.mp3'),
       );
     });
@@ -173,12 +173,12 @@ void main() {
 
       final source = AudioSource.uri(safRawUri);
       expect(source, isA<FileAudioSource>());
-      expect((source as FileAudioSource).filePath, equals(appAudioFile.path));
+      expect((source as FileAudioSource).path, equals(appAudioFile.path));
 
       final player = MiniaudioPlayer();
       try {
         await player.action.open(safRawUri);
-        expect(player.loader?.provider, isA<FileByteProvider>());
+        expect(player.action.activeLoader?.provider, isA<FileByteProvider>());
         expect(player.state.duration.inSeconds, inInclusiveRange(65, 75));
       } finally {
         await player.dispose();
@@ -192,7 +192,7 @@ void main() {
       final uri1 = 'content://com.miapp.fileprovider/music/cancion.mp3';
       final source1 = AudioSource.uri(uri1);
       expect(source1, isA<FileAudioSource>());
-      expect((source1 as FileAudioSource).filePath, equals(appAudioFile.path));
+      expect((source1 as FileAudioSource).path, equals(appAudioFile.path));
 
       // 2. FileProvider alias segment: content://com.miapp.fileprovider/mis_audios/cancion.mp3
       MiniaudioPlayerGlobalConfig.fileProviderAliases = {
@@ -201,12 +201,12 @@ void main() {
       final uri2 = 'content://com.miapp.fileprovider/mis_audios/cancion.mp3';
       final source2 = AudioSource.uri(uri2);
       expect(source2, isA<FileAudioSource>());
-      expect((source2 as FileAudioSource).filePath, equals(appAudioFile.path));
+      expect((source2 as FileAudioSource).path, equals(appAudioFile.path));
 
       final player = MiniaudioPlayer();
       try {
         await player.action.open(uri2);
-        expect(player.loader?.provider, isA<FileByteProvider>());
+        expect(player.action.activeLoader?.provider, isA<FileByteProvider>());
         expect(player.state.duration.inSeconds, inInclusiveRange(65, 75));
       } finally {
         await player.dispose();
@@ -247,8 +247,8 @@ void main() {
           expect(closedFds, equals([openedFd]));
 
           // 2. Provider must be promoted to Level 1 FileByteProvider with exact realPath
-          expect(player.loader?.provider, isA<FileByteProvider>());
-          final fileProvider = player.loader!.provider as FileByteProvider;
+          expect(player.action.activeLoader?.provider, isA<FileByteProvider>());
+          final fileProvider = player.action.activeLoader!.provider as FileByteProvider;
           expect(
             File(fileProvider.filePath).resolveSymbolicLinksSync(),
             equals(mp3File.resolveSymbolicLinksSync()),
@@ -299,8 +299,8 @@ void main() {
           await player.action.open('content://com.other.app.provider/external_audio/99');
 
           // 1. Provider must be Level 2 FdByteProvider (NOT copied to MemoryByteProvider or temp file)
-          expect(player.loader?.provider, isA<FdByteProvider>());
-          final fdProvider = player.loader!.provider as FdByteProvider;
+          expect(player.action.activeLoader?.provider, isA<FdByteProvider>());
+          final fdProvider = player.action.activeLoader!.provider as FdByteProvider;
           expect(fdProvider.fd, equals(openedFd));
           expect(fdProvider.isClosed, isFalse);
           expect(closedFds, isEmpty, reason: 'FD must remain open while FdByteProvider is active');
@@ -564,8 +564,8 @@ void main() {
       final player = MiniaudioPlayer();
       try {
         await player.action.open('fd://$readFd');
-        expect(player.loader?.provider, isA<FdByteProvider>());
-        final fdProv = player.loader!.provider as FdByteProvider;
+        expect(player.action.activeLoader?.provider, isA<FdByteProvider>());
+        final fdProv = player.action.activeLoader!.provider as FdByteProvider;
         expect(await fdProv.probeTail(0, 128), isNull);
 
         await player.action.play();
@@ -600,8 +600,8 @@ void main() {
 
         final player = MiniaudioPlayer();
         try {
-          await player.action.openFd(fd);
-          expect(player.loader?.provider, isA<FdByteProvider>());
+          await player.action.open(AudioSource.fd(fd));
+          expect(player.action.activeLoader?.provider, isA<FdByteProvider>());
           expect(player.state.duration.inSeconds, inInclusiveRange(9, 11));
 
           await player.action.play();
@@ -731,7 +731,7 @@ void main() {
       final player = MiniaudioPlayer();
       try {
         await player.action.open(dataUri);
-        expect(player.loader?.provider, isA<MemoryByteProvider>());
+        expect(player.action.activeLoader?.provider, isA<MemoryByteProvider>());
         expect(player.state.duration.inSeconds, inInclusiveRange(9, 11));
 
         await player.action.play();

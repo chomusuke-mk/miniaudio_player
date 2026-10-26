@@ -77,7 +77,7 @@ void main() {
     test('C1.1: openMemory rejects 0-length and tiny buffers (1..43 bytes) without crashing', () async {
       // 0 bytes
       expect(
-        () => player.action.openMemory(Uint8List(0)),
+        () => player.action.open(AudioSource.memory(Uint8List(0))),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -88,7 +88,7 @@ void main() {
           microBytes[i] = (i * 37) & 0xFF;
         }
         await expectLater(
-          player.action.openMemory(microBytes),
+          player.action.open(AudioSource.memory(microBytes)),
           throwsA(isA<MiniaudioPlayerException>()),
         );
       }
@@ -102,7 +102,7 @@ void main() {
       final zeroChan = Uint8List.fromList(validWav);
       ByteData.view(zeroChan.buffer).setUint16(22, 0, Endian.little);
       await expectLater(
-        player.action.openMemory(zeroChan),
+        player.action.open(AudioSource.memory(zeroChan)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -110,7 +110,7 @@ void main() {
       final highChan = Uint8List.fromList(validWav);
       ByteData.view(highChan.buffer).setUint16(22, 255, Endian.little);
       await expectLater(
-        player.action.openMemory(highChan),
+        player.action.open(AudioSource.memory(highChan)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -118,7 +118,7 @@ void main() {
       final zeroSampleRate = Uint8List.fromList(validWav);
       ByteData.view(zeroSampleRate.buffer).setUint32(24, 0, Endian.little);
       await expectLater(
-        player.action.openMemory(zeroSampleRate),
+        player.action.open(AudioSource.memory(zeroSampleRate)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -126,14 +126,14 @@ void main() {
       final zeroBits = Uint8List.fromList(validWav);
       ByteData.view(zeroBits.buffer).setUint16(34, 0, Endian.little);
       await expectLater(
-        player.action.openMemory(zeroBits),
+        player.action.open(AudioSource.memory(zeroBits)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
       // Mutate 4b: Non-standard 7-bit depth handled by dr_wav container packing without crash
       final sevenBits = Uint8List.fromList(validWav);
       ByteData.view(sevenBits.buffer).setUint16(34, 7, Endian.little);
-      await player.action.openMemory(sevenBits);
+      await player.action.open(AudioSource.memory(sevenBits));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await player.action.stop();
@@ -145,7 +145,7 @@ void main() {
       badMagic[2] = 0x50; // 'P'
       badMagic[3] = 0x45; // 'E'
       await expectLater(
-        player.action.openMemory(badMagic),
+        player.action.open(AudioSource.memory(badMagic)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -153,7 +153,7 @@ void main() {
       final unknownFmt = Uint8List.fromList(validWav);
       ByteData.view(unknownFmt.buffer).setUint16(20, 0xFFFF, Endian.little);
       try {
-        await player.action.openMemory(unknownFmt);
+        await player.action.open(AudioSource.memory(unknownFmt));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 30));
         await player.action.stop();
@@ -169,7 +169,7 @@ void main() {
       final truncatedAtHeader = validWav.sublist(0, 44);
       // Miniaudio may either open with 0 frames or fail gracefully, but must NOT crash
       try {
-        await player.action.openMemory(truncatedAtHeader);
+        await player.action.open(AudioSource.memory(truncatedAtHeader));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await player.action.stop();
@@ -179,7 +179,7 @@ void main() {
 
       // Truncate halfway through data
       final truncatedHalf = validWav.sublist(0, validWav.length ~/ 2);
-      await player.action.openMemory(truncatedHalf);
+      await player.action.open(AudioSource.memory(truncatedHalf));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(0));
@@ -205,7 +205,7 @@ void main() {
 
       // Also via openMemory
       await expectLater(
-        player.action.openMemory(garbage),
+        player.action.open(AudioSource.memory(garbage)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -217,7 +217,7 @@ void main() {
         injectDenormals: true,
       );
 
-      await player.action.openMemory(floatBytes);
+      await player.action.open(AudioSource.memory(floatBytes));
       // Enable EQ, Limiter, Reverb, and Spatializer to stress DSP filter registers
       await player.action.setEqualizer(const Equalizer(hz1k: 6.0));
       await player.action.setLimiter(true);
@@ -250,7 +250,7 @@ void main() {
       for (final code in [404, 403, 500]) {
         final errUrl = 'http://127.0.0.1:$serverPort/error/$code';
         await expectLater(
-          player.action.openUrl(errUrl),
+          player.action.open(AudioSource.uri(errUrl)),
           throwsA(isA<MiniaudioPlayerException>()),
         );
       }
@@ -259,7 +259,7 @@ void main() {
     test('C2.2: Server delivering malformed garbage headers throws cleanly', () async {
       final corruptUrl = 'http://127.0.0.1:$serverPort/corrupt/headers';
       await expectLater(
-        player.action.openUrl(corruptUrl),
+        player.action.open(AudioSource.uri(corruptUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -269,7 +269,7 @@ void main() {
       // Server closes socket after 500 bytes (< 65536 prebuffer)
       // Player must throw or handle without unhandled future rejection or crash
       try {
-        await player.action.openUrl(dropUrl);
+        await player.action.open(AudioSource.uri(dropUrl));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         await player.action.stop();
@@ -281,7 +281,7 @@ void main() {
     test('C2.4: Extreme trickle bandwidth (500 bytes/sec) handles starvation without deadlocks', () async {
       // 4 kbps = ~500 bytes/sec with 64KB initial burst
       final trickleUrl = 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=4&initial_burst=65536';
-      await player.action.openUrl(trickleUrl);
+      await player.action.open(AudioSource.uri(trickleUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -299,7 +299,7 @@ void main() {
 
     test('C2.5: HTTP Redirection (302 Found) to valid audio stream resolves seamlessly', () async {
       final redirectUrl = 'http://127.0.0.1:$serverPort/redirect/302?target=/music/salida.mp3';
-      await player.action.openUrl(redirectUrl);
+      await player.action.open(AudioSource.uri(redirectUrl));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       await player.action.play();
@@ -314,7 +314,7 @@ void main() {
       for (int i = 0; i < 10; i++) {
         final p = MiniaudioPlayer();
         // Fire open without awaiting, then immediately dispose
-        unawaited(p.action.openUrl(dropUrl).catchError((_) {}));
+        unawaited(p.action.open(AudioSource.uri(dropUrl)).catchError((_) {}));
         await Future<void>.delayed(const Duration(milliseconds: 5));
         await p.dispose();
       }
@@ -341,7 +341,7 @@ void main() {
             : 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=64&initial_burst=32768';
 
         futures.add(() async {
-          await p.action.openUrl(url);
+          await p.action.open(AudioSource.uri(url));
           await p.action.play();
           await Future<void>.delayed(const Duration(milliseconds: 300));
           await p.action.setVolume(0.8);
@@ -361,7 +361,7 @@ void main() {
 
       for (int i = 0; i < 40; i++) {
         final p = MiniaudioPlayer();
-        await p.action.openMemory(wavBytes);
+        await p.action.open(AudioSource.memory(wavBytes));
         await p.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 10));
         await p.dispose();

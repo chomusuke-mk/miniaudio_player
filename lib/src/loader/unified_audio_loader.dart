@@ -194,7 +194,7 @@ class UnifiedAudioLoader {
         : _bufferBehind;
     final totalDuration = effectiveAhead + effectiveBehind;
     final nominalBitrate =
-        _player.state.audioBitrate > 0 ? _player.state.audioBitrate : 256000;
+        _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
     final bytesPerSec = max(1, nominalBitrate ~/ 8);
     int calculatedCap = (totalDuration.inMilliseconds * bytesPerSec) ~/ 1000;
     if (provider.isNetwork && !_isLive) {
@@ -502,7 +502,7 @@ class UnifiedAudioLoader {
       formatName: detectedCodec.name,
       duration: _player.state.duration,
       totalBytes: _totalContentLength > 0 ? _totalContentLength : 0,
-      bitrate: _player.state.audioBitrate,
+      bitrate: _player.state.bitrate,
       sampleRate: _player.sampleRate,
       channels: _player.channels,
       isNetwork: provider.isNetwork,
@@ -577,7 +577,7 @@ class UnifiedAudioLoader {
     }
 
     final nominalBitrate =
-        _player.state.audioBitrate > 0 ? _player.state.audioBitrate : 256000;
+        _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
     final bytesPerSec = max(1, nominalBitrate ~/ 8);
     final targetAheadBytes = max(
       256 * 1024,
@@ -631,6 +631,34 @@ class UnifiedAudioLoader {
     const int sliceSize = 32768; // 32 KB slices
     int offset = 0;
     while (!_isDisposed && _seekGeneration == seekGen && offset < chunk.length) {
+      if (!_isLive && _totalContentLength > 0) {
+        final nominalBitrate =
+            _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
+        final bytesPerSec = max(1, nominalBitrate ~/ 8);
+        final targetAheadBytes = max(
+          256 * 1024,
+          (_bufferAhead.inMilliseconds * bytesPerSec) ~/ 1000,
+        );
+        final capBytes = _player.backend.getStreamStatus()?.bufferCapacity ??
+            (4 * 1024 * 1024);
+        final maxAheadBytes = min((capBytes * 0.85).round(), targetAheadBytes);
+
+        if (_aheadHeadroomBytes >= maxAheadBytes) {
+          _pauseSubscription();
+          _isPausedByBackpressure = true;
+          _pausedAtHeadroomBytes = _aheadHeadroomBytes;
+          _state = UnifiedLoaderState.pausedByBackpressure;
+          while (!_isDisposed && !_isStopped && _seekGeneration == seekGen) {
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            if (_isDisposed || _isStopped || _seekGeneration != seekGen) return;
+            onEngineTelemetryTick();
+            if (_aheadHeadroomBytes < (maxAheadBytes * 0.82).round()) {
+              break;
+            }
+          }
+        }
+      }
+
       final int end =
           (offset + sliceSize < chunk.length) ? offset + sliceSize : chunk.length;
       final Uint8List slice = Uint8List.sublistView(chunk, offset, end);

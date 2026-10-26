@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import '../equalizer.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
-import 'audio_source.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'engine_item.dart';
@@ -23,9 +22,6 @@ class EngineAction<T> {
   /// Creates an [EngineAction] facade bound to [_engine].
   EngineAction(this._engine);
 
-  /// Active network audio streamer instance on the currently active deck, if any.
-  dynamic get activeStreamer => _engine.activeStreamer;
-
   // --------------------------------------------------------------------------
   // Single-Source & Queue Opening
   // --------------------------------------------------------------------------
@@ -36,7 +32,7 @@ class EngineAction<T> {
   /// - [startIndex]: Initial zero-based index to load (defaults to `0`, or a
   ///   uniform random index if [shuffle] is `true` and [startIndex] is `null`).
   /// - [shuffle]: Whether to initialize the queue in Fisher-Yates shuffled order.
-  Future<void> openQueue(
+  Future<void> open(
     List<EngineItem<T>> items, {
     int? startIndex,
     bool shuffle = false,
@@ -45,155 +41,6 @@ class EngineAction<T> {
         items,
         startIndex: startIndex,
         shuffle: shuffle,
-      );
-
-  /// Coerces a list of flexible [sources] ([EngineItem], [AudioSource],
-  /// [String] file path / URL / asset, [Uri], [Uint8List], or `FileSystemEntity`)
-  /// into [EngineItem]s and opens them as the active queue without starting
-  /// playback. Call [play] to start playback.
-  Future<void> openSources(
-    List<dynamic> sources, {
-    int? startIndex,
-    bool shuffle = false,
-  }) {
-    final items = [
-      for (var i = 0; i < sources.length; i++)
-        EngineItem<T>.fromDynamic(sources[i], position: i),
-    ];
-    return _engine.openQueueInternal(
-      items,
-      startIndex: startIndex,
-      shuffle: shuffle,
-    );
-  }
-
-  /// Opens a single audio [source] as a 1-item queue without starting playback.
-  /// Call [play] to start playback.
-  ///
-  /// Accepts an [EngineItem], [AudioSource], [String] path/URL/asset, [Uri],
-  /// [Uint8List], or `FileSystemEntity`.
-  Future<void> open(
-    dynamic source, {
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-    Map<String, String>? headers,
-    bool isLive = false,
-    Duration? bufferAhead,
-  }) {
-    final item = EngineItem<T>.fromDynamic(
-      source,
-      data: data,
-      replayGainDb: replayGainDb,
-      replayPeak: replayPeak,
-      headers: headers,
-      isLive: isLive,
-      bufferAhead: bufferAhead,
-    );
-    return _engine.openQueueInternal(
-      [item],
-      startIndex: 0,
-      shuffle: false,
-    );
-  }
-
-  /// Opens a single local filesystem [filePath] as a 1-item queue without
-  /// starting playback. Call [play] to start playback.
-  Future<void> openFile(
-    String filePath, {
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-  }) =>
-      open(
-        EngineItem<T>.file(
-          filePath,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-        ),
-      );
-
-  /// Opens a single HTTP/HTTPS [uri] stream (progressive or [isLive] livestream)
-  /// as a 1-item queue without starting playback. Call [play] to start playback.
-  Future<void> openUrl(
-    Uri uri, {
-    Map<String, String>? headers,
-    bool isLive = false,
-    Duration? bufferAhead,
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-  }) =>
-      open(
-        EngineItem<T>.uri(
-          uri,
-          headers: headers,
-          isLive: isLive,
-          bufferAhead: bufferAhead,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-        ),
-      );
-
-  /// Opens an in-memory [bytes] audio buffer as a 1-item queue without starting
-  /// playback. Call [play] to start playback.
-  Future<void> openMemory(
-    Uint8List bytes, {
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-  }) =>
-      open(
-        EngineItem<T>.memory(
-          bytes,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-        ),
-      );
-
-  /// Opens a bundled application [assetKey] as a 1-item queue without starting
-  /// playback. Call [play] to start playback.
-  Future<void> openAsset(
-    String assetKey, {
-    String? package,
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-  }) =>
-      open(
-        EngineItem<T>.asset(
-          assetKey,
-          package: package,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-        ),
-      );
-
-  /// Opens an open native file descriptor [fd] (`fd://<fd>`) as a 1-item queue
-  /// without starting playback. Call [play] to start playback.
-  Future<void> openFd(
-    int fd, {
-    bool ownFd = true,
-    Duration? bufferAhead,
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-  }) =>
-      open(
-        EngineItem<T>(
-          source: AudioSource.fd(
-            fd,
-            ownFd: ownFd,
-            bufferAhead: bufferAhead,
-          ),
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-        ),
       );
 
   // --------------------------------------------------------------------------
@@ -250,35 +97,9 @@ class EngineAction<T> {
   Future<void> insertNext(EngineItem<T> item) =>
       _engine.insertNextInternal(item);
 
-  /// Coerces [source] into an [EngineItem] and inserts it immediately after
-  /// the currently playing item.
-  Future<void> insertNextSource(
-    dynamic source, {
-    T? data,
-    double? replayGainDb,
-    double? replayPeak,
-  }) =>
-      _engine.insertNextInternal(
-        EngineItem<T>.fromDynamic(
-          source,
-          data: data,
-          replayGainDb: replayGainDb,
-          replayPeak: replayPeak,
-        ),
-      );
-
   /// Appends [items] to the end of the active queue.
   Future<void> append(List<EngineItem<T>> items) =>
       _engine.appendInternal(items);
-
-  /// Coerces [sources] into [EngineItem]s and appends them to the end of the queue.
-  Future<void> appendSources(List<dynamic> sources) {
-    final items = [
-      for (var i = 0; i < sources.length; i++)
-        EngineItem<T>.fromDynamic(sources[i]),
-    ];
-    return _engine.appendInternal(items);
-  }
 
   /// Removes the item at [index] from the queue.
   ///
@@ -348,6 +169,18 @@ class EngineAction<T> {
   Future<void> setVolumeNormalization(bool enabled) =>
       _engine.setVolumeNormalizationInternal(enabled);
 
+  /// Sets the default fallback ReplayGain in decibels applied to queue items that
+  /// do not specify their own [EngineItem.replayGainDb].
+  Future<void> setDefaultReplayGain(double gainDb) =>
+      _engine.setDefaultReplayGainInternal(gainDb);
+
+  /// Forces a uniform global ReplayGain across all queue items in the engine,
+  /// overriding individual track metadata.
+  ///
+  /// Pass `null` to clear the forced override and restore per-track metadata processing.
+  Future<void> setForcedReplayGain(double? gainDb) =>
+      _engine.setForcedReplayGainInternal(gainDb);
+
   /// Enables or disables proactive Infinite Mix lookahead prefetching.
   Future<void> setInfiniteMix(bool enabled) =>
       _engine.setInfiniteMixInternal(enabled);
@@ -371,6 +204,13 @@ class EngineAction<T> {
   /// both decks.
   Future<void> setBufferSize(int bufferSize) =>
       _engine.setBufferSizeInternal(bufferSize);
+
+  /// Ingests dynamic ICY livestream metadata received over network on active deck.
+  void setIcyMeta(Uint8List data) => _engine.setIcyMetaInternal(data);
+
+  /// Probes tail metadata (ID3v1, APEv2, MP4 moov, etc.) directly into buffer Tail on active deck.
+  void probeTail(Uint8List data, int tailOffset) =>
+      _engine.probeTailInternal(data, tailOffset);
 
   /// Applies a 10-band [Equalizer] configuration across both decks.
   Future<void> setEqualizer(Equalizer equalizer) =>
@@ -423,21 +263,26 @@ class EngineAction<T> {
   Future<void> clearVisualizerOverride() =>
       _engine.setVisualizerOverrideInternal(null);
 
-  /// Manually applies ReplayGain normalization to the currently active deck.
+  /// Sets ReplayGain normalization for the engine.
+  ///
+  /// If [force] is `true`, this forces [gainDb] uniformly across all queue items,
+  /// overriding individual track metadata (equivalent to [setForcedReplayGain]).
+  /// If [force] is `false`, it sets the default fallback gain for tracks lacking
+  /// ReplayGain metadata (equivalent to [setDefaultReplayGain]).
   Future<void> setReplayGain({
     required double gainDb,
     double? peak,
-    double preampDb = 0.0,
     bool preventClipping = true,
+    bool force = false,
   }) =>
       _engine.setReplayGainInternal(
         gainDb: gainDb,
         peak: peak,
-        preampDb: preampDb,
         preventClipping: preventClipping,
+        force: force,
       );
 
-  /// Clears ReplayGain normalization on the active deck back to unity gain (`0.0 dB`).
+  /// Clears forced ReplayGain normalization and active deck normalization back to unity gain (`0.0 dB`).
   Future<void> clearReplayGain() => _engine.clearReplayGainInternal();
 
   /// Sets standalone manual preamp gain in decibels (`-12.0` to `+12.0` dB)
@@ -468,26 +313,4 @@ class EngineAction<T> {
 
   /// Configures studio-grade algorithmic reverberation ([Reverb]) across both decks.
   Future<void> setReverb(Reverb config) => _engine.setReverbInternal(config);
-
-  /// Updates specific parameters of the active reverb effect while preserving others.
-  Future<void> updateReverb({
-    bool? enabled,
-    double? roomSize,
-    double? damping,
-    double? width,
-    double? wet,
-    double? dry,
-  }) {
-    final current = _engine.state.reverb;
-    return _engine.setReverbInternal(
-      current.copyWith(
-        enabled: enabled,
-        roomSize: roomSize,
-        damping: damping,
-        width: width,
-        wet: wet,
-        dry: dry,
-      ),
-    );
-  }
 }

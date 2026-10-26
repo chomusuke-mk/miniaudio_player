@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import '../equalizer.dart';
 import '../loader/audio_byte_provider.dart';
-import '../loader/unified_audio_loader.dart';
 import '../platform/platform_backend.dart';
 import '../platform/platform_select.dart';
 import '../reverb.dart';
@@ -508,12 +507,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
 
   bool _isDisposed = false;
 
-  /// Broadcast stream of opening state (`true` while preparing audio source, `false` otherwise).
-  Stream<bool> get opening => stream.opening;
-
-  /// Broadcast stream of current playback lifecycle state.
-  Stream<PlaybackState> get playbackState => stream.playbackState;
-
   /// Action interface for controlling playback, volume, rate, pitch, buffer size, and DSP.
   late final PlayerAction action;
 
@@ -522,12 +515,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
 
   /// Synchronous state snapshot interface.
   late final PlayerState state;
-
-  /// Active unified audio loader instance, if a source is loaded.
-  UnifiedAudioLoader? get loader => action.activeLoader;
-
-  /// Active unified audio loader instance (alias for [loader]).
-  UnifiedAudioLoader? get streamer => action.activeLoader;
 
   /// Creates a [MiniaudioPlayer] instance initialized with
   /// [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
@@ -1081,7 +1068,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
       _lastBufferedRange = br;
       _bufferedRange = br;
       _bufferedPosition = br.end;
-      _bufferedPercentage = br.streamPercentage;
+      _bufferedPercentage = br.percentage;
       if (!_bufferedRangeController.isClosed) {
         _bufferedRangeController.add(br);
       }
@@ -1089,7 +1076,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
         _bufferedPositionController.add(br.end);
       }
       if (!_bufferedPercentageController.isClosed) {
-        _bufferedPercentageController.add(br.streamPercentage);
+        _bufferedPercentageController.add(br.percentage);
       }
     }
     action.activeLoader?.onEngineTelemetryTick();
@@ -1419,32 +1406,8 @@ class MiniaudioPlayer implements PlayerBackendListener {
     }
   }
 
-  /// Sets the active audio output device.
-  Future<void> setDevice(AudioDevice device) => action.setDevice(device);
-
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
-
-  /// Current internal buffer size in frames (0 = native default).
-  int get bufferSize => _bufferSize;
-
-  /// Current audio nominal bitrate in bits per second (bps), or 0 if uninitialized.
-  int get audioBitrate => _audioBitrate;
-
-  /// Alias for [audioBitrate].
-  int get bitrate => _audioBitrate;
-
-  /// Furthest continuous timestamp preloaded in RAM buffer.
-  Duration get bufferedPosition => _bufferedPosition;
-
-  /// Fraction (0.0 to 1.0) of the total track loaded into the buffer (for preloaded bar).
-  double get bufferedPercentage => _bufferedPercentage;
-
-  /// Comprehensive sliding-window circular buffer telemetry metrics.
-  BufferedRange get bufferedRange => _bufferedRange;
-
-  /// Current audio track metadata, or `null` if no track is opened.
-  AudioTrackMetadata? get trackMetadata => _trackMetadata;
 
   /// Updates current track metadata and notifies listeners.
   void setTrackMetadata(AudioTrackMetadata? metadata) {

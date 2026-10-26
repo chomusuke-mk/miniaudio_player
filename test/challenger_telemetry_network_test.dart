@@ -155,7 +155,7 @@ void main() {
       final sub2 = player.stream.playbackState.listen(stateEvents.add);
 
       await expectLater(
-        player.action.openUrl(badUrl),
+        player.action.open(AudioSource.uri(badUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -173,7 +173,7 @@ void main() {
     test('T1.4: Concurrent unawaited play() during failed open rejects or drops without freezing', () async {
       final badUrl = 'http://127.0.0.1:$serverPort/nonexistent_file_404.mp3';
 
-      final openFuture = player.action.openUrl(badUrl);
+      final openFuture = player.action.open(AudioSource.uri(badUrl));
       final playFuture = player.action.play();
 
       // openFuture should fail
@@ -192,7 +192,7 @@ void main() {
       final slowUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=1024&stall_ms=500';
 
       final playerToDispose = MiniaudioPlayer();
-      unawaited(playerToDispose.action.openUrl(slowUrl).catchError((_) {}));
+      unawaited(playerToDispose.action.open(AudioSource.uri(slowUrl)).catchError((_) {}));
 
       expect(playerToDispose.state.opening, isTrue);
 
@@ -296,7 +296,7 @@ void main() {
 
     test('S2.5: Out-of-bounds seeks on active network HTTP stream clamp safely', () async {
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(netUrl);
+      await player.action.open(AudioSource.uri(netUrl));
       final duration = player.state.duration;
 
       // Negative seek on network stream
@@ -341,7 +341,7 @@ void main() {
       final refusedUrl = 'http://127.0.0.1:$unusedPort/music/test.mp3';
 
       await expectLater(
-        player.action.openUrl(refusedUrl),
+        player.action.open(AudioSource.uri(refusedUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -353,7 +353,7 @@ void main() {
       final corruptUrl = 'http://127.0.0.1:$serverPort/corrupt/headers';
 
       try {
-        await player.action.openUrl(corruptUrl).timeout(const Duration(seconds: 4));
+        await player.action.open(AudioSource.uri(corruptUrl)).timeout(const Duration(seconds: 4));
       } catch (e) {
         expect(e, isA<Exception>());
       }
@@ -367,11 +367,11 @@ void main() {
       final url2 = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
 
       // Launch first open, then immediately launch second open without awaiting
-      unawaited(player.action.openUrl(url1).catchError((_) {}));
+      unawaited(player.action.open(AudioSource.uri(url1)).catchError((_) {}));
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       // Second open is the winner
-      await player.action.openUrl(url2);
+      await player.action.open(AudioSource.uri(url2));
 
       expect(player.state.opening, isFalse);
       expect(player.state.playbackState, equals(PlaybackState.stopped));
@@ -386,7 +386,7 @@ void main() {
 
     test('N3.4: Network stream seek(Duration.zero) immediately rewinds without crashing or stalling', () async {
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(netUrl);
+      await player.action.open(AudioSource.uri(netUrl));
       await player.action.play();
 
       // Let it play forward

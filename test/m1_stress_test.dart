@@ -95,12 +95,12 @@ void main() {
 
         // Chaotic permutation of actions without awaiting
         final actions = <Function>[
-          () => player.action.openUrl(url).catchError((_) {}),
+          () => player.action.open(AudioSource.uri(url)).catchError((_) {}),
           () => player.action.play().catchError((_) {}),
           () => player.action.seek(Duration(seconds: rng.nextInt(5))).catchError((_) {}),
           () => player.action.pause().catchError((_) {}),
           () => player.action.stop().catchError((_) {}),
-          () => player.action.openMemory(memoryWavBytes1).catchError((_) {}),
+          () => player.action.open(AudioSource.memory(memoryWavBytes1)).catchError((_) {}),
           () => player.action.play().catchError((_) {}),
         ];
 
@@ -124,7 +124,7 @@ void main() {
 
       for (int i = 0; i < 5; i++) {
         final player = MiniaudioPlayer();
-        player.action.openUrl(url).catchError((_) {});
+        player.action.open(AudioSource.uri(url)).catchError((_) {});
         player.action.play().catchError((_) {});
         player.action.seek(const Duration(seconds: 3)).catchError((_) {});
 
@@ -141,10 +141,10 @@ void main() {
 
       // 1. Destroy a player chaotically
       final messyPlayer = MiniaudioPlayer();
-      messyPlayer.action.openUrl(url).catchError((_) {});
+      messyPlayer.action.open(AudioSource.uri(url)).catchError((_) {});
       messyPlayer.action.play().catchError((_) {});
       messyPlayer.action.seek(const Duration(seconds: 4)).catchError((_) {});
-      messyPlayer.action.openMemory(memoryWavBytes2).catchError((_) {});
+      messyPlayer.action.open(AudioSource.memory(memoryWavBytes2)).catchError((_) {});
       await messyPlayer.dispose();
 
       // 2. Fresh player instance must play without native thread deadlock
@@ -174,7 +174,7 @@ void main() {
     });
 
     test('2.1: Local file: openFile + unawaited play advances position monotonically with diff > 0', () async {
-      player.action.openFile(localWavFile.path);
+      player.action.open(AudioSource.file(localWavFile.path));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -207,7 +207,7 @@ void main() {
     });
 
     test('2.2: Memory buffer: openMemory + unawaited play advances position monotonically with diff > 0', () async {
-      player.action.openMemory(memoryWavBytes1);
+      player.action.open(AudioSource.memory(memoryWavBytes1));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -242,7 +242,7 @@ void main() {
     test('2.3: Remote HTTP stream: openUrl + unawaited play advances position monotonically with diff > 0', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.openUrl(url);
+      player.action.open(AudioSource.uri(url));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -289,7 +289,7 @@ void main() {
     test('3.1: Remote HTTP stream: 5 unawaited seeks during Opening gate resolve cleanly', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.openUrl(url);
+      player.action.open(AudioSource.uri(url));
       player.action.seek(const Duration(seconds: 1));
       player.action.seek(const Duration(seconds: 4));
       player.action.seek(const Duration(seconds: 2));
@@ -339,7 +339,7 @@ void main() {
 
     test('4.1: Unawaited open on invalid media followed by unawaited play/seek fails gracefully without uncaught zone exception', () async {
       // Intentionally invalid file path
-      final invalidOpenFuture = player.action.openFile('/invalid/nonexistent/media.wav');
+      final invalidOpenFuture = player.action.open(AudioSource.file('/invalid/nonexistent/media.wav'));
       final playFuture = player.action.play();
       final seekFuture = player.action.seek(const Duration(seconds: 2));
 
@@ -354,11 +354,11 @@ void main() {
     test('4.2: Instant recovery: player resumes normal playback on next valid open after failed open', () async {
       // 1. Trigger failed open
       try {
-        await player.action.openMemory(Uint8List(0)); // empty bytes throws
+        await player.action.open(AudioSource.memory(Uint8List(0))); // empty bytes throws
       } catch (_) {}
 
       // 2. Open valid memory buffer immediately on the SAME player instance
-      await player.action.openMemory(memoryWavBytes1);
+      await player.action.open(AudioSource.memory(memoryWavBytes1));
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -387,10 +387,10 @@ void main() {
               final op = rng.nextInt(6);
               switch (op) {
                 case 0:
-                  player.action.openUrl(url).catchError((_) {});
+                  player.action.open(AudioSource.uri(url)).catchError((_) {});
                   break;
                 case 1:
-                  player.action.openMemory(memoryWavBytes1).catchError((_) {});
+                  player.action.open(AudioSource.memory(memoryWavBytes1)).catchError((_) {});
                   break;
                 case 2:
                   player.action.play().catchError((_) {});
@@ -440,13 +440,13 @@ void main() {
         final op = rng.nextInt(8);
         switch (op) {
           case 0:
-            player.action.openUrl(url).catchError((_) {});
+            player.action.open(AudioSource.uri(url)).catchError((_) {});
             break;
           case 1:
-            player.action.openMemory(memoryWavBytes2).catchError((_) {});
+            player.action.open(AudioSource.memory(memoryWavBytes2)).catchError((_) {});
             break;
           case 2:
-            player.action.openFile(localWavFile.path).catchError((_) {});
+            player.action.open(AudioSource.file(localWavFile.path)).catchError((_) {});
             break;
           case 3:
             player.action.play().catchError((_) {});

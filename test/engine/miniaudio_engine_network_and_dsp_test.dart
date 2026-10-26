@@ -100,7 +100,7 @@ void main() {
     });
 
     test('openQueue only prepares queue and leaves engine paused (state.playing == false)', () async {
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem.file(localWavFile1.path, data: 'Track 1'),
         EngineItem.file(localWavFile2.path, data: 'Track 2'),
       ]);
@@ -117,24 +117,24 @@ void main() {
 
     test('openFile, openMemory, and openUrl leave engine paused without autoplay', () async {
       // 1. openFile
-      await engine.action.openFile(localWavFile1.path);
+      await engine.action.open([EngineItem.file(localWavFile1.path)]);
       expect(engine.state.playing, isFalse);
       expect(engine.state.phase, equals(EnginePhase.paused));
 
       // 2. openMemory
-      await engine.action.openMemory(memoryWavBytes);
+      await engine.action.open([EngineItem.memory(memoryWavBytes)]);
       expect(engine.state.playing, isFalse);
       expect(engine.state.phase, equals(EnginePhase.paused));
 
       // 3. openUrl
       final url = Uri.parse('http://127.0.0.1:$serverPort/music/salida.mp3');
-      await engine.action.openUrl(url);
+      await engine.action.open([EngineItem.uri(url)]);
       expect(engine.state.playing, isFalse);
       expect(engine.state.phase, equals(EnginePhase.paused));
     });
 
     test('skipToIndex preserves current playback state (paused stays paused, playing stays playing)', () async {
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem.file(localWavFile1.path, data: 'Track 1'),
         EngineItem.file(localWavFile2.path, data: 'Track 2'),
         EngineItem.memory(memoryWavBytes, data: 'Track 3'),
@@ -187,10 +187,12 @@ void main() {
 
     test('LiveStreamAudioSource reports isLiveStream == true and seek is a safe no-op', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
-      await engine.action.open(
-        AudioSource.liveStream(liveUri),
-        data: 'Live Radio',
-      );
+      await engine.action.open([
+        EngineItem<String>(
+          source: AudioSource.liveStream(liveUri),
+          data: 'Live Radio',
+        ),
+      ]);
 
       expect(engine.state.isLiveStream, isTrue);
       await engine.action.play();
@@ -204,7 +206,7 @@ void main() {
 
     test('previous() on livestream bypasses 3-second restartThreshold and steps back', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem.file(localWavFile1.path, data: 'Local Track 1'),
         EngineItem(source: AudioSource.liveStream(liveUri), data: 'Live Radio 2'),
       ], startIndex: 1);
@@ -223,7 +225,7 @@ void main() {
 
     test('manual crossfade between livestream and local file runs smoothly', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem(source: AudioSource.liveStream(liveUri), data: 'Live Stream'),
         EngineItem.file(localWavFile1.path, data: 'Local File'),
       ]);
@@ -260,7 +262,7 @@ void main() {
     });
 
     test('ReplayGain metadata applied to deck on open without altering master volume', () async {
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem.file(
           localWavFile1.path,
           data: 'Track with RG',
@@ -289,13 +291,13 @@ void main() {
     });
 
     test('setVolumeNormalization(false) clears ReplayGain, true restores it', () async {
-      await engine.action.open(
-        EngineItem.file(
+      await engine.action.open([
+        EngineItem<String>.file(
           localWavFile1.path,
           replayGainDb: -4.5,
           replayPeak: 0.88,
         ),
-      );
+      ]);
 
       expect(engine.state.volumeNormalization, isTrue);
       expect(engine.state.replayGain.gainDb, closeTo(-4.5, 1e-2));
@@ -309,6 +311,87 @@ void main() {
       await engine.action.setVolumeNormalization(true);
       expect(engine.state.volumeNormalization, isTrue);
       expect(engine.state.replayGain.gainDb, closeTo(-4.5, 1e-2));
+    });
+
+    test('defaultReplayGain acts as fallback for tracks lacking metadata', () async {
+      await engine.action.setDefaultReplayGain(-5.0);
+      expect(engine.state.defaultReplayGain, closeTo(-5.0, 1e-2));
+
+      await engine.action.open([
+        EngineItem.file(
+          localWavFile1.path,
+          data: 'Track without RG',
+        ),
+        EngineItem.file(
+          localWavFile2.path,
+          data: 'Track with RG',
+          replayGainDb: -8.0,
+        ),
+      ]);
+
+      // Track 1 lacks metadata -> receives default fallback (-5.0 dB)
+      expect(engine.state.replayGain.gainDb, closeTo(-5.0, 1e-2));
+
+      // Track 2 has its own metadata -> uses -8.0 dB
+      await engine.action.next();
+      expect(engine.state.replayGain.gainDb, closeTo(-8.0, 1e-2));
+    });
+
+    test('forcedReplayGain forces uniform gain across all tracks, ignoring metadata', () async {
+      await engine.action.open([
+        EngineItem.file(
+          localWavFile1.path,
+          data: 'Track 1',
+          replayGainDb: -3.0,
+        ),
+        EngineItem.file(
+          localWavFile2.path,
+          data: 'Track 2',
+          replayGainDb: -10.0,
+        ),
+      ]);
+
+      expect(engine.state.replayGainMode, equals(ReplayGainMode.track));
+      expect(engine.state.replayGain.gainDb, closeTo(-3.0, 1e-2));
+
+      // Force uniform gain
+      await engine.action.setForcedReplayGain(-7.5);
+      expect(engine.state.replayGainMode, equals(ReplayGainMode.forced));
+      expect(engine.state.forcedReplayGain, closeTo(-7.5, 1e-2));
+      expect(engine.state.replayGain.gainDb, closeTo(-7.5, 1e-2));
+
+      // Next track also uses forced gain
+      await engine.action.next();
+      expect(engine.state.replayGain.gainDb, closeTo(-7.5, 1e-2));
+
+      // Clearing forced gain returns to per-track metadata
+      await engine.action.setForcedReplayGain(null);
+      expect(engine.state.replayGainMode, equals(ReplayGainMode.track));
+      expect(engine.state.replayGain.gainDb, closeTo(-10.0, 1e-2));
+    });
+
+    test('Preamp and ReplayGain are completely decoupled and do not clobber each other', () async {
+      await engine.action.open([
+        EngineItem<String>.file(
+          localWavFile1.path,
+          replayGainDb: -6.0,
+        ),
+      ]);
+
+      // Set user preamp
+      await engine.action.setPreamp(3.5);
+      expect(engine.state.preamp, closeTo(3.5, 1e-2));
+      expect(engine.state.replayGain.gainDb, closeTo(-6.0, 1e-2));
+
+      // Changing ReplayGain does NOT reset or touch preamp
+      await engine.action.setReplayGain(gainDb: -9.0, force: true);
+      expect(engine.state.replayGain.gainDb, closeTo(-9.0, 1e-2));
+      expect(engine.state.preamp, closeTo(3.5, 1e-2));
+
+      // Changing preamp does NOT alter active ReplayGain
+      await engine.action.setPreamp(-2.0);
+      expect(engine.state.preamp, closeTo(-2.0, 1e-2));
+      expect(engine.state.replayGain.gainDb, closeTo(-9.0, 1e-2));
     });
   });
 
@@ -330,7 +413,7 @@ void main() {
     });
 
     test('DSP settings (equalizer, reverb, preamp, balance, mono, crossfeed, limiter) persist across deck swaps', () async {
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem.file(localWavFile1.path, data: 'Track 1'),
         EngineItem.file(localWavFile2.path, data: 'Track 2'),
       ]);
@@ -347,7 +430,7 @@ void main() {
 
       expect(engine.state.equalizer, equals(Equalizer.rock));
       expect(engine.state.reverb, equals(Reverb.concertHall));
-      expect(engine.state.preampDb, closeTo(2.5, 1e-4));
+      expect(engine.state.preamp, closeTo(2.5, 1e-4));
       expect(engine.state.balance, closeTo(-0.3, 1e-4));
       expect(engine.state.mono, isTrue);
       expect(engine.state.crossfeed, equals(CrossfeedMode.moffatBauer));
@@ -363,7 +446,7 @@ void main() {
       // DSP state must remain identically configured after deck swap
       expect(engine.state.equalizer, equals(Equalizer.rock));
       expect(engine.state.reverb, equals(Reverb.concertHall));
-      expect(engine.state.preampDb, closeTo(2.5, 1e-4));
+      expect(engine.state.preamp, closeTo(2.5, 1e-4));
       expect(engine.state.balance, closeTo(-0.3, 1e-4));
       expect(engine.state.mono, isTrue);
       expect(engine.state.crossfeed, equals(CrossfeedMode.moffatBauer));
@@ -373,7 +456,7 @@ void main() {
     });
 
     test('Visualizer FFT computation enables only when listened and stays false on standby deck', () async {
-      await engine.action.openQueue([
+      await engine.action.open([
         EngineItem.file(localWavFile1.path, data: 'Track 1'),
         EngineItem.file(localWavFile2.path, data: 'Track 2'),
       ]);

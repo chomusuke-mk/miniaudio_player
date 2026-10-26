@@ -10,6 +10,19 @@ enum CrossfeedMode {
   chuMoy,
 }
 
+/// Operational modes for ReplayGain / EBU R128 loudness processing in the engine.
+enum ReplayGainMode {
+  /// Volume normalization is disabled (unity gain 0.0 dB).
+  disabled,
+
+  /// Automatically applies per-track ReplayGain metadata from EngineItem,
+  /// falling back to defaultReplayGain if not specified on the item.
+  track,
+
+  /// Forces a uniform global gain across all items, ignoring individual metadata.
+  forced,
+}
+
 /// Immutable configuration of active ReplayGain / EBU R128 track normalization.
 class ReplayGainConfig {
   /// Track gain in decibels relative to target LUFS (e.g. `-13.3`).
@@ -17,9 +30,6 @@ class ReplayGainConfig {
 
   /// Peak amplitude of the track (where 1.0 = 0 dBFS).
   final double peak;
-
-  /// Additional user preamp adjustment in decibels.
-  final double preampDb;
 
   /// Whether clipping defense is active (capping linear factor to `1.0 / peak`).
   final bool preventClipping;
@@ -30,13 +40,12 @@ class ReplayGainConfig {
   const ReplayGainConfig({
     this.gainDb = 0.0,
     this.peak = 0.0,
-    this.preampDb = 0.0,
     this.preventClipping = true,
     this.enabled = false,
   });
 
-  /// Total combined decibel target (gainDb + preampDb).
-  double get totalGainDb => enabled ? (gainDb + preampDb) : preampDb;
+  /// Effective decibel gain applied if enabled (`gainDb` when active, `0.0` if bypassed).
+  double get effectiveGainDb => enabled ? gainDb : 0.0;
 
   @override
   bool operator ==(Object other) =>
@@ -45,14 +54,13 @@ class ReplayGainConfig {
           runtimeType == other.runtimeType &&
           gainDb == other.gainDb &&
           peak == other.peak &&
-          preampDb == other.preampDb &&
           preventClipping == other.preventClipping &&
           enabled == other.enabled;
 
   @override
-  int get hashCode => Object.hash(gainDb, peak, preampDb, preventClipping, enabled);
+  int get hashCode => Object.hash(gainDb, peak, preventClipping, enabled);
 
   @override
   String toString() =>
-      'ReplayGainConfig(enabled: $enabled, gainDb: $gainDb, peak: $peak, preampDb: $preampDb, preventClipping: $preventClipping)';
+      'ReplayGainConfig(enabled: $enabled, gainDb: $gainDb, peak: $peak, preventClipping: $preventClipping)';
 }

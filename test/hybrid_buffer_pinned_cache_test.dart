@@ -85,8 +85,8 @@ void main() {
 
     setUp(() {
       MiniaudioPlayer.config(
-        bufferNetworkDuration: const Duration(seconds: 6),
-        bufferBehindNetworkDuration: const Duration(seconds: 3),
+        bufferNetworkDuration: const Duration(seconds: 10),
+        bufferBehindNetworkDuration: const Duration(seconds: 6),
       );
       player = MiniaudioPlayer();
     });
@@ -101,7 +101,7 @@ void main() {
 
     test('2.1: Initial stream open populates Tripartite Head and activeLoader', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
 
       expect(player.action.activeLoader, isNotNull);
       expect(player.state.duration.inMilliseconds, greaterThan(0));
@@ -110,7 +110,7 @@ void main() {
 
     test('2.2: Streaming within bufferBehind window retains audio_start in RING; seek(Duration.zero) incurs 0 HTTP range requests', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -138,7 +138,7 @@ void main() {
 
     test('2.3: Multiple sequential seeks to Duration.zero and within RING retain 0 HTTP range requests', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -163,7 +163,7 @@ void main() {
 
     test('2.4: Out-of-window seek triggers Byte-Range, and subsequent seek(Duration.zero) re-fetches audio_start while preserving HEAD', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -196,7 +196,7 @@ void main() {
 
     test('2.5: Rapid consecutive seeks to Duration.zero and within RING resolve without deadlock', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 500));
 

@@ -152,7 +152,7 @@ void main() {
         stdout.writeln('>>> [DEBUG] 1.$fmt: Opening $url');
 
         // 1. Open remote URL
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
         stdout.writeln('>>> [DEBUG] 1.$fmt: openUrl OK, dur=${player.state.duration.inMilliseconds}');
         expect(player.state.duration.inMilliseconds, greaterThan(0),
             reason: 'Duration must be resolved for $fmt');
@@ -219,10 +219,10 @@ void main() {
         final flakyPath = item['live_flaky'] as String;
 
         // 1. Open normal livestream
-        await player.action.openUrl(
+        await player.action.open(AudioSource.uri(
           'http://127.0.0.1:$serverPort$normalPath',
           isLive: true,
-        );
+        ));
         expect(player.state.duration, equals(Duration.zero));
 
         await player.action.play();
@@ -230,10 +230,10 @@ void main() {
         expect(player.state.playing, isTrue);
 
         // 2. Seamlessly switch to flaky live stream mid-stream
-        await player.action.openUrl(
+        await player.action.open(AudioSource.uri(
           'http://127.0.0.1:$serverPort$flakyPath',
           isLive: true,
-        );
+        ));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(player.state.playing, isTrue);
@@ -261,7 +261,7 @@ void main() {
 
       // 1. Attempt to open corrupt audio file -> expect controlled exception
       await expectLater(
-        player.action.openUrl(corruptUrl),
+        player.action.open(AudioSource.uri(corruptUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -271,7 +271,7 @@ void main() {
       expect(player.state.playing, isFalse);
 
       // 3. Immediate recovery: player must cleanly open valid URL and play
-      await player.action.openUrl(normalUrl);
+      await player.action.open(AudioSource.uri(normalUrl));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -288,7 +288,7 @@ void main() {
       final normalLive = 'http://127.0.0.1:$serverPort${item['live_normal']}';
 
       await expectLater(
-        player.action.openUrl(corruptLive, isLive: true),
+        player.action.open(AudioSource.uri(corruptLive, isLive: true)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -296,7 +296,7 @@ void main() {
       await player.action.stop();
 
       // Open valid live stream
-      await player.action.openUrl(normalLive, isLive: true);
+      await player.action.open(AudioSource.uri(normalLive, isLive: true));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
@@ -321,9 +321,9 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort$flakyPath?burst_limit=3';
 
       await resetStats(serverPort!);
-      await player.action.openUrl(
+      await player.action.open(AudioSource.uri(
         url,
-        bufferAhead: const Duration(milliseconds: 500),
+        bufferAhead: const Duration(milliseconds: 500)),
         bufferBehind: Duration.zero,
       );
       await player.action.play();
@@ -376,7 +376,7 @@ void main() {
 
         // Step 1: Open track A and play
         trace.log('Step 1: openUrl(trackA)');
-        await player.action.openUrl(trackA);
+        await player.action.open(AudioSource.uri(trackA));
         trace.log('Step 1.1: play()');
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -429,7 +429,7 @@ void main() {
         // Step 7: Open corrupt track mid-playback -> expect error, trace it
         trace.log('Step 7: open corrupt track');
         try {
-          await player.action.openUrl(corruptTrack);
+          await player.action.open(AudioSource.uri(corruptTrack));
           fail('Opening corrupt track should throw MiniaudioPlayerException');
         } on MiniaudioPlayerException catch (err) {
           trace.log('Step 7.1: caught expected exception', {'error': err.message});
@@ -442,7 +442,7 @@ void main() {
 
         // Step 9: Switch to Live Stream
         trace.log('Step 9: openUrl(liveStream)');
-        await player.action.openUrl(liveStream, isLive: true);
+        await player.action.open(AudioSource.uri(liveStream, isLive: true));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);
@@ -450,7 +450,7 @@ void main() {
 
         // Step 10: Switch directly from Live Stream to finite track B
         trace.log('Step 10: switch from live stream to track B (M4A/ALAC)');
-        await player.action.openUrl(trackB);
+        await player.action.open(AudioSource.uri(trackB));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);

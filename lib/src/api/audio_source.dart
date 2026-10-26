@@ -12,7 +12,7 @@ sealed class AudioSource {
   Uri? get uri;
 
   /// Creates an audio source backed by a local filesystem file path.
-  const factory AudioSource.file(String filePath) = FileAudioSource;
+  const factory AudioSource.file(String path) = FileAudioSource;
 
   /// Creates an audio source loaded directly from Flutter bundle assets without disk I/O.
   const factory AudioSource.asset(String assetKey, {String? package}) =
@@ -172,7 +172,7 @@ sealed class AudioSource {
     if (lower.startsWith('icy://') ||
         lower.startsWith('icys://') ||
         lower.startsWith('icyx://')) {
-      final isSecure = lower.startsWith('icys://') || lower.startsWith('icyx://');
+      final isSecure = lower.startsWith('icys://');
       final httpStr = str.replaceFirst(
         RegExp(r'^icy[sx]?://', caseSensitive: false),
         isSecure ? 'https://' : 'http://',
@@ -200,7 +200,7 @@ sealed class AudioSource {
       return NetworkAudioSource(
         parsed,
         headers: headers,
-        bufferAhead: bufferAhead ?? const Duration(seconds: 30),
+        bufferAhead: bufferAhead,
       );
     }
 
@@ -261,17 +261,14 @@ sealed class AudioSource {
 
 /// A local file on the filesystem.
 class FileAudioSource extends AudioSource {
-  final String filePath;
-  const FileAudioSource(this.filePath);
-
-  /// Path alias for [filePath].
-  String get path => filePath;
+  final String path;
+  const FileAudioSource(this.path);
 
   @override
-  Uri get uri => Uri.file(filePath);
+  Uri get uri => Uri.file(path);
 
   @override
-  String toString() => 'FileAudioSource($filePath)';
+  String toString() => 'FileAudioSource($path)';
 }
 
 /// An asset packaged in the Flutter app bundle.
@@ -319,19 +316,16 @@ class NetworkAudioSource extends AudioSource {
   final Uri uri;
   final Map<String, String>? headers;
   final bool enableCache;
-  final Duration bufferAhead;
+  final Duration? bufferAhead;
 
   /// Hint indicating a live stream; auto-detected at open time if `false`.
   final bool isLive;
-
-  /// URL alias for [uri].
-  Uri get url => uri;
 
   const NetworkAudioSource(
     this.uri, {
     this.headers,
     this.enableCache = true,
-    this.bufferAhead = const Duration(seconds: 30),
+    this.bufferAhead,
     this.isLive = false,
   });
 

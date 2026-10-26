@@ -91,7 +91,6 @@ MAP_API void map_wasm_set_replay_gain(
     int32_t enabled,
     float gain_db,
     float peak,
-    float preamp_db,
     int32_t prevent_clipping);
 MAP_API void map_wasm_clear_replay_gain(miniaudio_player_t *player);
 MAP_API void map_wasm_set_equalizer_band(miniaudio_player_t *player, uint32_t band, float gain_db);

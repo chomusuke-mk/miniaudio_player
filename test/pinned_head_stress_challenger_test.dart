@@ -101,7 +101,7 @@ void main() {
 
     test('Adv-1: Out-of-window jumps and seek(Duration.zero) resolve cleanly and resume playback', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -133,7 +133,7 @@ void main() {
 
     test('Adv-2: Seek to Duration.zero after playback EOF / completion', () async {
       final url = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -184,7 +184,7 @@ void main() {
 
     test('Adv-3: Large stream ingestion (15.86 MB ALAC) preserves HEAD/TAIL and decodes cleanly', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida_alac.m4a';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -208,7 +208,7 @@ void main() {
     test('Adv-4: Small stream (< 256 KB) RING caching and seek(Duration.zero)', () async {
       // cbr_noxing.mp3 is 240,788 bytes
       final url = 'http://127.0.0.1:$serverPort/music/cbr_noxing.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();
@@ -231,7 +231,7 @@ void main() {
 
     test('Adv-5: Rapid alternating seeks between remote offsets and Duration.zero resolve cleanly', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.openUrl(url);
+      await player.action.open(AudioSource.uri(url));
       expect(player.action.activeLoader, isNotNull);
 
       await player.action.play();

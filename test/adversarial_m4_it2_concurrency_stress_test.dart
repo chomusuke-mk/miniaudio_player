@@ -81,7 +81,7 @@ void main() {
         final futures = <Future<void>>[];
 
         // Initial open
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
 
         // Burst 100 disordered unawaited actions
         for (int i = 0; i < 100; i++) {
@@ -109,7 +109,7 @@ void main() {
               op = player.action.setVolume(rng.nextDouble() * 1.5);
               break;
             default:
-              op = player.action.openUrl(url);
+              op = player.action.open(AudioSource.uri(url));
               break;
           }
 
@@ -136,7 +136,7 @@ void main() {
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.playing, isFalse);
         expect(player.state.position, equals(Duration.zero));
-        expect(player.streamer?.isStopped, isTrue);
+        expect(player.action.activeLoader?.isStopped, isTrue);
 
         // Confirm clean recovery: play() after the storm resumes playback cleanly
         await player.action.play();
@@ -160,7 +160,7 @@ void main() {
         });
 
         final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
-        await player.action.openUrl(liveUrl, isLive: true);
+        await player.action.open(AudioSource.uri(liveUrl, isLive: true));
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.trackMetadata?.isLiveStream, isTrue);
 
@@ -168,7 +168,7 @@ void main() {
           // Play live stream
           await player.action.play();
           expect(player.state.playing, isTrue);
-          expect(player.streamer?.isBackpressureActive, isTrue,
+          expect(player.action.activeLoader?.isBackpressureActive, isTrue,
               reason: 'Backpressure monitor must be active during live playback (cycle $cycle)');
 
           // Micro-listen
@@ -178,15 +178,15 @@ void main() {
           await player.action.stop();
           expect(player.state.playbackState, equals(PlaybackState.stopped));
           expect(player.state.playing, isFalse);
-          expect(player.streamer?.isStopped, isTrue);
-          expect(player.streamer?.isBackpressureActive, isFalse,
+          expect(player.action.activeLoader?.isStopped, isTrue);
+          expect(player.action.activeLoader?.isBackpressureActive, isFalse,
               reason: 'Backpressure monitor must be cancelled on stop (cycle $cycle)');
         }
 
         // Final verification: player can still play cleanly
         await player.action.play();
         expect(player.state.playing, isTrue);
-        expect(player.streamer?.isBackpressureActive, isTrue);
+        expect(player.action.activeLoader?.isBackpressureActive, isTrue);
         await player.action.stop();
       },
       timeout: const Timeout(Duration(seconds: 20)),
@@ -205,7 +205,7 @@ void main() {
             final p = players[pIdx];
             tasks.add(() async {
               final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-              await p.action.openUrl(url);
+              await p.action.open(AudioSource.uri(url));
 
               for (int j = 0; j < 20; j++) {
                 if (rng.nextBool()) {
@@ -259,7 +259,7 @@ void main() {
         // Use endpoint that stalls after initial burst
         final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?stall_ms=3000&initial_burst=65536';
 
-        await player.action.openUrl(stallUrl);
+        await player.action.open(AudioSource.uri(stallUrl));
         await player.action.play();
 
         // Audio thread starts reading, starves, synthesizes PCM silence
@@ -293,7 +293,7 @@ void main() {
         });
 
         final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
 
         // Rapidly alternate play() and stop() without waiting for each to finish
         final unawaitedFutures = <Future<void>>[];
@@ -335,7 +335,7 @@ void main() {
         });
 
         final url = 'http://127.0.0.1:$serverPort/music/cbr_noxing.mp3';
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
         await player.action.play();
 
         // Let it reach EOF or seek near end

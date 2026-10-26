@@ -170,6 +170,3 @@ class Reverb {
         'width: $width, wet: $wet, dry: $dry)';
   }
 }
-
-/// Backward compatibility and naming alias for [Reverb].
-typedef ReverbConfig = Reverb;

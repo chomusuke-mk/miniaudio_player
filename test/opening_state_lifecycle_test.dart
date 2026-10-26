@@ -102,10 +102,6 @@ void main() {
       final sub1 = player.stream.opening.listen(openingEvents.add);
       final sub2 = player.stream.playbackState.listen(stateEvents.add);
 
-      // Also verify MiniaudioPlayer direct getters
-      final directOpeningEvents = <bool>[];
-      final sub3 = player.opening.listen(directOpeningEvents.add);
-
       final openFuture = player.action.open(localWavFile.path);
 
       // Verify that opening is true immediately while open is in flight
@@ -120,10 +116,8 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await sub1.cancel();
       await sub2.cancel();
-      await sub3.cancel();
 
       expect(openingEvents, containsAllInOrder([true, false]));
-      expect(directOpeningEvents, containsAllInOrder([true, false]));
       expect(stateEvents, containsAllInOrder([PlaybackState.opening, PlaybackState.stopped]));
     });
 
@@ -180,7 +174,7 @@ void main() {
     });
 
     test('2.2: Memory buffer: play() immediately after openMemory() without await starts cleanly', () async {
-      player.action.openMemory(memoryWavBytes);
+      player.action.open(AudioSource.memory(memoryWavBytes));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -198,7 +192,7 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
       // DO NOT AWAIT openUrl!
-      player.action.openUrl(url);
+      player.action.open(AudioSource.uri(url));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -248,7 +242,7 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
       const targetSeek = Duration(seconds: 5);
 
-      player.action.openUrl(url);
+      player.action.open(AudioSource.uri(url));
       final seekFuture = player.action.seek(targetSeek);
       final playFuture = player.action.play();
 
@@ -277,12 +271,12 @@ void main() {
       final url2 = 'http://127.0.0.1:$serverPort/music/salida.ogg';
 
       // Interleave open/play/open/seek rapidly
-      player.action.openUrl(url1);
+      player.action.open(AudioSource.uri(url1));
       player.action.play(); // Queued for url1
       player.action.seek(const Duration(seconds: 2));
 
       // Immediately switch track to url2 before url1 finishes opening
-      player.action.openUrl(url2);
+      player.action.open(AudioSource.uri(url2));
       player.action.seek(const Duration(seconds: 1));
       final finalPlayFuture = player.action.play(); // Queued for url2
 
@@ -299,7 +293,7 @@ void main() {
     test('4.2: pause() during opening cancels pending unawaited play()', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.openUrl(url);
+      player.action.open(AudioSource.uri(url));
       player.action.play(); // Queued
       player.action.pause(); // Should cancel queued play!
 
@@ -314,7 +308,7 @@ void main() {
     test('4.3: stop() during opening aborts and resets state to stopped', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.openUrl(url);
+      player.action.open(AudioSource.uri(url));
       player.action.play();
       player.action.seek(const Duration(seconds: 5));
       player.action.stop(); // Cancels opening and queued commands

@@ -158,7 +158,7 @@ void main() {
           final player = MiniaudioPlayer();
           try {
             expect(tracker.totalPeriodicCreated, equals(0));
-            await player.action.openFile(sampleWavFile.path);
+            await player.action.open(AudioSource.file(sampleWavFile.path));
             expect(tracker.totalPeriodicCreated, equals(0));
 
             await player.action.play();
@@ -202,7 +202,7 @@ void main() {
           try {
             sub = player.stream.visualizer.listen(visEvents.add);
             await player.action.setVisualizerEnabled(true);
-            await player.action.openFile(sampleWavFile.path);
+            await player.action.open(AudioSource.file(sampleWavFile.path));
             await player.action.play();
 
             // Allow 600ms for native FFT telemetry to arrive
@@ -231,7 +231,7 @@ void main() {
         await runWithZeroPeriodicTimerProof((tracker) async {
           final player = MiniaudioPlayer();
           try {
-            await player.action.openMemory(memoryWavBytes);
+            await player.action.open(AudioSource.memory(memoryWavBytes));
             expect(tracker.totalPeriodicCreated, equals(0));
 
             await player.action.play();
@@ -259,7 +259,7 @@ void main() {
         await runWithZeroPeriodicTimerProof((tracker) async {
           final player = MiniaudioPlayer();
           try {
-            await player.action.openFile(sampleWavFile.path);
+            await player.action.open(AudioSource.file(sampleWavFile.path));
             await player.action.play();
 
             // Rapid burst of 50 mixed DSP setters
@@ -285,7 +285,7 @@ void main() {
       await runWithZeroPeriodicTimerProof((tracker) async {
         final player = MiniaudioPlayer();
         try {
-          await player.action.openFile(sampleWavFile.path);
+          await player.action.open(AudioSource.file(sampleWavFile.path));
 
           // Switch to Auto
           await player.action.setDevice(AudioDevice.auto);
@@ -314,7 +314,7 @@ void main() {
         await runWithZeroPeriodicTimerProof((tracker) async {
           final player = MiniaudioPlayer();
           try {
-            await player.action.openFile(shortWavFile.path); // 500ms duration
+            await player.action.open(AudioSource.file(shortWavFile.path)); // 500ms duration
             await player.action.play();
 
             int elapsed = 0;
@@ -374,7 +374,7 @@ void main() {
           expect(player.state.completed, isFalse);
 
           // 2. stopped -> opening -> stopped
-          final openFut = player.action.openFile(sampleWavFile.path);
+          final openFut = player.action.open(AudioSource.file(sampleWavFile.path));
           expect(player.state.opening, isTrue);
           expect(player.state.playbackState, equals(PlaybackState.opening));
           await openFut;
@@ -409,7 +409,7 @@ void main() {
 
           // 8. stopped -> opening -> error
           expect(
-            () => player.action.openFile('/tmp/invalid_ghost_file_987654.wav'),
+            () => player.action.open(AudioSource.file('/tmp/invalid_ghost_file_987654.wav')),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -435,7 +435,7 @@ void main() {
         for (int i = 0; i < 25; i++) {
           final player = MiniaudioPlayer();
           try {
-            await player.action.openFile(sampleWavFile.path);
+            await player.action.open(AudioSource.file(sampleWavFile.path));
             expect(player.state.playbackState, equals(PlaybackState.stopped));
 
             await player.action.play();
@@ -452,7 +452,7 @@ void main() {
             expect(player.state.position, equals(Duration.zero));
 
             // Re-open different file
-            await player.action.openFile(shortWavFile.path);
+            await player.action.open(AudioSource.file(shortWavFile.path));
             expect(player.state.playbackState, equals(PlaybackState.stopped));
           } finally {
             await player.dispose();
@@ -475,7 +475,7 @@ void main() {
         final s3 = player.stream.playing.listen(playings.add);
 
         try {
-          await player.action.openFile(shortWavFile.path); // 500ms duration
+          await player.action.open(AudioSource.file(shortWavFile.path)); // 500ms duration
           await player.action.play();
 
           // Wait for natural EOF (up to 1500ms)
@@ -515,7 +515,7 @@ void main() {
         final sub2 = player.stream.completed.listen(completes.add);
 
         try {
-          await player.action.openFile(sampleWavFile.path); // 3.0s duration
+          await player.action.open(AudioSource.file(sampleWavFile.path)); // 3.0s duration
           final duration = player.state.duration;
 
           // Seek to exact duration -> completion
@@ -548,7 +548,7 @@ void main() {
       () async {
         final player = MiniaudioPlayer();
         try {
-          final openFut = player.action.openFile(sampleWavFile.path);
+          final openFut = player.action.open(AudioSource.file(sampleWavFile.path));
           // Concurrently fire transport commands without awaiting
           final playFut = player.action.play();
           final seekFut = player.action.seek(
@@ -578,7 +578,7 @@ void main() {
       final subPos = player.stream.position.listen(positionEvents.add);
 
       try {
-        await player.action.openFile(sampleWavFile.path);
+        await player.action.open(AudioSource.file(sampleWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -610,14 +610,14 @@ void main() {
         final player = MiniaudioPlayer();
         try {
           expect(
-            () => player.action.openFile('/non_existent_audio_path_xyz_123.wav'),
+            () => player.action.open(AudioSource.file('/non_existent_audio_path_xyz_123.wav')),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 50));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery: open valid file
-          await player.action.openFile(sampleWavFile.path);
+          await player.action.open(AudioSource.file(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
           expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -642,38 +642,38 @@ void main() {
         try {
           // 1. Zero-byte file
           expect(
-            () => player.action.openFile(emptyWavFile.path),
+            () => player.action.open(AudioSource.file(emptyWavFile.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 30));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery via openMemory
-          await player.action.openMemory(memoryWavBytes);
+          await player.action.open(AudioSource.memory(memoryWavBytes));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // 2. Truncated header file
           expect(
-            () => player.action.openFile(truncatedHeaderFile.path),
+            () => player.action.open(AudioSource.file(truncatedHeaderFile.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 30));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery via openFile
-          await player.action.openFile(sampleWavFile.path);
+          await player.action.open(AudioSource.file(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // 3. Random junk file
           expect(
-            () => player.action.openFile(corruptJunkFile.path),
+            () => player.action.open(AudioSource.file(corruptJunkFile.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 30));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery via valid file
-          await player.action.openFile(sampleWavFile.path);
+          await player.action.open(AudioSource.file(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // Play recovered track
@@ -693,7 +693,7 @@ void main() {
         try {
           // Empty path fast rejection
           expect(
-            () => player.action.openFile(''),
+            () => player.action.open(AudioSource.file('')),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           expect(player.state.playbackState, equals(PlaybackState.stopped));
@@ -706,7 +706,7 @@ void main() {
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // Open valid file
-          await player.action.openFile(sampleWavFile.path);
+          await player.action.open(AudioSource.file(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
         } finally {
           await player.dispose();
@@ -722,13 +722,13 @@ void main() {
           for (int i = 0; i < 5; i++) {
             // Trigger error
             await expectLater(
-              player.action.openFile('/tmp/ghost_file_$i.wav'),
+              player.action.open(AudioSource.file('/tmp/ghost_file_$i.wav')),
               throwsA(isA<MiniaudioPlayerException>()),
             );
             expect(player.state.playbackState, equals(PlaybackState.error));
 
             // Recover
-            await player.action.openMemory(memoryWavBytes);
+            await player.action.open(AudioSource.memory(memoryWavBytes));
             expect(player.state.playbackState, equals(PlaybackState.stopped));
 
             // Short play & stop
@@ -748,7 +748,7 @@ void main() {
       () async {
         final player = MiniaudioPlayer();
         try {
-          await player.action.openMemory(memoryWavBytes); // 600ms duration
+          await player.action.open(AudioSource.memory(memoryWavBytes)); // 600ms duration
           await player.action.play();
 
           int elapsed = 0;
@@ -781,7 +781,7 @@ void main() {
       () async {
         final player = MiniaudioPlayer();
         try {
-          await player.action.openFile(sampleWavFile.path); // 3.0s duration
+          await player.action.open(AudioSource.file(sampleWavFile.path)); // 3.0s duration
           // Seek near end to trigger EOF quickly
           await player.action.seek(const Duration(milliseconds: 2950));
           await player.action.play();
@@ -814,12 +814,12 @@ void main() {
       () async {
         final player = MiniaudioPlayer();
         try {
-          await player.action.openMemory(memoryWavBytes);
+          await player.action.open(AudioSource.memory(memoryWavBytes));
           await player.action.seek(player.state.duration);
           expect(player.state.completed, isTrue);
 
           // Open new file instead of replaying
-          await player.action.openFile(sampleWavFile.path);
+          await player.action.open(AudioSource.file(sampleWavFile.path));
           expect(player.state.completed, isFalse);
           expect(player.state.playbackState, equals(PlaybackState.stopped));
           expect(player.state.position, equals(Duration.zero));
@@ -843,7 +843,7 @@ void main() {
 
     setUp(() async {
       player = MiniaudioPlayer();
-      await player.action.openFile(sampleWavFile.path);
+      await player.action.open(AudioSource.file(sampleWavFile.path));
     });
 
     tearDown(() async {
@@ -1082,7 +1082,7 @@ void main() {
 
     setUp(() async {
       player = MiniaudioPlayer();
-      await player.action.openFile(sampleWavFile.path);
+      await player.action.open(AudioSource.file(sampleWavFile.path));
     });
 
     tearDown(() async {
@@ -1273,7 +1273,7 @@ void main() {
 
       setUp(() async {
         player = MiniaudioPlayer();
-        await player.action.openFile(sampleWavFile.path);
+        await player.action.open(AudioSource.file(sampleWavFile.path));
       });
 
       tearDown(() async {
@@ -1462,7 +1462,7 @@ void main() {
         'rate': player.stream.rate,
         'pitch': player.stream.pitch,
         'bufferSize': player.stream.bufferSize,
-        'audioBitrate': player.stream.audioBitrate,
+        'audioBitrate': player.stream.bitrate,
         'bitrate': player.stream.bitrate,
         'equalizer': player.stream.equalizer,
         'audioDevice': player.stream.audioDevice,
@@ -1516,12 +1516,12 @@ void main() {
         expect(player.state.rate, equals(1.0));
         expect(player.state.pitch, equals(1.0));
         expect(player.state.bufferSize, isZero);
-        expect(player.state.audioBitrate, isZero);
+        expect(player.state.bitrate, isZero);
         expect(player.state.bitrate, isZero);
         expect(player.state.equalizer, equals(Equalizer.flat));
         expect(player.state.audioDevice.isAuto, isTrue);
         expect(player.state.skipSilence, isFalse);
-        expect(player.state.isSkipSilenceEnabled, isFalse);
+        expect(player.state.skipSilence, isFalse);
         expect(
           player.state.silenceSkipMode,
           equals(SilenceSkipMode.disabled),
@@ -1534,7 +1534,7 @@ void main() {
         expect(player.state.visualizer, equals(VisualizerData.empty()));
         expect(player.state.visualizerEnabled, isFalse);
         expect(player.state.preamp, equals(0.0));
-        expect(player.state.preampDb, equals(0.0));
+        expect(player.state.preamp, equals(0.0));
         expect(
           player.state.replayGain,
           equals(const ReplayGainConfig()),
@@ -1552,16 +1552,16 @@ void main() {
     test(
       '7.3: All convenience aliases maintain identical values to canonical counterparts',
       () {
-        expect(player.state.bitrate, equals(player.state.audioBitrate));
+        expect(player.state.bitrate, equals(player.state.bitrate));
         expect(
-          player.state.isSkipSilenceEnabled,
+          player.state.skipSilence,
           equals(player.state.skipSilence),
         );
         expect(
           player.state.silenceSkipMode,
           equals(player.state.silenceConfig.mode),
         );
-        expect(player.state.preampDb, equals(player.state.preamp));
+        expect(player.state.preamp, equals(player.state.preamp));
       },
     );
 
@@ -1569,7 +1569,7 @@ void main() {
       '7.4: Post-disposal synchronous access to all 36 state getters is memory-safe',
       () async {
         final tempPlayer = MiniaudioPlayer();
-        await tempPlayer.action.openFile(sampleWavFile.path);
+        await tempPlayer.action.open(AudioSource.file(sampleWavFile.path));
         await tempPlayer.dispose();
         expect(tempPlayer.isDisposed, isTrue);
 
@@ -1589,19 +1589,19 @@ void main() {
         expect(tempPlayer.state.rate, isNotNull);
         expect(tempPlayer.state.pitch, isNotNull);
         expect(tempPlayer.state.bufferSize, isNotNull);
-        expect(tempPlayer.state.audioBitrate, isNotNull);
+        expect(tempPlayer.state.bitrate, isNotNull);
         expect(tempPlayer.state.bitrate, isNotNull);
         expect(tempPlayer.state.equalizer, isNotNull);
         expect(tempPlayer.state.audioDevice, isNotNull);
         expect(tempPlayer.state.skipSilence, isNotNull);
-        expect(tempPlayer.state.isSkipSilenceEnabled, isNotNull);
+        expect(tempPlayer.state.skipSilence, isNotNull);
         expect(tempPlayer.state.silenceSkipMode, isNotNull);
         expect(tempPlayer.state.silenceConfig, isNotNull);
         expect(tempPlayer.state.silenceSavedDuration, isNotNull);
         expect(tempPlayer.state.visualizer, isNotNull);
         expect(tempPlayer.state.visualizerEnabled, isNotNull);
         expect(tempPlayer.state.preamp, isNotNull);
-        expect(tempPlayer.state.preampDb, isNotNull);
+        expect(tempPlayer.state.preamp, isNotNull);
         expect(tempPlayer.state.replayGain, isNotNull);
         expect(tempPlayer.state.balance, isNotNull);
         expect(tempPlayer.state.mono, isNotNull);
@@ -1623,8 +1623,8 @@ void main() {
         expect(actionFuture, isA<Future<void>>());
         await actionFuture;
 
-        // 2. MiniaudioPlayer forwarder also returns Future<void>
-        final Future<void> forwarderFuture = player.setDevice(AudioDevice.auto);
+        // 2. Action setDevice also returns Future<void>
+        final Future<void> forwarderFuture = player.action.setDevice(AudioDevice.auto);
         expect(forwarderFuture, isA<Future<void>>());
         await forwarderFuture;
 
@@ -1677,7 +1677,7 @@ void main() {
         final activePlayer = MiniaudioPlayer();
         try {
           await runWithZeroPeriodicTimerProof((tracker) async {
-            await activePlayer.action.openFile(sampleWavFile.path);
+            await activePlayer.action.open(AudioSource.file(sampleWavFile.path));
             expect(activePlayer.state.duration, greaterThan(Duration.zero));
 
             await activePlayer.action.play();

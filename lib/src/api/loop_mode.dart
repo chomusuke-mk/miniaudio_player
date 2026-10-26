@@ -23,6 +23,3 @@ enum LoopMode {
     }
   }
 }
-
-/// Alias for [LoopMode] maintained for ergonomic compatibility.
-typedef Loop = LoopMode;

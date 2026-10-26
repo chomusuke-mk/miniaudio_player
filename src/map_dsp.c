@@ -347,7 +347,7 @@ float map_calculate_effective_preamp(const miniaudio_player_replay_gain_config_t
     float total_db = standalone_preamp_db;
     if (rg != NULL && rg->enabled)
     {
-        total_db += rg->gain_db + rg->preamp_db;
+        total_db += rg->gain_db;
     }
     float linear = powf(10.0f, total_db / 20.0f);
     if (rg != NULL && rg->enabled && rg->prevent_clipping && rg->peak > 0.0001f)

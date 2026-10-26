@@ -39,9 +39,11 @@ void main() {
             viewport.size.height * viewport.dpr,
           );
           tester.view.devicePixelRatio = viewport.dpr;
-          addTearDown(() {
+          addTearDown(() async {
             tester.view.resetPhysicalSize();
             tester.view.resetDevicePixelRatio();
+            await tester.pumpWidget(const SizedBox());
+            await tester.pump();
           });
 
           // 1. Initial pump
@@ -56,7 +58,7 @@ void main() {
 
           // 3. Verify mounted UI title
           expect(
-            find.text('miniaudio_player Demo'),
+            find.text('miniaudio_player'),
             findsOneWidget,
             reason: 'Main application UI failed to mount',
           );
@@ -121,9 +123,11 @@ void main() {
             viewport.size.height * viewport.dpr,
           );
           tester.view.devicePixelRatio = viewport.dpr;
-          addTearDown(() {
+          addTearDown(() async {
             tester.view.resetPhysicalSize();
             tester.view.resetDevicePixelRatio();
+            await tester.pumpWidget(const SizedBox());
+            await tester.pump();
           });
 
           await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -134,7 +138,7 @@ void main() {
           });
           await tester.pump();
 
-          expect(find.text('miniaudio_player Demo'), findsOneWidget);
+          expect(find.text('miniaudio_player'), findsOneWidget);
 
           final scrollables = find.byType(Scrollable);
           if (scrollables.evaluate().isNotEmpty) {
@@ -157,9 +161,11 @@ void main() {
     testWidgets('Mounted UI with 1.3x TextScaler on 320x568 compact viewport', (tester) async {
       tester.view.physicalSize = const Size(320 * 2.0, 568 * 2.0);
       tester.view.devicePixelRatio = 2.0;
-      addTearDown(() {
+      addTearDown(() async {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
       });
 
       await tester.pumpWidget(
@@ -178,7 +184,7 @@ void main() {
       });
       await tester.pump();
 
-      expect(find.text('miniaudio_player Demo'), findsOneWidget);
+      expect(find.text('miniaudio_player'), findsOneWidget);
 
       final scrollables = find.byType(Scrollable);
       if (scrollables.evaluate().isNotEmpty) {

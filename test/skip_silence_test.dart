@@ -81,7 +81,7 @@ void main() {
 
     test('initial state has silence skipping disabled and 0 saved duration', () {
       expect(player.state.skipSilence, isFalse);
-      expect(player.state.isSkipSilenceEnabled, isFalse);
+      expect(player.state.skipSilence, isFalse);
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.disabled));
       expect(player.state.silenceConfig.mode, equals(SilenceSkipMode.disabled));
       expect(player.state.silenceSavedDuration, equals(Duration.zero));
@@ -135,11 +135,11 @@ void main() {
       expect(configEvents, contains(targetConfig));
     });
 
-    test('configureSilenceSkip updates individual fields selectively', () async {
+    test('setSilenceConfig with copyWith updates individual fields selectively', () async {
       await player.action.setSilenceConfig(const SilenceSkipConfig.all());
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.all));
 
-      await player.action.configureSilenceSkip(thresholdDb: -38.0);
+      await player.action.setSilenceConfig(player.state.silenceConfig.copyWith(thresholdDb: -38.0));
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.all));
       expect(player.state.silenceConfig.thresholdDb, equals(-38.0));
       expect(

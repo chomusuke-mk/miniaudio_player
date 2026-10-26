@@ -101,7 +101,7 @@ void main() {
       () async {
         final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
 
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
 
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.action.activeLoader, isNotNull);
@@ -145,7 +145,7 @@ void main() {
       () async {
         final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
         await player.action.play();
 
         // Let audio advance past initial frames
@@ -202,9 +202,9 @@ void main() {
         // --- Sub-test 3A: Fully Cached Stream (WAV fully in RAM) ---
         final wavUrl = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
 
-        await player.action.openUrl(
+        await player.action.open(AudioSource.uri(
           wavUrl,
-          bufferAhead: const Duration(seconds: 60),
+          bufferAhead: const Duration(seconds: 60)),
           bufferBehind: const Duration(seconds: 60),
         );
         await player.action.play();
@@ -244,9 +244,9 @@ void main() {
         // --- Sub-test 3B: Partially Cached Stream (ALAC with constrained buffer) ---
         final alacUrl = 'http://127.0.0.1:$serverPort/music/salida_alac.m4a';
 
-        await player.action.openUrl(
+        await player.action.open(AudioSource.uri(
           alacUrl,
-          bufferAhead: const Duration(seconds: 3),
+          bufferAhead: const Duration(seconds: 3)),
           bufferBehind: const Duration(seconds: 1),
         );
         await player.action.play();
@@ -298,7 +298,7 @@ void main() {
         final stallUrl =
             'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=500&initial_burst=32768';
 
-        await player.action.openUrl(stallUrl);
+        await player.action.open(AudioSource.uri(stallUrl));
 
         final rng = Random(42);
 
@@ -374,13 +374,13 @@ void main() {
         final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
 
         // 1. Open live stream
-        await player.action.openUrl(liveUrl, isLive: true);
+        await player.action.open(AudioSource.uri(liveUrl, isLive: true));
 
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.duration, equals(Duration.zero));
         expect(player.state.trackMetadata?.isLiveStream, isTrue);
         expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));
-        expect(player.action.activeStreamer, isNotNull);
+        expect(player.action.activeLoader, isNotNull);
 
         // Verify initial HTTP connection
         final stats0 = await getServerStats(serverPort!);
@@ -401,7 +401,7 @@ void main() {
 
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.playing, isFalse);
-        expect(player.action.activeStreamer!.isStopped, isTrue);
+        expect(player.action.activeLoader!.isStopped, isTrue);
 
         // Verify socket abort and zero consumption while stopped
         final statsStop = await getServerStats(serverPort!);
@@ -428,7 +428,7 @@ void main() {
 
         expect(player.state.playing, isTrue);
         expect(player.state.playbackState, equals(PlaybackState.playing));
-        expect(player.action.activeStreamer!.isStopped, isFalse);
+        expect(player.action.activeLoader!.isStopped, isFalse);
 
         await player.action.stop();
         expect(player.state.playbackState, equals(PlaybackState.stopped));
@@ -441,9 +441,9 @@ void main() {
       () async {
         final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-        await player.action.openUrl(url);
+        await player.action.open(AudioSource.uri(url));
 
-        final streamer = player.action.activeStreamer;
+        final streamer = player.action.activeLoader;
         expect(streamer, isNotNull);
         expect(streamer!.isBackpressureActive, isTrue,
             reason: 'Backpressure monitor must be active after openUrl()');

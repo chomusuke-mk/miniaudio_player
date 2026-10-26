@@ -104,6 +104,8 @@ class MiniaudioEngine<T> {
   AudioDevice _audioDevice;
   SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
   bool _volumeNormalization = true;
+  double _defaultReplayGain = 0.0;
+  double? _forcedReplayGain;
   double _preampDb = 0.0;
   double _balance = 0.0;
   bool _mono = false;
@@ -210,6 +212,12 @@ class MiniaudioEngine<T> {
       StreamController<bool>.broadcast();
   final StreamController<bool> _volumeNormalizationController =
       StreamController<bool>.broadcast();
+  final StreamController<double> _defaultReplayGainController =
+      StreamController<double>.broadcast();
+  final StreamController<double?> _forcedReplayGainController =
+      StreamController<double?>.broadcast();
+  final StreamController<ReplayGainMode> _replayGainModeController =
+      StreamController<ReplayGainMode>.broadcast();
   final StreamController<bool> _infiniteMixController =
       StreamController<bool>.broadcast();
   final StreamController<Uint8List?> _metaBytesController =
@@ -344,6 +352,9 @@ class MiniaudioEngine<T> {
       isCrossfadingController: _isCrossfadingController,
       volumeNormalizationController: _volumeNormalizationController,
       infiniteMixController: _infiniteMixController,
+      defaultReplayGainController: _defaultReplayGainController,
+      forcedReplayGainController: _forcedReplayGainController,
+      replayGainModeController: _replayGainModeController,
       metaBytesController: _metaBytesController,
     );
 
@@ -365,7 +376,7 @@ class MiniaudioEngine<T> {
       getRate: () => _playbackRate,
       getPitch: () => _playbackPitch,
       getBufferSize: () => _bufferSize,
-      getAudioBitrate: () => _activePlayer.state.audioBitrate,
+      getAudioBitrate: () => _activePlayer.state.bitrate,
       getSampleRate: () => _activePlayer.sampleRate,
       getChannels: () => _activePlayer.channels,
       getEqualizer: () => _equalizer,
@@ -404,6 +415,9 @@ class MiniaudioEngine<T> {
       getVolumeNormalization: () => _volumeNormalization,
       getInfiniteMixEnabled: () => _queueManager.infiniteMixEnabled,
       getIsLiveStream: _resolveIsLiveStream,
+      getDefaultReplayGain: () => _defaultReplayGain,
+      getForcedReplayGain: () => _forcedReplayGain,
+      getReplayGainMode: _resolveReplayGainMode,
       getMetaBytes: () => _activePlayer.state.metaBytes,
     );
 
@@ -415,9 +429,6 @@ class MiniaudioEngine<T> {
     _bindActiveDeck();
   }
 
-  /// Active network audio streamer on the currently active deck, if any.
-  dynamic get activeStreamer => _activePlayer.streamer;
-
   /// Whether this engine instance has been disposed.
   bool get isDisposed => _phase == EnginePhase.disposed;
 
@@ -426,6 +437,20 @@ class MiniaudioEngine<T> {
     if (isDisposed) {
       throw const MiniaudioPlayerException('MiniaudioEngine is already disposed');
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Internal Helpers for EngineAction
+  // --------------------------------------------------------------------------
+
+  void setIcyMetaInternal(Uint8List data) {
+    if (isDisposed) return;
+    _activePlayer.action.setIcyMeta(data);
+  }
+
+  void probeTailInternal(Uint8List data, int tailOffset) {
+    if (isDisposed) return;
+    _activePlayer.action.probeTail(data, tailOffset);
   }
 
   // --------------------------------------------------------------------------
@@ -1020,6 +1045,12 @@ class MiniaudioEngine<T> {
         }
       });
 
+  ReplayGainMode _resolveReplayGainMode() {
+    if (!_volumeNormalization) return ReplayGainMode.disabled;
+    if (_forcedReplayGain != null) return ReplayGainMode.forced;
+    return ReplayGainMode.track;
+  }
+
   /// Internal implementation of [EngineAction.setVolumeNormalization].
   Future<void> setVolumeNormalizationInternal(bool enabled) =>
       _serialize(() async {
@@ -1028,6 +1059,38 @@ class MiniaudioEngine<T> {
         await _applyItemReplayGain(_activePlayer, _queueManager.currentItem);
         if (!_volumeNormalizationController.isClosed) {
           _volumeNormalizationController.add(enabled);
+        }
+        if (!_replayGainModeController.isClosed) {
+          _replayGainModeController.add(_resolveReplayGainMode());
+        }
+      });
+
+  /// Internal implementation of [EngineAction.setDefaultReplayGain].
+  Future<void> setDefaultReplayGainInternal(double gainDb) =>
+      _serialize(() async {
+        if (_defaultReplayGain == gainDb) return;
+        _defaultReplayGain = gainDb;
+        if (_forcedReplayGain == null && _volumeNormalization) {
+          await _applyItemReplayGain(_activePlayer, _queueManager.currentItem);
+        }
+        if (!_defaultReplayGainController.isClosed) {
+          _defaultReplayGainController.add(gainDb);
+        }
+      });
+
+  /// Internal implementation of [EngineAction.setForcedReplayGain].
+  Future<void> setForcedReplayGainInternal(double? gainDb) =>
+      _serialize(() async {
+        if (_forcedReplayGain == gainDb) return;
+        _forcedReplayGain = gainDb;
+        if (_volumeNormalization) {
+          await _applyItemReplayGain(_activePlayer, _queueManager.currentItem);
+        }
+        if (!_forcedReplayGainController.isClosed) {
+          _forcedReplayGainController.add(gainDb);
+        }
+        if (!_replayGainModeController.isClosed) {
+          _replayGainModeController.add(_resolveReplayGainMode());
         }
       });
 
@@ -1199,17 +1262,33 @@ class MiniaudioEngine<T> {
   Future<void> setReplayGainInternal({
     required double gainDb,
     double? peak,
-    double preampDb = 0.0,
     bool preventClipping = true,
+    bool force = false,
   }) =>
       _serialize(() async {
-        if (!_activePlayer.isDisposed) {
-          await _activePlayer.action.setReplayGain(
-            gainDb: gainDb,
-            peak: peak,
-            preampDb: preampDb,
-            preventClipping: preventClipping,
-          );
+        if (force) {
+          _forcedReplayGain = gainDb;
+          if (_volumeNormalization) {
+            await _applyItemReplayGain(_activePlayer, _queueManager.currentItem);
+          }
+          if (!_forcedReplayGainController.isClosed) {
+            _forcedReplayGainController.add(gainDb);
+          }
+          if (!_replayGainModeController.isClosed) {
+            _replayGainModeController.add(_resolveReplayGainMode());
+          }
+        } else {
+          _defaultReplayGain = gainDb;
+          if (!_defaultReplayGainController.isClosed) {
+            _defaultReplayGainController.add(gainDb);
+          }
+          if (!_activePlayer.isDisposed) {
+            await _activePlayer.action.setReplayGain(
+              gainDb: gainDb,
+              peak: peak,
+              preventClipping: preventClipping,
+            );
+          }
         }
         if (!_replayGainController.isClosed) {
           _replayGainController.add(_activePlayer.state.replayGain);
@@ -1218,6 +1297,13 @@ class MiniaudioEngine<T> {
 
   /// Internal implementation of [EngineAction.clearReplayGain].
   Future<void> clearReplayGainInternal() => _serialize(() async {
+        _forcedReplayGain = null;
+        if (!_forcedReplayGainController.isClosed) {
+          _forcedReplayGainController.add(null);
+        }
+        if (!_replayGainModeController.isClosed) {
+          _replayGainModeController.add(_resolveReplayGainMode());
+        }
         if (!_activePlayer.isDisposed) {
           await _activePlayer.action.clearReplayGain();
         }
@@ -1234,9 +1320,6 @@ class MiniaudioEngine<T> {
           if (!_playerA.isDisposed) _playerA.action.setPreamp(clamped),
           if (!_playerB.isDisposed) _playerB.action.setPreamp(clamped),
         ]);
-        if (_volumeNormalization) {
-          await _applyItemReplayGain(_activePlayer, _queueManager.currentItem);
-        }
         if (!_preampController.isClosed) {
           _preampController.add(clamped);
         }
@@ -1865,13 +1948,31 @@ class MiniaudioEngine<T> {
   ) async {
     if (deck.isDisposed) return;
     try {
-      if (_volumeNormalization &&
-          item != null &&
-          (item.replayGainDb != null || item.replayPeak != null)) {
+      if (!_volumeNormalization) {
+        await deck.action.clearReplayGain();
+        return;
+      }
+
+      if (_forcedReplayGain != null) {
         await deck.action.setReplayGain(
-          gainDb: item.replayGainDb ?? 0.0,
+          gainDb: _forcedReplayGain!,
+          preventClipping: true,
+        );
+        return;
+      }
+
+      final hasItemGain = item != null &&
+          (item.replayGainDb != null || item.replayPeak != null);
+
+      if (hasItemGain) {
+        await deck.action.setReplayGain(
+          gainDb: item.replayGainDb ?? _defaultReplayGain,
           peak: item.replayPeak,
-          preampDb: _preampDb,
+          preventClipping: true,
+        );
+      } else if (_defaultReplayGain != 0.0) {
+        await deck.action.setReplayGain(
+          gainDb: _defaultReplayGain,
           preventClipping: true,
         );
       } else {
@@ -2000,7 +2101,7 @@ class MiniaudioEngine<T> {
     );
 
     _activeDeckSubscriptions.add(
-      deck.stream.audioBitrate.listen((br) {
+      deck.stream.bitrate.listen((br) {
         if (!isCurrent()) return;
         if (!_audioBitrateController.isClosed) {
           _audioBitrateController.add(br);
@@ -2099,8 +2200,8 @@ class MiniaudioEngine<T> {
     if (!_trackMetadataController.isClosed) {
       _trackMetadataController.add(deck.state.trackMetadata);
     }
-    if (!_audioBitrateController.isClosed && deck.state.audioBitrate > 0) {
-      _audioBitrateController.add(deck.state.audioBitrate);
+    if (!_audioBitrateController.isClosed && deck.state.bitrate > 0) {
+      _audioBitrateController.add(deck.state.bitrate);
     }
     if (!_replayGainController.isClosed) {
       _replayGainController.add(deck.state.replayGain);
@@ -2243,6 +2344,9 @@ class MiniaudioEngine<T> {
     await _crossfadeConfigController.close();
     await _isCrossfadingController.close();
     await _volumeNormalizationController.close();
+    await _defaultReplayGainController.close();
+    await _forcedReplayGainController.close();
+    await _replayGainModeController.close();
     await _infiniteMixController.close();
     await _metaBytesController.close();
   }

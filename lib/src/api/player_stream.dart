@@ -163,9 +163,6 @@ class PlayerStream {
   Stream<int> get bufferSize => _bufferSizeController.stream;
 
   /// Broadcast stream of audio bitrate changes in bits per second (bps).
-  Stream<int> get audioBitrate => _audioBitrateController.stream;
-
-  /// Alias for [audioBitrate].
   Stream<int> get bitrate => _audioBitrateController.stream;
 
   /// Broadcast stream of 10-band equalizer configuration changes.

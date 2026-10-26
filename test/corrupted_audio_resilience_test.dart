@@ -196,7 +196,7 @@ void main() {
         endOffset: 32768,
       );
 
-      await player.action.openMemory(bitFlipped);
+      await player.action.open(AudioSource.memory(bitFlipped));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 

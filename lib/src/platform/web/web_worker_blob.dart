@@ -491,7 +491,6 @@ self.onmessage = async function(e) {
           msg.enabled ? 1 : 0,
           msg.gainDb !== undefined ? msg.gainDb : 0.0,
           msg.peak !== undefined ? msg.peak : 0.0,
-          msg.preampDb !== undefined ? msg.preampDb : 0.0,
           msg.preventClipping ? 1 : 0
         );
       }

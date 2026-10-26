@@ -67,7 +67,7 @@ void main() {
 
       // Endpoint drops connection after 70 KB (probe is 64 KB, so drop occurs during playback)
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=71680';
-      await player.action.openUrl(dropUrl);
+      await player.action.open(AudioSource.uri(dropUrl));
       await player.action.play();
 
       // Wait until initial chunk is consumed and connection drops
@@ -114,7 +114,7 @@ void main() {
 
       for (int i = 0; i < 8; i++) {
         final player = MiniaudioPlayer();
-        await player.action.openUrl(dropUrl);
+        await player.action.open(AudioSource.uri(dropUrl));
         await player.action.play();
 
         // Delay into the exact window where connection drops and reconnectTimer is scheduled
@@ -134,7 +134,7 @@ void main() {
 
       // 1500ms stall after 32 KB initial burst
       final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.wav?chunk_size=16384&stall_ms=1500&initial_burst=32768';
-      await player.action.openUrl(stallUrl);
+      await player.action.open(AudioSource.uri(stallUrl));
       await player.action.play();
 
       // Verify initial streaming state
@@ -175,8 +175,8 @@ void main() {
       final stallUrl2 = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=8192&stall_ms=600&initial_burst=32768';
 
       await Future.wait([
-        player1.action.openUrl(resumeUrl1),
-        player2.action.openUrl(stallUrl2),
+        player1.action.open(AudioSource.uri(resumeUrl1)),
+        player2.action.open(AudioSource.uri(stallUrl2)),
       ]);
 
       await Future.wait([

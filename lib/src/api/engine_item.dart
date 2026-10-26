@@ -328,7 +328,7 @@ class EngineItem<T> {
   /// [ResolvingAudioSource] with a deduced canonical path, or `null` otherwise.
   String? get filePath {
     final s = source;
-    if (s is FileAudioSource) return s.filePath;
+    if (s is FileAudioSource) return s.path;
     if (s is ResolvingAudioSource) return s.canonicalFilePath;
     return null;
   }
@@ -341,11 +341,11 @@ class EngineItem<T> {
     if (s is ResolvingAudioSource) return s.uri;
     if (s is MemoryAudioSource) return s.uri;
     if (s is CustomAudioSource) return s.provider.uri;
-    if (s is FileAudioSource && s.filePath.isNotEmpty) {
-      if (UriCapabilityResolver.isWindowsFilePath(s.filePath)) {
-        return Uri.file(s.filePath, windows: true);
+    if (s is FileAudioSource && s.path.isNotEmpty) {
+      if (UriCapabilityResolver.isWindowsFilePath(s.path)) {
+        return Uri.file(s.path, windows: true);
       }
-      return Uri.file(s.filePath);
+      return Uri.file(s.path);
     }
     return null;
   }
@@ -359,7 +359,7 @@ class EngineItem<T> {
     final s = source;
     return switch (s) {
       FileAudioSource() =>
-        'file:${UriCapabilityResolver.canonicalizeLocalPathForKey(s.filePath)}',
+        'file:${UriCapabilityResolver.canonicalizeLocalPathForKey(s.path)}',
       ResolvingAudioSource() => s.canonicalFilePath != null &&
               s.canonicalFilePath!.isNotEmpty
           ? 'file:${UriCapabilityResolver.canonicalizeLocalPathForKey(s.canonicalFilePath!)}'
@@ -378,7 +378,7 @@ class EngineItem<T> {
   bool get hasValidSource {
     final s = source;
     return switch (s) {
-      FileAudioSource() => s.filePath.trim().isNotEmpty,
+      FileAudioSource() => s.path.trim().isNotEmpty,
       ResolvingAudioSource() =>
         !s.rejectedByPathTraversal && s.uri.toString().trim().isNotEmpty,
       NetworkAudioSource() => s.uri.toString().trim().isNotEmpty,

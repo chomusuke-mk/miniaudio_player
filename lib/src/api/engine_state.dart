@@ -111,6 +111,9 @@ class EngineState<T> {
   final bool Function() _getVolumeNormalization;
   final bool Function() _getInfiniteMixEnabled;
   final bool Function() _getIsLiveStream;
+  final double Function() _getDefaultReplayGain;
+  final double? Function() _getForcedReplayGain;
+  final ReplayGainMode Function() _getReplayGainMode;
   final Uint8List? Function()? _getMetaBytes;
 
   /// Creates an [EngineState] view bound to [MiniaudioEngine] state getters.
@@ -166,6 +169,9 @@ class EngineState<T> {
     required bool Function() getVolumeNormalization,
     required bool Function() getInfiniteMixEnabled,
     required bool Function() getIsLiveStream,
+    double Function()? getDefaultReplayGain,
+    double? Function()? getForcedReplayGain,
+    ReplayGainMode Function()? getReplayGainMode,
     Uint8List? Function()? getMetaBytes,
   })  : _getPhase = getPhase,
         _getPosition = getPosition,
@@ -218,6 +224,14 @@ class EngineState<T> {
         _getVolumeNormalization = getVolumeNormalization,
         _getInfiniteMixEnabled = getInfiniteMixEnabled,
         _getIsLiveStream = getIsLiveStream,
+        _getDefaultReplayGain = getDefaultReplayGain ?? (() => 0.0),
+        _getForcedReplayGain = getForcedReplayGain ?? (() => null),
+        _getReplayGainMode = getReplayGainMode ??
+            (() => !getVolumeNormalization()
+                ? ReplayGainMode.disabled
+                : ((getForcedReplayGain != null && getForcedReplayGain() != null)
+                    ? ReplayGainMode.forced
+                    : ReplayGainMode.track)),
         _getMetaBytes = getMetaBytes;
 
   // --------------------------------------------------------------------------
@@ -250,23 +264,23 @@ class EngineState<T> {
   /// Whether playback is currently active.
   bool get playing => _getPlaying();
 
-  /// Alias for [playing].
-  bool get isPlaying => _getPlaying();
-
   /// Whether the active deck is currently buffering network data.
   bool get buffering => _getBuffering();
-
-  /// Alias for [buffering].
-  bool get isBuffering => _getBuffering();
 
   /// Whether the entire queue has finished playback.
   bool get completed => _getCompleted();
 
-  /// Alias for [completed].
-  bool get isCompleted => _getCompleted();
-
   /// Whether an audio source is currently being prepared/opened.
   bool get opening => _getOpening();
+
+  /// Whether engine is currently paused.
+  bool get isPaused => playbackState == PlaybackState.paused;
+
+  /// Whether engine is currently stopped.
+  bool get isStopped => playbackState == PlaybackState.stopped;
+
+  /// Whether engine is currently in an error state.
+  bool get isError => playbackState == PlaybackState.error;
 
   /// Current lifecycle state derived from the engine state machine.
   PlaybackState get playbackState => _getPlaybackState();
@@ -296,9 +310,6 @@ class EngineState<T> {
   int get bufferSize => _getBufferSize();
 
   /// Current audio nominal bitrate in bits per second (`bps`), or `0` if unknown.
-  int get audioBitrate => _getAudioBitrate();
-
-  /// Alias for [audioBitrate].
   int get bitrate => _getAudioBitrate();
 
   /// Native audio sampling rate in Hz of the active deck, or `0` if idle.
@@ -332,7 +343,7 @@ class EngineState<T> {
   bool get visualizerEnabled => _getVisualizerEnabled();
 
   /// Manual preamp gain in decibels (`-12.0` to `+12.0` dB).
-  double get preampDb => _getPreamp();
+  double get preamp => _getPreamp();
 
   /// Active ReplayGain / loudness normalization configuration on the active deck.
   ReplayGainConfig get replayGain => _getReplayGain();
@@ -376,9 +387,6 @@ class EngineState<T> {
   /// Current zero-based index into [queue], or `-1` if the queue is empty.
   int get currentIndex => _getCurrentIndex();
 
-  /// Alias for [currentIndex].
-  int get index => _getCurrentIndex();
-
   /// Currently active [EngineItem], or `null` if the queue is empty.
   EngineItem<T>? get currentItem => _getCurrentItem();
 
@@ -397,14 +405,8 @@ class EngineState<T> {
   /// Whether the queue is currently in shuffled order.
   bool get shuffle => _getShuffle();
 
-  /// Alias for [shuffle].
-  bool get isShuffled => _getShuffle();
-
   /// Current repeat policy ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
   LoopMode get loopMode => _getLoopMode();
-
-  /// Alias for [loopMode].
-  LoopMode get loop => _getLoopMode();
 
   /// Current automatic and manual crossfade configuration.
   CrossfadeConfig get crossfadeConfig => _getCrossfadeConfig();
@@ -423,6 +425,18 @@ class EngineState<T> {
 
   /// Whether automatic per-item ReplayGain normalization is enabled.
   bool get volumeNormalization => _getVolumeNormalization();
+
+  /// Default fallback ReplayGain in decibels applied to queue items that lack
+  /// per-track metadata.
+  double get defaultReplayGain => _getDefaultReplayGain();
+
+  /// Forced uniform ReplayGain in decibels applied across all queue items, or
+  /// `null` if per-track metadata is respected.
+  double? get forcedReplayGain => _getForcedReplayGain();
+
+  /// Current ReplayGain operational mode ([ReplayGainMode.disabled],
+  /// [ReplayGainMode.track], or [ReplayGainMode.forced]).
+  ReplayGainMode get replayGainMode => _getReplayGainMode();
 
   /// Whether Infinite Mix proactive lookahead prefetching is enabled.
   bool get infiniteMixEnabled => _getInfiniteMixEnabled();

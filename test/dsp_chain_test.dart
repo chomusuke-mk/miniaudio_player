@@ -9,33 +9,30 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('DSP Data Models', () {
-    test('ReplayGainConfig initializes defaults and computes totalGainDb', () {
+    test('ReplayGainConfig initializes defaults and computes effectiveGainDb', () {
       const defaultRg = ReplayGainConfig();
       expect(defaultRg.enabled, isFalse);
       expect(defaultRg.gainDb, equals(0.0));
       expect(defaultRg.peak, equals(0.0));
-      expect(defaultRg.preampDb, equals(0.0));
       expect(defaultRg.preventClipping, isTrue);
-      expect(defaultRg.totalGainDb, equals(0.0));
+      expect(defaultRg.effectiveGainDb, equals(0.0));
 
       const activeRg = ReplayGainConfig(
         gainDb: -8.5,
         peak: 0.95,
-        preampDb: 2.0,
         preventClipping: true,
         enabled: true,
       );
       expect(activeRg.enabled, isTrue);
       expect(activeRg.gainDb, equals(-8.5));
-      expect(activeRg.preampDb, equals(2.0));
-      expect(activeRg.totalGainDb, closeTo(-6.5, 0.001));
+      expect(activeRg.peak, equals(0.95));
+      expect(activeRg.effectiveGainDb, equals(-8.5));
 
-      const disabledWithPreamp = ReplayGainConfig(
+      const disabledRg = ReplayGainConfig(
         gainDb: -8.5,
-        preampDb: 3.0,
         enabled: false,
       );
-      expect(disabledWithPreamp.totalGainDb, equals(3.0));
+      expect(disabledRg.effectiveGainDb, equals(0.0));
     });
 
     test('CrossfeedMode enum has valid values', () {
@@ -103,14 +100,12 @@ void main() {
       await player.action.setReplayGain(
         gainDb: -12.5,
         peak: 0.98,
-        preampDb: 1.5,
         preventClipping: true,
       );
 
       expect(player.state.replayGain.enabled, isTrue);
       expect(player.state.replayGain.gainDb, closeTo(-12.5, 0.01));
       expect(player.state.replayGain.peak, closeTo(0.98, 0.01));
-      expect(player.state.replayGain.preampDb, closeTo(1.5, 0.01));
       expect(player.state.replayGain.preventClipping, isTrue);
 
       await player.action.clearReplayGain();
@@ -122,7 +117,7 @@ void main() {
 
       await player.action.setPreamp(3.5);
       expect(player.state.preamp, closeTo(3.5, 0.01));
-      expect(player.state.preampDb, closeTo(3.5, 0.01));
+      expect(player.state.preamp, closeTo(3.5, 0.01));
 
       await player.action.setPreamp(-4.0);
       expect(player.state.preamp, closeTo(-4.0, 0.01));
@@ -189,8 +184,8 @@ void main() {
       expect(player.state.reverb.wet, closeTo(0.40, 0.01));
       expect(player.state.reverb.dry, closeTo(0.95, 0.01));
 
-      // Test configureReverb parameter override
-      await player.action.configureReverb(wet: 0.60);
+      // Test copyWith parameter override
+      await player.action.setReverb(player.state.reverb.copyWith(wet: 0.60));
       expect(player.state.reverb.wet, closeTo(0.60, 0.01));
       expect(player.state.reverb.roomSize, closeTo(0.80, 0.01));
 
