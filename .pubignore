@@ -35,7 +35,8 @@ migrate_working_dir/
 
 # Pub specific ignores
 /cspell.yaml
-/pictures/
 /test/fixtures/
 
+/pictures/
+!/pictures/**/
 !/pictures/screenshots/studio_console_hero.png
