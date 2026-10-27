@@ -107,3 +107,13 @@ Future<RawHttpResponse> sendHttpGetRequest(
     rethrow;
   }
 }
+
+/// Decompresses [bytes] if a gzip header (0x1F 0x8B) is present.
+Uint8List decompressIfGzip(Uint8List bytes) {
+  if (bytes.length >= 2 && bytes[0] == 0x1F && bytes[1] == 0x8B) {
+    try {
+      return Uint8List.fromList(gzip.decode(bytes));
+    } catch (_) {}
+  }
+  return bytes;
+}

@@ -93,7 +93,7 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                             minWidth: 28,
                             minHeight: 28,
                           ),
-                          tooltip: 'Restablecer por defecto (${widget.defaultValue})',
+                          tooltip: 'Reset to default (${widget.defaultValue})',
                           onPressed: () {
                             widget.onChanged(widget.defaultValue);
                             _overlayEntry?.markNeedsBuild();

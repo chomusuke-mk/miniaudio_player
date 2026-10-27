@@ -121,7 +121,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             final isCompact = constraints.maxWidth < 700;
             return Row(
               children: [
-                // Left block: [icono + titulo + minidescripcion debajo]
+                // Left block: [icon + title + subtitle below]
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

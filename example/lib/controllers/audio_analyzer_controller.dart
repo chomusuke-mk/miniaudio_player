@@ -85,7 +85,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     _currentTrackId = track.id;
 
     if (!track.canAnalyze) {
-      _error = 'Formato ${track.displayType} no admite análisis offline.';
+      _error = 'Format ${track.displayType} does not support offline analysis.';
       notifyListeners();
       return;
     }

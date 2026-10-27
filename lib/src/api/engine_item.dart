@@ -365,6 +365,7 @@ class EngineItem<T> {
           ? 'file:${UriCapabilityResolver.canonicalizeLocalPathForKey(s.canonicalFilePath!)}'
           : 'uri:${s.uri}',
       LiveStreamAudioSource() => 'live:${s.uri}',
+      HlsAudioSource() => 'hls:${s.uri}',
       NetworkAudioSource() => s.isLive ? 'live:${s.uri}' : 'net:${s.uri}',
       AssetAudioSource() => s.package != null && s.package!.isNotEmpty
           ? 'asset:packages/${s.package}/${s.assetKey}'
@@ -379,6 +380,7 @@ class EngineItem<T> {
     final s = source;
     return switch (s) {
       FileAudioSource() => s.path.trim().isNotEmpty,
+      HlsAudioSource() => s.uri.toString().trim().isNotEmpty,
       ResolvingAudioSource() =>
         !s.rejectedByPathTraversal && s.uri.toString().trim().isNotEmpty,
       NetworkAudioSource() => s.uri.toString().trim().isNotEmpty,

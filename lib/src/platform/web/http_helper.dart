@@ -154,3 +154,6 @@ Future<RawHttpResponse> sendHttpGetRequest(
     abort: abortRequest,
   );
 }
+
+/// On Web, the browser automatically decompresses gzip/deflate responses.
+Uint8List decompressIfGzip(Uint8List bytes) => bytes;

@@ -26,3 +26,7 @@ export 'src/api/engine_action.dart';
 export 'src/api/miniaudio_engine.dart';
 export 'src/loader/audio_byte_provider.dart';
 export 'src/loader/unified_audio_loader.dart';
+export 'src/loader/hls/hls_byte_provider.dart';
+export 'src/loader/hls/hls_playlist_parser.dart';
+export 'src/loader/hls/hls_segment_demuxer.dart';
+export 'src/loader/hls/hls_sniffer.dart';

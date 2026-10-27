@@ -161,6 +161,7 @@ words:
   - Estebanez
   - etmp
   - Expansor
+  - EXTM
   - fabs
   - fabsf
   - faststart
@@ -265,6 +266,7 @@ words:
   - libvorbis
   - libvorbisfile
   - lieff
+  - livestream
   - livestreams
   - llret
   - logcat
@@ -301,6 +303,7 @@ words:
   - microcódigo
   - microcontrollers
   - midfi
+  - Mikhaylov
   - miniaudio
   - minimp
   - miscapture
@@ -310,6 +313,7 @@ words:
   - monofónica
   - moov
   - morlat
+  - mpegurl
   - mrelaxed
   - msimd
   - MSVC
@@ -416,6 +420,8 @@ words:
   - rifx
   - robustify
   - Rohit
+  - safelisted
+  - Sandboxed
   - SCHED
   - Schyler
   - sdcardfs

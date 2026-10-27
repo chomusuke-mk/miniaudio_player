@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../loader/audio_byte_provider.dart';
+import '../loader/hls/hls_sniffer.dart';
 import '../platform/fs_helper.dart';
 import 'player_exception.dart';
 
@@ -40,6 +41,14 @@ sealed class AudioSource {
     Map<String, String>? headers,
     Duration jitterBuffer,
   }) = LiveStreamAudioSource;
+
+  /// Creates an audio source for an HTTP Live Streaming (HLS / M3U8) stream.
+  const factory AudioSource.hls(
+    Uri uri, {
+    Map<String, String>? headers,
+    Duration? jitterBuffer,
+    bool isLive,
+  }) = HlsAudioSource;
 
   /// Creates an audio source backed by a custom [AudioByteProvider].
   const factory AudioSource.custom(AudioByteProvider provider) =
@@ -185,11 +194,19 @@ sealed class AudioSource {
       );
     }
 
-    // http://, https://, blob: -> Level 4 (NetworkAudioSource / LiveStreamAudioSource)
+    // http://, https://, blob: -> Level 4 (NetworkAudioSource / LiveStreamAudioSource / HlsAudioSource)
     if (lower.startsWith('http://') ||
         lower.startsWith('https://') ||
         lower.startsWith('blob:')) {
       final parsed = uriOrPath is Uri ? uriOrPath : Uri.parse(str);
+      if (HlsSniffer.isHlsUrl(parsed)) {
+        return HlsAudioSource(
+          parsed,
+          headers: headers,
+          jitterBuffer: bufferAhead,
+          isLive: isLive,
+        );
+      }
       if (isLive) {
         return LiveStreamAudioSource(
           parsed,
@@ -351,6 +368,25 @@ class LiveStreamAudioSource extends NetworkAudioSource {
 
   @override
   String toString() => 'LiveStreamAudioSource($uri)';
+}
+
+/// An HTTP Live Streaming (HLS / M3U8) audio source (Live broadcast or VOD).
+class HlsAudioSource extends AudioSource {
+  @override
+  final Uri uri;
+  final Map<String, String>? headers;
+  final Duration? jitterBuffer;
+  final bool isLive;
+
+  const HlsAudioSource(
+    this.uri, {
+    this.headers,
+    this.jitterBuffer,
+    this.isLive = false,
+  });
+
+  @override
+  String toString() => 'HlsAudioSource($uri)';
 }
 
 /// An audio source backed by an opaque or capability-promoted URI (`content://`, `fd://`,

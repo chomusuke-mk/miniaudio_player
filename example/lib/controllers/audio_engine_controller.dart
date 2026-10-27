@@ -114,6 +114,7 @@ class AudioEngineController extends ChangeNotifier {
   CrossfadeConfig get crossfadeConfig => engine.state.crossfadeConfig;
   bool get isShuffle => engine.state.shuffle;
   bool get isLoop => engine.state.loopMode != LoopMode.off;
+  LoopMode get loopMode => engine.state.loopMode;
 
   Equalizer get currentEqualizer => engine.state.equalizer;
   String get selectedPreset => _selectedPreset;
@@ -365,6 +366,8 @@ class AudioEngineController extends ChangeNotifier {
   Future<void> toggleLoop() async {
     final nextMode = engine.state.loopMode == LoopMode.off
         ? LoopMode.all
+        : engine.state.loopMode == LoopMode.all
+        ? LoopMode.one
         : LoopMode.off;
     await engine.action.setLoopMode(nextMode);
     notifyListeners();

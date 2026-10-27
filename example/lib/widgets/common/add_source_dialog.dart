@@ -52,7 +52,7 @@ class _AddSourceDialogState extends State<AddSourceDialog> {
         side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
       ),
       title: const Text(
-        'Añadir Fuente de Audio',
+        'Add Audio Source',
         style: TextStyle(color: StudioColors.textPrimary, fontSize: 16),
       ),
       content: SingleChildScrollView(
@@ -61,23 +61,23 @@ class _AddSourceDialogState extends State<AddSourceDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'Soporta HTTP(S), icy:// (Live Streams), file://, asset:// y data: URI.',
+              'Supports HTTP(S), icy:// (Live Streams), file://, asset://, and data: URI.',
               style: TextStyle(color: StudioColors.textSecondary, fontSize: 11),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _urlController,
               decoration: const InputDecoration(
-                labelText: 'URI o URL de Audio',
-                hintText: 'https://... o icy://... o file://...',
+                labelText: 'Audio URI or URL',
+                hintText: 'https://... or icy://... or file://...',
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _titleController,
               decoration: const InputDecoration(
-                labelText: 'Título Opcional',
-                hintText: 'Mi Audio',
+                labelText: 'Optional Title',
+                hintText: 'My Audio',
               ),
             ),
           ],
@@ -86,7 +86,7 @@ class _AddSourceDialogState extends State<AddSourceDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           style: FilledButton.styleFrom(
@@ -94,7 +94,7 @@ class _AddSourceDialogState extends State<AddSourceDialog> {
             foregroundColor: Colors.black,
           ),
           onPressed: _submit,
-          child: const Text('Añadir y Reproducir'),
+          child: const Text('Add & Play'),
         ),
       ],
     );

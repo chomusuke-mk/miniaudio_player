@@ -89,7 +89,7 @@ class PlaybackEngineCard extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                activeTrack?.title ?? 'Sin pista seleccionada',
+                                activeTrack?.title ?? 'No track selected',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w700,
@@ -101,8 +101,8 @@ class PlaybackEngineCard extends StatelessWidget {
                               const SizedBox(height: 2),
                               Text(
                                 activeTrack != null
-                                    ? '${activeTrack.artist ?? "Desconocido"} • ${activeTrack.displayType}'
-                                    : 'Selecciona una pista en la cola',
+                                    ? '${activeTrack.artist ?? "Unknown"} • ${activeTrack.displayType}'
+                                    : 'Select a track from the queue',
                                 style: const TextStyle(
                                   fontSize: 9.5,
                                   color: StudioColors.textSecondary,
@@ -115,7 +115,7 @@ class PlaybackEngineCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         StudioBadge(
-                          label: activeTrack?.resourceBadge ?? 'VACÍO',
+                          label: activeTrack?.resourceBadge ?? 'EMPTY',
                           color: activeTrack?.iconColor ?? StudioColors.accentCyan,
                         ),
                       ],
@@ -261,7 +261,7 @@ class PlaybackEngineCard extends StatelessWidget {
                             icon: const Icon(Icons.skip_previous, size: 20),
                             color: StudioColors.textPrimary,
                             visualDensity: VisualDensity.compact,
-                            tooltip: 'Anterior',
+                            tooltip: 'Previous',
                             onPressed: controller.previousTrack,
                           ),
                           IconButton(
@@ -273,7 +273,7 @@ class PlaybackEngineCard extends StatelessWidget {
                             ),
                             color: StudioColors.accentCyan,
                             visualDensity: VisualDensity.compact,
-                            tooltip: isPlaying ? 'Pausar' : 'Reproducir',
+                            tooltip: isPlaying ? 'Pause' : 'Play',
                             onPressed: () {
                               if (isPlaying) {
                                 engine.action.pause();
@@ -286,14 +286,14 @@ class PlaybackEngineCard extends StatelessWidget {
                             icon: const Icon(Icons.skip_next, size: 20),
                             color: StudioColors.textPrimary,
                             visualDensity: VisualDensity.compact,
-                            tooltip: 'Siguiente',
+                            tooltip: 'Next',
                             onPressed: controller.nextTrack,
                           ),
                           IconButton(
                             icon: const Icon(Icons.stop, size: 20),
                             color: StudioColors.accentRose,
                             visualDensity: VisualDensity.compact,
-                            tooltip: 'Detener',
+                            tooltip: 'Stop',
                             onPressed: engine.action.stop,
                           ),
                           IconButton(
@@ -302,19 +302,21 @@ class PlaybackEngineCard extends StatelessWidget {
                                 ? StudioColors.accentCyan
                                 : StudioColors.textMuted,
                             visualDensity: VisualDensity.compact,
-                            tooltip: 'Aleatorio',
+                            tooltip: 'Shuffle',
                             onPressed: controller.toggleShuffle,
                           ),
                           IconButton(
                             icon: Icon(
-                              controller.isLoop ? Icons.repeat_one : Icons.repeat,
+                              controller.loopMode == LoopMode.one
+                                  ? Icons.repeat_one
+                                  : Icons.repeat,
                               size: 18,
                             ),
                             color: controller.isLoop
                                 ? StudioColors.accentCyan
                                 : StudioColors.textMuted,
                             visualDensity: VisualDensity.compact,
-                            tooltip: 'Repetir',
+                            tooltip: 'Repeat',
                             onPressed: controller.toggleLoop,
                           ),
                         ],
@@ -452,7 +454,7 @@ class PlaybackEngineCard extends StatelessWidget {
                     initialValue: controller.selectedDevice,
                     isExpanded: true,
                     decoration: const InputDecoration(
-                      labelText: 'Dispositivo de Salida',
+                      labelText: 'Output Device',
                       prefixIcon: Icon(Icons.headphones, size: 16),
                       contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     ),
@@ -517,7 +519,7 @@ class PlaybackEngineCard extends StatelessWidget {
                               const SizedBox(width: 6),
                               const Expanded(
                                 child: Text(
-                                  'Pausar al cambiar de salida',
+                                  'Pause on Device Change',
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w600,
@@ -531,8 +533,8 @@ class PlaybackEngineCard extends StatelessWidget {
                           const SizedBox(height: 2),
                           Text(
                             controller.pauseOnDeviceChange
-                                ? 'Pausa nativa inmediata (0ms leak) si el endpoint físico cambia'
-                                : 'Inactivo: audio conmuta al nuevo endpoint sin pausar',
+                                ? 'Immediate native pause (0ms leak) if physical endpoint changes'
+                                : 'Inactive: audio switches to new endpoint without pausing',
                             style: const TextStyle(
                               fontSize: 9.5,
                               color: StudioColors.textMuted,

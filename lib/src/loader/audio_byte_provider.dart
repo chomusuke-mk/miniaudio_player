@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -7,6 +8,8 @@ import '../api/miniaudio_player.dart'
 import '../api/player_exception.dart';
 import '../platform/fs_helper.dart';
 import '../platform/http_helper.dart';
+import 'hls/hls_byte_provider.dart';
+import 'hls/hls_sniffer.dart';
 
 /// Response returned when opening an [AudioByteProvider] stream at a specific offset.
 class AudioByteStreamResponse {
@@ -362,6 +365,7 @@ class NetworkByteProvider extends AudioByteProvider {
 
   void Function()? _activeAbort;
   int _connectionGeneration = 0;
+  HlsByteProvider? _hlsDelegate;
 
   NetworkByteProvider(
     Uri uri, {
@@ -473,6 +477,101 @@ class NetworkByteProvider extends AudioByteProvider {
       }
 
       int totalBytes = res.contentLength;
+      final String? contentType = res.headers['content-type'];
+      final bool isHlsHint =
+          HlsSniffer.isHlsMime(contentType) || HlsSniffer.isHlsUrl(_uri);
+
+      if (isHlsHint && offset == 0) {
+        final manifestBuilder = BytesBuilder(copy: false);
+        await for (final chunk in res.stream) {
+          manifestBuilder.add(chunk);
+        }
+        final manifestText = utf8.decode(
+          decompressIfGzip(manifestBuilder.takeBytes()),
+          allowMalformed: true,
+        );
+        final hlsProvider = HlsByteProvider(
+          _uri,
+          headers: headers,
+          onMetadataBytes: onIcyMetaBytes,
+          initialManifest: manifestText,
+          isLiveHint: _isLiveStream,
+        );
+        _hlsDelegate = hlsProvider;
+        return hlsProvider.open(offset: offset, length: length);
+      }
+
+      final controller = StreamController<Uint8List>();
+      final firstChunkCompleter = Completer<Uint8List?>();
+      final manifestDoneCompleter = Completer<void>();
+      bool checkedHls = false;
+      bool isDetectedHls = false;
+      final manifestBuilder = BytesBuilder(copy: false);
+
+      late final StreamSubscription<Uint8List> sub;
+      sub = res.stream.listen(
+        (chunk) {
+          if (!checkedHls) {
+            checkedHls = true;
+            if (offset == 0 && HlsSniffer.isHlsBytes(chunk)) {
+              isDetectedHls = true;
+              manifestBuilder.add(chunk);
+              if (!firstChunkCompleter.isCompleted) {
+                firstChunkCompleter.complete(chunk);
+              }
+              return;
+            }
+            if (!firstChunkCompleter.isCompleted) {
+              firstChunkCompleter.complete(chunk);
+            }
+          }
+          if (isDetectedHls) {
+            manifestBuilder.add(chunk);
+          } else {
+            controller.add(chunk);
+          }
+        },
+        onError: (err, st) {
+          if (!firstChunkCompleter.isCompleted) {
+            firstChunkCompleter.complete(null);
+          }
+          if (!manifestDoneCompleter.isCompleted) {
+            manifestDoneCompleter.completeError(err, st);
+          }
+          controller.addError(err, st);
+        },
+        onDone: () {
+          if (!firstChunkCompleter.isCompleted) {
+            firstChunkCompleter.complete(null);
+          }
+          if (!manifestDoneCompleter.isCompleted) {
+            manifestDoneCompleter.complete();
+          }
+          controller.close();
+        },
+      );
+
+      controller.onPause = () => sub.pause();
+      controller.onResume = () => sub.resume();
+
+      await firstChunkCompleter.future;
+      if (isDetectedHls) {
+        await manifestDoneCompleter.future.catchError((_) {});
+        final manifestText = utf8.decode(
+          decompressIfGzip(manifestBuilder.takeBytes()),
+          allowMalformed: true,
+        );
+        final hlsProvider = HlsByteProvider(
+          _uri,
+          headers: headers,
+          onMetadataBytes: onIcyMetaBytes,
+          initialManifest: manifestText,
+          isLiveHint: _isLiveStream,
+        );
+        _hlsDelegate = hlsProvider;
+        return hlsProvider.open(offset: offset, length: length);
+      }
+
       bool isSeekable = res.headers['accept-ranges']?.toLowerCase() == 'bytes' ||
           (totalBytes > 0 && !_isLiveStream);
 
@@ -505,8 +604,8 @@ class NetworkByteProvider extends AudioByteProvider {
       }
 
       final Stream<Uint8List> demuxedStream = icyMetaint > 0
-          ? res.stream.transform(_createIcyDemuxTransformer(icyMetaint))
-          : res.stream;
+          ? controller.stream.transform(_createIcyDemuxTransformer(icyMetaint))
+          : controller.stream;
 
       final meta = <String, String>{};
       for (final key in ['icy-name', 'icy-genre', 'icy-br']) {
@@ -624,13 +723,20 @@ class NetworkByteProvider extends AudioByteProvider {
   }
 
   @override
-  Future<void> abortActiveStream() async => close();
+  Future<void> abortActiveStream() async {
+    _connectionGeneration++;
+    _activeAbort?.call();
+    _activeAbort = null;
+    await _hlsDelegate?.abortActiveStream();
+  }
 
   @override
   Future<void> close() async {
     _connectionGeneration++;
     _activeAbort?.call();
     _activeAbort = null;
+    await _hlsDelegate?.close();
+    _hlsDelegate = null;
   }
 }
 

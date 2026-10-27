@@ -229,7 +229,7 @@ class _FloatingSliderDialogState extends State<FloatingSliderDialog> {
                 ),
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text(
-                  'APLICAR & CERRAR',
+                  'APPLY & CLOSE',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
                 ),
               ),

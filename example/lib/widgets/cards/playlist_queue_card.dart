@@ -30,12 +30,12 @@ class PlaylistQueueCard extends StatelessWidget {
             spacing: 6,
             children: [
               StudioBadge(
-                label: '${tracks.length} PISTAS',
+                label: '${tracks.length} TRACKS',
                 color: StudioColors.accentCyan,
               ),
               IconButton.filledTonal(
                 icon: const Icon(Icons.add, size: 18),
-                tooltip: 'Añadir URL, URI o archivo a la cola',
+                tooltip: 'Add URL, URI, or file to queue',
                 visualDensity: VisualDensity.compact,
                 style: IconButton.styleFrom(
                   backgroundColor: StudioColors.cardBorder,
@@ -71,7 +71,7 @@ class PlaylistQueueCard extends StatelessWidget {
                   runSpacing: 4,
                   children: [
                     const Text(
-                      'CURVA: ',
+                      'CURVE: ',
                       style: TextStyle(
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
@@ -146,7 +146,7 @@ class PlaylistQueueCard extends StatelessWidget {
                 child: tracks.isEmpty
                     ? const Center(
                         child: Text(
-                          'Cola vacía. Agrega pistas con el botón +',
+                          'Queue is empty. Add tracks with the + button',
                           style: TextStyle(color: StudioColors.textMuted, fontSize: 11),
                         ),
                       )
@@ -236,7 +236,7 @@ class PlaylistQueueCard extends StatelessWidget {
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   subtitle: Text(
-                                    track.artist ?? 'Pista de Audio',
+                                    track.artist ?? 'Audio Track',
                                     style: const TextStyle(
                                       fontSize: 9,
                                       color: StudioColors.textSecondary,

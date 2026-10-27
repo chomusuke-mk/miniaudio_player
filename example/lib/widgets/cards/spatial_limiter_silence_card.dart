@@ -108,13 +108,13 @@ class SpatialLimiterSilenceCard extends StatelessWidget {
             initialValue: controller.crossfeedMode,
             isExpanded: true,
             decoration: const InputDecoration(
-              labelText: 'Modo Crossfeed',
+              labelText: 'Crossfeed Mode',
               contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             ),
             items: const [
               DropdownMenuItem(
                 value: CrossfeedMode.off,
-                child: Text('Bypass (Desactivado)', style: TextStyle(fontSize: 9.5)),
+                child: Text('Bypass (Disabled)', style: TextStyle(fontSize: 9.5)),
               ),
               DropdownMenuItem(
                 value: CrossfeedMode.moffatBauer,
@@ -349,7 +349,7 @@ class SpatialLimiterSilenceCard extends StatelessWidget {
                         : controller.silenceMode,
                     isExpanded: true,
                     decoration: const InputDecoration(
-                      labelText: 'Modo de Silencio',
+                      labelText: 'Silence Mode',
                       contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                     ),
                     items: const [

@@ -180,7 +180,7 @@ abstract final class MockData {
     final synthBase64 = base64Encode(synthWav);
     addTrack(
       id: 'data:audio/wav;base64,...',
-      title: 'Tono 440Hz Sintetizado (data: URI)',
+      title: 'Synthesized 440Hz Tone (data: URI)',
       source: AudioSource.uri('data:audio/wav;base64,$synthBase64'),
       isGenerated: true,
       artist: 'In-Memory DSP',

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import '../equalizer.dart';
 import '../loader/audio_byte_provider.dart';
+import '../loader/hls/hls_byte_provider.dart';
 import '../loader/unified_audio_loader.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
@@ -197,6 +198,24 @@ class PlayerAction {
             ),
             gen: gen,
             bufferAhead: effectiveAhead ?? s.jitterBuffer,
+            bufferBehind: effectiveBehind ??
+                _player.bufferBehindLiveStreamDuration,
+          ),
+        );
+
+      case HlsAudioSource s:
+        return _openGuarded(
+          (gen) => _startUnifiedLoader(
+            HlsByteProvider(
+              s.uri,
+              headers: s.headers,
+              onMetadataBytes: setIcyMeta,
+              isLiveHint: s.isLive,
+            ),
+            gen: gen,
+            bufferAhead: effectiveAhead ??
+                s.jitterBuffer ??
+                _player.bufferLiveStreamDuration,
             bufferBehind: effectiveBehind ??
                 _player.bufferBehindLiveStreamDuration,
           ),

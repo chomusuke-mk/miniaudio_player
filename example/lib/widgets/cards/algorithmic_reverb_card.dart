@@ -79,7 +79,7 @@ class AlgorithmicReverbCard extends StatelessWidget {
               ),
               const SizedBox(height: 14),
 
-              // 5 Rotary Studio Knobs (Circunferencias deslizables):
+              // 5 Rotary Studio Knobs (Rotary Sliders):
               // Room Size, Damping, Stereo Width, Wet Level, Dry Level
               LayoutBuilder(
                 builder: (context, constraints) {

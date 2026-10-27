@@ -31,7 +31,7 @@ class AudioAnalyzerCard extends StatelessWidget {
               )
             : (analyzerController.isAnalyzing
                 ? const StudioBadge(
-                    label: 'ANALIZANDO...',
+                    label: 'ANALYZING...',
                     color: StudioColors.accentCyan,
                   )
                 : const StudioBadge(
@@ -44,7 +44,7 @@ class AudioAnalyzerCard extends StatelessWidget {
           title: 'UNIFIED AUDIO ANALYZER (BS.1770-4 / EBU R128)',
           subtitle: canAnalyze
               ? 'Single-Pass Non-Blocking Decoding • Integrated Loudness & Dynamic Range'
-              : 'Deshabilitado: ${track?.displayType ?? "Fuente"} no admite análisis offline single-pass',
+              : 'Disabled: ${track?.displayType ?? "Source"} does not support single-pass offline analysis',
           trailing: badge,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -67,7 +67,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Análisis offline y ReplayGain no disponibles para fuentes ${track?.displayType ?? "remotas/en vivo"}. La reproducción opera en bypass directo.',
+                          'Offline analysis and ReplayGain not available for ${track?.displayType ?? "remote/live"} sources. Playback operates in direct bypass.',
                           style: const TextStyle(
                             fontSize: 9.5,
                             color: StudioColors.textSecondary,
@@ -97,7 +97,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                             : 'N/A',
                         subtext: canAnalyze
                             ? 'Target: -14 LUFS (EBU R128)'
-                            : 'No disponible (${track?.resourceBadge ?? "Stream"})',
+                            : 'Not available (${track?.resourceBadge ?? "Stream"})',
                         color: canAnalyze
                             ? StudioColors.accentCyan
                             : StudioColors.textMuted,
@@ -111,7 +111,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                             : 'N/A',
                         subtext: canAnalyze
                             ? 'Safe Inter-Sample Headroom'
-                            : 'No disponible (${track?.resourceBadge ?? "Stream"})',
+                            : 'Not available (${track?.resourceBadge ?? "Stream"})',
                         color: canAnalyze
                             ? StudioColors.accentEmerald
                             : StudioColors.textMuted,
@@ -123,7 +123,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                             : 'N/A',
                         subtext: canAnalyze
                             ? 'Dynamic Master Range'
-                            : 'No disponible (${track?.resourceBadge ?? "Stream"})',
+                            : 'Not available (${track?.resourceBadge ?? "Stream"})',
                         color: canAnalyze
                             ? StudioColors.accentAmber
                             : StudioColors.textMuted,
@@ -137,9 +137,9 @@ class AudioAnalyzerCard extends StatelessWidget {
                             : 'N/A',
                         subtext: canAnalyze
                             ? (analyzerController.replayGainActive
-                                ? 'Compensación activa'
-                                : 'Modo bypass')
-                            : 'No disponible (${track?.resourceBadge ?? "Stream"})',
+                                ? 'Compensation active'
+                                : 'Bypass mode')
+                            : 'Not available (${track?.resourceBadge ?? "Stream"})',
                         color: canAnalyze
                             ? StudioColors.accentPurple
                             : StudioColors.textMuted,
@@ -182,12 +182,12 @@ class AudioAnalyzerCard extends StatelessWidget {
                     final isNarrow = constraints.maxWidth < 460;
 
                     final replayGainSubtitle = !canAnalyze
-                        ? 'Deshabilitado para streams en vivo / remotos'
+                        ? 'Disabled for live / remote streams'
                         : (result?.replayGain != null
                             ? (analyzerController.replayGainActive
-                                ? 'Compensación activa: ${result!.replayGain!.gainDb.toStringAsFixed(1)} dB'
-                                : 'Modo Bypass sin compensación')
-                            : 'Pendiente de análisis para esta pista');
+                                ? 'Active compensation: ${result!.replayGain!.gainDb.toStringAsFixed(1)} dB'
+                                : 'Bypass mode without compensation')
+                            : 'Analysis pending for this track');
 
                     final replayGainCard = _buildControlPanel(
                       icon: Icons.tune,
@@ -196,9 +196,9 @@ class AudioAnalyzerCard extends StatelessWidget {
                       isActive: canAnalyze && analyzerController.replayGainActive,
                       activeColor: StudioColors.accentPurple,
                       statusText: !canAnalyze
-                          ? 'DESHABILITADO'
+                          ? 'DISABLED'
                           : (analyzerController.replayGainActive
-                              ? 'ACTIVO (EBU R128)'
+                              ? 'ACTIVE (EBU R128)'
                               : 'BYPASSED'),
                       onToggle: canAnalyze
                           ? () {
@@ -214,16 +214,16 @@ class AudioAnalyzerCard extends StatelessWidget {
                       icon: Icons.shield,
                       title: 'ANTI-CLIPPING TRUE-PEAK GUARD',
                       subtitle: !canAnalyze
-                          ? 'Deshabilitado para streams en vivo / remotos'
+                          ? 'Disabled for live / remote streams'
                           : (analyzerController.preventClipping
-                              ? 'Ceiling -1.0 dBFS • DAC Seguro'
-                              : 'Desactivado (Riesgo clipping inter-sample)'),
+                              ? 'Ceiling -1.0 dBFS • Safe DAC'
+                              : 'Disabled (Risk of inter-sample clipping)'),
                       isActive: canAnalyze && analyzerController.preventClipping,
                       activeColor: StudioColors.accentEmerald,
                       statusText: !canAnalyze
-                          ? 'DESHABILITADO'
+                          ? 'DISABLED'
                           : (analyzerController.preventClipping
-                              ? 'PROTEGIDO'
+                              ? 'PROTECTED'
                               : 'OFF'),
                       onToggle: canAnalyze
                           ? () {

@@ -106,6 +106,8 @@ enum AudioFormat {
   mp2('mp2'),
   mp1('mp1'),
   oga('oga'),
+  hls('hls'),
+  m3u8('m3u8'),
   unknown('unknown');
 
   final String extension;

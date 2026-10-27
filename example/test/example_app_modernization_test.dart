@@ -232,7 +232,7 @@ void main() {
         await tester.pump();
 
         // Verify title exists
-        expect(find.text('Pausar al cambiar de salida'), findsOneWidget);
+        expect(find.text('Pause on Device Change'), findsOneWidget);
 
         // Find Switch within PlaybackEngineCard
         final switchFinder = find.descendant(

@@ -30,11 +30,12 @@ migrate_working_dir/
 /build/
 /coverage/
 /temp/
-/ARCHITECTURE.md
+/docs/
 /.agents/
-/PROBLEMS.md
 
 # Pub specific ignores
 /assets/
 /cspell.yaml
-/pictures/miniaudio_player.svg
+/pictures/
+
+!/pictures/screenshots/studio_console_hero.png

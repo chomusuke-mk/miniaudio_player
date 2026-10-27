@@ -441,11 +441,17 @@ classDiagram
         +resolveProvider() Future~AudioByteProvider~
     }
 
+    class HlsByteProvider {
+        +Uri uri
+        +open(offset, length)
+    }
+
     AudioByteProvider <|-- MemoryByteProvider
     AudioByteProvider <|-- FileByteProvider
     AudioByteProvider <|-- AssetByteProvider
     AudioByteProvider <|-- NetworkByteProvider
     NetworkByteProvider <|-- LiveStreamByteProvider
+    AudioByteProvider <|-- HlsByteProvider
     AudioByteProvider <|-- FdByteProvider
     AudioByteProvider <|-- ResolvingByteProvider
 ```
@@ -455,6 +461,7 @@ classDiagram
 - **`AssetByteProvider`**: Bridges Flutter asset bundles (`rootBundle`) directly into memory via `MiniaudioPlayerGlobalConfig.assetLoader`.
 - **`NetworkByteProvider`**: Progressive HTTP/HTTPS byte-range client. Issues chunked requests (`Range: bytes=start-end`), decodes ICY shoutcast metadata frames on the fly, and applies exponential backoff for transient HTTP errors (429, 502, 503, 504).
 - **`LiveStreamByteProvider`**: Subclass of `NetworkByteProvider` configured for unbounded streams. Marks stream length as unknown (`-1`) and activates sliding-window jitter buffering.
+- **`HlsByteProvider`**: Native HTTP Live Streaming (HLS / M3U8) pipeline. Parses Master and Media playlists, handles Live edge buffering and VOD seeking, extracts and dispatches ID3v2 metadata frames, strips container overhead, and streams clean elementary AAC (ADTS) / MP3 frames to `map_buffer_t` with reactive backpressure.
 - **`FdByteProvider`**: Directly streams an open OS file descriptor (`int fd`) using POSIX `pread()` / Windows random access, bypassing file copy overhead under Android Scoped Storage.
 
 ### 5.2 The 5-Level Capability Promotion Pipeline
@@ -1227,7 +1234,12 @@ miniaudio_player/
 │       │   └── native_types.dart     # FFI constants, enum mappings, and error codes
 │       ├── loader/                   # Ingestion and stream buffering
 │       │   ├── audio_byte_provider.dart # AudioByteProvider hierarchy & UriCapabilityResolver
-│       │   └── unified_audio_loader.dart # Unified progressive loader & backpressure FSM
+│       │   ├── unified_audio_loader.dart # Unified progressive loader & backpressure FSM
+│       │   └── hls/                  # HTTP Live Streaming (HLS / M3U8) pipeline
+│       │       ├── hls_byte_provider.dart # HLS playlist and segment streamer
+│       │       ├── hls_playlist_parser.dart # Master and media playlist parser
+│       │       ├── hls_segment_demuxer.dart # ADTS AAC / MP3 / TS segment demuxer
+│       │       └── hls_sniffer.dart     # Magic bytes (#EXTM3U) and MIME sniffer
 │       └── platform/                 # Polymorphic platform abstraction
 │           ├── fs_helper.dart        # Cross-platform filesystem helpers
 │           ├── http_helper.dart      # Cross-platform HTTP request abstraction

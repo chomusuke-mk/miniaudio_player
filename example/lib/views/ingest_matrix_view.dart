@@ -140,9 +140,9 @@ class IngestMatrixView extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               const Text(
-                '• Pinned Head: Nunca se sobreescribe; permite a decodificadores releer tablas de muestras.\n'
-                '• Pure Audio Ring: Modular indexado circular; descarta datos tras el cursor y absorbe fluctuaciones.\n'
-                '• Tail Buffer: Sonda final (probeTail) para archivos MP4 con átomos moov al final sin descargar todo el archivo.',
+                '• Pinned Head: Never overwritten; allows decoders to re-read sample tables.\n'
+                '• Pure Audio Ring: Modular circular indexing; discards data behind cursor and absorbs jitter.\n'
+                '• Tail Buffer: Final probe (probeTail) for MP4 files with trailing moov atoms without downloading the entire file.',
                 style: TextStyle(fontSize: 10, color: StudioColors.textSecondary, height: 1.5),
               ),
             ],

@@ -204,15 +204,16 @@ Both [`MiniaudioPlayer`](https://github.com/chomusuke-mk/miniaudio_player/blob/m
 
 ## 📦 Supported Audio Formats
 
-| Format                   | Extensions                               | Decoding Backend                |
-| :----------------------- | :--------------------------------------- | :------------------------------ |
-| **MPEG Audio**           | `.mp3`, `.mp2`, `.mp1`                   | Native miniaudio (`dr_mp3`)     |
-| **Waveform Audio**       | `.wav`, `.bwf`, `.rifx`, `.w64`, `.rf64` | Native miniaudio (`dr_wav`)     |
-| **FLAC**                 | `.flac`                                  | Native miniaudio (`dr_flac`)    |
-| **Ogg Vorbis**           | `.ogg`, `.oga`                           | Native miniaudio (`stb_vorbis`) |
-| **Opus**                 | `.opus`                                  | Native Opus decoder (`libopus`) |
-| **Apple Lossless / AAC** | `.m4a`, `.aac`                           | Native ALAC / Helix AAC         |
-| **Audio Interchange**    | `.aif`, `.aiff`, `.aifc`                 | Native miniaudio                |
+| Format                   | Extensions                               | Decoding Backend                                          |
+| :----------------------- | :--------------------------------------- | :-------------------------------------------------------- |
+| **MPEG Audio**           | `.mp3`, `.mp2`, `.mp1`                   | Native miniaudio (`dr_mp3`)                               |
+| **Waveform Audio**       | `.wav`, `.bwf`, `.rifx`, `.w64`, `.rf64` | Native miniaudio (`dr_wav`)                               |
+| **FLAC**                 | `.flac`                                  | Native miniaudio (`dr_flac`)                              |
+| **Ogg Vorbis**           | `.ogg`, `.oga`                           | Native miniaudio (`stb_vorbis`)                           |
+| **Opus**                 | `.opus`                                  | Native Opus decoder (`libopus`)                           |
+| **Apple Lossless / AAC** | `.m4a`, `.aac`                           | Native ALAC / Helix AAC                                   |
+| **HTTP Live Streaming**  | `.m3u8`, `.m3u`                          | Native HLS pipeline (`HlsByteProvider` + Helix AAC / MP3) |
+| **Audio Interchange**    | `.aif`, `.aiff`, `.aifc`                 | Native miniaudio                                          |
 
 ---
 
@@ -283,12 +284,19 @@ await player.action.open(
 );
 await player.action.play();
 
-// 4. In-Memory Playback directly from RAM (Uint8List)
+// 4. HTTP Live Streaming (HLS / M3U8 Livestreams & VOD)
+// Supports Master/Media playlists, ID3 metadata extraction, and automatic in-band #EXTM3U sniffing!
+await player.action.open(
+  AudioSource.uri('https://mdstrm.com/audio/5fab0687bcd6c2389ee9480c/live.m3u8'),
+);
+await player.action.play();
+
+// 5. In-Memory Playback directly from RAM (Uint8List)
 final Uint8List rawBytes = getDecryptedAudioBytes();
 await player.action.open(AudioSource.memory(rawBytes));
 await player.action.play();
 
-// 5. Direct Flutter Asset Bundle Playback (No temporary disk file created!)
+// 6. Direct Flutter Asset Bundle Playback (No temporary disk file created!)
 await player.action.open(AudioSource.asset('assets/music/theme.wav'));
 await player.action.play();
 

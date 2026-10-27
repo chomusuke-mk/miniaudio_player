@@ -53,7 +53,7 @@ class AudioTrack {
     if (isGenerated) return 'data: URI';
     if (source is ResolvingAudioSource) return 'content / fd';
     if (source is AssetAudioSource) return 'asset://';
-    if (source is MemoryAudioSource) return 'Memoria RAM';
+    if (source is MemoryAudioSource) return 'RAM Memory';
     if (source is LiveStreamAudioSource) return 'icy:// (Live)';
     if (source is NetworkAudioSource) return 'https://';
     if (source is FileAudioSource) return 'file://';
@@ -116,7 +116,7 @@ abstract final class TrackFormatInfo {
       return 'ICY STREAM LIVE';
     }
     if (track.isGenerated) {
-      return 'PCM SINTETIZADO';
+      return 'SYNTHESIZED PCM';
     }
     return 'HI-RES STEREO';
   }
