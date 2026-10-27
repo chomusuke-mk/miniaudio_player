@@ -18,6 +18,11 @@
     - [3.2 Native Platform Architecture (`NativePlayerBackend` \& Dart Native Assets)](#32-native-platform-architecture-nativeplayerbackend--dart-native-assets)
     - [3.3 Web Platform Architecture (`WebPlayerBackend`, Web Workers \& AudioWorklet)](#33-web-platform-architecture-webplayerbackend-web-workers--audioworklet)
   - [4. The Tripartite Facade Architecture (`.action`, `.state`, `.stream`)](#4-the-tripartite-facade-architecture-action-state-stream)
+    - [4.1 Strict Canonical Interface \& Zero-Alias Design Axiom](#41-strict-canonical-interface--zero-alias-design-axiom)
+    - [4.2 Single Canonical `open` Method \& Payload Polymorphism](#42-single-canonical-open-method--payload-polymorphism)
+    - [4.3 Engine Facade Scope \& Clear Separation of Concerns](#43-engine-facade-scope--clear-separation-of-concerns)
+    - [4.4 Unified ReplayGain Dynamic Signal Calibration](#44-unified-replaygain-dynamic-signal-calibration)
+    - [4.5 Tripartite State and Stream Parity](#45-tripartite-state-and-stream-parity)
   - [5. Unified Ingest, AudioByteProviders \& Capability Promotion](#5-unified-ingest-audiobyteproviders--capability-promotion)
     - [5.1 The `AudioByteProvider` Hierarchy](#51-the-audiobyteprovider-hierarchy)
     - [5.2 The 5-Level Capability Promotion Pipeline](#52-the-5-level-capability-promotion-pipeline)
@@ -36,7 +41,7 @@
     - [7.5 Native Data Source State Machine (`map_source_state_t`)](#75-native-data-source-state-machine-map_source_state_t)
     - [7.6 Native Silence Detection State Machine (`map_silence_state_t`)](#76-native-silence-detection-state-machine-map_silence_state_t)
   - [8. High-Level Dual-Deck Queue \& Crossfade Engine (`MiniaudioEngine<T>`)](#8-high-level-dual-deck-queue--crossfade-engine-miniaudioenginet)
-    - [8.1 Dual-Deck Orchestration \& Single Ownership Invariant](#81-dual-deck-orchestration--single-ownership-invariant)
+    - [8.1 Dual-Deck Orchestration, Delegation \& Single Ownership Invariant](#81-dual-deck-orchestration-delegation--single-ownership-invariant)
     - [8.2 Queue Lifecycle, Fisher-Yates Shuffle \& Exact Un-shuffle](#82-queue-lifecycle-fisher-yates-shuffle--exact-un-shuffle)
     - [8.3 Mathematical Crossfade Curves: Equal-Power vs. Linear](#83-mathematical-crossfade-curves-equal-power-vs-linear)
     - [8.4 Infinite Mix Proactive Prefetching Pipeline](#84-infinite-mix-proactive-prefetching-pipeline)
@@ -67,6 +72,11 @@
     - [13.3 Windows: WASAPI Exclusive \& MMCSS 1 ms Scheduling](#133-windows-wasapi-exclusive--mmcss-1-ms-scheduling)
     - [13.4 Apple macOS / iOS: CoreAudio AudioUnit Graph](#134-apple-macos--ios-coreaudio-audiounit-graph)
     - [13.5 Universal Hardware Denormal Purging (FTZ \& DAZ)](#135-universal-hardware-denormal-purging-ftz--daz)
+    - [13.6 Dynamic Hardware Routing, Endpoint Resolution \& Zero-Leak Transitions (`pauseOnDeviceChange`)](#136-dynamic-hardware-routing-endpoint-resolution--zero-leak-transitions-pauseondevicechange)
+      - [13.6.1 Physical Endpoint Resolution (`AudioDevice.auto` vs. `effectiveId`)](#1361-physical-endpoint-resolution-audiodeviceauto-vs-effectiveid)
+      - [13.6.2 Zero-Leak Native C Pause Delegation (0 ms Acoustic Leakage)](#1362-zero-leak-native-c-pause-delegation-0-ms-acoustic-leakage)
+      - [13.6.3 Fallback \& Error Resilience Matrix](#1363-fallback--error-resilience-matrix)
+      - [13.6.4 Dual-Deck Engine Delegation](#1364-dual-deck-engine-delegation)
   - [14. Verification, Quality Assurance \& Acoustic Certification](#14-verification-quality-assurance--acoustic-certification)
   - [15. Repository Layout \& Code Navigation Map](#15-repository-layout--code-navigation-map)
 
@@ -224,6 +234,9 @@ abstract class PlayerBackend {
   void setSilenceSkip(SilenceSkipConfig config);
   void setVisualizerEnabled(bool enabled);
   Future<void> setDevice(String deviceId);
+  AudioDevice getCurrentDevice();
+  void setPauseOnDeviceChange(bool enabled);
+  bool getPauseOnDeviceChange();
   Future<void> dispose();
 }
 ```
@@ -309,11 +322,58 @@ Both the single-track [`MiniaudioPlayer`](../lib/src/api/miniaudio_player.dart) 
  └───────────────┘               └───────────────┘               └───────────────┘
 ```
 
-| Facade Domain | Component Type                                                                                            | Execution Timing               | Primary Responsibilities                                                                                                                                                                                   |
-| :------------ | :-------------------------------------------------------------------------------------------------------- | :----------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`.action`** | [`PlayerAction`](../lib/src/api/player_action.dart) / [`EngineAction`](../lib/src/api/engine_action.dart) | Asynchronous (`Future<T>`)     | Transports commands (`open`, `play`, `pause`, `seek`, `stop`), DSP modifiers (`setEqualizer`, `setReverb`, `setVolume`), and queue transitions (`next`, `previous`, `shuffle`). Enforces the Opening Gate. |
-| **`.state`**  | [`PlayerState`](../lib/src/api/player_state.dart) / [`EngineState`](../lib/src/api/engine_state.dart)     | Synchronous ($\mathcal{O}(1)$) | Immediate, zero-cost access to playback metrics: `position`, `duration`, `playbackState`, `volume`, `rate`, `pitch`, `equalizer`, `reverb`, `bufferedRange`, `visualizer`, and `currentItem`.              |
-| **`.stream`** | [`PlayerStream`](../lib/src/api/player_stream.dart) / [`EngineStream`](../lib/src/api/engine_stream.dart) | Reactive (`Stream<T>`)         | Fine-grained broadcast streams for UI widgets (`StreamBuilder`). Delivers granular updates only when specific properties change.                                                                           |
+| Facade Domain | Component Type                                                                                            | Execution Timing               | Primary Responsibilities                                                                                                                                                                                                            |
+| :------------ | :-------------------------------------------------------------------------------------------------------- | :----------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`.action`** | [`PlayerAction`](../lib/src/api/player_action.dart) / [`EngineAction`](../lib/src/api/engine_action.dart) | Asynchronous (`Future<T>`)     | Transports commands (`open`, `play`, `pause`, `seek`, `stop`), DSP modifiers (`setEqualizer`, `setReverb`, `setVolume`), and queue transitions (`next`, `previous`, `skipToIndex`, `shuffle`). Enforces the Opening Gate.           |
+| **`.state`**  | [`PlayerState`](../lib/src/api/player_state.dart) / [`EngineState`](../lib/src/api/engine_state.dart)     | Synchronous ($\mathcal{O}(1)$) | Immediate, zero-cost access to playback metrics: `position`, `duration`, `playbackState`, `volume`, `rate`, `pitch`, `equalizer`, `reverb`, `bufferedRange`, `visualizer`, `audioDevice`, `pauseOnDeviceChange`, and `currentItem`. |
+| **`.stream`** | [`PlayerStream`](../lib/src/api/player_stream.dart) / [`EngineStream`](../lib/src/api/engine_stream.dart) | Reactive (`Stream<T>`)         | Fine-grained broadcast streams for UI widgets (`StreamBuilder`). Delivers granular updates only when specific properties change.                                                                                                    |
+
+### 4.1 Strict Canonical Interface & Zero-Alias Design Axiom
+
+To guarantee API clarity, eliminate ambiguity, and maintain architectural discipline, `miniaudio_player` enforces a **Zero-Alias Axiom**:
+
+- **Elimination of Pure Aliases**: Methods performing duplicate operations under alternate names have been systematically removed. Transport actions provide strictly canonical methods: `play()`, `pause()`, `stop()`, and `seek()`. Legacy or ambiguous aliases—such as `start()`, `resume()`, `changePlaybackSpeed()`, or redundant getters like `currentPosition`—are entirely eliminated.
+- **Strict Method Parity**: Every mutable capability exposed in `.action` reflects its immediate, non-blocking value in `.state` and emits telemetry changes across its dedicated reactive broadcast stream in `.stream`.
+
+### 4.2 Single Canonical `open` Method & Payload Polymorphism
+
+Instead of proliferating separate source-specific loaders (`openFile`, `openUrl`, `openAsset`, `openMemory`, `openFd`), both facades expose a single, canonical, polymorphic `open()` method:
+
+1. **`PlayerAction.open(source, {Duration? bufferAhead, Duration? bufferBehind})`**:
+   Accepts either a strongly typed [`AudioSource`](../lib/src/api/audio_source.dart) instance (`AudioSource.file`, `AudioSource.network`, `AudioSource.asset`, `AudioSource.memory`, `AudioSource.fd`, `AudioSource.uri`) or a dynamic raw target (`String` path/URL, `Uri`, `Uint8List`, or filesystem entity) which is automatically promoted via [`AudioSource.uri`](../lib/src/api/audio_source.dart) and resolved through the 5-level promotion pipeline.
+2. **`EngineAction.open(items, {int? startIndex, bool shuffle = false})`**:
+   Accepts a list of typed [`EngineItem<T>`](../lib/src/api/engine_item.dart) instances encapsulating audio sources with optional domain payloads `T`, individual track ReplayGain metadata, and custom headers.
+
+### 4.3 Engine Facade Scope & Clear Separation of Concerns
+
+[`EngineAction`](../lib/src/api/engine_action.dart) adheres strictly to high-level multi-track orchestration (Option A Architecture):
+
+- **Orchestration Surface**: Focuses exclusively on queue navigation (`play`, `pause`, `stop`, `seek`, `next`, `previous`, `skipToIndex`, `shuffle`, `setLoopMode`), hardware routing (`setDevice`, `setBufferSize`, `setPauseOnDeviceChange`), and global DSP effects applied uniformly across the master mix (`setEqualizer`, `setReverb`, `setCrossfade`, `setInfiniteMix`, `setReplayGain`).
+- **Deck Isolation**: Prevents deck-level implementation details (such as single-deck silence skipping, per-deck pitch manipulation, or individual deck streamer hooks) from leaking into the engine action facade. The dual underlying deck players remain encapsulated internal workers managed exclusively by the engine.
+
+### 4.4 Unified ReplayGain Dynamic Signal Calibration
+
+The ReplayGain API provides a clean, unified interface for loudness normalization across the engine:
+
+- **`setReplayGain({required double gainDb, double? peak, bool preventClipping = true, bool force = false})`**:
+  - When `force: true`, enforces `gainDb` uniformly across all queue items, overriding individual track metadata (equivalent to `setForcedReplayGain(gainDb)`).
+  - When `force: false`, sets the default fallback gain for tracks lacking embedded ReplayGain tags (equivalent to `setDefaultReplayGain(gainDb)`).
+- **`clearReplayGain()`**: Clears forced overrides and restores unity gain ($0.0\text{ dB}$).
+- **`setPreamp(double preampDb)`**: Adjusts manual pre-amplification ($\pm 12\text{ dB}$) independently of track metadata.
+
+### 4.5 Tripartite State and Stream Parity
+
+Every state property in `PlayerState` and `EngineState` has a directly corresponding reactive broadcast `Stream` in `PlayerStream` and `EngineStream`. This 1:1 symmetry ensures that Flutter UI components can either read instantaneous values synchronously without `async`/`await` overhead or subscribe to fine-grained streams for targeted widget rebuilding:
+
+| Telemetry Property         | State Snapshot (`.state`) | Reactive Stream (`.stream`) | Trigger & Update Mechanism                                        |
+| :------------------------- | :------------------------ | :-------------------------- | :---------------------------------------------------------------- |
+| **Playback State**         | `playbackState`           | `playbackState`             | Dispatched immediately upon transport state transition            |
+| **Position / Time**        | `position`                | `position`                  | Throttled ~30 fps telemetry from audio thread                     |
+| **Duration**               | `duration`                | `duration`                  | Updated upon container header/tail sniffing or metadata ingest    |
+| **Audio Device**           | `audioDevice`             | `audioDevice`               | Dispatched upon hardware enumeration, routing change, or fallback |
+| **Pause On Device Change** | `pauseOnDeviceChange`     | `pauseOnDeviceChange`       | Updated synchronously upon configuration change                   |
+| **Buffering Metrics**      | `bufferedRange`           | `bufferedRange`             | Emitted when sliding buffer window advances                       |
+| **10-Band Visualizer**     | `visualizer`              | `visualizer`                | Dispatched at ~30 fps via atomic sequence lock                    |
 
 ---
 
@@ -619,7 +679,7 @@ stateDiagram-v2
 
 [`MiniaudioEngine<T>`](../lib/src/api/miniaudio_engine.dart) provides dual-deck queue management, seamless crossfading, ReplayGain normalization, and Infinite Mix streaming.
 
-### 8.1 Dual-Deck Orchestration & Single Ownership Invariant
+### 8.1 Dual-Deck Orchestration, Delegation & Single Ownership Invariant
 
 The engine wraps two distinct `MiniaudioPlayer` instances (`_playerA` and `_playerB`), alternating their roles between **Active Deck** (currently outputting to the master mix) and **Standby Deck** (pre-buffering incoming tracks):
 
@@ -636,6 +696,7 @@ The engine wraps two distinct `MiniaudioPlayer` instances (`_playerA` and `_play
 ```
 
 - **Single Ownership Invariant**: External application code never interacts directly with underlying player instances. Deck lifecycle transitions (`open`, `play`, `pause`, `stop`, `seek`, volume fading) are driven exclusively through the engine's serialized FIFO command queue.
+- **Hardware Configuration Delegation**: Hardware-level settings—such as audio output device routing (`setDevice`), hardware buffer sizes (`setBufferSize`), and native device change pause policy (`setPauseOnDeviceChange`)—are set at the engine level and automatically delegated down to both child player instances (`_playerA` and `_playerB`). When a crossfade or track transition swaps active and standby decks, both decks maintain identical hardware routing policies and zero-leak protections.
 - **Clean Standby Invariant**: Before reusing the standby deck, any in-flight transitions are deterministically settled, and the deck is stopped and reset to `0.0` volume.
 
 ### 8.2 Queue Lifecycle, Fisher-Yates Shuffle & Exact Un-shuffle
@@ -1051,6 +1112,58 @@ Denormal floating-point numbers can cause significant CPU performance degradatio
   ```
 
 - **ARM64 / ARMv7**: Enables FTZ by setting the FZ bit (bit 24) in the Floating-Point Status and Control Register (FPCR).
+
+### 13.6 Dynamic Hardware Routing, Endpoint Resolution & Zero-Leak Transitions (`pauseOnDeviceChange`)
+
+Mobile and desktop audio workflows require deterministic handling when output devices are plugged, unplugged, disconnected, or manually selected. In traditional audio plugins, disconnecting headphones causes audio to briefly blast through the device's loudspeakers before the application's UI or Dart isolate can receive an event, parse it, and asynchronously dispatch a pause command.
+
+`miniaudio_player` eliminates this problem through native C-level pre-handoff interception:
+
+#### 13.6.1 Physical Endpoint Resolution (`AudioDevice.auto` vs. `effectiveId`)
+
+Operating systems expose default audio output devices under virtual or pseudo-device identifiers (e.g., `NULL` or `'default'` in miniaudio/ALSA, `kAudioObjectUnknown` in CoreAudio). To prevent state ambiguity:
+
+- **Canonical Auto Representation**: The automatic system default is uniformly represented by [`AudioDevice.auto`](../lib/src/api/audio_device.dart) (`id = 'auto'`, `isAuto = true`).
+- **Resolved Hardware Endpoint (`effectiveId`)**: Every device instance—especially `AudioDevice.auto`—stores an `effectiveId` string. When miniaudio initializes or re-routes an audio device, the native coordinator queries the underlying hardware driver (PulseAudio, AAudio, CoreAudio, WASAPI) and extracts the exact physical endpoint identifier.
+- **Physical Endpoint Equivalence (`isSameEndpoint`)**:
+
+  ```dart
+  bool isSameEndpoint(AudioDevice other) {
+    final myEff = effectiveId.isNotEmpty ? effectiveId : id;
+    final otherEff = other.effectiveId.isNotEmpty ? other.effectiveId : other.id;
+    if (myEff.isNotEmpty && otherEff.isNotEmpty) {
+      return myEff == otherEff;
+    }
+    return this == other;
+  }
+  ```
+
+  This ensures the engine compares actual physical hardware endpoints rather than virtual alias strings.
+
+#### 13.6.2 Zero-Leak Native C Pause Delegation (0 ms Acoustic Leakage)
+
+When `pauseOnDeviceChange` is enabled (via constructor parameter or `setPauseOnDeviceChange(true)`), the pause operation is executed directly inside the native C core ([`src/miniaudio_player.c`](../src/miniaudio_player.c) / [`src/map_device.c`](../src/map_device.c)):
+
+- **Pre-Handoff Interception**: When a hardware notification arrives (`ma_device_notification_type_stopped` or OS route change), the engine checks `ma_atomic_load_32(&player->pause_on_device_change)`.
+- **Atomic State Halting**: If the player is actively playing and the route transition is involuntary (such as unplugging headphones or disconnecting a Bluetooth sink), the engine halts playback **before** the new hardware audio stream initializes.
+- **0 ms Leakage Guarantee**: Because the pause occurs natively in the C rendering coordinator before PCM frames are scheduled to the new hardware DAC, zero milliseconds of audio leak to unintended outputs (e.g. built-in speakers). The Dart event loop is subsequently notified via `map_event_dispatcher` to update `.state.playbackState` and `.stream.playbackState`.
+
+#### 13.6.3 Fallback & Error Resilience Matrix
+
+The hardware router handles device disconnections and manual routing failures with deterministic fallback logic:
+
+| Scenario / Trigger                                        |    `pauseOnDeviceChange`    | Active Endpoint ($E_{\text{active}}$) | Target Endpoint ($E_{\text{target}}$)                  | Outcome & Playback State                    | Rationale                                                                              |
+| :-------------------------------------------------------- | :-------------------------: | :------------------------------------ | :----------------------------------------------------- | :------------------------------------------ | :------------------------------------------------------------------------------------- |
+| **Involuntary OS Disconnect** (e.g. Headphones unplugged) |           `true`            | Headphone Jack / BT                   | System Default (Loudspeaker)                           | **Paused immediately** ($0\text{ ms}$ leak) | Protects user privacy by preventing speaker blare.                                     |
+| **Involuntary OS Disconnect** (e.g. Headphones unplugged) |           `false`           | Headphone Jack / BT                   | System Default (Loudspeaker)                           | **Continues playing** on new endpoint       | Standard uninterrupted playback mode.                                                  |
+| **Successful Manual Switch** (`setDevice`)                | Ignored (`true` or `false`) | Device A                              | Device B                                               | **Continues playing** on Device B           | User explicitly chose the new destination.                                             |
+| **Failed Manual Switch (Fallback to Same Endpoint)**      |      `true` or `false`      | Device A                              | Device B (Failed) $\rightarrow$ Falls back to Device A | **Continues playing** on Device A           | The resolved endpoint did not physically change; uninterrupted continuity preserved.   |
+| **Failed Manual Switch (Fallback to Different Endpoint)** |           `true`            | Device A                              | Device B (Failed) $\rightarrow$ Falls back to Device C | **Paused immediately**                      | Intentional switch failed and landing on an unexpected endpoint triggers safety pause. |
+| **Failed Manual Switch (Fallback to Different Endpoint)** |           `false`           | Device A                              | Device B (Failed) $\rightarrow$ Falls back to Device C | **Continues playing** on fallback Device C  | Best-effort playback continuation when safety pause is disabled.                       |
+
+#### 13.6.4 Dual-Deck Engine Delegation
+
+In [`MiniaudioEngine<T>`](../lib/src/api/miniaudio_engine.dart), `pauseOnDeviceChange` is maintained as an engine-level configuration. When set via the engine constructor or `engine.action.setPauseOnDeviceChange(enabled)`, the state is atomically propagated to both internal player decks (`_playerA` and `_playerB`). During automated crossfades or track pre-buffering, both decks maintain identical hardware transition policies, ensuring zero leakage regardless of which deck currently owns the active audio stream.
 
 ---
 

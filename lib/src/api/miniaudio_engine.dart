@@ -162,6 +162,8 @@ class MiniaudioEngine<T> {
       StreamController<Equalizer>.broadcast();
   final StreamController<AudioDevice> _audioDeviceController =
       StreamController<AudioDevice>.broadcast();
+  final StreamController<bool> _pauseOnDeviceChangeController =
+      StreamController<bool>.broadcast();
   final StreamController<bool> _skipSilenceController =
       StreamController<bool>.broadcast();
   final StreamController<SilenceSkipConfig> _silenceConfigController =
@@ -224,6 +226,7 @@ class MiniaudioEngine<T> {
       StreamController<Uint8List?>.broadcast();
 
   // Distinct emission caches to prevent duplicate stream events
+  bool _pauseOnDeviceChange = false;
   List<EngineItem<T>>? _lastEmittedQueue;
   int _lastEmittedIndex = -1;
   EngineItem<T>? _lastEmittedItem;
@@ -261,6 +264,7 @@ class MiniaudioEngine<T> {
   MiniaudioEngine({
     int? bufferSize,
     AudioDevice? defaultAudioDevice,
+    bool pauseOnDeviceChange = false,
     CrossfadeConfig? crossfadeConfig,
     InfiniteMixProvider<T>? infiniteMixProvider,
     Duration crossfadeTickerInterval = const Duration(milliseconds: 25),
@@ -272,16 +276,19 @@ class MiniaudioEngine<T> {
             MiniaudioPlayer(
               bufferSize: bufferSize,
               defaultAudioDevice: defaultAudioDevice,
+              pauseOnDeviceChange: pauseOnDeviceChange,
             ),
         _playerB = playerB ??
             MiniaudioPlayer(
               bufferSize: bufferSize,
               defaultAudioDevice: defaultAudioDevice,
+              pauseOnDeviceChange: pauseOnDeviceChange,
             ),
         _bufferSize =
             bufferSize ?? MiniaudioPlayer.globalConfig.defaultBufferSize,
         _audioDevice = defaultAudioDevice ??
             MiniaudioPlayer.globalConfig.defaultAudioDevice,
+        _pauseOnDeviceChange = pauseOnDeviceChange,
         _crossfadeConfig = crossfadeConfig ?? CrossfadeConfig(),
         _queueManager = InternalQueueManager<T>(
           infiniteMixProvider: infiniteMixProvider,
@@ -290,6 +297,12 @@ class MiniaudioEngine<T> {
         _crossfade = InternalCrossfadeController(
           tickerInterval: crossfadeTickerInterval,
         ) {
+    if (playerA != null && pauseOnDeviceChange) {
+      playerA.action.setPauseOnDeviceChange(pauseOnDeviceChange);
+    }
+    if (playerB != null && pauseOnDeviceChange) {
+      playerB.action.setPauseOnDeviceChange(pauseOnDeviceChange);
+    }
     _activePlayer = _playerA;
     _standbyPlayer = _playerB;
 
@@ -326,6 +339,7 @@ class MiniaudioEngine<T> {
       audioBitrateController: _audioBitrateController,
       equalizerController: _equalizerController,
       audioDeviceController: _audioDeviceController,
+      pauseOnDeviceChangeController: _pauseOnDeviceChangeController,
       skipSilenceController: _skipSilenceController,
       silenceConfigController: _silenceConfigController,
       silenceSavedDurationController: _silenceSavedDurationController,
@@ -381,6 +395,7 @@ class MiniaudioEngine<T> {
       getChannels: () => _activePlayer.channels,
       getEqualizer: () => _equalizer,
       getAudioDevice: () => _activePlayer.state.audioDevice,
+      getPauseOnDeviceChange: () => _pauseOnDeviceChange,
       getSkipSilence: () => _silenceConfig.mode != SilenceSkipMode.disabled,
       getSilenceSkipMode: () => _silenceConfig.mode,
       getSilenceConfig: () => _silenceConfig,
@@ -451,6 +466,16 @@ class MiniaudioEngine<T> {
   void probeTailInternal(Uint8List data, int tailOffset) {
     if (isDisposed) return;
     _activePlayer.action.probeTail(data, tailOffset);
+  }
+
+  void setPauseOnDeviceChangeInternal(bool enabled) {
+    if (_pauseOnDeviceChange == enabled) return;
+    _pauseOnDeviceChange = enabled;
+    if (!_playerA.isDisposed) _playerA.action.setPauseOnDeviceChange(enabled);
+    if (!_playerB.isDisposed) _playerB.action.setPauseOnDeviceChange(enabled);
+    if (!_pauseOnDeviceChangeController.isClosed) {
+      _pauseOnDeviceChangeController.add(enabled);
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -2319,6 +2344,7 @@ class MiniaudioEngine<T> {
     await _audioBitrateController.close();
     await _equalizerController.close();
     await _audioDeviceController.close();
+    await _pauseOnDeviceChangeController.close();
     await _skipSilenceController.close();
     await _silenceConfigController.close();
     await _silenceSavedDurationController.close();

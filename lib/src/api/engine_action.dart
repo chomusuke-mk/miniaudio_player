@@ -234,6 +234,10 @@ class EngineAction<T> {
   Future<void> setDevice(AudioDevice device) =>
       _engine.setDeviceInternal(device);
 
+  /// Sets whether playback should automatically pause when the active audio output endpoint changes across both decks.
+  void setPauseOnDeviceChange(bool enabled) =>
+      _engine.setPauseOnDeviceChangeInternal(enabled);
+
   /// Enables or disables silence skipping across both decks.
   Future<void> setSkipSilence(
     bool enabled, {

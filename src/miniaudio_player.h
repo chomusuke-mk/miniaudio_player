@@ -107,10 +107,11 @@ extern "C"
 
     typedef struct
     {
-        char id[516];       /**< Unique device ID encoded as hex string, or empty for default */
-        char name[256];     /**< Human-readable device name */
-        int32_t is_default; /**< 1 if system default playback device, 0 otherwise */
-        int32_t is_auto;    /**< 1 if auto (system-managed) routing, 0 for pinned hardware device */
+        char id[516];           /**< Selector ID encoded as hex string, or "auto" for default */
+        char effective_id[516]; /**< Physical OS hardware endpoint ID currently active */
+        char name[256];         /**< Human-readable device name */
+        int32_t is_default;     /**< 1 if system default playback device, 0 otherwise */
+        int32_t is_auto;        /**< 1 if auto (system-managed) routing, 0 for pinned hardware device */
     } miniaudio_device_info_t;
 
     typedef struct
@@ -540,6 +541,13 @@ extern "C"
     MAP_API int32_t miniaudio_player_get_current_device(
         const miniaudio_player_t *player,
         miniaudio_device_info_t *out_device);
+
+    MAP_API int32_t miniaudio_player_set_pause_on_device_change(
+        miniaudio_player_t *player,
+        int32_t enabled);
+
+    MAP_API int32_t miniaudio_player_get_pause_on_device_change(
+        const miniaudio_player_t *player);
 
     typedef void (*miniaudio_player_device_notification_cb)(void *user_data);
 

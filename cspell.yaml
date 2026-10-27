@@ -218,6 +218,7 @@ words:
   - Hsieh's
   - huffman
   - icdf
+  - icecast
   - Icecast
   - icys
   - icyx
@@ -299,6 +300,7 @@ words:
   - microarquitectura
   - microcódigo
   - microcontrollers
+  - midfi
   - miniaudio
   - minimp
   - miscapture
@@ -377,6 +379,7 @@ words:
   - QTHETA
   - quadrophonic
   - quantisation
+  - radiofrance
   - Raphson
   - Ravier
   - recálculo
@@ -417,6 +420,7 @@ words:
   - Schyler
   - sdcardfs
   - seekability
+  - Seekable
   - seekbar
   - seekbars
   - seeked
@@ -449,6 +453,7 @@ words:
   - SROUND
   - stbv
   - STDLIB
+  - streaminfo
   - STREAMINFO
   - Subárbol
   - subgraves

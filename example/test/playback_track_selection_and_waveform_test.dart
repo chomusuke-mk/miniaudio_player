@@ -107,7 +107,7 @@ void main() {
 
       // Scroll main page to make sure queue is visible
       final mainScrollable = find.byType(Scrollable).first;
-      await tester.drag(mainScrollable, const Offset(0, -350));
+      await tester.drag(mainScrollable, const Offset(0, -500));
       await tester.pumpAndSettle();
 
       final listTiles = find.descendant(
@@ -117,6 +117,9 @@ void main() {
       expect(listTiles, findsWidgets);
 
       final secondTile = listTiles.at(1);
+      await tester.ensureVisible(secondTile);
+      await tester.pumpAndSettle();
+
       final titleFinder = find.descendant(of: secondTile, matching: find.byType(Text)).first;
       final secondTitle = (tester.widget(titleFinder) as Text).data!;
 
@@ -129,7 +132,7 @@ void main() {
       await tester.pump();
 
       // Scroll back up to the top to verify active track banner
-      await tester.drag(mainScrollable, const Offset(0, 500));
+      await tester.drag(mainScrollable, const Offset(0, 700));
       await tester.pumpAndSettle();
 
       // Verify active track banner inside PlaybackEngineCard displays second track title

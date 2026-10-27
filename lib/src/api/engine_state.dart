@@ -81,6 +81,7 @@ class EngineState<T> {
   final int Function() _getChannels;
   final Equalizer Function() _getEqualizer;
   final AudioDevice Function() _getAudioDevice;
+  final bool Function() _getPauseOnDeviceChange;
   final bool Function() _getSkipSilence;
   final SilenceSkipMode Function() _getSilenceSkipMode;
   final SilenceSkipConfig Function() _getSilenceConfig;
@@ -139,6 +140,7 @@ class EngineState<T> {
     required int Function() getChannels,
     required Equalizer Function() getEqualizer,
     required AudioDevice Function() getAudioDevice,
+    required bool Function() getPauseOnDeviceChange,
     required bool Function() getSkipSilence,
     required SilenceSkipMode Function() getSilenceSkipMode,
     required SilenceSkipConfig Function() getSilenceConfig,
@@ -194,6 +196,7 @@ class EngineState<T> {
         _getChannels = getChannels,
         _getEqualizer = getEqualizer,
         _getAudioDevice = getAudioDevice,
+        _getPauseOnDeviceChange = getPauseOnDeviceChange,
         _getSkipSilence = getSkipSilence,
         _getSilenceSkipMode = getSilenceSkipMode,
         _getSilenceConfig = getSilenceConfig,
@@ -323,6 +326,9 @@ class EngineState<T> {
 
   /// Currently selected audio output device.
   AudioDevice get audioDevice => _getAudioDevice();
+
+  /// Whether playback automatically pauses when the audio output device changes.
+  bool get pauseOnDeviceChange => _getPauseOnDeviceChange();
 
   /// Whether silence skipping is currently enabled.
   bool get skipSilence => _getSkipSilence();

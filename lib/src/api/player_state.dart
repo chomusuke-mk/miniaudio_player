@@ -79,6 +79,7 @@ class PlayerState {
   final double Function() _getSpatializerWidth;
   final Reverb Function() _getReverb;
   final bool Function() _getLimiterEnabled;
+  final bool Function() _getPauseOnDeviceChange;
   final Uint8List? Function()? _getMetaBytes;
 
   PlayerState({
@@ -100,6 +101,7 @@ class PlayerState {
     required int Function() getAudioBitrate,
     required Equalizer Function() getEqualizer,
     required AudioDevice Function() getAudioDevice,
+    required bool Function() getPauseOnDeviceChange,
     required bool Function() getSkipSilence,
     required SilenceSkipMode Function() getSilenceSkipMode,
     required SilenceSkipConfig Function() getSilenceConfig,
@@ -134,6 +136,7 @@ class PlayerState {
         _getAudioBitrate = getAudioBitrate,
         _getEqualizer = getEqualizer,
         _getAudioDevice = getAudioDevice,
+        _getPauseOnDeviceChange = getPauseOnDeviceChange,
         _getSkipSilence = getSkipSilence,
         _getSilenceSkipMode = getSilenceSkipMode,
         _getSilenceConfig = getSilenceConfig,
@@ -204,6 +207,9 @@ class PlayerState {
 
   /// Currently active audio output device.
   AudioDevice get audioDevice => _getAudioDevice();
+
+  /// Whether playback automatically pauses when the audio output device changes.
+  bool get pauseOnDeviceChange => _getPauseOnDeviceChange();
 
   /// Whether silence skipping is currently enabled.
   bool get skipSilence => _getSkipSilence();

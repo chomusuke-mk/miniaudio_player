@@ -490,6 +490,83 @@ class PlaybackEngineCard extends StatelessWidget {
                   );
                 },
               ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: StudioColors.cardBackgroundDark,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: StudioColors.cardBorder),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.pause_circle_outline,
+                                size: 14,
+                                color: controller.pauseOnDeviceChange
+                                    ? StudioColors.accentCyan
+                                    : StudioColors.textMuted,
+                              ),
+                              const SizedBox(width: 6),
+                              const Expanded(
+                                child: Text(
+                                  'Pausar al cambiar de salida',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: StudioColors.textPrimary,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            controller.pauseOnDeviceChange
+                                ? 'Pausa nativa inmediata (0ms leak) si el endpoint físico cambia'
+                                : 'Inactivo: audio conmuta al nuevo endpoint sin pausar',
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: StudioColors.textMuted,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          controller.pauseOnDeviceChange ? 'ON' : 'OFF',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: controller.pauseOnDeviceChange
+                                ? StudioColors.accentCyan
+                                : StudioColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Switch(
+                          value: controller.pauseOnDeviceChange,
+                          activeThumbColor: StudioColors.accentCyan,
+                          onChanged: (val) => controller.setPauseOnDeviceChange(val),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         );

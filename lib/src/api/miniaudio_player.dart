@@ -419,6 +419,8 @@ class MiniaudioPlayer implements PlayerBackendListener {
       StreamController<Equalizer>.broadcast();
   final StreamController<AudioDevice> _audioDeviceController =
       StreamController<AudioDevice>.broadcast();
+  final StreamController<bool> _pauseOnDeviceChangeController =
+      StreamController<bool>.broadcast();
   final StreamController<bool> _skipSilenceController =
       StreamController<bool>.broadcast();
   final StreamController<SilenceSkipConfig> _silenceConfigController =
@@ -475,6 +477,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
   Equalizer _equalizer = Equalizer.flat;
   Equalizer _lastEmittedEqualizer = Equalizer.flat;
   AudioDevice _audioDevice = _globalConfig.defaultAudioDevice;
+  bool _pauseOnDeviceChange = false;
   SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
   SilenceSkipConfig _lastEmittedSilenceConfig = const SilenceSkipConfig();
   Duration _silenceSavedDuration = Duration.zero;
@@ -519,9 +522,14 @@ class MiniaudioPlayer implements PlayerBackendListener {
   /// Creates a [MiniaudioPlayer] instance initialized with
   /// [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
   /// [MiniaudioPlayerGlobalConfig.defaultAudioDevice].
-  MiniaudioPlayer({int? bufferSize, AudioDevice? defaultAudioDevice}) {
+  MiniaudioPlayer({
+    int? bufferSize,
+    AudioDevice? defaultAudioDevice,
+    bool pauseOnDeviceChange = false,
+  }) {
     _bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
     _audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
+    _pauseOnDeviceChange = pauseOnDeviceChange;
 
     _visualizerController = StreamController<VisualizerData>.broadcast(
       onListen: () {
@@ -554,6 +562,10 @@ class MiniaudioPlayer implements PlayerBackendListener {
       playbackDeviceId: devId,
     );
 
+    if (pauseOnDeviceChange) {
+      _backend.setPauseOnDeviceChange(true);
+    }
+
     _audioDevice = _backend.getCurrentDevice();
 
     action = PlayerAction(this);
@@ -577,6 +589,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
       audioBitrateController: _audioBitrateController,
       equalizerController: _equalizerController,
       audioDeviceController: _audioDeviceController,
+      pauseOnDeviceChangeController: _pauseOnDeviceChangeController,
       skipSilenceController: _skipSilenceController,
       silenceConfigController: _silenceConfigController,
       silenceSavedDurationController: _silenceSavedDurationController,
@@ -613,6 +626,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
       getAudioBitrate: () => _audioBitrate,
       getEqualizer: () => _equalizer,
       getAudioDevice: getAudioDevice,
+      getPauseOnDeviceChange: () => _pauseOnDeviceChange,
       getSkipSilence: () => _silenceConfig.mode != SilenceSkipMode.disabled,
       getSilenceSkipMode: () => _silenceConfig.mode,
       getSilenceConfig: () => _silenceConfig,
@@ -638,6 +652,18 @@ class MiniaudioPlayer implements PlayerBackendListener {
       return _audioDevice;
     }
     return _backend.getCurrentDevice();
+  }
+
+  /// Updates pause on device change setting and propagates to native backend and stream.
+  void setPauseOnDeviceChangeInternal(bool enabled) {
+    if (_pauseOnDeviceChange == enabled) return;
+    _pauseOnDeviceChange = enabled;
+    if (!_isDisposed) {
+      _backend.setPauseOnDeviceChange(enabled);
+    }
+    if (!_pauseOnDeviceChangeController.isClosed) {
+      _pauseOnDeviceChangeController.add(enabled);
+    }
   }
 
   /// Internal handle to the native miniaudio player.
@@ -1449,6 +1475,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
     await _audioBitrateController.close();
     await _equalizerController.close();
     await _audioDeviceController.close();
+    await _pauseOnDeviceChangeController.close();
     await _skipSilenceController.close();
     await _silenceConfigController.close();
     await _silenceSavedDurationController.close();

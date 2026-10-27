@@ -144,6 +144,8 @@ abstract class PlayerBackend {
   void probeTail(Uint8List data, int tailOffset);
   Future<void> setDevice(String deviceId);
   AudioDevice getCurrentDevice();
+  void setPauseOnDeviceChange(bool enabled);
+  bool getPauseOnDeviceChange();
 
   // --- Lifecycle ---
   Future<void> dispose();

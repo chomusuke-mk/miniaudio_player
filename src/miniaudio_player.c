@@ -198,6 +198,7 @@ struct miniaudio_player
     miniaudio_device_info_t current_device;
     MA_ATOMIC(4, ma_int32) needs_device_fallback;
     MA_ATOMIC(4, ma_int32) is_switching_device;
+    MA_ATOMIC(4, ma_int32) pause_on_device_change;
     int32_t device_changed;
     map_event_dispatcher_t dispatcher;
 };
@@ -286,11 +287,44 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
         ma_device_info info;
         if (ma_device_get_info(pNotification->pDevice, ma_device_type_playback, &info) == MA_SUCCESS)
         {
+            char new_effective_id[516];
+            memset(new_effective_id, 0, sizeof(new_effective_id));
+            if (player->custom_device_id.aaudio > 0 &&
+                (pNotification->pDevice->pContext == NULL || pNotification->pDevice->pContext->backend == ma_backend_aaudio || pNotification->pDevice->pContext->backend == ma_backend_opensl
+#if defined(__ANDROID__)
+                 || 1
+#endif
+                ))
+            {
+                snprintf(new_effective_id, sizeof(new_effective_id), "%d", (int)player->custom_device_id.aaudio);
+            }
+            else
+            {
+                map_device_id_to_string(&info.id, new_effective_id, sizeof(new_effective_id));
+            }
+
+            int32_t is_switching = ma_atomic_load_32(&player->is_switching_device);
+            int32_t pause_on_change = ma_atomic_load_32(&player->pause_on_device_change);
+            int32_t cur_state = ma_atomic_load_32(&player->state);
+
             ma_mutex_lock(&player->lock);
+            int endpoint_changed = (strcmp(player->current_device.effective_id, new_effective_id) != 0);
+
+            if (endpoint_changed && !is_switching && pause_on_change && cur_state == MAP_PLAYBACK_STATE_PLAYING)
+            {
+                ma_sound_stop(&player->sound);
+                ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
+                map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
+                map_event_dispatcher_post_playing(&player->dispatcher, 0);
+            }
+
+            strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
+            player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
+            strncpy(player->current_device.effective_id, new_effective_id, sizeof(player->current_device.effective_id) - 1);
+            player->current_device.effective_id[sizeof(player->current_device.effective_id) - 1] = '\0';
+
             if (player->has_custom_device)
             {
-                strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
-                player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
                 if (player->custom_device_id.aaudio > 0 &&
                     (pNotification->pDevice->pContext == NULL || pNotification->pDevice->pContext->backend == ma_backend_aaudio || pNotification->pDevice->pContext->backend == ma_backend_opensl
 #if defined(__ANDROID__)
@@ -309,13 +343,14 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
             }
             else
             {
-                strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
-                player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
-                player->current_device.id[0] = '\0';
+                strncpy(player->current_device.id, "auto", sizeof(player->current_device.id) - 1);
+                player->current_device.id[sizeof(player->current_device.id) - 1] = '\0';
                 player->current_device.is_default = 1;
                 player->current_device.is_auto = 1;
             }
             player->device_changed = 1;
+            map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
+            map_event_dispatcher_flush(&player->dispatcher);
             ma_mutex_unlock(&player->lock);
 
             if (pNotification->pDevice != NULL && pNotification->pDevice->sampleRate > 0 &&
@@ -327,12 +362,28 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
                 ma_mutex_unlock(&player->lock);
             }
 
-            map_log_print(MAP_LOG_LEVEL_INFO, "core", "device notification: rerouted to '%s'", player->current_device.name);
+            map_log_print(MAP_LOG_LEVEL_INFO, "core", "device notification: rerouted to '%s' (effective: '%s')",
+                          player->current_device.name, player->current_device.effective_id);
         }
     }
     else if (pNotification->type == ma_device_notification_type_stopped)
     {
-        if (!ma_atomic_load_32(&player->is_switching_device) && player->has_custom_device)
+        int32_t is_switching = ma_atomic_load_32(&player->is_switching_device);
+        int32_t pause_on_change = ma_atomic_load_32(&player->pause_on_device_change);
+        int32_t cur_state = ma_atomic_load_32(&player->state);
+
+        if (!is_switching && pause_on_change && cur_state == MAP_PLAYBACK_STATE_PLAYING)
+        {
+            ma_mutex_lock(&player->lock);
+            ma_sound_stop(&player->sound);
+            ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
+            map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
+            map_event_dispatcher_post_playing(&player->dispatcher, 0);
+            map_event_dispatcher_flush(&player->dispatcher);
+            ma_mutex_unlock(&player->lock);
+        }
+
+        if (!is_switching && player->has_custom_device)
         {
             map_log_print(MAP_LOG_LEVEL_WARNING, "core", "device notification: playback device stopped (unplugged/disconnected)");
             ma_atomic_store_32(&player->needs_device_fallback, 1);
@@ -364,6 +415,8 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     uint32_t buffer_size;
     miniaudio_player_playback_state_t state;
     ma_bool32 has_custom = MA_FALSE;
+    ma_bool32 fallback_engaged = MA_FALSE;
+    char prev_effective_id[516];
     miniaudio_device_info_t new_dev_info;
 
     if (player == NULL)
@@ -395,6 +448,8 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     sample_rate = player->sample_rate;
     buffer_size = player->buffer_size;
     state = (miniaudio_player_playback_state_t)ma_atomic_load_32(&player->state);
+    strncpy(prev_effective_id, player->current_device.effective_id, sizeof(prev_effective_id) - 1);
+    prev_effective_id[sizeof(prev_effective_id) - 1] = '\0';
     ma_mutex_unlock(&player->lock);
 
     was_started = ma_device_is_started(pDevice);
@@ -434,6 +489,7 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
             map_log_print(MAP_LOG_LEVEL_WARNING, "core", "target device '%s' not found or disconnected, falling back to default", device_id);
             dev_cfg.playback.pDeviceID = NULL;
             has_custom = MA_FALSE;
+            fallback_engaged = MA_TRUE;
             memset(&target_id, 0, sizeof(target_id));
         }
     }
@@ -451,6 +507,7 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
         map_log_print(MAP_LOG_LEVEL_WARNING, "core", "failed to init target device (res %d), falling back to default", res);
         dev_cfg.playback.pDeviceID = NULL;
         has_custom = MA_FALSE;
+        fallback_engaged = MA_TRUE;
         res = ma_device_init(pContext, &dev_cfg, pDevice);
     }
 
@@ -484,10 +541,12 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
                 ))
             {
                 snprintf(new_dev_info.id, sizeof(new_dev_info.id), "%d", (int)target_id.aaudio);
+                snprintf(new_dev_info.effective_id, sizeof(new_dev_info.effective_id), "%d", (int)target_id.aaudio);
             }
             else
             {
                 map_device_id_to_string(&dev_info.id, new_dev_info.id, sizeof(new_dev_info.id));
+                map_device_id_to_string(&dev_info.id, new_dev_info.effective_id, sizeof(new_dev_info.effective_id));
             }
             new_dev_info.is_default = dev_info.isDefault;
             new_dev_info.is_auto = 0;
@@ -496,7 +555,8 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
         {
             strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
             new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
-            new_dev_info.id[0] = '\0';
+            strncpy(new_dev_info.id, "auto", sizeof(new_dev_info.id) - 1);
+            map_device_id_to_string(&dev_info.id, new_dev_info.effective_id, sizeof(new_dev_info.effective_id));
             new_dev_info.is_default = 1;
             new_dev_info.is_auto = 1;
         }
@@ -505,7 +565,8 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     {
         strncpy(new_dev_info.name, "Default", sizeof(new_dev_info.name) - 1);
         new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
-        new_dev_info.id[0] = '\0';
+        strncpy(new_dev_info.id, "auto", sizeof(new_dev_info.id) - 1);
+        strncpy(new_dev_info.effective_id, "default", sizeof(new_dev_info.effective_id) - 1);
         new_dev_info.is_default = 1;
         new_dev_info.is_auto = 1;
     }
@@ -522,61 +583,98 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
 
     if (was_started || state == MAP_PLAYBACK_STATE_PLAYING)
     {
-        res = ma_device_start(pDevice);
-        if (res != MA_SUCCESS && has_custom)
+        if (fallback_engaged &&
+            ma_atomic_load_32(&player->pause_on_device_change) &&
+            strcmp(new_dev_info.effective_id, prev_effective_id) != 0)
         {
-            map_log_print(MAP_LOG_LEVEL_WARNING, "core", "failed to start custom device '%s' (res %d), falling back to default", device_id, res);
+            ma_mutex_lock(&player->lock);
+            ma_sound_stop(&player->sound);
+            ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
+            map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
+            map_event_dispatcher_post_playing(&player->dispatcher, 0);
+            map_event_dispatcher_flush(&player->dispatcher);
+            ma_mutex_unlock(&player->lock);
+            map_log_print(MAP_LOG_LEVEL_INFO, "core", "device fallback to different endpoint ('%s' -> '%s'); pausing playback",
+                          prev_effective_id, new_dev_info.effective_id);
+        }
+        else
+        {
+            res = ma_device_start(pDevice);
+            if (res != MA_SUCCESS && has_custom)
+            {
+                map_log_print(MAP_LOG_LEVEL_WARNING, "core", "failed to start custom device '%s' (res %d), falling back to default", device_id, res);
 #if defined(__ANDROID__)
-            if (pContext->backend == ma_backend_aaudio)
-            {
-                ma_atomic_bool32_set(&pDevice->aaudio.isTearingDown, MA_TRUE);
-            }
+                if (pContext->backend == ma_backend_aaudio)
+                {
+                    ma_atomic_bool32_set(&pDevice->aaudio.isTearingDown, MA_TRUE);
+                }
 #endif
-            dev_cfg.playback.pDeviceID = NULL;
-            dev_cfg.performanceProfile = ma_performance_profile_low_latency;
-            has_custom = MA_FALSE;
-            memset(&target_id, 0, sizeof(target_id));
-            ma_device_uninit(pDevice);
-            if (ma_device_init(pContext, &dev_cfg, pDevice) == MA_SUCCESS)
-            {
-                if (pDevice->sampleRate > 0 && pDevice->sampleRate != player->eq_node.sampleRate)
+                dev_cfg.playback.pDeviceID = NULL;
+                dev_cfg.performanceProfile = ma_performance_profile_low_latency;
+                has_custom = MA_FALSE;
+                fallback_engaged = MA_TRUE;
+                memset(&target_id, 0, sizeof(target_id));
+                ma_device_uninit(pDevice);
+                if (ma_device_init(pContext, &dev_cfg, pDevice) == MA_SUCCESS)
                 {
-                    ma_equalizer_node_set_sample_rate(&player->eq_node, pDevice->sampleRate);
+                    if (pDevice->sampleRate > 0 && pDevice->sampleRate != player->eq_node.sampleRate)
+                    {
+                        ma_equalizer_node_set_sample_rate(&player->eq_node, pDevice->sampleRate);
+                        ma_mutex_lock(&player->lock);
+                        player->sample_rate = pDevice->sampleRate;
+                        ma_mutex_unlock(&player->lock);
+                    }
+                    if (ma_device_get_info(pDevice, ma_device_type_playback, &dev_info) == MA_SUCCESS)
+                    {
+                        strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
+                        new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
+                        map_device_id_to_string(&dev_info.id, new_dev_info.effective_id, sizeof(new_dev_info.effective_id));
+                    }
+                    else
+                    {
+                        strncpy(new_dev_info.name, "Default", sizeof(new_dev_info.name) - 1);
+                        new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
+                        strncpy(new_dev_info.effective_id, "default", sizeof(new_dev_info.effective_id) - 1);
+                    }
+                    strncpy(new_dev_info.id, "auto", sizeof(new_dev_info.id) - 1);
+                    new_dev_info.is_default = 1;
+                    new_dev_info.is_auto = 1;
+
                     ma_mutex_lock(&player->lock);
-                    player->sample_rate = pDevice->sampleRate;
+                    player->has_custom_device = 0;
+                    player->custom_device_id = target_id;
+                    player->current_device = new_dev_info;
+                    player->device_changed = 1;
+                    ma_atomic_store_32(&player->needs_device_fallback, 0);
+                    map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
+                    map_event_dispatcher_flush(&player->dispatcher);
                     ma_mutex_unlock(&player->lock);
-                }
-                if (ma_device_get_info(pDevice, ma_device_type_playback, &dev_info) == MA_SUCCESS)
-                {
-                    strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
-                    new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
-                }
-                else
-                {
-                    strncpy(new_dev_info.name, "Default", sizeof(new_dev_info.name) - 1);
-                }
-                new_dev_info.id[0] = '\0';
-                new_dev_info.is_default = 1;
-                new_dev_info.is_auto = 1;
 
-                ma_mutex_lock(&player->lock);
-                player->has_custom_device = 0;
-                player->custom_device_id = target_id;
-                player->current_device = new_dev_info;
-                player->device_changed = 1;
-                ma_atomic_store_32(&player->needs_device_fallback, 0);
-                map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
-                map_event_dispatcher_flush(&player->dispatcher);
-                ma_mutex_unlock(&player->lock);
-
-                ma_device_start(pDevice);
+                    if (ma_atomic_load_32(&player->pause_on_device_change) &&
+                        strcmp(new_dev_info.effective_id, prev_effective_id) != 0)
+                    {
+                        ma_mutex_lock(&player->lock);
+                        ma_sound_stop(&player->sound);
+                        ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
+                        map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
+                        map_event_dispatcher_post_playing(&player->dispatcher, 0);
+                        map_event_dispatcher_flush(&player->dispatcher);
+                        ma_mutex_unlock(&player->lock);
+                        map_log_print(MAP_LOG_LEVEL_INFO, "core", "device fallback to different endpoint ('%s' -> '%s'); pausing playback",
+                                      prev_effective_id, new_dev_info.effective_id);
+                    }
+                    else
+                    {
+                        ma_device_start(pDevice);
+                    }
+                    ma_atomic_store_32(&player->is_switching_device, 0);
+                    map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active (fallback): '%s' (default: %d)",
+                                  new_dev_info.name, new_dev_info.is_default);
+                    return MAP_SUCCESS;
+                }
                 ma_atomic_store_32(&player->is_switching_device, 0);
-                map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active (fallback): '%s' (default: %d)",
-                              new_dev_info.name, new_dev_info.is_default);
-                return MAP_SUCCESS;
+                return MAP_ERROR_GENERIC;
             }
-            ma_atomic_store_32(&player->is_switching_device, 0);
-            return MAP_ERROR_GENERIC;
         }
     }
 
@@ -638,8 +736,11 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
                               : 1024;
     player->has_resource_manager = MA_FALSE;
     strcpy(player->current_device.name, "System Default");
+    strcpy(player->current_device.id, "auto");
+    player->current_device.effective_id[0] = '\0';
     player->current_device.is_default = 1;
     player->current_device.is_auto = 1;
+    ma_atomic_store_32(&player->pause_on_device_change, 0);
 
     if (config != NULL)
     {
@@ -810,10 +911,12 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
                         ))
                     {
                         snprintf(player->current_device.id, sizeof(player->current_device.id), "%d", (int)player->custom_device_id.aaudio);
+                        snprintf(player->current_device.effective_id, sizeof(player->current_device.effective_id), "%d", (int)player->custom_device_id.aaudio);
                     }
                     else
                     {
                         map_device_id_to_string(&info.id, player->current_device.id, sizeof(player->current_device.id));
+                        map_device_id_to_string(&info.id, player->current_device.effective_id, sizeof(player->current_device.effective_id));
                     }
                     player->current_device.is_default = info.isDefault;
                     player->current_device.is_auto = 0;
@@ -822,7 +925,8 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
                 {
                     strncpy(player->current_device.name, info.name, sizeof(player->current_device.name) - 1);
                     player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
-                    player->current_device.id[0] = '\0';
+                    strncpy(player->current_device.id, "auto", sizeof(player->current_device.id) - 1);
+                    map_device_id_to_string(&info.id, player->current_device.effective_id, sizeof(player->current_device.effective_id));
                     player->current_device.is_default = 1;
                     player->current_device.is_auto = 1;
                 }
@@ -831,7 +935,8 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
             {
                 strncpy(player->current_device.name, "Default", sizeof(player->current_device.name) - 1);
                 player->current_device.name[sizeof(player->current_device.name) - 1] = '\0';
-                player->current_device.id[0] = '\0';
+                strncpy(player->current_device.id, "auto", sizeof(player->current_device.id) - 1);
+                strncpy(player->current_device.effective_id, "default", sizeof(player->current_device.effective_id) - 1);
                 player->current_device.is_default = 1;
                 player->current_device.is_auto = 1;
             }
@@ -884,8 +989,11 @@ cleanup_error:
         ma_resource_manager_uninit(&player->resource_manager);
         player->has_resource_manager = MA_FALSE;
     strcpy(player->current_device.name, "System Default");
+    strcpy(player->current_device.id, "auto");
+    player->current_device.effective_id[0] = '\0';
     player->current_device.is_default = 1;
     player->current_device.is_auto = 1;
+    ma_atomic_store_32(&player->pause_on_device_change, 0);
     }
     if (player->has_log)
     {
@@ -955,8 +1063,11 @@ MAP_API int32_t miniaudio_player_destroy(miniaudio_player_t *player)
         ma_resource_manager_uninit(&player->resource_manager);
         player->has_resource_manager = MA_FALSE;
     strcpy(player->current_device.name, "System Default");
+    strcpy(player->current_device.id, "auto");
+    player->current_device.effective_id[0] = '\0';
     player->current_device.is_default = 1;
     player->current_device.is_auto = 1;
+    ma_atomic_store_32(&player->pause_on_device_change, 0);
     }
 
     if (player->has_log)
@@ -2277,6 +2388,8 @@ MAP_API int32_t miniaudio_player_get_current_device(
     {
         memset(out_device, 0, sizeof(*out_device));
         strcpy(out_device->name, "System Default");
+        strcpy(out_device->id, "auto");
+        strcpy(out_device->effective_id, "dummy");
         out_device->is_default = 1;
         out_device->is_auto = 1;
     }
@@ -2308,6 +2421,24 @@ MAP_API int32_t miniaudio_player_get_current_device(
     return MAP_SUCCESS;
 }
 #endif
+
+MAP_API int32_t miniaudio_player_set_pause_on_device_change(
+    miniaudio_player_t *player,
+    int32_t enabled)
+{
+    if (player == NULL)
+        return MAP_ERROR_INVALID_ARGS;
+    ma_atomic_store_32(&player->pause_on_device_change, enabled ? 1 : 0);
+    return MAP_SUCCESS;
+}
+
+MAP_API int32_t miniaudio_player_get_pause_on_device_change(
+    const miniaudio_player_t *player)
+{
+    if (player == NULL)
+        return 0;
+    return (int32_t)ma_atomic_load_32((ma_atomic_int32 *)&player->pause_on_device_change);
+}
 
 /* ========================================================================= */
 /* Equalizer Controls                                                        */
@@ -2846,6 +2977,14 @@ MAP_API int32_t miniaudio_player_get_status(
                 }
                 else
                 {
+                    char eff_id[516];
+                    map_device_id_to_string(&devInfo.id, eff_id, sizeof(eff_id));
+                    if (strcmp(mut_player->current_device.effective_id, eff_id) != 0)
+                    {
+                        strncpy(mut_player->current_device.effective_id, eff_id, sizeof(mut_player->current_device.effective_id) - 1);
+                        mut_player->current_device.effective_id[sizeof(mut_player->current_device.effective_id) - 1] = '\0';
+                        mut_player->device_changed = 1;
+                    }
                     if (strcmp(mut_player->current_device.name, devInfo.name) != 0)
                     {
                         strncpy(mut_player->current_device.name, devInfo.name, sizeof(mut_player->current_device.name) - 1);
@@ -2860,6 +2999,8 @@ MAP_API int32_t miniaudio_player_get_status(
 #else
     memset(&out_status->device, 0, sizeof(out_status->device));
     strcpy(out_status->device.name, "System Default");
+    strcpy(out_status->device.id, "auto");
+    strcpy(out_status->device.effective_id, "dummy");
     out_status->device.is_default = 1;
     out_status->device.is_auto = 1;
 #endif

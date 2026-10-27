@@ -477,6 +477,11 @@ external int miniaudio_player_get_meta_bytes_version(
   ffi.Pointer<miniaudio_player_t> player,
 );
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
+external int miniaudio_player_get_pause_on_device_change(
+  ffi.Pointer<miniaudio_player_t> player,
+);
+
 @ffi.Native<ffi.Float Function(ffi.Pointer<miniaudio_player_t>)>(isLeaf: true)
 external double miniaudio_player_get_pitch(
   ffi.Pointer<miniaudio_player_t> player,
@@ -768,6 +773,12 @@ external void miniaudio_player_set_log_level(
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32)>()
 external int miniaudio_player_set_mono(
+  ffi.Pointer<miniaudio_player_t> player,
+  int enabled,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>, ffi.Int32)>()
+external int miniaudio_player_set_pause_on_device_change(
   ffi.Pointer<miniaudio_player_t> player,
   int enabled,
 );
@@ -1601,9 +1612,13 @@ typedef miniaudio_buffered_range_t = miniaudio_buffered_range;
 /// /* Player Status Snapshot (Single-Call FFI Marshalling)                      */
 /// /* =========================================================================
 final class miniaudio_device_info_t extends ffi.Struct {
-  /// < Unique device ID encoded as hex string, or empty for default
+  /// < Selector ID encoded as hex string, or "auto" for default
   @ffi.Array.multi([516])
   external ffi.Array<ffi.Char> id;
+
+  /// < Physical OS hardware endpoint ID currently active
+  @ffi.Array.multi([516])
+  external ffi.Array<ffi.Char> effective_id;
 
   /// < Human-readable device name
   @ffi.Array.multi([256])

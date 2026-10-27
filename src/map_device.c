@@ -829,6 +829,7 @@ static int32_t map_android_get_devices(
 
         /* Device ID formatted as decimal integer string */
         snprintf(devices[valid_count].id, sizeof(devices[valid_count].id), "%d", (int)dev_id);
+        snprintf(devices[valid_count].effective_id, sizeof(devices[valid_count].effective_id), "%d", (int)dev_id);
 
         /* Default output detection */
         int is_default = 0;
@@ -1006,6 +1007,7 @@ MAP_API int32_t miniaudio_player_get_devices(
             strncpy(devices[i].name, pPlaybackInfos[i].name, sizeof(devices[i].name) - 1);
             devices[i].name[sizeof(devices[i].name) - 1] = '\0';
             map_device_id_to_string(&pPlaybackInfos[i].id, devices[i].id, sizeof(devices[i].id));
+            map_device_id_to_string(&pPlaybackInfos[i].id, devices[i].effective_id, sizeof(devices[i].effective_id));
             devices[i].is_default = pPlaybackInfos[i].isDefault;
             devices[i].is_auto = 0;
         }

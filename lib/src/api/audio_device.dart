@@ -2,8 +2,11 @@ import 'miniaudio_player.dart';
 
 /// Represents an audio output device.
 class AudioDevice {
-  /// Unique device identifier (hex-encoded string for hardware devices, or empty for automatic default).
+  /// Unique device identifier (hex-encoded string for hardware devices, or 'auto' for automatic default).
   final String id;
+
+  /// Underlying physical hardware device endpoint ID currently active in the OS.
+  final String effectiveId;
 
   /// Human-readable device name or 'SYSTEM DEFAULT'.
   final String name;
@@ -19,12 +22,13 @@ class AudioDevice {
 
   const AudioDevice({
     required this.id,
+    this.effectiveId = '',
     required this.name,
     String? resolvedName,
     bool isAuto = false,
     this.type,
   })  : _resolvedName = resolvedName,
-        _isAuto = isAuto;
+        _isAuto = isAuto || id == 'auto' || id == '';
 
   /// Hardware device name currently routed by the OS (when [isAuto] is true).
   String? get resolvedName => _resolvedName;
@@ -34,7 +38,8 @@ class AudioDevice {
 
   /// Automatic / system-managed default output audio device template.
   static const AudioDevice auto = AudioDevice(
-    id: '',
+    id: 'auto',
+    effectiveId: '',
     name: 'SYSTEM DEFAULT',
     isAuto: true,
   );
@@ -52,17 +57,27 @@ class AudioDevice {
     return name;
   }
 
+  /// Checks whether this device and [other] route to the same physical hardware endpoint.
+  bool isSameEndpoint(AudioDevice other) {
+    final myEff = effectiveId.isNotEmpty ? effectiveId : id;
+    final otherEff = other.effectiveId.isNotEmpty ? other.effectiveId : other.id;
+    if (myEff.isNotEmpty && otherEff.isNotEmpty) {
+      return myEff == otherEff;
+    }
+    return this == other;
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is AudioDevice &&
           runtimeType == other.runtimeType &&
-          id == other.id);
+          ((isAuto && other.isAuto) || id == other.id));
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => isAuto ? 'auto'.hashCode : id.hashCode;
 
   @override
   String toString() =>
-      'AudioDevice(id: $id, name: $name, auto: $_isAuto${_resolvedName != null ? ", resolved: $_resolvedName" : ""}${type != null ? ", type: $type" : ""})';
+      'AudioDevice(id: $id, effectiveId: $effectiveId, name: $name, auto: $_isAuto${_resolvedName != null ? ", resolved: $_resolvedName" : ""}${type != null ? ", type: $type" : ""})';
 }

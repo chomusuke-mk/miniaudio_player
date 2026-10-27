@@ -26,12 +26,14 @@ String _charArrayToString(Array<Char> array, int length) {
 extension MiniaudioDeviceInfoCX on native.miniaudio_device_info_t {
   AudioDevice toAudioDevice() {
     final devId = _charArrayToString(id, 516);
+    final effId = _charArrayToString(effective_id, 516);
     final devName = _charArrayToString(name, 256);
     final isAutoDev = is_auto != 0;
 
     if (isAutoDev) {
       return AudioDevice(
-        id: '',
+        id: 'auto',
+        effectiveId: effId,
         name: 'SYSTEM DEFAULT',
         resolvedName: devName.isNotEmpty ? devName : null,
         isAuto: true,
@@ -40,6 +42,7 @@ extension MiniaudioDeviceInfoCX on native.miniaudio_device_info_t {
 
     return AudioDevice(
       id: devId,
+      effectiveId: effId.isNotEmpty ? effId : devId,
       name: devName.isEmpty ? 'Default' : devName,
       isAuto: false,
     );

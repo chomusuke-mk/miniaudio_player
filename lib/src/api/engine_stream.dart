@@ -40,6 +40,7 @@ class EngineStream<T> {
   final StreamController<int> _audioBitrateController;
   final StreamController<Equalizer> _equalizerController;
   final StreamController<AudioDevice> _audioDeviceController;
+  final StreamController<bool> _pauseOnDeviceChangeController;
   final StreamController<bool> _skipSilenceController;
   final StreamController<SilenceSkipConfig> _silenceConfigController;
   final StreamController<Duration> _silenceSavedDurationController;
@@ -92,6 +93,7 @@ class EngineStream<T> {
     required StreamController<int> audioBitrateController,
     required StreamController<Equalizer> equalizerController,
     required StreamController<AudioDevice> audioDeviceController,
+    required StreamController<bool> pauseOnDeviceChangeController,
     required StreamController<bool> skipSilenceController,
     required StreamController<SilenceSkipConfig> silenceConfigController,
     required StreamController<Duration> silenceSavedDurationController,
@@ -141,6 +143,7 @@ class EngineStream<T> {
         _audioBitrateController = audioBitrateController,
         _equalizerController = equalizerController,
         _audioDeviceController = audioDeviceController,
+        _pauseOnDeviceChangeController = pauseOnDeviceChangeController,
         _skipSilenceController = skipSilenceController,
         _silenceConfigController = silenceConfigController,
         _silenceSavedDurationController = silenceSavedDurationController,
@@ -233,6 +236,9 @@ class EngineStream<T> {
 
   /// Broadcast stream of active audio output device changes.
   Stream<AudioDevice> get audioDevice => _audioDeviceController.stream;
+
+  /// Broadcast stream of pause on device change setting changes.
+  Stream<bool> get pauseOnDeviceChange => _pauseOnDeviceChangeController.stream;
 
   /// Broadcast stream of silence skipping enabled state.
   Stream<bool> get skipSilence => _skipSilenceController.stream;

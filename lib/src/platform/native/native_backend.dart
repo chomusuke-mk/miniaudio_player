@@ -811,7 +811,9 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
 
   @override
   Future<void> setDevice(String deviceId) async {
-    final devPtr = deviceId.isEmpty ? nullptr : deviceId.toNativeUtf8();
+    final devPtr = (deviceId.isEmpty || deviceId == 'auto')
+        ? nullptr
+        : deviceId.toNativeUtf8();
     try {
       final res = native.miniaudio_player_set_device(
         _playerHandle,
@@ -843,6 +845,19 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
     } finally {
       calloc.free(devPtr);
     }
+  }
+
+  @override
+  void setPauseOnDeviceChange(bool enabled) {
+    native.miniaudio_player_set_pause_on_device_change(
+      _playerHandle,
+      enabled ? 1 : 0,
+    );
+  }
+
+  @override
+  bool getPauseOnDeviceChange() {
+    return native.miniaudio_player_get_pause_on_device_change(_playerHandle) != 0;
   }
 
   @override

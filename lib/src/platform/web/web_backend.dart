@@ -769,17 +769,27 @@ class WebPlayerBackend implements PlayerBackend {
   @override
   int get channels => _channels;
 
+  bool _pauseOnDeviceChange = false;
+
   @override
   Future<void> setDevice(String deviceId) async {
     _currentDevice = AudioDevice(
       id: deviceId,
-      name: deviceId.isEmpty ? 'System Default' : deviceId,
-      isAuto: deviceId.isEmpty,
+      name: (deviceId.isEmpty || deviceId == 'auto') ? 'System Default' : deviceId,
+      isAuto: deviceId.isEmpty || deviceId == 'auto',
     );
   }
 
   @override
   AudioDevice getCurrentDevice() => _currentDevice;
+
+  @override
+  void setPauseOnDeviceChange(bool enabled) {
+    _pauseOnDeviceChange = enabled;
+  }
+
+  @override
+  bool getPauseOnDeviceChange() => _pauseOnDeviceChange;
 
   @override
   Future<void> dispose() async {

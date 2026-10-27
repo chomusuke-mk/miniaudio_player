@@ -156,6 +156,7 @@ class AudioEngineController extends ChangeNotifier {
   int get selectedBufferSize => engine.state.bufferSize;
   List<AudioDevice> get audioDevices => _audioDevices;
   AudioDevice get selectedDevice => engine.state.audioDevice;
+  bool get pauseOnDeviceChange => engine.state.pauseOnDeviceChange;
 
   Future<void> init() async {
     _cachedTracks = await MockData.loadTracks();
@@ -217,6 +218,7 @@ class AudioEngineController extends ChangeNotifier {
     _subscriptions.add(engine.stream.defaultReplayGain.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.forcedReplayGain.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.audioDevice.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.pauseOnDeviceChange.listen((_) => notifyListeners()));
     _subscriptions.add(MiniaudioPlayer.getAudioDevicesStream().listen((list) {
       if (list.isNotEmpty) {
         _audioDevices = list;
@@ -515,6 +517,11 @@ class AudioEngineController extends ChangeNotifier {
 
   Future<void> setDevice(AudioDevice dev) async {
     await engine.action.setDevice(dev);
+    notifyListeners();
+  }
+
+  Future<void> setPauseOnDeviceChange(bool enabled) async {
+    engine.action.setPauseOnDeviceChange(enabled);
     notifyListeners();
   }
 

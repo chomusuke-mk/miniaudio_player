@@ -53,9 +53,10 @@ void main() {
     expect(deviceWithType.toString(), contains('type: 7'));
   });
 
-  test('AudioDevice.auto static constant has empty ID and isAuto true', () {
-    expect(AudioDevice.auto.id, isEmpty);
+  test('AudioDevice.auto static constant has auto ID and isAuto true', () {
+    expect(AudioDevice.auto.id, equals('auto'));
     expect(AudioDevice.auto.isAuto, isTrue);
+    expect(AudioDevice.auto.effectiveId, isEmpty);
     expect(AudioDevice.auto.name, equals('SYSTEM DEFAULT'));
     expect(AudioDevice.auto.toString(), contains('auto'));
   });

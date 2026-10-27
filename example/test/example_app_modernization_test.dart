@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
+import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -212,6 +213,54 @@ void main() {
               (w.opacity == 1.0 || w.opacity == 0.38),
         );
         expect(opacityFinder, findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'Pause on Device Change: Displays toggle and reacts to tap events',
+      (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
+        await tester.pumpWidget(const MiniaudioPlayerExampleApp());
+        await tester.pump();
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(seconds: 2));
+        });
+        await tester.pump();
+
+        // Verify title exists
+        expect(find.text('Pausar al cambiar de salida'), findsOneWidget);
+
+        // Find Switch within PlaybackEngineCard
+        final switchFinder = find.descendant(
+          of: find.byType(PlaybackEngineCard),
+          matching: find.byType(Switch),
+        );
+        expect(switchFinder, findsOneWidget);
+
+        // Initial state is false (OFF)
+        Switch pauseSwitch = tester.widget(switchFinder);
+        expect(pauseSwitch.value, isFalse);
+        expect(find.text('OFF'), findsWidgets);
+
+        // Tap the switch to enable
+        await tester.tap(switchFinder);
+        await tester.pumpAndSettle();
+
+        pauseSwitch = tester.widget(switchFinder);
+        expect(pauseSwitch.value, isTrue);
+        expect(find.text('ON'), findsWidgets);
+
+        // Tap the switch again to disable
+        await tester.tap(switchFinder);
+        await tester.pumpAndSettle();
+
+        pauseSwitch = tester.widget(switchFinder);
+        expect(pauseSwitch.value, isFalse);
+        expect(find.text('OFF'), findsWidgets);
       },
     );
   });

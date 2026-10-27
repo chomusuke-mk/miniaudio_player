@@ -526,6 +526,12 @@ class PlayerAction {
     await _player.backend.setDevice(deviceId);
   }
 
+  /// Sets whether playback should automatically pause when the active audio output endpoint changes.
+  void setPauseOnDeviceChange(bool enabled) {
+    _player.ensureNotDisposed();
+    _player.setPauseOnDeviceChangeInternal(enabled);
+  }
+
   /// Sets whether silence skipping is enabled, optionally configuring mode and thresholds.
   Future<void> setSkipSilence(
     bool enabled, {
