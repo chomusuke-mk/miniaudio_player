@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.1
+
+Update description and links on `pubspec.yaml`.
+
 ## 3.0.0
 
 This release marks the largest milestone in `miniaudio_player` history. The library evolves from a single-deck local file player (v2.1.0) into a **complete, studio-grade cross-platform audio engine and DSP workstation** for Flutter, Dart, and Web. It introduces full WebAssembly and AudioWorklet web support, an automated dual-deck queue engine with continuous mathematical crossfades, custom byte providers with on-the-fly decryption for DRM and protected audio, a native tripartite circular buffer, dynamic hardware routing with 0 ms acoustic leak prevention, and an uncompromising canonical API adhering to the _Zero-Alias Axiom_.

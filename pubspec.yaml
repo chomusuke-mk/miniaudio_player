@@ -1,6 +1,6 @@
 name: miniaudio_player
 description: "Ultra-low-resource cross-platform audio player and DSP engine using miniaudio. Features dual-deck crossfade queue, equalizer, reverb, limiter, crossfeed, pitch, rate & visualizer."
-version: 3.0.0
+version: 3.0.1
 repository: https://github.com/chomusuke-mk/miniaudio_player
 issue_tracker: https://github.com/chomusuke-mk/miniaudio_player/issues
 funding:
