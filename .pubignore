@@ -34,7 +34,6 @@ migrate_working_dir/
 /.agents/
 
 # Pub specific ignores
-/assets/
 /cspell.yaml
 /pictures/
 /test/fixtures/
