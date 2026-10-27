@@ -37,5 +37,6 @@ migrate_working_dir/
 /assets/
 /cspell.yaml
 /pictures/
+/test/fixtures/
 
 !/pictures/screenshots/studio_console_hero.png
