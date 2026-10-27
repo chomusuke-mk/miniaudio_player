@@ -23,7 +23,7 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mic
 ## 📸 Studio Master Console (Hero Preview)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/studio_console_hero.png" alt="miniaudio_player - Studio Master Console Overview" width="100%" />
+  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/studio_console_hero.png" alt="miniaudio_player - Studio Master Console Overview" width="100%" />
 </p>
 
 <p align="center">
