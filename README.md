@@ -5,6 +5,7 @@
 # <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/icons/icon.png" alt="miniaudio_player icon" width="40" height="40" align="center" /> miniaudio_player
 
 [![pub package](https://img.shields.io/pub/v/miniaudio_player.svg?logo=dart&color=blue)](https://pub.dev/packages/miniaudio_player)
+[![Demo](https://img.shields.io/badge/demo-online-blueviolet?logo=googlechrome&logoColor=white)](https://miniaudio_player.chomusuke.dev/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-android%20|%20ios%20|%20macos%20|%20windows%20|%20linux%20|%20web-blue.svg)](https://pub.dev/packages/miniaudio_player)
 [![Dart FFI & Wasm](https://img.shields.io/badge/Dart-FFI%20Native%20Assets%20%7C%20WebAssembly-0175C2.svg?logo=dart)](https://dart.dev/interop/c-interop)
@@ -25,6 +26,10 @@ Engineered from the ground up for professional electroacoustic fidelity, sub-mic
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/studio_console_hero.png" alt="miniaudio_player - Studio Master Console Overview" width="100%" />
 </p>
 
+<p align="center">
+  🎮 <strong>Live Demo:</strong> <a href="https://miniaudio_player.chomusuke.dev/"><strong>https://miniaudio_player.chomusuke.dev/</strong></a>
+</p>
+
 _The newly overhauled **Studio Master Console** demonstration app included in `example/`. Features high-resolution audio playback with interactive waveform seekbars, dynamic dual-deck queue management with continuous mathematical crossfading, real-time 10-band spectrum visualizer and stereo VU meters, offline single-pass ITU-R BS.1770-4 / EBU R128 loudness analysis, ISO 266 10-band biquad equalizer with interactive frequency curves, Freeverb algorithmic reverb, and spatial/limiter/silence processing._
 
 ---
@@ -32,7 +37,7 @@ _The newly overhauled **Studio Master Console** demonstration app included in `e
 ## ✨ Features at a Glance
 
 - 🎛️ **High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)**: Automated dual-deck orchestrator wrapping two dedicated players (_Deck A_ and _Deck B_) that alternate between Active and Standby roles. Features an explicit 8-state Finite State Machine (`EnginePhase`), serialized FIFO command dispatch, continuous Equal-Power ($\cos / \sin$) and Linear crossfades (`CrossfadeConfig`), non-destructive Fisher-Yates shuffle with exact un-shuffle restoration, loop modes (`LoopMode.off`, `.one`, `.all`), generic domain item encapsulation (`EngineItem<T>`), per-track ReplayGain calibration, and proactive Infinite Mix prefetching (`InfiniteMixProvider<T>`).
-- 🌐 **Full Web Platform Support (WebAssembly & AudioWorklet)**: First-class execution in Flutter Web. Miniaudio's C core is cross-compiled to WebAssembly (`miniaudio_player.wasm`) running in background Web Workers, streaming decoded PCM frames directly to native `AudioWorkletNode` pipelines with zero UI thread contention.
+- 🌐 **Full Web Platform Support (WebAssembly & AudioWorklet)**: First-class execution in Flutter Web ([Live Demo](https://miniaudio_player.chomusuke.dev/)). Miniaudio's C core is cross-compiled to WebAssembly (`miniaudio_player.wasm`) running in background Web Workers, streaming decoded PCM frames directly to native `AudioWorkletNode` pipelines with zero UI thread contention.
 - 🔐 **Custom Audio Sources, DRM & On-The-Fly Decryption (`AudioByteProvider`)**: Plug-and-play stream abstraction enabling developers to play encrypted, DRM-protected, or proprietary media formats (AES-128, ChaCha20, custom cloud storage, peer-to-peer streams) with **zero temporary files and zero disk writes**. Decrypted audio streams exist exclusively in memory RAM and are piped directly to native C buffers with automatic reactive backpressure and random-access seek support.
 - 🌊 **Native Tripartite Memory Buffer (`map_buffer_t`) & 5-Level Capability Promotion**: Decouples audio ingestion from consumer codecs. Divides stream memory into a Pinned Head (immutable headers), Pure Audio Ring ($\mathcal{O}(1)$ lock-free circular buffer), and Tail Buffer (seek tables and trailing metadata). Automatically resolves and promotes any source through a 5-level hierarchy (`File`, `Memory`, `Asset`, `Network VOD`, `LiveStream`, and `FdByteProvider`).
 - ⚡ **Strict Real-Time Determinism ($\mathcal{O}(1)$) & Zero Allocations**: The real-time OS audio callback runs in bounded $\mathcal{O}(1)$ time with **0 dynamic heap memory allocations (`malloc`, `free`)**, ensuring completely glitch-free playback even under heavy system or UI load.
