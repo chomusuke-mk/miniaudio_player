@@ -157,9 +157,14 @@ class UnifiedAudioLoader {
 
   void _log(int level, String message) {
     if (MiniaudioPlayer.globalConfig.logLevel.value >= level) {
-      final tag = level == 1
-          ? 'ERROR'
-          : (level == 2 ? 'WARN' : 'DEBUG');
+      final tag = switch (level) {
+        1 => 'ERROR',
+        2 => 'WARN',
+        3 => 'INFO',
+        4 => 'DEBUG',
+        5 => 'VERBOSE',
+        _ => 'LOG',
+      };
       // ignore: avoid_print
       print('[miniaudio_player][$tag][loader] $message');
     }
@@ -197,7 +202,7 @@ class UnifiedAudioLoader {
         _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
     final bytesPerSec = max(1, nominalBitrate ~/ 8);
     int calculatedCap = (totalDuration.inMilliseconds * bytesPerSec) ~/ 1000;
-    if (provider.isNetwork && !_isLive) {
+    if (provider.isNetwork) {
       calculatedCap = max(calculatedCap, 2 * 1024 * 1024);
     }
     if (!provider.isNetwork &&
@@ -563,42 +568,40 @@ class UnifiedAudioLoader {
     _rangeEnd = status.rangeEnd;
     _aheadHeadroomBytes = status.aheadHeadroomBytes;
 
-    if (_isLive || _totalContentLength <= 0) {
-      if (_isPausedByBackpressure &&
-          _responseSub != null &&
-          _responseSub!.isPaused) {
-        _isPausedByBackpressure = false;
-        _state = UnifiedLoaderState.streaming;
-        if (!_isFeedingChunk) {
-          _resumeSubscription();
-        }
-      }
-      return;
-    }
-
     final nominalBitrate =
         _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
     final bytesPerSec = max(1, nominalBitrate ~/ 8);
     final targetAheadBytes = max(
-      256 * 1024,
+      _isLive ? 512 * 1024 : 256 * 1024,
       (_bufferAhead.inMilliseconds * bytesPerSec) ~/ 1000,
     );
     final capBytes = status.bufferCapacity > 0
         ? status.bufferCapacity
         : 4 * 1024 * 1024;
-    final maxAheadBytes = min((capBytes * 0.85).round(), targetAheadBytes);
+    // When playing a live stream, audio is produced at realtime 1.0x rate.
+    // We only apply backpressure if buffer approaches full capacity (90%) to prevent eviction.
+    // When paused, we apply backpressure at targetAheadBytes to prevent buffer overflow.
+    final maxAheadBytes = (_isLive && _player.state.playing)
+        ? (capBytes * 0.90).round()
+        : min((capBytes * 0.85).round(), targetAheadBytes);
+
+    final releaseThreshold = (_isLive && _player.state.playing)
+        ? (capBytes * 0.70).round()
+        : (maxAheadBytes * 0.60).round();
 
     if (_aheadHeadroomBytes >= maxAheadBytes &&
+        _aheadHeadroomBytes > 0 &&
         _responseSub != null &&
         !_isPausedByBackpressure) {
       _pauseSubscription();
       _isPausedByBackpressure = true;
       _pausedAtHeadroomBytes = _aheadHeadroomBytes;
       _state = UnifiedLoaderState.pausedByBackpressure;
-    } else if (_aheadHeadroomBytes < (maxAheadBytes * 0.82).round() ||
+      _log(5, 'Backpressure engaged: headroom=$_aheadHeadroomBytes >= $maxAheadBytes (live=$_isLive)');
+    } else if (_aheadHeadroomBytes < releaseThreshold ||
         (_isPausedByBackpressure &&
             _pausedAtHeadroomBytes > 0 &&
-            _aheadHeadroomBytes <= (_pausedAtHeadroomBytes * 0.82).round()) ||
+            _aheadHeadroomBytes <= (_pausedAtHeadroomBytes * 0.75).round()) ||
         status.isBuffering) {
       if (_responseSub != null &&
           (_isPausedByBackpressure || _responseSub!.isPaused)) {
@@ -608,19 +611,27 @@ class UnifiedAudioLoader {
         if (!_isFeedingChunk) {
           _resumeSubscription();
         }
+        _log(5, 'Backpressure released: headroom=$_aheadHeadroomBytes (live=$_isLive)');
       } else if (_responseSub == null &&
           !_isReopening &&
           _reconnectTimer == null &&
           !_isStreamEnded &&
-          _totalContentLength > 0 &&
-          _rangeEnd < _totalContentLength &&
-          _isRangeSupported) {
-        _isPausedByBackpressure = false;
-        _pausedAtHeadroomBytes = 0;
-        _state = UnifiedLoaderState.streaming;
-        _reconnectRetries = 0;
-        _currentStreamOffset = _rangeEnd;
-        _reopenFromOffset(_rangeEnd, _seekGeneration);
+          !_isStopped &&
+          provider.isNetwork) {
+        if (!_isLive && _totalContentLength > 0 && _rangeEnd < _totalContentLength && _isRangeSupported) {
+          _isPausedByBackpressure = false;
+          _pausedAtHeadroomBytes = 0;
+          _state = UnifiedLoaderState.streaming;
+          _reconnectRetries = 0;
+          _currentStreamOffset = _rangeEnd;
+          _reopenFromOffset(_rangeEnd, _seekGeneration);
+        } else if (_isLive) {
+          _isPausedByBackpressure = false;
+          _pausedAtHeadroomBytes = 0;
+          _state = UnifiedLoaderState.streaming;
+          _log(4, 'Live stream idle/disconnected while buffering/playing; reconnecting');
+          _scheduleReconnect(_seekGeneration, isLive: true);
+        }
       }
     }
   }
@@ -631,30 +642,38 @@ class UnifiedAudioLoader {
     const int sliceSize = 32768; // 32 KB slices
     int offset = 0;
     while (!_isDisposed && _seekGeneration == seekGen && offset < chunk.length) {
-      if (!_isLive && _totalContentLength > 0) {
-        final nominalBitrate =
-            _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
-        final bytesPerSec = max(1, nominalBitrate ~/ 8);
-        final targetAheadBytes = max(
-          256 * 1024,
-          (_bufferAhead.inMilliseconds * bytesPerSec) ~/ 1000,
-        );
-        final capBytes = _player.backend.getStreamStatus()?.bufferCapacity ??
-            (4 * 1024 * 1024);
-        final maxAheadBytes = min((capBytes * 0.85).round(), targetAheadBytes);
+      final nominalBitrate =
+          _player.state.bitrate > 0 ? _player.state.bitrate : 256000;
+      final bytesPerSec = max(1, nominalBitrate ~/ 8);
+      final targetAheadBytes = max(
+        _isLive ? 512 * 1024 : 256 * 1024,
+        (_bufferAhead.inMilliseconds * bytesPerSec) ~/ 1000,
+      );
+      final capBytes = _player.backend.getStreamStatus()?.bufferCapacity ??
+          (4 * 1024 * 1024);
+      final maxAheadBytes = (_isLive && _player.state.playing)
+          ? (capBytes * 0.90).round()
+          : min((capBytes * 0.85).round(), targetAheadBytes);
 
-        if (_aheadHeadroomBytes >= maxAheadBytes) {
-          _pauseSubscription();
-          _isPausedByBackpressure = true;
-          _pausedAtHeadroomBytes = _aheadHeadroomBytes;
-          _state = UnifiedLoaderState.pausedByBackpressure;
-          while (!_isDisposed && !_isStopped && _seekGeneration == seekGen) {
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-            if (_isDisposed || _isStopped || _seekGeneration != seekGen) return;
-            onEngineTelemetryTick();
-            if (_aheadHeadroomBytes < (maxAheadBytes * 0.82).round()) {
-              break;
-            }
+      final releaseThreshold = (_isLive && _player.state.playing)
+          ? (capBytes * 0.70).round()
+          : (maxAheadBytes * 0.60).round();
+
+      if (_aheadHeadroomBytes >= maxAheadBytes && _aheadHeadroomBytes > 0) {
+        _pauseSubscription();
+        _isPausedByBackpressure = true;
+        _pausedAtHeadroomBytes = _aheadHeadroomBytes;
+        _state = UnifiedLoaderState.pausedByBackpressure;
+        _log(5, '_feedChunk backpressure pause: headroom=$_aheadHeadroomBytes >= $maxAheadBytes (live=$_isLive)');
+        while (!_isDisposed && !_isStopped && _seekGeneration == seekGen) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          if (_isDisposed || _isStopped || _seekGeneration != seekGen) return;
+          onEngineTelemetryTick();
+          if (!_isPausedByBackpressure ||
+              _aheadHeadroomBytes < releaseThreshold ||
+              (_isLive && _player.state.playing && _aheadHeadroomBytes < (capBytes * 0.85).round())) {
+            _log(5, '_feedChunk backpressure release: headroom=$_aheadHeadroomBytes');
+            break;
           }
         }
       }
@@ -668,6 +687,7 @@ class UnifiedAudioLoader {
         _pauseSubscription();
         _isPausedByBackpressure = true;
         _state = UnifiedLoaderState.pausedByBackpressure;
+        _log(5, '_feedChunk errorBusy: pausing subscription and retrying');
         while (!_isDisposed && !_isStopped && _seekGeneration == seekGen) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
           if (_isDisposed || _isStopped || _seekGeneration != seekGen) return;
@@ -675,6 +695,7 @@ class UnifiedAudioLoader {
           if (feedRes == MapResult.success) {
             _isPausedByBackpressure = false;
             _state = UnifiedLoaderState.streaming;
+            _log(5, '_feedChunk errorBusy resolved; resumed streaming');
             break;
           }
         }
@@ -813,6 +834,53 @@ class UnifiedAudioLoader {
         _isReopening = false;
       }
     }
+  }
+
+  /// Notifies the loader that playback has been resumed via `play()`.
+  void onPlay() {
+    if (_isDisposed || _isStopped) return;
+    _refreshTelemetryFromBackend();
+    _log(4, 'onPlay: live=$_isLive, state=$_state, readCursor=$_readCursorByte, range=[$_rangeStart..$_rangeEnd], headroom=$_aheadHeadroomBytes');
+    if (_isLive) {
+      final status = _player.backend.getStreamStatus();
+      final bool isStarvedOrEvicted = status != null &&
+          (status.readCursorByte < status.rangeStart ||
+           (status.rangeEnd > 0 && status.readCursorByte >= status.rangeEnd));
+
+      if ((isStarvedOrEvicted || _responseSub == null) &&
+          !_isReopening &&
+          _reconnectTimer == null &&
+          provider.isNetwork) {
+        _log(3, 'onPlay: live stream starved/evicted or disconnected; reconnecting immediately');
+        _scheduleReconnect(_seekGeneration, isLive: true);
+      } else {
+        // Proactively unpause backpressure and resume streaming on play
+        _isPausedByBackpressure = false;
+        _pausedAtHeadroomBytes = 0;
+        _state = UnifiedLoaderState.streaming;
+        if (_responseSub != null && _responseSub!.isPaused) {
+          _resumeSubscription();
+          _log(4, 'onPlay: proactively resumed network subscription');
+        }
+      }
+    } else {
+      if (_isPausedByBackpressure) {
+        _isPausedByBackpressure = false;
+        _pausedAtHeadroomBytes = 0;
+        _state = UnifiedLoaderState.streaming;
+        if (_responseSub != null && _responseSub!.isPaused && !_isFeedingChunk) {
+          _resumeSubscription();
+        }
+      }
+    }
+    onEngineTelemetryTick();
+  }
+
+  /// Notifies the loader that playback has been paused via `pause()`.
+  void onPause() {
+    if (_isDisposed || _isStopped) return;
+    _refreshTelemetryFromBackend();
+    _log(4, 'onPause: live=$_isLive, state=$_state, readCursor=$_readCursorByte, range=[$_rangeStart..$_rangeEnd], headroom=$_aheadHeadroomBytes');
   }
 
   /// Resumes loader activity when `play()` is called after `stop()`.

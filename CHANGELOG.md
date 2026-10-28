@@ -2,6 +2,16 @@
 
 ## 3.0.2
 
+- **Livestream Long Pause & Playback Freeze Fix**:
+  - Fixed an issue where pausing a livestream for a prolonged period caused playback to play only the residual pre-decoded audio chunk in the buffer upon `play()`, after which sound stopped, position froze, and no more data was requested from the network.
+  - Removed the `!is_live` bypass in `map_buffer_ring_write_internal` to engage backpressure while paused, preventing incoming stream chunks from advancing `range_start` beyond `read_cursor` (buffer eviction).
+  - Added automatic read cursor resynchronization in `map_buffer_read`: if a livestream read cursor is evicted behind `range_start`, the cursor automatically resynchronizes to `range_start` with a warning instead of failing with fatal `MA_NOT_IMPLEMENTED`.
+  - Implemented proactive stream resumption in `UnifiedAudioLoader.onPlay()` and `onPause()` transport hooks, immediately lifting backpressure and unpausing the HTTP network subscription upon `play()` without waiting for backpressure headroom decay or delayed chunk slicing.
+  - Enforced a minimum buffer capacity of 2 MB for all network streams (including live streams), preventing buffer starvation on high-bitrate streams (e.g. 1.5 Mbps) where the default 320 KB held less than 2 seconds of audio.
+  - Widened backpressure hysteresis thresholds (engaging at 90% during active live playback, releasing at 60–70%) to prevent rapid oscillation ("chattering") and eliminate false underruns caused by network round-trip delays.
+  - Increased re-buffering threshold in C for live streams to 48 KB and deduplicated `map_event_dispatcher_post_buffering` notifications in `map_source.c` to prevent buffering state flickering across 20 ms audio callback periods.
+  - Added structured verbose diagnostic logs for buffer starvation, backpressure engagement/release, and cursor resynchronization (`MapLogLevel.verbose`).
+
 - **Hardware Device Fallback & `pauseOnDeviceChange` Lifecycle**:
   - Fixed an issue where disconnecting the active audio output device (e.g. unplugging headphones) with `pauseOnDeviceChange: true` paused playback, but subsequent `play()` invocations showed `playing` without audio output or progress bar movement.
   - Re-routed device fallback to execute asynchronously in the background event dispatcher thread (`map_player_check_device_fallback`) upon hardware disconnection notifications (`ma_device_notification_type_stopped`), waking up via `wakeup_event` without blocking audio threads or holding locks.

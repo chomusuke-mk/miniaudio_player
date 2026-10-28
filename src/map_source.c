@@ -114,6 +114,17 @@ static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
                 if (readFromDecoder > 0)
                 {
                     ma_pcm_rb_commit_write(&pDS->rb, (ma_uint32)readFromDecoder);
+                    if (pDS->is_stream && pDS->state == MAP_SOURCE_STATE_BUFFERING)
+                    {
+                        if (pDS->buffer.range_end - pDS->buffer.read_cursor > 32768 || !pDS->buffer.is_buffering)
+                        {
+                            pDS->state = MAP_SOURCE_STATE_DECODING;
+                            if (pDS->pDispatcher != NULL)
+                            {
+                                map_event_dispatcher_post_buffering(pDS->pDispatcher, 0);
+                            }
+                        }
+                    }
                 }
 
                 if (pDS->is_stream)
@@ -134,6 +145,23 @@ static ma_thread_result MA_THREADCALL map_decoder_worker_entry(void *pData)
 
             if (!was_aborted && pDS->is_stream && !is_buffer_eof && readFromDecoder == 0)
             {
+                if (pDS->pDispatcher != NULL && (pDS->buffer.is_buffering || map_buffer_is_starving(&pDS->buffer)))
+                {
+                    if (pDS->state != MAP_SOURCE_STATE_BUFFERING)
+                    {
+                        pDS->state = MAP_SOURCE_STATE_BUFFERING;
+                        map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                    }
+                }
+                if (pDS->buffer.is_live && decRes != MA_SUCCESS)
+                {
+                    map_log_print(MAP_LOG_LEVEL_WARNING, "source",
+                        "live stream decoder decode error (%d); resyncing decoder stream at read_cursor=%lld",
+                        decRes, (long long)pDS->buffer.read_cursor);
+                    ma_mutex_lock(&pDS->decoder_mutex);
+                    map_decoder_reset_stream(&pDS->decoder, pDS->buffer.read_cursor, pDS->readCursorFrames);
+                    ma_mutex_unlock(&pDS->decoder_mutex);
+                }
                 /* Waiting for more chunks from provider */
                 ma_sleep(5);
             }
@@ -216,6 +244,14 @@ static ma_result map_time_stretch_ds_read_filtered(
 
             if (fastRead > 0)
             {
+                if (pDS->state == MAP_SOURCE_STATE_BUFFERING)
+                {
+                    pDS->state = MAP_SOURCE_STATE_DECODING;
+                    if (pDS->pDispatcher != NULL)
+                    {
+                        map_event_dispatcher_post_buffering(pDS->pDispatcher, 0);
+                    }
+                }
                 if (pFramesRead != NULL) *pFramesRead = fastRead;
                 if (pRealFramesRead != NULL) *pRealFramesRead = fastRead;
                 map_time_stretch_ds_check_signal_worker(pDS);
@@ -234,6 +270,17 @@ static ma_result map_time_stretch_ds_read_filtered(
 
             /* Transient buffer lag / starvation: synthesize silence without blocking RT thread */
             ma_atomic_fetch_add_32(&pDS->underrun_count, 1);
+            if (pDS->is_stream && (pDS->buffer.is_buffering || map_buffer_is_starving(&pDS->buffer)))
+            {
+                if (pDS->state != MAP_SOURCE_STATE_BUFFERING)
+                {
+                    pDS->state = MAP_SOURCE_STATE_BUFFERING;
+                    if (pDS->pDispatcher != NULL)
+                    {
+                        map_event_dispatcher_post_buffering(pDS->pDispatcher, 1);
+                    }
+                }
+            }
             if (pFramesOut != NULL && framesToRead > 0)
             {
                 memset(pFramesOut, 0, framesToRead * channels * sizeof(float));

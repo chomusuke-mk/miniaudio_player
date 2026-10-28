@@ -369,6 +369,8 @@ class PlayerAction {
   Future<void> _executePlay() async {
     if (_activeLoader != null && _activeLoader!.isStopped) {
       await _activeLoader!.onPlayFromStopped();
+    } else {
+      _activeLoader?.onPlay();
     }
     if (_player.state.completed ||
         (_player.state.duration > Duration.zero &&
@@ -394,6 +396,7 @@ class PlayerAction {
   }
 
   Future<void> _executePause() async {
+    _activeLoader?.onPause();
     await _player.backend.pause();
   }
 

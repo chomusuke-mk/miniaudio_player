@@ -1300,8 +1300,8 @@ ma_result map_buffer_write(
         return MA_INTERRUPT;
     }
 
-    /* Backpressure protection: For progressive file streams, never allow writer to overrun ring read_cursor */
-    if (!mb->is_probing && !mb->is_live && mb->head_locked)
+    /* Backpressure protection: Never allow writer to overrun ring read_cursor beyond capacity */
+    if (!mb->is_probing && mb->head_locked)
     {
         int64_t write_end = offset + (int64_t)size;
         if (write_end > mb->audio_start)
@@ -1309,6 +1309,9 @@ ma_result map_buffer_write(
             int64_t ring_read_pos = (mb->read_cursor > mb->audio_start) ? mb->read_cursor : mb->audio_start;
             if (write_end - ring_read_pos > (int64_t)mb->capacity)
             {
+                map_log_print(MAP_LOG_LEVEL_VERBOSE, "buffer",
+                    "stream_feed MA_BUSY: write_end=%lld, ring_read_pos=%lld, cap=%zu, is_live=%d",
+                    (long long)write_end, (long long)ring_read_pos, mb->capacity, mb->is_live);
                 ma_mutex_unlock(&mb->lock);
                 return MA_BUSY;
             }
@@ -1483,7 +1486,7 @@ ma_result map_buffer_write(
     if (mb->is_buffering || mb->state == MAP_BUFFER_STATE_BUFFERING)
     {
         int64_t buffered_ahead = mb->range_end - mb->read_cursor;
-        int64_t rebuffer_threshold = mb->is_live ? (int64_t)(8 * 1024) : (int64_t)(32 * 1024);
+        int64_t rebuffer_threshold = mb->is_live ? (int64_t)(48 * 1024) : (int64_t)(64 * 1024);
         if (mb->capacity > 0 && rebuffer_threshold > (int64_t)(mb->capacity / 2))
         {
             rebuffer_threshold = (int64_t)(mb->capacity / 2);
@@ -1742,6 +1745,15 @@ ma_result map_buffer_read(
         if (req_offset < mb->range_start &&
             (req_offset < 0 || (size_t)req_offset >= mb->head_size))
         {
+            if (mb->is_live)
+            {
+                map_log_print(MAP_LOG_LEVEL_WARNING, "buffer",
+                    "live stream read cursor evicted: req_offset=%lld < range_start=%lld (capacity=%zu, range_end=%lld); resyncing to range_start",
+                    (long long)req_offset, (long long)mb->range_start, mb->capacity, (long long)mb->range_end);
+                mb->read_cursor = mb->range_start;
+                req_offset = mb->range_start;
+                continue;
+            }
             ma_mutex_unlock(&mb->lock);
             return MA_NOT_IMPLEMENTED;
         }
@@ -1754,6 +1766,9 @@ ma_result map_buffer_read(
         }
 
         /* Data not yet arrived (wait on event) */
+        map_log_print(MAP_LOG_LEVEL_VERBOSE, "buffer",
+            "data starvation: req_offset=%lld >= range_end=%lld (is_live=%d, read_cursor=%lld)",
+            (long long)req_offset, (long long)mb->range_end, mb->is_live, (long long)mb->read_cursor);
         mb->is_buffering = MA_TRUE;
         mb->state = MAP_BUFFER_STATE_BUFFERING;
         ma_mutex_unlock(&mb->lock);

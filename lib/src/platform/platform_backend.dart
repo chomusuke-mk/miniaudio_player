@@ -34,7 +34,11 @@ class BackendStreamStatus {
     required this.rangeEnd,
   });
 
-  int get aheadHeadroomBytes => rangeEnd - readCursorByte;
+  int get aheadHeadroomBytes {
+    if (readCursorByte < rangeStart) return 0;
+    final h = rangeEnd - readCursorByte;
+    return h < 0 ? 0 : h;
+  }
 }
 
 /// Callback listener receiving reactive state and telemetry updates from [PlayerBackend].
