@@ -157,6 +157,7 @@ words:
   - ENOSEEK
   - ENOTAUDIO
   - ENOTFORMAT
+  - entrancy
   - eosflag
   - Equalizador
   - EREAD
@@ -534,6 +535,7 @@ words:
   - vorb
   - vorbisfile
   - VSHR
+  - wakeup
   - Wakeup
   - wakeups
   - wasapi

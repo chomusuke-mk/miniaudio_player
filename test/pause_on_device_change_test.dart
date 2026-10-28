@@ -1,5 +1,9 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
+
+import 'helpers/synthetic_audio.dart';
 
 void main() {
   group('AudioDevice effectiveId and endpoint resolution', () {
@@ -180,6 +184,86 @@ void main() {
       final samePhysicalEndpoint = currentActiveEndpoint.isSameEndpoint(fallbackResolvedEndpoint);
       expect(samePhysicalEndpoint, isFalse,
           reason: 'Fallback landed on a different physical endpoint; pauseOnDeviceChange must pause.');
+    });
+  });
+
+  group('Playback, seek, and leaf call safety with pauseOnDeviceChange enabled', () {
+    late File testWavFile;
+
+    setUpAll(() async {
+      testWavFile = await SyntheticAudioGenerator.createTempWavFile(
+        fileName: 'pause_on_device_change_test.wav',
+        frequencyHz: 440.0,
+        durationSeconds: 5.0,
+        sampleRate: 44100,
+        numChannels: 2,
+      );
+    });
+
+    tearDownAll(() async {
+      await SyntheticAudioGenerator.cleanUp(testWavFile);
+    });
+
+    test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {
+      final player = MiniaudioPlayer(pauseOnDeviceChange: true);
+      try {
+        await player.action.open(AudioSource.file(testWavFile.path));
+        expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
+
+        await player.action.play();
+        expect(player.state.playing, isTrue);
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        await player.action.pause();
+        expect(player.state.playing, isFalse);
+
+        // Seek while paused (calls streamSeek and duration/position getters)
+        await player.action.seek(const Duration(milliseconds: 2500));
+        expect(player.state.position.inMilliseconds, inInclusiveRange(2400, 2600));
+
+        // Resume play after seek
+        await player.action.play();
+        expect(player.state.playing, isTrue);
+
+        await Future.delayed(const Duration(milliseconds: 150));
+        expect(player.state.position.inMilliseconds, greaterThan(2500));
+
+        await player.action.stop();
+      } finally {
+        await player.dispose();
+      }
+    });
+
+    test('MiniaudioEngine with pauseOnDeviceChange handles seek and resume properly', () async {
+      final engine = MiniaudioEngine(pauseOnDeviceChange: true);
+      try {
+        await engine.action.open([EngineItem(source: AudioSource.file(testWavFile.path))]);
+        expect(engine.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
+
+        await engine.action.play();
+        expect(engine.state.phase, equals(EnginePhase.playing));
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        await engine.action.pause();
+        expect(engine.state.phase, equals(EnginePhase.paused));
+
+        // Seek while paused
+        await engine.action.seek(const Duration(milliseconds: 2000));
+        expect(engine.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
+
+        // Resume play
+        await engine.action.play();
+        expect(engine.state.phase, equals(EnginePhase.playing));
+
+        await Future.delayed(const Duration(milliseconds: 150));
+        expect(engine.state.position.inMilliseconds, greaterThan(2000));
+
+        await engine.action.stop();
+      } finally {
+        await engine.dispose();
+      }
     });
   });
 }

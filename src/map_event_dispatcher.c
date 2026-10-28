@@ -592,6 +592,11 @@ static ma_thread_result MA_THREADCALL map_event_dispatcher_worker(void *pData)
 
     while (ma_atomic_load_32(&disp->is_running))
     {
+        if (disp->maintenance_cb != NULL && disp->player != NULL)
+        {
+            disp->maintenance_cb(disp->player);
+        }
+
         map_event_dispatcher_process_events(disp);
 
         if (!ma_atomic_load_32(&disp->is_running))

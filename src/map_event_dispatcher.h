@@ -228,6 +228,7 @@ extern "C"
         /* Callback configuration */
         miniaudio_player_event_cb callback;
         void *user_data;
+        void (*maintenance_cb)(struct miniaudio_player *player);
 
         /* Rate limiting and timing */
         MA_ATOMIC(4, ma_uint32) telemetry_interval_ms;

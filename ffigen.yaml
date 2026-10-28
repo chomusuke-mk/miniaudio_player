@@ -22,6 +22,9 @@ functions:
       - 'miniaudio_player_is_.*'
       - 'miniaudio_player_set_log_level'
       - 'miniaudio_player_free_audio_analysis'
+    exclude:
+      - 'miniaudio_player_get_devices'
+      - 'miniaudio_player_get_status'
 comments:
   style: any
   length: full

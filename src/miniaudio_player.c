@@ -350,8 +350,8 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
             }
             player->device_changed = 1;
             map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
-            map_event_dispatcher_flush(&player->dispatcher);
             ma_mutex_unlock(&player->lock);
+            map_event_dispatcher_flush(&player->dispatcher);
 
             if (pNotification->pDevice != NULL && pNotification->pDevice->sampleRate > 0 &&
                 pNotification->pDevice->sampleRate != player->eq_node.sampleRate)
@@ -379,14 +379,15 @@ static void map_miniaudio_device_notification(const ma_device_notification *pNot
             ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
             map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
             map_event_dispatcher_post_playing(&player->dispatcher, 0);
-            map_event_dispatcher_flush(&player->dispatcher);
             ma_mutex_unlock(&player->lock);
+            map_event_dispatcher_flush(&player->dispatcher);
         }
 
         if (!is_switching && player->has_custom_device)
         {
             map_log_print(MAP_LOG_LEVEL_WARNING, "core", "device notification: playback device stopped (unplugged/disconnected)");
             ma_atomic_store_32(&player->needs_device_fallback, 1);
+            ma_event_signal(&player->dispatcher.wakeup_event);
         }
         else
         {
@@ -578,103 +579,101 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     player->device_changed = 1;
     ma_atomic_store_32(&player->needs_device_fallback, 0);
     map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
-    map_event_dispatcher_flush(&player->dispatcher);
     ma_mutex_unlock(&player->lock);
+    map_event_dispatcher_flush(&player->dispatcher);
 
-    if (was_started || state == MAP_PLAYBACK_STATE_PLAYING)
+    if (fallback_engaged &&
+        ma_atomic_load_32(&player->pause_on_device_change) &&
+        strcmp(new_dev_info.effective_id, prev_effective_id) != 0)
     {
-        if (fallback_engaged &&
-            ma_atomic_load_32(&player->pause_on_device_change) &&
-            strcmp(new_dev_info.effective_id, prev_effective_id) != 0)
+        ma_mutex_lock(&player->lock);
+        ma_sound_stop(&player->sound);
+        ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
+        map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
+        map_event_dispatcher_post_playing(&player->dispatcher, 0);
+        ma_mutex_unlock(&player->lock);
+        map_event_dispatcher_flush(&player->dispatcher);
+        map_log_print(MAP_LOG_LEVEL_INFO, "core", "device fallback to different endpoint ('%s' -> '%s'); pausing playback",
+                      prev_effective_id, new_dev_info.effective_id);
+    }
+
+    if (!ma_device_is_started(pDevice))
+    {
+        res = ma_device_start(pDevice);
+        if (res != MA_SUCCESS && has_custom)
         {
-            ma_mutex_lock(&player->lock);
-            ma_sound_stop(&player->sound);
-            ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
-            map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
-            map_event_dispatcher_post_playing(&player->dispatcher, 0);
-            map_event_dispatcher_flush(&player->dispatcher);
-            ma_mutex_unlock(&player->lock);
-            map_log_print(MAP_LOG_LEVEL_INFO, "core", "device fallback to different endpoint ('%s' -> '%s'); pausing playback",
-                          prev_effective_id, new_dev_info.effective_id);
-        }
-        else
-        {
-            res = ma_device_start(pDevice);
-            if (res != MA_SUCCESS && has_custom)
-            {
-                map_log_print(MAP_LOG_LEVEL_WARNING, "core", "failed to start custom device '%s' (res %d), falling back to default", device_id, res);
+            map_log_print(MAP_LOG_LEVEL_WARNING, "core", "failed to start custom device '%s' (res %d), falling back to default", device_id, res);
 #if defined(__ANDROID__)
-                if (pContext->backend == ma_backend_aaudio)
-                {
-                    ma_atomic_bool32_set(&pDevice->aaudio.isTearingDown, MA_TRUE);
-                }
+            if (pContext->backend == ma_backend_aaudio)
+            {
+                ma_atomic_bool32_set(&pDevice->aaudio.isTearingDown, MA_TRUE);
+            }
 #endif
-                dev_cfg.playback.pDeviceID = NULL;
-                dev_cfg.performanceProfile = ma_performance_profile_low_latency;
-                has_custom = MA_FALSE;
-                fallback_engaged = MA_TRUE;
-                memset(&target_id, 0, sizeof(target_id));
-                ma_device_uninit(pDevice);
-                if (ma_device_init(pContext, &dev_cfg, pDevice) == MA_SUCCESS)
+            dev_cfg.playback.pDeviceID = NULL;
+            dev_cfg.performanceProfile = ma_performance_profile_low_latency;
+            has_custom = MA_FALSE;
+            fallback_engaged = MA_TRUE;
+            memset(&target_id, 0, sizeof(target_id));
+            ma_device_uninit(pDevice);
+            if (ma_device_init(pContext, &dev_cfg, pDevice) == MA_SUCCESS)
+            {
+                if (pDevice->sampleRate > 0 && pDevice->sampleRate != player->eq_node.sampleRate)
                 {
-                    if (pDevice->sampleRate > 0 && pDevice->sampleRate != player->eq_node.sampleRate)
-                    {
-                        ma_equalizer_node_set_sample_rate(&player->eq_node, pDevice->sampleRate);
-                        ma_mutex_lock(&player->lock);
-                        player->sample_rate = pDevice->sampleRate;
-                        ma_mutex_unlock(&player->lock);
-                    }
-                    if (ma_device_get_info(pDevice, ma_device_type_playback, &dev_info) == MA_SUCCESS)
-                    {
-                        strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
-                        new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
-                        map_device_id_to_string(&dev_info.id, new_dev_info.effective_id, sizeof(new_dev_info.effective_id));
-                    }
-                    else
-                    {
-                        strncpy(new_dev_info.name, "Default", sizeof(new_dev_info.name) - 1);
-                        new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
-                        strncpy(new_dev_info.effective_id, "default", sizeof(new_dev_info.effective_id) - 1);
-                    }
-                    strncpy(new_dev_info.id, "auto", sizeof(new_dev_info.id) - 1);
-                    new_dev_info.is_default = 1;
-                    new_dev_info.is_auto = 1;
-
+                    ma_equalizer_node_set_sample_rate(&player->eq_node, pDevice->sampleRate);
                     ma_mutex_lock(&player->lock);
-                    player->has_custom_device = 0;
-                    player->custom_device_id = target_id;
-                    player->current_device = new_dev_info;
-                    player->device_changed = 1;
-                    ma_atomic_store_32(&player->needs_device_fallback, 0);
-                    map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
-                    map_event_dispatcher_flush(&player->dispatcher);
+                    player->sample_rate = pDevice->sampleRate;
                     ma_mutex_unlock(&player->lock);
+                }
+                if (ma_device_get_info(pDevice, ma_device_type_playback, &dev_info) == MA_SUCCESS)
+                {
+                    strncpy(new_dev_info.name, dev_info.name, sizeof(new_dev_info.name) - 1);
+                    new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
+                    map_device_id_to_string(&dev_info.id, new_dev_info.effective_id, sizeof(new_dev_info.effective_id));
+                }
+                else
+                {
+                    strncpy(new_dev_info.name, "Default", sizeof(new_dev_info.name) - 1);
+                    new_dev_info.name[sizeof(new_dev_info.name) - 1] = '\0';
+                    strncpy(new_dev_info.effective_id, "default", sizeof(new_dev_info.effective_id) - 1);
+                }
+                strncpy(new_dev_info.id, "auto", sizeof(new_dev_info.id) - 1);
+                new_dev_info.is_default = 1;
+                new_dev_info.is_auto = 1;
 
-                    if (ma_atomic_load_32(&player->pause_on_device_change) &&
-                        strcmp(new_dev_info.effective_id, prev_effective_id) != 0)
-                    {
-                        ma_mutex_lock(&player->lock);
-                        ma_sound_stop(&player->sound);
-                        ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
-                        map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
-                        map_event_dispatcher_post_playing(&player->dispatcher, 0);
-                        map_event_dispatcher_flush(&player->dispatcher);
-                        ma_mutex_unlock(&player->lock);
-                        map_log_print(MAP_LOG_LEVEL_INFO, "core", "device fallback to different endpoint ('%s' -> '%s'); pausing playback",
-                                      prev_effective_id, new_dev_info.effective_id);
-                    }
-                    else
-                    {
-                        ma_device_start(pDevice);
-                    }
-                    ma_atomic_store_32(&player->is_switching_device, 0);
-                    map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active (fallback): '%s' (default: %d)",
-                                  new_dev_info.name, new_dev_info.is_default);
-                    return MAP_SUCCESS;
+                ma_mutex_lock(&player->lock);
+                player->has_custom_device = 0;
+                player->custom_device_id = target_id;
+                player->current_device = new_dev_info;
+                player->device_changed = 1;
+                ma_atomic_store_32(&player->needs_device_fallback, 0);
+                map_event_dispatcher_post_device(&player->dispatcher, &player->current_device);
+                ma_mutex_unlock(&player->lock);
+                map_event_dispatcher_flush(&player->dispatcher);
+
+                if (ma_atomic_load_32(&player->pause_on_device_change) &&
+                    strcmp(new_dev_info.effective_id, prev_effective_id) != 0)
+                {
+                    ma_mutex_lock(&player->lock);
+                    ma_sound_stop(&player->sound);
+                    ma_atomic_store_32(&player->state, MAP_PLAYBACK_STATE_PAUSED);
+                    map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_PAUSED);
+                    map_event_dispatcher_post_playing(&player->dispatcher, 0);
+                    ma_mutex_unlock(&player->lock);
+                    map_event_dispatcher_flush(&player->dispatcher);
+                    map_log_print(MAP_LOG_LEVEL_INFO, "core", "device fallback to different endpoint ('%s' -> '%s'); pausing playback",
+                                  prev_effective_id, new_dev_info.effective_id);
+                }
+                if (!ma_device_is_started(pDevice))
+                {
+                    ma_device_start(pDevice);
                 }
                 ma_atomic_store_32(&player->is_switching_device, 0);
-                return MAP_ERROR_GENERIC;
+                map_log_print(MAP_LOG_LEVEL_INFO, "core", "playback device active (fallback): '%s' (default: %d)",
+                              new_dev_info.name, new_dev_info.is_default);
+                return MAP_SUCCESS;
             }
+            ma_atomic_store_32(&player->is_switching_device, 0);
+            return MAP_ERROR_GENERIC;
         }
     }
 
@@ -685,6 +684,21 @@ static int32_t map_player_apply_device(miniaudio_player_t *player, const char *d
     return MAP_SUCCESS;
 }
 #endif
+
+static void map_player_check_device_fallback(miniaudio_player_t *player)
+{
+    if (player == NULL)
+        return;
+#if !defined(MA_NO_DEVICE_IO)
+    if (ma_atomic_exchange_32(&player->needs_device_fallback, 0) == 1)
+    {
+        if (!ma_atomic_load_32(&player->is_switching_device) && player->has_custom_device)
+        {
+            map_player_apply_device(player, NULL);
+        }
+    }
+#endif
+}
 
 /* ========================================================================= */
 /* Public Lifecycle API                                                      */
@@ -958,6 +972,7 @@ MAP_API miniaudio_player_t *miniaudio_player_create(
 
         ma_equalizer_node_set_dispatcher(&player->eq_node, &player->dispatcher);
         map_time_stretch_ds_set_dispatcher(&player->stretch_ds, &player->dispatcher);
+        player->dispatcher.maintenance_cb = map_player_check_device_fallback;
 
         /* Post initial state */
         map_event_dispatcher_post_state(&player->dispatcher, MAP_PLAYBACK_STATE_STOPPED);
@@ -1732,6 +1747,10 @@ MAP_API int32_t miniaudio_player_stream_seek(
     if (player == NULL)
         return MAP_ERROR_INVALID_ARGS;
 
+#if !defined(MA_NO_DEVICE_IO)
+    map_player_check_device_fallback(player);
+#endif
+
     ma_mutex_lock(&player->lock);
     miniaudio_player_playback_state_t cur_state =
         (miniaudio_player_playback_state_t)ma_atomic_load_32(&player->state);
@@ -1753,8 +1772,8 @@ MAP_API int32_t miniaudio_player_stream_seek(
         ma_atomic_exchange_32(&player->sound.atEnd, MA_TRUE);
         map_player_set_state(player, MAP_PLAYBACK_STATE_COMPLETED);
         map_event_dispatcher_post_position(&player->dispatcher, position_ms);
-        map_event_dispatcher_flush(&player->dispatcher);
         ma_mutex_unlock(&player->lock);
+        map_event_dispatcher_flush(&player->dispatcher);
         return MAP_STREAM_SEEK_CACHE_HIT;
     }
 
@@ -1795,9 +1814,9 @@ MAP_API int32_t miniaudio_player_stream_seek(
         map_event_dispatcher_post_buffering(&player->dispatcher, 0);
     }
     map_event_dispatcher_post_position(&player->dispatcher, position_ms);
+    ma_mutex_unlock(&player->lock);
     map_event_dispatcher_flush(&player->dispatcher);
 
-    ma_mutex_unlock(&player->lock);
     return seek_res;
 }
 
@@ -2102,6 +2121,18 @@ MAP_API int32_t miniaudio_player_play(miniaudio_player_t *player)
 
     map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "play command");
 
+#if !defined(MA_NO_DEVICE_IO)
+    map_player_check_device_fallback(player);
+
+    {
+        ma_device *pDevice = ma_engine_get_device(&player->engine);
+        if (pDevice != NULL && !ma_device_is_started(pDevice))
+        {
+            ma_device_start(pDevice);
+        }
+    }
+#endif
+
     ma_mutex_lock(&player->lock);
     miniaudio_player_playback_state_t cur_state =
         (miniaudio_player_playback_state_t)ma_atomic_load_32(&player->state);
@@ -2132,8 +2163,8 @@ MAP_API int32_t miniaudio_player_play(miniaudio_player_t *player)
     }
 
     map_player_set_state(player, MAP_PLAYBACK_STATE_PLAYING);
-    map_event_dispatcher_flush(&player->dispatcher);
     ma_mutex_unlock(&player->lock);
+    map_event_dispatcher_flush(&player->dispatcher);
     return MAP_SUCCESS;
 }
 
@@ -2209,6 +2240,10 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
 
     map_log_print(MAP_LOG_LEVEL_DEBUG, "core", "seek to %lld ms", (long long)position_ms);
 
+#if !defined(MA_NO_DEVICE_IO)
+    map_player_check_device_fallback(player);
+#endif
+
     ma_mutex_lock(&player->lock);
     miniaudio_player_playback_state_t cur_state =
         (miniaudio_player_playback_state_t)ma_atomic_load_32(&player->state);
@@ -2235,6 +2270,7 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
         ma_atomic_exchange_32(&player->sound.atEnd, MA_TRUE);
         map_player_set_state(player, MAP_PLAYBACK_STATE_COMPLETED);
         map_event_dispatcher_post_position(&player->dispatcher, position_ms);
+        ma_mutex_unlock(&player->lock);
         map_event_dispatcher_flush(&player->dispatcher);
     }
     else
@@ -2255,10 +2291,10 @@ MAP_API int32_t miniaudio_player_seek(miniaudio_player_t *player, int64_t positi
             map_player_set_state(player, cur_state);
         }
         map_event_dispatcher_post_position(&player->dispatcher, position_ms);
+        ma_mutex_unlock(&player->lock);
         map_event_dispatcher_flush(&player->dispatcher);
     }
 
-    ma_mutex_unlock(&player->lock);
     return MAP_SUCCESS;
 }
 
@@ -2949,17 +2985,6 @@ MAP_API int32_t miniaudio_player_get_status(
     }
 
 #if !defined(MA_NO_DEVICE_IO)
-    if (ma_atomic_load_32(&mut_player->needs_device_fallback) && !ma_atomic_load_32(&mut_player->is_switching_device))
-    {
-        ma_atomic_store_32(&mut_player->needs_device_fallback, 0);
-        if (mut_player->has_custom_device)
-        {
-            ma_mutex_unlock(&mut_player->lock);
-            map_player_apply_device(mut_player, NULL);
-            ma_mutex_lock(&mut_player->lock);
-        }
-    }
-    else
     {
         ma_device *pDev = ma_engine_get_device(&mut_player->engine);
         if (pDev != NULL)
@@ -3049,66 +3074,121 @@ MAP_API int32_t miniaudio_player_get_status(
 
 MAP_API int64_t miniaudio_player_get_position_ms(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    int64_t pos = 0;
+    if (player == NULL)
         return 0;
-    return status.position_ms;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    if (mut_player->sound_loaded)
+    {
+        float cursor_sec = 0.0f;
+        if (ma_sound_get_cursor_in_seconds(&mut_player->sound, &cursor_sec) == MA_SUCCESS && cursor_sec >= 0.0f)
+        {
+            pos = (int64_t)((double)cursor_sec * 1000.0 + 0.5);
+            if (mut_player->duration_ms > 0 && pos > mut_player->duration_ms)
+            {
+                pos = mut_player->duration_ms;
+            }
+        }
+    }
+    ma_mutex_unlock(&mut_player->lock);
+    return pos;
 }
 
 MAP_API int64_t miniaudio_player_get_duration_ms(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    int64_t dur;
+    if (player == NULL)
         return 0;
-    return status.duration_ms;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    dur = mut_player->duration_ms;
+    ma_mutex_unlock(&mut_player->lock);
+    return dur;
 }
 
 MAP_API int32_t miniaudio_player_is_playing(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    int32_t playing;
+    if (player == NULL)
         return 0;
-    return status.is_playing;
+    mut_player = (miniaudio_player_t *)player;
+    if (ma_atomic_load_32(&mut_player->state) != MAP_PLAYBACK_STATE_PLAYING)
+        return 0;
+    ma_mutex_lock(&mut_player->lock);
+    playing = (mut_player->sound_loaded && ma_sound_is_playing(&mut_player->sound)) ? 1 : 0;
+    ma_mutex_unlock(&mut_player->lock);
+    return playing;
 }
 
 MAP_API int32_t miniaudio_player_is_completed(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    int32_t completed;
+    if (player == NULL)
         return 0;
-    return status.is_completed;
+    mut_player = (miniaudio_player_t *)player;
+    if (ma_atomic_load_32(&mut_player->is_completed))
+        return 1;
+    ma_mutex_lock(&mut_player->lock);
+    completed = (mut_player->sound_loaded && ma_sound_at_end(&mut_player->sound)) ? 1 : 0;
+    ma_mutex_unlock(&mut_player->lock);
+    return completed;
 }
 
 MAP_API float miniaudio_player_get_volume(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    float vol;
+    if (player == NULL)
         return 1.0f;
-    return status.volume;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    vol = mut_player->volume;
+    ma_mutex_unlock(&mut_player->lock);
+    return vol;
 }
 
 MAP_API float miniaudio_player_get_rate(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    float rate;
+    if (player == NULL)
         return 1.0f;
-    return status.rate;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    rate = mut_player->rate;
+    ma_mutex_unlock(&mut_player->lock);
+    return rate;
 }
 
 MAP_API float miniaudio_player_get_pitch(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    float pitch;
+    if (player == NULL)
         return 1.0f;
-    return status.pitch;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    pitch = mut_player->pitch;
+    ma_mutex_unlock(&mut_player->lock);
+    return pitch;
 }
 
 MAP_API uint32_t miniaudio_player_get_bitrate(const miniaudio_player_t *player)
 {
-    miniaudio_player_status_t status;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
+    miniaudio_player_t *mut_player;
+    uint32_t br;
+    if (player == NULL)
         return 0;
-    return status.bitrate;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    br = mut_player->bitrate;
+    ma_mutex_unlock(&mut_player->lock);
+    return br;
 }
 
 MAP_API uint32_t miniaudio_player_get_sample_rate(const miniaudio_player_t *player)
@@ -3129,12 +3209,13 @@ MAP_API int32_t miniaudio_player_get_equalizer(
     const miniaudio_player_t *player,
     miniaudio_player_equalizer_params_t *out_equalizer)
 {
-    miniaudio_player_status_t status;
+    miniaudio_player_t *mut_player;
     if (player == NULL || out_equalizer == NULL)
         return MAP_ERROR_INVALID_ARGS;
-    if (miniaudio_player_get_status(player, &status) != MAP_SUCCESS)
-        return MAP_ERROR_GENERIC;
-    *out_equalizer = status.equalizer;
+    mut_player = (miniaudio_player_t *)player;
+    ma_mutex_lock(&mut_player->lock);
+    *out_equalizer = mut_player->eq_params;
+    ma_mutex_unlock(&mut_player->lock);
     return MAP_SUCCESS;
 }
 

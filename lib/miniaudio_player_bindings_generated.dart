@@ -441,7 +441,7 @@ external int miniaudio_player_get_current_device(
 /// /* =========================================================================
 @ffi.Native<
     ffi.Int32 Function(ffi.Pointer<ffi.Pointer<miniaudio_device_info_t>>,
-        ffi.Pointer<ffi.Uint32>)>(isLeaf: true)
+        ffi.Pointer<ffi.Uint32>)>()
 external int miniaudio_player_get_devices(
   ffi.Pointer<ffi.Pointer<miniaudio_device_info_t>> out_devices,
   ffi.Pointer<ffi.Uint32> out_count,
@@ -520,7 +520,7 @@ external int miniaudio_player_get_silence_saved_ms(
 /// /* =========================================================================
 @ffi.Native<
     ffi.Int32 Function(ffi.Pointer<miniaudio_player_t>,
-        ffi.Pointer<miniaudio_player_status_t>)>(isLeaf: true)
+        ffi.Pointer<miniaudio_player_status_t>)>()
 external int miniaudio_player_get_status(
   ffi.Pointer<miniaudio_player_t> player,
   ffi.Pointer<miniaudio_player_status_t> out_status,

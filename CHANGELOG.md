@@ -2,6 +2,16 @@
 
 ## 3.0.2
 
+- **Hardware Device Fallback & `pauseOnDeviceChange` Lifecycle**:
+  - Fixed an issue where disconnecting the active audio output device (e.g. unplugging headphones) with `pauseOnDeviceChange: true` paused playback, but subsequent `play()` invocations showed `playing` without audio output or progress bar movement.
+  - Re-routed device fallback to execute asynchronously in the background event dispatcher thread (`map_player_check_device_fallback`) upon hardware disconnection notifications (`ma_device_notification_type_stopped`), waking up via `wakeup_event` without blocking audio threads or holding locks.
+  - Ensured `miniaudio_player_play()`, `miniaudio_player_seek()`, and `miniaudio_player_stream_seek()` verify and apply any pending device fallbacks before restarting sound.
+  - Guaranteed that `map_player_apply_device` and `miniaudio_player_play` keep the hardware playback device started (`ma_device_start`) so that unpausing immediately consumes PCM frames and advances playback.
+- **Dart FFI Leaf Call Safety & Pure Read-Only Getters**:
+  - Fixed a fatal Dart runtime abort (`error: Cannot invoke native callback from a leaf call`) that occurred when seeking after an audio output device change.
+  - In `src/miniaudio_player.c`, removed lazy device fallback mutation and event flushing from `miniaudio_player_get_status()`, enforcing strict $\mathcal{O}(1)$ read-only semantics for status queries.
+  - Refactored lightweight inspection APIs (`miniaudio_player_get_duration_ms`, `get_position_ms`, `is_playing`, `is_completed`, `get_volume`, `get_rate`, `get_pitch`, `get_bitrate`, `get_equalizer`) to directly query atomic and mutex-protected fields instead of constructing full status structures.
+  - Updated `ffigen.yaml` to exclude `miniaudio_player_get_devices` and `miniaudio_player_get_status` from FFI leaf calls, preventing any re-entrancy conflicts with Dart isolate listeners.
 - **Auto-Crossfade & Seek FSM Synchronization**:
   - Guarded automatic crossfade lifecycle with `_autoCrossfadeTriggered` to prevent duplicate or out-of-order scheduling from high-frequency position ticks.
   - Seeking outside the auto-crossfade zone (`position < duration - crossfadeDuration`) now immediately aborts any in-flight or preparing auto-crossfade, restores active deck volume to 100%, resets the standby deck to standby, bumps epoch to cancel pending asynchronous preparation tasks, and allows re-triggering when the track naturally reaches the boundary again.
