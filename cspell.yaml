@@ -17,6 +17,7 @@ words:
   - APIC
   - ARCHMASK
   - armeabi
+  - arraybuffer
   - asintóticamente
   - asound
   - aspt
@@ -115,6 +116,7 @@ words:
   - desnormalizado
   - desnormalizados
   - desync
+  - desynchronized
   - devs
   - DFLOAT
   - DHAVE
@@ -160,6 +162,7 @@ words:
   - EREAD
   - Estebanez
   - etmp
+  - EXITSTATUS
   - Expansor
   - EXTM
   - fabs
@@ -245,6 +248,7 @@ words:
   - jetbrains
   - Jezar
   - kbps
+  - Keepalive
   - Koen
   - kotlin
   - LBCF
@@ -426,6 +430,7 @@ words:
   - Schyler
   - sdcardfs
   - seekability
+  - seekable
   - Seekable
   - seekbar
   - seekbars
@@ -462,6 +467,7 @@ words:
   - streaminfo
   - STREAMINFO
   - Subárbol
+  - subarray
   - subgraves
   - sublist
   - submix
@@ -478,6 +484,8 @@ words:
   - SUPERWIDEBAND
   - Suttle
   - Symbian
+  - syscall
+  - SYSCALLS
   - tagncompare
   - tapset
   - TDAC
@@ -546,6 +554,7 @@ words:
   - Wsign
   - WSOLA
   - Wunused
+  - xfade
   - Xing
   - Xiph
   - xiphmont

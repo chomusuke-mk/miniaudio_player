@@ -50,7 +50,7 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
     ma_data_converter_reset(&pDecoder->converter);
     pDecoder->inputCacheRemaining = 0;
     pDecoder->inputCacheConsumed = 0;
-    pDecoder->readPointerInPCMFrames = targetFrame;
+    pDecoder->readPointerInPCMFrames = (newStreamOffset == 0) ? 0 : targetFrame;
 
     /* 2. Reset backend if present */
     if (pDecoder->pBackend != NULL)
@@ -70,15 +70,20 @@ ma_result map_decoder_reset_stream(ma_decoder *pDecoder, int64_t newStreamOffset
         {
             ma_mp3 *pMP3 = (ma_mp3 *)pDecoder->pBackend;
             ma_dr_mp3_reset(&pMP3->dr);
-            if (newStreamOffset == 0 && pDecoder->pUserData != NULL)
+            ma_uint64 actualStart = 0;
+            if (pDecoder->pUserData != NULL)
             {
                 map_buffer_t *mb = (map_buffer_t *)pDecoder->pUserData;
                 if (mb->is_initialized && mb->audio_start > 0)
                 {
-                    mb->read_cursor = mb->audio_start;
+                    actualStart = (ma_uint64)mb->audio_start;
+                    if (newStreamOffset == 0)
+                    {
+                        mb->read_cursor = mb->audio_start;
+                    }
                 }
             }
-            pMP3->dr.streamStartOffset = (ma_uint64)(newStreamOffset > 0 ? newStreamOffset : 0);
+            pMP3->dr.streamStartOffset = (ma_uint64)(newStreamOffset > 0 ? newStreamOffset : actualStart);
             pMP3->dr.streamCursor = pMP3->dr.streamStartOffset;
             pMP3->dr.currentPCMFrame = (newStreamOffset == 0) ? 0 : internalTargetFrame;
             return MA_SUCCESS;

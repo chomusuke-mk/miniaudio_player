@@ -88,6 +88,14 @@ class InternalCrossfadeController {
     return math.max(0.0, rawMediaMs + _mediaOffsetMs);
   }
 
+  void _log(String message) {
+    if (MiniaudioPlayer.globalConfig.logLevel.value >=
+        MiniaudioLogLevel.verbose.value) {
+      // ignore: avoid_print
+      print('[miniaudio_player][VERBOSE][crossfade] $message');
+    }
+  }
+
   /// Starts interpolating volume from [playerOut] (`masterVolume -> 0.0`) to
   /// [playerIn] (`0.0 -> masterVolume`) over [duration].
   ///
@@ -114,7 +122,15 @@ class InternalCrossfadeController {
     _curve = curve;
     _effectiveDuration = duration;
 
+    _log(
+      'start: duration=${duration.inMilliseconds}ms, curve=${curve.name}, '
+      'masterVolume=${_masterVolume.toStringAsFixed(2)}, rate=$_playbackRate, '
+      'playerOut pos=${playerOut.state.position.inMilliseconds}ms/${playerOut.state.duration.inMilliseconds}ms, '
+      'playerIn pos=${playerIn.state.position.inMilliseconds}ms/${playerIn.state.duration.inMilliseconds}ms',
+    );
+
     if (duration.inMilliseconds <= immediateCutThresholdMs) {
+      _log('start: duration <= ${immediateCutThresholdMs}ms, executing immediate cut');
       await _applyVolumes(playerOut, playerIn, 0.0, _masterVolume);
       if (opId == _operationId) {
         onComplete();
@@ -167,6 +183,7 @@ class InternalCrossfadeController {
     _lastTickWallTime = now;
 
     if (out.state.completed) {
+      _log('tick: playerOut signaled completed -> completing crossfade early');
       _completeNow(opId);
       return;
     }
@@ -176,12 +193,18 @@ class InternalCrossfadeController {
         ? (_currentElapsedMediaMs() / totalMs).clamp(0.0, 1.0)
         : 1.0;
 
+    final (volOut, volIn) = computeVolumes(p, _curve, _masterVolume);
+    _log(
+      'tick: p=${p.toStringAsFixed(3)}, volOut=${volOut.toStringAsFixed(3)}, volIn=${volIn.toStringAsFixed(3)}, '
+      'elapsedMedia=${_currentElapsedMediaMs().toStringAsFixed(1)}ms/${totalMs}ms, '
+      'outPos=${out.state.position.inMilliseconds}ms, inPos=${inn.state.position.inMilliseconds}ms',
+    );
+
     if (p >= 1.0) {
       _completeNow(opId);
       return;
     }
 
-    final (volOut, volIn) = computeVolumes(p, _curve, _masterVolume);
     _applyVolumesUnawaited(out, inn, volOut, volIn);
   }
 
@@ -191,12 +214,45 @@ class InternalCrossfadeController {
     final inn = _playerIn;
     final callback = _onComplete;
 
+    _log(
+      '_completeNow: opId=$opId, effectiveDuration=${_effectiveDuration.inMilliseconds}ms, '
+      'outPos=${out?.state.position.inMilliseconds}ms, inPos=${inn?.state.position.inMilliseconds}ms',
+    );
+
     cancel();
 
     if (out != null && inn != null) {
       _applyVolumesUnawaited(out, inn, 0.0, _masterVolume);
     }
     callback?.call();
+  }
+
+  /// Synchronizes the active crossfade gain envelope with the actual media
+  /// playback position of the outgoing player, allowing seeking inside the
+  /// crossfade zone to update the volume curves seamlessly.
+  void syncProgress(double normalizedProgress) {
+    if (!_isActive) return;
+    final p = normalizedProgress.clamp(0.0, 1.0);
+    final totalMs = _effectiveDuration.inMilliseconds.toDouble();
+    if (totalMs > 0) {
+      final desiredMediaMs = p * totalMs;
+      final rawMediaMs = _currentElapsedMediaMs() - _mediaOffsetMs;
+      _mediaOffsetMs = desiredMediaMs - rawMediaMs;
+    }
+    final out = _playerOut;
+    final inn = _playerIn;
+    if (out != null && inn != null) {
+      final (volOut, volIn) = computeVolumes(p, _curve, _masterVolume);
+      _log(
+        'syncProgress: inputProgress=${normalizedProgress.toStringAsFixed(3)}, clampedP=${p.toStringAsFixed(3)}, '
+        'volOut=${volOut.toStringAsFixed(3)}, volIn=${volIn.toStringAsFixed(3)}, '
+        'effectiveDuration=${_effectiveDuration.inMilliseconds}ms',
+      );
+      _applyVolumesUnawaited(out, inn, volOut, volIn);
+    }
+    if (p >= 1.0) {
+      _completeNow(_operationId);
+    }
   }
 
   /// Dynamically updates the master volume (`0.0..2.0`) during an active ramp.
@@ -234,6 +290,7 @@ class InternalCrossfadeController {
   void capRemainingDuration(Duration maxRemaining) {
     if (!_isActive) return;
     final p = progress;
+    _log('capRemainingDuration: maxRemaining=${maxRemaining.inMilliseconds}ms, currentP=${p.toStringAsFixed(3)}');
     if (p >= 1.0 || maxRemaining <= Duration.zero) {
       _completeNow(_operationId);
       return;
@@ -255,6 +312,7 @@ class InternalCrossfadeController {
   /// Freezes the gain envelope ticker at its current progress.
   void pause() {
     if (!_isActive || _isPaused) return;
+    _log('pause: progress=${progress.toStringAsFixed(3)}');
     if (_lastTickWallTime != null) {
       final deltaWallMs =
           DateTime.now().difference(_lastTickWallTime!).inMicroseconds / 1000.0;
@@ -271,6 +329,7 @@ class InternalCrossfadeController {
   /// Resumes the gain envelope ticker from its paused progress.
   void resume() {
     if (!_isActive || !_isPaused) return;
+    _log('resume: progress=${progress.toStringAsFixed(3)}');
     _isPaused = false;
     _lastTickWallTime = DateTime.now();
     _startTicker(_operationId);
@@ -283,6 +342,9 @@ class InternalCrossfadeController {
 
   /// Synchronously stops the gain envelope ticker without firing `_onComplete`.
   void cancel() {
+    if (_isActive) {
+      _log('cancel: operationId=$_operationId');
+    }
     _operationId++;
     _ticker?.cancel();
     _ticker = null;

@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.0.2
+
+- **Auto-Crossfade & Seek FSM Synchronization**:
+  - Guarded automatic crossfade lifecycle with `_autoCrossfadeTriggered` to prevent duplicate or out-of-order scheduling from high-frequency position ticks.
+  - Seeking outside the auto-crossfade zone (`position < duration - crossfadeDuration`) now immediately aborts any in-flight or preparing auto-crossfade, restores active deck volume to 100%, resets the standby deck to standby, bumps epoch to cancel pending asynchronous preparation tasks, and allows re-triggering when the track naturally reaches the boundary again.
+  - Position stream listener automatically detects if playback position falls outside the auto-crossfade window (with a 500 ms safety buffer tolerance against hardware timer jitter) and cancels active auto-crossfades safely.
+  - Seeking inside the auto-crossfade zone preserves the running transition and synchronizes the gain envelope progress directly with the seeked position.
+  - Preserved manual crossfade semantics during seeking on incoming tracks without unintended reverts to discarded tracks.
+- **Libopus Decoder Stream Resynchronization & Premature EOF Fix**:
+  - Fixed a critical bug in `ma_libopus_seek_to_pcm_frame` where seekable Ogg Opus files (especially tracks with embedded metadata such as PNG cover art in `OpusTags`) experienced premature EOF / track skipping after seeking.
+  - When the underlying stream buffer was repositioned or flushed externally (e.g. `map_buffer_try_seek_cached` resetting `read_cursor`), `opusfile`'s internal file offset `_of->offset` became desynchronized from the actual buffer cursor by the exact size of the scanned metadata headers. As audio was decoded, `opusfile` prematurely triggered EOF once its desynchronized offset reached the file size limit, causing playback to end early (e.g. at ~16-17s in a 78s file).
+  - Added stream offset resynchronization via `pOpus->onTell` inside `ma_libopus_seek_to_pcm_frame`, resetting `ogg_sync_reset(&of->oy)` and decoder state so `op_pcm_seek` always executes in lockstep with the buffer.
+  - Accurately synchronized `pOpus->currentPCMFrame` with `op_pcm_tell` return value after seeking.
+- **Verbose Diagnostic Logging for Engine & Crossfade**:
+  - Added structured verbose logs in `MiniaudioEngine` and `InternalCrossfadeController` activated via `MiniaudioLogLevel.verbose` (`[miniaudio_player][VERBOSE][engine]` and `[miniaudio_player][VERBOSE][crossfade]`).
+  - Displays real-time crossfade parameters, normalized gain curves (`p`, `volOut`, `volIn`), media elapsed time, deck positions, durations, completion flags, and state machine phase transitions.
+- **Loader Backpressure & Decoder Seek Fixes**:
+  - Fixed `UnifiedAudioLoader.seek` on cache hits where an active stream previously paused by backpressure remained frozen, causing audio buffer starvation after ~14s.
+  - Fixed `map_decoder_reset_stream` for MP3 streams to preserve `audio_start` (ID3v2 offset) instead of resetting `streamStartOffset` to 0, preventing decoder seek failures that restarted sound from 0s.
+  - Fixed `ma_libopus_reset_stream` decoder position synchronization.
+
 ## 3.0.1
 
 Update description and links on `pubspec.yaml`.

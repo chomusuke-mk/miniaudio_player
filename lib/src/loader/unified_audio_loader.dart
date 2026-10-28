@@ -920,8 +920,14 @@ class UnifiedAudioLoader {
       _isStreamEnded = false;
       _refreshTelemetryFromBackend();
       if (prevState == UnifiedLoaderState.stopped ||
-          prevState == UnifiedLoaderState.completed) {
+          prevState == UnifiedLoaderState.completed ||
+          prevState == UnifiedLoaderState.pausedByBackpressure) {
         _state = UnifiedLoaderState.streaming;
+        _isPausedByBackpressure = false;
+        _pausedAtHeadroomBytes = 0;
+        if (_responseSub != null && _responseSub!.isPaused && !_isFeedingChunk) {
+          _resumeSubscription();
+        }
       } else {
         _state = prevState;
       }

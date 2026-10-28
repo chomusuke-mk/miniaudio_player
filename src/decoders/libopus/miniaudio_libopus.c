@@ -5,6 +5,7 @@
 
 #if !defined(MA_NO_LIBOPUS)
 #include <opusfile.h>
+#include "internal.h"
 #endif
 
 #include <string.h> /* For memset(). */
@@ -441,13 +442,36 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
             return MA_SUCCESS;
         }
 
-        ogg_int64_t total = op_pcm_total((OggOpusFile *)pOpus->of, -1);
+        OggOpusFile *of = (OggOpusFile *)pOpus->of;
+
+        /* Resynchronize opusfile internal byte offset if the underlying data stream
+         * was repositioned or flushed externally (e.g. map_buffer_try_seek_cached or flush). */
+        if (pOpus->onTell != NULL)
+        {
+            ma_int64 curPos = -1;
+            if (pOpus->onTell(pOpus->pReadSeekTellUserData, &curPos) == MA_SUCCESS)
+            {
+                if (curPos >= 0 && curPos != of->offset)
+                {
+                    of->offset = curPos;
+                    ogg_sync_reset(&of->oy);
+                    of->op_count = 0;
+                    of->od_buffer_size = 0;
+                    of->prev_packet_gp = -1;
+                    of->prev_page_offset = -1;
+                    of->ready_state = OP_OPENED;
+                }
+            }
+        }
+
+        ogg_int64_t total = op_pcm_total(of, -1);
         if (total > 0 && (ogg_int64_t)frameIndex >= total)
         {
             frameIndex = (ma_uint64)(total - 1);
         }
 
-        int libopusResult = op_pcm_seek((OggOpusFile *)pOpus->of, (ogg_int64_t)frameIndex);
+        int libopusResult = op_pcm_seek(of, (ogg_int64_t)frameIndex);
+        ogg_int64_t tellPos = op_pcm_tell(of);
         if (libopusResult != 0)
         {
             if (libopusResult == OP_ENOSEEK)
@@ -464,7 +488,7 @@ MA_API ma_result ma_libopus_seek_to_pcm_frame(ma_libopus *pOpus, ma_uint64 frame
             }
         }
 
-        pOpus->currentPCMFrame = frameIndex;
+        pOpus->currentPCMFrame = (tellPos >= 0) ? (ma_uint64)tellPos : frameIndex;
         return MA_SUCCESS;
     }
 #else
@@ -487,7 +511,7 @@ MA_API ma_result ma_libopus_reset_stream(ma_libopus *pOpus, ma_int64 newStreamOf
     }
 
 #if !defined(MA_NO_LIBOPUS)
-    pOpus->currentPCMFrame = targetFrame;
+    pOpus->currentPCMFrame = (newStreamOffset == 0) ? 0 : targetFrame;
 
     if (pOpus->of != NULL && op_seekable((OggOpusFile *)pOpus->of))
     {

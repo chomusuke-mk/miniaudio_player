@@ -373,4 +373,118 @@ void main() {
       expect(engine.state.completed, isFalse);
     });
   });
+
+  group('FSM Scenario 6: Seek and Crossfade Boundary Lifecycle & Zero-Crossfade Stability', () {
+    late MiniaudioEngine<String> engine;
+
+    tearDown(() async {
+      if (!engine.isDisposed) {
+        await engine.dispose();
+      }
+    });
+
+    test('seek to 2s with crossfade=0 maintains track 1 and does not switch prematurely', () async {
+      engine = MiniaudioEngine<String>(
+        crossfadeConfig: const CrossfadeConfig.off(),
+      );
+
+      await engine.action.open([
+        EngineItem.file(track1File.path, data: 'Track 1'),
+        EngineItem.file(track2File.path, data: 'Track 2'),
+      ]);
+
+      await engine.action.play();
+      // Go to track 2
+      await engine.action.next();
+      expect(engine.state.currentIndex, equals(1));
+
+      // Go back to track 1
+      await engine.action.previous();
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.playing, isTrue);
+
+      // Let track play for ~500ms then seek to 2 seconds
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await engine.action.seek(const Duration(seconds: 2));
+
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.position.inMilliseconds, closeTo(2000, 350));
+      expect(engine.state.volume, closeTo(1.0, 1e-4));
+
+      // Let playback run for 1 second; verify track 1 is still playing (no premature next())
+      await Future<void>.delayed(const Duration(seconds: 1));
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.playing, isTrue);
+      expect(engine.state.position.inMilliseconds, greaterThanOrEqualTo(2500));
+    });
+
+    test('seeking back outside crossfade range aborts auto-crossfade and allows re-triggering', () async {
+      engine = MiniaudioEngine<String>(
+        crossfadeConfig: CrossfadeConfig(
+          duration: const Duration(seconds: 2),
+          manualDuration: const Duration(seconds: 2),
+        ),
+      );
+
+      await engine.action.open([
+        EngineItem.file(track1File.path, data: 'Track 1'),
+        EngineItem.file(track2File.path, data: 'Track 2'),
+      ]);
+
+      await engine.action.play();
+
+      // Seek into auto-crossfade zone (track is ~6s long)
+      await engine.action.seek(const Duration(milliseconds: 4500));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+
+      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.currentIndex, equals(0));
+
+      // Seek back outside the crossfade zone (to 1.5s)
+      await engine.action.seek(const Duration(milliseconds: 1500));
+
+      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.position.inMilliseconds, closeTo(1500, 350));
+      expect(engine.state.volume, closeTo(1.0, 1e-4));
+
+      // Seek back into crossfade zone: it triggers again smoothly
+      await engine.action.seek(const Duration(milliseconds: 4600));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+
+      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.currentIndex, equals(0));
+    });
+
+    test('seeking within crossfade range preserves autoCrossfading phase and updates progress', () async {
+      engine = MiniaudioEngine<String>(
+        crossfadeConfig: CrossfadeConfig(
+          duration: const Duration(seconds: 2),
+          manualDuration: const Duration(seconds: 2),
+        ),
+      );
+
+      await engine.action.open([
+        EngineItem.file(track1File.path, data: 'Track 1'),
+        EngineItem.file(track2File.path, data: 'Track 2'),
+      ]);
+
+      await engine.action.play();
+
+      // Seek into crossfade zone (4.2s out of ~6.0s)
+      await engine.action.seek(const Duration(milliseconds: 4200));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+
+      // Seek slightly further inside crossfade zone (5.0s)
+      await engine.action.seek(const Duration(milliseconds: 5000));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // Phase remains autoCrossfading on outgoing track without error or premature skip
+      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.position.inMilliseconds, closeTo(5000, 350));
+    });
+  });
 }
