@@ -39539,27 +39539,12 @@ static ma_bool32 ma_has_default_device__aaudio(ma_context* pContext, ma_device_t
 static ma_result ma_wait_for_simple_state_transition__aaudio(ma_context* pContext, ma_AAudioStream* pStream, ma_aaudio_stream_state_t oldState, ma_aaudio_stream_state_t newState)
 {
     ma_aaudio_stream_state_t actualNewState;
-    ma_aaudio_result_t resultAA = ((MA_PFN_AAudioStream_waitForStateChange)pContext->aaudio.AAudioStream_waitForStateChange)(pStream, oldState, &actualNewState, 1000000000); /* 1 second timeout. */
+    ma_aaudio_result_t resultAA = ((MA_PFN_AAudioStream_waitForStateChange)pContext->aaudio.AAudioStream_waitForStateChange)(pStream, oldState, &actualNewState, 5000000000); /* 5 second timeout. */
     if (resultAA != MA_AAUDIO_OK) {
-        if (resultAA == -893 /* AAUDIO_ERROR_TIMEOUT */) {
-            actualNewState = ((MA_PFN_AAudioStream_getState)pContext->aaudio.AAudioStream_getState)(pStream);
-            if (newState == MA_AAUDIO_STREAM_STATE_STARTED && (actualNewState == MA_AAUDIO_STREAM_STATE_STARTING || actualNewState == MA_AAUDIO_STREAM_STATE_STARTED)) {
-                return MA_SUCCESS;
-            }
-            if (newState == MA_AAUDIO_STREAM_STATE_STOPPED && (actualNewState == MA_AAUDIO_STREAM_STATE_STOPPING || actualNewState == MA_AAUDIO_STREAM_STATE_STOPPED || actualNewState == MA_AAUDIO_STREAM_STATE_DISCONNECTED)) {
-                return MA_SUCCESS;
-            }
-        }
         return ma_result_from_aaudio(resultAA);
     }
 
     if (newState != actualNewState) {
-        if (newState == MA_AAUDIO_STREAM_STATE_STARTED && (actualNewState == MA_AAUDIO_STREAM_STATE_STARTING || actualNewState == MA_AAUDIO_STREAM_STATE_STARTED)) {
-            return MA_SUCCESS;
-        }
-        if (newState == MA_AAUDIO_STREAM_STATE_STOPPED && (actualNewState == MA_AAUDIO_STREAM_STATE_STOPPING || actualNewState == MA_AAUDIO_STREAM_STATE_STOPPED || actualNewState == MA_AAUDIO_STREAM_STATE_DISCONNECTED)) {
-            return MA_SUCCESS;
-        }
         return MA_ERROR;   /* Failed to transition into the expected state. */
     }
 
@@ -39829,10 +39814,6 @@ static ma_result ma_device_start_stream__aaudio(ma_device* pDevice, ma_AAudioStr
 
         result = ma_wait_for_simple_state_transition__aaudio(pDevice->pContext, pStream, currentState, MA_AAUDIO_STREAM_STATE_STARTED);
         if (result != MA_SUCCESS) {
-            ma_aaudio_stream_state_t checkState = ((MA_PFN_AAudioStream_getState)pDevice->pContext->aaudio.AAudioStream_getState)(pStream);
-            if (checkState == MA_AAUDIO_STREAM_STATE_STARTING || checkState == MA_AAUDIO_STREAM_STATE_STARTED) {
-                return MA_SUCCESS;
-            }
             return result;
         }
     }
@@ -39879,10 +39860,6 @@ static ma_result ma_device_stop_stream__aaudio(ma_device* pDevice, ma_AAudioStre
 
         result = ma_wait_for_simple_state_transition__aaudio(pDevice->pContext, pStream, currentState, MA_AAUDIO_STREAM_STATE_STOPPED);
         if (result != MA_SUCCESS) {
-            ma_aaudio_stream_state_t checkState = ((MA_PFN_AAudioStream_getState)pDevice->pContext->aaudio.AAudioStream_getState)(pStream);
-            if (checkState == MA_AAUDIO_STREAM_STATE_STOPPING || checkState == MA_AAUDIO_STREAM_STATE_STOPPED || checkState == MA_AAUDIO_STREAM_STATE_DISCONNECTED) {
-                return MA_SUCCESS;
-            }
             return result;
         }
     }
@@ -65386,9 +65363,6 @@ typedef struct
 
 MA_API ma_result ma_stbvorbis_init(ma_read_proc onRead, ma_seek_proc onSeek, ma_tell_proc onTell, void* pReadSeekTellUserData, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_stbvorbis* pVorbis);
 MA_API ma_result ma_stbvorbis_init_file(const char* pFilePath, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_stbvorbis* pVorbis);
-#if defined(_WIN32)
-MA_API ma_result ma_stbvorbis_init_file_w(const wchar_t* pFilePath, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_stbvorbis* pVorbis);
-#endif
 MA_API ma_result ma_stbvorbis_init_memory(const void* pData, size_t dataSize, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_stbvorbis* pVorbis);
 MA_API void ma_stbvorbis_uninit(ma_stbvorbis* pVorbis, const ma_allocation_callbacks* pAllocationCallbacks);
 MA_API ma_result ma_stbvorbis_read_pcm_frames(ma_stbvorbis* pVorbis, void* pFramesOut, ma_uint64 frameCount, ma_uint64* pFramesRead);
@@ -65587,9 +65561,7 @@ MA_API ma_result ma_stbvorbis_init(ma_read_proc onRead, ma_seek_proc onSeek, ma_
         result = ma_stbvorbis_post_init(pVorbis);
         if (result != MA_SUCCESS) {
             stb_vorbis_close(pVorbis->stb);
-            pVorbis->stb = NULL;
             ma_free(pVorbis->push.pData, pAllocationCallbacks);
-            pVorbis->push.pData = NULL;
             return result;
         }
 
@@ -65643,46 +65615,6 @@ MA_API ma_result ma_stbvorbis_init_file(const char* pFilePath, const ma_decoding
     #endif
 }
 
-#if defined(_WIN32)
-MA_API ma_result ma_stbvorbis_init_file_w(const wchar_t* pFilePath, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_stbvorbis* pVorbis)
-{
-    ma_result result;
-
-    result = ma_stbvorbis_init_internal(pConfig, pVorbis);
-    if (result != MA_SUCCESS) {
-        return result;
-    }
-
-    #if !defined(MA_NO_VORBIS)
-    {
-        (void)pAllocationCallbacks;
-
-        /* We can use stb_vorbis' pull mode for file based streams. */
-        pVorbis->stb = stb_vorbis_open_filename_w(pFilePath, NULL, NULL);
-        if (pVorbis->stb == NULL) {
-            return MA_INVALID_FILE;
-        }
-
-        pVorbis->usingPushMode = MA_FALSE;
-
-        result = ma_stbvorbis_post_init(pVorbis);
-        if (result != MA_SUCCESS) {
-            stb_vorbis_close(pVorbis->stb);
-            return result;
-        }
-
-        return MA_SUCCESS;
-    }
-    #else
-    {
-        (void)pFilePath;
-        (void)pAllocationCallbacks;
-        return MA_NOT_IMPLEMENTED;
-    }
-    #endif
-}
-#endif
-
 MA_API ma_result ma_stbvorbis_init_memory(const void* pData, size_t dataSize, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_stbvorbis* pVorbis)
 {
     ma_result result;
@@ -65735,15 +65667,11 @@ MA_API void ma_stbvorbis_uninit(ma_stbvorbis* pVorbis, const ma_allocation_callb
 
     #if !defined(MA_NO_VORBIS)
     {
-        if (pVorbis->stb != NULL) {
-            stb_vorbis_close(pVorbis->stb);
-            pVorbis->stb = NULL;
-        }
+        stb_vorbis_close(pVorbis->stb);
 
         /* We'll have to clear some memory if we're using push mode. */
-        if (pVorbis->usingPushMode && pVorbis->push.pData != NULL) {
+        if (pVorbis->usingPushMode) {
             ma_free(pVorbis->push.pData, pAllocationCallbacks);
-            pVorbis->push.pData = NULL;
         }
     }
     #else
@@ -65766,7 +65694,7 @@ MA_API ma_result ma_stbvorbis_read_pcm_frames(ma_stbvorbis* pVorbis, void* pFram
         return MA_INVALID_ARGS;
     }
 
-    if (pVorbis == NULL || pVorbis->stb == NULL) {
+    if (pVorbis == NULL) {
         return MA_INVALID_ARGS;
     }
 
@@ -65948,7 +65876,6 @@ MA_API ma_result ma_stbvorbis_seek_to_pcm_frame(ma_stbvorbis* pVorbis, ma_uint64
                 backwards. This will hopefully be removed once we get our own Vorbis decoder implemented.
                 */
                 stb_vorbis_close(pVorbis->stb);
-                pVorbis->stb = NULL;
                 ma_free(pVorbis->push.pData, &pVorbis->allocationCallbacks);
 
                 MA_ZERO_OBJECT(&pVorbis->push);
@@ -66201,40 +66128,11 @@ static void ma_decoding_backend_uninit__stbvorbis(void* pUserData, ma_data_sourc
     ma_free(pVorbis, pAllocationCallbacks);
 }
 
-#if defined(_WIN32)
-static ma_result ma_decoding_backend_init_file_w__stbvorbis(void* pUserData, const wchar_t* pFilePath, const ma_decoding_backend_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, ma_data_source** ppBackend)
-{
-    ma_result result;
-    ma_stbvorbis* pVorbis;
-
-    (void)pUserData;
-
-    pVorbis = (ma_stbvorbis*)ma_malloc(sizeof(*pVorbis), pAllocationCallbacks);
-    if (pVorbis == NULL) {
-        return MA_OUT_OF_MEMORY;
-    }
-
-    result = ma_stbvorbis_init_file_w(pFilePath, pConfig, pAllocationCallbacks, pVorbis);
-    if (result != MA_SUCCESS) {
-        ma_free(pVorbis, pAllocationCallbacks);
-        return result;
-    }
-
-    *ppBackend = pVorbis;
-
-    return MA_SUCCESS;
-}
-#endif
-
 static ma_decoding_backend_vtable g_ma_decoding_backend_vtable_stbvorbis =
 {
     ma_decoding_backend_init__stbvorbis,
     ma_decoding_backend_init_file__stbvorbis,
-#if defined(_WIN32)
-    ma_decoding_backend_init_file_w__stbvorbis,
-#else
     NULL, /* onInitFileW() */
-#endif
     ma_decoding_backend_init_memory__stbvorbis,
     ma_decoding_backend_uninit__stbvorbis
 };
@@ -73365,7 +73263,6 @@ done:
     ma_atomic_compare_and_swap_i32(&pDataStream->result, MA_BUSY, result);
 
     /* Only signal the other threads after the result has been set just for cleanliness sake. */
-    ma_atomic_fetch_add_32(&pDataStream->executionPointer, 1);
     if (pJob->data.resourceManager.loadDataStream.pInitNotification != NULL) {
         ma_async_notification_signal(pJob->data.resourceManager.loadDataStream.pInitNotification);
     }
@@ -73373,6 +73270,7 @@ done:
         ma_fence_release(pJob->data.resourceManager.loadDataStream.pInitFence);
     }
 
+    ma_atomic_fetch_add_32(&pDataStream->executionPointer, 1);
     return result;
 }
 
