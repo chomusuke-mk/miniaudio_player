@@ -1,5 +1,5 @@
-pub mod tripartite;
 pub mod stream_reader;
+pub mod tripartite;
 
-pub use tripartite::TripartiteBuffer;
 pub use stream_reader::BufferStreamReader;
+pub use tripartite::{BufferError, BufferRange, BufferState, TripartiteBuffer};

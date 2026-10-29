@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "miniaudio_player"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 # Decodificación y Demuxing 100% Rust

@@ -3,6 +3,33 @@ use std::os::raw::{c_char, c_void};
 pub enum MapDeviceContextOpaque {}
 pub type MapDeviceContext = MapDeviceContextOpaque;
 
+/* Códigos de error canónicos de miniaudio_player */
+pub const MAP_SUCCESS: i32 = 0;
+pub const MAP_ERROR_GENERIC: i32 = -1;
+pub const MAP_ERROR_INVALID_ARGS: i32 = -2;
+pub const MAP_ERROR_OUT_OF_MEMORY: i32 = -3;
+pub const MAP_ERROR_ENGINE_INIT: i32 = -4;
+pub const MAP_ERROR_FILE_NOT_FOUND: i32 = -5;
+pub const MAP_ERROR_DECODE_FAILED: i32 = -6;
+pub const MAP_ERROR_INVALID_STATE: i32 = -7;
+pub const MAP_ERROR_SEEK_FAILED: i32 = -8;
+pub const MAP_ERROR_NODE_FAILED: i32 = -9;
+pub const MAP_ERROR_UNSUPPORTED: i32 = -10;
+pub const MAP_ERROR_ACCESS_DENIED: i32 = -11;
+pub const MAP_ERROR_BUSY: i32 = -12;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MiniaudioBufferedRange {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub duration_ms: i64,
+    pub fill_percentage: f32,
+    pub stream_percentage: f32,
+    pub is_buffering: i32,
+    pub is_eof: i32,
+}
+
 extern "C" {
     pub fn map_device_create(
         sample_rate: u32,
