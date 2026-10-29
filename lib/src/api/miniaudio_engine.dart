@@ -97,6 +97,12 @@ class MiniaudioEngine<T> {
   /// the crossfade window or loading a new track.
   bool _autoCrossfadeTriggered = false;
 
+  /// Prebuffered item prepared and standing by on [_standbyPlayer] at volume 0.0.
+  EngineItem<T>? _standbyPrebufferedItem;
+
+  /// In-flight future for background prebuffering on [_standbyPlayer].
+  Future<void>? _standbyPrebufferFuture;
+
   /// Serialized FIFO command lane tail.
   Future<void> _commandTail = Future<void>.value();
 
@@ -463,7 +469,8 @@ class MiniaudioEngine<T> {
   /// Ensures that the engine has not been disposed.
   void ensureNotDisposed() {
     if (isDisposed) {
-      throw const MiniaudioPlayerException('MiniaudioEngine is already disposed');
+      throw const MiniaudioPlayerException(
+          'MiniaudioEngine is already disposed');
     }
   }
 
@@ -608,6 +615,12 @@ class MiniaudioEngine<T> {
   ///   the queue HAS already advanced to `_activePlayer`), finalizes
   ///   `_activePlayer` at `_masterVolume` and stops `_standbyPlayer`.
   Future<void> _settleActiveTransition() async {
+    if (_standbyPrebufferFuture != null) {
+      try {
+        await _standbyPrebufferFuture;
+      } catch (_) {}
+      _standbyPrebufferFuture = null;
+    }
     final currentPhase = _phase;
     _log(
       '_settleActiveTransition: currentPhase=${currentPhase.name}, '
@@ -653,6 +666,9 @@ class MiniaudioEngine<T> {
   /// Ensures [deck] is completely silent (`volume = 0.0`) and stopped (`stop()`)
   /// with visualizer DSP disabled.
   Future<void> _resetDeckToStandby(MiniaudioPlayer deck) async {
+    if (identical(deck, _standbyPlayer)) {
+      _standbyPrebufferedItem = null;
+    }
     if (deck.isDisposed) return;
     deck.setManualVisualizerOverride(false);
     try {
@@ -664,6 +680,7 @@ class MiniaudioEngine<T> {
   }
 
   void _swapDecks() {
+    _standbyPrebufferedItem = null;
     final prevActive = _activePlayer;
     _activePlayer = _standbyPlayer;
     _standbyPlayer = prevActive;
@@ -738,8 +755,7 @@ class MiniaudioEngine<T> {
         }
 
         if (_phase == EnginePhase.completed) {
-          final target =
-              _queueManager.jumpTo(0) ?? _queueManager.currentItem;
+          final target = _queueManager.jumpTo(0) ?? _queueManager.currentItem;
           if (target == null) return;
           await _loadOrTransitionToTarget(
             target,
@@ -764,6 +780,7 @@ class MiniaudioEngine<T> {
 
         await _activePlayer.action.play();
         _setPhase(EnginePhase.playing);
+        _maybePrebufferNextCandidate();
       });
 
   /// Internal implementation of [EngineAction.pause].
@@ -812,8 +829,7 @@ class MiniaudioEngine<T> {
             _crossfade.resume();
             _emitDerivedTransportState();
           } else if (_phase == EnginePhase.completed) {
-            final target =
-                _queueManager.jumpTo(0) ?? _queueManager.currentItem;
+            final target = _queueManager.jumpTo(0) ?? _queueManager.currentItem;
             if (target != null) {
               await _loadOrTransitionToTarget(
                 target,
@@ -878,7 +894,8 @@ class MiniaudioEngine<T> {
             _setPhase(EnginePhase.paused);
           }
           await _activePlayer.action.seek(clamped);
-        } else if (_phase == EnginePhase.autoCrossfading || _autoTarget != null) {
+        } else if (_phase == EnginePhase.autoCrossfading ||
+            _autoTarget != null) {
           if (isOutsideAutoCrossfade) {
             // User sought outside the auto-crossfade zone. Cancel auto-crossfade immediately!
             await _settleActiveTransition();
@@ -926,6 +943,8 @@ class MiniaudioEngine<T> {
         await _settleActiveTransition();
 
         final nextItem = await _queueManager.next(isManual: true);
+        _emitQueueAndCursorState();
+
         if (nextItem == null) {
           await _enterEndOfQueue();
           return;
@@ -953,6 +972,7 @@ class MiniaudioEngine<T> {
           position: _activePlayer.state.position,
           isLiveStream: _resolveIsLiveStream(),
         );
+        _emitQueueAndCursorState();
 
         if (prevItem == null) {
           await _restartCurrentTrack(play: shouldPlay);
@@ -973,6 +993,7 @@ class MiniaudioEngine<T> {
         await _settleActiveTransition();
 
         final item = _queueManager.jumpTo(index);
+        _emitQueueAndCursorState();
         if (item == null) return;
 
         await _loadOrTransitionToTarget(
@@ -1358,7 +1379,8 @@ class MiniaudioEngine<T> {
         if (force) {
           _forcedReplayGain = gainDb;
           if (_volumeNormalization) {
-            await _applyItemReplayGain(_activePlayer, _queueManager.currentItem);
+            await _applyItemReplayGain(
+                _activePlayer, _queueManager.currentItem);
           }
           if (!_forcedReplayGainController.isClosed) {
             _forcedReplayGainController.add(gainDb);
@@ -1440,8 +1462,7 @@ class MiniaudioEngine<T> {
       });
 
   /// Internal implementation of [EngineAction.setCrossfeed].
-  Future<void> setCrossfeedInternal(CrossfeedMode mode) =>
-      _serialize(() async {
+  Future<void> setCrossfeedInternal(CrossfeedMode mode) => _serialize(() async {
         _crossfeed = mode;
         await Future.wait([
           if (!_playerA.isDisposed) _playerA.action.setCrossfeed(mode),
@@ -1530,9 +1551,8 @@ class MiniaudioEngine<T> {
       final ok = useCrossfade
           ? await _startManualCrossfade(
               candidate,
-              targetDuration: isManual
-                  ? _crossfadeConfig.manualDuration
-                  : Duration.zero,
+              targetDuration:
+                  isManual ? _crossfadeConfig.manualDuration : Duration.zero,
             )
           : await _hardLoad(candidate, play: play);
       if (ok) return;
@@ -1581,6 +1601,9 @@ class MiniaudioEngine<T> {
     _setPhase(play ? EnginePhase.playing : EnginePhase.paused);
     _emitQueueAndCursorState();
     _emitActiveDeckSnapshot();
+    if (play) {
+      _maybePrebufferNextCandidate();
+    }
     return true;
   }
 
@@ -1594,46 +1617,130 @@ class MiniaudioEngine<T> {
     final outgoing = _activePlayer;
     final incoming = _standbyPlayer;
 
+    final isPrebuffered = _standbyPrebufferedItem != null &&
+        InternalQueueManager.isSameItem(_standbyPrebufferedItem, item);
+    _standbyPrebufferedItem = null;
+
     _log(
       '_startManualCrossfade: target=${item.id}, targetDuration=${targetDuration.inMilliseconds}ms, '
+      'isPrebuffered=$isPrebuffered, '
       'outgoingPos=${outgoing.state.position.inMilliseconds}ms/${outgoing.state.duration.inMilliseconds}ms',
     );
 
-    // Guarantee standby deck is 100% stopped and clean before opening
-    await _resetDeckToStandby(incoming);
+    if (isPrebuffered) {
+      final outgoingRemaining = outgoing.state.duration > Duration.zero
+          ? outgoing.state.duration - outgoing.state.position
+          : Duration.zero;
+      final clampedDuration = _clampCrossfadeDuration(
+        outgoingDuration: outgoing.state.duration,
+        outgoingRemaining: outgoingRemaining,
+        targetDuration: targetDuration,
+        incomingDuration: incoming.state.duration,
+        isOutgoingLive: _resolveIsLiveStream(),
+        isIncomingLive: item.isLiveStream ||
+            (incoming.state.trackMetadata?.isLiveStream ?? false),
+      );
 
+      _log(
+        '_startManualCrossfade (prebuffered): clampedDuration=${clampedDuration.inMilliseconds}ms',
+      );
+
+      _swapDecks();
+      final transitionEpoch = _epoch;
+
+      try {
+        await incoming.action.play();
+      } catch (_) {
+        _log('_startManualCrossfade: incoming play() failed');
+        return false;
+      }
+
+      if (clampedDuration.inMilliseconds <=
+          InternalCrossfadeController.immediateCutThresholdMs) {
+        _log(
+            '_startManualCrossfade: clampedDuration <= cutThreshold, cutting immediately');
+        await _resetDeckToStandby(outgoing);
+        await incoming.action.setVolume(_masterVolume);
+        _setPhase(EnginePhase.playing);
+        _emitQueueAndCursorState();
+        _emitActiveDeckSnapshot();
+        _maybePrebufferNextCandidate();
+        return true;
+      }
+
+      _setPhase(EnginePhase.manualCrossfading);
+      _emitQueueAndCursorState();
+      _emitActiveDeckSnapshot();
+
+      await _crossfade.start(
+        playerOut: outgoing,
+        playerIn: incoming,
+        duration: clampedDuration,
+        curve: _crossfadeConfig.curve,
+        masterVolume: _masterVolume,
+        playbackRate: _playbackRate,
+        onComplete: () => _onCrossfadeComplete(transitionEpoch),
+      );
+      return true;
+    }
+
+    // --- Path when incoming was NOT prebuffered (slow file, web live stream, multi-skip) ---
+    _setPhase(EnginePhase.manualCrossfading);
+    _emitQueueAndCursorState();
+
+    Timer? fadeTimer;
+    final fadeStart = DateTime.now();
+    final effectiveFadeDuration = targetDuration > Duration.zero
+        ? targetDuration
+        : const Duration(milliseconds: 300);
+
+    // If targetDuration <= cutThreshold, pause outgoing immediately
+    if (targetDuration.inMilliseconds <=
+        InternalCrossfadeController.immediateCutThresholdMs) {
+      try {
+        await outgoing.action.pause();
+      } catch (_) {}
+    } else if (outgoing.state.playing) {
+      // Start fading down outgoing deck immediately for instant acoustic feedback
+      fadeTimer = Timer.periodic(const Duration(milliseconds: 25), (_) {
+        if (outgoing.isDisposed) return;
+        final elapsed = DateTime.now().difference(fadeStart);
+        final p =
+            (elapsed.inMilliseconds / effectiveFadeDuration.inMilliseconds)
+                .clamp(0.0, 1.0);
+        final (volOut, _) = InternalCrossfadeController.computeVolumes(
+          p,
+          _crossfadeConfig.curve,
+          _masterVolume,
+        );
+        outgoing.action.setVolume(volOut).ignore();
+      });
+    }
+
+    await _resetDeckToStandby(incoming);
     final ok = await _prepareDeck(
       incoming,
       item,
       initialVolume: 0.0,
     );
+
+    fadeTimer?.cancel();
+
     if (!ok) {
       _log('_startManualCrossfade: _prepareDeck failed on incoming');
       await _resetDeckToStandby(incoming);
+      if (!outgoing.isDisposed) {
+        await outgoing.action.setVolume(_masterVolume);
+      }
+      _setPhase(
+          outgoing.state.playing ? EnginePhase.playing : EnginePhase.paused);
+      _emitQueueAndCursorState();
       return false;
     }
 
-    final outgoingRemaining =
-        outgoing.state.duration > Duration.zero
-            ? outgoing.state.duration - outgoing.state.position
-            : Duration.zero;
-    final clampedDuration = _clampCrossfadeDuration(
-      outgoingDuration: outgoing.state.duration,
-      outgoingRemaining: outgoingRemaining,
-      targetDuration: targetDuration,
-      incomingDuration: incoming.state.duration,
-      isOutgoingLive: _resolveIsLiveStream(),
-      isIncomingLive: item.isLiveStream ||
-          (incoming.state.trackMetadata?.isLiveStream ?? false),
-    );
+    final elapsedMs = DateTime.now().difference(fadeStart).inMilliseconds;
+    final remainingFadeMs = effectiveFadeDuration.inMilliseconds - elapsedMs;
 
-    _log(
-      '_startManualCrossfade: clampedDuration=${clampedDuration.inMilliseconds}ms, '
-      'outgoingRemaining=${outgoingRemaining.inMilliseconds}ms',
-    );
-
-    // Swap active and standby roles BEFORE starting playback on incoming so
-    // telemetry and state immediately reflect the new active track.
     _swapDecks();
     final transitionEpoch = _epoch;
 
@@ -1644,12 +1751,21 @@ class MiniaudioEngine<T> {
       return false;
     }
 
-    if (clampedDuration.inMilliseconds <=
-        InternalCrossfadeController.immediateCutThresholdMs) {
-      _log('_startManualCrossfade: clampedDuration <= cutThreshold, cutting immediately');
+    if (remainingFadeMs <=
+            InternalCrossfadeController.immediateCutThresholdMs ||
+        targetDuration.inMilliseconds <=
+            InternalCrossfadeController.immediateCutThresholdMs) {
       await _resetDeckToStandby(outgoing);
-      await incoming.action.setVolume(_masterVolume);
-      _setPhase(EnginePhase.playing);
+      await _crossfade.start(
+        playerOut: outgoing,
+        playerIn: incoming,
+        duration: const Duration(milliseconds: 150),
+        curve: CrossfadeCurve.linear,
+        masterVolume: _masterVolume,
+        playbackRate: _playbackRate,
+        onComplete: () => _onCrossfadeComplete(transitionEpoch),
+      );
+      _setPhase(EnginePhase.manualCrossfading);
       _emitQueueAndCursorState();
       _emitActiveDeckSnapshot();
       return true;
@@ -1662,7 +1778,7 @@ class MiniaudioEngine<T> {
     await _crossfade.start(
       playerOut: outgoing,
       playerIn: incoming,
-      duration: clampedDuration,
+      duration: Duration(milliseconds: remainingFadeMs),
       curve: _crossfadeConfig.curve,
       masterVolume: _masterVolume,
       playbackRate: _playbackRate,
@@ -1833,38 +1949,45 @@ class MiniaudioEngine<T> {
     final startEpoch = _epoch;
     _autoTarget = next;
 
+    final isPrebuffered = _standbyPrebufferedItem != null &&
+        InternalQueueManager.isSameItem(_standbyPrebufferedItem, next);
+    _standbyPrebufferedItem = null;
+
     _log(
       '_startAutoCrossfade: starting to prepare next=${next.id}, plannedDuration=${plannedDuration.inMilliseconds}ms, '
+      'isPrebuffered=$isPrebuffered, '
       'outgoingPos=${outgoing.state.position.inMilliseconds}ms/${outgoing.state.duration.inMilliseconds}ms, '
       'startEpoch=$startEpoch',
     );
 
-    await _resetDeckToStandby(incoming);
-    final ok = await _prepareDeck(
-      incoming,
-      next,
-      initialVolume: 0.0,
-    );
-
-    if (isDisposed ||
-        _epoch != startEpoch ||
-        !InternalQueueManager.isSameItem(_autoTarget, next)) {
-      _log(
-        '_startAutoCrossfade aborted: isDisposed=$isDisposed, '
-        'epoch=$_epoch vs startEpoch=$startEpoch',
+    if (!isPrebuffered) {
+      await _resetDeckToStandby(incoming);
+      final ok = await _prepareDeck(
+        incoming,
+        next,
+        initialVolume: 0.0,
       );
-      await _resetDeckToStandby(incoming);
-      _autoCrossfadeTriggered = false;
-      return;
-    }
 
-    if (!ok) {
-      _log('_startAutoCrossfade: _prepareDeck failed on incoming deck');
-      _autoTarget = null;
-      _failedAutoTarget = next;
-      await _resetDeckToStandby(incoming);
-      _autoCrossfadeTriggered = false;
-      return;
+      if (isDisposed ||
+          _epoch != startEpoch ||
+          !InternalQueueManager.isSameItem(_autoTarget, next)) {
+        _log(
+          '_startAutoCrossfade aborted: isDisposed=$isDisposed, '
+          'epoch=$_epoch vs startEpoch=$startEpoch',
+        );
+        await _resetDeckToStandby(incoming);
+        _autoCrossfadeTriggered = false;
+        return;
+      }
+
+      if (!ok) {
+        _log('_startAutoCrossfade: _prepareDeck failed on incoming deck');
+        _autoTarget = null;
+        _failedAutoTarget = next;
+        await _resetDeckToStandby(incoming);
+        _autoCrossfadeTriggered = false;
+        return;
+      }
     }
 
     // Re-clamp using actual remaining time on outgoing and resolved duration
@@ -1961,7 +2084,8 @@ class MiniaudioEngine<T> {
         _swapDecks();
       } else if (_phase != EnginePhase.manualCrossfading ||
           _epoch != originEpoch) {
-        _log('_onCrossfadeComplete ignored: phase=${_phase.name}, epoch=$_epoch vs $originEpoch');
+        _log(
+            '_onCrossfadeComplete ignored: phase=${_phase.name}, epoch=$_epoch vs $originEpoch');
         return;
       }
 
@@ -1981,11 +2105,25 @@ class MiniaudioEngine<T> {
       if (_activePlayer.state.completed) {
         _log('_onCrossfadeComplete: activePlayer completed after transition');
         _scheduleCompletion(verifyPosition: false);
+      } else {
+        _maybePrebufferNextCandidate();
       }
     });
   }
 
   void _onNextCandidateChanged(EngineItem<T>? candidate) {
+    if (_standbyPrebufferedItem != null &&
+        !InternalQueueManager.isSameItem(_standbyPrebufferedItem, candidate)) {
+      _scheduleInternal(() async {
+        if (_phase != EnginePhase.autoCrossfading &&
+            _phase != EnginePhase.manualCrossfading) {
+          await _resetDeckToStandby(_standbyPlayer);
+          _standbyPrebufferedItem = null;
+          _maybePrebufferNextCandidate();
+        }
+      });
+    }
+
     if (_phase != EnginePhase.autoCrossfading && _autoTarget == null) return;
     if (InternalQueueManager.isSameItem(candidate, _autoTarget)) return;
     _scheduleInternal(() async {
@@ -1999,6 +2137,7 @@ class MiniaudioEngine<T> {
     if (isDisposed || _phase == EnginePhase.loading) return;
     _emitQueueAndCursorState();
     _maybeScheduleAutoCrossfade(_activePlayer.state.position);
+    _maybePrebufferNextCandidate();
   }
 
   Duration _clampCrossfadeDuration({
@@ -2111,6 +2250,76 @@ class MiniaudioEngine<T> {
       await _resetDeckToStandby(deck);
       return false;
     }
+  }
+
+  /// Proactively prebuffers the next track candidate on [_standbyPlayer] at
+  /// volume `0.0` while the active deck is playing, eliminating disk read and
+  /// header decoding latency when the user skips or reaches the end of the track.
+  void _maybePrebufferNextCandidate() {
+    if (isDisposed) {
+      return;
+    }
+    if (_phase != EnginePhase.playing && _phase != EnginePhase.paused) {
+      return;
+    }
+    if (_crossfade.isActive ||
+        _standbyPrebufferFuture != null ||
+        _autoCrossfadeTriggered) {
+      return;
+    }
+
+    final candidate = _queueManager.peekNext(distinct: true);
+    if (candidate == null ||
+        candidate.isLiveStream ||
+        !candidate.hasValidSource) {
+      return;
+    }
+    if (InternalQueueManager.isSameItem(candidate, _standbyPrebufferedItem)) {
+      return;
+    }
+
+    final prebufferEpoch = _epoch;
+    late final Future<void> future;
+    future = () async {
+      try {
+        if (isDisposed || _epoch != prebufferEpoch || _crossfade.isActive) {
+          return;
+        }
+
+        await _resetDeckToStandby(_standbyPlayer);
+
+        if (isDisposed || _epoch != prebufferEpoch || _crossfade.isActive) {
+          return;
+        }
+
+        final ok = await _prepareDeck(
+          _standbyPlayer,
+          candidate,
+          initialVolume: 0.0,
+        );
+
+        if (isDisposed ||
+            _epoch != prebufferEpoch ||
+            _crossfade.isActive ||
+            !ok) {
+          await _resetDeckToStandby(_standbyPlayer);
+          _standbyPrebufferedItem = null;
+          return;
+        }
+
+        _standbyPrebufferedItem = candidate;
+        _log(
+            '_maybePrebufferNextCandidate: successfully prebuffered ${candidate.id} (${candidate.sourceKey})');
+      } catch (_) {
+        _standbyPrebufferedItem = null;
+      } finally {
+        if (identical(_standbyPrebufferFuture, future)) {
+          _standbyPrebufferFuture = null;
+        }
+      }
+    }();
+
+    _standbyPrebufferFuture = future;
   }
 
   Future<void> _configureDeckDsp(MiniaudioPlayer deck) async {
@@ -2242,7 +2451,9 @@ class MiniaudioEngine<T> {
     _activeDeckSubscriptions.add(
       deck.stream.playing.listen((playing) {
         if (!isCurrent()) return;
-        if (_phase == EnginePhase.playing && !playing && !deck.state.completed) {
+        if (_phase == EnginePhase.playing &&
+            !playing &&
+            !deck.state.completed) {
           _setPhase(EnginePhase.paused);
         } else if (_phase == EnginePhase.paused && playing) {
           _setPhase(EnginePhase.playing);

@@ -213,24 +213,24 @@ class UnifiedAudioLoader {
       calculatedCap = max(calculatedCap, _totalContentLength);
     }
 
-    int targetProbeSize = (!provider.isNetwork &&
-            !_isLive &&
-            _totalContentLength > 0 &&
-            _totalContentLength <= calculatedCap)
+    int targetProbeSize = (_totalContentLength > 0 && _totalContentLength < 65536)
         ? _totalContentLength
         : 65536;
 
     _probeCompleter = Completer<void>();
     final initialBuilder = BytesBuilder(copy: false);
     bool streamDone = false;
+    bool id3Checked = false;
 
     _responseSub = res.stream.listen(
       (chunk) async {
         if (_state == UnifiedLoaderState.probingHead) {
           initialBuilder.add(chunk);
           // Auto-extend initial probe if an ID3v2 header larger than targetProbeSize is detected
-          if (initialBuilder.length >= 10) {
-            final curBytes = initialBuilder.toBytes();
+          if (!id3Checked && initialBuilder.length >= 10) {
+            id3Checked = true;
+            final curBytes =
+                chunk.length >= 10 ? chunk : initialBuilder.toBytes();
             if (curBytes[0] == 0x49 &&
                 curBytes[1] == 0x44 &&
                 curBytes[2] == 0x33) {

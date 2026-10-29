@@ -1479,8 +1479,11 @@ MAP_API int32_t miniaudio_player_open_stream_ex(
         }
     }
 
-    /* Fallback metadata sniffer for finite streams where decoder could not seek to EOF (e.g. CBR MP3, Vorbis, Opus) */
-    if (!is_live && initial_data != NULL && initial_data_size > 0)
+    /* Fallback metadata sniffer for finite streams where decoder could not seek to EOF (e.g. CBR MP3 without Xing header) */
+    map_container_format_t container = player->stretch_ds.buffer.container_format;
+    if (!is_live && player->duration_ms == 0 && initial_data != NULL && initial_data_size > 0 &&
+        container != MAP_CONTAINER_WAV && container != MAP_CONTAINER_FLAC &&
+        container != MAP_CONTAINER_ADTS && container != MAP_CONTAINER_MP4)
     {
         uint32_t sniffed_bitrate = 0;
         int64_t sniffed_duration_ms = 0;
@@ -1488,56 +1491,53 @@ MAP_API int32_t miniaudio_player_open_stream_ex(
         if (map_sniff_stream_info(initial_data, initial_data_size, total_size,
                                   &sniffed_bitrate, &sniffed_duration_ms) && sniffed_duration_ms > 0)
         {
-            if (player->duration_ms == 0 || (total_size > 0 && (int64_t)initial_data_size < total_size))
+            player->duration_ms = sniffed_duration_ms;
+            player->bitrate = sniffed_bitrate;
+            if (player->stretch_ds.sampleRate > 0)
             {
-                player->duration_ms = sniffed_duration_ms;
-                player->bitrate = sniffed_bitrate;
-                if (player->stretch_ds.sampleRate > 0)
-                {
-                    player->stretch_ds.totalFrames = (ma_uint64)((double)player->duration_ms * (double)player->stretch_ds.sampleRate / 1000.0 + 0.5);
-                }
+                player->stretch_ds.totalFrames = (ma_uint64)((double)player->duration_ms * (double)player->stretch_ds.sampleRate / 1000.0 + 0.5);
             }
         }
+    }
 
+    if (!is_live && initial_data != NULL && initial_data_size > 0)
+    {
+        if (container == MAP_CONTAINER_OGG_VORBIS || container == MAP_CONTAINER_OGG_OPUS)
         {
-            map_container_format_t container = player->stretch_ds.buffer.container_format;
-            if (container == MAP_CONTAINER_OGG_VORBIS || container == MAP_CONTAINER_OGG_OPUS)
+            uint32_t srate = 0;
+            if (player->stretch_ds.decoder.pBackend != NULL)
             {
-                uint32_t srate = 0;
-                if (player->stretch_ds.decoder.pBackend != NULL)
+                ma_data_source_get_data_format(player->stretch_ds.decoder.pBackend, NULL, NULL, &srate, NULL, 0);
+            }
+            if (srate == 0)
+            {
+                srate = player->stretch_ds.sampleRate;
+            }
+            const uint8_t * scan_buf = NULL;
+            size_t scan_len = 0;
+            if (tail_data != NULL && tail_data_size >= 27)
+            {
+                scan_buf = tail_data;
+                scan_len = tail_data_size;
+            }
+            else if (total_size > 0 && (int64_t)initial_data_size >= total_size && initial_data_size >= 27)
+            {
+                scan_buf = initial_data;
+                scan_len = initial_data_size;
+            }
+            if (scan_buf != NULL)
+            {
+                int64_t ogg_dur_ms = 0;
+                if (map_sniffer_extract_tail_duration_ms(container, srate, scan_buf, scan_len, &ogg_dur_ms) && ogg_dur_ms > 0)
                 {
-                    ma_data_source_get_data_format(player->stretch_ds.decoder.pBackend, NULL, NULL, &srate, NULL, 0);
-                }
-                if (srate == 0)
-                {
-                    srate = player->stretch_ds.sampleRate;
-                }
-                const uint8_t * scan_buf = NULL;
-                size_t scan_len = 0;
-                if (tail_data != NULL && tail_data_size >= 27)
-                {
-                    scan_buf = tail_data;
-                    scan_len = tail_data_size;
-                }
-                else if (total_size > 0 && (int64_t)initial_data_size >= total_size && initial_data_size >= 27)
-                {
-                    scan_buf = initial_data;
-                    scan_len = initial_data_size;
-                }
-                if (scan_buf != NULL)
-                {
-                    int64_t ogg_dur_ms = 0;
-                    if (map_sniffer_extract_tail_duration_ms(container, srate, scan_buf, scan_len, &ogg_dur_ms) && ogg_dur_ms > 0)
+                    player->duration_ms = ogg_dur_ms;
+                    if (total_size > 0)
                     {
-                        player->duration_ms = ogg_dur_ms;
-                        if (total_size > 0)
-                        {
-                            player->bitrate = (uint32_t)(((uint64_t)total_size * 8000ULL) / (uint64_t)ogg_dur_ms);
-                        }
-                        if (player->stretch_ds.sampleRate > 0)
-                        {
-                            player->stretch_ds.totalFrames = (ma_uint64)((double)player->duration_ms * (double)player->stretch_ds.sampleRate / 1000.0 + 0.5);
-                        }
+                        player->bitrate = (uint32_t)(((uint64_t)total_size * 8000ULL) / (uint64_t)ogg_dur_ms);
+                    }
+                    if (player->stretch_ds.sampleRate > 0)
+                    {
+                        player->stretch_ds.totalFrames = (ma_uint64)((double)player->duration_ms * (double)player->stretch_ds.sampleRate / 1000.0 + 0.5);
                     }
                 }
             }

@@ -22,6 +22,23 @@ ma_bool32 map_sniff_mp3_stream_info(
         return MA_FALSE;
     }
 
+    /* Reject non-MP3 containers immediately */
+    if (data_size >= 4)
+    {
+        if (memcmp(data, "RIFF", 4) == 0 ||
+            memcmp(data, "RF64", 4) == 0 ||
+            memcmp(data, "fLaC", 4) == 0 ||
+            memcmp(data, "FORM", 4) == 0 ||
+            memcmp(data, "OggS", 4) == 0)
+        {
+            return MA_FALSE;
+        }
+    }
+    if (data_size >= 8 && memcmp(data + 4, "ftyp", 4) == 0)
+    {
+        return MA_FALSE;
+    }
+
     /* 1. Skip ID3v2 tag if present */
     if (data[0] == 'I' && data[1] == 'D' && data[2] == '3')
     {
