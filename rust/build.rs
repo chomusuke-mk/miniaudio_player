@@ -17,6 +17,10 @@ fn main() {
         println!("cargo:rustc-link-lib=ole32");
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=advapi32");
+    } else if target_os == "macos" || target_os == "ios" {
+        println!("cargo:rustc-link-lib=framework=CoreAudio");
+        println!("cargo:rustc-link-lib=framework=AudioToolbox");
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
     }
 
     build.compile("miniaudio_bridge");

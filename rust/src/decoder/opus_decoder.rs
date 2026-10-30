@@ -1,1 +1,1 @@
-pub struct OpusDecoder;
+pub use symphonia_adapter_oporus::OpusDecoder;

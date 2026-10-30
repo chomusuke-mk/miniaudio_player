@@ -19,6 +19,28 @@ pub const MAP_ERROR_ACCESS_DENIED: i32 = -11;
 pub const MAP_ERROR_BUSY: i32 = -12;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MapDeviceInfo {
+    pub id: [u8; 516],
+    pub effective_id: [u8; 516],
+    pub name: [u8; 256],
+    pub is_default: i32,
+    pub is_auto: i32,
+}
+
+impl Default for MapDeviceInfo {
+    fn default() -> Self {
+        Self {
+            id: [0; 516],
+            effective_id: [0; 516],
+            name: [0; 256],
+            is_default: 1,
+            is_auto: 1,
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MiniaudioBufferedRange {
     pub start_ms: i64,
@@ -46,21 +68,37 @@ extern "C" {
     pub fn map_device_get_sample_rate(ctx: *const MapDeviceContext) -> u32;
     pub fn map_device_get_channels(ctx: *const MapDeviceContext) -> u32;
     pub fn map_device_set_device(ctx: *mut MapDeviceContext, device_id: *const c_char) -> i32;
+    pub fn map_device_get_current_device_info(
+        ctx: *const MapDeviceContext,
+        out_device: *mut MapDeviceInfo,
+    ) -> i32;
+
+    pub fn map_device_enumerate_devices(
+        out_devices: *mut *mut MapDeviceInfo,
+        out_count: *mut u32,
+    ) -> i32;
+    pub fn map_device_free_devices(devices: *mut MapDeviceInfo);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rust_render_pcm_frames(
-    _user_data: *mut c_void,
-    _output_frames: *mut f32,
-    _frame_count: u32,
+    user_data: *mut c_void,
+    output_frames: *mut f32,
+    frame_count: u32,
 ) {
-    // Renderizado implementado en etapas posteriores
+    if !user_data.is_null() && !output_frames.is_null() && frame_count > 0 {
+        let player = &mut *(user_data as *mut crate::core::PlayerCoordinator);
+        player.render_pcm(output_frames, frame_count as usize);
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rust_on_device_notification(
-    _user_data: *mut c_void,
-    _notification_type: i32,
+    user_data: *mut c_void,
+    notification_type: i32,
 ) {
-    // Notificaciones de hardware implementadas en etapas posteriores
+    if !user_data.is_null() {
+        let player = &mut *(user_data as *mut crate::core::PlayerCoordinator);
+        player.on_device_notification(notification_type);
+    }
 }

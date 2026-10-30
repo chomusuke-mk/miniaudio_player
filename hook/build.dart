@@ -2,8 +2,6 @@ import 'dart:io';
 
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
-import 'package:logging/logging.dart';
-import 'package:native_toolchain_c/native_toolchain_c.dart';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
@@ -13,154 +11,165 @@ void main(List<String> args) async {
 
     final packageName = input.packageName;
     final targetOS = input.config.code.targetOS;
+    final targetArch = input.config.code.targetArchitecture;
 
-    final List<String> libraries = [];
-    final Map<String, String> defines = {
-      'DART_SHARED_LIB': '1',
-      'MINIAUDIO_PLAYER_EXPORTS': '1',
-      'OPUS_BUILD': '1',
-      'HAVE_LRINT': '1',
-      'HAVE_LRINTF': '1',
-      'FLOAT_APPROX': '1',
-      'USE_DEFAULT_STDLIB': '1',
-    };
+    final String libName = _dylibFileName(targetOS, packageName);
+    final outLibFile = File.fromUri(input.outputDirectory.resolve(libName));
 
-    final List<String> sources = [
-      'src/miniaudio_impl.c',
-      'src/map_silence.c',
-      'src/map_reverb.c',
-      'src/map_dsp.c',
-      'src/map_source.c',
-      'src/map_buffer.c',
-      'src/map_device.c',
-      'src/map_analysis.c',
-      'src/map_sniffer.c',
-      'src/map_event_dispatcher.c',
-      'src/miniaudio_player.c',
-      'src/sonic/sonic.c',
-      'src/decoders/libogg/bitwise.c',
-      'src/decoders/libogg/framing.c',
-      'src/decoders/libopus/miniaudio_libopus.c',
-      'src/decoders/libopus/opusfile.c',
-      'src/decoders/libopus/info.c',
-      'src/decoders/libopus/internal.c',
-      'src/decoders/libopus/stream.c',
-      'src/decoders/libopus/opus_src/opus.c',
-      'src/decoders/libopus/opus_src/opus_decoder.c',
-      'src/decoders/libopus/opus_src/opus_multistream.c',
-      'src/decoders/libopus/opus_src/opus_multistream_decoder.c',
-      'src/decoders/libopus/opus_src/repacketizer.c',
-      'src/decoders/libopus/opus_src/mapping_matrix.c',
-      'src/decoders/libopus/opus_src/extensions.c',
-      'src/decoders/aac/miniaudio_aac.c',
-      'src/decoders/alac/alac.c',
-    ];
+    final cargoExe = _findCargo();
+    final rustDir = Directory.fromUri(input.packageRoot.resolve('rust'));
 
-    void addCDir(String path) {
-      final dir = Directory(path);
-      if (dir.existsSync()) {
-        final files =
-            dir
-                .listSync()
-                .whereType<File>()
-                .where((f) => f.path.endsWith('.c'))
-                .map((f) => f.path)
-                .toList()
-              ..sort();
-        sources.addAll(files);
+    if (cargoExe != null && rustDir.existsSync()) {
+      final targetTriple = _resolveTargetTriple(targetOS, targetArch);
+      final isHost = _isHost(targetOS, targetArch);
+
+      final buildArgs = [
+        'build',
+        '--release',
+        '--manifest-path',
+        rustDir.uri.resolve('Cargo.toml').toFilePath(),
+      ];
+
+      if (!isHost && targetTriple.isNotEmpty) {
+        buildArgs.addAll(['--target', targetTriple]);
       }
-    }
 
-    addCDir('src/decoders/libopus/celt');
-    addCDir('src/decoders/libopus/silk');
-    addCDir('src/decoders/libopus/silk/float');
-    addCDir('src/decoders/helix-aac');
+      final cargoEnv = Map<String, String>.from(Platform.environment);
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) {
+        final cargoBin = '$home/.cargo/bin';
+        final curPath = cargoEnv['PATH'] ?? '';
+        if (!curPath.contains(cargoBin)) {
+          cargoEnv['PATH'] = '$cargoBin:$curPath';
+        }
+      }
 
-    final List<String> commonFlags = [];
-    final List<String> linkFlags = [];
+      final res = Process.runSync(
+        cargoExe,
+        buildArgs,
+        workingDirectory: input.packageRoot.toFilePath(),
+        environment: cargoEnv,
+      );
 
-    if (targetOS == OS.linux) {
-      libraries.addAll(['pthread', 'm', 'dl']);
-      defines['_GNU_SOURCE'] = '1';
-      defines['VAR_ARRAYS'] = '1';
-      commonFlags.addAll([
-        '-std=c99',
-        '-O3',
-        '-fomit-frame-pointer',
-        '-fno-math-errno',
-        '-ffp-contract=fast',
-        '-fno-trapping-math',
-      ]);
-    } else if (targetOS == OS.windows) {
-      libraries.addAll(['ole32', 'uuid', 'winmm', 'advapi32']);
-      defines['_CRT_SECURE_NO_WARNINGS'] = '1';
-      defines['USE_ALLOCA'] = '1';
-      // MSVC-compatible flags when compiling on Windows
-      commonFlags.addAll([
-        '/std:c11',
-        '/fp:precise',
-      ]);
-    } else if (targetOS == OS.android) {
-      libraries.addAll(['OpenSLES', 'log', 'm', 'dl']);
-      defines['VAR_ARRAYS'] = '1';
-      commonFlags.addAll([
-        '-std=c99',
-        '-O3',
-        '-fomit-frame-pointer',
-        '-fno-math-errno',
-        '-ffp-contract=fast',
-        '-fno-trapping-math',
-      ]);
+      if (res.exitCode != 0) {
+        throw ProcessException(
+          cargoExe,
+          buildArgs,
+          'Cargo build failed:\n${res.stdout}\n${res.stderr}',
+          res.exitCode,
+        );
+      }
 
-      // Android 15+ 16 KB Page Size ELF Segment Alignment
-      linkFlags.addAll(['-Wl,-z,max-page-size=16384']);
+      final targetSubdir = (!isHost && targetTriple.isNotEmpty)
+          ? 'target/$targetTriple/release'
+          : 'target/release';
 
-      // 32-bit ARM NEON Hardware Activation
-      if (input.config.code.targetArchitecture == Architecture.arm) {
-        commonFlags.addAll(['-mfpu=neon-vfpv4', '-mfloat-abi=softfp']);
-        defines['OPUS_ARM_MAY_HAVE_NEON_INTR'] = '1';
-      } else if (input.config.code.targetArchitecture == Architecture.arm64) {
-        defines['OPUS_ARM_PRESUME_AARCH64_NEON_INTR'] = '1';
+      final builtFile = File.fromUri(rustDir.uri.resolve('$targetSubdir/$libName'));
+      if (builtFile.existsSync()) {
+        builtFile.copySync(outLibFile.path);
+      } else {
+        // Fallback check on Linux/Unix .so naming
+        final altSo = File.fromUri(rustDir.uri.resolve('$targetSubdir/libminiaudio_player.so'));
+        if (altSo.existsSync()) {
+          altSo.copySync(outLibFile.path);
+        } else {
+          throw StateError('Built library not found at: ${builtFile.path}');
+        }
       }
     } else {
-      defines['VAR_ARRAYS'] = '1';
-      commonFlags.addAll(['-std=c99', '-O3']);
+      // Prebuilt library fallback from package directory
+      final prebuiltFile = File.fromUri(input.packageRoot.resolve('lib/src/bin/$libName'));
+      if (prebuiltFile.existsSync()) {
+        prebuiltFile.copySync(outLibFile.path);
+      } else {
+        throw StateError(
+          'Cargo is not available and prebuilt library was not found at ${prebuiltFile.path}',
+        );
+      }
     }
 
-    final cbuilder = CBuilder.library(
-      name: packageName,
-      assetName: '${packageName}_bindings_generated.dart',
-      sources: sources,
-      includes: [
-        'src',
-        'src/sonic',
-        'src/decoders/include',
-        'src/decoders/include/opus',
-        'src/decoders/include/ogg',
-        'src/decoders/libogg',
-        'src/decoders/libopus',
-        'src/decoders/libopus/opus_src',
-        'src/decoders/libopus/celt',
-        'src/decoders/libopus/silk',
-        'src/decoders/libopus/silk/float',
-        'src/decoders/helix-aac',
-        'src/decoders/minimp4',
-        'src/decoders/aac',
-        'src/decoders/alac',
-      ],
-      libraries: libraries,
-      defines: defines,
-      flags: [...commonFlags, ...linkFlags],
+    final srcDir = Directory.fromUri(rustDir.uri.resolve('src'));
+    if (srcDir.existsSync()) {
+      for (final entity in srcDir.listSync(recursive: true)) {
+        if (entity is File) {
+          output.dependencies.add(entity.uri);
+        }
+      }
+    }
+    output.dependencies.add(rustDir.uri.resolve('Cargo.toml'));
+    output.dependencies.add(rustDir.uri.resolve('build.rs'));
+
+    output.assets.code.add(
+      CodeAsset(
+        package: packageName,
+        name: '${packageName}_bindings_generated.dart',
+        linkMode: DynamicLoadingBundled(),
+        file: outLibFile.uri,
+      ),
     );
-
-    hierarchicalLoggingEnabled = true;
-    final logger = Logger(packageName)
-      ..level = Level.ALL
-      ..onRecord.listen((record) {
-        // ignore: avoid_print
-        print(record.message);
-      });
-
-    await cbuilder.run(input: input, output: output, logger: logger);
   });
+}
+
+String _dylibFileName(OS os, String name) {
+  if (os == OS.windows) return '$name.dll';
+  if (os == OS.macOS || os == OS.iOS) return 'lib$name.dylib';
+  return 'lib$name.so';
+}
+
+String? _findCargo() {
+  final home = Platform.environment['HOME'] ?? '';
+  if (home.isNotEmpty) {
+    final candidate = File('$home/.cargo/bin/cargo');
+    if (candidate.existsSync()) {
+      return candidate.path;
+    }
+  }
+  // Try resolving from PATH
+  final res = Process.runSync('which', ['cargo']);
+  if (res.exitCode == 0) {
+    final path = (res.stdout as String).trim();
+    if (path.isNotEmpty && File(path).existsSync()) {
+      return path;
+    }
+  }
+  return null;
+}
+
+bool _isHost(OS os, Architecture arch) {
+  if (os != OS.current) return false;
+  // Match current host arch
+  final hostArch = _hostArchitecture();
+  return hostArch == arch;
+}
+
+Architecture _hostArchitecture() {
+  final archStr = Platform.version.toLowerCase();
+  if (archStr.contains('arm64') || archStr.contains('aarch64')) {
+    return Architecture.arm64;
+  }
+  if (archStr.contains('x64') || archStr.contains('x86_64')) {
+    return Architecture.x64;
+  }
+  return Architecture.x64;
+}
+
+String _resolveTargetTriple(OS os, Architecture arch) {
+  if (os == OS.linux) {
+    if (arch == Architecture.x64) return 'x86_64-unknown-linux-gnu';
+    if (arch == Architecture.arm64) return 'aarch64-unknown-linux-gnu';
+  } else if (os == OS.android) {
+    if (arch == Architecture.arm64) return 'aarch64-linux-android';
+    if (arch == Architecture.arm) return 'armv7-linux-androideabi';
+    if (arch == Architecture.x64) return 'x86_64-linux-android';
+    if (arch == Architecture.ia32) return 'i686-linux-android';
+  } else if (os == OS.windows) {
+    if (arch == Architecture.x64) return 'x86_64-pc-windows-msvc';
+  } else if (os == OS.macOS) {
+    if (arch == Architecture.arm64) return 'aarch64-apple-darwin';
+    if (arch == Architecture.x64) return 'x86_64-apple-darwin';
+  } else if (os == OS.iOS) {
+    if (arch == Architecture.arm64) return 'aarch64-apple-ios';
+    if (arch == Architecture.x64) return 'x86_64-apple-ios';
+  }
+  return '';
 }

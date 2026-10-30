@@ -110,6 +110,7 @@ impl TripartiteBuffer {
         let mut b = self.inner.lock().unwrap();
         b.head_data.clear();
         b.head_data.extend_from_slice(head);
+        b.head_locked = true;
         b.meta_version = b.meta_version.wrapping_add(1);
         self.data_ready_cond.notify_all();
     }
@@ -130,6 +131,10 @@ impl TripartiteBuffer {
 
     pub fn probe_tail(&self, tail: &[u8], tail_offset: u64) {
         self.set_tail(tail, Some(tail_offset));
+    }
+
+    pub fn tail_data(&self) -> Vec<u8> {
+        self.inner.lock().unwrap().tail_data.clone()
     }
 
     pub fn set_audio_start(&self, start: u64) {
@@ -283,6 +288,9 @@ impl TripartiteBuffer {
         if out.is_empty() {
             return Ok(0);
         }
+        if out.is_empty() {
+            return Ok(0);
+        }
 
         if let Some(total) = b.total_size {
             if offset >= total {
@@ -290,7 +298,6 @@ impl TripartiteBuffer {
             }
         }
 
-        // TIER 1: Pinned Head
         if offset < b.head_data.len() as u64 {
             let head_avail = b.head_data.len() - (offset as usize);
             let head_copy = out.len().min(head_avail);
@@ -313,21 +320,19 @@ impl TripartiteBuffer {
         // TIER 2: Tail Buffer / EOF Protection
         if b.tail_locked {
             if let Some(audio_end) = b.audio_end {
-                if offset >= audio_end {
-                    if b.is_decoding_audio {
-                        return Ok(0); // EOF de audio puro
-                    }
-                    if !b.tail_data.is_empty() && offset >= b.tail_start {
-                        let rel = (offset - b.tail_start) as usize;
-                        if rel < b.tail_data.len() {
-                            let avail = b.tail_data.len() - rel;
-                            let to_copy = out.len().min(avail);
-                            out[..to_copy].copy_from_slice(&b.tail_data[rel..rel + to_copy]);
-                            return Ok(to_copy);
-                        }
-                    }
-                    return Ok(0);
+                if offset >= audio_end && b.is_decoding_audio {
+                    return Ok(0); // Pure audio EOF
                 }
+            }
+            if !b.tail_data.is_empty() && offset >= b.tail_start {
+                let rel = (offset - b.tail_start) as usize;
+                if rel < b.tail_data.len() {
+                    let avail = b.tail_data.len() - rel;
+                    let to_copy = out.len().min(avail);
+                    out[..to_copy].copy_from_slice(&b.tail_data[rel..rel + to_copy]);
+                    return Ok(to_copy);
+                }
+                return Ok(0);
             }
         }
 
@@ -365,7 +370,8 @@ impl TripartiteBuffer {
 
         // Si se solicitó después de range_end
         if offset >= b.range_end {
-            if b.is_eof {
+            let reached_total = b.total_size.map(|tot| b.range_end >= tot).unwrap_or(false);
+            if b.is_eof || reached_total {
                 return Ok(0);
             }
             return Err(BufferError::WouldBlock);
@@ -420,6 +426,7 @@ impl TripartiteBuffer {
         b.range_start = new_stream_offset;
         b.range_end = new_stream_offset;
         b.read_cursor = new_stream_offset;
+        b.is_eof = false;
         b.state = BufferState::Buffering;
         self.data_ready_cond.notify_all();
     }
@@ -429,6 +436,7 @@ impl TripartiteBuffer {
         b.read_cursor = target_offset;
         if target_offset >= b.range_start && target_offset < b.range_end {
             b.state = BufferState::Ready;
+            b.is_eof = false;
         } else if !b.is_eof {
             b.state = BufferState::Buffering;
         }
@@ -442,6 +450,11 @@ impl TripartiteBuffer {
         if is_hit {
             b.read_cursor = target_offset;
             b.state = BufferState::Ready;
+            if let Some(tot) = b.total_size {
+                if b.range_end >= tot {
+                    b.is_eof = true;
+                }
+            }
             let contiguous = b.range_start <= b.audio_start;
             (true, contiguous)
         } else {
@@ -558,6 +571,19 @@ impl TripartiteBuffer {
 
     pub fn is_live(&self) -> bool {
         self.inner.lock().unwrap().is_live
+    }
+
+    pub fn is_eof(&self) -> bool {
+        let b = self.inner.lock().unwrap();
+        b.is_eof || b.total_size.map(|tot| b.range_end >= tot).unwrap_or(false)
+    }
+
+    pub fn head_size(&self) -> usize {
+        self.inner.lock().unwrap().head_data.len()
+    }
+
+    pub fn ring_capacity(&self) -> usize {
+        self.inner.lock().unwrap().ring_capacity
     }
 
     pub fn total_size(&self) -> Option<u64> {

@@ -358,7 +358,10 @@ void main() {
       await engine.action.seek(const Duration(milliseconds: 5900));
 
       // Wait for playback to hit EOF
-      await Future<void>.delayed(const Duration(milliseconds: 600));
+      for (int i = 0; i < 10; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (engine.state.completed) break;
+      }
 
       expect(engine.state.phase, equals(EnginePhase.completed));
       expect(engine.state.completed, isTrue);

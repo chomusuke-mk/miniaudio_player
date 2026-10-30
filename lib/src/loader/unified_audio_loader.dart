@@ -327,6 +327,7 @@ class UnifiedAudioLoader {
     int openRes = MapResult.errorGeneric;
     AudioCodec detectedCodec = AudioCodec.unknown;
     bool tailAlreadyProbed = false;
+    Uint8List? preOpenTailBytes;
 
     while (!_isDisposed && _seekGeneration == gen) {
       final probeBytes = initialBuilder.toBytes();
@@ -371,7 +372,6 @@ class UnifiedAudioLoader {
           probeBytes[2] == 0x67 &&
           probeBytes[3] == 0x53;
 
-      Uint8List? preOpenTailBytes;
       if (isOgg &&
           !tailAlreadyProbed &&
           !_isLive &&
