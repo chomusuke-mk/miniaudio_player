@@ -217,6 +217,14 @@ impl SymphoniaEngine {
 
                     match decoder.decode(&packet) {
                         Ok(decoded) => {
+                            let rate = decoded.spec().rate();
+                            let channels = decoded.spec().channels().count() as u32;
+                            if rate > 0 && rate != self.sample_rate {
+                                self.sample_rate = rate;
+                            }
+                            if channels > 0 && channels != self.channels {
+                                self.channels = channels;
+                            }
                             out_pcm.clear();
                             decoded.copy_to_vec_interleaved(out_pcm);
                             return Ok(true);

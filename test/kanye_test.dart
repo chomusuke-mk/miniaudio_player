@@ -1,4 +1,5 @@
 @Tags(['network'])
+library;
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';

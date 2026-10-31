@@ -12,8 +12,10 @@ use crate::bridge::ffi::*;
 use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, TripartiteBuffer};
 use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{BoundaryInfo, ContainerFormat, FormatSniffer, SymphoniaEngine};
+use crate::dsp::channel_matrix::ChannelMatrix;
 use crate::dsp::crossfeed::CrossfeedMode;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
+use crate::dsp::resampler::RubatoResampler;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::{SilenceConfig, SilenceDetector};
 use crate::dsp::sonic::SonicStream;
@@ -100,6 +102,8 @@ pub struct PlayerCoordinator {
     pub bitrate: Arc<AtomicU32>,
     pub sample_rate: Arc<AtomicU32>,
     pub channels: Arc<AtomicU32>,
+    pub device_sample_rate: Arc<AtomicU32>,
+    pub device_channels: Arc<AtomicU32>,
     pub period_size_in_frames: Arc<AtomicU32>,
     pub silence_saved_ms: Arc<AtomicI64>,
     pub visualizer_enabled: Arc<AtomicBool>,
@@ -175,6 +179,8 @@ impl PlayerCoordinator {
         let bitrate = Arc::new(AtomicU32::new(0));
         let sample_rate = Arc::new(AtomicU32::new(sr));
         let channels = Arc::new(AtomicU32::new(ch));
+        let device_sample_rate = Arc::new(AtomicU32::new(sr));
+        let device_channels = Arc::new(AtomicU32::new(ch));
         let period_size_in_frames = Arc::new(AtomicU32::new(period));
         let silence_saved_ms = Arc::new(AtomicI64::new(0));
         let visualizer_enabled = Arc::new(AtomicBool::new(false));
@@ -191,7 +197,8 @@ impl PlayerCoordinator {
 
         let silence_config = Arc::new(RwLock::new(SilenceConfig::default()));
 
-        let (producer, consumer) = AudioRingBuffer::create(131072 * (ch as usize));
+        let ring_cap = (sr as usize * ch as usize * 3).max(262144);
+        let (producer, consumer) = AudioRingBuffer::create(ring_cap);
         let audio_producer = Arc::new(Mutex::new(Some(producer)));
 
         let (cmd_prod, cmd_cons) = rtrb::RingBuffer::new(256);
@@ -248,6 +255,8 @@ impl PlayerCoordinator {
             state: state.clone(),
             sample_rate: sample_rate.clone(),
             channels: channels.clone(),
+            device_sample_rate: device_sample_rate.clone(),
+            device_channels: device_channels.clone(),
             volume: volume.clone(),
             rate: rate.clone(),
             position_frames: position_frames.clone(),
@@ -286,6 +295,15 @@ impl PlayerCoordinator {
             return Err(dev_res);
         }
 
+        let actual_sr = unsafe { map_device_get_sample_rate(device_ctx) };
+        let actual_ch = unsafe { map_device_get_channels(device_ctx) };
+        if actual_sr > 0 {
+            device_sample_rate.store(actual_sr, Ordering::SeqCst);
+        }
+        if actual_ch > 0 {
+            device_channels.store(actual_ch, Ordering::SeqCst);
+        }
+
         let mut coordinator = Box::new(Self {
             device_ctx,
             renderer_ptr,
@@ -300,6 +318,8 @@ impl PlayerCoordinator {
             bitrate,
             sample_rate,
             channels,
+            device_sample_rate,
+            device_channels,
             period_size_in_frames,
             silence_saved_ms,
             visualizer_enabled,
@@ -381,17 +401,29 @@ impl PlayerCoordinator {
         let flush_acknowledged = self.flush_acknowledged.clone();
         let stream_reinit_needed = self.stream_reinit_needed.clone();
 
+        let dev_sr_arc = self.device_sample_rate.clone();
+        let dev_ch_arc = self.device_channels.clone();
         let handle = thread::Builder::new()
             .name("map-decoder".to_string())
             .spawn(move || {
                 let mut frame_buf = Vec::new();
                 let mut active_buf = Vec::new();
-                let mut sonic_out_buf = vec![0.0f32; 8192];
+                let mut matrix_buf = Vec::new();
+                let mut resampler_out = Vec::new();
+                let mut pending_pcm: Vec<f32> = Vec::new();
+                let mut pending_offset: usize = 0;
+                let mut sonic_out_buf = vec![0.0f32; 16384];
 
-                let cur_sr = sr_arc.load(Ordering::Relaxed);
-                let cur_ch = ch_arc.load(Ordering::Relaxed) as usize;
+                let cur_sr = sr_arc.load(Ordering::Relaxed).max(8000);
+                let cur_ch = (ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+                let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000);
+                let cur_dev_ch = (dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+
                 let mut sonic = SonicStream::new(cur_sr, cur_ch);
                 let mut silence_detector = SilenceDetector::new(cur_ch, cur_sr);
+                let mut channel_matrix = ChannelMatrix::new(cur_ch, cur_dev_ch);
+                let mut resampler = RubatoResampler::new(cur_sr, cur_dev_sr, cur_dev_ch, 1024)
+                    .unwrap_or_else(|_| RubatoResampler::new(48000, 48000, cur_dev_ch, 1024).unwrap());
 
                 let mut last_tele_pos: i64 = -1;
                 let mut last_vis_instant = std::time::Instant::now();
@@ -488,6 +520,9 @@ impl PlayerCoordinator {
                         sonic.flush();
                         silence_detector.reset(target_seek == 0);
                         silence_saved_arc.store(0, Ordering::Relaxed);
+                        pending_pcm.clear();
+                        pending_offset = 0;
+                        resampler.reset();
                         tele.post_event(
                             EventType::SilenceSaved,
                             MapEventData {
@@ -549,6 +584,9 @@ impl PlayerCoordinator {
                                     }
                                     stream_reinit_needed.store(false, Ordering::Release);
                                     decoder_eof_arc.store(false, Ordering::Relaxed);
+                                    pending_pcm.clear();
+                                    pending_offset = 0;
+                                    resampler.reset();
                                 }
                             }
                         } else {
@@ -598,7 +636,33 @@ impl PlayerCoordinator {
                         }
                     }
 
-                    // Check producer slots
+                    // 1. Drain pending PCM from previous packet first (Zero-loss backpressure guarantee)
+                    if pending_offset < pending_pcm.len() {
+                        let slice_to_write = &pending_pcm[pending_offset..];
+                        let written = {
+                            if let Ok(mut guard) = producer_arc.lock() {
+                                if let Some(ref mut prod) = *guard {
+                                    prod.write_chunk(slice_to_write)
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            }
+                        };
+                        pending_offset += written;
+                        if pending_offset < pending_pcm.len() {
+                            let (lock, cvar) = &*wake;
+                            let guard = lock.lock().unwrap();
+                            let _ = cvar.wait_timeout(guard, Duration::from_millis(3));
+                            continue;
+                        } else {
+                            pending_pcm.clear();
+                            pending_offset = 0;
+                        }
+                    }
+
+                    // 2. Check producer slots before decoding a new packet
                     let slots = {
                         if let Ok(guard) = producer_arc.lock() {
                             if let Some(ref prod) = *guard {
@@ -614,11 +678,11 @@ impl PlayerCoordinator {
                     if slots < 2048 {
                         let (lock, cvar) = &*wake;
                         let guard = lock.lock().unwrap();
-                        let _ = cvar.wait_timeout(guard, Duration::from_millis(5));
+                        let _ = cvar.wait_timeout(guard, Duration::from_millis(3));
                         continue;
                     }
 
-                    // Decode next frame
+                    // 3. Decode next frame
                     let mut decoded_ok = false;
                     let mut eof_reached = false;
 
@@ -627,6 +691,14 @@ impl PlayerCoordinator {
                             match eng.decode_next_frame(&mut frame_buf) {
                                 Ok(true) => {
                                     decoded_ok = true;
+                                    let new_sr = eng.sample_rate();
+                                    let new_ch = eng.channels();
+                                    if new_sr > 0 && new_sr != sr_arc.load(Ordering::Relaxed) {
+                                        sr_arc.store(new_sr, Ordering::Relaxed);
+                                    }
+                                    if new_ch > 0 && new_ch != ch_arc.load(Ordering::Relaxed) {
+                                        ch_arc.store(new_ch, Ordering::Relaxed);
+                                    }
                                 }
                                 Ok(false) => {
                                     eof_reached = true;
@@ -691,6 +763,36 @@ impl PlayerCoordinator {
                             }
                         }
 
+                        // Flush any remaining resampler frames
+                        if pending_pcm.is_empty() {
+                            let _ = resampler.flush(&mut pending_pcm);
+                            pending_offset = 0;
+                        }
+                        if pending_offset < pending_pcm.len() {
+                            let slice = &pending_pcm[pending_offset..];
+                            let written = {
+                                if let Ok(mut guard) = producer_arc.lock() {
+                                    if let Some(ref mut prod) = *guard {
+                                        prod.write_chunk(slice)
+                                    } else {
+                                        0
+                                    }
+                                } else {
+                                    0
+                                }
+                            };
+                            pending_offset += written;
+                            if pending_offset < pending_pcm.len() {
+                                let (lock, cvar) = &*wake;
+                                let guard = lock.lock().unwrap();
+                                let _ = cvar.wait_timeout(guard, Duration::from_millis(4));
+                                continue;
+                            } else {
+                                pending_pcm.clear();
+                                pending_offset = 0;
+                            }
+                        }
+
                         if state.load(Ordering::Relaxed) == STATE_BUFFERING {
                             state.store(STATE_PLAYING, Ordering::Relaxed);
                             tele.post_event(
@@ -722,9 +824,16 @@ impl PlayerCoordinator {
                             );
                         }
 
-                        let cur_rate = f32::from_bits(rate_arc.load(Ordering::Relaxed));
-                        let cur_pitch = f32::from_bits(pitch_arc.load(Ordering::Relaxed));
-                        let ch = ch_arc.load(Ordering::Relaxed) as usize;
+                        let cur_track_sr = sr_arc.load(Ordering::Relaxed).max(8000);
+                        let cur_track_ch = (ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+                        let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000);
+                        let cur_dev_ch = (dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+
+                        if cur_track_sr > 0 && cur_track_ch > 0 && (cur_track_sr != silence_detector.sample_rate() || cur_track_ch != silence_detector.channels()) {
+                            silence_detector.set_sample_rate(cur_track_sr);
+                            silence_detector.set_channels(cur_track_ch);
+                            sonic = SonicStream::new(cur_track_sr, cur_track_ch);
+                        }
 
                         // Silence Detection
                         let cur_silence_cfg = *silence_cfg_arc.read().unwrap();
@@ -748,33 +857,62 @@ impl PlayerCoordinator {
                             );
                         }
 
-                        let samples_out = frames_out * ch;
+                        let samples_out = frames_out * cur_track_ch;
                         if samples_out == 0 {
                             continue;
                         }
                         let active_slice = &active_buf[..samples_out];
 
                         // Time-stretching / Pitch-shifting
-                        if (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001 {
+                        let cur_rate = f32::from_bits(rate_arc.load(Ordering::Relaxed));
+                        let cur_pitch = f32::from_bits(pitch_arc.load(Ordering::Relaxed));
+                        let sonic_slice = if (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001 {
                             sonic.set_speed(cur_rate);
                             sonic.set_pitch(cur_pitch);
                             sonic.write_float(active_slice);
 
                             let frames_read = sonic.read_float(&mut sonic_out_buf);
-                            let samples_read = frames_read * ch;
-                            if samples_read > 0 {
-                                if let Ok(mut guard) = producer_arc.lock() {
-                                    if let Some(ref mut prod) = *guard {
-                                        prod.write_chunk(&sonic_out_buf[..samples_read]);
-                                    }
-                                }
-                            }
+                            let samples_read = frames_read * cur_track_ch;
+                            &sonic_out_buf[..samples_read]
                         } else {
+                            active_slice
+                        };
+
+                        // Channel Matrix Adaptation (e.g. Mono -> Stereo, 5.1 -> Stereo, 5.1 -> 7.1, etc.)
+                        channel_matrix.set_channels(cur_track_ch, cur_dev_ch);
+                        channel_matrix.process_interleaved(sonic_slice, &mut matrix_buf);
+
+                        // High-Fidelity Resampling (e.g. 44.1k -> 48k, 192k -> 48k, or passthrough)
+                        if resampler.sample_rate_in() != cur_track_sr
+                            || resampler.sample_rate_out() != cur_dev_sr
+                            || resampler.channels() != cur_dev_ch
+                        {
+                            if let Ok(new_res) = RubatoResampler::new(cur_track_sr, cur_dev_sr, cur_dev_ch, 1024) {
+                                resampler = new_res;
+                            }
+                        }
+                        resampler_out.clear();
+                        let _ = resampler.process_interleaved(&matrix_buf, &mut resampler_out);
+
+                        // Commit to pending buffer and write first chunk
+                        pending_pcm.extend_from_slice(&resampler_out);
+                        pending_offset = 0;
+
+                        let written = {
                             if let Ok(mut guard) = producer_arc.lock() {
                                 if let Some(ref mut prod) = *guard {
-                                    prod.write_chunk(active_slice);
+                                    prod.write_chunk(&pending_pcm[pending_offset..])
+                                } else {
+                                    0
                                 }
+                            } else {
+                                0
                             }
+                        };
+                        pending_offset += written;
+                        if pending_offset >= pending_pcm.len() {
+                            pending_pcm.clear();
+                            pending_offset = 0;
                         }
                     }
                 }
@@ -813,6 +951,7 @@ impl PlayerCoordinator {
     pub fn begin_open(&mut self) -> i32 {
         let _ = self.stop();
         *self.custom_source_handle.write().unwrap() = None;
+        *self.engine.lock().unwrap() = None;
         self.decoder_eof.store(false, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
         self.telemetry.post_event(
@@ -1084,19 +1223,21 @@ impl PlayerCoordinator {
             0
         };
 
-        self.sample_rate.store(sr, Ordering::Relaxed);
-        self.channels.store(ch, Ordering::Relaxed);
-        self.duration_ms.store(dur, Ordering::Relaxed);
-        self.bitrate.store(bitrate, Ordering::Relaxed);
-        self.is_stream.store(is_stream, Ordering::Relaxed);
-        self.decoder_eof.store(false, Ordering::Relaxed);
-        self.position_ms.store(0, Ordering::Relaxed);
-        self.position_frames.store(0, Ordering::Relaxed);
+        {
+            let mut eng_lock = self.engine.lock().unwrap();
+            *eng_lock = Some(eng);
+            self.sample_rate.store(sr, Ordering::SeqCst);
+            self.channels.store(ch, Ordering::SeqCst);
+            self.duration_ms.store(dur, Ordering::SeqCst);
+            self.bitrate.store(bitrate, Ordering::SeqCst);
+            self.is_stream.store(is_stream, Ordering::SeqCst);
+            self.decoder_eof.store(false, Ordering::SeqCst);
+            self.position_ms.store(0, Ordering::SeqCst);
+            self.position_frames.store(0, Ordering::SeqCst);
+            self.flush_generation.fetch_add(1, Ordering::SeqCst);
+        }
 
-        self.send_dsp_command(DspCommand::SetSampleRate(sr));
-        self.flush_generation.fetch_add(1, Ordering::Release);
-
-        *self.engine.lock().unwrap() = Some(eng);
+        self.send_dsp_command(DspCommand::SetSampleRate(self.device_sample_rate.load(Ordering::Relaxed)));
 
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
         self.telemetry.post_event(
@@ -1885,10 +2026,9 @@ impl PlayerCoordinator {
 
         MAP_SUCCESS
     }
-}
 
-impl Drop for PlayerCoordinator {
-    fn drop(&mut self) {
+    pub fn destroy(&mut self) {
+        let _ = self.stop();
         self.telemetry.stop();
         if let Ok(mut cb) = self.completion_cb.write() {
             *cb = None;
@@ -1914,5 +2054,11 @@ impl Drop for PlayerCoordinator {
             }
             self.renderer_ptr = std::ptr::null_mut();
         }
+    }
+}
+
+impl Drop for PlayerCoordinator {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }

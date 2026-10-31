@@ -44,6 +44,8 @@ pub struct AudioRenderer {
     pub state: Arc<AtomicI32>,
     pub sample_rate: Arc<AtomicU32>,
     pub channels: Arc<AtomicU32>,
+    pub device_sample_rate: Arc<AtomicU32>,
+    pub device_channels: Arc<AtomicU32>,
     pub volume: Arc<AtomicU32>,
     pub rate: Arc<AtomicU32>,
     pub position_frames: Arc<AtomicI64>,
@@ -122,7 +124,7 @@ impl AudioRenderer {
             self.flush_acknowledged.store(current_flush, Ordering::Release);
         }
 
-        let ch = self.channels.load(Ordering::Relaxed) as usize;
+        let ch = self.device_channels.load(Ordering::Relaxed) as usize;
         let total_samples = frame_count * ch;
         let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
 
@@ -155,7 +157,7 @@ impl AudioRenderer {
                 self.buffering_resumed_flag.store(true, Ordering::Release);
             }
             let frames_played = (read_samples / ch) as i64;
-            let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
+            let sr = self.device_sample_rate.load(Ordering::Relaxed) as i64;
             let rate = f32::from_bits(self.rate.load(Ordering::Relaxed)).max(0.01);
             let track_subframes = ((frames_played as f64) * (rate as f64) * 1024.0) as i64;
             let total_subframes =

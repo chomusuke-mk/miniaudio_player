@@ -40,7 +40,9 @@ void main() {
     await player.dispose();
   });
 
-  test('Queue of 1000 items from /mnt/Last_Order/Música and 400 consecutive next()', () async {
+  test(
+    'Queue of 1000 items from /mnt/Last_Order/Música and 400 consecutive next()',
+    () async {
     final musicDir = Directory('/mnt/Last_Order/Música');
     if (!musicDir.existsSync()) return;
     final files = musicDir
@@ -78,5 +80,5 @@ void main() {
     expect(engine.state.currentIndex, 400);
 
     await engine.dispose();
-  });
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }

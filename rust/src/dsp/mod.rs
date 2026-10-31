@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod biquad;
 pub mod chain;
+pub mod channel_matrix;
 pub mod crossfeed;
 pub mod equalizer;
 pub mod limiter;
@@ -18,6 +19,7 @@ pub use analysis::{
 };
 pub use biquad::BiquadDf2t;
 pub use chain::DspChain;
+pub use channel_matrix::ChannelMatrix;
 pub use crossfeed::{Bs2bCrossfeed, CrossfeedMode};
 pub use equalizer::{Equalizer, EqualizerParams, ReplayGainConfig};
 pub use limiter::SoftLimiter;

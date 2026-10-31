@@ -889,7 +889,7 @@ impl RustPlayer {
     pub fn dispose(&self) {
         self.telemetry.set_rust_callback(None);
         let mut lock = self.inner.lock().unwrap();
-        let _ = lock.stop();
+        lock.destroy();
     }
 }
 

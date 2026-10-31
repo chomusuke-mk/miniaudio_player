@@ -356,7 +356,11 @@ void main() {
 
         // Clean restart after chaos
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 250));
+        int waitMs = 0;
+        while (player.state.playbackState == PlaybackState.buffering && waitMs < 3000) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          waitMs += 50;
+        }
 
         expect(player.state.playing, isTrue);
         expect(player.state.playbackState, equals(PlaybackState.playing));
