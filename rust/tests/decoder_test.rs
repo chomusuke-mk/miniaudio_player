@@ -211,3 +211,25 @@ fn test_probe_matrix_files() {
         println!("{fname}: matched format={:?}", probed.format_info().short_name);
     }
 }
+
+#[test]
+fn test_aiff_stream_probe() {
+    let aif_bytes = std::fs::read("../example/assets/music/salida.aif").expect("Cannot read salida.aif");
+    let chunk_size = 65536.min(aif_bytes.len());
+    let initial_data = &aif_bytes[..chunk_size];
+
+    let buf = TripartiteBuffer::new(2 * 1024 * 1024, Some(aif_bytes.len() as u64), false);
+    buf.set_audio_start(0);
+    let _ = buf.feed_chunk(initial_data);
+
+    let reader = BufferStreamReader::new(buf);
+    let res = SymphoniaEngine::new(reader, Some("aiff"));
+    assert!(res.is_ok());
+
+    let buf2 = TripartiteBuffer::new(2 * 1024 * 1024, Some(aif_bytes.len() as u64), false);
+    buf2.set_audio_start(0);
+    let _ = buf2.feed_chunk(initial_data);
+    let reader2 = BufferStreamReader::new(buf2);
+    let res2 = SymphoniaEngine::new(reader2, None);
+    assert!(res2.is_ok());
+}

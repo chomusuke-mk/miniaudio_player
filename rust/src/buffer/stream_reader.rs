@@ -70,7 +70,7 @@ impl Seek for BufferStreamReader {
 
 impl MediaSource for BufferStreamReader {
     fn is_seekable(&self) -> bool {
-        !self.buffer.is_live()
+        !self.buffer.is_live() && (self.buffer.is_tail_locked() || self.buffer.is_fully_buffered())
     }
 
     fn byte_len(&self) -> Option<u64> {
