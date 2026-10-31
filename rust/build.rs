@@ -1,8 +1,8 @@
 fn main() {
     let mut build = cc::Build::new();
     build
-        .file("../src/miniaudio_device_bridge.c")
-        .include("../src")
+        .file("c_src/miniaudio_device_bridge.c")
+        .include("c_src")
         .warnings(false);
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -24,7 +24,7 @@ fn main() {
     }
 
     build.compile("miniaudio_bridge");
-    println!("cargo:rerun-if-changed=../src/miniaudio_device_bridge.c");
-    println!("cargo:rerun-if-changed=../src/miniaudio_device_bridge.h");
-    println!("cargo:rerun-if-changed=../src/miniaudio.h");
+    println!("cargo:rerun-if-changed=c_src/miniaudio_device_bridge.c");
+    println!("cargo:rerun-if-changed=c_src/miniaudio_device_bridge.h");
+    println!("cargo:rerun-if-changed=c_src/miniaudio.h");
 }

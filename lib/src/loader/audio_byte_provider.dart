@@ -504,6 +504,7 @@ class NetworkByteProvider extends AudioByteProvider {
       final controller = StreamController<Uint8List>();
       final firstChunkCompleter = Completer<Uint8List?>();
       final manifestDoneCompleter = Completer<void>();
+      manifestDoneCompleter.future.ignore();
       bool checkedHls = false;
       bool isDetectedHls = false;
       final manifestBuilder = BytesBuilder(copy: false);
@@ -535,7 +536,7 @@ class NetworkByteProvider extends AudioByteProvider {
           if (!firstChunkCompleter.isCompleted) {
             firstChunkCompleter.complete(null);
           }
-          if (!manifestDoneCompleter.isCompleted) {
+          if (isDetectedHls && !manifestDoneCompleter.isCompleted) {
             manifestDoneCompleter.completeError(err, st);
           }
           controller.addError(err, st);
@@ -544,7 +545,7 @@ class NetworkByteProvider extends AudioByteProvider {
           if (!firstChunkCompleter.isCompleted) {
             firstChunkCompleter.complete(null);
           }
-          if (!manifestDoneCompleter.isCompleted) {
+          if (isDetectedHls && !manifestDoneCompleter.isCompleted) {
             manifestDoneCompleter.complete();
           }
           controller.close();

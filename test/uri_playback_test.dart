@@ -6,7 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player/src/ffi/native_types.dart';
+import 'package:miniaudio_player/src/api/player_exception.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

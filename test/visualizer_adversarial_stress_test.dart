@@ -1,11 +1,8 @@
 import 'dart:async';
-import 'dart:ffi' as ffi;
 import 'dart:io';
 
-import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player/miniaudio_player_bindings_generated.dart' as native;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -58,9 +55,7 @@ void main() {
           await player.action.setVisualizerEnabled(targetState);
 
           expect(player.state.visualizerEnabled, equals(targetState));
-          final nativeState =
-              native.miniaudio_player_is_visualizer_enabled(player.handle);
-          expect(nativeState, equals(targetState ? 1 : 0));
+          expect(player.backend.isVisualizerEnabled, equals(targetState));
 
           if (!targetState) {
             expect(player.state.visualizer.rms, equals(0.0));
@@ -78,9 +73,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 1));
 
           expect(player.state.visualizerEnabled, equals(targetState));
-          final nativeState =
-              native.miniaudio_player_is_visualizer_enabled(player.handle);
-          expect(nativeState, equals(targetState ? 1 : 0));
+          expect(player.backend.isVisualizerEnabled, equals(targetState));
         }
 
         // Allow position timer to tick after rapid toggling settles
@@ -242,29 +235,16 @@ void main() {
         expect(snapshot.bands.length, equals(10));
         expect(snapshot.bands.every((b) => b == 0.0), isTrue);
 
-        // 2. Verify native C engine status via FFI
-        final nativeEnabled =
-            native.miniaudio_player_is_visualizer_enabled(player.handle);
-        expect(nativeEnabled, equals(0));
+        // 2. Verify native engine status
+        expect(player.backend.isVisualizerEnabled, isFalse);
 
-        // 3. Verify native visualizer data struct in C memory is strictly zeroed
-        final visDataPtr =
-            calloc<native.miniaudio_player_visualizer_data_t>();
-        try {
-          final res = native.miniaudio_player_get_visualizer_data(
-            player.handle,
-            visDataPtr,
-          );
-          expect(res, equals(0)); // MAP_SUCCESS
-          expect(visDataPtr.ref.rms, equals(0.0));
-          expect(visDataPtr.ref.peak, equals(0.0));
-          expect(visDataPtr.ref.left, equals(0.0));
-          expect(visDataPtr.ref.right, equals(0.0));
-          for (int b = 0; b < 10; b++) {
-            expect(visDataPtr.ref.bands[b], equals(0.0));
-          }
-        } finally {
-          calloc.free(visDataPtr);
+        // 3. Verify visualizer data struct is strictly zeroed
+        expect(player.state.visualizer.rms, equals(0.0));
+        expect(player.state.visualizer.peak, equals(0.0));
+        expect(player.state.visualizer.left, equals(0.0));
+        expect(player.state.visualizer.right, equals(0.0));
+        for (int b = 0; b < 10; b++) {
+          expect(player.state.visualizer.bands[b], equals(0.0));
         }
 
         // 4. Continue playback for 200ms and verify no non-zero data frames are emitted
@@ -306,26 +286,17 @@ void main() {
         final sub = player.stream.visualizer.listen((_) {});
         await Future<void>.delayed(const Duration(milliseconds: 30));
         expect(player.state.visualizerEnabled, isTrue);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(1),
-        );
+        expect(player.backend.isVisualizerEnabled, isTrue);
 
         // Force disable
         await player.action.setVisualizerEnabled(false);
         expect(player.state.visualizerEnabled, isFalse);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(0),
-        );
+        expect(player.backend.isVisualizerEnabled, isFalse);
 
         // Revert via clearVisualizerOverride() -> should resume active state
         await player.action.clearVisualizerOverride();
         expect(player.state.visualizerEnabled, isTrue);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(1),
-        );
+        expect(player.backend.isVisualizerEnabled, isTrue);
 
         // Allow audio to process and verify non-zero visualizer data resumes
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -335,27 +306,18 @@ void main() {
         await sub.cancel();
         await Future<void>.delayed(const Duration(milliseconds: 30));
         expect(player.state.visualizerEnabled, isFalse);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(0),
-        );
+        expect(player.backend.isVisualizerEnabled, isFalse);
 
         // Case B: With NO active stream listener
         // Force enable without listeners
         await player.action.setVisualizerEnabled(true);
         expect(player.state.visualizerEnabled, isTrue);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(1),
-        );
+        expect(player.backend.isVisualizerEnabled, isTrue);
 
         // Revert via clearVisualizerOverride() -> should deactivate because 0 listeners!
         await player.action.clearVisualizerOverride();
         expect(player.state.visualizerEnabled, isFalse);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(0),
-        );
+        expect(player.backend.isVisualizerEnabled, isFalse);
 
         // Force disable without listeners
         await player.action.setVisualizerEnabled(false);
@@ -413,10 +375,7 @@ void main() {
         // 1. Force visualizer disabled before any listeners exist
         await player.action.setVisualizerEnabled(false);
         expect(player.state.visualizerEnabled, isFalse);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(0),
-        );
+        expect(player.backend.isVisualizerEnabled, isFalse);
 
         // 2. Now attach 5 listeners while forced false is active
         final listeners = <StreamSubscription<VisualizerData>>[];
@@ -433,10 +392,7 @@ void main() {
 
         // Native DSP MUST REMAIN DISABLED
         expect(player.state.visualizerEnabled, isFalse);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(0),
-        );
+        expect(player.backend.isVisualizerEnabled, isFalse);
         expect(player.state.visualizer.rms, equals(0.0));
         expect(player.state.visualizer.bands.every((b) => b == 0.0), isTrue);
 
@@ -453,10 +409,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(player.state.visualizerEnabled, isFalse);
-        expect(
-          native.miniaudio_player_is_visualizer_enabled(player.handle),
-          equals(0),
-        );
+        expect(player.backend.isVisualizerEnabled, isFalse);
       },
     );
 

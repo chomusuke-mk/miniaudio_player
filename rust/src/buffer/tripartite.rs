@@ -573,6 +573,20 @@ impl TripartiteBuffer {
         self.inner.lock().unwrap().is_live
     }
 
+    pub fn is_tail_locked(&self) -> bool {
+        let b = self.inner.lock().unwrap();
+        b.tail_locked && !b.tail_data.is_empty()
+    }
+
+    pub fn is_fully_buffered(&self) -> bool {
+        let b = self.inner.lock().unwrap();
+        if let Some(tot) = b.total_size {
+            b.range_end >= tot || b.is_eof
+        } else {
+            false
+        }
+    }
+
     pub fn is_eof(&self) -> bool {
         let b = self.inner.lock().unwrap();
         b.is_eof || b.total_size.map(|tot| b.range_end >= tot).unwrap_or(false)

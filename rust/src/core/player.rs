@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::bridge::ffi::*;
 use crate::buffer::TripartiteBuffer;
-use crate::decoder::{BoundaryInfo, FormatSniffer, SymphoniaEngine};
+use crate::decoder::{BoundaryInfo, ContainerFormat, FormatSniffer, SymphoniaEngine};
 use crate::dsp::crossfeed::CrossfeedMode;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
@@ -683,7 +683,7 @@ impl PlayerCoordinator {
             }
         };
 
-        self.init_engine(eng, false, file_size);
+        self.init_engine(eng, false, file_size, &[]);
         MAP_SUCCESS
     }
 
@@ -703,7 +703,7 @@ impl PlayerCoordinator {
             }
         };
 
-        self.init_engine(eng, false, data.len() as u64);
+        self.init_engine(eng, false, data.len() as u64, data);
         MAP_SUCCESS
     }
 
@@ -727,8 +727,10 @@ impl PlayerCoordinator {
         let tot = if total_size > 0 { Some(total_size as u64) } else { None };
         let trip = TripartiteBuffer::new(cap, tot, is_live);
 
+        let mut container = ContainerFormat::Unknown;
         if !initial_data.is_empty() {
             let (_status, boundary) = FormatSniffer::detect_head_boundary(initial_data, total_size);
+            container = boundary.container;
             if boundary.audio_start > 0 {
                 let head_len = (boundary.audio_start as usize).min(initial_data.len());
                 trip.set_head(&initial_data[..head_len]);
@@ -755,15 +757,20 @@ impl PlayerCoordinator {
             }
         }
 
-        let hint = match encoding_format {
-            1 => Some("mp3"),
-            2 => Some("aac"),
-            3 => Some("flac"),
-            4 => Some("ogg"),
-            5 => Some("opus"),
-            6 => Some("wav"),
-            7 => Some("mp4"),
-            _ => None,
+        let hint = match container {
+            ContainerFormat::Mp3 => Some("mp3"),
+            ContainerFormat::Adts => Some("aac"),
+            ContainerFormat::Flac => Some("flac"),
+            ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
+            ContainerFormat::Wav => Some("wav"),
+            ContainerFormat::Mp4 => Some("mp4"),
+            ContainerFormat::Unknown => match encoding_format {
+                1 => Some("wav"),
+                2 => Some("flac"),
+                3 => Some("mp3"),
+                4 => Some("ogg"),
+                _ => None,
+            },
         };
 
         let reader = trip.create_reader();
@@ -781,11 +788,11 @@ impl PlayerCoordinator {
 
         let tot = trip.total_size().unwrap_or(0);
         *self.trip_buffer.write().unwrap() = Some(trip);
-        self.init_engine(eng, true, tot);
+        self.init_engine(eng, true, tot, initial_data);
         MAP_SUCCESS
     }
 
-    fn init_engine(&mut self, eng: SymphoniaEngine, is_stream: bool, total_bytes: u64) {
+    fn init_engine(&mut self, eng: SymphoniaEngine, is_stream: bool, total_bytes: u64, initial_data: &[u8]) {
         let sr = eng.sample_rate();
         let ch = eng.channels();
         let mut dur = eng.duration_ms().unwrap_or(0) as i64;
@@ -803,6 +810,14 @@ impl PlayerCoordinator {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        if dur <= 0 && total_bytes > 0 && !initial_data.is_empty() {
+            if let Some((_br, d)) = FormatSniffer::sniff_stream_info(initial_data, total_bytes as i64) {
+                if d > 0 {
+                    dur = d;
                 }
             }
         }

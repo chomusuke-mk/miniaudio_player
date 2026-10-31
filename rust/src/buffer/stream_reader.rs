@@ -74,6 +74,10 @@ impl MediaSource for BufferStreamReader {
     }
 
     fn byte_len(&self) -> Option<u64> {
-        self.buffer.total_size()
+        if self.buffer.is_tail_locked() || self.buffer.is_fully_buffered() {
+            self.buffer.total_size()
+        } else {
+            None
+        }
     }
 }

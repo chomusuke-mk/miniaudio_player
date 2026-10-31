@@ -667,8 +667,14 @@ class WebPlayerBackend implements PlayerBackend {
     _listener?.onSilenceConfig(config);
   }
 
+  bool _visualizerEnabled = false;
+
+  @override
+  bool get isVisualizerEnabled => _visualizerEnabled;
+
   @override
   void setVisualizerEnabled(bool enabled) {
+    _visualizerEnabled = enabled;
     _worker?.postMessage(
       WebWorkerCommand(
         type: 'setVisualizerEnabled',

@@ -32,7 +32,7 @@ void main() {
   final allFiles = dir.listSync().whereType<File>().toList();
   allFiles.sort((a, b) => a.path.compareTo(b.path));
 
-  // Filter supported files (excluding .webm which is Matroska container)
+  // Filter supported files
   final supportedFiles = allFiles.where((f) {
     final ext = f.path.split('.').last.toLowerCase();
     return miniAudioPlayerSupportedExtensions.contains(ext);
@@ -73,7 +73,6 @@ void main() {
           expect((posAfterSeek - 2000).abs(), lessThanOrEqualTo(1000),
               reason: '$fileName position after seek should be near 2000 ms (was $posAfterSeek)');
         }
-
         // 4. pause
         await player.action.pause();
         expect(player.state.playing, isFalse);
@@ -268,22 +267,27 @@ void main() {
     setUp(() => player = MiniaudioPlayer());
     tearDown(() async => await player.dispose());
 
-    test('6.1: Opening unsupported format (salida.webm) throws MiniaudioPlayerException gracefully', () async {
-      final webmFile = File('example/assets/music/salida.webm');
-      if (!webmFile.existsSync()) return;
+    test('6.1: Opening unsupported format throws MiniaudioPlayerException gracefully', () async {
+      final dummyFile = File('example/assets/music/unsupported.xyz');
+      await dummyFile.writeAsString('not a real audio stream');
+      try {
+        await expectLater(
+          player.action.open(AudioSource.file(dummyFile.path)),
+          throwsA(isA<MiniaudioPlayerException>()),
+        );
 
-      await expectLater(
-        player.action.open(AudioSource.file(webmFile.path)),
-        throwsA(isA<MiniaudioPlayerException>()),
-      );
-
-      // Player must be immediately reusable
-      await player.action.open(AudioSource.file('example/assets/music/salida_alac.m4a'));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
-      await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(player.state.playing, isTrue);
-      await player.action.stop();
+        // Player must be immediately reusable
+        await player.action.open(AudioSource.file('example/assets/music/salida_alac.m4a'));
+        expect(player.state.duration.inMilliseconds, greaterThan(0));
+        await player.action.play();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(player.state.playing, isTrue);
+        await player.action.stop();
+      } finally {
+        if (dummyFile.existsSync()) {
+          await dummyFile.delete();
+        }
+      }
     });
   });
 

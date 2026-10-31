@@ -6,7 +6,7 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::Time;
-use symphonia_adapter_oporus::OpusDecoder;
+use symphonia_adapter_libopus::OpusDecoder;
 
 use super::extended_pcm::{ExtendedPcmProbe, ExtendedPcmReader};
 
@@ -14,6 +14,7 @@ pub fn create_codec_registry() -> CodecRegistry {
     let mut registry = CodecRegistry::new();
     symphonia::default::register_enabled_codecs(&mut registry);
     registry.register_audio_decoder::<OpusDecoder>();
+    registry.register_audio_decoder::<symphonia_adapter_fdk_aac::AacDecoder>();
     registry
 }
 
@@ -64,59 +65,100 @@ impl SymphoniaEngine {
                     MediaSourceStreamOptions::default(),
                 );
 
-                let format_reader = symphonia::default::get_probe().probe(
+                let mut format_reader = symphonia::default::get_probe().probe(
                     &hint,
                     mss,
                     FormatOptions::default(),
                     MetadataOptions::default(),
                 )?;
 
-                // WebM and Matroska containers are not supported by miniaudio_player specification
-                let short_name = format_reader.format_info().short_name;
-                if short_name == "matroska" || short_name == "mkv" || short_name == "webm" {
-                    return Err(SymphoniaError::Unsupported("WebM/MKV is not supported"));
-                }
-
                 // Buscar la primera pista de audio válida
-                let track = format_reader
-                    .tracks()
-                    .iter()
-                    .find(|t| {
-                        t.codec_params
-                            .as_ref()
-                            .and_then(|p| p.audio())
-                            .map(|a| a.codec != CODEC_ID_NULL_AUDIO)
-                            .unwrap_or(false)
-                    })
-                    .ok_or_else(|| SymphoniaError::Unsupported("no supported audio track found"))?;
+                let (track_id, audio_params, track_time_base, track_duration, track_num_frames) = {
+                    let track = format_reader
+                        .tracks()
+                        .iter()
+                        .find(|t| {
+                            t.codec_params
+                                .as_ref()
+                                .and_then(|p| p.audio())
+                                .map(|a| a.codec != CODEC_ID_NULL_AUDIO)
+                                .unwrap_or(false)
+                        })
+                        .ok_or_else(|| SymphoniaError::Unsupported("no supported audio track found"))?;
 
-                let track_id = track.id;
-                let audio_params = track
-                    .codec_params
-                    .as_ref()
-                    .and_then(|p| p.audio())
-                    .ok_or_else(|| SymphoniaError::Unsupported("audio track parameters missing"))?;
+                    let params = track
+                        .codec_params
+                        .as_ref()
+                        .and_then(|p| p.audio())
+                        .ok_or_else(|| SymphoniaError::Unsupported("audio track parameters missing"))?
+                        .clone();
 
-                let sample_rate = audio_params.sample_rate.unwrap_or(44100);
+                    (track.id, params, track.time_base, track.duration, track.num_frames)
+                };
+
+                let sample_rate = audio_params.sample_rate.unwrap_or(0);
+                if sample_rate == 0 {
+                    return Err(SymphoniaError::Unsupported("invalid sample rate: 0"));
+                }
                 let channels = audio_params
                     .channels
                     .as_ref()
                     .map(|c| c.count() as u32)
-                    .unwrap_or(2);
+                    .unwrap_or(0);
+                if channels == 0 || channels > 32 {
+                    return Err(SymphoniaError::Unsupported("invalid channel count"));
+                }
+                if let Some(bps) = audio_params.bits_per_sample {
+                    if bps == 0 {
+                        return Err(SymphoniaError::Unsupported("invalid bits per sample: 0"));
+                    }
+                }
 
                 // Calcular duración aproximada si está disponible
-                let duration_ms = if let (Some(tb), Some(dur)) = (track.time_base, track.duration) {
+                let mut duration_ms = if let (Some(tb), Some(dur)) = (track_time_base, track_duration) {
                     tb.calc_duration(dur).map(|t| t.as_millis().max(0) as u64)
-                } else if let (Some(tb), Some(n_frames)) = (track.time_base, track.num_frames) {
+                } else if let (Some(tb), Some(n_frames)) = (track_time_base, track_num_frames) {
                     tb.calc_duration(symphonia::core::units::Duration::new(n_frames))
                         .map(|t| t.as_millis().max(0) as u64)
                 } else {
                     None
                 };
 
+                if duration_ms.is_none() {
+                    if let Some(rev) = format_reader.metadata().current() {
+                        for track in &rev.per_track {
+                            for tag in &track.metadata.tags {
+                                if tag.raw.key.to_uppercase().contains("DURATION") {
+                                    if let symphonia::core::meta::RawValue::String(ref s) = tag.raw.value {
+                                        if let Some(ms) = parse_duration_string(s) {
+                                            duration_ms = Some(ms);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if duration_ms.is_some() {
+                                break;
+                            }
+                        }
+                        if duration_ms.is_none() {
+                            for tag in &rev.media.tags {
+                                if tag.raw.key.to_uppercase().contains("DURATION") {
+                                    if let symphonia::core::meta::RawValue::String(ref s) = tag.raw.value {
+                                        if let Some(ms) = parse_duration_string(s) {
+                                            duration_ms = Some(ms);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let codec_registry = create_codec_registry();
                 let decoder = codec_registry.make_audio_decoder(
-                    audio_params,
+                    &audio_params,
                     &AudioDecoderOptions::default(),
                 )?;
 
@@ -225,5 +267,26 @@ impl SymphoniaEngine {
                 Ok(())
             }
         }
+    }
+}
+
+fn parse_duration_string(s: &str) -> Option<u64> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 3 {
+        let hours: f64 = parts[0].trim().parse().ok()?;
+        let mins: f64 = parts[1].trim().parse().ok()?;
+        let secs: f64 = parts[2].trim().parse().ok()?;
+        let total_ms = (hours * 3600.0 + mins * 60.0 + secs) * 1000.0;
+        Some(total_ms.max(0.0) as u64)
+    } else if parts.len() == 2 {
+        let mins: f64 = parts[0].trim().parse().ok()?;
+        let secs: f64 = parts[1].trim().parse().ok()?;
+        let total_ms = (mins * 60.0 + secs) * 1000.0;
+        Some(total_ms.max(0.0) as u64)
+    } else if parts.len() == 1 {
+        let secs: f64 = parts[0].trim().parse().ok()?;
+        Some((secs * 1000.0).max(0.0) as u64)
+    } else {
+        None
     }
 }

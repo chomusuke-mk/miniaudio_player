@@ -58,6 +58,7 @@ words:
   - casteo
   - cbuilder
   - cdim
+  - cdylib
   - chomusuke
   - classpath
   - cliptest
@@ -65,6 +66,7 @@ words:
   - Coalson
   - codebooks
   - códecs
+  - codegen
   - coef
   - COEF
   - COMBFILTER
@@ -350,6 +352,7 @@ words:
   - nyquist
   - oga
   - oggpack
+  - oporus
   - optimizador
   - opusdec
   - opusfile
@@ -424,8 +427,11 @@ words:
   - resynth
   - rgain
   - rifx
+  - rlib
   - robustify
   - Rohit
+  - rtrb
+  - rustfft
   - safelisted
   - Sandboxed
   - SCHED
@@ -464,6 +470,7 @@ words:
   - spinlocks
   - SPSC
   - SROUND
+  - staticlib
   - stbv
   - STDLIB
   - streaminfo

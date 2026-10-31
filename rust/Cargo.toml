@@ -9,9 +9,10 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 # Decodificación y Demuxing 100% Rust
-symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats"] }
-symphonia-adapter-oporus = "0.1"
-oporus = "0.2"
+symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats", "all-meta"] }
+symphonia-adapter-libopus = "0.3"
+symphonia-adapter-fdk-aac = "0.2"
+# libopus = "0.2"
 
 # Concurrencia Lock-Free y Tiempo Real
 log = "0.4"
@@ -19,6 +20,7 @@ rtrb = "0.3"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
 atomic = "0.6"
+flutter_rust_bridge = "=2.13.0"
 
 # DSP, Análisis Espectral y Resampling
 rustfft = "6.2"

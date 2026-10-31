@@ -139,6 +139,7 @@ abstract class PlayerBackend {
   void setLimiterEnabled(bool enabled);
   void setSilenceSkip(SilenceSkipConfig config);
   void setVisualizerEnabled(bool enabled);
+  bool get isVisualizerEnabled => false;
   void setPreamp(double preampDb);
   void setReplayGain(ReplayGainConfig config);
   void setBalance(double balance);

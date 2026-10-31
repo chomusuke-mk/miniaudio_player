@@ -37,6 +37,10 @@ const List<String> miniAudioPlayerSupportedExtensions = [
   'oga',
   'aac',
   'm4a',
+  'webm',
+  'mkv',
+  'mka',
+  'caf',
 ];
 
 /// Logging severity levels for miniaudio and internal player engine.

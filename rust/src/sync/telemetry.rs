@@ -141,6 +141,7 @@ pub struct MapEvent {
 }
 
 pub type EventCallback = unsafe extern "C" fn(user_data: *mut c_void, event: *const MapEvent);
+pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>;
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
@@ -154,6 +155,7 @@ pub const MAP_EVENT_RING_CAPACITY: usize = 128;
 pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callback: Arc<RwLock<Option<(EventCallback, usize)>>>,
+    rust_callback: Arc<RwLock<Option<RustEventCallback>>>,
     ring: Arc<Vec<UnsafeCell<MapEvent>>>,
     ring_head: Arc<AtomicUsize>,
 }
@@ -167,6 +169,7 @@ impl TelemetryDispatcher {
         let callback_slot = Arc::new(RwLock::new(
             callback.map(|cb| (cb, user_data as usize)),
         ));
+        let rust_callback = Arc::new(RwLock::new(None));
 
         let mut ring_vec = Vec::with_capacity(MAP_EVENT_RING_CAPACITY);
         for _ in 0..MAP_EVENT_RING_CAPACITY {
@@ -181,6 +184,7 @@ impl TelemetryDispatcher {
         Self {
             is_running,
             callback: callback_slot,
+            rust_callback,
             ring: Arc::new(ring_vec),
             ring_head: Arc::new(AtomicUsize::new(0)),
         }
@@ -189,6 +193,12 @@ impl TelemetryDispatcher {
     pub fn set_callback(&self, callback: Option<EventCallback>, user_data: *mut c_void) {
         if let Ok(mut lock) = self.callback.write() {
             *lock = callback.map(|cb| (cb, user_data as usize));
+        }
+    }
+
+    pub fn set_rust_callback(&self, callback: Option<RustEventCallback>) {
+        if let Ok(mut lock) = self.rust_callback.write() {
+            *lock = callback;
         }
     }
 
@@ -206,6 +216,12 @@ impl TelemetryDispatcher {
                 timestamp_ns: monotonic_now_ns(),
                 data,
             };
+        }
+
+        if let Ok(guard) = self.rust_callback.read() {
+            if let Some(cb) = guard.as_ref() {
+                cb(event_type, &data);
+            }
         }
 
         if let Ok(guard) = self.callback.read() {
@@ -226,6 +242,42 @@ impl TelemetryDispatcher {
         let event_ptr = self.ring[slot].get();
         unsafe {
             *event_ptr = event;
+        }
+
+        if let Ok(guard) = self.rust_callback.read() {
+            if let Some(cb) = guard.as_ref() {
+                let event_type = match event.event_type {
+                    1 => EventType::State,
+                    2 => EventType::Position,
+                    3 => EventType::Duration,
+                    4 => EventType::IsPlaying,
+                    5 => EventType::IsBuffering,
+                    6 => EventType::IsCompleted,
+                    7 => EventType::Volume,
+                    8 => EventType::Rate,
+                    9 => EventType::Pitch,
+                    10 => EventType::Bitrate,
+                    11 => EventType::BufferSize,
+                    12 => EventType::Device,
+                    13 => EventType::Visualizer,
+                    14 => EventType::VisualizerEnabled,
+                    15 => EventType::BufferedRange,
+                    16 => EventType::SilenceConfig,
+                    17 => EventType::SilenceSaved,
+                    18 => EventType::Equalizer,
+                    19 => EventType::Preamp,
+                    20 => EventType::ReplayGain,
+                    21 => EventType::Balance,
+                    22 => EventType::Mono,
+                    23 => EventType::Crossfeed,
+                    24 => EventType::Spatializer,
+                    25 => EventType::Reverb,
+                    26 => EventType::Limiter,
+                    27 => EventType::Error,
+                    _ => EventType::None,
+                };
+                cb(event_type, &event.data);
+            }
         }
 
         if let Ok(guard) = self.callback.read() {

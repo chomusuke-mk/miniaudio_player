@@ -530,7 +530,7 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
 
                         if burst_remaining > 0:
                             burst_remaining -= len(data)
-                        else:
+                        if burst_remaining <= 0:
                             time.sleep(stall_ms / 1000.0)
             except (BrokenPipeError, ConnectionResetError, socket.error):
                 pass

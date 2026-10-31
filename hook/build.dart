@@ -96,6 +96,14 @@ void main(List<String> args) async {
         }
       }
     }
+    final cSrcDir = Directory.fromUri(rustDir.uri.resolve('c_src'));
+    if (cSrcDir.existsSync()) {
+      for (final entity in cSrcDir.listSync(recursive: true)) {
+        if (entity is File) {
+          output.dependencies.add(entity.uri);
+        }
+      }
+    }
     output.dependencies.add(rustDir.uri.resolve('Cargo.toml'));
     output.dependencies.add(rustDir.uri.resolve('build.rs'));
 
