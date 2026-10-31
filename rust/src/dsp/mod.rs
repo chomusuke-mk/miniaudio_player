@@ -4,9 +4,11 @@ pub mod chain;
 pub mod crossfeed;
 pub mod equalizer;
 pub mod limiter;
+pub mod resampler;
 pub mod reverb;
 pub mod silence;
 pub mod sonic;
+pub mod timestretch;
 pub mod visualizer;
 
 pub use analysis::{
@@ -19,7 +21,9 @@ pub use chain::DspChain;
 pub use crossfeed::{Bs2bCrossfeed, CrossfeedMode};
 pub use equalizer::{Equalizer, EqualizerParams, ReplayGainConfig};
 pub use limiter::SoftLimiter;
+pub use resampler::{RubatoResampler, resample_slice};
 pub use reverb::{Freeverb, ReverbConfig};
 pub use silence::{SilenceConfig, SilenceDetector, SilenceMode, SilenceState};
 pub use sonic::SonicStream;
+pub use timestretch::{TimeStretchProcessor, timestretch_audio};
 pub use visualizer::{Visualizer, VisualizerData};

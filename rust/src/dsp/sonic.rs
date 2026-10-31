@@ -17,7 +17,7 @@ pub const SONIC_MAX_RATE: f32 = 20.0;
 const SINC_FILTER_POINTS: usize = 12;
 const SINC_TABLE_SIZE: usize = 601;
 
-static SINC_TABLE: [i16; SINC_TABLE_SIZE] = [
+static SINC_TABLE_I16: [i16; SINC_TABLE_SIZE] = [
     0, 0, 0, 0, 0, 0, 0, -1, -1, -2, -2,
     -3, -4, -6, -7, -9, -10, -12, -14, -17, -19, -21,
     -24, -26, -29, -32, -34, -37, -40, -42, -44, -47, -48,
@@ -76,10 +76,10 @@ static SINC_TABLE: [i16; SINC_TABLE_SIZE] = [
 ];
 
 pub struct SonicStream {
-    input_buffer: Vec<i16>,
-    output_buffer: Vec<i16>,
-    pitch_buffer: Vec<i16>,
-    down_sample_buffer: Vec<i16>,
+    input_buffer: Vec<f32>,
+    output_buffer: Vec<f32>,
+    pitch_buffer: Vec<f32>,
+    down_sample_buffer: Vec<f32>,
 
     speed: f32,
     volume: f32,
@@ -121,10 +121,10 @@ impl SonicStream {
         let initial_cap = 65536.max(max_required + (max_required >> 2));
 
         Self {
-            input_buffer: vec![0; initial_cap * ch],
-            output_buffer: vec![0; initial_cap * ch],
-            pitch_buffer: vec![0; initial_cap * ch],
-            down_sample_buffer: vec![0; max_required],
+            input_buffer: vec![0.0; initial_cap * ch],
+            output_buffer: vec![0.0; initial_cap * ch],
+            pitch_buffer: vec![0.0; initial_cap * ch],
+            down_sample_buffer: vec![0.0; max_required],
 
             speed: 1.0,
             volume: 1.0,
@@ -212,15 +212,7 @@ impl SonicStream {
         self.enlarge_input_buffer(num_frames);
 
         let start = self.num_input_samples * self.num_channels;
-        for (i, &s) in samples.iter().enumerate() {
-            let clamped = s.clamp(-1.0, 1.0);
-            let val = if clamped >= 0.0 {
-                (clamped * 32767.0 + 0.5) as i16
-            } else {
-                (clamped * 32767.0 - 0.5) as i16
-            };
-            self.input_buffer[start + i] = val;
-        }
+        self.input_buffer[start..start + samples.len()].copy_from_slice(samples);
 
         self.update_num_input_samples(num_frames);
         self.process_stream_input()
@@ -235,9 +227,7 @@ impl SonicStream {
         let num_frames = self.num_output_samples.min(max_frames);
         let total_samples = num_frames * self.num_channels;
 
-        for i in 0..total_samples {
-            out_samples[i] = self.output_buffer[i] as f32 / 32767.0;
-        }
+        out_samples[..total_samples].copy_from_slice(&self.output_buffer[..total_samples]);
 
         let remaining = self.num_output_samples - num_frames;
         if remaining > 0 {
@@ -260,7 +250,7 @@ impl SonicStream {
         self.enlarge_input_buffer(remaining + 2 * max_req);
         let start = remaining * self.num_channels;
         let silence_len = 2 * max_req * self.num_channels;
-        self.input_buffer[start..start + silence_len].fill(0);
+        self.input_buffer[start..start + silence_len].fill(0.0);
         self.num_input_samples += 2 * max_req;
 
         self.process_stream_input();
@@ -284,7 +274,7 @@ impl SonicStream {
         let required = (self.num_input_samples + num_frames) * self.num_channels;
         if required > self.input_buffer.len() {
             let new_cap = self.input_buffer.len() + (self.input_buffer.len() >> 1) + num_frames * self.num_channels;
-            self.input_buffer.resize(new_cap, 0);
+            self.input_buffer.resize(new_cap, 0.0);
         }
     }
 
@@ -292,7 +282,7 @@ impl SonicStream {
         let required = (self.num_output_samples + num_frames) * self.num_channels;
         if required > self.output_buffer.len() {
             let new_cap = self.output_buffer.len() + (self.output_buffer.len() >> 1) + num_frames * self.num_channels;
-            self.output_buffer.resize(new_cap, 0);
+            self.output_buffer.resize(new_cap, 0.0);
         }
     }
 
@@ -300,7 +290,7 @@ impl SonicStream {
         let required = (self.num_pitch_samples + num_frames) * self.num_channels;
         if required > self.pitch_buffer.len() {
             let new_cap = self.pitch_buffer.len() + (self.pitch_buffer.len() >> 1) + num_frames * self.num_channels;
-            self.pitch_buffer.resize(new_cap, 0);
+            self.pitch_buffer.resize(new_cap, 0.0);
         }
     }
 
@@ -342,7 +332,7 @@ impl SonicStream {
         if (self.volume - 1.0).abs() > 0.0001 {
             let ch = self.num_channels;
             for s in &mut self.output_buffer[orig_output * ch..self.num_output_samples * ch] {
-                *s = (*s as f32 * self.volume).clamp(-32767.0, 32767.0) as i16;
+                *s *= self.volume;
             }
         }
 
@@ -504,9 +494,9 @@ impl SonicStream {
     fn overlap_add(
         num_samples: usize,
         num_channels: usize,
-        out: &mut [i16],
-        ramp_down: &[i16],
-        ramp_up: &[i16],
+        out: &mut [f32],
+        ramp_down: &[f32],
+        ramp_up: &[f32],
     ) {
         if num_samples == 0 {
             return;
@@ -520,13 +510,7 @@ impl SonicStream {
 
             for c in 0..num_channels {
                 let idx = t * num_channels + c;
-                let val = ramp_down[idx] as f32 * gain_down + ramp_up[idx] as f32 * gain_up;
-                let clamped = val.clamp(-32767.0, 32767.0);
-                out[idx] = if clamped >= 0.0 {
-                    (clamped + 0.5) as i16
-                } else {
-                    (clamped - 0.5) as i16
-                };
+                out[idx] = ramp_down[idx] * gain_down + ramp_up[idx] * gain_up;
             }
         }
     }
@@ -592,45 +576,45 @@ impl SonicStream {
         let ch = self.num_channels;
 
         for i in 0..num_samples {
-            let mut sum: i32 = 0;
+            let mut sum: f32 = 0.0;
             let base = position * ch + i * samples_per_val;
             for j in 0..samples_per_val {
-                sum += self.input_buffer[base + j] as i32;
+                sum += self.input_buffer[base + j];
             }
-            self.down_sample_buffer[i] = (sum / samples_per_val as i32) as i16;
+            self.down_sample_buffer[i] = sum / samples_per_val as f32;
         }
     }
 
     fn find_pitch_period_in_range(
-        samples: &[i16],
+        samples: &[f32],
         min_period: usize,
         max_period: usize,
     ) -> (usize, usize, usize) {
         let mut best_period = 0;
         let mut worst_period = 255;
-        let mut min_diff: u64 = 1;
-        let mut max_diff: u64 = 0;
+        let mut min_diff: f64 = 1.0;
+        let mut max_diff: f64 = 0.0;
 
         for period in min_period..=max_period {
-            let mut diff: u64 = 0;
+            let mut diff: f64 = 0.0;
             for i in 0..period {
-                let s_val = samples[i] as i32;
-                let p_val = samples[i + period] as i32;
-                diff += (s_val - p_val).unsigned_abs() as u64;
+                let s_val = samples[i] as f64;
+                let p_val = samples[i + period] as f64;
+                diff += (s_val - p_val).abs();
             }
 
-            if best_period == 0 || diff * (best_period as u64) < min_diff * (period as u64) {
+            if best_period == 0 || diff * (best_period as f64) < min_diff * (period as f64) {
                 min_diff = diff;
                 best_period = period;
             }
-            if diff * (worst_period as u64) > max_diff * (period as u64) {
+            if diff * (worst_period as f64) > max_diff * (period as f64) {
                 max_diff = diff;
                 worst_period = period;
             }
         }
 
-        let ret_min = (min_diff / best_period.max(1) as u64) as usize;
-        let ret_max = (max_diff / worst_period.max(1) as u64) as usize;
+        let ret_min = (min_diff / best_period.max(1) as f64 * 32767.0) as usize;
+        let ret_max = (max_diff / worst_period.max(1) as f64 * 32767.0) as usize;
         (best_period, ret_min, ret_max)
     }
 
@@ -732,7 +716,7 @@ impl SonicStream {
         self.num_pitch_samples -= num_samples;
     }
 
-    fn interpolate(&self, in_offset: usize, old_srate: usize, new_srate: usize) -> i16 {
+    fn interpolate(&self, in_offset: usize, old_srate: usize, new_srate: usize) -> f32 {
         let ch = self.num_channels;
         let position = self.new_rate_position * old_srate;
         let left_position = self.old_rate_position * new_srate;
@@ -740,35 +724,34 @@ impl SonicStream {
         let ratio = right_position.saturating_sub(position).saturating_sub(1);
         let width = right_position.saturating_sub(left_position).max(1);
 
-        let mut total: i64 = 0;
+        let mut total: f32 = 0.0;
         for i in 0..SINC_FILTER_POINTS {
             let weight = Self::find_sinc_coeff(i, ratio, width);
             let sample_idx = in_offset + i * ch;
             let sample_val = if sample_idx < self.pitch_buffer.len() {
-                self.pitch_buffer[sample_idx] as i64
+                self.pitch_buffer[sample_idx]
             } else {
-                0
+                0.0
             };
-            total += sample_val * weight as i64;
+            total += sample_val * weight;
         }
 
-        let res = total >> 16;
-        res.clamp(i16::MIN as i64, i16::MAX as i64) as i16
+        total
     }
 
-    fn find_sinc_coeff(i: usize, ratio: usize, width: usize) -> i32 {
+    fn find_sinc_coeff(i: usize, ratio: usize, width: usize) -> f32 {
         if width == 0 {
-            return 0;
+            return 0.0;
         }
         let lobe_points = (SINC_TABLE_SIZE - 1) / SINC_FILTER_POINTS;
         let left = (i * lobe_points + (ratio * lobe_points) / width).min(SINC_TABLE_SIZE - 1);
         let right = (left + 1).min(SINC_TABLE_SIZE - 1);
         let pos = (i * lobe_points * width + ratio * lobe_points).saturating_sub(left * width);
 
-        let left_val = SINC_TABLE[left] as i32;
-        let right_val = SINC_TABLE[right] as i32;
+        let left_val = SINC_TABLE_I16[left] as f32 / 32767.0;
+        let right_val = SINC_TABLE_I16[right] as f32 / 32767.0;
 
-        ((left_val * (width as i32 - pos as i32) + right_val * pos as i32) << 1) / width as i32
+        left_val + (right_val - left_val) * (pos as f32 / width as f32)
     }
 }
 

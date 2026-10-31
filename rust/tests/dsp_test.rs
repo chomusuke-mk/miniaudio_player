@@ -173,6 +173,44 @@ fn test_sonic_speed_and_pitch() {
 }
 
 #[test]
+fn test_sonic_dynamic_range_above_140db() {
+    let sample_rate = 44100;
+    let channels = 2;
+    let mut sonic = SonicStream::new(sample_rate, channels);
+    sonic.set_speed(1.0);
+
+    // Micro-amplitude signal at -140 dBFS: ~1e-7 amplitude
+    // In 16-bit integer (truncation threshold ~3e-5), this would be rounded to 0.0
+    let micro_amp = 1.0e-7f32;
+    let input: Vec<f32> = (0..1024 * channels)
+        .map(|i| if i % 2 == 0 { micro_amp } else { -micro_amp })
+        .collect();
+
+    assert!(sonic.write_float(&input));
+    sonic.flush();
+
+    let avail = sonic.samples_available();
+    assert!(avail >= 1024);
+
+    let mut out = vec![0.0f32; avail * channels];
+    let read = sonic.read_float(&mut out);
+    assert!(read > 0);
+
+    // Verify non-zero representation and precision preservation
+    let non_zero_count = out.iter().filter(|&&s| s != 0.0).count();
+    assert!(
+        non_zero_count > 0,
+        "Dynamic range > 140 dB must preserve micro-signals (amplitude 1e-7) without truncation to zero"
+    );
+    let max_amp = out.iter().fold(0.0f32, |acc, &s| acc.max(s.abs()));
+    assert!(
+        max_amp > 1.0e-8,
+        "Signal amplitude must be preserved within dynamic range, got {}",
+        max_amp
+    );
+}
+
+#[test]
 fn test_visualizer_frequency_response() {
     let sample_rate = 44100;
     let mut vis = Visualizer::new(1, sample_rate);
@@ -203,3 +241,88 @@ fn test_dsp_chain_integration() {
         assert!(s.abs() <= 1.0);
     }
 }
+
+#[test]
+fn test_rubato_resampler_streaming_and_slice() {
+    use miniaudio_player::dsp::resampler::{RubatoResampler, resample_slice};
+
+    let sample_rate_in = 44100;
+    let sample_rate_out = 48000;
+    let channels = 2;
+
+    let mut resampler = RubatoResampler::new(
+        sample_rate_in,
+        sample_rate_out,
+        channels,
+        1024,
+    ).expect("Failed to create RubatoResampler");
+
+    let sine = generate_sine(440.0, sample_rate_in, 0.1, channels); // 0.1s
+    let mut out_stream = Vec::new();
+    let written = resampler.process_interleaved(&sine, &mut out_stream).unwrap();
+    let flushed = resampler.flush(&mut out_stream).unwrap();
+    assert!(written + flushed > 0);
+    assert!(!out_stream.is_empty());
+
+    // Test convenient slice resampling
+    let out_slice = resample_slice(&sine, sample_rate_in, sample_rate_out, channels).unwrap();
+    assert!(!out_slice.is_empty());
+    let expected_len = (sine.len() as f64 * sample_rate_out as f64 / sample_rate_in as f64) as usize;
+    let diff = (out_slice.len() as isize - expected_len as isize).abs();
+    assert!(diff < 500, "Expected ~{} samples, got {}", expected_len, out_slice.len());
+
+    // Passthrough test when sample rates match
+    let same = resample_slice(&sine, sample_rate_in, sample_rate_in, channels).unwrap();
+    assert_eq!(same, sine);
+}
+
+#[test]
+fn test_rubato_resampler_dynamic_range_above_140db() {
+    use miniaudio_player::dsp::resampler::resample_slice;
+
+    let sample_rate_in = 44100;
+    let sample_rate_out = 48000;
+    let channels = 2;
+
+    // Micro-signal at -140 dBFS: ~1e-7 amplitude
+    let micro_amp = 1.0e-7f32;
+    let input: Vec<f32> = (0..2048 * channels)
+        .map(|i| if i % 2 == 0 { micro_amp } else { -micro_amp })
+        .collect();
+
+    let resampled = resample_slice(&input, sample_rate_in, sample_rate_out, channels).unwrap();
+    assert!(!resampled.is_empty());
+
+    let max_amp = resampled.iter().fold(0.0f32, |acc, &s| acc.max(s.abs()));
+    assert!(
+        max_amp > 1.0e-8,
+        "Rubato dynamic range > 140 dB must preserve micro-signals (amplitude 1e-7), got {}",
+        max_amp
+    );
+}
+
+#[test]
+fn test_timestretch_engine_processor() {
+    use miniaudio_player::dsp::timestretch::{TimeStretchProcessor, timestretch_audio};
+
+    let sample_rate = 44100;
+    let channels = 2;
+    let sine = generate_sine(440.0, sample_rate, 0.2, channels); // 0.2s of 440Hz sine
+
+    let mut proc = TimeStretchProcessor::new(sample_rate, channels);
+    proc.set_speed(1.25);
+    proc.set_pitch(1.0);
+
+    let rendered = proc.process_slice(&sine).expect("timestretch process failed");
+    assert!(!rendered.is_empty());
+
+    // At 1.25x tempo (speeding up), output length should be shorter than input (~1/1.25 = 0.8)
+    let ratio = rendered.len() as f32 / sine.len() as f32;
+    assert!(ratio > 0.7 && ratio < 0.95, "Expected ratio ~0.8, got {}", ratio);
+
+    // Test convenience function
+    let rendered2 = timestretch_audio(&sine, sample_rate, channels, 0.8, 1.0).unwrap();
+    assert!(rendered2.len() > sine.len(), "Slowed down audio should have more frames");
+}
+
+
