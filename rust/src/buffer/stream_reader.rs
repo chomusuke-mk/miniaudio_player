@@ -24,7 +24,7 @@ impl BufferStreamReader {
 
 impl Read for BufferStreamReader {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        match self.buffer.read_blocking(self.cursor, buf, Some(std::time::Duration::from_millis(2000))) {
+        match self.buffer.read_blocking(self.cursor, buf, Some(std::time::Duration::from_millis(50))) {
             Ok(bytes_read) => {
                 self.cursor += bytes_read as u64;
                 let _ = self.buffer.seek(self.cursor);
