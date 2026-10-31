@@ -486,8 +486,40 @@ impl FormatSniffer {
         None
     }
 
+    pub fn sniff_adts_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
+        if data.len() < 7 || total_size <= 0 {
+            return None;
+        }
+        let sample_rates = [
+            96000, 88200, 64000, 48000, 44100, 32000,
+            24000, 22050, 16000, 12000, 11025, 8000, 7350,
+        ];
+        let scan_limit = data.len().saturating_sub(6).min(4096);
+        for i in 0..scan_limit {
+            let h = &data[i..];
+            if is_adts_sync(h) {
+                let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
+                if sr_idx < sample_rates.len() {
+                    let sr = sample_rates[sr_idx];
+                    let frame_len = (((h[3] as u32 & 0x03) << 11) | ((h[4] as u32) << 3) | ((h[5] as u32) >> 5)) as u64;
+                    if frame_len >= 7 {
+                        let bitrate = ((frame_len * 8 * sr as u64) / 1024) as u32;
+                        if bitrate > 0 {
+                            let dur_ms = (total_size * 8000) / bitrate as i64;
+                            return Some((bitrate, dur_ms));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn sniff_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if let Some(res) = Self::sniff_mp3_stream_info(data, total_size) {
+            return Some(res);
+        }
+        if let Some(res) = Self::sniff_adts_stream_info(data, total_size) {
             return Some(res);
         }
         if let Some(res) = Self::sniff_ogg_vorbis_stream_info(data, total_size) {

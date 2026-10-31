@@ -3,13 +3,14 @@
 use std::ffi::{c_char, c_void};
 use std::fs::File;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::bridge::ffi::*;
 use crate::buffer::TripartiteBuffer;
+use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{BoundaryInfo, ContainerFormat, FormatSniffer, SymphoniaEngine};
 use crate::dsp::crossfeed::CrossfeedMode;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -18,7 +19,8 @@ use crate::dsp::silence::{SilenceConfig, SilenceDetector};
 use crate::dsp::sonic::SonicStream;
 use crate::dsp::visualizer::VisualizerData;
 use crate::dsp::DspChain;
-use crate::sync::ring_buffer::{AudioConsumer, AudioProducer, AudioRingBuffer};
+use crate::sync::ring_buffer::{AudioProducer, AudioRingBuffer};
+use crate::sync::seqlock::CachePaddedSeqlock;
 use crate::sync::telemetry::{
     DeviceInfo as TelemetryDeviceInfo, EventCallback, EventType, MapEventData,
     SpatializerData, TelemetryDispatcher,
@@ -85,6 +87,7 @@ pub type CompletionCallback = unsafe extern "C" fn(user_data: *mut c_void);
 
 pub struct PlayerCoordinator {
     pub device_ctx: *mut MapDeviceContext,
+    pub renderer_ptr: *mut AudioRenderer,
 
     pub state: Arc<AtomicI32>,
     pub pause_on_device_change: Arc<AtomicBool>,
@@ -108,11 +111,28 @@ pub struct PlayerCoordinator {
     pub telemetry: Arc<TelemetryDispatcher>,
     pub completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
 
-    pub dsp_chain: Arc<Mutex<DspChain>>,
     pub silence_config: Arc<RwLock<SilenceConfig>>,
 
     pub audio_producer: Arc<Mutex<Option<AudioProducer>>>,
-    pub audio_consumer: Arc<Mutex<Option<AudioConsumer>>>,
+    pub cmd_producer: Arc<Mutex<Option<rtrb::Producer<DspCommand>>>>,
+    pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
+
+    pub flush_generation: Arc<AtomicU64>,
+    pub flush_acknowledged: Arc<AtomicU64>,
+    pub completed_flag: Arc<AtomicBool>,
+    pub buffering_flag: Arc<AtomicBool>,
+
+    // Cached DSP settings
+    pub eq_params: Arc<RwLock<EqualizerParams>>,
+    pub preamp_db: Arc<AtomicU32>,
+    pub replay_gain: Arc<RwLock<ReplayGainConfig>>,
+    pub balance: Arc<AtomicU32>,
+    pub mono_enabled: Arc<AtomicBool>,
+    pub spatializer_enabled: Arc<AtomicBool>,
+    pub spatializer_width: Arc<AtomicU32>,
+    pub crossfeed_mode: Arc<AtomicI32>,
+    pub reverb_config: Arc<RwLock<ReverbConfig>>,
+    pub limiter_enabled: Arc<AtomicBool>,
 
     pub engine: Arc<Mutex<Option<SymphoniaEngine>>>,
     pub seek_request_ms: Arc<AtomicI64>,
@@ -164,12 +184,30 @@ impl PlayerCoordinator {
             on_completed.map(|cb| (cb, user_data as usize)),
         ));
 
-        let dsp_chain = Arc::new(Mutex::new(DspChain::new(ch as usize, sr)));
         let silence_config = Arc::new(RwLock::new(SilenceConfig::default()));
 
-        let (producer, consumer) = AudioRingBuffer::create(65536 * (ch as usize));
+        let (producer, consumer) = AudioRingBuffer::create(131072 * (ch as usize));
         let audio_producer = Arc::new(Mutex::new(Some(producer)));
-        let audio_consumer = Arc::new(Mutex::new(Some(consumer)));
+
+        let (cmd_prod, cmd_cons) = rtrb::RingBuffer::new(256);
+        let cmd_producer = Arc::new(Mutex::new(Some(cmd_prod)));
+
+        let visualizer_seqlock = Arc::new(CachePaddedSeqlock::new(VisualizerData::default()));
+        let flush_generation = Arc::new(AtomicU64::new(0));
+        let flush_acknowledged = Arc::new(AtomicU64::new(0));
+        let completed_flag = Arc::new(AtomicBool::new(false));
+        let buffering_flag = Arc::new(AtomicBool::new(false));
+
+        let eq_params = Arc::new(RwLock::new(EqualizerParams::default()));
+        let preamp_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let replay_gain = Arc::new(RwLock::new(ReplayGainConfig::default()));
+        let balance = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let mono_enabled = Arc::new(AtomicBool::new(false));
+        let spatializer_enabled = Arc::new(AtomicBool::new(false));
+        let spatializer_width = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let crossfeed_mode = Arc::new(AtomicI32::new(0));
+        let reverb_config = Arc::new(RwLock::new(ReverbConfig::default()));
+        let limiter_enabled = Arc::new(AtomicBool::new(true));
 
         let engine = Arc::new(Mutex::new(None));
         let seek_request_ms = Arc::new(AtomicI64::new(-1));
@@ -178,8 +216,71 @@ impl PlayerCoordinator {
         let decoder_running = Arc::new(AtomicBool::new(true));
         let decoder_wake = Arc::new((Mutex::new(false), Condvar::new()));
 
+        let pause_on_device = pause_on_device_change.clone();
+        let state_for_notif = state.clone();
+        let tele_for_notif = telemetry.clone();
+        let notif_cb: Arc<dyn Fn(i32) + Send + Sync> = Arc::new(move |_notification_type: i32| {
+            if pause_on_device.load(Ordering::Relaxed) {
+                if state_for_notif.load(Ordering::Relaxed) == STATE_PLAYING {
+                    state_for_notif.store(STATE_PAUSED, Ordering::Relaxed);
+                    tele_for_notif.post_event(
+                        EventType::IsPlaying,
+                        MapEventData { is_playing: 0 },
+                    );
+                    tele_for_notif.post_event(
+                        EventType::State,
+                        MapEventData { state: STATE_PAUSED },
+                    );
+                }
+            }
+        });
+
+        let renderer = AudioRenderer {
+            consumer,
+            cmd_consumer: cmd_cons,
+            state: state.clone(),
+            sample_rate: sample_rate.clone(),
+            channels: channels.clone(),
+            volume: volume.clone(),
+            rate: rate.clone(),
+            position_frames: position_frames.clone(),
+            position_ms: position_ms.clone(),
+            duration_ms: duration_ms.clone(),
+            decoder_eof: decoder_eof.clone(),
+            seek_request_ms: seek_request_ms.clone(),
+            is_stream: is_stream.clone(),
+            flush_generation: flush_generation.clone(),
+            flush_acknowledged: flush_acknowledged.clone(),
+            local_flush_gen: 0,
+            completed_flag: completed_flag.clone(),
+            buffering_flag: buffering_flag.clone(),
+            dsp: DspChain::new(ch as usize, sr),
+            visualizer_seqlock: visualizer_seqlock.clone(),
+            visualizer_enabled: visualizer_enabled.clone(),
+            notification_callback: Some(notif_cb),
+        };
+        let renderer_ptr = Box::into_raw(Box::new(renderer));
+
+        let mut dev_res = 0;
+        let device_ctx = unsafe {
+            map_device_create(
+                sr,
+                ch,
+                period,
+                playback_device_id,
+                renderer_ptr as *mut c_void,
+                &mut dev_res,
+            )
+        };
+
+        if device_ctx.is_null() || dev_res != 0 {
+            unsafe { drop(Box::from_raw(renderer_ptr)); }
+            return Err(dev_res);
+        }
+
         let mut coordinator = Box::new(Self {
-            device_ctx: std::ptr::null_mut(),
+            device_ctx,
+            renderer_ptr,
             state,
             pause_on_device_change,
             position_ms,
@@ -199,10 +300,24 @@ impl PlayerCoordinator {
             boundary_info,
             telemetry,
             completion_cb,
-            dsp_chain,
             silence_config,
             audio_producer,
-            audio_consumer,
+            cmd_producer,
+            visualizer_seqlock,
+            flush_generation,
+            flush_acknowledged,
+            completed_flag,
+            buffering_flag,
+            eq_params,
+            preamp_db,
+            replay_gain,
+            balance,
+            mono_enabled,
+            spatializer_enabled,
+            spatializer_width,
+            crossfeed_mode,
+            reverb_config,
+            limiter_enabled,
             engine,
             seek_request_ms,
             decoder_eof,
@@ -211,29 +326,18 @@ impl PlayerCoordinator {
             decoder_thread: None,
         });
 
-        // Create hardware device bridge
-        let mut dev_res = 0;
-        let self_ptr = (&mut *coordinator) as *mut PlayerCoordinator as *mut c_void;
-        let device_ctx = unsafe {
-            map_device_create(
-                sr,
-                ch,
-                period,
-                playback_device_id,
-                self_ptr,
-                &mut dev_res,
-            )
-        };
-
-        if device_ctx.is_null() || dev_res != 0 {
-            return Err(dev_res);
-        }
-        coordinator.device_ctx = device_ctx;
-
         // Spawn background decoder loop
         coordinator.start_decoder_loop();
 
         Ok(coordinator)
+    }
+
+    pub fn send_dsp_command(&self, cmd: DspCommand) {
+        if let Ok(mut guard) = self.cmd_producer.lock() {
+            if let Some(ref mut prod) = *guard {
+                let _ = prod.push(cmd);
+            }
+        }
     }
 
     fn start_decoder_loop(&mut self) {
@@ -256,6 +360,13 @@ impl PlayerCoordinator {
         let trip_buf_arc = self.trip_buffer.clone();
         let decoder_eof_arc = self.decoder_eof.clone();
         let tele = self.telemetry.clone();
+        let completed_flag = self.completed_flag.clone();
+        let buffering_flag = self.buffering_flag.clone();
+        let visualizer_seqlock = self.visualizer_seqlock.clone();
+        let visualizer_enabled = self.visualizer_enabled.clone();
+        let completion_cb = self.completion_cb.clone();
+        let flush_generation = self.flush_generation.clone();
+        let flush_acknowledged = self.flush_acknowledged.clone();
 
         let handle = thread::Builder::new()
             .name("map-decoder".to_string())
@@ -269,7 +380,44 @@ impl PlayerCoordinator {
                 let mut sonic = SonicStream::new(cur_sr, cur_ch);
                 let mut silence_detector = SilenceDetector::new(cur_ch, cur_sr);
 
+                let mut last_tele_pos: i64 = -1;
+                let mut last_vis_instant = std::time::Instant::now();
+
                 while running.load(Ordering::Relaxed) {
+                    // 1. Check completed flag from AudioRenderer
+                    if completed_flag.swap(false, Ordering::AcqRel) {
+                        let dur = dur_ms.load(Ordering::Relaxed);
+                        tele.post_event(EventType::Position, MapEventData { position_ms: dur });
+                        tele.post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+                        tele.post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
+                        tele.post_event(EventType::State, MapEventData { state: STATE_COMPLETED });
+                        if let Ok(guard) = completion_cb.read() {
+                            if let Some((cb, udata)) = *guard {
+                                unsafe { cb(udata as *mut c_void); }
+                            }
+                        }
+                    }
+
+                    // 2. Check buffering flag from AudioRenderer
+                    if buffering_flag.swap(false, Ordering::AcqRel) {
+                        tele.post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
+                        tele.post_event(EventType::State, MapEventData { state: STATE_BUFFERING });
+                    }
+
+                    // 3. Periodic Position Telemetry dispatch
+                    let cur_pos = pos_ms.load(Ordering::Relaxed);
+                    if cur_pos != last_tele_pos && (cur_pos / 33 != last_tele_pos / 33 || cur_pos == 0) {
+                        last_tele_pos = cur_pos;
+                        tele.post_event(EventType::Position, MapEventData { position_ms: cur_pos });
+                    }
+
+                    // 4. Periodic Visualizer Telemetry dispatch (~30fps)
+                    if visualizer_enabled.load(Ordering::Relaxed) && last_vis_instant.elapsed() >= Duration::from_millis(33) {
+                        last_vis_instant = std::time::Instant::now();
+                        let vis = visualizer_seqlock.read();
+                        tele.post_event(EventType::Visualizer, MapEventData { visualizer: vis });
+                    }
+
                     let cur_sr = sr_arc.load(Ordering::Relaxed);
                     let cur_ch = ch_arc.load(Ordering::Relaxed) as usize;
                     if cur_sr > 0 && cur_ch > 0 && (cur_sr != silence_detector.sample_rate() || cur_ch != silence_detector.channels()) {
@@ -307,6 +455,13 @@ impl PlayerCoordinator {
                             continue;
                         }
 
+                        // Wait for flush to be acknowledged by renderer (up to 50ms)
+                        let cur_flush = flush_generation.load(Ordering::Acquire);
+                        let start_wait = std::time::Instant::now();
+                        while flush_acknowledged.load(Ordering::Acquire) < cur_flush && start_wait.elapsed() < Duration::from_millis(50) {
+                            std::thread::yield_now();
+                        }
+
                         decoder_eof_arc.store(false, Ordering::Relaxed);
                         if let Ok(mut eng_lock) = engine_arc.lock() {
                             if let Some(ref mut eng) = *eng_lock {
@@ -337,7 +492,7 @@ impl PlayerCoordinator {
                     if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
                         let (lock, cvar) = &*wake;
                         let guard = lock.lock().unwrap();
-                        let _ = cvar.wait_timeout(guard, Duration::from_millis(50));
+                        let _ = cvar.wait_timeout(guard, Duration::from_millis(30));
                         continue;
                     }
 
@@ -514,97 +669,6 @@ impl PlayerCoordinator {
         self.decoder_thread = handle;
     }
 
-    pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
-        let ch = self.channels.load(Ordering::Relaxed) as usize;
-        let total_samples = frame_count * ch;
-        let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
-
-        let cur_state = self.state.load(Ordering::Relaxed);
-        if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
-            out_slice.fill(0.0);
-            return;
-        }
-
-        let mut read_samples = 0;
-        if let Ok(mut guard) = self.audio_consumer.lock() {
-            if let Some(ref mut cons) = *guard {
-                read_samples = cons.read_chunk(out_slice);
-            }
-        }
-
-        if read_samples < total_samples {
-            out_slice[read_samples..].fill(0.0);
-
-            let decoder_at_eof = self.decoder_eof.load(Ordering::Relaxed);
-            let seek_pending = self.seek_request_ms.load(Ordering::Relaxed) >= 0;
-            if decoder_at_eof && !seek_pending && read_samples == 0 {
-                self.state.store(STATE_COMPLETED, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::Position,
-                    MapEventData { position_ms: self.duration_ms.load(Ordering::Relaxed) },
-                );
-                self.telemetry.post_event(
-                    EventType::IsPlaying,
-                    MapEventData { is_playing: 0 },
-                );
-                self.telemetry.post_event(
-                    EventType::IsCompleted,
-                    MapEventData { is_completed: 1 },
-                );
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_COMPLETED },
-                );
-                if let Ok(guard) = self.completion_cb.read() {
-                    if let Some((cb, udata)) = *guard {
-                        unsafe { cb(udata as *mut c_void); }
-                    }
-                }
-            } else if read_samples == 0 && self.is_stream.load(Ordering::Relaxed) {
-                self.state.store(STATE_BUFFERING, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::IsBuffering,
-                    MapEventData { is_buffering: 1 },
-                );
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_BUFFERING },
-                );
-            }
-        }
-
-        if read_samples > 0 {
-            let frames_played = (read_samples / ch) as i64;
-            let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
-            let rate = f32::from_bits(self.rate.load(Ordering::Relaxed)).max(0.01);
-            let track_subframes = ((frames_played as f64) * (rate as f64) * 1024.0) as i64;
-            let total_subframes = self.position_frames.fetch_add(track_subframes, Ordering::Relaxed) + track_subframes;
-            let total_frames = total_subframes / 1024;
-            let new_pos = if sr > 0 { (total_frames * 1000) / sr } else { 0 };
-            let prev_pos = self.position_ms.swap(new_pos, Ordering::Relaxed);
-            if new_pos / 33 != prev_pos / 33 {
-                self.telemetry.post_event(
-                    EventType::Position,
-                    MapEventData { position_ms: new_pos },
-                );
-            }
-        }
-
-        // Apply Real-Time DSP Pipeline
-        let vol = f32::from_bits(self.volume.load(Ordering::Relaxed));
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_volume(vol);
-            dsp.process_frames(out_slice);
-            if self.visualizer_enabled.load(Ordering::Relaxed) {
-                let vis = dsp.visualizer.data();
-                self.telemetry.post_event(
-                    EventType::Visualizer,
-                    MapEventData { visualizer: vis },
-                );
-            }
-        }
-    }
-
     pub fn on_device_notification(&mut self, _notification_type: i32) {
         if self.pause_on_device_change.load(Ordering::Relaxed) {
             if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
@@ -683,7 +747,16 @@ impl PlayerCoordinator {
             }
         };
 
-        self.init_engine(eng, false, file_size, &[]);
+        let mut header = [0u8; 8192];
+        let mut header_len = 0;
+        if let Ok(mut f) = File::open(path) {
+            use std::io::Read;
+            if let Ok(n) = f.read(&mut header) {
+                header_len = n;
+            }
+        }
+
+        self.init_engine(eng, false, file_size, &header[..header_len]);
         MAP_SUCCESS
     }
 
@@ -839,37 +912,8 @@ impl PlayerCoordinator {
         self.position_ms.store(0, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
 
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            let vis_en = self.visualizer_enabled.load(Ordering::Relaxed);
-            let prev_eq = dsp.eq.params();
-            let prev_preamp = dsp.eq.preamp_db();
-            let prev_rg = dsp.eq.replay_gain();
-            let prev_bal = dsp.eq.balance();
-            let prev_mono = dsp.eq.mono();
-            let prev_spat_en = dsp.eq.spatializer_enabled();
-            let prev_spat_w = dsp.eq.spatializer_width();
-            let prev_xfade = dsp.crossfeed.mode();
-            let prev_reverb = *dsp.reverb.config();
-            let prev_limiter = dsp.limiter.is_enabled();
-
-            let mut new_dsp = DspChain::new(ch as usize, sr);
-            new_dsp.visualizer.set_enabled(vis_en);
-            new_dsp.eq.set_all(&prev_eq);
-            new_dsp.eq.set_preamp_db(prev_preamp);
-            new_dsp.eq.set_replay_gain(prev_rg);
-            new_dsp.eq.set_balance(prev_bal);
-            new_dsp.eq.set_mono(prev_mono);
-            new_dsp.eq.set_spatializer(prev_spat_en, prev_spat_w);
-            new_dsp.crossfeed.set_mode(prev_xfade);
-            new_dsp.reverb.set_config(prev_reverb);
-            new_dsp.limiter.set_enabled(prev_limiter);
-
-            *dsp = new_dsp;
-        }
-
-        let (prod, cons) = AudioRingBuffer::create(65536 * (ch as usize));
-        *self.audio_producer.lock().unwrap() = Some(prod);
-        *self.audio_consumer.lock().unwrap() = Some(cons);
+        self.send_dsp_command(DspCommand::SetSampleRate(sr));
+        self.flush_generation.fetch_add(1, Ordering::Release);
 
         *self.engine.lock().unwrap() = Some(eng);
 
@@ -911,11 +955,7 @@ impl PlayerCoordinator {
         if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
             trip.flush(new_stream_offset as u64);
             self.decoder_eof.store(false, Ordering::Relaxed);
-            if let Ok(mut cons_guard) = self.audio_consumer.lock() {
-                if let Some(ref mut cons) = *cons_guard {
-                    cons.clear();
-                }
-            }
+            self.flush_generation.fetch_add(1, Ordering::Release);
             MAP_SUCCESS
         } else {
             MAP_ERROR_INVALID_STATE
@@ -950,11 +990,7 @@ impl PlayerCoordinator {
             let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
             self.position_frames.store(if sr > 0 { (dur * sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
             self.seek_request_ms.store(-1, Ordering::SeqCst);
-            if let Ok(mut guard) = self.audio_consumer.lock() {
-                if let Some(ref mut cons) = *guard {
-                    cons.clear();
-                }
-            }
+            self.flush_generation.fetch_add(1, Ordering::Release);
 
             self.telemetry.post_event(
                 EventType::Position,
@@ -992,11 +1028,7 @@ impl PlayerCoordinator {
                 MapEventData { state: STATE_PAUSED },
             );
         }
-        if let Ok(mut guard) = self.audio_consumer.lock() {
-            if let Some(ref mut cons) = *guard {
-                cons.clear();
-            }
-        }
+        self.flush_generation.fetch_add(1, Ordering::Release);
 
         self.position_ms.store(position_ms, Ordering::Relaxed);
         let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
@@ -1166,7 +1198,11 @@ impl PlayerCoordinator {
         if frames_out.is_null() || out_frames_read.is_null() {
             return MAP_ERROR_INVALID_ARGS;
         }
-        self.render_pcm(frames_out, frame_count as usize);
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                (*self.renderer_ptr).render_pcm(frames_out, frame_count as usize);
+            }
+        }
         unsafe {
             *out_frames_read = frame_count;
         }
@@ -1245,11 +1281,7 @@ impl PlayerCoordinator {
                 MapEventData { state: STATE_PAUSED },
             );
         }
-        if let Ok(mut guard) = self.audio_consumer.lock() {
-            if let Some(ref mut cons) = *guard {
-                cons.clear();
-            }
-        }
+        self.flush_generation.fetch_add(1, Ordering::Release);
 
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
         self.position_ms.store(0, Ordering::Relaxed);
@@ -1289,11 +1321,7 @@ impl PlayerCoordinator {
             let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
             self.position_frames.store(if sr > 0 { (dur * sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
             self.seek_request_ms.store(-1, Ordering::SeqCst);
-            if let Ok(mut guard) = self.audio_consumer.lock() {
-                if let Some(ref mut cons) = *guard {
-                    cons.clear();
-                }
-            }
+            self.flush_generation.fetch_add(1, Ordering::Release);
 
             self.telemetry.post_event(
                 EventType::Position,
@@ -1331,11 +1359,7 @@ impl PlayerCoordinator {
                 MapEventData { state: STATE_PAUSED },
             );
         }
-        if let Ok(mut guard) = self.audio_consumer.lock() {
-            if let Some(ref mut cons) = *guard {
-                cons.clear();
-            }
-        }
+        self.flush_generation.fetch_add(1, Ordering::Release);
 
         self.position_ms.store(position_ms, Ordering::Relaxed);
         let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
@@ -1355,9 +1379,7 @@ impl PlayerCoordinator {
     pub fn set_volume(&mut self, volume: f32) -> i32 {
         let vol = volume.max(0.0);
         self.volume.store(vol.to_bits(), Ordering::Relaxed);
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_volume(vol);
-        }
+        self.send_dsp_command(DspCommand::SetVolume(vol));
         self.telemetry.post_event(
             EventType::Volume,
             MapEventData { volume: vol },
@@ -1440,9 +1462,8 @@ impl PlayerCoordinator {
     }
 
     pub fn set_equalizer(&mut self, params: &EqualizerParams) -> i32 {
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_equalizer_params(params);
-        }
+        *self.eq_params.write().unwrap() = *params;
+        self.send_dsp_command(DspCommand::SetEqualizerParams(*params));
         self.telemetry.post_event(
             EventType::Equalizer,
             MapEventData { equalizer: *params },
@@ -1451,19 +1472,14 @@ impl PlayerCoordinator {
     }
 
     pub fn set_equalizer_band(&mut self, band: u32, gain_db: f32) -> i32 {
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_equalizer_band(band as usize, gain_db);
-        }
+        self.eq_params.write().unwrap().set_band(band as usize, gain_db);
+        self.send_dsp_command(DspCommand::SetEqualizerBand { band: band as usize, gain_db });
         MAP_SUCCESS
     }
 
     pub fn get_equalizer(&self, out: &mut EqualizerParams) -> i32 {
-        if let Ok(dsp) = self.dsp_chain.lock() {
-            *out = dsp.eq.params();
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
+        *out = *self.eq_params.read().unwrap();
+        MAP_SUCCESS
     }
 
     pub fn set_replay_gain(&mut self, gain_db: f32, peak: f32, prevent_clipping: i32) -> i32 {
@@ -1473,9 +1489,8 @@ impl PlayerCoordinator {
             prevent_clipping,
             enabled: 1,
         };
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_replay_gain(rg);
-        }
+        *self.replay_gain.write().unwrap() = rg;
+        self.send_dsp_command(DspCommand::SetReplayGain(rg));
         self.telemetry.post_event(
             EventType::ReplayGain,
             MapEventData { replay_gain: rg },
@@ -1485,9 +1500,8 @@ impl PlayerCoordinator {
 
     pub fn clear_replay_gain(&mut self) -> i32 {
         let rg = ReplayGainConfig::default();
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_replay_gain(rg);
-        }
+        *self.replay_gain.write().unwrap() = rg;
+        self.send_dsp_command(DspCommand::SetReplayGain(rg));
         self.telemetry.post_event(
             EventType::ReplayGain,
             MapEventData { replay_gain: rg },
@@ -1496,9 +1510,8 @@ impl PlayerCoordinator {
     }
 
     pub fn set_preamp(&mut self, preamp_db: f32) -> i32 {
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_preamp_db(preamp_db);
-        }
+        self.preamp_db.store(preamp_db.to_bits(), Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetPreamp(preamp_db));
         self.telemetry.post_event(
             EventType::Preamp,
             MapEventData { preamp_db },
@@ -1507,9 +1520,8 @@ impl PlayerCoordinator {
     }
 
     pub fn set_balance(&mut self, pan: f32) -> i32 {
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_balance(pan);
-        }
+        self.balance.store(pan.to_bits(), Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetBalance(pan));
         self.telemetry.post_event(
             EventType::Balance,
             MapEventData { balance: pan },
@@ -1519,9 +1531,8 @@ impl PlayerCoordinator {
 
     pub fn set_mono(&mut self, enabled: i32) -> i32 {
         let mono = enabled != 0;
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_mono(mono);
-        }
+        self.mono_enabled.store(mono, Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetMono(mono));
         self.telemetry.post_event(
             EventType::Mono,
             MapEventData { mono_enabled: enabled },
@@ -1535,9 +1546,8 @@ impl PlayerCoordinator {
             2 => CrossfeedMode::ChuMoy,
             _ => CrossfeedMode::Off,
         };
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_crossfeed(cf_mode);
-        }
+        self.crossfeed_mode.store(mode, Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetCrossfeed(cf_mode));
         self.telemetry.post_event(
             EventType::Crossfeed,
             MapEventData { crossfeed_mode: mode },
@@ -1546,9 +1556,10 @@ impl PlayerCoordinator {
     }
 
     pub fn set_spatializer(&mut self, enabled: i32, width: f32) -> i32 {
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_spatializer(enabled != 0, width);
-        }
+        let en = enabled != 0;
+        self.spatializer_enabled.store(en, Ordering::Relaxed);
+        self.spatializer_width.store(width.to_bits(), Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetSpatializer { enabled: en, width });
         self.telemetry.post_event(
             EventType::Spatializer,
             MapEventData {
@@ -1578,9 +1589,8 @@ impl PlayerCoordinator {
             wet,
             dry,
         };
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.set_reverb(rev);
-        }
+        *self.reverb_config.write().unwrap() = rev;
+        self.send_dsp_command(DspCommand::SetReverb(rev));
         self.telemetry.post_event(
             EventType::Reverb,
             MapEventData { reverb: rev },
@@ -1589,9 +1599,9 @@ impl PlayerCoordinator {
     }
 
     pub fn set_limiter(&mut self, enabled: i32) -> i32 {
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.limiter.set_enabled(enabled != 0);
-        }
+        let en = enabled != 0;
+        self.limiter_enabled.store(en, Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetLimiter(en));
         self.telemetry.post_event(
             EventType::Limiter,
             MapEventData { limiter_enabled: enabled },
@@ -1618,16 +1628,16 @@ impl PlayerCoordinator {
     }
 
     pub fn set_visualizer_enabled(&mut self, enabled: i32) -> i32 {
-        self.visualizer_enabled.store(enabled != 0, Ordering::Relaxed);
-        if let Ok(mut dsp) = self.dsp_chain.lock() {
-            dsp.visualizer.set_enabled(enabled != 0);
-            if enabled == 0 {
-                let zero_vis = dsp.visualizer.data();
-                self.telemetry.post_event(
-                    EventType::Visualizer,
-                    MapEventData { visualizer: zero_vis },
-                );
-            }
+        let en = enabled != 0;
+        self.visualizer_enabled.store(en, Ordering::Relaxed);
+        self.send_dsp_command(DspCommand::SetVisualizerEnabled(en));
+        if !en {
+            let zero_vis = VisualizerData::default();
+            self.visualizer_seqlock.write(|v| *v = zero_vis);
+            self.telemetry.post_event(
+                EventType::Visualizer,
+                MapEventData { visualizer: zero_vis },
+            );
         }
         self.telemetry.post_event(
             EventType::VisualizerEnabled,
@@ -1641,12 +1651,8 @@ impl PlayerCoordinator {
     }
 
     pub fn get_visualizer_data(&self, out: &mut VisualizerData) -> i32 {
-        if let Ok(dsp) = self.dsp_chain.lock() {
-            *out = dsp.visualizer.data();
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
+        *out = self.visualizer_seqlock.read();
+        MAP_SUCCESS
     }
 
     pub fn get_status(&self, out: &mut MiniaudioPlayerStatus) -> i32 {
@@ -1664,19 +1670,17 @@ impl PlayerCoordinator {
         out.sample_rate = self.sample_rate.load(Ordering::Relaxed);
         out.channels = self.channels.load(Ordering::Relaxed);
 
-        if let Ok(dsp) = self.dsp_chain.lock() {
-            out.equalizer = dsp.eq.params();
-            out.preamp_db = dsp.eq.preamp_db();
-            out.replay_gain = dsp.eq.replay_gain();
-            out.balance = dsp.eq.balance();
-            out.mono_enabled = dsp.eq.mono() as i32;
-            out.crossfeed_mode = dsp.crossfeed.mode() as i32;
-            out.spatializer_enabled = dsp.eq.spatializer_enabled() as i32;
-            out.spatializer_width = dsp.eq.spatializer_width();
-            out.reverb = *dsp.reverb.config();
-            out.limiter_enabled = dsp.limiter.is_enabled() as i32;
-            out.visualizer = dsp.visualizer.data();
-        }
+        out.equalizer = *self.eq_params.read().unwrap();
+        out.preamp_db = f32::from_bits(self.preamp_db.load(Ordering::Relaxed));
+        out.replay_gain = *self.replay_gain.read().unwrap();
+        out.balance = f32::from_bits(self.balance.load(Ordering::Relaxed));
+        out.mono_enabled = self.mono_enabled.load(Ordering::Relaxed) as i32;
+        out.crossfeed_mode = self.crossfeed_mode.load(Ordering::Relaxed);
+        out.spatializer_enabled = self.spatializer_enabled.load(Ordering::Relaxed) as i32;
+        out.spatializer_width = f32::from_bits(self.spatializer_width.load(Ordering::Relaxed));
+        out.reverb = *self.reverb_config.read().unwrap();
+        out.limiter_enabled = self.limiter_enabled.load(Ordering::Relaxed) as i32;
+        out.visualizer = self.visualizer_seqlock.read();
 
         out.visualizer_enabled = self.visualizer_enabled.load(Ordering::Relaxed) as i32;
         out.silence = *self.silence_config.read().unwrap();
@@ -1707,6 +1711,13 @@ impl Drop for PlayerCoordinator {
                 map_device_destroy(self.device_ctx);
             }
             self.device_ctx = std::ptr::null_mut();
+        }
+
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.renderer_ptr));
+            }
+            self.renderer_ptr = std::ptr::null_mut();
         }
     }
 }

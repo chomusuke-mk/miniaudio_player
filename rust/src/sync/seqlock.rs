@@ -2,10 +2,11 @@
 
 use crossbeam_utils::CachePadded;
 use std::cell::UnsafeCell;
-use std::sync::atomic::{fence, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 
 pub struct CachePaddedSeqlock<T> {
     sequence: CachePadded<AtomicUsize>,
+    writer_lock: AtomicBool,
     data: UnsafeCell<T>,
 }
 
@@ -16,12 +17,22 @@ impl<T> CachePaddedSeqlock<T> {
     pub fn new(initial: T) -> Self {
         Self {
             sequence: CachePadded::new(AtomicUsize::new(0)),
+            writer_lock: AtomicBool::new(false),
             data: UnsafeCell::new(initial),
         }
     }
 
-    /// Mutates the protected data. Guaranteed to never block readers indefinitely.
+    /// Mutates the protected data with writer mutual exclusion. Guaranteed to never block readers indefinitely.
     pub fn write<F: FnOnce(&mut T)>(&self, f: F) {
+        // Spin until acquiring exclusive writer permission
+        while self
+            .writer_lock
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+
         let seq = self.sequence.load(Ordering::Relaxed);
         // Odd sequence number indicates a write is in progress
         self.sequence.store(seq.wrapping_add(1), Ordering::Release);
@@ -34,6 +45,9 @@ impl<T> CachePaddedSeqlock<T> {
         fence(Ordering::Release);
         // Even sequence number indicates write is complete and consistent
         self.sequence.store(seq.wrapping_add(2), Ordering::Release);
+
+        // Release writer permission
+        self.writer_lock.store(false, Ordering::Release);
     }
 
     /// Reads consistent snapshot of `T`. Retries spin-loop if a write overlapped.

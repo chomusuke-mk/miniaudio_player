@@ -64,6 +64,14 @@ impl EqualizerParams {
             hz16k: arr[9],
         }
     }
+
+    pub fn set_band(&mut self, band_index: usize, gain_db: f32) {
+        let mut arr = self.as_array();
+        if band_index < arr.len() {
+            arr[band_index] = gain_db;
+            *self = Self::from_array(&arr);
+        }
+    }
 }
 
 #[repr(C)]

@@ -1,5 +1,6 @@
 pub mod config;
 pub mod player;
+pub mod renderer;
 
 pub use config::PlayerConfig;
 pub use player::{
@@ -8,3 +9,4 @@ pub use player::{
     STATE_BUFFERING, STATE_COMPLETED, STATE_ERROR, STATE_OPENING, STATE_PLAYING, STATE_PAUSED,
     STATE_STOPPED,
 };
+pub use renderer::{AudioRenderer, DspCommand};
