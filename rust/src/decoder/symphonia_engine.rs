@@ -8,7 +8,10 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::Time;
 use symphonia_adapter_libopus::OpusDecoder;
 
+use super::ape::{ApeProbe, ApeReader};
+use super::dsf::{DsfProbe, DsfReader};
 use super::extended_pcm::{ExtendedPcmProbe, ExtendedPcmReader};
+use super::wavpack::{WavpackProbe, WavpackReader};
 
 pub fn create_codec_registry() -> CodecRegistry {
     let mut registry = CodecRegistry::new();
@@ -25,6 +28,9 @@ enum EngineBackend {
         track_id: u32,
     },
     ExtendedPcm(ExtendedPcmReader),
+    Dsf(DsfReader),
+    Ape(ApeReader),
+    WavPack(WavpackReader),
 }
 
 pub struct SymphoniaEngine {
@@ -41,8 +47,8 @@ impl SymphoniaEngine {
     ) -> Result<Self, SymphoniaError> {
         let boxed_source: Box<dyn MediaSource> = Box::new(source);
 
-        // Try Extended PCM first (RF64, RIFX, W64)
-        match ExtendedPcmReader::try_new(boxed_source)? {
+        // 1. Try Extended PCM first (RF64, RIFX, W64)
+        let boxed_source = match ExtendedPcmReader::try_new(boxed_source)? {
             ExtendedPcmProbe::Matched(pcm) => {
                 let sample_rate = pcm.sample_rate();
                 let channels = pcm.channels();
@@ -54,16 +60,67 @@ impl SymphoniaEngine {
                     duration_ms,
                 });
             }
-            ExtendedPcmProbe::NotMatched(src) => {
-                let mut hint = Hint::new();
-                if let Some(ext) = hint_extension {
-                    hint.with_extension(ext);
-                }
+            ExtendedPcmProbe::NotMatched(src) => src,
+        };
 
-                let mss = MediaSourceStream::new(
-                    src,
-                    MediaSourceStreamOptions::default(),
-                );
+        // 2. Try DSD (.dsf)
+        let boxed_source = match DsfReader::try_new(boxed_source)? {
+            DsfProbe::Matched(dsf) => {
+                let sample_rate = dsf.sample_rate();
+                let channels = dsf.channels();
+                let duration_ms = dsf.duration_ms();
+                return Ok(Self {
+                    backend: EngineBackend::Dsf(dsf),
+                    sample_rate,
+                    channels,
+                    duration_ms,
+                });
+            }
+            DsfProbe::NotMatched(src) => src,
+        };
+
+        // 3. Try Monkey's Audio (.ape)
+        let boxed_source = match ApeReader::try_new(boxed_source)? {
+            ApeProbe::Matched(ape) => {
+                let sample_rate = ape.sample_rate();
+                let channels = ape.channels();
+                let duration_ms = ape.duration_ms();
+                return Ok(Self {
+                    backend: EngineBackend::Ape(ape),
+                    sample_rate,
+                    channels,
+                    duration_ms,
+                });
+            }
+            ApeProbe::NotMatched(src) => src,
+        };
+
+        // 4. Try WavPack (.wv)
+        let boxed_source = match WavpackReader::try_new(boxed_source)? {
+            WavpackProbe::Matched(wv) => {
+                let sample_rate = wv.sample_rate();
+                let channels = wv.channels();
+                let duration_ms = wv.duration_ms();
+                return Ok(Self {
+                    backend: EngineBackend::WavPack(wv),
+                    sample_rate,
+                    channels,
+                    duration_ms,
+                });
+            }
+            WavpackProbe::NotMatched(src) => src,
+        };
+
+        // 5. Symphonia default probe (MP3, AAC, FLAC, Ogg, WAV, MP4, WebM/MKV)
+        let mut hint = Hint::new();
+        if let Some(ext) = hint_extension {
+            hint.with_extension(ext);
+        }
+
+        let mss = MediaSourceStream::new(
+            boxed_source,
+            MediaSourceStreamOptions::default(),
+        );
 
                 let mut format_reader = symphonia::default::get_probe().probe(
                     &hint,
@@ -172,8 +229,6 @@ impl SymphoniaEngine {
                     channels,
                     duration_ms,
                 })
-            }
-        }
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -193,6 +248,9 @@ impl SymphoniaEngine {
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         match &mut self.backend {
             EngineBackend::ExtendedPcm(pcm) => pcm.decode_next_frame(out_pcm),
+            EngineBackend::Dsf(dsf) => dsf.decode_next_frame(out_pcm),
+            EngineBackend::Ape(ape) => ape.decode_next_frame(out_pcm),
+            EngineBackend::WavPack(wv) => wv.decode_next_frame(out_pcm),
             EngineBackend::Symphonia {
                 format_reader,
                 decoder,
@@ -244,6 +302,9 @@ impl SymphoniaEngine {
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         match &mut self.backend {
             EngineBackend::ExtendedPcm(pcm) => pcm.seek_ms(position_ms),
+            EngineBackend::Dsf(dsf) => dsf.seek_ms(position_ms),
+            EngineBackend::Ape(ape) => ape.seek_ms(position_ms),
+            EngineBackend::WavPack(wv) => wv.seek_ms(position_ms),
             EngineBackend::Symphonia {
                 format_reader,
                 decoder,

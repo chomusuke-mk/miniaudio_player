@@ -154,6 +154,10 @@ impl FileByteSource {
         let file = File::open(path)?;
         Self::new(file)
     }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
 }
 
 impl Read for FileByteSource {

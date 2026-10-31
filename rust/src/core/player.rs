@@ -259,6 +259,7 @@ impl PlayerCoordinator {
             device_channels: device_channels.clone(),
             volume: volume.clone(),
             rate: rate.clone(),
+            pitch: pitch.clone(),
             position_frames: position_frames.clone(),
             position_ms: position_ms.clone(),
             duration_ms: duration_ms.clone(),
@@ -272,6 +273,8 @@ impl PlayerCoordinator {
             buffering_flag: buffering_flag.clone(),
             buffering_resumed_flag: buffering_resumed_flag.clone(),
             dsp: DspChain::new(ch as usize, sr),
+            sonic: SonicStream::new(sr, (ch as usize).clamp(1, 8)),
+            sonic_in_buf: vec![0.0f32; 16384],
             visualizer_seqlock: visualizer_seqlock.clone(),
             visualizer_enabled: visualizer_enabled.clone(),
             notification_callback: Some(notif_cb),
@@ -381,8 +384,6 @@ impl PlayerCoordinator {
         let pos_ms = self.position_ms.clone();
         let pos_frames = self.position_frames.clone();
         let dur_ms = self.duration_ms.clone();
-        let rate_arc = self.rate.clone();
-        let pitch_arc = self.pitch.clone();
         let sr_arc = self.sample_rate.clone();
         let ch_arc = self.channels.clone();
         let silence_cfg_arc = self.silence_config.clone();
@@ -412,14 +413,12 @@ impl PlayerCoordinator {
                 let mut resampler_out = Vec::new();
                 let mut pending_pcm: Vec<f32> = Vec::new();
                 let mut pending_offset: usize = 0;
-                let mut sonic_out_buf = vec![0.0f32; 16384];
 
                 let cur_sr = sr_arc.load(Ordering::Relaxed).max(8000);
                 let cur_ch = (ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
                 let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000);
                 let cur_dev_ch = (dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
 
-                let mut sonic = SonicStream::new(cur_sr, cur_ch);
                 let mut silence_detector = SilenceDetector::new(cur_ch, cur_sr);
                 let mut channel_matrix = ChannelMatrix::new(cur_ch, cur_dev_ch);
                 let mut resampler = RubatoResampler::new(cur_sr, cur_dev_sr, cur_dev_ch, 1024)
@@ -458,18 +457,18 @@ impl PlayerCoordinator {
                     if cur_sr > 0 && cur_ch > 0 && (cur_sr != silence_detector.sample_rate() || cur_ch != silence_detector.channels()) {
                         silence_detector.set_sample_rate(cur_sr);
                         silence_detector.set_channels(cur_ch);
-                        sonic = SonicStream::new(cur_sr, cur_ch);
                     }
 
                     // Check for seek request
                     let target_seek = seek_req.swap(-1, Ordering::SeqCst);
                     if target_seek >= 0 {
+                        let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000) as i64;
                         let dur = dur_ms.load(Ordering::Relaxed);
                         if dur > 0 && target_seek >= dur {
                             decoder_eof_arc.store(true, Ordering::Relaxed);
                             state.store(STATE_COMPLETED, Ordering::Relaxed);
                             pos_ms.store(dur, Ordering::Relaxed);
-                            let f = if cur_sr > 0 { (dur * cur_sr as i64 * 1024) / 1000 } else { 0 };
+                            let f = if cur_dev_sr > 0 { (dur * cur_dev_sr * 1024) / 1000 } else { 0 };
                             pos_frames.store(f, Ordering::Relaxed);
                             tele.post_event(
                                 EventType::Position,
@@ -490,11 +489,14 @@ impl PlayerCoordinator {
                             continue;
                         }
 
-                        // Wait for flush to be acknowledged by renderer (up to 50ms)
-                        let cur_flush = flush_generation.load(Ordering::Acquire);
-                        let start_wait = std::time::Instant::now();
-                        while flush_acknowledged.load(Ordering::Acquire) < cur_flush && start_wait.elapsed() < Duration::from_millis(50) {
-                            std::thread::yield_now();
+                        // Wait for flush to be acknowledged by renderer (up to 15ms only if active)
+                        let is_rendering = state.load(Ordering::Relaxed) == STATE_PLAYING;
+                        if is_rendering {
+                            let cur_flush = flush_generation.load(Ordering::Acquire);
+                            let start_wait = std::time::Instant::now();
+                            while flush_acknowledged.load(Ordering::Acquire) < cur_flush && start_wait.elapsed() < Duration::from_millis(15) {
+                                std::thread::yield_now();
+                            }
                         }
 
                         decoder_eof_arc.store(false, Ordering::Relaxed);
@@ -517,7 +519,6 @@ impl PlayerCoordinator {
                                 }
                             }
                         }
-                        sonic.flush();
                         silence_detector.reset(target_seek == 0);
                         silence_saved_arc.store(0, Ordering::Relaxed);
                         pending_pcm.clear();
@@ -530,7 +531,7 @@ impl PlayerCoordinator {
                             },
                         );
                         pos_ms.store(target_seek, Ordering::Relaxed);
-                        let f = if cur_sr > 0 { (target_seek * cur_sr as i64 * 1024) / 1000 } else { 0 };
+                        let f = if cur_dev_sr > 0 { (target_seek * cur_dev_sr * 1024) / 1000 } else { 0 };
                         pos_frames.store(f, Ordering::Relaxed);
                         tele.post_event(
                             EventType::Position,
@@ -832,7 +833,6 @@ impl PlayerCoordinator {
                         if cur_track_sr > 0 && cur_track_ch > 0 && (cur_track_sr != silence_detector.sample_rate() || cur_track_ch != silence_detector.channels()) {
                             silence_detector.set_sample_rate(cur_track_sr);
                             silence_detector.set_channels(cur_track_ch);
-                            sonic = SonicStream::new(cur_track_sr, cur_track_ch);
                         }
 
                         // Silence Detection
@@ -863,24 +863,9 @@ impl PlayerCoordinator {
                         }
                         let active_slice = &active_buf[..samples_out];
 
-                        // Time-stretching / Pitch-shifting
-                        let cur_rate = f32::from_bits(rate_arc.load(Ordering::Relaxed));
-                        let cur_pitch = f32::from_bits(pitch_arc.load(Ordering::Relaxed));
-                        let sonic_slice = if (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001 {
-                            sonic.set_speed(cur_rate);
-                            sonic.set_pitch(cur_pitch);
-                            sonic.write_float(active_slice);
-
-                            let frames_read = sonic.read_float(&mut sonic_out_buf);
-                            let samples_read = frames_read * cur_track_ch;
-                            &sonic_out_buf[..samples_read]
-                        } else {
-                            active_slice
-                        };
-
                         // Channel Matrix Adaptation (e.g. Mono -> Stereo, 5.1 -> Stereo, 5.1 -> 7.1, etc.)
                         channel_matrix.set_channels(cur_track_ch, cur_dev_ch);
-                        channel_matrix.process_interleaved(sonic_slice, &mut matrix_buf);
+                        channel_matrix.process_interleaved(active_slice, &mut matrix_buf);
 
                         // High-Fidelity Resampling (e.g. 44.1k -> 48k, 192k -> 48k, or passthrough)
                         if resampler.sample_rate_in() != cur_track_sr
@@ -973,8 +958,8 @@ impl PlayerCoordinator {
     pub fn open_file(&mut self, path: &str) -> i32 {
         let _ = self.begin_open();
 
-        let file = match File::open(path) {
-            Ok(f) => f,
+        let source = match crate::buffer::FileByteSource::open(std::path::Path::new(path)) {
+            Ok(s) => s,
             Err(_) => {
                 self.state.store(STATE_ERROR, Ordering::Relaxed);
                 self.telemetry.post_event(
@@ -985,12 +970,12 @@ impl PlayerCoordinator {
             }
         };
 
-        let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let file_size = source.size();
         let ext = std::path::Path::new(path)
             .extension()
             .and_then(|e| e.to_str());
 
-        let eng = match SymphoniaEngine::new(file, ext) {
+        let eng = match SymphoniaEngine::new(source, ext) {
             Ok(e) => e,
             Err(_) => {
                 self.state.store(STATE_ERROR, Ordering::Relaxed);
@@ -1092,6 +1077,11 @@ impl PlayerCoordinator {
             ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
             ContainerFormat::Wav => Some("wav"),
             ContainerFormat::Mp4 => Some("mp4"),
+            ContainerFormat::Matroska => Some("mka"),
+            ContainerFormat::Dsf => Some("dsf"),
+            ContainerFormat::Ape => Some("ape"),
+            ContainerFormat::WavPack => Some("wv"),
+            ContainerFormat::Hls => Some("m3u8"),
             ContainerFormat::Unknown => match encoding_format {
                 1 => Some("wav"),
                 2 => Some("flac"),
@@ -1143,6 +1133,11 @@ impl PlayerCoordinator {
                 ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
                 ContainerFormat::Wav => Some("wav"),
                 ContainerFormat::Mp4 => Some("mp4"),
+                ContainerFormat::Matroska => Some("mka"),
+                ContainerFormat::Dsf => Some("dsf"),
+                ContainerFormat::Ape => Some("ape"),
+                ContainerFormat::WavPack => Some("wv"),
+                ContainerFormat::Hls => Some("m3u8"),
                 ContainerFormat::Unknown => None,
             };
         }
@@ -1314,8 +1309,8 @@ impl PlayerCoordinator {
             self.decoder_eof.store(true, Ordering::Relaxed);
             self.state.store(STATE_COMPLETED, Ordering::Relaxed);
             self.position_ms.store(dur, Ordering::Relaxed);
-            let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
-            self.position_frames.store(if sr > 0 { (dur * sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
+            let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
+            self.position_frames.store(if dev_sr > 0 { (dur * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
             self.seek_request_ms.store(-1, Ordering::SeqCst);
             self.flush_generation.fetch_add(1, Ordering::Release);
 
@@ -1358,8 +1353,8 @@ impl PlayerCoordinator {
         self.flush_generation.fetch_add(1, Ordering::Release);
 
         self.position_ms.store(position_ms, Ordering::Relaxed);
-        let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
-        self.position_frames.store(if sr > 0 { (position_ms * sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
+        let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
+        self.position_frames.store(if dev_sr > 0 { (position_ms * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::Position,
             MapEventData { position_ms },
@@ -1653,8 +1648,8 @@ impl PlayerCoordinator {
             self.decoder_eof.store(true, Ordering::Relaxed);
             self.state.store(STATE_COMPLETED, Ordering::Relaxed);
             self.position_ms.store(dur, Ordering::Relaxed);
-            let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
-            self.position_frames.store(if sr > 0 { (dur * sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
+            let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
+            self.position_frames.store(if dev_sr > 0 { (dur * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
             self.seek_request_ms.store(-1, Ordering::SeqCst);
             self.flush_generation.fetch_add(1, Ordering::Release);
 
@@ -1697,8 +1692,8 @@ impl PlayerCoordinator {
         self.flush_generation.fetch_add(1, Ordering::Release);
 
         self.position_ms.store(position_ms, Ordering::Relaxed);
-        let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
-        self.position_frames.store(if sr > 0 { (position_ms * sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
+        let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
+        self.position_frames.store(if dev_sr > 0 { (position_ms * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::Position,
             MapEventData { position_ms },

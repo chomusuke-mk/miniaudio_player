@@ -364,6 +364,7 @@ class NetworkByteProvider extends AudioByteProvider {
   final int maxRetries;
 
   void Function()? _activeAbort;
+  void Function()? _inFlightAbort;
   int _connectionGeneration = 0;
   HlsByteProvider? _hlsDelegate;
 
@@ -410,6 +411,8 @@ class NetworkByteProvider extends AudioByteProvider {
   Future<AudioByteStreamResponse> open({int offset = 0, int? length}) async {
     _connectionGeneration++;
     final int gen = _connectionGeneration;
+    _inFlightAbort?.call();
+    _inFlightAbort = null;
     _activeAbort?.call();
     _activeAbort = null;
 
@@ -420,6 +423,7 @@ class NetworkByteProvider extends AudioByteProvider {
         res = await sendHttpGetRequest(
           _uri,
           headers: _buildRequestHeaders(offset: offset, length: length),
+          onConnecting: (abort) => _inFlightAbort = abort,
         );
       } catch (e) {
         final errStr = e.toString();
@@ -430,6 +434,8 @@ class NetworkByteProvider extends AudioByteProvider {
               : 'Failed to connect to $_uri: $e',
           errorCode: MapResult.errorFileNotFound,
         );
+      } finally {
+        _inFlightAbort = null;
       }
 
       if (gen != _connectionGeneration) {
@@ -684,8 +690,11 @@ class NetworkByteProvider extends AudioByteProvider {
         final probeHeaders = <String, String>{};
         if (headers != null) probeHeaders.addAll(headers!);
         probeHeaders['Range'] = 'bytes=$tailOffset-${tailOffset + length - 1}';
-        res = await sendHttpGetRequest(_uri, headers: probeHeaders)
-            .timeout(const Duration(seconds: 6));
+        res = await sendHttpGetRequest(
+          _uri,
+          headers: probeHeaders,
+          onConnecting: (abort) => _inFlightAbort = abort,
+        ).timeout(const Duration(seconds: 6));
         if (res.statusCode == 429 ||
             res.statusCode == 503 ||
             res.statusCode == 502 ||
@@ -726,6 +735,8 @@ class NetworkByteProvider extends AudioByteProvider {
   @override
   Future<void> abortActiveStream() async {
     _connectionGeneration++;
+    _inFlightAbort?.call();
+    _inFlightAbort = null;
     _activeAbort?.call();
     _activeAbort = null;
     await _hlsDelegate?.abortActiveStream();
@@ -734,6 +745,8 @@ class NetworkByteProvider extends AudioByteProvider {
   @override
   Future<void> close() async {
     _connectionGeneration++;
+    _inFlightAbort?.call();
+    _inFlightAbort = null;
     _activeAbort?.call();
     _activeAbort = null;
     await _hlsDelegate?.close();

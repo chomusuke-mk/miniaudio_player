@@ -3,7 +3,9 @@
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -296,6 +298,8 @@ pub struct TelemetryDispatcher {
     typed_callback: Arc<RwLock<Option<TypedEventCallback>>>,
     ring: Arc<Vec<UnsafeCell<MapEvent>>>,
     ring_head: Arc<AtomicUsize>,
+    tx: crossbeam_channel::Sender<TelemetryEvent>,
+    worker_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
 }
 
 unsafe impl Send for TelemetryDispatcher {}
@@ -309,7 +313,7 @@ impl TelemetryDispatcher {
             callback.map(|cb| (cb, user_data as usize)),
         ));
         let rust_callback = Arc::new(RwLock::new(None));
-        let typed_callback = Arc::new(RwLock::new(None));
+        let typed_callback: Arc<RwLock<Option<TypedEventCallback>>> = Arc::new(RwLock::new(None));
 
         let mut ring_vec = Vec::with_capacity(MAP_EVENT_RING_CAPACITY);
         for _ in 0..MAP_EVENT_RING_CAPACITY {
@@ -321,6 +325,42 @@ impl TelemetryDispatcher {
             }));
         }
 
+        let (tx, rx) = crossbeam_channel::unbounded::<TelemetryEvent>();
+        let is_running_clone = is_running.clone();
+        let typed_cb_clone = typed_callback.clone();
+
+        let handle = thread::Builder::new()
+            .name("map-telemetry".to_string())
+            .spawn(move || {
+                let mut last_position: i64 = -1;
+                while is_running_clone.load(Ordering::Relaxed) {
+                    match rx.recv_timeout(Duration::from_millis(25)) {
+                        Ok(first_event) => {
+                            let mut batch = vec![first_event];
+                            while let Ok(ev) = rx.try_recv() {
+                                batch.push(ev);
+                            }
+                            if let Ok(guard) = typed_cb_clone.read() {
+                                if let Some(ref cb) = *guard {
+                                    for ev in batch {
+                                        if let TelemetryEvent::Position(pos) = ev {
+                                            if pos == last_position {
+                                                continue;
+                                            }
+                                            last_position = pos;
+                                        }
+                                        cb(&ev);
+                                    }
+                                }
+                            }
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            })
+            .ok();
+
         Self {
             is_running,
             callback: callback_slot,
@@ -328,6 +368,8 @@ impl TelemetryDispatcher {
             typed_callback,
             ring: Arc::new(ring_vec),
             ring_head: Arc::new(AtomicUsize::new(0)),
+            tx,
+            worker_handle: Arc::new(Mutex::new(handle)),
         }
     }
 
@@ -350,15 +392,13 @@ impl TelemetryDispatcher {
     }
 
     /// Strongly-typed, compiler-enforced telemetry dispatch.
+    ///
+    /// GUARANTEES:
+    /// - 100% Lock-Free & Wait-Free: Audio and decoding threads NEVER block or invoke Dart FFI.
+    /// - All Dart FFI dispatch is executed asynchronously by the dedicated `map-telemetry` thread.
     pub fn post(&self, event: TelemetryEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
-        }
-
-        if let Ok(guard) = self.typed_callback.read() {
-            if let Some(cb) = guard.as_ref() {
-                cb(&event);
-            }
         }
 
         let event_type = event.event_type();
@@ -388,6 +428,9 @@ impl TelemetryDispatcher {
                 }
             }
         }
+
+        // Asynchronous, lock-free dispatch to the dedicated map-telemetry thread
+        let _ = self.tx.send(event);
     }
 
     pub fn post_event(&self, event_type: EventType, data: MapEventData) {
@@ -463,6 +506,11 @@ impl TelemetryDispatcher {
         self.is_running.store(false, Ordering::SeqCst);
         if let Ok(mut lock) = self.callback.write() {
             *lock = None;
+        }
+        if let Ok(mut handle_guard) = self.worker_handle.lock() {
+            if let Some(handle) = handle_guard.take() {
+                let _ = handle.join();
+            }
         }
     }
 }

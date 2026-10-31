@@ -9,6 +9,8 @@ enum AudioCodec {
   vorbis('vorbis'),
   pcm('pcm'),
   alac('alac'),
+  wavpack('wavpack'),
+  dsd('dsd'),
   unknown('unknown');
 
   final String name;
@@ -21,6 +23,27 @@ enum AudioCodec {
       // 1. FLAC: 'fLaC' (0x66, 0x4C, 0x61, 0x43)
       if (bytes[0] == 0x66 && bytes[1] == 0x4C && bytes[2] == 0x61 && bytes[3] == 0x43) {
         return AudioCodec.flac;
+      }
+
+      // WavPack: 'wvpk' (0x77, 0x76, 0x70, 0x6B)
+      if (bytes[0] == 0x77 && bytes[1] == 0x76 && bytes[2] == 0x70 && bytes[3] == 0x6B) {
+        return AudioCodec.wavpack;
+      }
+
+      // DSD: 'DSD ' (0x44, 0x53, 0x44, 0x20)
+      if (bytes[0] == 0x44 && bytes[1] == 0x53 && bytes[2] == 0x44 && bytes[3] == 0x20) {
+        return AudioCodec.dsd;
+      }
+
+      // Matroska / WebM EBML: 0x1A, 0x45, 0xDF, 0xA3
+      if (bytes[0] == 0x1A && bytes[1] == 0x45 && bytes[2] == 0xDF && bytes[3] == 0xA3) {
+        final probeLimit = min(4096, bytes.length);
+        final probeStr = String.fromCharCodes(bytes.sublist(0, probeLimit));
+        if (probeStr.contains('Opus') || probeStr.contains('opus')) return AudioCodec.opus;
+        if (probeStr.contains('vorbis')) return AudioCodec.vorbis;
+        if (probeStr.contains('FLAC')) return AudioCodec.flac;
+        if (probeStr.contains('aac') || probeStr.contains('A_AAC')) return AudioCodec.aac;
+        return AudioCodec.opus;
       }
 
       // 2. Ogg Container: 'OggS'
@@ -106,6 +129,11 @@ enum AudioFormat {
   mp2('mp2'),
   mp1('mp1'),
   oga('oga'),
+  wv('wv'),
+  webm('webm'),
+  mka('mka'),
+  dsf('dsf'),
+  dff('dff'),
   hls('hls'),
   m3u8('m3u8'),
   unknown('unknown');
@@ -129,6 +157,10 @@ enum AudioFormat {
         return AudioFormat.wav;
       case AudioCodec.alac:
         return AudioFormat.alac;
+      case AudioCodec.wavpack:
+        return AudioFormat.wv;
+      case AudioCodec.dsd:
+        return AudioFormat.dsf;
       case AudioCodec.unknown:
         return AudioFormat.unknown;
     }

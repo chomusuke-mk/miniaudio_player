@@ -27,6 +27,15 @@ rustfft = "6.2"
 rubato = "0.15"
 timestretch = "0.16"
 
+# Streaming HLS (M3U8) y Criptografía
+m3u8-rs = "6.0"
+aes = "0.8"
+cbc = "0.1"
+
+# Formatos Adicionales Audiófilos (MIT / Apache-2.0)
+ape-decoder = "0.3"
+wavicle = "0.1"
+
 [build-dependencies]
 cc = "1.2"
 
@@ -35,7 +44,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "fat"
 codegen-units = 1
 strip = true
 panic = "unwind"

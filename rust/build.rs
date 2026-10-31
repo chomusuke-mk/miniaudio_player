@@ -3,7 +3,11 @@ fn main() {
     build
         .file("c_src/miniaudio_device_bridge.c")
         .include("c_src")
-        .warnings(false);
+        .warnings(false)
+        .opt_level(3)
+        .flag_if_supported("-ffunction-sections")
+        .flag_if_supported("-fdata-sections")
+        .flag_if_supported("-fvisibility=hidden");
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "android" {

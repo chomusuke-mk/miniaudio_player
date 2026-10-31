@@ -615,12 +615,8 @@ class MiniaudioEngine<T> {
   ///   the queue HAS already advanced to `_activePlayer`), finalizes
   ///   `_activePlayer` at `_masterVolume` and stops `_standbyPlayer`.
   Future<void> _settleActiveTransition() async {
-    if (_standbyPrebufferFuture != null) {
-      try {
-        await _standbyPrebufferFuture;
-      } catch (_) {}
-      _standbyPrebufferFuture = null;
-    }
+    _bumpEpoch();
+    _standbyPrebufferFuture = null;
     final currentPhase = _phase;
     _log(
       '_settleActiveTransition: currentPhase=${currentPhase.name}, '
@@ -939,16 +935,18 @@ class MiniaudioEngine<T> {
           return;
         }
 
-        final shouldPlay = _phase == EnginePhase.completed || state.playing;
-        await _settleActiveTransition();
-
+        // Advance queue index immediately so UI reflects the next song at t=0
         final nextItem = await _queueManager.next(isManual: true);
         _emitQueueAndCursorState();
 
         if (nextItem == null) {
+          await _settleActiveTransition();
           await _enterEndOfQueue();
           return;
         }
+
+        final shouldPlay = _phase == EnginePhase.completed || state.playing;
+        await _settleActiveTransition();
 
         await _loadOrTransitionToTarget(
           nextItem,

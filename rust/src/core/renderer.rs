@@ -14,6 +14,7 @@ use crate::dsp::chain::DspChain;
 use crate::dsp::crossfeed::CrossfeedMode;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
+use crate::dsp::sonic::SonicStream;
 use crate::dsp::visualizer::VisualizerData;
 use crate::sync::ring_buffer::AudioConsumer;
 use crate::sync::seqlock::CachePaddedSeqlock;
@@ -48,6 +49,7 @@ pub struct AudioRenderer {
     pub device_channels: Arc<AtomicU32>,
     pub volume: Arc<AtomicU32>,
     pub rate: Arc<AtomicU32>,
+    pub pitch: Arc<AtomicU32>,
     pub position_frames: Arc<AtomicI64>,
     pub position_ms: Arc<AtomicI64>,
     pub duration_ms: Arc<AtomicI64>,
@@ -65,6 +67,8 @@ pub struct AudioRenderer {
     pub buffering_resumed_flag: Arc<AtomicBool>,
 
     pub dsp: DspChain,
+    pub sonic: SonicStream,
+    pub sonic_in_buf: Vec<f32>,
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     pub visualizer_enabled: Arc<AtomicBool>,
 
@@ -109,7 +113,11 @@ impl AudioRenderer {
                         DspCommand::SetVisualizerEnabled(en) => {
                             self.dsp.set_visualizer_enabled(*en)
                         }
-                        DspCommand::SetSampleRate(sr) => self.dsp.set_sample_rate(*sr),
+                        DspCommand::SetSampleRate(sr) => {
+                            self.dsp.set_sample_rate(*sr);
+                            let ch = self.device_channels.load(Ordering::Relaxed) as usize;
+                            self.sonic = SonicStream::new(*sr, ch.clamp(1, 8));
+                        }
                     }
                 }
                 chunk.commit_all();
@@ -121,6 +129,7 @@ impl AudioRenderer {
         if current_flush != self.local_flush_gen {
             self.local_flush_gen = current_flush;
             self.consumer.clear();
+            self.sonic.flush();
             self.flush_acknowledged.store(current_flush, Ordering::Release);
         }
 
@@ -134,8 +143,35 @@ impl AudioRenderer {
             return;
         }
 
-        // 3. Read chunk from audio consumer (wait-free, zero locks)
-        let read_samples = self.consumer.read_chunk(out_slice);
+        // 3. Read chunk from audio consumer with on-demand zero-latency time-stretching
+        let cur_rate = f32::from_bits(self.rate.load(Ordering::Relaxed)).clamp(0.25, 4.0);
+        let cur_pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed)).clamp(0.5, 2.0);
+        let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;
+
+        let (read_samples, un_stretched_frames_consumed) = if !is_stretched {
+            let read = self.consumer.read_chunk(out_slice);
+            (read, (read / ch) as i64)
+        } else {
+            self.sonic.set_speed(cur_rate);
+            self.sonic.set_pitch(cur_pitch);
+            let mut frames_out = 0;
+            while frames_out < frame_count {
+                let got = self.sonic.read_float(&mut out_slice[frames_out * ch..]);
+                frames_out += got;
+                if frames_out >= frame_count {
+                    break;
+                }
+                let needed = ((frame_count - frames_out) * ch).max(512);
+                let to_read = needed.min(self.sonic_in_buf.len());
+                let read = self.consumer.read_chunk(&mut self.sonic_in_buf[..to_read]);
+                if read == 0 {
+                    break;
+                }
+                self.sonic.write_float(&self.sonic_in_buf[..read]);
+            }
+            let un_stretched = (frames_out as f64 * cur_rate as f64).round() as i64;
+            (frames_out * ch, un_stretched)
+        };
 
         if read_samples < total_samples {
             out_slice[read_samples..].fill(0.0);
@@ -156,10 +192,8 @@ impl AudioRenderer {
                 self.state.store(STATE_PLAYING, Ordering::Release);
                 self.buffering_resumed_flag.store(true, Ordering::Release);
             }
-            let frames_played = (read_samples / ch) as i64;
             let sr = self.device_sample_rate.load(Ordering::Relaxed) as i64;
-            let rate = f32::from_bits(self.rate.load(Ordering::Relaxed)).max(0.01);
-            let track_subframes = ((frames_played as f64) * (rate as f64) * 1024.0) as i64;
+            let track_subframes = un_stretched_frames_consumed * 1024;
             let total_subframes =
                 self.position_frames.fetch_add(track_subframes, Ordering::Relaxed) + track_subframes;
             let total_frames = total_subframes / 1024;

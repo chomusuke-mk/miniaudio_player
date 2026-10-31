@@ -26,10 +26,17 @@ class RawHttpResponse {
 Future<RawHttpResponse> sendHttpGetRequest(
   Uri uri, {
   Map<String, String>? headers,
+  void Function(void Function() abort)? onConnecting,
 }) async {
   final client = HttpClient()
     ..userAgent = defaultHttpUserAgent
     ..autoUncompress = false;
+
+  onConnecting?.call(() {
+    try {
+      client.close(force: true);
+    } catch (_) {}
+  });
 
   try {
     final req = await client.getUrl(uri);

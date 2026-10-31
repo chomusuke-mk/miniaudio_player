@@ -11,6 +11,11 @@ pub enum ContainerFormat {
     OggOpus = 5,
     Wav = 6,
     Mp4 = 7,
+    Matroska = 8,
+    Dsf = 9,
+    Ape = 10,
+    WavPack = 11,
+    Hls = 12,
 }
 
 #[repr(C)]
@@ -110,6 +115,36 @@ impl FormatSniffer {
             let status = Self::detect_mp4(data, total_size, &mut info);
             return (status, info);
         }
+        if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+            info.container = ContainerFormat::Matroska;
+            info.audio_start = 0;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
+        if data.starts_with(b"DSD ") {
+            info.container = ContainerFormat::Dsf;
+            info.audio_start = 0;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
+        if data.starts_with(b"MAC ") {
+            info.container = ContainerFormat::Ape;
+            info.audio_start = 0;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
+        if data.starts_with(b"wvpk") {
+            info.container = ContainerFormat::WavPack;
+            info.audio_start = 0;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
+        if data.starts_with(b"#EXTM3U") || data.starts_with(b"#EXT-X-") {
+            info.container = ContainerFormat::Hls;
+            info.audio_start = 0;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
 
         // Leading ID3v2 tags
         let mut p: usize = 0;
@@ -145,6 +180,24 @@ impl FormatSniffer {
         if data[p..].starts_with(b"fLaC") {
             let status = Self::detect_flac(data, total_size, p as i64, &mut info);
             return (status, info);
+        }
+        if data[p..].starts_with(b"MAC ") {
+            info.container = ContainerFormat::Ape;
+            info.audio_start = p as i64;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
+        if data[p..].starts_with(b"wvpk") {
+            info.container = ContainerFormat::WavPack;
+            info.audio_start = p as i64;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
+        }
+        if data[p..].starts_with(b"DSD ") {
+            info.container = ContainerFormat::Dsf;
+            info.audio_start = p as i64;
+            info.audio_end = total_size;
+            return (BoundaryStatus::Found, info);
         }
 
         let status = Self::detect_mpeg(data, total_size, p as i64, &mut info);

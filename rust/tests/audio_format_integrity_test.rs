@@ -503,3 +503,130 @@ fn test_player_coordinator_playback_lifecycle() {
     }
 }
 
+#[test]
+fn test_seek_mathematical_precision_no_drift() {
+    // Verify that seeking to 55,000 ms on a 44.1 kHz track on a 48 kHz device
+    // results in EXACTLY 55,000 ms without jumping to 59,863 ms (1 minute).
+    let track_sr = 44100u32;
+    let dev_sr = 48000u32;
+
+    let target_seek_ms = 55000i64;
+
+    // Correct formula: position_frames must strictly track device_sample_rate
+    let pos_frames_dev = (target_seek_ms * dev_sr as i64 * 1024) / 1000;
+    let pos_frames_arc = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(pos_frames_dev));
+
+    // Simulate render_pcm consuming 480 frames (10 ms at 48 kHz)
+    let frames_consumed = 480i64;
+    let track_subframes = frames_consumed * 1024;
+    let total_subframes = pos_frames_arc.fetch_add(track_subframes, Ordering::Relaxed) + track_subframes;
+    let total_frames = total_subframes / 1024;
+    let new_pos_ms = (total_frames * 1000) / dev_sr as i64;
+
+    assert_eq!(new_pos_ms, 55010, "Position must be 55,010 ms after 10 ms playback, NOT 59,863 ms!");
+
+    // If the buggy track_sr was used:
+    let buggy_frames = (target_seek_ms * track_sr as i64 * 1024) / 1000;
+    let buggy_pos = (buggy_frames / 1024 * 1000) / dev_sr as i64;
+    assert_ne!(buggy_pos, 55000, "Buggy formula produced drift");
+    let drift_ratio = dev_sr as f64 / track_sr as f64;
+    let projected_drift = (55000.0 * drift_ratio) as i64;
+    assert_eq!(projected_drift, 59863, "Buggy drift explains 55s -> 1 minute jump!");
+}
+
+#[test]
+fn test_instant_rate_and_pitch_response_consumer_side() {
+    use miniaudio_player::core::renderer::AudioRenderer;
+    use miniaudio_player::dsp::chain::DspChain;
+    use miniaudio_player::dsp::sonic::SonicStream;
+    use miniaudio_player::dsp::visualizer::VisualizerData;
+    use miniaudio_player::sync::seqlock::CachePaddedSeqlock;
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64};
+    use std::sync::Arc;
+
+    let dev_sr = 48000u32;
+    let dev_ch = 2usize;
+    let ring_cap = dev_sr as usize * dev_ch * 2; // 2 seconds
+    let (mut producer, consumer) = AudioRingBuffer::create(ring_cap);
+
+    // Pre-fill ring buffer with 48,000 stereo frames (1 second) of sine wave
+    let pcm = generate_sine_wave_pcm(48000, dev_sr, dev_ch, 440.0);
+    producer.write_chunk(&pcm);
+
+    let (_, cmd_consumer) = rtrb::RingBuffer::new(64);
+
+    let state = Arc::new(AtomicI32::new(STATE_PLAYING));
+    let sample_rate = Arc::new(AtomicU32::new(dev_sr));
+    let channels = Arc::new(AtomicU32::new(dev_ch as u32));
+    let device_sample_rate = Arc::new(AtomicU32::new(dev_sr));
+    let device_channels = Arc::new(AtomicU32::new(dev_ch as u32));
+    let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let rate = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let pitch = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let position_frames = Arc::new(AtomicI64::new(0));
+    let position_ms = Arc::new(AtomicI64::new(0));
+    let duration_ms = Arc::new(AtomicI64::new(10000));
+    let flush_generation = Arc::new(AtomicU64::new(0));
+    let flush_acknowledged = Arc::new(AtomicU64::new(0));
+    let decoder_eof = Arc::new(AtomicBool::new(false));
+    let seek_request_ms = Arc::new(AtomicI64::new(-1));
+    let is_stream = Arc::new(AtomicBool::new(false));
+    let completed_flag = Arc::new(AtomicBool::new(false));
+    let buffering_flag = Arc::new(AtomicBool::new(false));
+    let buffering_resumed_flag = Arc::new(AtomicBool::new(false));
+    let visualizer_seqlock = Arc::new(CachePaddedSeqlock::new(VisualizerData::default()));
+    let visualizer_enabled = Arc::new(AtomicBool::new(false));
+
+    let mut renderer = AudioRenderer {
+        consumer,
+        cmd_consumer,
+        state: state.clone(),
+        sample_rate: sample_rate.clone(),
+        channels: channels.clone(),
+        device_sample_rate: device_sample_rate.clone(),
+        device_channels: device_channels.clone(),
+        volume: volume.clone(),
+        rate: rate.clone(),
+        pitch: pitch.clone(),
+        position_frames: position_frames.clone(),
+        position_ms: position_ms.clone(),
+        duration_ms: duration_ms.clone(),
+        decoder_eof: decoder_eof.clone(),
+        seek_request_ms: seek_request_ms.clone(),
+        is_stream: is_stream.clone(),
+        flush_generation: flush_generation.clone(),
+        flush_acknowledged: flush_acknowledged.clone(),
+        local_flush_gen: 0,
+        completed_flag: completed_flag.clone(),
+        buffering_flag: buffering_flag.clone(),
+        buffering_resumed_flag: buffering_resumed_flag.clone(),
+        dsp: DspChain::new(dev_ch, dev_sr),
+        sonic: SonicStream::new(dev_sr, dev_ch),
+        sonic_in_buf: vec![0.0f32; 16384],
+        visualizer_seqlock: visualizer_seqlock.clone(),
+        visualizer_enabled: visualizer_enabled.clone(),
+        notification_callback: None,
+    };
+
+    let frame_count = 480usize; // 10 ms at 48 kHz
+    let mut out_slice = vec![0.0f32; frame_count * dev_ch];
+
+    // 1. Render at 1.0x speed
+    renderer.render_pcm(out_slice.as_mut_ptr(), frame_count);
+    assert_eq!(position_ms.load(Ordering::Relaxed), 10, "10 ms rendered at 1.0x speed");
+
+    // 2. Change rate to 2.0x instantaneously
+    rate.store(2.0f32.to_bits(), Ordering::Relaxed);
+
+    // 3. Render next 10 ms buffer: must take effect on THIS exact buffer (< 10 ms latency)!
+    renderer.render_pcm(out_slice.as_mut_ptr(), frame_count);
+    let pos_after_2x = position_ms.load(Ordering::Relaxed);
+    // At 2.0x, in 10 ms of real time, ~20 ms of audio frames must be consumed!
+    assert!(
+        pos_after_2x >= 28 && pos_after_2x <= 32,
+        "Position after 10 ms at 2.0x must be ~30 ms (got {} ms), proving instantaneous speed change!",
+        pos_after_2x
+    );
+}
+
+

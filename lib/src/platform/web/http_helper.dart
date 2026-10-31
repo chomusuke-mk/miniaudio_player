@@ -25,8 +25,14 @@ class RawHttpResponse {
 Future<RawHttpResponse> sendHttpGetRequest(
   Uri uri, {
   Map<String, String>? headers,
+  void Function(void Function() abort)? onConnecting,
 }) async {
   final abortController = web.AbortController();
+  onConnecting?.call(() {
+    try {
+      abortController.abort();
+    } catch (_) {}
+  });
   final jsHeaders = web.Headers();
   if (headers != null) {
     headers.forEach((k, v) {

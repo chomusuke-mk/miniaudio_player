@@ -52,6 +52,7 @@ class UnifiedAudioLoader {
   bool _isStopped = false;
   bool _isDisposed = false;
   bool _isReopening = false;
+  int? _inFlightTargetByte;
 
   void _pauseSubscription() {
     final sub = _responseSub;
@@ -1003,8 +1004,14 @@ class UnifiedAudioLoader {
       return;
     }
 
-    // 2. Cache MISS (0): cancel any prior stream and open provider at targetByte.
+    // 2. Cache MISS (0):
+    // Check if the in-flight request is already targeting this byte.
+    if (_isReopening && _inFlightTargetByte == targetByte) {
+      return;
+    }
+
     _isReopening = true;
+    _inFlightTargetByte = targetByte;
     _isPausedByBackpressure = false;
     _isStreamEnded = false;
     final int thisSeekGen = ++_seekGeneration;
@@ -1030,6 +1037,7 @@ class UnifiedAudioLoader {
     } finally {
       if (_seekGeneration == thisSeekGen) {
         _isReopening = false;
+        _inFlightTargetByte = null;
       }
     }
   }

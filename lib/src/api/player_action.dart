@@ -423,10 +423,13 @@ class PlayerAction {
     await _player.backend.stop();
   }
 
+  int _seekGeneration = 0;
+
   /// Seeks to the specified [position].
   Future<void> seek(Duration position) {
     _player.ensureNotDisposed();
     final targetPosition = position < Duration.zero ? Duration.zero : position;
+    final thisSeekGen = ++_seekGeneration;
 
     Future<void> doSeek() async {
       if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
@@ -436,9 +439,12 @@ class PlayerAction {
         } catch (_) {
           return;
         }
-        if (_openGeneration != gen) {
+        if (_openGeneration != gen || _seekGeneration != thisSeekGen) {
           return;
         }
+      }
+      if (_seekGeneration != thisSeekGen) {
+        return;
       }
       return _executeSeek(targetPosition);
     }

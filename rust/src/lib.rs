@@ -5,6 +5,7 @@ pub mod buffer;
 pub mod core;
 pub mod decoder;
 pub mod dsp;
+pub mod hls;
 pub mod sync;
 
 pub use bridge::ffi::*;
