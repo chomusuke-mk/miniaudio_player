@@ -37,8 +37,8 @@ fn test_ring_buffer_concurrent_threads() {
         let mut buffer = [0.0f32; 128];
         while count < total_samples {
             let to_write = (total_samples - count).min(128);
-            for i in 0..to_write {
-                buffer[i] = (count + i) as f32;
+            for (i, item) in buffer.iter_mut().enumerate().take(to_write) {
+                *item = (count + i) as f32;
             }
             let written = producer.write_chunk(&buffer[..to_write]);
             count += written;
@@ -53,8 +53,8 @@ fn test_ring_buffer_concurrent_threads() {
         let mut buffer = [0.0f32; 128];
         while count < total_samples {
             let read = consumer.read_chunk(&mut buffer);
-            for i in 0..read {
-                assert_eq!(buffer[i], (count + i) as f32);
+            for (i, &val) in buffer.iter().enumerate().take(read) {
+                assert_eq!(val, (count + i) as f32);
             }
             count += read;
             if read == 0 {

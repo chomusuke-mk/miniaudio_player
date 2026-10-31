@@ -13,7 +13,7 @@ use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::silence::SilenceConfig;
 use crate::dsp::visualizer::VisualizerData;
 use crate::frb_generated::StreamSink;
-use crate::sync::telemetry::{EventType, MapEventData, TelemetryDispatcher};
+use crate::sync::telemetry::{TelemetryDispatcher, TelemetryEvent};
 
 use super::types::*;
 
@@ -22,115 +22,103 @@ fn c_buf_to_string(buf: &[u8]) -> String {
     String::from_utf8_lossy(&buf[..len]).to_string()
 }
 
-fn map_telemetry_event(event_type: EventType, data: &MapEventData) -> Option<RustPlayerEvent> {
-    unsafe {
-        match event_type {
-            EventType::None => None,
-            EventType::State => Some(RustPlayerEvent::State(data.state)),
-            EventType::Position => Some(RustPlayerEvent::Position(data.position_ms)),
-            EventType::Duration => Some(RustPlayerEvent::Duration(data.duration_ms)),
-            EventType::IsPlaying => Some(RustPlayerEvent::IsPlaying(data.is_playing != 0)),
-            EventType::IsBuffering => Some(RustPlayerEvent::IsBuffering(data.is_buffering != 0)),
-            EventType::IsCompleted => Some(RustPlayerEvent::IsCompleted(data.is_completed != 0)),
-            EventType::Volume => Some(RustPlayerEvent::Volume(data.volume)),
-            EventType::Rate => Some(RustPlayerEvent::Rate(data.rate)),
-            EventType::Pitch => Some(RustPlayerEvent::Pitch(data.pitch)),
-            EventType::Bitrate => Some(RustPlayerEvent::Bitrate(data.bitrate)),
-            EventType::BufferSize => Some(RustPlayerEvent::BufferSize(data.buffer_size)),
-            EventType::Device => {
-                let dev = &data.device;
-                Some(RustPlayerEvent::Device(RustAudioDevice {
-                    id: c_buf_to_string(&dev.id),
-                    effective_id: c_buf_to_string(&dev.effective_id),
-                    name: c_buf_to_string(&dev.name),
-                    is_default: dev.is_default != 0,
-                    is_auto: dev.is_auto != 0,
-                }))
-            }
-            EventType::Visualizer => {
-                let vis = &data.visualizer;
-                Some(RustPlayerEvent::Visualizer(RustVisualizerData {
-                    bands: vis.bands.to_vec(),
-                    rms: vis.rms,
-                    peak: vis.peak,
-                    left: vis.left,
-                    right: vis.right,
-                }))
-            }
-            EventType::VisualizerEnabled => {
-                Some(RustPlayerEvent::VisualizerEnabled(data.visualizer_enabled != 0))
-            }
-            EventType::BufferedRange => {
-                let br = &data.buffered_range;
-                Some(RustPlayerEvent::BufferedRange(RustBufferedRange {
-                    start_ms: br.start_ms,
-                    end_ms: br.end_ms,
-                    duration_ms: br.duration_ms,
-                    fill_percentage: br.fill_percentage,
-                    stream_percentage: br.stream_percentage,
-                    is_buffering: br.is_buffering != 0,
-                    is_eof: br.is_eof != 0,
-                }))
-            }
-            EventType::SilenceConfig => {
-                let sc = &data.silence_config;
-                Some(RustPlayerEvent::SilenceConfig(RustSilenceConfig {
-                    mode: sc.mode as i32,
-                    threshold_db: sc.threshold_db,
-                    min_silence_duration_ms: sc.min_silence_duration_ms,
-                    padding_ms: sc.padding_ms,
-                    enabled: sc.mode != crate::dsp::silence::SilenceMode::Disabled,
-                }))
-            }
-            EventType::SilenceSaved => Some(RustPlayerEvent::SilenceSaved(data.silence_saved_ms)),
-            EventType::Equalizer => {
-                let eq = &data.equalizer;
-                Some(RustPlayerEvent::Equalizer(RustEqualizerParams {
-                    gains: vec![
-                        eq.hz31, eq.hz63, eq.hz125, eq.hz250, eq.hz500, eq.hz1k, eq.hz2k, eq.hz4k,
-                        eq.hz8k, eq.hz16k,
-                    ],
-                    enabled: true,
-                }))
-            }
-            EventType::Preamp => Some(RustPlayerEvent::Preamp(data.preamp_db)),
-            EventType::ReplayGain => {
-                let rg = &data.replay_gain;
-                Some(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                    gain_db: rg.gain_db,
-                    peak: rg.peak,
-                    prevent_clipping: rg.prevent_clipping != 0,
-                    enabled: rg.enabled != 0,
-                }))
-            }
-            EventType::Balance => Some(RustPlayerEvent::Balance(data.balance)),
-            EventType::Mono => Some(RustPlayerEvent::Mono(data.mono_enabled != 0)),
-            EventType::Crossfeed => Some(RustPlayerEvent::Crossfeed(data.crossfeed_mode)),
-            EventType::Spatializer => {
-                let sp = &data.spatializer;
-                Some(RustPlayerEvent::Spatializer {
-                    enabled: sp.enabled != 0,
-                    width: sp.width,
-                })
-            }
-            EventType::Reverb => {
-                let rv = &data.reverb;
-                Some(RustPlayerEvent::Reverb(RustReverbParams {
-                    room_size: rv.room_size,
-                    damping: rv.damping,
-                    wet: rv.wet,
-                    dry: rv.dry,
-                    width: rv.width,
-                    mode: 0.0,
-                    enabled: rv.enabled != 0,
-                }))
-            }
-            EventType::Limiter => Some(RustPlayerEvent::Limiter(data.limiter_enabled != 0)),
-            EventType::Error => Some(RustPlayerEvent::Error {
-                message: format!("Error code {}", data.error_code),
-                code: data.error_code,
-            }),
+fn map_telemetry_event(event: &TelemetryEvent) -> Option<RustPlayerEvent> {
+    match event {
+        TelemetryEvent::None => None,
+        TelemetryEvent::State(s) => Some(RustPlayerEvent::State(*s)),
+        TelemetryEvent::Position(p) => Some(RustPlayerEvent::Position(*p)),
+        TelemetryEvent::Duration(d) => Some(RustPlayerEvent::Duration(*d)),
+        TelemetryEvent::IsPlaying(p) => Some(RustPlayerEvent::IsPlaying(*p)),
+        TelemetryEvent::IsBuffering(b) => Some(RustPlayerEvent::IsBuffering(*b)),
+        TelemetryEvent::IsCompleted(c) => Some(RustPlayerEvent::IsCompleted(*c)),
+        TelemetryEvent::Volume(v) => Some(RustPlayerEvent::Volume(*v)),
+        TelemetryEvent::Rate(r) => Some(RustPlayerEvent::Rate(*r)),
+        TelemetryEvent::Pitch(p) => Some(RustPlayerEvent::Pitch(*p)),
+        TelemetryEvent::Bitrate(b) => Some(RustPlayerEvent::Bitrate(*b)),
+        TelemetryEvent::BufferSize(b) => Some(RustPlayerEvent::BufferSize(*b)),
+        TelemetryEvent::Device(dev) => {
+            Some(RustPlayerEvent::Device(RustAudioDevice {
+                id: c_buf_to_string(&dev.id),
+                effective_id: c_buf_to_string(&dev.effective_id),
+                name: c_buf_to_string(&dev.name),
+                is_default: dev.is_default != 0,
+                is_auto: dev.is_auto != 0,
+            }))
         }
+        TelemetryEvent::Visualizer(vis) => {
+            Some(RustPlayerEvent::Visualizer(RustVisualizerData {
+                bands: vis.bands.to_vec(),
+                rms: vis.rms,
+                peak: vis.peak,
+                left: vis.left,
+                right: vis.right,
+            }))
+        }
+        TelemetryEvent::VisualizerEnabled(e) => Some(RustPlayerEvent::VisualizerEnabled(*e)),
+        TelemetryEvent::BufferedRange(br) => {
+            Some(RustPlayerEvent::BufferedRange(RustBufferedRange {
+                start_ms: br.start_ms,
+                end_ms: br.end_ms,
+                duration_ms: br.duration_ms,
+                fill_percentage: br.fill_percentage,
+                stream_percentage: br.stream_percentage,
+                is_buffering: br.is_buffering != 0,
+                is_eof: br.is_eof != 0,
+            }))
+        }
+        TelemetryEvent::SilenceConfig(sc) => {
+            Some(RustPlayerEvent::SilenceConfig(RustSilenceConfig {
+                mode: sc.mode as i32,
+                threshold_db: sc.threshold_db,
+                min_silence_duration_ms: sc.min_silence_duration_ms,
+                padding_ms: sc.padding_ms,
+                enabled: sc.mode != crate::dsp::silence::SilenceMode::Disabled,
+            }))
+        }
+        TelemetryEvent::SilenceSaved(s) => Some(RustPlayerEvent::SilenceSaved(*s)),
+        TelemetryEvent::Equalizer(eq) => {
+            Some(RustPlayerEvent::Equalizer(RustEqualizerParams {
+                gains: vec![
+                    eq.hz31, eq.hz63, eq.hz125, eq.hz250, eq.hz500, eq.hz1k, eq.hz2k, eq.hz4k,
+                    eq.hz8k, eq.hz16k,
+                ],
+                enabled: true,
+            }))
+        }
+        TelemetryEvent::Preamp(p) => Some(RustPlayerEvent::Preamp(*p)),
+        TelemetryEvent::ReplayGain(rg) => {
+            Some(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: rg.gain_db,
+                peak: rg.peak,
+                prevent_clipping: rg.prevent_clipping != 0,
+                enabled: rg.enabled != 0,
+            }))
+        }
+        TelemetryEvent::Balance(b) => Some(RustPlayerEvent::Balance(*b)),
+        TelemetryEvent::Mono(m) => Some(RustPlayerEvent::Mono(*m)),
+        TelemetryEvent::Crossfeed(c) => Some(RustPlayerEvent::Crossfeed(*c)),
+        TelemetryEvent::Spatializer(sp) => {
+            Some(RustPlayerEvent::Spatializer {
+                enabled: sp.enabled != 0,
+                width: sp.width,
+            })
+        }
+        TelemetryEvent::Reverb(rv) => {
+            Some(RustPlayerEvent::Reverb(RustReverbParams {
+                room_size: rv.room_size,
+                damping: rv.damping,
+                wet: rv.wet,
+                dry: rv.dry,
+                width: rv.width,
+                mode: 0.0,
+                enabled: rv.enabled != 0,
+            }))
+        }
+        TelemetryEvent::Limiter(l) => Some(RustPlayerEvent::Limiter(*l)),
+        TelemetryEvent::Error(code) => Some(RustPlayerEvent::Error {
+            message: format!("Error code {}", code),
+            code: *code,
+        }),
     }
 }
 
@@ -179,9 +167,9 @@ impl RustPlayer {
     pub fn subscribe_events(&self, sink: StreamSink<RustPlayerEvent>) -> Result<(), String> {
         let sink_clone = sink.clone();
         *self.event_sink.lock().unwrap() = Some(sink);
-        self.telemetry.set_rust_callback(Some(Box::new(move |event_type, data| {
-            if let Some(event) = map_telemetry_event(event_type, data) {
-                let _ = sink_clone.add(event);
+        self.telemetry.set_typed_callback(Some(Box::new(move |event| {
+            if let Some(mapped) = map_telemetry_event(event) {
+                let _ = sink_clone.add(mapped);
             }
         })));
         Ok(())
@@ -255,14 +243,8 @@ impl RustPlayer {
     pub fn notify_open_error(&self, error_code: i32) {
         let lock = self.inner.lock().unwrap();
         lock.state.store(STATE_ERROR, Ordering::Relaxed);
-        lock.telemetry.post_event(
-            EventType::State,
-            MapEventData { state: STATE_ERROR },
-        );
-        lock.telemetry.post_event(
-            EventType::Error,
-            MapEventData { error_code },
-        );
+        lock.telemetry.post(TelemetryEvent::State(STATE_ERROR));
+        lock.telemetry.post(TelemetryEvent::Error(error_code));
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -979,17 +961,14 @@ pub fn analyze_audio_file(
         waveform_points,
     };
 
-    let mut result = crate::dsp::analysis::analyze_file(&path, &config)
+    let result = crate::dsp::analysis::analyze_file(&path, &config)
         .map_err(|e| format!("Analysis failed with error {}", e))?;
 
-    let waveform_points_vec = if result.has_waveform != 0 && !result.waveform.points.is_null() {
-        let count = result.waveform.point_count as usize;
-        let slice = unsafe { std::slice::from_raw_parts(result.waveform.points, count) };
-        slice.to_vec()
+    let waveform_points_vec = if result.has_waveform != 0 {
+        result.waveform.points
     } else {
         Vec::new()
     };
-    crate::dsp::analysis::free_analysis_result(&mut result);
 
     Ok(RustAudioAnalysisResult {
         duration_ms: result.duration_ms,
@@ -1051,14 +1030,8 @@ pub fn analyze_audio_memory(
         byte_size,
     ).map_err(|e| format!("Analysis failed with error {}", e))?;
 
-    let waveform_points_vec = if result.has_waveform != 0 && !result.waveform.points.is_null() {
-        let count = result.waveform.point_count as usize;
-        let slice = unsafe { std::slice::from_raw_parts(result.waveform.points, count) };
-        let vec = slice.to_vec();
-        unsafe {
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(result.waveform.points, count));
-        }
-        vec
+    let waveform_points_vec = if result.has_waveform != 0 {
+        result.waveform.points
     } else {
         Vec::new()
     };

@@ -105,9 +105,9 @@ impl Visualizer {
             sum_sq_r += r * r;
 
             let mono = (l + r) * 0.5;
-            for b in 0..EQ_BAND_COUNT {
+            for (b, band_acc) in band_sq.iter_mut().enumerate().take(EQ_BAND_COUNT) {
                 let filtered = self.bpf_filters[b].process(mono);
-                band_sq[b] += filtered * filtered;
+                *band_acc += filtered * filtered;
             }
         }
 
@@ -143,10 +143,10 @@ impl Visualizer {
 
     fn recalculate_filters(&mut self) {
         let fs = self.sample_rate as f64;
-        for b in 0..EQ_BAND_COUNT {
+        for (b, &freq) in EQ_FREQUENCIES.iter().enumerate().take(EQ_BAND_COUNT) {
             let s1 = self.bpf_filters[b].s1;
             let s2 = self.bpf_filters[b].s2;
-            self.bpf_filters[b] = BiquadDf2t::bandpass(EQ_FREQUENCIES[b], fs, 1.2);
+            self.bpf_filters[b] = BiquadDf2t::bandpass(freq, fs, 1.2);
             self.bpf_filters[b].s1 = s1;
             self.bpf_filters[b].s2 = s2;
         }

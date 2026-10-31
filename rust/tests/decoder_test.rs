@@ -202,7 +202,7 @@ fn test_probe_matrix_files() {
     for fname in &files {
         let p = format!("../example/assets/music/{}", fname);
         let bytes = std::fs::read(&p).unwrap();
-        let ext = fname.split('.').last();
+        let ext = fname.split('.').next_back();
         let cursor = std::io::Cursor::new(bytes);
         let mss = symphonia::core::io::MediaSourceStream::new(Box::new(cursor), Default::default());
         let mut hint = symphonia::core::formats::probe::Hint::new();

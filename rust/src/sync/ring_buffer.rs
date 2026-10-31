@@ -36,6 +36,11 @@ impl AudioProducer {
     pub fn is_full(&self) -> bool {
         self.producer.is_full()
     }
+
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.producer.buffer().capacity()
+    }
 }
 
 pub struct AudioConsumer {

@@ -1,6 +1,8 @@
 pub mod config;
 pub mod player;
 pub mod renderer;
+pub mod types;
+pub mod typestate;
 
 pub use config::PlayerConfig;
 pub use player::{
@@ -10,3 +12,5 @@ pub use player::{
     STATE_STOPPED,
 };
 pub use renderer::{AudioRenderer, DspCommand};
+pub use types::{Decibels, PlayerError, SampleRate, Volume};
+pub use typestate::{Active, Open, Paused, Player, Stopped, Uninitialized};

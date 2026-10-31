@@ -28,7 +28,7 @@ impl Default for AudioAnalysisConfig {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ReplayGainData {
     pub gain_db: f32,
     pub peak: f32,
@@ -36,23 +36,23 @@ pub struct ReplayGainData {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WaveformData {
     pub point_count: u32,
-    pub points: *mut f32,
+    pub points: Vec<f32>,
 }
 
 impl Default for WaveformData {
     fn default() -> Self {
         Self {
             point_count: 0,
-            points: std::ptr::null_mut(),
+            points: Vec::new(),
         }
     }
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioAnalysisResult {
     pub status: i32,
     pub duration_ms: i64,
@@ -293,12 +293,10 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
             points.push(chunk_peak.clamp(0.0, 1.0));
         }
 
-        let mut boxed_slice = points.into_boxed_slice();
         result.waveform = WaveformData {
             point_count: target_points as u32,
-            points: boxed_slice.as_mut_ptr(),
+            points,
         };
-        let _ = Box::into_raw(boxed_slice); // Retain memory for caller
         result.has_waveform = 1;
     }
 
@@ -324,16 +322,7 @@ pub fn analyze_memory(data: &[u8], config: &AudioAnalysisConfig) -> Result<Audio
 }
 
 pub fn free_analysis_result(result: &mut AudioAnalysisResult) {
-    if result.has_waveform != 0 && !result.waveform.points.is_null() && result.waveform.point_count > 0 {
-        unsafe {
-            let slice = std::slice::from_raw_parts_mut(
-                result.waveform.points,
-                result.waveform.point_count as usize,
-            );
-            drop(Box::from_raw(slice));
-        }
-        result.waveform.points = std::ptr::null_mut();
-        result.waveform.point_count = 0;
-        result.has_waveform = 0;
-    }
+    result.waveform.points.clear();
+    result.waveform.point_count = 0;
+    result.has_waveform = 0;
 }

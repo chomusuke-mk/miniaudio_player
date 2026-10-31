@@ -122,6 +122,7 @@ pub struct PlayerCoordinator {
     pub flush_acknowledged: Arc<AtomicU64>,
     pub completed_flag: Arc<AtomicBool>,
     pub buffering_flag: Arc<AtomicBool>,
+    pub buffering_resumed_flag: Arc<AtomicBool>,
 
     // Cached DSP settings
     pub eq_params: Arc<RwLock<EqualizerParams>>,
@@ -138,6 +139,7 @@ pub struct PlayerCoordinator {
     pub engine: Arc<Mutex<Option<SymphoniaEngine>>>,
     pub seek_request_ms: Arc<AtomicI64>,
     pub decoder_eof: Arc<AtomicBool>,
+    pub stream_reinit_needed: Arc<AtomicBool>,
 
     pub decoder_running: Arc<AtomicBool>,
     pub decoder_wake: Arc<(Mutex<bool>, Condvar)>,
@@ -149,6 +151,7 @@ unsafe impl Send for PlayerCoordinator {}
 unsafe impl Sync for PlayerCoordinator {}
 
 impl PlayerCoordinator {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(
         target_sample_rate: u32,
         target_channels: u32,
@@ -199,6 +202,7 @@ impl PlayerCoordinator {
         let flush_acknowledged = Arc::new(AtomicU64::new(0));
         let completed_flag = Arc::new(AtomicBool::new(false));
         let buffering_flag = Arc::new(AtomicBool::new(false));
+        let buffering_resumed_flag = Arc::new(AtomicBool::new(false));
 
         let eq_params = Arc::new(RwLock::new(EqualizerParams::default()));
         let preamp_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
@@ -214,6 +218,7 @@ impl PlayerCoordinator {
         let engine = Arc::new(Mutex::new(None));
         let seek_request_ms = Arc::new(AtomicI64::new(-1));
         let decoder_eof = Arc::new(AtomicBool::new(false));
+        let stream_reinit_needed = Arc::new(AtomicBool::new(false));
 
         let decoder_running = Arc::new(AtomicBool::new(true));
         let decoder_wake = Arc::new((Mutex::new(false), Condvar::new()));
@@ -256,6 +261,7 @@ impl PlayerCoordinator {
             local_flush_gen: 0,
             completed_flag: completed_flag.clone(),
             buffering_flag: buffering_flag.clone(),
+            buffering_resumed_flag: buffering_resumed_flag.clone(),
             dsp: DspChain::new(ch as usize, sr),
             visualizer_seqlock: visualizer_seqlock.clone(),
             visualizer_enabled: visualizer_enabled.clone(),
@@ -311,6 +317,7 @@ impl PlayerCoordinator {
             flush_acknowledged,
             completed_flag,
             buffering_flag,
+            buffering_resumed_flag,
             eq_params,
             preamp_db,
             replay_gain,
@@ -324,6 +331,7 @@ impl PlayerCoordinator {
             engine,
             seek_request_ms,
             decoder_eof,
+            stream_reinit_needed,
             decoder_running,
             decoder_wake,
             decoder_thread: None,
@@ -365,11 +373,13 @@ impl PlayerCoordinator {
         let tele = self.telemetry.clone();
         let completed_flag = self.completed_flag.clone();
         let buffering_flag = self.buffering_flag.clone();
+        let buffering_resumed_flag = self.buffering_resumed_flag.clone();
         let visualizer_seqlock = self.visualizer_seqlock.clone();
         let visualizer_enabled = self.visualizer_enabled.clone();
         let completion_cb = self.completion_cb.clone();
         let flush_generation = self.flush_generation.clone();
         let flush_acknowledged = self.flush_acknowledged.clone();
+        let stream_reinit_needed = self.stream_reinit_needed.clone();
 
         let handle = thread::Builder::new()
             .name("map-decoder".to_string())
@@ -401,24 +411,14 @@ impl PlayerCoordinator {
                         }
                     }
 
-                    // 2. Check buffering flag from AudioRenderer
+                    // 2. Check buffering flags from AudioRenderer
                     if buffering_flag.swap(false, Ordering::AcqRel) {
                         tele.post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
                         tele.post_event(EventType::State, MapEventData { state: STATE_BUFFERING });
                     }
-
-                    // 3. Periodic Position Telemetry dispatch
-                    let cur_pos = pos_ms.load(Ordering::Relaxed);
-                    if cur_pos != last_tele_pos && (cur_pos / 33 != last_tele_pos / 33 || cur_pos == 0) {
-                        last_tele_pos = cur_pos;
-                        tele.post_event(EventType::Position, MapEventData { position_ms: cur_pos });
-                    }
-
-                    // 4. Periodic Visualizer Telemetry dispatch (~30fps)
-                    if visualizer_enabled.load(Ordering::Relaxed) && last_vis_instant.elapsed() >= Duration::from_millis(33) {
-                        last_vis_instant = std::time::Instant::now();
-                        let vis = visualizer_seqlock.read();
-                        tele.post_event(EventType::Visualizer, MapEventData { visualizer: vis });
+                    if buffering_resumed_flag.swap(false, Ordering::AcqRel) {
+                        tele.post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
+                        tele.post_event(EventType::State, MapEventData { state: STATE_PLAYING });
                     }
 
                     let cur_sr = sr_arc.load(Ordering::Relaxed);
@@ -467,8 +467,22 @@ impl PlayerCoordinator {
 
                         decoder_eof_arc.store(false, Ordering::Relaxed);
                         if let Ok(mut eng_lock) = engine_arc.lock() {
-                            if let Some(ref mut eng) = *eng_lock {
-                                let _ = eng.seek_ms(target_seek as u64);
+                            let mut reinit = false;
+                            if target_seek == 0 && is_stream_arc.load(Ordering::Relaxed) {
+                                if let Ok(guard) = trip_buf_arc.read() {
+                                    if let Some(ref trip) = *guard {
+                                        let reader = trip.create_reader();
+                                        if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
+                                            *eng_lock = Some(new_eng);
+                                            reinit = true;
+                                        }
+                                    }
+                                }
+                            }
+                            if !reinit {
+                                if let Some(ref mut eng) = *eng_lock {
+                                    let _ = eng.seek_ms(target_seek as u64);
+                                }
                             }
                         }
                         sonic.flush();
@@ -497,6 +511,91 @@ impl PlayerCoordinator {
                         let guard = lock.lock().unwrap();
                         let _ = cvar.wait_timeout(guard, Duration::from_millis(30));
                         continue;
+                    }
+
+                    // Reinitialize engine if live stream was flushed/reopened
+                    if stream_reinit_needed.load(Ordering::Acquire) {
+                        let can_init = {
+                            if let Ok(guard) = trip_buf_arc.read() {
+                                if let Some(ref trip) = *guard {
+                                    trip.head_size() > 0 || trip.range_end() > trip.range_start() || trip.is_eof()
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        };
+                        if can_init {
+                            let maybe_reader = {
+                                if let Ok(guard) = trip_buf_arc.read() {
+                                    guard.as_ref().map(|t| t.create_reader())
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(reader) = maybe_reader {
+                                if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
+                                    let new_sr = new_eng.sample_rate();
+                                    let new_ch = new_eng.channels();
+                                    if new_sr > 0 {
+                                        sr_arc.store(new_sr, Ordering::Relaxed);
+                                    }
+                                    if new_ch > 0 {
+                                        ch_arc.store(new_ch as u32, Ordering::Relaxed);
+                                    }
+                                    if let Ok(mut eng_lock) = engine_arc.lock() {
+                                        *eng_lock = Some(new_eng);
+                                    }
+                                    stream_reinit_needed.store(false, Ordering::Release);
+                                    decoder_eof_arc.store(false, Ordering::Relaxed);
+                                }
+                            }
+                        } else {
+                            let (lock, cvar) = &*wake;
+                            let guard = lock.lock().unwrap();
+                            let _ = cvar.wait_timeout(guard, Duration::from_millis(10));
+                            continue;
+                        }
+                    }
+
+                    // 3. Periodic Position Telemetry dispatch (active playback only)
+                    let cur_pos = pos_ms.load(Ordering::Relaxed);
+                    if cur_pos != last_tele_pos && (cur_pos / 33 != last_tele_pos / 33 || cur_pos == 0) {
+                        last_tele_pos = cur_pos;
+                        tele.post_event(EventType::Position, MapEventData { position_ms: cur_pos });
+                    }
+
+                    // 4. Periodic Visualizer Telemetry dispatch (~30fps, active playback only)
+                    if visualizer_enabled.load(Ordering::Relaxed) && last_vis_instant.elapsed() >= Duration::from_millis(33) {
+                        last_vis_instant = std::time::Instant::now();
+                        let vis = visualizer_seqlock.read();
+                        tele.post_event(EventType::Visualizer, MapEventData { visualizer: vis });
+                    }
+
+                    if state.load(Ordering::Relaxed) == STATE_BUFFERING {
+                        let has_enough_audio = {
+                            if let Ok(guard) = producer_arc.lock() {
+                                if let Some(ref prod) = *guard {
+                                    prod.slots_available() < prod.capacity()
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        };
+                        if has_enough_audio {
+                            state.store(STATE_PLAYING, Ordering::Relaxed);
+                            tele.post_event(
+                                EventType::IsBuffering,
+                                MapEventData { is_buffering: 0 },
+                            );
+                            tele.post_event(
+                                EventType::State,
+                                MapEventData { state: STATE_PLAYING },
+                            );
+                        }
                     }
 
                     // Check producer slots
@@ -534,15 +633,28 @@ impl PlayerCoordinator {
                                 }
                                 Err(err) => {
                                     if is_stream_arc.load(Ordering::Relaxed) {
-                                        state.store(STATE_BUFFERING, Ordering::Relaxed);
-                                        tele.post_event(
-                                            EventType::IsBuffering,
-                                            MapEventData { is_buffering: 1 },
-                                        );
-                                        tele.post_event(
-                                            EventType::State,
-                                            MapEventData { state: STATE_BUFFERING },
-                                        );
+                                        let is_empty = {
+                                            if let Ok(guard) = producer_arc.lock() {
+                                                if let Some(ref prod) = *guard {
+                                                    prod.slots_available() >= prod.capacity()
+                                                } else {
+                                                    true
+                                                }
+                                            } else {
+                                                true
+                                            }
+                                        };
+                                        if is_empty && state.load(Ordering::Relaxed) != STATE_BUFFERING {
+                                            state.store(STATE_BUFFERING, Ordering::Relaxed);
+                                            tele.post_event(
+                                                EventType::IsBuffering,
+                                                MapEventData { is_buffering: 1 },
+                                            );
+                                            tele.post_event(
+                                                EventType::State,
+                                                MapEventData { state: STATE_BUFFERING },
+                                            );
+                                        }
                                         thread::sleep(Duration::from_millis(10));
                                         continue;
                                     } else {
@@ -579,7 +691,7 @@ impl PlayerCoordinator {
                             }
                         }
 
-                        if cur_state == STATE_BUFFERING {
+                        if state.load(Ordering::Relaxed) == STATE_BUFFERING {
                             state.store(STATE_PLAYING, Ordering::Relaxed);
                             tele.post_event(
                                 EventType::IsBuffering,
@@ -598,7 +710,7 @@ impl PlayerCoordinator {
 
                     if decoded_ok && !frame_buf.is_empty() {
                         decoder_eof_arc.store(false, Ordering::Relaxed);
-                        if cur_state == STATE_BUFFERING {
+                        if state.load(Ordering::Relaxed) == STATE_BUFFERING {
                             state.store(STATE_PLAYING, Ordering::Relaxed);
                             tele.post_event(
                                 EventType::IsBuffering,
@@ -934,11 +1046,12 @@ impl PlayerCoordinator {
     }
 
     fn init_engine(&mut self, eng: SymphoniaEngine, is_stream: bool, total_bytes: u64, initial_data: &[u8]) {
+        let is_live = self.trip_buffer.read().map(|g| g.as_ref().map(|t| t.is_live()).unwrap_or(false)).unwrap_or(false);
         let sr = eng.sample_rate();
         let ch = eng.channels();
-        let mut dur = eng.duration_ms().unwrap_or(0) as i64;
+        let mut dur = if is_live { 0 } else { eng.duration_ms().unwrap_or(0) as i64 };
 
-        if dur <= 0 {
+        if !is_live && dur <= 0 {
             if let Ok(guard) = self.trip_buffer.read() {
                 if let Some(ref trip) = *guard {
                     let tail = trip.tail_data();
@@ -955,7 +1068,7 @@ impl PlayerCoordinator {
             }
         }
 
-        if dur <= 0 && total_bytes > 0 && !initial_data.is_empty() {
+        if !is_live && dur <= 0 && total_bytes > 0 && !initial_data.is_empty() {
             if let Some((_br, d)) = FormatSniffer::sniff_stream_info(initial_data, total_bytes as i64) {
                 if d > 0 {
                     dur = d;
@@ -985,7 +1098,7 @@ impl PlayerCoordinator {
 
         *self.engine.lock().unwrap() = Some(eng);
 
-        self.state.store(STATE_PAUSED, Ordering::Relaxed);
+        self.state.store(STATE_STOPPED, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::Duration,
             MapEventData { duration_ms: dur },
@@ -996,7 +1109,7 @@ impl PlayerCoordinator {
         );
         self.telemetry.post_event(
             EventType::State,
-            MapEventData { state: STATE_PAUSED },
+            MapEventData { state: STATE_STOPPED },
         );
 
         let (_, cvar) = &*self.decoder_wake;
@@ -1024,6 +1137,11 @@ impl PlayerCoordinator {
             trip.flush(new_stream_offset as u64);
             self.decoder_eof.store(false, Ordering::Relaxed);
             self.flush_generation.fetch_add(1, Ordering::Release);
+            if trip.is_live() {
+                self.stream_reinit_needed.store(true, Ordering::Release);
+            }
+            let (_, cvar) = &*self.decoder_wake;
+            cvar.notify_all();
             MAP_SUCCESS
         } else {
             MAP_ERROR_INVALID_STATE
@@ -1257,6 +1375,7 @@ impl PlayerCoordinator {
         }
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn read_pcm_frames(
         &mut self,
         frames_out: *mut f32,
@@ -1338,6 +1457,13 @@ impl PlayerCoordinator {
         }
 
         self.decoder_eof.store(false, Ordering::Relaxed);
+        if let Ok(guard) = self.trip_buffer.read() {
+            if let Some(ref trip) = *guard {
+                if trip.is_live() {
+                    self.stream_reinit_needed.store(true, Ordering::Release);
+                }
+            }
+        }
         self.telemetry.post_event(
             EventType::IsCompleted,
             MapEventData { is_completed: 0 },
@@ -1488,6 +1614,7 @@ impl PlayerCoordinator {
         self.period_size_in_frames.load(Ordering::Relaxed)
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_device(&mut self, device_id: *const c_char) -> i32 {
         if self.device_ctx.is_null() {
             return MAP_ERROR_INVALID_STATE;

@@ -60,6 +60,7 @@ pub struct AudioRenderer {
 
     pub completed_flag: Arc<AtomicBool>,
     pub buffering_flag: Arc<AtomicBool>,
+    pub buffering_resumed_flag: Arc<AtomicBool>,
 
     pub dsp: DspChain,
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
@@ -79,6 +80,7 @@ impl AudioRenderer {
     /// - 100% Allocation-Free: Never allocates on the heap.
     /// - Wait-Free: Returns in bounded $\mathcal{O}(frame\_count \times channels)$ execution time.
     #[inline]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
         // 1. Drain pending DSP commands (wait-free SPSC from PlayerCoordinator)
         let available_cmds = self.cmd_consumer.slots();
@@ -148,6 +150,10 @@ impl AudioRenderer {
         }
 
         if read_samples > 0 {
+            if cur_state == STATE_BUFFERING {
+                self.state.store(STATE_PLAYING, Ordering::Release);
+                self.buffering_resumed_flag.store(true, Ordering::Release);
+            }
             let frames_played = (read_samples / ch) as i64;
             let sr = self.sample_rate.load(Ordering::Relaxed) as i64;
             let rate = f32::from_bits(self.rate.load(Ordering::Relaxed)).max(0.01);

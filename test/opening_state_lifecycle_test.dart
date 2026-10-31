@@ -125,7 +125,10 @@ void main() {
       // First play local file to advance position and telemetry
       await player.action.open(localWavFile.path);
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final deadline = DateTime.now().add(const Duration(milliseconds: 600));
+      while (player.state.position.inMilliseconds <= 100 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
       expect(player.state.position.inMilliseconds, greaterThan(100));
       expect(player.state.playing, isTrue);
 

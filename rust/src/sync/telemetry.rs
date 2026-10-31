@@ -71,7 +71,7 @@ impl Default for BufferedRange {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeviceInfo {
     pub id: [u8; 516],
     pub effective_id: [u8; 516],
@@ -97,6 +97,142 @@ impl Default for DeviceInfo {
 pub struct SpatializerData {
     pub enabled: i32,
     pub width: f32,
+}
+
+/// Strongly-typed, compiler-enforced telemetry events replacing untagged C unions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TelemetryEvent {
+    None,
+    State(i32),
+    Position(i64),
+    Duration(i64),
+    IsPlaying(bool),
+    IsBuffering(bool),
+    IsCompleted(bool),
+    Volume(f32),
+    Rate(f32),
+    Pitch(f32),
+    Bitrate(u32),
+    BufferSize(u32),
+    Device(Box<DeviceInfo>),
+    Visualizer(VisualizerData),
+    VisualizerEnabled(bool),
+    BufferedRange(BufferedRange),
+    SilenceConfig(SilenceConfig),
+    SilenceSaved(i64),
+    Equalizer(EqualizerParams),
+    Preamp(f32),
+    ReplayGain(ReplayGainConfig),
+    Balance(f32),
+    Mono(bool),
+    Crossfeed(i32),
+    Spatializer(SpatializerData),
+    Reverb(ReverbConfig),
+    Limiter(bool),
+    Error(i32),
+}
+
+impl TelemetryEvent {
+    pub fn event_type(&self) -> EventType {
+        match self {
+            TelemetryEvent::None => EventType::None,
+            TelemetryEvent::State(_) => EventType::State,
+            TelemetryEvent::Position(_) => EventType::Position,
+            TelemetryEvent::Duration(_) => EventType::Duration,
+            TelemetryEvent::IsPlaying(_) => EventType::IsPlaying,
+            TelemetryEvent::IsBuffering(_) => EventType::IsBuffering,
+            TelemetryEvent::IsCompleted(_) => EventType::IsCompleted,
+            TelemetryEvent::Volume(_) => EventType::Volume,
+            TelemetryEvent::Rate(_) => EventType::Rate,
+            TelemetryEvent::Pitch(_) => EventType::Pitch,
+            TelemetryEvent::Bitrate(_) => EventType::Bitrate,
+            TelemetryEvent::BufferSize(_) => EventType::BufferSize,
+            TelemetryEvent::Device(_) => EventType::Device,
+            TelemetryEvent::Visualizer(_) => EventType::Visualizer,
+            TelemetryEvent::VisualizerEnabled(_) => EventType::VisualizerEnabled,
+            TelemetryEvent::BufferedRange(_) => EventType::BufferedRange,
+            TelemetryEvent::SilenceConfig(_) => EventType::SilenceConfig,
+            TelemetryEvent::SilenceSaved(_) => EventType::SilenceSaved,
+            TelemetryEvent::Equalizer(_) => EventType::Equalizer,
+            TelemetryEvent::Preamp(_) => EventType::Preamp,
+            TelemetryEvent::ReplayGain(_) => EventType::ReplayGain,
+            TelemetryEvent::Balance(_) => EventType::Balance,
+            TelemetryEvent::Mono(_) => EventType::Mono,
+            TelemetryEvent::Crossfeed(_) => EventType::Crossfeed,
+            TelemetryEvent::Spatializer(_) => EventType::Spatializer,
+            TelemetryEvent::Reverb(_) => EventType::Reverb,
+            TelemetryEvent::Limiter(_) => EventType::Limiter,
+            TelemetryEvent::Error(_) => EventType::Error,
+        }
+    }
+
+    pub fn to_map_event_data(&self) -> MapEventData {
+        match self {
+            TelemetryEvent::None => MapEventData { state: 0 },
+            TelemetryEvent::State(s) => MapEventData { state: *s },
+            TelemetryEvent::Position(p) => MapEventData { position_ms: *p },
+            TelemetryEvent::Duration(d) => MapEventData { duration_ms: *d },
+            TelemetryEvent::IsPlaying(p) => MapEventData { is_playing: if *p { 1 } else { 0 } },
+            TelemetryEvent::IsBuffering(b) => MapEventData { is_buffering: if *b { 1 } else { 0 } },
+            TelemetryEvent::IsCompleted(c) => MapEventData { is_completed: if *c { 1 } else { 0 } },
+            TelemetryEvent::Volume(v) => MapEventData { volume: *v },
+            TelemetryEvent::Rate(r) => MapEventData { rate: *r },
+            TelemetryEvent::Pitch(p) => MapEventData { pitch: *p },
+            TelemetryEvent::Bitrate(b) => MapEventData { bitrate: *b },
+            TelemetryEvent::BufferSize(b) => MapEventData { buffer_size: *b },
+            TelemetryEvent::Device(d) => MapEventData { device: **d },
+            TelemetryEvent::Visualizer(v) => MapEventData { visualizer: *v },
+            TelemetryEvent::VisualizerEnabled(e) => MapEventData { visualizer_enabled: if *e { 1 } else { 0 } },
+            TelemetryEvent::BufferedRange(br) => MapEventData { buffered_range: *br },
+            TelemetryEvent::SilenceConfig(sc) => MapEventData { silence_config: *sc },
+            TelemetryEvent::SilenceSaved(s) => MapEventData { silence_saved_ms: *s },
+            TelemetryEvent::Equalizer(eq) => MapEventData { equalizer: *eq },
+            TelemetryEvent::Preamp(p) => MapEventData { preamp_db: *p },
+            TelemetryEvent::ReplayGain(rg) => MapEventData { replay_gain: *rg },
+            TelemetryEvent::Balance(b) => MapEventData { balance: *b },
+            TelemetryEvent::Mono(m) => MapEventData { mono_enabled: if *m { 1 } else { 0 } },
+            TelemetryEvent::Crossfeed(c) => MapEventData { crossfeed_mode: *c },
+            TelemetryEvent::Spatializer(sp) => MapEventData { spatializer: *sp },
+            TelemetryEvent::Reverb(rv) => MapEventData { reverb: *rv },
+            TelemetryEvent::Limiter(l) => MapEventData { limiter_enabled: if *l { 1 } else { 0 } },
+            TelemetryEvent::Error(e) => MapEventData { error_code: *e },
+        }
+    }
+
+    pub fn from_raw(event_type: EventType, data: &MapEventData) -> Self {
+        unsafe {
+            match event_type {
+                EventType::None => TelemetryEvent::None,
+                EventType::State => TelemetryEvent::State(data.state),
+                EventType::Position => TelemetryEvent::Position(data.position_ms),
+                EventType::Duration => TelemetryEvent::Duration(data.duration_ms),
+                EventType::IsPlaying => TelemetryEvent::IsPlaying(data.is_playing != 0),
+                EventType::IsBuffering => TelemetryEvent::IsBuffering(data.is_buffering != 0),
+                EventType::IsCompleted => TelemetryEvent::IsCompleted(data.is_completed != 0),
+                EventType::Volume => TelemetryEvent::Volume(data.volume),
+                EventType::Rate => TelemetryEvent::Rate(data.rate),
+                EventType::Pitch => TelemetryEvent::Pitch(data.pitch),
+                EventType::Bitrate => TelemetryEvent::Bitrate(data.bitrate),
+                EventType::BufferSize => TelemetryEvent::BufferSize(data.buffer_size),
+                EventType::Device => TelemetryEvent::Device(Box::new(data.device)),
+                EventType::Visualizer => TelemetryEvent::Visualizer(data.visualizer),
+                EventType::VisualizerEnabled => TelemetryEvent::VisualizerEnabled(data.visualizer_enabled != 0),
+                EventType::BufferedRange => TelemetryEvent::BufferedRange(data.buffered_range),
+                EventType::SilenceConfig => TelemetryEvent::SilenceConfig(data.silence_config),
+                EventType::SilenceSaved => TelemetryEvent::SilenceSaved(data.silence_saved_ms),
+                EventType::Equalizer => TelemetryEvent::Equalizer(data.equalizer),
+                EventType::Preamp => TelemetryEvent::Preamp(data.preamp_db),
+                EventType::ReplayGain => TelemetryEvent::ReplayGain(data.replay_gain),
+                EventType::Balance => TelemetryEvent::Balance(data.balance),
+                EventType::Mono => TelemetryEvent::Mono(data.mono_enabled != 0),
+                EventType::Crossfeed => TelemetryEvent::Crossfeed(data.crossfeed_mode),
+                EventType::Spatializer => TelemetryEvent::Spatializer(data.spatializer),
+                EventType::Reverb => TelemetryEvent::Reverb(data.reverb),
+                EventType::Limiter => TelemetryEvent::Limiter(data.limiter_enabled != 0),
+                EventType::Error => TelemetryEvent::Error(data.error_code),
+            }
+        }
+    }
 }
 
 #[repr(C)]
@@ -142,6 +278,7 @@ pub struct MapEvent {
 
 pub type EventCallback = unsafe extern "C" fn(user_data: *mut c_void, event: *const MapEvent);
 pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>;
+pub type TypedEventCallback = Box<dyn Fn(&TelemetryEvent) + Send + Sync>;
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
@@ -156,6 +293,7 @@ pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callback: Arc<RwLock<Option<(EventCallback, usize)>>>,
     rust_callback: Arc<RwLock<Option<RustEventCallback>>>,
+    typed_callback: Arc<RwLock<Option<TypedEventCallback>>>,
     ring: Arc<Vec<UnsafeCell<MapEvent>>>,
     ring_head: Arc<AtomicUsize>,
 }
@@ -164,12 +302,14 @@ unsafe impl Send for TelemetryDispatcher {}
 unsafe impl Sync for TelemetryDispatcher {}
 
 impl TelemetryDispatcher {
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(callback: Option<EventCallback>, user_data: *mut c_void) -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let callback_slot = Arc::new(RwLock::new(
             callback.map(|cb| (cb, user_data as usize)),
         ));
         let rust_callback = Arc::new(RwLock::new(None));
+        let typed_callback = Arc::new(RwLock::new(None));
 
         let mut ring_vec = Vec::with_capacity(MAP_EVENT_RING_CAPACITY);
         for _ in 0..MAP_EVENT_RING_CAPACITY {
@@ -185,6 +325,7 @@ impl TelemetryDispatcher {
             is_running,
             callback: callback_slot,
             rust_callback,
+            typed_callback,
             ring: Arc::new(ring_vec),
             ring_head: Arc::new(AtomicUsize::new(0)),
         }
@@ -202,10 +343,26 @@ impl TelemetryDispatcher {
         }
     }
 
-    pub fn post_event(&self, event_type: EventType, data: MapEventData) {
+    pub fn set_typed_callback(&self, callback: Option<TypedEventCallback>) {
+        if let Ok(mut lock) = self.typed_callback.write() {
+            *lock = callback;
+        }
+    }
+
+    /// Strongly-typed, compiler-enforced telemetry dispatch.
+    pub fn post(&self, event: TelemetryEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
         }
+
+        if let Ok(guard) = self.typed_callback.read() {
+            if let Some(cb) = guard.as_ref() {
+                cb(&event);
+            }
+        }
+
+        let event_type = event.event_type();
+        let data = event.to_map_event_data();
 
         let slot = self.ring_head.fetch_add(1, Ordering::Relaxed) % MAP_EVENT_RING_CAPACITY;
         let event_ptr = self.ring[slot].get();
@@ -233,6 +390,11 @@ impl TelemetryDispatcher {
         }
     }
 
+    pub fn post_event(&self, event_type: EventType, data: MapEventData) {
+        let typed_event = TelemetryEvent::from_raw(event_type, &data);
+        self.post(typed_event);
+    }
+
     pub fn dispatch(&self, event: MapEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
@@ -244,38 +406,46 @@ impl TelemetryDispatcher {
             *event_ptr = event;
         }
 
+        let event_type = match event.event_type {
+            1 => EventType::State,
+            2 => EventType::Position,
+            3 => EventType::Duration,
+            4 => EventType::IsPlaying,
+            5 => EventType::IsBuffering,
+            6 => EventType::IsCompleted,
+            7 => EventType::Volume,
+            8 => EventType::Rate,
+            9 => EventType::Pitch,
+            10 => EventType::Bitrate,
+            11 => EventType::BufferSize,
+            12 => EventType::Device,
+            13 => EventType::Visualizer,
+            14 => EventType::VisualizerEnabled,
+            15 => EventType::BufferedRange,
+            16 => EventType::SilenceConfig,
+            17 => EventType::SilenceSaved,
+            18 => EventType::Equalizer,
+            19 => EventType::Preamp,
+            20 => EventType::ReplayGain,
+            21 => EventType::Balance,
+            22 => EventType::Mono,
+            23 => EventType::Crossfeed,
+            24 => EventType::Spatializer,
+            25 => EventType::Reverb,
+            26 => EventType::Limiter,
+            27 => EventType::Error,
+            _ => EventType::None,
+        };
+
+        let typed = TelemetryEvent::from_raw(event_type, &event.data);
+        if let Ok(guard) = self.typed_callback.read() {
+            if let Some(cb) = guard.as_ref() {
+                cb(&typed);
+            }
+        }
+
         if let Ok(guard) = self.rust_callback.read() {
             if let Some(cb) = guard.as_ref() {
-                let event_type = match event.event_type {
-                    1 => EventType::State,
-                    2 => EventType::Position,
-                    3 => EventType::Duration,
-                    4 => EventType::IsPlaying,
-                    5 => EventType::IsBuffering,
-                    6 => EventType::IsCompleted,
-                    7 => EventType::Volume,
-                    8 => EventType::Rate,
-                    9 => EventType::Pitch,
-                    10 => EventType::Bitrate,
-                    11 => EventType::BufferSize,
-                    12 => EventType::Device,
-                    13 => EventType::Visualizer,
-                    14 => EventType::VisualizerEnabled,
-                    15 => EventType::BufferedRange,
-                    16 => EventType::SilenceConfig,
-                    17 => EventType::SilenceSaved,
-                    18 => EventType::Equalizer,
-                    19 => EventType::Preamp,
-                    20 => EventType::ReplayGain,
-                    21 => EventType::Balance,
-                    22 => EventType::Mono,
-                    23 => EventType::Crossfeed,
-                    24 => EventType::Spatializer,
-                    25 => EventType::Reverb,
-                    26 => EventType::Limiter,
-                    27 => EventType::Error,
-                    _ => EventType::None,
-                };
                 cb(event_type, &event.data);
             }
         }

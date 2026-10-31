@@ -387,7 +387,7 @@ impl TripartiteBuffer {
     }
 
     pub fn read_blocking(&self, offset: u64, out: &mut [u8], timeout: Option<Duration>) -> Result<usize, BufferError> {
-        let mut remaining_timeout = timeout.unwrap_or(Duration::from_millis(50));
+        let mut remaining_timeout = timeout.unwrap_or(Duration::from_millis(2000));
 
         loop {
             match self.read_at(offset, out) {
@@ -434,10 +434,10 @@ impl TripartiteBuffer {
     pub fn seek(&self, target_offset: u64) -> Result<(), BufferError> {
         let mut b = self.inner.lock().unwrap();
         b.read_cursor = target_offset;
-        if target_offset >= b.range_start && target_offset < b.range_end {
+        b.is_eof = false;
+        if target_offset < b.head_data.len() as u64 || (target_offset >= b.range_start && target_offset < b.range_end) {
             b.state = BufferState::Ready;
-            b.is_eof = false;
-        } else if !b.is_eof {
+        } else {
             b.state = BufferState::Buffering;
         }
         self.data_ready_cond.notify_all();
@@ -446,17 +446,34 @@ impl TripartiteBuffer {
 
     pub fn try_seek_cached(&self, target_offset: u64) -> (bool, bool) {
         let mut b = self.inner.lock().unwrap();
-        let is_hit = target_offset >= b.range_start && target_offset < b.range_end;
-        if is_hit {
-            b.read_cursor = target_offset;
-            b.state = BufferState::Ready;
-            if let Some(tot) = b.total_size {
-                if b.range_end >= tot {
-                    b.is_eof = true;
-                }
+        let effective_audio_start = b.audio_start;
+        let effective_audio_end = b.audio_end.or(b.total_size).unwrap_or(0);
+        let audio_target = if target_offset < effective_audio_start { effective_audio_start } else { target_offset };
+
+        let in_ring = audio_target >= b.range_start && (
+            audio_target < b.range_end ||
+            (b.is_eof && audio_target <= b.range_end) ||
+            (effective_audio_end > 0 && b.range_end >= effective_audio_end && audio_target <= effective_audio_end)
+        );
+        let contiguous_from_start = b.range_start <= effective_audio_start;
+        let full_file_in_ram = b.total_size.map(|tot| {
+            tot > 0 && contiguous_from_start && (b.is_eof || (effective_audio_end > 0 && b.range_end >= effective_audio_end))
+        }).unwrap_or(false);
+
+        if in_ring || full_file_in_ram {
+            let seek_from_start = full_file_in_ram || contiguous_from_start;
+            b.read_cursor = if seek_from_start && target_offset == 0 { 0 } else { audio_target };
+            b.should_abort = false;
+            b.state = if full_file_in_ram || (b.is_eof && in_ring) {
+                BufferState::Eof
+            } else {
+                BufferState::Ready
+            };
+            if full_file_in_ram {
+                b.is_eof = true;
             }
-            let contiguous = b.range_start <= b.audio_start;
-            (true, contiguous)
+            self.data_ready_cond.notify_all();
+            (true, contiguous_from_start)
         } else {
             (false, false)
         }
@@ -571,6 +588,14 @@ impl TripartiteBuffer {
 
     pub fn is_live(&self) -> bool {
         self.inner.lock().unwrap().is_live
+    }
+
+    pub fn range_start(&self) -> u64 {
+        self.inner.lock().unwrap().range_start
+    }
+
+    pub fn range_end(&self) -> u64 {
+        self.inner.lock().unwrap().range_end
     }
 
     pub fn is_tail_locked(&self) -> bool {

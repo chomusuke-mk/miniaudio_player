@@ -4,4 +4,7 @@ pub mod telemetry;
 
 pub use ring_buffer::{AudioConsumer, AudioProducer, AudioRingBuffer};
 pub use seqlock::CachePaddedSeqlock;
-pub use telemetry::{EventCallback, EventType, MapEvent, MapEventData, TelemetryDispatcher};
+pub use telemetry::{
+    EventCallback, EventType, MapEvent, MapEventData, TelemetryDispatcher, TelemetryEvent,
+    TypedEventCallback,
+};
