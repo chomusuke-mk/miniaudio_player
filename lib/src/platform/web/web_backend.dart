@@ -419,6 +419,35 @@ class WebPlayerBackend implements PlayerBackend {
   }
 
   @override
+  Future<void> openCustomStream({
+    required int streamId,
+    int? totalSize,
+    required bool isSeekable,
+    required Uint8List initialBytes,
+  }) async {
+    throw UnsupportedError('openCustomStream is not supported on web yet');
+  }
+
+  @override
+  void supplyCustomBytes({
+    required int streamId,
+    required int requestId,
+    required Uint8List data,
+    required bool isEof,
+  }) {
+    throw UnsupportedError('supplyCustomBytes is not supported on web yet');
+  }
+
+  @override
+  void notifyCustomError({
+    required int streamId,
+    required int requestId,
+    required String errorMessage,
+  }) {
+    throw UnsupportedError('notifyCustomError is not supported on web yet');
+  }
+
+  @override
   int streamFeed(Uint8List chunk) {
     if (_isDisposed || chunk.isEmpty) return MapResult.errorInvalidState;
     if (_totalSize > 0 && (_rangeEnd - _readCursorByte) + chunk.length > _bufferCapacity) {

@@ -130,7 +130,18 @@ abstract class RustPlayer implements RustOpaqueInterface {
           periodSize: periodSize,
           playbackDeviceId: playbackDeviceId);
 
+  void notifyCustomError(
+      {required int streamId,
+      required BigInt requestId,
+      required String errorMessage});
+
   void notifyOpenError({required int errorCode});
+
+  Future<void> openCustomStream(
+      {required int streamId,
+      BigInt? totalSize,
+      required bool isSeekable,
+      required List<int> initialBytes});
 
   Future<void> openFile({required String path});
 
@@ -212,4 +223,10 @@ abstract class RustPlayer implements RustOpaqueInterface {
       required PlatformInt64 newStreamOffset});
 
   Stream<RustPlayerEvent> subscribeEvents();
+
+  void supplyCustomBytes(
+      {required int streamId,
+      required BigInt requestId,
+      required List<int> data,
+      required bool isEof});
 }

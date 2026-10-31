@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::bridge::ffi::*;
-use crate::buffer::TripartiteBuffer;
+use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, TripartiteBuffer};
 use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{BoundaryInfo, ContainerFormat, FormatSniffer, SymphoniaEngine};
 use crate::dsp::crossfeed::CrossfeedMode;
@@ -107,6 +107,7 @@ pub struct PlayerCoordinator {
     pub is_stream: Arc<AtomicBool>,
     pub trip_buffer: Arc<RwLock<Option<TripartiteBuffer>>>,
     pub boundary_info: Arc<RwLock<Option<BoundaryInfo>>>,
+    pub custom_source_handle: Arc<RwLock<Option<CustomByteSourceHandle>>>,
 
     pub telemetry: Arc<TelemetryDispatcher>,
     pub completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
@@ -178,6 +179,7 @@ impl PlayerCoordinator {
         let is_stream = Arc::new(AtomicBool::new(false));
         let trip_buffer = Arc::new(RwLock::new(None));
         let boundary_info = Arc::new(RwLock::new(None));
+        let custom_source_handle = Arc::new(RwLock::new(None));
 
         let telemetry = Arc::new(TelemetryDispatcher::new(None, std::ptr::null_mut()));
         let completion_cb = Arc::new(RwLock::new(
@@ -298,6 +300,7 @@ impl PlayerCoordinator {
             is_stream,
             trip_buffer,
             boundary_info,
+            custom_source_handle,
             telemetry,
             completion_cb,
             silence_config,
@@ -697,6 +700,7 @@ impl PlayerCoordinator {
 
     pub fn begin_open(&mut self) -> i32 {
         let _ = self.stop();
+        *self.custom_source_handle.write().unwrap() = None;
         self.decoder_eof.store(false, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
         self.telemetry.post_event(
@@ -863,6 +867,70 @@ impl PlayerCoordinator {
         *self.trip_buffer.write().unwrap() = Some(trip);
         self.init_engine(eng, true, tot, initial_data);
         MAP_SUCCESS
+    }
+
+    pub fn open_custom_source(
+        &mut self,
+        source: CustomDartByteSource,
+        handle: CustomByteSourceHandle,
+        total_size: Option<u64>,
+        is_seekable: bool,
+        initial_bytes: &[u8],
+    ) -> i32 {
+        let _ = self.begin_open();
+
+        let mut hint = None;
+        if !initial_bytes.is_empty() {
+            let (_status, boundary) = FormatSniffer::detect_head_boundary(
+                initial_bytes,
+                total_size.map(|s| s as i64).unwrap_or(-1),
+            );
+            hint = match boundary.container {
+                ContainerFormat::Mp3 => Some("mp3"),
+                ContainerFormat::Adts => Some("aac"),
+                ContainerFormat::Flac => Some("flac"),
+                ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
+                ContainerFormat::Wav => Some("wav"),
+                ContainerFormat::Mp4 => Some("mp4"),
+                ContainerFormat::Unknown => None,
+            };
+        }
+
+        *self.custom_source_handle.write().unwrap() = Some(handle);
+
+        let eng = match SymphoniaEngine::new(source, hint) {
+            Ok(e) => e,
+            Err(_) => {
+                *self.custom_source_handle.write().unwrap() = None;
+                self.state.store(STATE_ERROR, Ordering::Relaxed);
+                self.telemetry.post_event(
+                    EventType::State,
+                    MapEventData { state: STATE_ERROR },
+                );
+                return MAP_ERROR_DECODE_FAILED;
+            }
+        };
+
+        self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), initial_bytes);
+        MAP_SUCCESS
+    }
+
+    pub fn supply_custom_bytes(&self, _stream_id: u32, request_id: u64, data: Vec<u8>, is_eof: bool) -> i32 {
+        if let Some(ref handle) = *self.custom_source_handle.read().unwrap() {
+            handle.supply_bytes(request_id, data, is_eof);
+            MAP_SUCCESS
+        } else {
+            MAP_ERROR_INVALID_STATE
+        }
+    }
+
+    pub fn notify_custom_error(&self, _stream_id: u32, request_id: u64, error_message: String) -> i32 {
+        if let Some(ref handle) = *self.custom_source_handle.read().unwrap() {
+            handle.notify_error(request_id, error_message);
+            MAP_SUCCESS
+        } else {
+            MAP_ERROR_INVALID_STATE
+        }
     }
 
     fn init_engine(&mut self, eng: SymphoniaEngine, is_stream: bool, total_bytes: u64, initial_data: &[u8]) {

@@ -104,6 +104,26 @@ abstract class PlayerBackend {
     int encodingFormat = 0,
   });
 
+  Future<void> openCustomStream({
+    required int streamId,
+    int? totalSize,
+    required bool isSeekable,
+    required Uint8List initialBytes,
+  }) async {}
+
+  void supplyCustomBytes({
+    required int streamId,
+    required int requestId,
+    required Uint8List data,
+    required bool isEof,
+  }) {}
+
+  void notifyCustomError({
+    required int streamId,
+    required int requestId,
+    required String errorMessage,
+  }) {}
+
   int streamFeed(Uint8List chunk);
   int streamFlush(int newStreamOffset);
   int streamSeek(int positionMs, int newStreamOffset);

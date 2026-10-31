@@ -79,6 +79,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_Spatializer value)? spatializer,
     TResult Function(RustPlayerEvent_Reverb value)? reverb,
     TResult Function(RustPlayerEvent_Limiter value)? limiter,
+    TResult Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
     TResult Function(RustPlayerEvent_Error value)? error,
     required TResult orElse(),
   }) {
@@ -136,6 +137,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that);
+      case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
+        return dartReadRequest(_that);
       case RustPlayerEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -187,6 +190,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_Spatializer value) spatializer,
     required TResult Function(RustPlayerEvent_Reverb value) reverb,
     required TResult Function(RustPlayerEvent_Limiter value) limiter,
+    required TResult Function(RustPlayerEvent_DartReadRequest value)
+        dartReadRequest,
     required TResult Function(RustPlayerEvent_Error value) error,
   }) {
     final _that = this;
@@ -243,6 +248,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that);
       case RustPlayerEvent_Limiter():
         return limiter(_that);
+      case RustPlayerEvent_DartReadRequest():
+        return dartReadRequest(_that);
       case RustPlayerEvent_Error():
         return error(_that);
     }
@@ -289,6 +296,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_Spatializer value)? spatializer,
     TResult? Function(RustPlayerEvent_Reverb value)? reverb,
     TResult? Function(RustPlayerEvent_Limiter value)? limiter,
+    TResult? Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
     TResult? Function(RustPlayerEvent_Error value)? error,
   }) {
     final _that = this;
@@ -345,6 +353,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that);
+      case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
+        return dartReadRequest(_that);
       case RustPlayerEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -392,6 +402,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(bool enabled, double width)? spatializer,
     TResult Function(RustReverbParams field0)? reverb,
     TResult Function(bool field0)? limiter,
+    TResult Function(RustDartReadRequest field0)? dartReadRequest,
     TResult Function(String message, int code)? error,
     required TResult orElse(),
   }) {
@@ -449,6 +460,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that.field0);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that.field0);
+      case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
+        return dartReadRequest(_that.field0);
       case RustPlayerEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -497,6 +510,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(bool enabled, double width) spatializer,
     required TResult Function(RustReverbParams field0) reverb,
     required TResult Function(bool field0) limiter,
+    required TResult Function(RustDartReadRequest field0) dartReadRequest,
     required TResult Function(String message, int code) error,
   }) {
     final _that = this;
@@ -553,6 +567,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that.field0);
       case RustPlayerEvent_Limiter():
         return limiter(_that.field0);
+      case RustPlayerEvent_DartReadRequest():
+        return dartReadRequest(_that.field0);
       case RustPlayerEvent_Error():
         return error(_that.message, _that.code);
     }
@@ -598,6 +614,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(bool enabled, double width)? spatializer,
     TResult? Function(RustReverbParams field0)? reverb,
     TResult? Function(bool field0)? limiter,
+    TResult? Function(RustDartReadRequest field0)? dartReadRequest,
     TResult? Function(String message, int code)? error,
   }) {
     final _that = this;
@@ -654,6 +671,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that.field0);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that.field0);
+      case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
+        return dartReadRequest(_that.field0);
       case RustPlayerEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -2419,6 +2438,74 @@ class _$RustPlayerEvent_LimiterCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_DartReadRequest extends RustPlayerEvent {
+  const RustPlayerEvent_DartReadRequest(this.field0) : super._();
+
+  final RustDartReadRequest field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_DartReadRequestCopyWith<RustPlayerEvent_DartReadRequest>
+      get copyWith => _$RustPlayerEvent_DartReadRequestCopyWithImpl<
+          RustPlayerEvent_DartReadRequest>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_DartReadRequest &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.dartReadRequest(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_DartReadRequestCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_DartReadRequestCopyWith(
+          RustPlayerEvent_DartReadRequest value,
+          $Res Function(RustPlayerEvent_DartReadRequest) _then) =
+      _$RustPlayerEvent_DartReadRequestCopyWithImpl;
+  @useResult
+  $Res call({RustDartReadRequest field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_DartReadRequestCopyWithImpl<$Res>
+    implements $RustPlayerEvent_DartReadRequestCopyWith<$Res> {
+  _$RustPlayerEvent_DartReadRequestCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_DartReadRequest _self;
+  final $Res Function(RustPlayerEvent_DartReadRequest) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_DartReadRequest(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustDartReadRequest,
     ));
   }
 }

@@ -1,5 +1,13 @@
 //! Strongly-typed models for Flutter <-> Rust communication.
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RustDartReadRequest {
+    pub stream_id: u32,
+    pub request_id: u64,
+    pub offset: u64,
+    pub length: u32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustAudioDevice {
     pub id: String,
@@ -133,5 +141,6 @@ pub enum RustPlayerEvent {
     Spatializer { enabled: bool, width: f32 },
     Reverb(RustReverbParams),
     Limiter(bool),
+    DartReadRequest(RustDartReadRequest),
     Error { message: String, code: i32 },
 }

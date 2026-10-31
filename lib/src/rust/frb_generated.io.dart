@@ -57,6 +57,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustBufferedRange dco_decode_box_autoadd_rust_buffered_range(dynamic raw);
 
   @protected
+  RustDartReadRequest dco_decode_box_autoadd_rust_dart_read_request(
+      dynamic raw);
+
+  @protected
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(dynamic raw);
 
   @protected
@@ -71,6 +75,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustVisualizerData dco_decode_box_autoadd_rust_visualizer_data(dynamic raw);
+
+  @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
   double dco_decode_f_32(dynamic raw);
@@ -97,6 +104,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -107,6 +117,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustBufferedRange dco_decode_rust_buffered_range(dynamic raw);
+
+  @protected
+  RustDartReadRequest dco_decode_rust_dart_read_request(dynamic raw);
 
   @protected
   RustEqualizerParams dco_decode_rust_equalizer_params(dynamic raw);
@@ -134,6 +147,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int dco_decode_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -181,6 +197,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustDartReadRequest sse_decode_box_autoadd_rust_dart_read_request(
+      SseDeserializer deserializer);
+
+  @protected
   RustEqualizerParams sse_decode_box_autoadd_rust_equalizer_params(
       SseDeserializer deserializer);
 
@@ -199,6 +219,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustVisualizerData sse_decode_box_autoadd_rust_visualizer_data(
       SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_32(SseDeserializer deserializer);
@@ -226,6 +249,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -237,6 +263,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustBufferedRange sse_decode_rust_buffered_range(
+      SseDeserializer deserializer);
+
+  @protected
+  RustDartReadRequest sse_decode_rust_dart_read_request(
       SseDeserializer deserializer);
 
   @protected
@@ -269,6 +299,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -317,6 +350,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustBufferedRange self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_dart_read_request(
+      RustDartReadRequest self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_equalizer_params(
       RustEqualizerParams self, SseSerializer serializer);
 
@@ -335,6 +372,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_rust_visualizer_data(
       RustVisualizerData self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
@@ -364,6 +404,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
       Uint8List? self, SseSerializer serializer);
 
@@ -378,6 +421,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_buffered_range(
       RustBufferedRange self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_dart_read_request(
+      RustDartReadRequest self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_equalizer_params(
@@ -413,6 +460,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

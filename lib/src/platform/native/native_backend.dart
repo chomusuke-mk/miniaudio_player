@@ -44,6 +44,11 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
   StreamSubscription<rust_types.RustPlayerEvent>? _eventSub;
   PlayerBackendListener? _listener;
   bool _isDisposed = false;
+  final _dartReadRequestController =
+      StreamController<rust_types.RustDartReadRequest>.broadcast();
+
+  Stream<rust_types.RustDartReadRequest> get onDartReadRequest =>
+      _dartReadRequestController.stream;
 
   int _initSampleRate = 0;
   int _initChannels = 0;
@@ -126,7 +131,7 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
   static double _f32(double v) => (v * 1e6).roundToDouble() / 1e6;
 
   void _onRustEvent(rust_types.RustPlayerEvent event) {
-    if (_isDisposed || _listener == null) return;
+    if (_isDisposed) return;
     event.when(
       state: (s) => _listener?.onState(_mapState(s)),
       position: (ms) => _listener?.onPosition(Duration(milliseconds: ms.toInt())),
@@ -189,6 +194,7 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
         dry: _f32(rv.dry),
       )),
       limiter: (l) => _listener?.onLimiter(l),
+      dartReadRequest: (req) => _dartReadRequestController.add(req),
       error: (msg, code) => _listener?.onError(msg, code),
     );
   }
@@ -286,6 +292,60 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
       _listener?.onCompleted(false);
     }
     return res;
+  }
+
+  @override
+  Future<void> openCustomStream({
+    required int streamId,
+    int? totalSize,
+    required bool isSeekable,
+    required Uint8List initialBytes,
+  }) async {
+    _ensureNotDisposed();
+    await ensureRustInitialized();
+    _createPlayer();
+
+    await _rustPlayer!.openCustomStream(
+      streamId: streamId,
+      totalSize: totalSize != null ? BigInt.from(totalSize) : null,
+      isSeekable: isSeekable,
+      initialBytes: initialBytes,
+    );
+
+    final durMs = _rustPlayer!.getDurationMs().toInt();
+    final bitrate = _rustPlayer!.getBitrate();
+    _listener?.onDuration(Duration(milliseconds: durMs > 0 ? durMs : 0));
+    _listener?.onBitrate(bitrate > 0 ? bitrate : 0);
+  }
+
+  @override
+  void supplyCustomBytes({
+    required int streamId,
+    required int requestId,
+    required Uint8List data,
+    required bool isEof,
+  }) {
+    if (_isDisposed || _rustPlayer == null) return;
+    _rustPlayer!.supplyCustomBytes(
+      streamId: streamId,
+      requestId: BigInt.from(requestId),
+      data: data,
+      isEof: isEof,
+    );
+  }
+
+  @override
+  void notifyCustomError({
+    required int streamId,
+    required int requestId,
+    required String errorMessage,
+  }) {
+    if (_isDisposed || _rustPlayer == null) return;
+    _rustPlayer!.notifyCustomError(
+      streamId: streamId,
+      requestId: BigInt.from(requestId),
+      errorMessage: errorMessage,
+    );
   }
 
   @override
@@ -654,6 +714,7 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    _dartReadRequestController.close();
     final sub = _eventSub;
     _eventSub = null;
     unawaited(sub?.cancel());

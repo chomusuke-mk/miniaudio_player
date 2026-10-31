@@ -138,6 +138,8 @@ pub struct RustPlayer {
     inner: Arc<Mutex<Box<PlayerCoordinator>>>,
     telemetry: Arc<TelemetryDispatcher>,
     raw_ptr: usize,
+    event_sink: Arc<Mutex<Option<StreamSink<RustPlayerEvent>>>>,
+    custom_handle: Arc<Mutex<Option<crate::buffer::CustomByteSourceHandle>>>,
 }
 
 impl RustPlayer {
@@ -169,11 +171,14 @@ impl RustPlayer {
             inner: Arc::new(Mutex::new(boxed)),
             telemetry,
             raw_ptr,
+            event_sink: Arc::new(Mutex::new(None)),
+            custom_handle: Arc::new(Mutex::new(None)),
         })
     }
 
     pub fn subscribe_events(&self, sink: StreamSink<RustPlayerEvent>) -> Result<(), String> {
-        let sink_clone = sink;
+        let sink_clone = sink.clone();
+        *self.event_sink.lock().unwrap() = Some(sink);
         self.telemetry.set_rust_callback(Some(Box::new(move |event_type, data| {
             if let Some(event) = map_telemetry_event(event_type, data) {
                 let _ = sink_clone.add(event);
@@ -332,6 +337,79 @@ impl RustPlayer {
             buffer_capacity_bytes,
             encoding_format,
         )
+    }
+
+    pub fn open_custom_stream(
+        &self,
+        stream_id: u32,
+        total_size: Option<u64>,
+        is_seekable: bool,
+        initial_bytes: Vec<u8>,
+    ) -> Result<(), String> {
+        let sink_clone = self.event_sink.clone();
+        let request_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
+            if let Some(ref sink) = *sink_clone.lock().unwrap() {
+                let _ = sink.add(RustPlayerEvent::DartReadRequest(RustDartReadRequest {
+                    stream_id: req.stream_id,
+                    request_id: req.request_id,
+                    offset: req.offset,
+                    length: req.length,
+                }));
+            }
+        });
+
+        let (source, handle) = crate::buffer::CustomDartByteSource::new(
+            stream_id,
+            total_size,
+            is_seekable,
+            initial_bytes.clone(),
+            request_sender,
+        );
+
+        *self.custom_handle.lock().unwrap() = Some(handle.clone());
+
+        let mut lock = self.inner.lock().unwrap();
+        let res = lock.open_custom_source(
+            source,
+            handle,
+            total_size,
+            is_seekable,
+            &initial_bytes,
+        );
+        if res == 0 {
+            Ok(())
+        } else {
+            *self.custom_handle.lock().unwrap() = None;
+            Err(format!("open_custom_stream failed: error {}", res))
+        }
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn supply_custom_bytes(
+        &self,
+        _stream_id: u32,
+        request_id: u64,
+        data: Vec<u8>,
+        is_eof: bool,
+    ) -> Result<(), String> {
+        if let Some(ref handle) = *self.custom_handle.lock().unwrap() {
+            handle.supply_bytes(request_id, data, is_eof);
+            Ok(())
+        } else {
+            Err("No active custom byte source".to_string())
+        }
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn notify_custom_error(
+        &self,
+        _stream_id: u32,
+        request_id: u64,
+        error_message: String,
+    ) {
+        if let Some(ref handle) = *self.custom_handle.lock().unwrap() {
+            handle.notify_error(request_id, error_message);
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]

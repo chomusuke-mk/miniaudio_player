@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
@@ -152,6 +152,37 @@ class RustBufferedRange {
           isEof == other.isEof;
 }
 
+class RustDartReadRequest {
+  final int streamId;
+  final BigInt requestId;
+  final BigInt offset;
+  final int length;
+
+  const RustDartReadRequest({
+    required this.streamId,
+    required this.requestId,
+    required this.offset,
+    required this.length,
+  });
+
+  @override
+  int get hashCode =>
+      streamId.hashCode ^
+      requestId.hashCode ^
+      offset.hashCode ^
+      length.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustDartReadRequest &&
+          runtimeType == other.runtimeType &&
+          streamId == other.streamId &&
+          requestId == other.requestId &&
+          offset == other.offset &&
+          length == other.length;
+}
+
 class RustEqualizerParams {
   final Float32List gains;
   final bool enabled;
@@ -259,6 +290,9 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.limiter(
     bool field0,
   ) = RustPlayerEvent_Limiter;
+  const factory RustPlayerEvent.dartReadRequest(
+    RustDartReadRequest field0,
+  ) = RustPlayerEvent_DartReadRequest;
   const factory RustPlayerEvent.error({
     required String message,
     required int code,
