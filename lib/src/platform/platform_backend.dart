@@ -95,6 +95,9 @@ abstract class PlayerBackend {
   // --- Unified Stream Lifecycle (UnifiedAudioLoader -> map_buffer_t -> map_source) ---
   Future<void> beginOpen();
 
+  Future<void> openSource(String source, {Map<String, String>? headers});
+  Future<void> openMemory(Uint8List bytes);
+
   Future<int> openStreamEx({
     required Uint8List initialBytes,
     Uint8List? tailBytes,

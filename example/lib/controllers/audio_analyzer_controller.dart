@@ -97,20 +97,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     try {
       AudioAnalysisResult? res;
 
-      if (track.source is AssetAudioSource) {
-        final key = (track.source as AssetAudioSource).assetKey;
-        final byteData = await rootBundle.load(key);
-        final bytes = byteData.buffer.asUint8List(
-          byteData.offsetInBytes,
-          byteData.lengthInBytes,
-        );
-        res = await MiniaudioPlayer.analyzeAudioMemory(
-          bytes,
-          waveform: true,
-          replayGain: true,
-          waveformPoints: 72,
-        );
-      } else if (track.source is MemoryAudioSource) {
+      if (track.source is MemoryAudioSource) {
         final bytes = (track.source as MemoryAudioSource).bytes;
         res = await MiniaudioPlayer.analyzeAudioMemory(
           bytes,
@@ -118,23 +105,23 @@ class AudioAnalyzerController extends ChangeNotifier {
           replayGain: true,
           waveformPoints: 72,
         );
-      } else if (!kIsWeb && track.source is FileAudioSource) {
-        final path = (track.source as FileAudioSource).path;
-        if (File(path).existsSync()) {
-          res = await MiniaudioPlayer.analyzeAudio(
-            path,
+      } else if (!kIsWeb && track.source is UriAudioSource) {
+        final s = (track.source as UriAudioSource).sourceString;
+        if (s.startsWith('assets/')) {
+          final byteData = await rootBundle.load(s);
+          final bytes = byteData.buffer.asUint8List(
+            byteData.offsetInBytes,
+            byteData.lengthInBytes,
+          );
+          res = await MiniaudioPlayer.analyzeAudioMemory(
+            bytes,
             waveform: true,
             replayGain: true,
             waveformPoints: 72,
           );
-        }
-      } else if (!kIsWeb &&
-          track.source.uri != null &&
-          track.source.uri!.isScheme('file')) {
-        final path = track.source.uri!.toFilePath();
-        if (File(path).existsSync()) {
+        } else if (File(s).existsSync()) {
           res = await MiniaudioPlayer.analyzeAudio(
-            path,
+            s,
             waveform: true,
             replayGain: true,
             waveformPoints: 72,

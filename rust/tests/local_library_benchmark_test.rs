@@ -149,15 +149,17 @@ fn benchmark_format_files(ext: &str, search_roots: &[&str], min_count: usize, ta
     );
 
     // Strict performance invariants for local files (including external mechanical drives):
-    // Open p95 < 100 ms, Seek p95 < 100 ms (most formats are sub-millisecond).
+    // Open p95 < 100 ms, Seek p95 < 100 ms (200 ms in unoptimized debug build).
+    let max_seek = if cfg!(debug_assertions) { 200_000 } else { 100_000 };
     assert!(
         p95_open < 100_000,
         "[{ext}] Open time p95 exceeded 100ms: {:.2}ms",
         p95_open as f64 / 1000.0
     );
     assert!(
-        p95_seek < 100_000,
-        "[{ext}] Seek time p95 exceeded 100ms: {:.2}ms",
+        p95_seek < max_seek,
+        "[{ext}] Seek time p95 exceeded {}ms: {:.2}ms",
+        max_seek / 1000,
         p95_seek as f64 / 1000.0
     );
 }

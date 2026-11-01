@@ -61,7 +61,7 @@ void main() {
   group('Adversarial Concurrency & Deadlock Verification', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       try {
         await player.dispose();
@@ -70,8 +70,8 @@ void main() {
 
     test('ADV-1: Rapid interleaved seek(0), seek(t), play, pause during active streaming', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.open(AudioSource.uri(url));
-      expect(player.action.activeLoader, isNotNull);
+      await player.action.open(AudioSource(url));
+      expect(player.state.opening, isFalse);
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -97,7 +97,7 @@ void main() {
     test('ADV-2: Deadlock stress test under artificial network stall (decoder blocked on data_ready_event)', () async {
       // Stream stalls for 1000ms after initial 32 KB burst
       final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=1000&initial_burst=32768';
-      await player.action.open(AudioSource.uri(stallUrl));
+      await player.action.open(AudioSource(stallUrl));
 
       await player.action.play();
       // Allow playback to consume the burst and enter the 1000ms network stall
@@ -124,7 +124,7 @@ void main() {
     test('ADV-3: High seek contention with interleaved cache hits and misses during dropped connection', () async {
       // Connection drops abruptly after 64 KB
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=65536';
-      await player.action.open(AudioSource.uri(dropUrl));
+      await player.action.open(AudioSource(dropUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -147,13 +147,13 @@ void main() {
 
       // Final seek to zero must succeed cleanly
       await player.action.seek(Duration.zero);
-      expect(player.action.activeLoader, isNotNull);
+      expect(player.state.opening, isFalse);
       await player.action.stop();
     }, timeout: const Timeout(Duration(seconds: 25)));
 
     test('ADV-4: Burst fuzzing of 50 concurrent unawaited commands under flaky network', () async {
       final flakyUrl = 'http://127.0.0.1:$serverPort/flaky/music/salida.mp3';
-      await player.action.open(AudioSource.uri(flakyUrl));
+      await player.action.open(AudioSource(flakyUrl));
 
       final rng = Random(1337);
       final unawaitedFutures = <Future<void>>[];
@@ -189,14 +189,14 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 25)));
 
     test('ADV-5: Concurrent multi-player seek contention under network stalls', () async {
-      final player2 = MiniaudioPlayer();
+      final player2 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final stallUrl1 = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=8192&stall_ms=500&initial_burst=32768';
         final stallUrl2 = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=4096&stall_ms=800&initial_burst=32768';
 
         await Future.wait([
-          player.action.open(AudioSource.uri(stallUrl1)),
-          player2.action.open(AudioSource.uri(stallUrl2)),
+          player.action.open(AudioSource(stallUrl1)),
+          player2.action.open(AudioSource(stallUrl2)),
         ]);
 
         await Future.wait([

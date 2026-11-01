@@ -33,7 +33,7 @@ void main() {
     test(
       'Rapid Toggle Stress: 120 rapid toggles mid-playback without crashes, locks, or corruption',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
@@ -44,7 +44,7 @@ void main() {
         });
         addTearDown(() => sub.cancel());
 
-        await player.action.open(audioFile.path);
+        await player.action.open(AudioSource(audioFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
         expect(player.state.playing, isTrue);
@@ -98,12 +98,12 @@ void main() {
     test(
       'Multi-Subscriber Concurrency: 15+ concurrent listeners with dynamic attach/detach and overrides',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path);
+        await player.action.open(AudioSource(audioFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
@@ -198,7 +198,7 @@ void main() {
     test(
       'Mid-Playback Disable: Visualizer data strictly zeroed and native DSP disabled',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
@@ -209,7 +209,7 @@ void main() {
         });
         addTearDown(() => sub.cancel());
 
-        await player.action.open(audioFile.path);
+        await player.action.open(AudioSource(audioFile.path));
         await player.action.play();
 
         // Wait until real music produces significant energy
@@ -273,12 +273,12 @@ void main() {
     test(
       'clearVisualizerOverride: Complete lifecycle matrix and restoration under playback',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path);
+        await player.action.open(AudioSource(audioFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
@@ -340,9 +340,9 @@ void main() {
       'Hostile Lifecycle: Repeated fast player re-instantiation and disposal under active visualizer',
       () async {
         for (int iteration = 0; iteration < 8; iteration++) {
-          final p = MiniaudioPlayer();
+          final p = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           final sub = p.stream.visualizer.listen((_) {});
-          await p.action.open(audioFile.path);
+          await p.action.open(AudioSource(audioFile.path));
           await p.action.play();
 
           // Fast toggle during initial buffer fill
@@ -363,12 +363,12 @@ void main() {
     test(
       'Listener Attachment While Override False: New subscriptions never trigger native DSP activation',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path);
+        await player.action.open(AudioSource(audioFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
@@ -419,12 +419,12 @@ void main() {
     test(
       'Playback Control Concurrency: Seeks and pauses interleaved with visualizer overrides',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
 
-        await player.action.open(audioFile.path);
+        await player.action.open(AudioSource(audioFile.path));
         await player.action.play();
         final sub = player.stream.visualizer.listen((_) {});
         addTearDown(() => sub.cancel());

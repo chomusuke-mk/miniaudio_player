@@ -13,7 +13,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -24,7 +24,7 @@ void main() {
       const url =
           'https://dn711104.ca.archive.org/0/items/kanyes-whole-discography/Kanye%27s%20Whole%20Discography%2F808%27s%26Heartbreak%2FAmazing%20%28feat.%20Young%20Jeezy%29.m4a';
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
 
       print('URL 1 opened successfully!');
       print('Duration: ${player.state.duration}');
@@ -59,7 +59,7 @@ void main() {
       const url =
           'https://dn711104.ca.archive.org/0/items/kanyes-whole-discography/Kanye%27s%20Whole%20Discography%2F808%27s%26Heartbreak%2FAmazing%20%28feat.%20Young%20Jeezy%29.m4a';
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
       expect(player.state.duration.inSeconds, greaterThan(230));
 
       // Seek to 3:50 (230 seconds)
@@ -94,7 +94,7 @@ void main() {
       const url =
           'https://dn710105.ca.archive.org/0/items/art-bell-1990-2000/1988-12-00%20-%20%20Terence%20Mckenna%20-%20Psilocybin%20And%20The%20Sands%20Of%20Time.mp3';
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
       print('URL 2 opened: duration=${player.state.duration}');
       expect(player.state.duration.inMinutes, greaterThan(10));
 
@@ -108,7 +108,7 @@ void main() {
       const url =
           'https://dn720307.ca.archive.org/0/items/gd85-06-30.sbd.miller.30158.sbeok.flacf/gd85-06-30d1t01.mp3';
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
       print('URL 3 opened: duration=${player.state.duration}');
       expect(player.state.duration.inMinutes, greaterThan(1));
 
@@ -122,7 +122,7 @@ void main() {
       const url =
           'https://upload.wikimedia.org/wikipedia/commons/4/44/Creator_of_the_Universe_%28The_Space_Force_Hymn%29.wav';
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
       print('URL 4 opened: duration=${player.state.duration}');
       expect(player.state.duration.inSeconds, greaterThan(30));
 
@@ -137,7 +137,7 @@ void main() {
       const url =
           'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg';
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
       print('URL 5 opened: duration=${player.state.duration}');
 
       // Duration should be ~1:31 (91s), NOT 0:57 (57s)

@@ -63,7 +63,7 @@ void main() {
   group('Flaky Network: Periodic Stalls and Buffer Depletion', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('1.1: Periodic stall (16 KB burst, 400ms stall) verifies buffering state transitions', () async {
@@ -72,7 +72,7 @@ void main() {
       final bufferingEvents = <bool>[];
       final sub = player.stream.buffering.listen(bufferingEvents.add);
 
-      await player.action.open(AudioSource.uri(stallUrl));
+      await player.action.open(AudioSource(stallUrl));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -90,7 +90,7 @@ void main() {
 
     test('1.2: Position continues progressing monotonically across multiple stall cycles', () async {
       final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=8192&stall_ms=300&initial_burst=65536';
-      await player.action.open(AudioSource.uri(stallUrl));
+      await player.action.open(AudioSource(stallUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 500));
@@ -105,7 +105,7 @@ void main() {
 
     test('1.3: User pause and resume during active stall cycle maintains state consistency', () async {
       final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=16384&stall_ms=500&initial_burst=65536';
-      await player.action.open(AudioSource.uri(stallUrl));
+      await player.action.open(AudioSource(stallUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -124,7 +124,7 @@ void main() {
 
     test('1.4: Strict monotonic clock hold during network stall', () async {
       final stallUrl = 'http://127.0.0.1:$serverPort/stall/salida.wav?chunk_size=32768&stall_ms=1200&initial_burst=65536';
-      await player.action.open(AudioSource.uri(stallUrl));
+      await player.action.open(AudioSource(stallUrl));
       await player.action.play();
 
       // Wait for initial burst (~400ms audio) to completely drain and enter network stall
@@ -152,12 +152,12 @@ void main() {
   group('Flaky Network: Bandwidth Throttling & Adaptive Backpressure', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('2.1: 32 kbps rate limiting on 128 kbps stream streams with buffering without deadlocking', () async {
       final rateLimitUrl = 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=32&initial_burst=65536';
-      await player.action.open(AudioSource.uri(rateLimitUrl));
+      await player.action.open(AudioSource(rateLimitUrl));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       await player.action.play();
@@ -172,7 +172,7 @@ void main() {
 
     test('2.2: Seeking across rate-limited stream flushes buffer and resumes without hang', () async {
       final rateLimitUrl = 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=64&initial_burst=65536';
-      await player.action.open(AudioSource.uri(rateLimitUrl));
+      await player.action.open(AudioSource(rateLimitUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -192,12 +192,12 @@ void main() {
   group('Flaky Network: Connection Resets & Range Resumption', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('3.1: Abrupt connection drop after 64 KB header does not crash audio thread', () async {
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=65536';
-      await player.action.open(AudioSource.uri(dropUrl));
+      await player.action.open(AudioSource(dropUrl));
 
       await player.action.play();
       // Allow time for server to drop socket
@@ -210,7 +210,7 @@ void main() {
 
     test('3.2: Range resumption on dropped stream (/drop_resume/) recovers playback', () async {
       final resumeUrl = 'http://127.0.0.1:$serverPort/drop_resume/salida.mp3?drop_at=65536';
-      await player.action.open(AudioSource.uri(resumeUrl));
+      await player.action.open(AudioSource(resumeUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -226,8 +226,8 @@ void main() {
     test('3.3: Rapid open, drop, and immediate dispose cycles do not leak sockets or isolates', () async {
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=16384';
       for (int i = 0; i < 5; i++) {
-        final quickPlayer = MiniaudioPlayer();
-        unawaited(quickPlayer.action.open(AudioSource.uri(dropUrl)).catchError((_) {}));
+        final quickPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+        unawaited(quickPlayer.action.open(AudioSource(dropUrl)).catchError((_) {}));
         await Future<void>.delayed(const Duration(milliseconds: 20));
         await quickPlayer.dispose();
       }
@@ -242,7 +242,7 @@ void main() {
 
     setUp(() {
       MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.debug);
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -266,7 +266,7 @@ void main() {
       MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.verbose);
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      await player.action.open(AudioSource.uri(netUrl));
+      await player.action.open(AudioSource(netUrl));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -312,12 +312,12 @@ void main() {
   group('Progressive HTTP MP3 Seeking & Decoder Recovery', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('5.1: Seeking forward across HTTP range requests reliably resumes audio playback', () async {
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.open(AudioSource.uri(netUrl));
+      await player.action.open(AudioSource(netUrl));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -358,7 +358,7 @@ void main() {
 
     test('5.2: Multiple rapid consecutive seeks do not stall decoder or hang pipeline', () async {
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.open(AudioSource.uri(netUrl));
+      await player.action.open(AudioSource(netUrl));
       await player.action.play();
 
       // Fire 5 rapid seeks back-to-back
@@ -385,12 +385,12 @@ void main() {
   group('Progressive HTTP WAV Streaming & Seeking', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('6.1: Streaming 24-bit stereo WAV with seeks maintains frame alignment without noise stalls', () async {
       final wavUrl = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
-      await player.action.open(AudioSource.uri(wavUrl));
+      await player.action.open(AudioSource(wavUrl));
       expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(9000));
 
       await player.action.play();
@@ -417,12 +417,12 @@ void main() {
   group('Remote Stream Replay on Play Action', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('7.1: Calling play() after stream reaches EOF restarts playback from beginning', () async {
       final wavUrl = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
-      await player.action.open(AudioSource.uri(wavUrl));
+      await player.action.open(AudioSource(wavUrl));
       await player.action.play();
 
       // Seek near end so it completes quickly (duration is 10s)

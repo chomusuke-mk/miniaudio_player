@@ -141,9 +141,12 @@ class PlaybackEngineCard extends StatelessWidget {
                     initialData: engine.state.bufferedPosition,
                     builder: (context, bufSnap) {
                       final bufPos = bufSnap.data ?? engine.state.bufferedPosition;
-                      final isLocal = track?.source is AssetAudioSource ||
-                          track?.source is MemoryAudioSource ||
-                          track?.source is FileAudioSource;
+                      final isLocal = track?.source is MemoryAudioSource ||
+                          (track?.source is UriAudioSource &&
+                              !(track!.source as UriAudioSource)
+                                  .sourceString
+                                  .toLowerCase()
+                                  .startsWith('http'));
                       final bufferedProgress = isLocal
                           ? 1.0
                           : (dur.inMilliseconds > 0

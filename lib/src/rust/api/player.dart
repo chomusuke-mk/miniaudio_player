@@ -147,6 +147,9 @@ abstract class RustPlayer implements RustOpaqueInterface {
 
   Future<void> openMemory({required List<int> data});
 
+  Future<void> openSource(
+      {required String source, List<RustHttpHeader>? headers});
+
   Future<int> openStreamEx(
       {required List<int> initialBytes,
       Uint8List? tailBytes,

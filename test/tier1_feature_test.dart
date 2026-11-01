@@ -32,7 +32,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -44,7 +44,7 @@ void main() {
     test(
       '1.1: play starts audio playback and updates state.playing to true',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         expect(player.state.playing, isFalse);
 
         await player.action.play();
@@ -53,7 +53,7 @@ void main() {
     );
 
     test('1.2: play causes state.position to advance over time', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -61,7 +61,7 @@ void main() {
     });
 
     test('1.3: play emits true on stream.playing', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       final expectation = expectLater(
         player.stream.playing,
@@ -75,7 +75,7 @@ void main() {
     test(
       '1.4: calling play when already playing is idempotent without error',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.play();
         expect(player.state.playing, isTrue);
 
@@ -88,7 +88,7 @@ void main() {
     test(
       '1.5: open prepares track ready for playback without starting automatically',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         expect(player.state.playing, isFalse);
         expect(player.state.duration, greaterThan(Duration.zero));
 
@@ -108,7 +108,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -120,7 +120,7 @@ void main() {
     test(
       '2.1: pause halts active playback and sets state.playing to false',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.playing, isTrue);
@@ -131,7 +131,7 @@ void main() {
     );
 
     test('2.2: pause emits false on stream.playing', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
 
       final expectation = expectLater(
@@ -146,7 +146,7 @@ void main() {
     test(
       '2.3: pause preserves current playback position without rewinding',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 300));
 
@@ -163,7 +163,7 @@ void main() {
     test(
       '2.4: pause when already paused is idempotent without error',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         expect(player.state.playing, isFalse);
 
         await player.action.pause();
@@ -176,7 +176,7 @@ void main() {
     test(
       '2.5: calling play after pause resumes from the paused position',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
 
@@ -202,7 +202,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -212,7 +212,7 @@ void main() {
     });
 
     test('3.1: stop halts playback and sets state.playing to false', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -221,7 +221,7 @@ void main() {
     });
 
     test('3.2: stop rewinds state.position to Duration.zero', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(player.state.position.inMilliseconds, greaterThan(100));
@@ -231,7 +231,7 @@ void main() {
     });
 
     test('3.3: stop emits Duration.zero on stream.position', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -247,7 +247,7 @@ void main() {
     test(
       '3.4: stop when already stopped is idempotent without error',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.stop();
         expect(player.state.playing, isFalse);
         expect(player.state.position, equals(Duration.zero));
@@ -261,7 +261,7 @@ void main() {
     test(
       '3.5: calling play after stop restarts playback from Duration.zero',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
 
@@ -284,7 +284,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -294,7 +294,7 @@ void main() {
     });
 
     test('4.1: seek updates state.position to requested timestamp', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       const target = Duration(seconds: 2);
 
       await player.action.seek(target);
@@ -305,7 +305,7 @@ void main() {
     });
 
     test('4.2: seek emits new position on stream.position', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       const target = Duration(seconds: 1, milliseconds: 500);
 
       final expectation = expectLater(
@@ -324,7 +324,7 @@ void main() {
     test(
       '4.3: seek forward while playing continues playback from new position',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.play();
         const forwardTarget = Duration(seconds: 3);
 
@@ -344,7 +344,7 @@ void main() {
     );
 
     test('4.4: seek backward while playing updates position and continues playback', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
       await player.action.seek(const Duration(seconds: 3));
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -362,7 +362,7 @@ void main() {
     test(
       '4.5: seek while paused updates position without initiating playback',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         expect(player.state.playing, isFalse);
 
         const target = Duration(seconds: 2);
@@ -384,7 +384,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -398,13 +398,13 @@ void main() {
     });
 
     test('5.2: setVolume updates state.volume to specified level', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setVolume(0.65);
       expect(player.state.volume, closeTo(0.65, 0.001));
     });
 
     test('5.3: setVolume emits new volume level on stream.volume', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       final expectation = expectLater(
         player.stream.volume,
@@ -416,7 +416,7 @@ void main() {
     });
 
     test('5.4: setVolume to 0.0 mutes playback', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setVolume(0.0);
       expect(player.state.volume, equals(0.0));
     });
@@ -424,7 +424,7 @@ void main() {
     test(
       '5.5: setVolume to 2.0 amplifies volume to maximum allowed gain',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         await player.action.setVolume(2.0);
         expect(player.state.volume, equals(2.0));
       },
@@ -438,7 +438,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -452,13 +452,13 @@ void main() {
     });
 
     test('6.2: setRate updates state.rate to specified speed', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setRate(1.25);
       expect(player.state.rate, closeTo(1.25, 0.001));
     });
 
     test('6.3: setRate emits new rate on stream.rate', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       final expectation = expectLater(
         player.stream.rate,
@@ -470,19 +470,19 @@ void main() {
     });
 
     test('6.4: setRate to 2.0 doubles playback speed', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setRate(2.0);
       expect(player.state.rate, equals(2.0));
     });
 
     test('6.5: setRate to 0.5 halves playback speed', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setRate(0.5);
       expect(player.state.rate, equals(0.5));
     });
 
     test('6.6: position advances at 2x rate when playback speed is 2.0', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setRate(2.0);
       await player.action.play();
 
@@ -495,7 +495,7 @@ void main() {
     });
 
     test('6.7: position advances at 0.5x rate when playback speed is 0.5', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setRate(0.5);
       await player.action.play();
 
@@ -508,7 +508,7 @@ void main() {
     });
 
     test('6.8: changing rate dynamically mid-playback transitions position speed smoothly', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
 
       // Play 300ms at 1.0x
@@ -535,7 +535,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -549,13 +549,13 @@ void main() {
     });
 
     test('7.2: setPitch updates state.pitch to specified factor', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setPitch(1.3);
       expect(player.state.pitch, closeTo(1.3, 0.001));
     });
 
     test('7.3: setPitch emits new pitch on stream.pitch', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       final expectation = expectLater(
         player.stream.pitch,
@@ -567,13 +567,13 @@ void main() {
     });
 
     test('7.4: setPitch to 1.5 shifts pitch upwards', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setPitch(1.5);
       expect(player.state.pitch, equals(1.5));
     });
 
     test('7.5: setPitch to 0.75 shifts pitch downwards', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.setPitch(0.75);
       expect(player.state.pitch, equals(0.75));
     });
@@ -586,7 +586,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -603,7 +603,7 @@ void main() {
     test(
       '8.2: setEqualizer updates state.equalizer with custom gains',
       () async {
-        await player.action.open(testWavFile.path);
+        await player.action.open(AudioSource(testWavFile.path));
         const customEq = Equalizer(
           hz31: 3.0,
           hz63: 2.0,
@@ -623,7 +623,7 @@ void main() {
     );
 
     test('8.3: setEqualizer emits new Equalizer on stream.equalizer', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
       const customEq = Equalizer(hz31: 5.0, hz16k: -5.0);
 
       final expectation = expectLater(
@@ -681,7 +681,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -729,7 +729,7 @@ void main() {
     });
 
     test('9.6: applying presets sequentially via setEqualizer updates state and stream', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       await player.action.setEqualizer(Equalizer.rock);
       expect(player.state.equalizer, equals(Equalizer.rock));
@@ -747,12 +747,12 @@ void main() {
   // =========================================================================
   group('Feature 10: Player Lifecycle & Teardown', () {
     test('10.1: isDisposed is false initially upon instantiation', () {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       expect(player.isDisposed, isFalse);
     });
 
     test('10.2: dispose sets isDisposed to true', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       expect(player.isDisposed, isFalse);
 
       await player.dispose();
@@ -760,7 +760,7 @@ void main() {
     });
 
     test('10.3: multiple calls to dispose are idempotent and safe', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       await player.dispose();
       expect(player.isDisposed, isTrue);
 
@@ -771,8 +771,8 @@ void main() {
     });
 
     test('10.4: dispose while playing halts playback cleanly and frees native resources', () async {
-      final player = MiniaudioPlayer();
-      await player.action.open(testWavFile.path);
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      await player.action.open(AudioSource(testWavFile.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.playing, isTrue);
@@ -782,8 +782,8 @@ void main() {
     });
 
     test('10.5: stream controllers close cleanly upon disposal', () async {
-      final player = MiniaudioPlayer();
-      await player.action.open(testWavFile.path);
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      await player.action.open(AudioSource(testWavFile.path));
 
       var playingDone = false;
       player.stream.playing.listen((_) {}, onDone: () => playingDone = true);

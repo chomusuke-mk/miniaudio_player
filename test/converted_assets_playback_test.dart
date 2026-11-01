@@ -17,9 +17,9 @@ void main() {
         final file = File(assetPath);
         expect(file.existsSync(), isTrue, reason: 'File must exist: $assetPath');
 
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource(file.path));
         try {
-          await player.action.open(AudioSource.file(file.path));
+          await player.action.open(AudioSource(file.path));
 
           expect(player.state.duration.inMilliseconds, greaterThan(60000),
               reason: 'Duration for $assetPath must be ~68s');

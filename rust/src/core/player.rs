@@ -154,6 +154,28 @@ pub struct PlayerCoordinator {
 unsafe impl Send for PlayerCoordinator {}
 unsafe impl Sync for PlayerCoordinator {}
 
+pub fn strip_file_prefix(source: &str) -> String {
+    let s = source.trim();
+    if let Some(stripped) = s.strip_prefix("file://localhost/") {
+        format!("/{}", stripped.trim_start_matches('/'))
+    } else if let Some(stripped) = s.strip_prefix("file:///") {
+        let bytes = stripped.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            stripped.to_string()
+        } else {
+            format!("/{}", stripped.trim_start_matches('/'))
+        }
+    } else if let Some(stripped) = s.strip_prefix("file://") {
+        if let Some(path) = stripped.strip_prefix('/') {
+            format!("/{}", path)
+        } else {
+            format!("/{}", stripped)
+        }
+    } else {
+        s.to_string()
+    }
+}
+
 impl PlayerCoordinator {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(
@@ -163,6 +185,43 @@ impl PlayerCoordinator {
         playback_device_id: *const c_char,
         on_completed: Option<CompletionCallback>,
         user_data: *mut c_void,
+    ) -> Result<Box<Self>, i32> {
+        Self::new_internal(
+            target_sample_rate,
+            target_channels,
+            period_size,
+            playback_device_id,
+            on_completed,
+            user_data,
+            true,
+        )
+    }
+
+    pub fn new_deck(
+        target_sample_rate: u32,
+        target_channels: u32,
+        period_size: u32,
+    ) -> Result<Box<Self>, i32> {
+        Self::new_internal(
+            target_sample_rate,
+            target_channels,
+            period_size,
+            std::ptr::null(),
+            None,
+            std::ptr::null_mut(),
+            false,
+        )
+    }
+
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn new_internal(
+        target_sample_rate: u32,
+        target_channels: u32,
+        period_size: u32,
+        playback_device_id: *const c_char,
+        on_completed: Option<CompletionCallback>,
+        user_data: *mut c_void,
+        with_device: bool,
     ) -> Result<Box<Self>, i32> {
         let sr = if target_sample_rate > 0 { target_sample_rate } else { 44100 };
         let ch = if target_channels > 0 { target_channels } else { 2 };
@@ -250,6 +309,10 @@ impl PlayerCoordinator {
         });
 
         let renderer = AudioRenderer {
+            header: crate::core::renderer::PcmRendererHeader {
+                render_fn: crate::core::renderer::audio_renderer_render_trampoline,
+                notif_fn: crate::core::renderer::audio_renderer_notif_trampoline,
+            },
             consumer,
             cmd_consumer: cmd_cons,
             state: state.clone(),
@@ -281,30 +344,33 @@ impl PlayerCoordinator {
         };
         let renderer_ptr = Box::into_raw(Box::new(renderer));
 
-        let mut dev_res = 0;
-        let device_ctx = unsafe {
-            map_device_create(
-                sr,
-                ch,
-                period,
-                playback_device_id,
-                renderer_ptr as *mut c_void,
-                &mut dev_res,
-            )
-        };
+        let mut device_ctx = std::ptr::null_mut();
+        if with_device {
+            let mut dev_res = 0;
+            device_ctx = unsafe {
+                map_device_create(
+                    sr,
+                    ch,
+                    period,
+                    playback_device_id,
+                    renderer_ptr as *mut c_void,
+                    &mut dev_res,
+                )
+            };
 
-        if device_ctx.is_null() || dev_res != 0 {
-            unsafe { drop(Box::from_raw(renderer_ptr)); }
-            return Err(dev_res);
-        }
+            if device_ctx.is_null() || dev_res != 0 {
+                unsafe { drop(Box::from_raw(renderer_ptr)); }
+                return Err(dev_res);
+            }
 
-        let actual_sr = unsafe { map_device_get_sample_rate(device_ctx) };
-        let actual_ch = unsafe { map_device_get_channels(device_ctx) };
-        if actual_sr > 0 {
-            device_sample_rate.store(actual_sr, Ordering::SeqCst);
-        }
-        if actual_ch > 0 {
-            device_channels.store(actual_ch, Ordering::SeqCst);
+            let actual_sr = unsafe { map_device_get_sample_rate(device_ctx) };
+            let actual_ch = unsafe { map_device_get_channels(device_ctx) };
+            if actual_sr > 0 {
+                device_sample_rate.store(actual_sr, Ordering::SeqCst);
+            }
+            if actual_ch > 0 {
+                device_channels.store(actual_ch, Ordering::SeqCst);
+            }
         }
 
         let mut coordinator = Box::new(Self {
@@ -952,6 +1018,168 @@ impl PlayerCoordinator {
             EventType::State,
             MapEventData { state: STATE_OPENING },
         );
+        MAP_SUCCESS
+    }
+
+    pub fn open_source(
+        &mut self,
+        source: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+    ) -> i32 {
+        let trimmed = source.trim();
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("icy://") {
+            let url = if let Some(stripped) = trimmed.strip_prefix("icy://") {
+                format!("http://{}", stripped)
+            } else {
+                trimmed.to_string()
+            };
+            self.open_network(&url, headers)
+        } else {
+            let path = if let Some(stripped) = trimmed.strip_prefix("asset://") {
+                let p = stripped.strip_prefix('/').unwrap_or(stripped);
+                if std::path::Path::new(p).exists() {
+                    p.to_string()
+                } else if std::path::Path::new(&format!("example/{}", p)).exists() {
+                    format!("example/{}", p)
+                } else {
+                    p.to_string()
+                }
+            } else if let Some(stripped) = trimmed.strip_prefix("asset:") {
+                let p = stripped.strip_prefix('/').unwrap_or(stripped);
+                if std::path::Path::new(p).exists() {
+                    p.to_string()
+                } else if std::path::Path::new(&format!("example/{}", p)).exists() {
+                    format!("example/{}", p)
+                } else {
+                    p.to_string()
+                }
+            } else {
+                strip_file_prefix(trimmed)
+            };
+
+            let resolved = if !std::path::Path::new(&path).exists() && std::path::Path::new(&format!("example/{}", path)).exists() {
+                format!("example/{}", path)
+            } else {
+                path
+            };
+            self.open_file(&resolved)
+        }
+    }
+
+    pub fn open_network(
+        &mut self,
+        url: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+    ) -> i32 {
+        let _ = self.begin_open();
+
+        let mut req = ureq::get(url);
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                req = req.set(&h.key, &h.value);
+            }
+        }
+
+        let res = match req.call() {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, _)) => {
+                self.state.store(STATE_ERROR, Ordering::Relaxed);
+                self.telemetry.post_event(
+                    EventType::State,
+                    MapEventData { state: STATE_ERROR },
+                );
+                return if code == 404 {
+                    MAP_ERROR_FILE_NOT_FOUND
+                } else {
+                    MAP_ERROR_DECODE_FAILED
+                };
+            }
+            Err(_) => {
+                self.state.store(STATE_ERROR, Ordering::Relaxed);
+                self.telemetry.post_event(
+                    EventType::State,
+                    MapEventData { state: STATE_ERROR },
+                );
+                return MAP_ERROR_FILE_NOT_FOUND;
+            }
+        };
+
+        let content_length: i64 = res
+            .header("content-length")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(-1);
+
+        let mut reader = res.into_reader();
+        let mut initial_data = vec![0u8; 65536];
+        let mut n_read = 0;
+        while n_read < initial_data.len() {
+            match reader.read(&mut initial_data[n_read..]) {
+                Ok(0) => break,
+                Ok(n) => n_read += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        initial_data.truncate(n_read);
+
+        if initial_data.is_empty() {
+            self.state.store(STATE_ERROR, Ordering::Relaxed);
+            self.telemetry.post_event(
+                EventType::State,
+                MapEventData { state: STATE_ERROR },
+            );
+            return MAP_ERROR_DECODE_FAILED;
+        }
+
+        let is_live = content_length <= 0;
+        let res_code = self.open_stream_ex(
+            &initial_data,
+            None,
+            content_length,
+            is_live,
+            4 * 1024 * 1024,
+            0,
+        );
+
+        if res_code != MAP_SUCCESS {
+            return res_code;
+        }
+
+        let trip_opt = self.trip_buffer.read().unwrap().clone();
+        if let Some(trip) = trip_opt {
+            let abort_flag = self.decoder_running.clone();
+            std::thread::Builder::new()
+                .name("miniaudio-net-streamer".to_string())
+                .spawn(move || {
+                    let mut chunk = vec![0u8; 32768];
+                    while abort_flag.load(Ordering::Relaxed) {
+                        match reader.read(&mut chunk) {
+                            Ok(0) => {
+                                trip.mark_eof();
+                                break;
+                            }
+                            Ok(n) => {
+                                let mut offset = 0;
+                                while offset < n && abort_flag.load(Ordering::Relaxed) {
+                                    match trip.feed_chunk(&chunk[offset..n]) {
+                                        Ok(written) => {
+                                            offset += written;
+                                        }
+                                        Err(crate::buffer::BufferError::Busy) => {
+                                            std::thread::sleep(std::time::Duration::from_millis(20));
+                                        }
+                                        Err(_) => return,
+                                    }
+                                }
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                            Err(_) => break,
+                        }
+                    }
+                })
+                .ok();
+        }
+
         MAP_SUCCESS
     }
 
@@ -1984,6 +2212,15 @@ impl PlayerCoordinator {
     pub fn get_visualizer_data(&self, out: &mut VisualizerData) -> i32 {
         *out = self.visualizer_seqlock.read();
         MAP_SUCCESS
+    }
+
+    #[inline]
+    pub fn render_pcm(&self, output_frames: *mut f32, frame_count: usize) {
+        if !self.renderer_ptr.is_null() && !output_frames.is_null() && frame_count > 0 {
+            unsafe {
+                (*self.renderer_ptr).render_pcm(output_frames, frame_count);
+            }
+        }
     }
 
     pub fn get_status(&self, out: &mut MiniaudioPlayerStatus) -> i32 {

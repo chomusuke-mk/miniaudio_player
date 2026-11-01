@@ -67,7 +67,7 @@ void main() {
       () async {
         final rng = Random(42);
         final caughtErrors = <Object>[];
-        var player = MiniaudioPlayer();
+        var player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         addTearDown(() async {
           if (!player.isDisposed) await player.dispose();
         });
@@ -87,15 +87,15 @@ void main() {
               final sourceSelect = rng.nextInt(3);
               if (sourceSelect == 0) {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.open(shortWavFile.path), caughtErrors),
+                  safeDispatch(() => player.action.open(AudioSource(shortWavFile.path)), caughtErrors),
                 );
               } else if (sourceSelect == 1) {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.open(mediumWavFile.path), caughtErrors),
+                  safeDispatch(() => player.action.open(AudioSource(mediumWavFile.path)), caughtErrors),
                 );
               } else {
                 backgroundTasks.add(
-                  safeDispatch(() => player.action.open(AudioSource.memory(memoryWavBytes)), caughtErrors),
+                  safeDispatch(() => player.action.open(AudioSource(memoryWavBytes)), caughtErrors),
                 );
               }
               break;
@@ -190,7 +190,7 @@ void main() {
               if (!player.isDisposed && rng.nextInt(10) == 0) {
                 backgroundTasks.add(safeDispatch(() => player.dispose(), caughtErrors));
                 // Immediately resurrect a new instance to continue fuzzing
-                player = MiniaudioPlayer();
+                player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
               }
               break;
           }
@@ -219,7 +219,7 @@ void main() {
       () async {
         final rng = Random(42);
         final caughtErrors = <Object>[];
-        final players = List.generate(4, (_) => MiniaudioPlayer());
+        final players = List.generate(4, (_) => MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
 
         addTearDown(() async {
           for (final p in players) {
@@ -238,7 +238,7 @@ void main() {
               switch (cmd) {
                 case 0:
                   await safeDispatch(() async {
-                    await p.action.open(shortWavFile.path);
+                    await p.action.open(AudioSource(shortWavFile.path));
                     await p.action.play();
                   }, caughtErrors);
                   break;
@@ -289,13 +289,13 @@ void main() {
         final caughtErrors = <Object>[];
 
         for (int i = 0; i < 35; i++) {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           final microDelay = rng.nextInt(3000); // 0 to 3ms
 
           if (i % 2 == 0) {
-            unawaited(safeDispatch(() => player.action.open(shortWavFile.path), caughtErrors));
+            unawaited(safeDispatch(() => player.action.open(AudioSource(shortWavFile.path)), caughtErrors));
           } else {
-            unawaited(safeDispatch(() => player.action.open(AudioSource.memory(memoryWavBytes)), caughtErrors));
+            unawaited(safeDispatch(() => player.action.open(AudioSource(memoryWavBytes)), caughtErrors));
           }
 
           if (microDelay > 0) {

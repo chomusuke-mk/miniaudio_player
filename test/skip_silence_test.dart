@@ -70,7 +70,7 @@ void main() {
     File? testAudioFile;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -164,7 +164,7 @@ void main() {
         ),
       );
 
-      await player.action.open(testAudioFile!.path);
+      await player.action.open(AudioSource(testAudioFile!.path));
       await player.action.play();
 
       // Give engine a brief moment to decode initial audio
@@ -197,7 +197,7 @@ void main() {
         ),
       );
 
-      await player.action.open(testAudioFile!.path);
+      await player.action.open(AudioSource(testAudioFile!.path));
       await player.action.play();
 
       // Wait until playback reaches and skips the silence pause
@@ -226,7 +226,7 @@ void main() {
 
       await player.action.setSkipSilence(false);
 
-      await player.action.open(testAudioFile!.path);
+      await player.action.open(AudioSource(testAudioFile!.path));
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -246,7 +246,7 @@ void main() {
         ],
       );
 
-      await player.action.open(testAudioFile!.path);
+      await player.action.open(AudioSource(testAudioFile!.path));
       await player.action.play();
 
       // Toggle silence skip ON while playing
@@ -273,7 +273,7 @@ void main() {
       );
 
       await player.action.setSilenceConfig(const SilenceSkipConfig.all());
-      await player.action.open(testAudioFile!.path);
+      await player.action.open(AudioSource(testAudioFile!.path));
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 200));

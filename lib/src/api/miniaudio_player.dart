@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../equalizer.dart';
-import '../loader/audio_byte_provider.dart';
 import '../platform/platform_backend.dart';
 import '../platform/platform_select.dart';
 import '../reverb.dart';
 import 'audio_analysis_result.dart';
 import 'audio_device.dart';
+import 'audio_source.dart';
 import 'buffered_range.dart';
 import 'dsp_config.dart';
 import 'player_action.dart';
@@ -69,94 +69,10 @@ typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
 /// Optional resolver for loading Flutter bundle assets.
 typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
 
-/// Callback that opens an opaque URI (such as Android `content://`) in read mode
-/// and returns its detached native OS file descriptor (`int fd`), or `null` if unavailable.
-///
-/// Example on Android:
-/// `(uri) => contentResolver.openFileDescriptor(uri, "r")?.detachFd()`
-typedef ContentFdOpener = FutureOr<int?> Function(Uri uri);
-
-/// Callback that resolves a custom or platform-specific [Uri] into an [AudioByteProvider].
-typedef CustomUriResolver = FutureOr<AudioByteProvider?> Function(
-  Uri uri, {
-  Map<String, String>? headers,
-});
-
-/// Callback for closing a detached native file descriptor `fd`.
-/// Defaults to POSIX `close(fd)` on native platforms.
-typedef NativeFdCloser = FutureOr<void> Function(int fd);
-
-/// Callback for resolving the kernel symbolic link target of `/proc/self/fd/<fd>`.
-/// Defaults to reading `/proc/self/fd/<fd>` on Linux/Android.
-typedef FdSymbolicLinkResolver = String? Function(int fd);
-
-/// Optional probe hook for verifying direct filesystem read access to a resolved path.
-typedef DirectFileAccessProbe = bool Function(String path);
-
 /// Global configuration container for [MiniaudioPlayer].
 class MiniaudioPlayerGlobalConfig {
   /// Optional global loader for resolving Flutter assets (e.g. `(key) => (await rootBundle.load(key)).buffer.asUint8List()`).
   static AssetBytesLoader? assetLoader;
-
-  /// Registered application base directories (e.g. `filesDir`, `cacheDir`, `externalFilesDir`)
-  /// or `alias=/path` entries used to synchronously promote `content://` (`FileProvider` / SAF)
-  /// URIs referencing app-owned files directly to Level 1 (`FileAudioSource` / `FileByteProvider`).
-  static List<String> appDirectories = <String>[];
-
-  /// Optional mapping of `FileProvider` root path aliases (e.g. `'mis_audios': '/data/user/0/com.miapp/files/music'`)
-  /// for synchronous Level 1 promotion.
-  static Map<String, String> fileProviderAliases = <String, String>{};
-
-  /// Optional native descriptor opener for `content://` and custom URIs.
-  ///
-  /// Delivers a detached `int fd` to the Capability Promotion pipeline, which
-  /// inspects `/proc/self/fd/<fd>` to promote app-readable files to `FileByteProvider`
-  /// (closing the temporary `fd` immediately) or retains `FdByteProvider(fd)` for
-  /// `O(1)` random-access reading under Scoped Storage without RAM or temp-file copies.
-  static ContentFdOpener? contentFdOpener;
-
-  /// Optional custom URI resolver returning an [AudioByteProvider] for custom schemes
-  /// or virtual streams.
-  static CustomUriResolver? uriResolver;
-
-  /// Optional custom closer for detached native file descriptors.
-  /// When `null`, POSIX `close(fd)` is used automatically on native platforms.
-  static NativeFdCloser? fdCloser;
-
-  /// Optional override for resolving `/proc/self/fd/<fd>` symbolic link targets.
-  /// When `null`, the native `/proc/self/fd/<fd>` VFS symlink is read automatically.
-  static FdSymbolicLinkResolver? fdLinkResolver;
-
-  /// Optional override for probing whether a resolved local path is directly readable.
-  static DirectFileAccessProbe? directFileAccessProbe;
-
-  /// Resets all URI resolution hooks and registered app directories to their defaults.
-  static void resetUriConfig() {
-    appDirectories = <String>[];
-    fileProviderAliases = <String, String>{};
-    contentFdOpener = null;
-    uriResolver = null;
-    fdCloser = null;
-    fdLinkResolver = null;
-    directFileAccessProbe = null;
-  }
-
-  /// Instance accessor for [MiniaudioPlayerGlobalConfig.appDirectories].
-  List<String> get registeredAppDirectories => appDirectories;
-  set registeredAppDirectories(List<String> value) => appDirectories = value;
-
-  /// Instance accessor for [MiniaudioPlayerGlobalConfig.fileProviderAliases].
-  Map<String, String> get registeredFileProviderAliases => fileProviderAliases;
-  set registeredFileProviderAliases(Map<String, String> value) =>
-      fileProviderAliases = value;
-
-  /// Instance accessor for [MiniaudioPlayerGlobalConfig.contentFdOpener].
-  ContentFdOpener? get activeContentFdOpener => contentFdOpener;
-  set activeContentFdOpener(ContentFdOpener? value) => contentFdOpener = value;
-
-  /// Instance accessor for [MiniaudioPlayerGlobalConfig.uriResolver].
-  CustomUriResolver? get activeUriResolver => uriResolver;
-  set activeUriResolver(CustomUriResolver? value) => uriResolver = value;
 
   /// Default period buffer size in frames applied when instantiating new players
   /// (0 = miniaudio device native default).
@@ -241,13 +157,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
     Duration? bufferBehindLocalDuration,
     Duration? bufferBehindNetworkDuration,
     Duration? bufferBehindLiveStreamDuration,
-    List<String>? appDirectories,
-    Map<String, String>? fileProviderAliases,
-    ContentFdOpener? contentFdOpener,
-    CustomUriResolver? uriResolver,
-    NativeFdCloser? fdCloser,
-    FdSymbolicLinkResolver? fdLinkResolver,
-    DirectFileAccessProbe? directFileAccessProbe,
     AssetBytesLoader? assetLoader,
   }) {
     if (assetLoader != null) {
@@ -294,28 +203,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
     if (bufferBehindLiveStreamDuration != null) {
       _globalConfig.bufferBehindLiveStreamDuration =
           bufferBehindLiveStreamDuration;
-    }
-    if (appDirectories != null) {
-      MiniaudioPlayerGlobalConfig.appDirectories = List<String>.from(appDirectories);
-    }
-    if (fileProviderAliases != null) {
-      MiniaudioPlayerGlobalConfig.fileProviderAliases =
-          Map<String, String>.from(fileProviderAliases);
-    }
-    if (contentFdOpener != null) {
-      MiniaudioPlayerGlobalConfig.contentFdOpener = contentFdOpener;
-    }
-    if (uriResolver != null) {
-      MiniaudioPlayerGlobalConfig.uriResolver = uriResolver;
-    }
-    if (fdCloser != null) {
-      MiniaudioPlayerGlobalConfig.fdCloser = fdCloser;
-    }
-    if (fdLinkResolver != null) {
-      MiniaudioPlayerGlobalConfig.fdLinkResolver = fdLinkResolver;
-    }
-    if (directFileAccessProbe != null) {
-      MiniaudioPlayerGlobalConfig.directFileAccessProbe = directFileAccessProbe;
     }
     return _globalConfig;
   }
@@ -523,10 +410,11 @@ class MiniaudioPlayer implements PlayerBackendListener {
   /// Synchronous state snapshot interface.
   late final PlayerState state;
 
-  /// Creates a [MiniaudioPlayer] instance initialized with
-  /// [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
+  /// Creates a [MiniaudioPlayer] instance bound to the provided [AudioSource], initialized
+  /// with [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
   /// [MiniaudioPlayerGlobalConfig.defaultAudioDevice].
-  MiniaudioPlayer({
+  MiniaudioPlayer(
+    AudioSource source, {
     int? bufferSize,
     AudioDevice? defaultAudioDevice,
     bool pauseOnDeviceChange = false,
@@ -648,7 +536,12 @@ class MiniaudioPlayer implements PlayerBackendListener {
       getLimiterEnabled: () => _limiterEnabled,
       getMetaBytes: _getMetaBytes,
     );
+
+    action.open(source);
   }
+
+  /// Awaits completion of the initial audio source opening triggered by the constructor.
+  Future<void> get waitUntilOpen => action.waitUntilOpen();
 
   /// Returns the currently active audio output device.
   AudioDevice getAudioDevice() {
@@ -961,7 +854,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
         _playbackStateController.add(newState);
       }
     }
-    action.activeLoader?.onEngineTelemetryTick();
   }
 
   @override
@@ -973,7 +865,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
         _positionController.add(pos);
       }
     }
-    action.activeLoader?.onEngineTelemetryTick();
   }
 
   @override
@@ -1007,7 +898,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
   @override
   void onBuffering(bool isBuffering) {
     notifyBuffering(isBuffering);
-    action.activeLoader?.onEngineTelemetryTick();
   }
 
   @override
@@ -1109,7 +999,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
         _bufferedPercentageController.add(br.percentage);
       }
     }
-    action.activeLoader?.onEngineTelemetryTick();
   }
 
   @override

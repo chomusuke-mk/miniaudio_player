@@ -91,16 +91,16 @@ void main() {
       final rng = Random(42);
 
       for (int i = 0; i < 20; i++) {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
 
         // Chaotic permutation of actions without awaiting
         final actions = <Function>[
-          () => player.action.open(AudioSource.uri(url)).catchError((_) {}),
+          () => player.action.open(AudioSource(url)).catchError((_) {}),
           () => player.action.play().catchError((_) {}),
           () => player.action.seek(Duration(seconds: rng.nextInt(5))).catchError((_) {}),
           () => player.action.pause().catchError((_) {}),
           () => player.action.stop().catchError((_) {}),
-          () => player.action.open(AudioSource.memory(memoryWavBytes1)).catchError((_) {}),
+          () => player.action.open(AudioSource(memoryWavBytes1)).catchError((_) {}),
           () => player.action.play().catchError((_) {}),
         ];
 
@@ -123,8 +123,8 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
       for (int i = 0; i < 5; i++) {
-        final player = MiniaudioPlayer();
-        player.action.open(AudioSource.uri(url)).catchError((_) {});
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+        player.action.open(AudioSource(url)).catchError((_) {});
         player.action.play().catchError((_) {});
         player.action.seek(const Duration(seconds: 3)).catchError((_) {});
 
@@ -140,17 +140,17 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
       // 1. Destroy a player chaotically
-      final messyPlayer = MiniaudioPlayer();
-      messyPlayer.action.open(AudioSource.uri(url)).catchError((_) {});
+      final messyPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      messyPlayer.action.open(AudioSource(url)).catchError((_) {});
       messyPlayer.action.play().catchError((_) {});
       messyPlayer.action.seek(const Duration(seconds: 4)).catchError((_) {});
-      messyPlayer.action.open(AudioSource.memory(memoryWavBytes2)).catchError((_) {});
+      messyPlayer.action.open(AudioSource(memoryWavBytes2)).catchError((_) {});
       await messyPlayer.dispose();
 
       // 2. Fresh player instance must play without native thread deadlock
-      final freshPlayer = MiniaudioPlayer();
+      final freshPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
-        await freshPlayer.action.open(localWavFile.path);
+        await freshPlayer.action.open(AudioSource(localWavFile.path));
         await freshPlayer.action.play();
 
         await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -168,13 +168,13 @@ void main() {
   group('2. Position Monotonicity and Non-Stalling under Unawaited Play', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
 
     test('2.1: Local file: openFile + unawaited play advances position monotonically with diff > 0', () async {
-      player.action.open(AudioSource.file(localWavFile.path));
+      player.action.open(AudioSource(localWavFile.path));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -207,7 +207,7 @@ void main() {
     });
 
     test('2.2: Memory buffer: openMemory + unawaited play advances position monotonically with diff > 0', () async {
-      player.action.open(AudioSource.memory(memoryWavBytes1));
+      player.action.open(AudioSource(memoryWavBytes1));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -242,7 +242,7 @@ void main() {
     test('2.3: Remote HTTP stream: openUrl + unawaited play advances position monotonically with diff > 0', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.open(AudioSource.uri(url));
+      player.action.open(AudioSource(url));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -281,7 +281,7 @@ void main() {
   group('3. Rapid Seek Storm during Opening Gate', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -289,7 +289,7 @@ void main() {
     test('3.1: Remote HTTP stream: 5 unawaited seeks during Opening gate resolve cleanly', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.open(AudioSource.uri(url));
+      player.action.open(AudioSource(url));
       player.action.seek(const Duration(seconds: 1));
       player.action.seek(const Duration(seconds: 4));
       player.action.seek(const Duration(seconds: 2));
@@ -311,7 +311,7 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 15)));
 
     test('3.2: Boundary seeks (negative, past duration, zero) during Opening gate', () async {
-      player.action.open(localWavFile.path);
+      player.action.open(AudioSource(localWavFile.path));
       player.action.seek(const Duration(seconds: -10)); // clamped to 0
       player.action.seek(const Duration(hours: 1));     // clamped to duration
       player.action.seek(const Duration(seconds: 2));
@@ -332,14 +332,14 @@ void main() {
   group('4. Failure Handling & Instant Recovery during Opening', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
 
     test('4.1: Unawaited open on invalid media followed by unawaited play/seek fails gracefully without uncaught zone exception', () async {
       // Intentionally invalid file path
-      final invalidOpenFuture = player.action.open(AudioSource.file('/invalid/nonexistent/media.wav'));
+      final invalidOpenFuture = player.action.open(AudioSource('/invalid/nonexistent/media.wav'));
       final playFuture = player.action.play();
       final seekFuture = player.action.seek(const Duration(seconds: 2));
 
@@ -354,11 +354,11 @@ void main() {
     test('4.2: Instant recovery: player resumes normal playback on next valid open after failed open', () async {
       // 1. Trigger failed open
       try {
-        await player.action.open(AudioSource.memory(Uint8List(0))); // empty bytes throws
+        await player.action.open(AudioSource(Uint8List(0))); // empty bytes throws
       } catch (_) {}
 
       // 2. Open valid memory buffer immediately on the SAME player instance
-      await player.action.open(AudioSource.memory(memoryWavBytes1));
+      await player.action.open(AudioSource(memoryWavBytes1));
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -375,7 +375,7 @@ void main() {
   group('5. Concurrent Multi-Player Instance Chaos', () {
     test('5.1: 6 concurrent MiniaudioPlayer instances performing interleaved unawaited operations', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      final players = List.generate(6, (_) => MiniaudioPlayer());
+      final players = List.generate(6, (_) => MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
 
       try {
         final futures = <Future<void>>[];
@@ -387,10 +387,10 @@ void main() {
               final op = rng.nextInt(6);
               switch (op) {
                 case 0:
-                  player.action.open(AudioSource.uri(url)).catchError((_) {});
+                  player.action.open(AudioSource(url)).catchError((_) {});
                   break;
                 case 1:
-                  player.action.open(AudioSource.memory(memoryWavBytes1)).catchError((_) {});
+                  player.action.open(AudioSource(memoryWavBytes1)).catchError((_) {});
                   break;
                 case 2:
                   player.action.play().catchError((_) {});
@@ -427,7 +427,7 @@ void main() {
   group('6. Microsecond Jitter 100-Operation Stress Fuzzing', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -440,13 +440,13 @@ void main() {
         final op = rng.nextInt(8);
         switch (op) {
           case 0:
-            player.action.open(AudioSource.uri(url)).catchError((_) {});
+            player.action.open(AudioSource(url)).catchError((_) {});
             break;
           case 1:
-            player.action.open(AudioSource.memory(memoryWavBytes2)).catchError((_) {});
+            player.action.open(AudioSource(memoryWavBytes2)).catchError((_) {});
             break;
           case 2:
-            player.action.open(AudioSource.file(localWavFile.path)).catchError((_) {});
+            player.action.open(AudioSource(localWavFile.path)).catchError((_) {});
             break;
           case 3:
             player.action.play().catchError((_) {});
@@ -471,7 +471,7 @@ void main() {
       }
 
       // Settle and verify engine health
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
 

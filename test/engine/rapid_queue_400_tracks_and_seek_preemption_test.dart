@@ -11,7 +11,7 @@ void main() {
       // Populate a 400 track queue
       final items = List.generate(
         400,
-        (i) => EngineItem.file(
+        (i) => EngineItem.from(
           'example/assets/music/salida.wav',
           id: i,
           data: 'Track $i',
@@ -39,8 +39,7 @@ void main() {
     });
 
     test('Rapid consecutive seeks preempt previous in-flight seeks without delay', () async {
-      final player = MiniaudioPlayer();
-      await player.action.open(AudioSource.file('example/assets/music/salida.wav'));
+      final player = MiniaudioPlayer(AudioSource('example/assets/music/salida.wav'));
       await player.action.play();
 
       final stopwatch = Stopwatch()..start();

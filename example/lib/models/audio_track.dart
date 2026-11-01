@@ -22,61 +22,65 @@ class AudioTrack {
     this.replayPeak,
   });
 
-  bool get isLive => source is LiveStreamAudioSource;
+  String get _sourceString =>
+      source is UriAudioSource ? (source as UriAudioSource).sourceString : '';
+
+  bool get _isNetwork {
+    final s = _sourceString.toLowerCase();
+    return s.startsWith('http://') || s.startsWith('https://') || s.startsWith('icy://');
+  }
+
+  bool get isLive {
+    final s = _sourceString.toLowerCase();
+    return _isNetwork && (s.contains('/live') || s.contains('.m3u8') || s.contains('icecast'));
+  }
 
   bool get canAnalyze {
-    if (isLive || source is LiveStreamAudioSource) return false;
-    if (source is NetworkAudioSource) return false;
-    final uri = source.uri;
-    if (uri != null) {
-      final scheme = uri.scheme.toLowerCase();
-      if (scheme == 'icy' || scheme == 'http' || scheme == 'https') return false;
-    }
-    return source is AssetAudioSource ||
-        source is MemoryAudioSource ||
-        source is FileAudioSource ||
-        (uri?.isScheme('file') ?? false);
+    if (isLive || _isNetwork) return false;
+    return source is MemoryAudioSource || source is UriAudioSource;
   }
 
   String get resourceBadge {
     if (isGenerated) return 'DATA URI';
-    if (source is ResolvingAudioSource) return 'RESOLVER';
-    if (source is LiveStreamAudioSource) return 'LIVE STREAM';
-    if (source is NetworkAudioSource) return 'NETWORK';
+    if (source is CustomAudioSource) return 'CUSTOM';
     if (source is MemoryAudioSource) return 'MEMORY';
-    if (source is AssetAudioSource) return 'ASSET';
-    if (source is FileAudioSource) return 'FILE';
-    return 'SOURCE';
+    if (isLive) return 'LIVE STREAM';
+    if (_isNetwork) return 'NETWORK';
+    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) return 'ASSET';
+    return 'FILE';
   }
 
   String get displayType {
     if (isGenerated) return 'data: URI';
-    if (source is ResolvingAudioSource) return 'content / fd';
-    if (source is AssetAudioSource) return 'asset://';
+    if (source is CustomAudioSource) return 'CustomProvider';
     if (source is MemoryAudioSource) return 'RAM Memory';
-    if (source is LiveStreamAudioSource) return 'icy:// (Live)';
-    if (source is NetworkAudioSource) return 'https://';
-    if (source is FileAudioSource) return 'file://';
-    return 'URI';
+    if (isLive) return 'icy:// (Live)';
+    if (_isNetwork) return 'https://';
+    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) return 'asset://';
+    return 'file://';
   }
 
   IconData get icon {
     if (isGenerated) return Icons.graphic_eq;
-    if (source is ResolvingAudioSource) return Icons.alt_route;
-    if (source is LiveStreamAudioSource) return Icons.radio;
-    if (source is NetworkAudioSource) return Icons.cloud_outlined;
+    if (source is CustomAudioSource) return Icons.alt_route;
+    if (isLive) return Icons.radio;
+    if (_isNetwork) return Icons.cloud_outlined;
     if (source is MemoryAudioSource) return Icons.memory;
-    if (source is AssetAudioSource) return Icons.audiotrack;
+    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) {
+      return Icons.audiotrack;
+    }
     return Icons.insert_drive_file_outlined;
   }
 
   Color get iconColor {
     if (isGenerated) return Colors.amberAccent;
-    if (source is ResolvingAudioSource) return Colors.orangeAccent;
-    if (source is LiveStreamAudioSource) return Colors.redAccent;
-    if (source is NetworkAudioSource) return Colors.lightBlueAccent;
+    if (source is CustomAudioSource) return Colors.orangeAccent;
+    if (isLive) return Colors.redAccent;
+    if (_isNetwork) return Colors.lightBlueAccent;
     if (source is MemoryAudioSource) return Colors.purpleAccent;
-    if (source is AssetAudioSource) return Colors.tealAccent;
+    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) {
+      return Colors.tealAccent;
+    }
     return Colors.greenAccent;
   }
 
@@ -92,7 +96,10 @@ class AudioTrack {
 abstract final class TrackFormatInfo {
   static String deduceFormatBadge(AudioTrack? track, {int sampleRate = 0, int channels = 0, int bitrate = 0}) {
     if (track == null) return 'AUDIO ENGINE';
-    final name = (track.source.uri?.path ?? track.title).toLowerCase();
+    final name = (track.source is UriAudioSource
+            ? (track.source as UriAudioSource).sourceString
+            : track.title)
+        .toLowerCase();
 
     if (name.endsWith('.flac')) {
       final rateStr = sampleRate > 0 ? '${(sampleRate / 1000).toStringAsFixed(0)}kHz' : '96kHz';
@@ -116,8 +123,9 @@ abstract final class TrackFormatInfo {
       return 'ICY STREAM LIVE';
     }
     if (track.isGenerated) {
-      return 'SYNTHESIZED PCM';
+      return 'PCM SINTETIZADO';
     }
     return 'HI-RES STEREO';
   }
 }
+

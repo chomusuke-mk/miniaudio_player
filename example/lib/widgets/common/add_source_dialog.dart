@@ -31,7 +31,7 @@ class _AddSourceDialogState extends State<AddSourceDialog> {
         ? uriStr.split(RegExp(r'[/\\]')).last
         : _titleController.text.trim();
 
-    final source = AudioSource.uri(uriStr);
+    final source = AudioSource(uriStr);
     final track = AudioTrack(
       id: uriStr,
       title: title,

@@ -157,7 +157,7 @@ void main() {
     late Directory tempDir;
 
     setUp(() async {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       tempDir = Directory.systemTemp.createTempSync('miniaudio_codec_test_');
     });
 
@@ -177,7 +177,7 @@ void main() {
       final misnamed = File('${tempDir.path}/track_actually_mp3.wav');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open(AudioSource.file(misnamed.path));
+      await player.action.open(AudioSource(misnamed.path));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -195,7 +195,7 @@ void main() {
       final extensionless = File('${tempDir.path}/audio_stream_payload');
       extensionless.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open(AudioSource.file(extensionless.path));
+      await player.action.open(AudioSource(extensionless.path));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.flac));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -213,7 +213,7 @@ void main() {
       final misnamed = File('${tempDir.path}/opaque_blob.bin');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open(AudioSource.file(misnamed.path));
+      await player.action.open(AudioSource(misnamed.path));
       expect(player.state.trackMetadata?.codec, equals(AudioCodec.aac));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -229,7 +229,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -286,11 +286,7 @@ void main() {
       final file = File('example/assets/music/salida.mp3');
       if (!file.existsSync()) return;
 
-      await player.action.open(
-        file.path,
-        bufferAhead: const Duration(seconds: 15),
-        bufferBehind: const Duration(seconds: 5),
-      );
+      await player.action.open(AudioSource(file.path));
 
       expect(player.sampleRate, greaterThan(0));
       expect(player.channels, greaterThan(0));

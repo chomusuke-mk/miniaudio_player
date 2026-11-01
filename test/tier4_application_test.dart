@@ -51,7 +51,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -68,13 +68,13 @@ void main() {
       player.stream.completed.listen((completed) async {
         if (completed && currentTrackIndex < playlist.length - 1) {
           currentTrackIndex++;
-          await player.action.open(playlist[currentTrackIndex]);
+          await player.action.open(AudioSource(playlist[currentTrackIndex]));
           await player.action.play();
           completer.complete();
         }
       });
 
-      await player.action.open(playlist[0]);
+      await player.action.open(AudioSource(playlist[0]));
       await player.action.play();
       await completer.future.timeout(const Duration(seconds: 3));
 
@@ -89,7 +89,7 @@ void main() {
         int playCount = 0;
 
         for (final path in playlist) {
-          await player.action.open(path);
+          await player.action.open(AudioSource(path));
           await player.action.play();
           expect(player.state.playing, isTrue);
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -109,7 +109,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -119,7 +119,7 @@ void main() {
     });
 
     test('A2.1: opening Track 2 while Track 1 is actively playing replaces track cleanly', () async {
-      await player.action.open(track1.path);
+      await player.action.open(AudioSource(track1.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -127,7 +127,7 @@ void main() {
       expect(player.state.position.inMilliseconds, greaterThan(100));
 
       // User hits "Next Track": opens Track 2 without stopping first
-      await player.action.open(track2.path);
+      await player.action.open(AudioSource(track2.path));
       await player.action.play();
 
       expect(player.state.playing, isTrue);
@@ -141,13 +141,13 @@ void main() {
     test(
       'A2.2: rapid track replacement across 4 files resolves to the last track',
       () async {
-        await player.action.open(track1.path);
+        await player.action.open(AudioSource(track1.path));
         await player.action.play();
 
         // Fire successive open calls without awaiting in between
-        unawaited(player.action.open(track2.path));
-        unawaited(player.action.open(track3.path));
-        await player.action.open(shortTrack.path);
+        unawaited(player.action.open(AudioSource(track2.path)));
+        unawaited(player.action.open(AudioSource(track3.path)));
+        await player.action.open(AudioSource(shortTrack.path));
         await player.action.play();
 
         expect(player.state.playing, isTrue);
@@ -163,7 +163,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -185,7 +185,7 @@ void main() {
         expect(player.state.equalizer, equals(Equalizer.flat));
 
         // 2. Open Track
-        await player.action.open(track1.path);
+        await player.action.open(AudioSource(track1.path));
         expect(player.state.playing, isFalse);
         expect(player.state.duration.inMilliseconds, closeTo(2500, 100));
 
@@ -236,7 +236,7 @@ void main() {
         expect(player.state.position, equals(Duration.zero));
 
         // 9. Re-open short track and play to completion
-        await player.action.open(shortTrack.path);
+        await player.action.open(AudioSource(shortTrack.path));
         final completedExpectation = expectLater(
           player.stream.completed,
           emitsThrough(true),
@@ -261,7 +261,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -271,7 +271,7 @@ void main() {
     });
 
     test('A4.1: rapid toggling of play/pause button 10 times in 150ms resolves cleanly', () async {
-      await player.action.open(track1.path);
+      await player.action.open(AudioSource(track1.path));
 
       for (int i = 0; i < 10; i++) {
         if (i % 2 == 0) {
@@ -290,7 +290,7 @@ void main() {
     });
 
     test('A4.2: rapid volume and rate slider scrubbing executes without corruption', () async {
-      await player.action.open(track1.path);
+      await player.action.open(AudioSource(track1.path));
       await player.action.play();
 
       final futures = <Future<void>>[];
@@ -316,7 +316,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -326,7 +326,7 @@ void main() {
     });
 
     test('A5.1: stream.volume, rate, pitch, and equalizer events strictly match player.state', () async {
-      await player.action.open(track1.path);
+      await player.action.open(AudioSource(track1.path));
 
       double? lastStreamVolume;
       double? lastStreamRate;
@@ -360,7 +360,7 @@ void main() {
     test(
       'A5.2: re-opening a file after stop restarts playback cleanly',
       () async {
-        await player.action.open(track1.path);
+        await player.action.open(AudioSource(track1.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
         await player.action.stop();
@@ -368,7 +368,7 @@ void main() {
         expect(player.state.playing, isFalse);
         expect(player.state.position, equals(Duration.zero));
 
-        await player.action.open(track1.path);
+        await player.action.open(AudioSource(track1.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
 

@@ -94,7 +94,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -103,9 +103,9 @@ void main() {
 
     test('Test 1.1: Giant Cover Art (> 256 KB) in MP3 & .metaBytes synthesis', () async {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
 
-      expect(player.action.activeLoader, isNotNull, reason: 'Unified loader should be active');
+      expect(player.state.opening, isFalse);
 
       // Check metaBytes immediately after opening
       final meta = player.state.metaBytes;
@@ -143,7 +143,7 @@ void main() {
 
     test('Test 1.2: Giant Picture Block (> 256 KB) in FLAC & .metaBytes synthesis', () async {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.flac';
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
 
       final meta = player.state.metaBytes;
       expect(meta, isNotNull, reason: 'metaBytes must not be null for FLAC track');
@@ -168,7 +168,7 @@ void main() {
 
     test('Test 2: EOF Chirp Prevention (Tail Protection against fake 0xFF 0xFB syncwords)', () async {
       final url = 'http://127.0.0.1:$serverPort/music/eof_chirp.mp3';
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
 
       // Verify metaBytes has tail tags synthesized
       final meta = player.state.metaBytes;
@@ -201,7 +201,7 @@ void main() {
 
     test('Test 3: Non-Fast-Start MP4 / M4A Probing & .metaBytes Synthesis', () async {
       final url = 'http://127.0.0.1:$serverPort/music/non_faststart.m4a';
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
 
       // Verify track opens and duration is determined
       expect(player.state.duration, greaterThan(Duration.zero),
@@ -236,7 +236,7 @@ void main() {
 
     test('Test 4: WAV with Trailing Chunks Post-Data (LIST/INFO)', () async {
       final url = 'http://127.0.0.1:$serverPort/music/trailing_chunks.wav';
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
 
       final meta = player.state.metaBytes;
       expect(meta, isNotNull, reason: 'metaBytes must not be null for WAV with metadata');
@@ -280,7 +280,7 @@ void main() {
         }
       });
 
-      await player.action.open(AudioSource.uri(url));
+      await player.action.open(AudioSource(url));
       await player.action.play();
 
       // Wait for at least 2 ICY metadata blocks to be demuxed from the audio stream and synthesized
@@ -338,7 +338,7 @@ void main() {
       });
 
       final url = 'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
-      await engine.action.open([EngineItem.uri(Uri.parse(url))]);
+      await engine.action.open([EngineItem.from(Uri.parse(url))]);
       await engine.action.play();
 
       int waitMs = 0;
@@ -371,10 +371,10 @@ void main() {
 
     test('Test 7: 3 MB Head & 25 KB Tail with 5-Second Buffer Integrity', () async {
       // Small 1 MB circular buffer (~5 seconds at 44.1kHz 16-bit stereo)
-      final smallBufferPlayer = MiniaudioPlayer(bufferSize: 1);
+      final smallBufferPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'), bufferSize: 1);
       final url = 'http://127.0.0.1:$serverPort/music/head_3mb_tail_25kb.mp3';
 
-      await smallBufferPlayer.action.open(AudioSource.uri(url));
+      await smallBufferPlayer.action.open(AudioSource(url));
 
       // Verify Head is not truncated to 256 KB, but retains all ~3 MB of metadata
       final pinnedHeadBytes = smallBufferPlayer.pinnedHeadSize;
@@ -408,7 +408,7 @@ void main() {
     });
 
     test('Test 8: Metadata Lifecycle: open() & dispose() reset, stop() preserves', () async {
-      final lifecyclePlayer = MiniaudioPlayer();
+      final lifecyclePlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
 
       final metaEmissions = <Uint8List?>[];
@@ -417,7 +417,7 @@ void main() {
       });
 
       // 1. Open track with metadata
-      await lifecyclePlayer.action.open(AudioSource.uri(url));
+      await lifecyclePlayer.action.open(AudioSource(url));
       expect(lifecyclePlayer.state.metaBytes, isNotNull,
           reason: 'Opened track must have non-null metaBytes');
 
@@ -427,7 +427,7 @@ void main() {
           reason: 'stop() must preserve metadata for fast replay');
 
       // 3. Open second track -> opening MUST reset metadata to null during loading
-      final openFuture = lifecyclePlayer.action.open(AudioSource.uri('http://127.0.0.1:$serverPort/music/trailing_chunks.wav'));
+      final openFuture = lifecyclePlayer.action.open(AudioSource('http://127.0.0.1:$serverPort/music/trailing_chunks.wav'));
       // During opening phase or stream, null was emitted
       await openFuture;
       expect(metaEmissions.any((m) => m == null), isTrue,

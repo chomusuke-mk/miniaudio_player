@@ -62,11 +62,11 @@ void main() {
   test('Livestream pause during long time then play reproduction test', () async {
     MiniaudioPlayer.globalConfig.logLevel = MiniaudioLogLevel.verbose;
 
-    final player = MiniaudioPlayer();
+    final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
+    print('=== OPENING LIVESTREAM ===');
+    final player = MiniaudioPlayer(AudioSource(liveUrl));
     try {
-      final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
-      print('=== OPENING LIVESTREAM ===');
-      await player.action.open(AudioSource.uri(liveUrl, isLive: true));
+      await player.waitUntilOpen;
       print('=== OPENED LIVESTREAM ===');
 
       print('=== PLAYING ===');

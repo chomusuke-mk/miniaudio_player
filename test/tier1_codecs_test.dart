@@ -23,7 +23,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -63,7 +63,7 @@ void main() {
         for (final file in opusFiles) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           expect(
             player.state.duration.inSeconds,
             greaterThan(0),
@@ -86,7 +86,7 @@ void main() {
       () async {
         final oggFile = resolveAsset('example/assets/music/salida.ogg');
 
-        await player.action.open(oggFile.absolute.path);
+        await player.action.open(AudioSource(oggFile.absolute.path));
         final duration = player.state.duration;
         expect(
           duration.inSeconds,
@@ -125,7 +125,7 @@ void main() {
           final file = resolveAsset(formatPath);
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           final duration = player.state.duration;
           expect(duration.inMilliseconds, greaterThan(0));
 
@@ -164,7 +164,7 @@ void main() {
       () async {
         final mp3File = resolveAsset('example/assets/music/salida.mp3');
 
-        await player.action.open(mp3File.absolute.path);
+        await player.action.open(AudioSource(mp3File.absolute.path));
         expect(
           player.state.duration.inSeconds,
           greaterThan(0),
@@ -186,7 +186,7 @@ void main() {
       () async {
         final flacFile = resolveAsset('example/assets/music/salida.flac');
 
-        await player.action.open(flacFile.absolute.path);
+        await player.action.open(AudioSource(flacFile.absolute.path));
         expect(
           player.state.duration.inSeconds,
           greaterThan(0),
@@ -213,7 +213,7 @@ void main() {
         for (final file in wavFiles) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           expect(
             player.state.duration.inSeconds,
             greaterThan(0),
@@ -243,7 +243,7 @@ void main() {
         for (final file in aiffFiles) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           final duration = player.state.duration;
           expect(
             duration.inSeconds,
@@ -283,7 +283,7 @@ void main() {
         for (final file in wav64Files) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           final duration = player.state.duration;
           expect(
             duration.inSeconds,
@@ -323,7 +323,7 @@ void main() {
         for (final file in mpegOggFiles) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           final duration = player.state.duration;
           expect(
             duration.inSeconds,
@@ -361,7 +361,7 @@ void main() {
         for (final file in aacFiles) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           final duration = player.state.duration;
           expect(
             duration.inSeconds,
@@ -399,7 +399,7 @@ void main() {
           if (!file.existsSync()) continue;
 
           expect(
-            () => player.action.open(file.absolute.path),
+            () => player.action.open(AudioSource(file.absolute.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
         }
@@ -412,7 +412,7 @@ void main() {
       () async {
         final wavFile = resolveAsset('example/assets/music/salida.wav');
 
-        await player.action.open(wavFile.absolute.path);
+        await player.action.open(AudioSource(wavFile.absolute.path));
         await player.action.play();
 
         // Default state: rate 1.0, pitch 1.0
@@ -449,7 +449,7 @@ void main() {
         MiniaudioPlayer.config(defaultBufferSize: 1024);
         expect(MiniaudioPlayer.config().defaultBufferSize, equals(1024));
 
-        final newPlayer = MiniaudioPlayer();
+        final newPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         expect(newPlayer.state.bufferSize, equals(1024));
         newPlayer.dispose();
 
@@ -512,7 +512,7 @@ void main() {
         for (final file in testFiles) {
           if (!file.existsSync()) continue;
 
-          await player.action.open(file.absolute.path);
+          await player.action.open(AudioSource(file.absolute.path));
           await Future<void>.delayed(const Duration(milliseconds: 60));
 
           // State getter & player direct getter
@@ -542,7 +542,7 @@ void main() {
           'example/assets/music/salida.opus',
         );
 
-        await player.action.open(file.absolute.path);
+        await player.action.open(AudioSource(file.absolute.path));
         await player.action.play();
 
         // Test increasing speed smoothly to 1.5x, 2.0x, 2.5x without errors or degradation
@@ -579,7 +579,7 @@ void main() {
       () async {
         final file = resolveAsset('example/assets/music/salida.mp3');
 
-        await player.action.open(file.absolute.path);
+        await player.action.open(AudioSource(file.absolute.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
@@ -621,7 +621,7 @@ void main() {
       () async {
         final wavFile = resolveAsset('example/assets/music/salida.wav');
 
-        await player.action.open(wavFile.absolute.path);
+        await player.action.open(AudioSource(wavFile.absolute.path));
         await player.action.setPitch(2.0);
         await player.action.setRate(1.0);
         await player.action.play();
@@ -726,7 +726,7 @@ void main() {
       () async {
         final oggFile = resolveAsset('example/assets/music/salida.ogg');
 
-        await player.action.open(oggFile.absolute.path);
+        await player.action.open(AudioSource(oggFile.absolute.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));
         expect(player.state.playing, isTrue);

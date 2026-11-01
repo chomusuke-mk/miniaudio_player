@@ -59,6 +59,7 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
 
   static ExternalLibrary _findRustLibrary() {
     final candidatePaths = [
+      'rust/target/debug/libminiaudio_player.so',
       'rust/target/release/libminiaudio_player.so',
       '.dart_tool/hooks_runner/shared/miniaudio_player/build/6b4ebf10e7/libminiaudio_player.so',
       'libminiaudio_player.so',
@@ -249,6 +250,43 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
   }
 
   // --- Unified Stream Lifecycle ---
+
+  @override
+  Future<void> openSource(String source, {Map<String, String>? headers}) async {
+    _ensureNotDisposed();
+    await ensureRustInitialized();
+    _createPlayer();
+
+    List<rust_types.RustHttpHeader>? rustHeaders;
+    if (headers != null && headers.isNotEmpty) {
+      rustHeaders = headers.entries
+          .map((e) => rust_types.RustHttpHeader(key: e.key, value: e.value))
+          .toList();
+    }
+
+    await _rustPlayer!.openSource(source: source, headers: rustHeaders);
+    final durMs = _rustPlayer!.getDurationMs().toInt();
+    final bitrate = _rustPlayer!.getBitrate();
+    _listener?.onDuration(Duration(milliseconds: durMs > 0 ? durMs : 0));
+    _listener?.onBitrate(bitrate > 0 ? bitrate : 0);
+    _listener?.onPosition(Duration.zero);
+    _listener?.onCompleted(false);
+  }
+
+  @override
+  Future<void> openMemory(Uint8List bytes) async {
+    _ensureNotDisposed();
+    await ensureRustInitialized();
+    _createPlayer();
+
+    await _rustPlayer!.openMemory(data: bytes);
+    final durMs = _rustPlayer!.getDurationMs().toInt();
+    final bitrate = _rustPlayer!.getBitrate();
+    _listener?.onDuration(Duration(milliseconds: durMs > 0 ? durMs : 0));
+    _listener?.onBitrate(bitrate > 0 ? bitrate : 0);
+    _listener?.onPosition(Duration.zero);
+    _listener?.onCompleted(false);
+  }
 
   @override
   Future<void> beginOpen() async {

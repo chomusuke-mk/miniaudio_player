@@ -44,14 +44,14 @@ void main() {
   group('Local Files Matrix Playback & Seeking (openFile)', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
       final fileName = file.uri.pathSegments.last;
       test('1.openFile: $fileName', () async {
         // 1. openFile
-        await player.action.open(AudioSource.file(file.path));
+        await player.action.open(AudioSource(file.path));
         final duration = player.state.duration;
         expect(duration.inMilliseconds, greaterThan(0),
             reason: '$fileName duration should be greater than 0');
@@ -90,7 +90,7 @@ void main() {
   group('Local In-Memory Buffer Matrix (openMemory)', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
@@ -98,7 +98,7 @@ void main() {
       test('2.openMemory: $fileName', () async {
         final bytes = await file.readAsBytes();
 
-        await player.action.open(AudioSource.memory(bytes));
+        await player.action.open(AudioSource(bytes));
         final duration = player.state.duration;
         expect(duration.inMilliseconds, greaterThan(0),
             reason: '$fileName in-memory duration should be > 0');
@@ -130,7 +130,7 @@ void main() {
   group('Local Asset Playback Matrix (openAsset)', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     const representativeFormats = [
@@ -153,7 +153,7 @@ void main() {
 
       test('3.openAsset: $fileName ($fmt)', () async {
         final assetKey = 'example/assets/music/$fileName';
-        await player.action.open(AudioSource.asset(assetKey));
+        await player.action.open(AudioSource(assetKey));
         expect(player.state.duration.inMilliseconds, greaterThan(0));
 
         await player.action.play();
@@ -172,12 +172,12 @@ void main() {
   group('Polymorphic Local Source Types (AudioSource & File)', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('4.1: AudioSource.file opens and plays local file', () async {
       final file = File('example/assets/music/salida.mp3');
-      await player.action.open(AudioSource.file(file.path));
+      await player.action.open(AudioSource(file.path));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -187,7 +187,7 @@ void main() {
 
     test('4.2: AudioSource.uri with file:// URI opens and plays local file', () async {
       final file = File('example/assets/music/salida.wav');
-      await player.action.open(AudioSource.uri(file.absolute.uri));
+      await player.action.open(AudioSource(file.absolute.uri));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -197,7 +197,7 @@ void main() {
 
     test('4.3: Direct File instance passed to player.action.open()', () async {
       final file = File('example/assets/music/salida.flac');
-      await player.action.open(file);
+      await player.action.open(AudioSource(file.path));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -206,7 +206,7 @@ void main() {
     });
 
     test('4.4: Raw path String passed to player.action.open()', () async {
-      await player.action.open('example/assets/music/salida_aac.m4a');
+      await player.action.open(AudioSource('example/assets/music/salida_aac.m4a'));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -223,7 +223,7 @@ void main() {
     late File corruptFile;
 
     setUp(() async {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       corruptFile = File('test/helpers/temp_corrupt_test_file.mp3');
       // Create artificial garbage file
       await corruptFile.writeAsBytes(List<int>.generate(2048, (i) => (i * 7 + 13) % 256));
@@ -239,7 +239,7 @@ void main() {
     test('5.1: Corrupt local file throws controlled exception without breaking player', () async {
       // 1. Attempt to open corrupt local file
       await expectLater(
-        player.action.open(AudioSource.file(corruptFile.path)),
+        player.action.open(AudioSource(corruptFile.path)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -249,7 +249,7 @@ void main() {
       expect(player.state.playing, isFalse);
 
       // 3. Immediately recover by opening valid local file
-      await player.action.open(AudioSource.file('example/assets/music/salida.mp3'));
+      await player.action.open(AudioSource('example/assets/music/salida.mp3'));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -264,7 +264,7 @@ void main() {
   group('Unsupported Local Format Clean Failure', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('6.1: Opening unsupported format throws MiniaudioPlayerException gracefully', () async {
@@ -272,12 +272,12 @@ void main() {
       await dummyFile.writeAsString('not a real audio stream');
       try {
         await expectLater(
-          player.action.open(AudioSource.file(dummyFile.path)),
+          player.action.open(AudioSource(dummyFile.path)),
           throwsA(isA<MiniaudioPlayerException>()),
         );
 
         // Player must be immediately reusable
-        await player.action.open(AudioSource.file('example/assets/music/salida_alac.m4a'));
+        await player.action.open(AudioSource('example/assets/music/salida_alac.m4a'));
         expect(player.state.duration.inMilliseconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -297,7 +297,7 @@ void main() {
   group('Chaotic Local Controls Sequence', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('7.1: Comprehensive chaotic commands loop with detailed trace validation', () async {
@@ -310,7 +310,7 @@ void main() {
 
         // Step 1: Open track A and play
         trace.log('Step 1: openFile(trackA)');
-        await player.action.open(AudioSource.file(trackA));
+        await player.action.open(AudioSource(trackA));
         trace.log('Step 1.1: play()');
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -356,7 +356,7 @@ void main() {
 
         // Step 7: Switch in flight to M4A (AAC) track B
         trace.log('Step 7: switch to track B (M4A AAC)');
-        await player.action.open(AudioSource.file(trackB));
+        await player.action.open(AudioSource(trackB));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);
@@ -372,7 +372,7 @@ void main() {
 
         // Step 9: Switch in flight to M4A (ALAC) track C
         trace.log('Step 9: switch to track C (M4A ALAC)');
-        await player.action.open(AudioSource.file(trackC));
+        await player.action.open(AudioSource(trackC));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);

@@ -23,7 +23,7 @@ void main() {
     late MiniaudioPlayer player;
     File? tempFile;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       await player.dispose();
       await SyntheticAudioGenerator.cleanUp(tempFile);
@@ -38,7 +38,7 @@ void main() {
         corruptLengthBytes: 2048,
       );
 
-      await player.action.open(tempFile!.path);
+      await player.action.open(AudioSource(tempFile!.path));
       expect(player.state.duration.inMilliseconds, inInclusiveRange(1900, 2100));
 
       await player.action.play();
@@ -64,7 +64,7 @@ void main() {
       await tempFile!.writeAsBytes(corruptedBytes, flush: true);
 
       // Engine must open available frames without reading past buffer or crashing
-      await player.action.open(tempFile!.path);
+      await player.action.open(AudioSource(tempFile!.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -83,7 +83,7 @@ void main() {
       tempFile = File('${tempDir.path}/float_nan.wav');
       await tempFile!.writeAsBytes(floatBytes, flush: true);
 
-      await player.action.open(tempFile!.path);
+      await player.action.open(AudioSource(tempFile!.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -100,7 +100,7 @@ void main() {
     late MiniaudioPlayer player;
     File? tempFile;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       await player.dispose();
       await SyntheticAudioGenerator.cleanUp(tempFile);
@@ -124,7 +124,7 @@ void main() {
         fileName: 'salida_flipped.mp3',
       );
 
-      await player.action.open(tempFile!.path);
+      await player.action.open(AudioSource(tempFile!.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
@@ -150,7 +150,7 @@ void main() {
         fileName: 'salida_flipped.flac',
       );
 
-      await player.action.open(tempFile!.path);
+      await player.action.open(AudioSource(tempFile!.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
@@ -175,7 +175,7 @@ void main() {
       );
 
       try {
-        await player.action.open(tempFile!.path);
+        await player.action.open(AudioSource(tempFile!.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         await player.action.stop();
@@ -196,7 +196,7 @@ void main() {
         endOffset: 32768,
       );
 
-      await player.action.open(AudioSource.memory(bitFlipped));
+      await player.action.open(AudioSource(bitFlipped));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -211,7 +211,7 @@ void main() {
     late MiniaudioPlayer player;
     File? tempFile;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       await player.dispose();
       await SyntheticAudioGenerator.cleanUp(tempFile);
@@ -223,7 +223,7 @@ void main() {
         final file = resolveAsset('example/assets/music/$asset');
         if (!file.existsSync()) continue;
 
-        await player.action.open(file.path);
+        await player.action.open(AudioSource(file.path));
         expect(player.state.duration.inSeconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -241,7 +241,7 @@ void main() {
         final file = resolveAsset('example/assets/music/$asset');
         if (!file.existsSync()) continue;
 
-        await player.action.open(file.path);
+        await player.action.open(AudioSource(file.path));
         expect(player.state.duration.inSeconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -256,7 +256,7 @@ void main() {
         if (!file.existsSync()) continue;
 
         // 1. Play valid
-        await player.action.open(file.path);
+        await player.action.open(AudioSource(file.path));
         expect(player.state.duration.inSeconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -275,7 +275,7 @@ void main() {
           fileName: 'corrupt_$asset',
         );
 
-        await player.action.open(tempFile!.path);
+        await player.action.open(AudioSource(tempFile!.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
         await player.action.stop();
@@ -289,7 +289,7 @@ void main() {
         final file = resolveAsset('example/assets/music/$asset');
         if (!file.existsSync()) continue;
 
-        await player.action.open(file.path);
+        await player.action.open(AudioSource(file.path));
         expect(player.state.duration.inSeconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -300,7 +300,7 @@ void main() {
     test('3.5: Apple Lossless Audio Codec (.m4a ALAC) container playback & seeking', () async {
       final alacFile = resolveAsset('example/assets/music/salida_alac.m4a');
       if (alacFile.existsSync()) {
-        await player.action.open(alacFile.path);
+        await player.action.open(AudioSource(alacFile.path));
         expect(player.state.duration.inSeconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 150));

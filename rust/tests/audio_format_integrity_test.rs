@@ -578,6 +578,10 @@ fn test_instant_rate_and_pitch_response_consumer_side() {
     let visualizer_enabled = Arc::new(AtomicBool::new(false));
 
     let mut renderer = AudioRenderer {
+        header: miniaudio_player::core::renderer::PcmRendererHeader {
+            render_fn: miniaudio_player::core::renderer::audio_renderer_render_trampoline,
+            notif_fn: miniaudio_player::core::renderer::audio_renderer_notif_trampoline,
+        },
         consumer,
         cmd_consumer,
         state: state.clone(),

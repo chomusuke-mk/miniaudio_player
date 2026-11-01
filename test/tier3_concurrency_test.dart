@@ -51,8 +51,8 @@ void main() {
     late MiniaudioPlayer playerB;
 
     setUp(() {
-      playerA = MiniaudioPlayer();
-      playerB = MiniaudioPlayer();
+      playerA = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      playerB = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -61,8 +61,8 @@ void main() {
     });
 
     test('C1.1: two players run simultaneously in parallel without contention', () async {
-      await playerA.action.open(fileA.path);
-      await playerB.action.open(fileB.path);
+      await playerA.action.open(AudioSource(fileA.path));
+      await playerB.action.open(AudioSource(fileB.path));
 
       await Future.wait([playerA.action.play(), playerB.action.play()]);
 
@@ -76,12 +76,12 @@ void main() {
     });
 
     test('C1.2: independent playback positions advance in parallel', () async {
-      await playerA.action.open(fileA.path);
+      await playerA.action.open(AudioSource(fileA.path));
       await playerA.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       // Start playerB later
-      await playerB.action.open(fileB.path);
+      await playerB.action.open(AudioSource(fileB.path));
       await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -101,8 +101,8 @@ void main() {
     late MiniaudioPlayer playerB;
 
     setUp(() {
-      playerA = MiniaudioPlayer();
-      playerB = MiniaudioPlayer();
+      playerA = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      playerB = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -113,8 +113,8 @@ void main() {
     test(
       'C2.1: volume adjustments on Player A do not affect Player B',
       () async {
-        await playerA.action.open(fileA.path);
-        await playerB.action.open(fileB.path);
+        await playerA.action.open(AudioSource(fileA.path));
+        await playerB.action.open(AudioSource(fileB.path));
 
         await playerA.action.setVolume(0.35);
         await playerB.action.setVolume(0.95);
@@ -132,8 +132,8 @@ void main() {
     test(
       'C2.2: rate and pitch adjustments are completely isolated per instance',
       () async {
-        await playerA.action.open(fileA.path);
-        await playerB.action.open(fileB.path);
+        await playerA.action.open(AudioSource(fileA.path));
+        await playerB.action.open(AudioSource(fileB.path));
 
         await playerA.action.setRate(1.75);
         await playerB.action.setRate(0.5);
@@ -151,8 +151,8 @@ void main() {
     test(
       'C2.3: equalizer adjustments are completely isolated per instance',
       () async {
-        await playerA.action.open(fileA.path);
-        await playerB.action.open(fileB.path);
+        await playerA.action.open(AudioSource(fileA.path));
+        await playerB.action.open(AudioSource(fileB.path));
 
         await playerA.action.setEqualizer(Equalizer.rock);
         await playerB.action.setEqualizer(Equalizer.jazz);
@@ -175,8 +175,8 @@ void main() {
     late MiniaudioPlayer playerB;
 
     setUp(() {
-      playerA = MiniaudioPlayer();
-      playerB = MiniaudioPlayer();
+      playerA = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      playerB = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -187,9 +187,9 @@ void main() {
     test(
       'C3.1: pausing Player A does not interrupt Player B playback',
       () async {
-        await playerA.action.open(fileA.path);
+        await playerA.action.open(AudioSource(fileA.path));
         await playerA.action.play();
-        await playerB.action.open(fileB.path);
+        await playerB.action.open(AudioSource(fileB.path));
         await playerB.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -204,9 +204,9 @@ void main() {
     );
 
     test('C3.2: stopping Player A rewinds only Player A to zero', () async {
-      await playerA.action.open(fileA.path);
+      await playerA.action.open(AudioSource(fileA.path));
       await playerA.action.play();
-      await playerB.action.open(fileB.path);
+      await playerB.action.open(AudioSource(fileB.path));
       await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -219,9 +219,9 @@ void main() {
     });
 
     test('C3.3: seeking Player A does not shift Player B position', () async {
-      await playerA.action.open(fileA.path);
+      await playerA.action.open(AudioSource(fileA.path));
       await playerA.action.play();
-      await playerB.action.open(fileB.path);
+      await playerB.action.open(AudioSource(fileB.path));
       await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 150));
 
@@ -244,8 +244,8 @@ void main() {
     late MiniaudioPlayer playerB;
 
     setUp(() {
-      playerA = MiniaudioPlayer();
-      playerB = MiniaudioPlayer();
+      playerA = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      playerB = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -254,9 +254,9 @@ void main() {
     });
 
     test('C4.1: disposing Player A mid-playback leaves Player B running uninterrupted', () async {
-      await playerA.action.open(fileA.path);
+      await playerA.action.open(AudioSource(fileA.path));
       await playerA.action.play();
-      await playerB.action.open(fileB.path);
+      await playerB.action.open(AudioSource(fileB.path));
       await playerB.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -291,17 +291,17 @@ void main() {
     });
 
     test('C5.1: 4 concurrent players run simultaneously with zero crosstalk', () async {
-      final p1 = MiniaudioPlayer();
-      final p2 = MiniaudioPlayer();
-      final p3 = MiniaudioPlayer();
-      final p4 = MiniaudioPlayer();
+      final p1 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      final p2 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      final p3 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      final p4 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       players.addAll([p1, p2, p3, p4]);
 
       await Future.wait([
-        p1.action.open(fileA.path).then((_) => p1.action.play()),
-        p2.action.open(fileB.path).then((_) => p2.action.play()),
-        p3.action.open(fileC.path).then((_) => p3.action.play()),
-        p4.action.open(fileD.path).then((_) => p4.action.play()),
+        p1.action.open(AudioSource(fileA.path)).then((_) => p1.action.play()),
+        p2.action.open(AudioSource(fileB.path)).then((_) => p2.action.play()),
+        p3.action.open(AudioSource(fileC.path)).then((_) => p3.action.play()),
+        p4.action.open(AudioSource(fileD.path)).then((_) => p4.action.play()),
       ]);
 
       expect(p1.state.playing, isTrue);
@@ -328,12 +328,12 @@ void main() {
     });
 
     test('C5.2: interleaved rapid commands across multiple instances execute safely', () async {
-      final p1 = MiniaudioPlayer();
-      final p2 = MiniaudioPlayer();
+      final p1 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      final p2 = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       players.addAll([p1, p2]);
 
-      await p1.action.open(fileA.path);
-      await p2.action.open(fileB.path);
+      await p1.action.open(AudioSource(fileA.path));
+      await p2.action.open(AudioSource(fileB.path));
 
       // Execute interleaved operations concurrently
       await Future.wait([

@@ -46,7 +46,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -58,7 +58,7 @@ void main() {
     test(
       'B1.1: opening a 0-byte file rejects cleanly without native crash',
       () async {
-        expect(() => player.action.open(emptyWavFile.path), throwsA(anything));
+        expect(() => player.action.open(AudioSource(emptyWavFile.path)), throwsA(anything));
       },
     );
 
@@ -66,7 +66,7 @@ void main() {
       'B1.2: opening a corrupted file rejects cleanly without native crash',
       () async {
         expect(
-          () => player.action.open(corruptedWavFile.path),
+          () => player.action.open(AudioSource(corruptedWavFile.path)),
           throwsA(anything),
         );
       },
@@ -75,7 +75,7 @@ void main() {
     test('B1.3: opening a non-existent file path throws without crashing engine', () async {
       expect(
         () => player.action.open(
-          '/path/to/non_existent_file_${DateTime.now().microsecondsSinceEpoch}.wav',
+          AudioSource('/path/to/non_existent_file_${DateTime.now().microsecondsSinceEpoch}.wav'),
         ),
         throwsA(anything),
       );
@@ -84,7 +84,7 @@ void main() {
     test(
       'B1.4: playing ultra-short audio file (80ms) reaches completion cleanly',
       () async {
-        await player.action.open(shortWavFile.path);
+        await player.action.open(AudioSource(shortWavFile.path));
 
         final completedExpectation = expectLater(
           player.stream.completed,
@@ -102,7 +102,7 @@ void main() {
     test(
       'B1.5: natural completion transition emits true on stream.completed exactly once',
       () async {
-        await player.action.open(shortWavFile.path);
+        await player.action.open(AudioSource(shortWavFile.path));
 
         final completedEvents = <bool>[];
         final sub = player.stream.completed.listen((val) {
@@ -130,7 +130,7 @@ void main() {
     test(
       'B1.6: post-completion stop resets state to stopped, position to zero, and does not emit true on completed stream',
       () async {
-        await player.action.open(shortWavFile.path);
+        await player.action.open(AudioSource(shortWavFile.path));
 
         final completedEvents = <bool>[];
         final sub = player.stream.completed.listen((val) {
@@ -166,7 +166,7 @@ void main() {
     test(
       'B1.7: Completed state does not re-emit duplicate completed true events',
       () async {
-        await player.action.open(shortWavFile.path);
+        await player.action.open(AudioSource(shortWavFile.path));
         await player.action.play();
 
         final stopwatch = Stopwatch()..start();
@@ -194,7 +194,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -206,7 +206,7 @@ void main() {
     test(
       'B2.1: seeking past duration clamps to duration or completes track',
       () async {
-        await player.action.open(standardWavFile.path);
+        await player.action.open(AudioSource(standardWavFile.path));
         final duration = player.state.duration;
 
         // Seek far beyond track length
@@ -223,7 +223,7 @@ void main() {
     test(
       'B2.2: seeking to negative timestamp clamps to Duration.zero',
       () async {
-        await player.action.open(standardWavFile.path);
+        await player.action.open(AudioSource(standardWavFile.path));
         await player.action.seek(const Duration(seconds: 2));
         expect(player.state.position.inMilliseconds, greaterThan(1000));
 
@@ -235,7 +235,7 @@ void main() {
     test(
       'B2.3: seeking to exact Duration.zero succeeds and sets position to 0',
       () async {
-        await player.action.open(standardWavFile.path);
+        await player.action.open(AudioSource(standardWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -247,7 +247,7 @@ void main() {
     test(
       'B2.4: seeking while stopped preserves target position for next play',
       () async {
-        await player.action.open(standardWavFile.path);
+        await player.action.open(AudioSource(standardWavFile.path));
         await player.action.stop();
 
         const seekPos = Duration(seconds: 1);
@@ -274,7 +274,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -284,7 +284,7 @@ void main() {
     });
 
     test('B3.1: rapid burst of 20 seek operations without awaiting does not deadlock or crash', () async {
-      await player.action.open(standardWavFile.path);
+      await player.action.open(AudioSource(standardWavFile.path));
       await player.action.play();
 
       // Simulate aggressive user scrubbing the slider
@@ -302,7 +302,7 @@ void main() {
     });
 
     test('B3.2: rapid seek between zero and midpoint converges to final seek target', () async {
-      await player.action.open(standardWavFile.path);
+      await player.action.open(AudioSource(standardWavFile.path));
 
       for (int i = 0; i < 10; i++) {
         await player.action.seek(Duration(milliseconds: i % 2 == 0 ? 0 : 1500));
@@ -325,7 +325,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -381,7 +381,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -437,7 +437,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -493,7 +493,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
     });
 
     tearDown(() async {
@@ -553,7 +553,7 @@ void main() {
     test(
       'B8.1: invoking action.play() after dispose throws immediately',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         await player.dispose();
         expect(player.isDisposed, isTrue);
 
@@ -562,7 +562,7 @@ void main() {
     );
 
     test('B8.2: invoking action.pause(), stop(), seek(), or open() after dispose throws', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       await player.dispose();
 
       expect(() => player.action.pause(), throwsA(anything));
@@ -571,13 +571,13 @@ void main() {
         () => player.action.seek(const Duration(seconds: 1)),
         throwsA(anything),
       );
-      expect(() => player.action.open(standardWavFile.path), throwsA(anything));
+      expect(() => player.action.open(AudioSource(standardWavFile.path)), throwsA(anything));
     });
 
     test(
       'B8.3: invoking action parameter setters after dispose throws',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         await player.dispose();
 
         expect(() => player.action.setVolume(0.5), throwsA(anything));

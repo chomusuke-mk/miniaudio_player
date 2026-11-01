@@ -83,7 +83,7 @@ void main() {
   group('1. State Machine & Stream Telemetry for Opening State', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -102,7 +102,7 @@ void main() {
       final sub1 = player.stream.opening.listen(openingEvents.add);
       final sub2 = player.stream.playbackState.listen(stateEvents.add);
 
-      final openFuture = player.action.open(localWavFile.path);
+      final openFuture = player.action.open(AudioSource(localWavFile.path));
 
       // Verify that opening is true immediately while open is in flight
       expect(player.state.opening, isTrue);
@@ -123,7 +123,7 @@ void main() {
 
     test('1.3: Stale playback telemetry is flushed immediately upon opening', () async {
       // First play local file to advance position and telemetry
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
       await player.action.play();
       final deadline = DateTime.now().add(const Duration(milliseconds: 600));
       while (player.state.position.inMilliseconds <= 100 && DateTime.now().isBefore(deadline)) {
@@ -133,7 +133,7 @@ void main() {
       expect(player.state.playing, isTrue);
 
       // Open new source - telemetry must reset immediately synchronously
-      player.action.open(memoryWavBytes);
+      player.action.open(AudioSource(memoryWavBytes));
 
       expect(player.state.opening, isTrue);
       expect(player.state.playing, isFalse);
@@ -149,14 +149,14 @@ void main() {
   group('2. Unawaited play() immediately after open()', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
 
     test('2.1: Local file: play() immediately after open() without await starts cleanly', () async {
       // Critical test: DO NOT AWAIT open()!
-      player.action.open(localWavFile.path);
+      player.action.open(AudioSource(localWavFile.path));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -177,7 +177,7 @@ void main() {
     });
 
     test('2.2: Memory buffer: play() immediately after openMemory() without await starts cleanly', () async {
-      player.action.open(AudioSource.memory(memoryWavBytes));
+      player.action.open(AudioSource(memoryWavBytes));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -195,7 +195,7 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
       // DO NOT AWAIT openUrl!
-      player.action.open(AudioSource.uri(url));
+      player.action.open(AudioSource(url));
       final playFuture = player.action.play();
 
       await playFuture;
@@ -217,7 +217,7 @@ void main() {
   group('3. Unawaited seek() immediately after open()', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -225,7 +225,7 @@ void main() {
     test('3.1: seek() immediately after open() without await seeks accurately', () async {
       const targetSeek = Duration(seconds: 4);
 
-      player.action.open(localWavFile.path);
+      player.action.open(AudioSource(localWavFile.path));
       final seekFuture = player.action.seek(targetSeek);
       final playFuture = player.action.play();
 
@@ -245,7 +245,7 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
       const targetSeek = Duration(seconds: 5);
 
-      player.action.open(AudioSource.uri(url));
+      player.action.open(AudioSource(url));
       final seekFuture = player.action.seek(targetSeek);
       final playFuture = player.action.play();
 
@@ -264,7 +264,7 @@ void main() {
   group('4. Rapid Interleaved Transport Calls & Stress Interleaving', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -274,12 +274,12 @@ void main() {
       final url2 = 'http://127.0.0.1:$serverPort/music/salida.ogg';
 
       // Interleave open/play/open/seek rapidly
-      player.action.open(AudioSource.uri(url1));
+      player.action.open(AudioSource(url1));
       player.action.play(); // Queued for url1
       player.action.seek(const Duration(seconds: 2));
 
       // Immediately switch track to url2 before url1 finishes opening
-      player.action.open(AudioSource.uri(url2));
+      player.action.open(AudioSource(url2));
       player.action.seek(const Duration(seconds: 1));
       final finalPlayFuture = player.action.play(); // Queued for url2
 
@@ -296,7 +296,7 @@ void main() {
     test('4.2: pause() during opening cancels pending unawaited play()', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.open(AudioSource.uri(url));
+      player.action.open(AudioSource(url));
       player.action.play(); // Queued
       player.action.pause(); // Should cancel queued play!
 
@@ -311,7 +311,7 @@ void main() {
     test('4.3: stop() during opening aborts and resets state to stopped', () async {
       final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
-      player.action.open(AudioSource.uri(url));
+      player.action.open(AudioSource(url));
       player.action.play();
       player.action.seek(const Duration(seconds: 5));
       player.action.stop(); // Cancels opening and queued commands
@@ -337,7 +337,7 @@ void main() {
         switch (op) {
           case 0:
             final src = sources[rng.nextInt(sources.length)];
-            player.action.open(src).catchError((_) {});
+            player.action.open(AudioSource(src)).catchError((_) {});
             break;
           case 1:
             player.action.play().catchError((_) {});
@@ -358,7 +358,7 @@ void main() {
       }
 
       // After chaotic burst, verify the engine recovers and plays normally
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
 

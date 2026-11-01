@@ -37,8 +37,33 @@ pub enum DspCommand {
     SetSampleRate(u32),
 }
 
+#[repr(C)]
+pub struct PcmRendererHeader {
+    pub render_fn: unsafe extern "C" fn(ptr: *mut std::os::raw::c_void, output: *mut f32, count: usize),
+    pub notif_fn: unsafe extern "C" fn(ptr: *mut std::os::raw::c_void, notif: i32),
+}
+
+pub unsafe extern "C" fn audio_renderer_render_trampoline(
+    ptr: *mut std::os::raw::c_void,
+    output: *mut f32,
+    count: usize,
+) {
+    let r = &mut *(ptr as *mut AudioRenderer);
+    r.render_pcm(output, count);
+}
+
+pub unsafe extern "C" fn audio_renderer_notif_trampoline(
+    ptr: *mut std::os::raw::c_void,
+    notif: i32,
+) {
+    let r = &*(ptr as *mut AudioRenderer);
+    r.on_device_notification(notif);
+}
+
 /// Decoupled, real-time safe audio renderer passed exclusively to the hardware audio callback.
+#[repr(C)]
 pub struct AudioRenderer {
+    pub header: PcmRendererHeader,
     pub consumer: AudioConsumer,
     pub cmd_consumer: rtrb::Consumer<DspCommand>,
 

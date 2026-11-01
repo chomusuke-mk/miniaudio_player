@@ -67,7 +67,7 @@ void main() {
     late MiniaudioPlayer player;
     File? tempFile;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
       await SyntheticAudioGenerator.cleanUp(tempFile);
@@ -77,7 +77,7 @@ void main() {
     test('C1.1: openMemory rejects 0-length and tiny buffers (1..43 bytes) without crashing', () async {
       // 0 bytes
       expect(
-        () => player.action.open(AudioSource.memory(Uint8List(0))),
+        () => player.action.open(AudioSource(Uint8List(0))),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -88,7 +88,7 @@ void main() {
           microBytes[i] = (i * 37) & 0xFF;
         }
         await expectLater(
-          player.action.open(AudioSource.memory(microBytes)),
+          player.action.open(AudioSource(microBytes)),
           throwsA(isA<MiniaudioPlayerException>()),
         );
       }
@@ -102,7 +102,7 @@ void main() {
       final zeroChan = Uint8List.fromList(validWav);
       ByteData.view(zeroChan.buffer).setUint16(22, 0, Endian.little);
       await expectLater(
-        player.action.open(AudioSource.memory(zeroChan)),
+        player.action.open(AudioSource(zeroChan)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -110,7 +110,7 @@ void main() {
       final highChan = Uint8List.fromList(validWav);
       ByteData.view(highChan.buffer).setUint16(22, 255, Endian.little);
       await expectLater(
-        player.action.open(AudioSource.memory(highChan)),
+        player.action.open(AudioSource(highChan)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -118,7 +118,7 @@ void main() {
       final zeroSampleRate = Uint8List.fromList(validWav);
       ByteData.view(zeroSampleRate.buffer).setUint32(24, 0, Endian.little);
       await expectLater(
-        player.action.open(AudioSource.memory(zeroSampleRate)),
+        player.action.open(AudioSource(zeroSampleRate)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -126,7 +126,7 @@ void main() {
       final zeroBits = Uint8List.fromList(validWav);
       ByteData.view(zeroBits.buffer).setUint16(34, 0, Endian.little);
       await expectLater(
-        player.action.open(AudioSource.memory(zeroBits)),
+        player.action.open(AudioSource(zeroBits)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -134,7 +134,7 @@ void main() {
       final sevenBits = Uint8List.fromList(validWav);
       ByteData.view(sevenBits.buffer).setUint16(34, 7, Endian.little);
       try {
-        await player.action.open(AudioSource.memory(sevenBits));
+        await player.action.open(AudioSource(sevenBits));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await player.action.stop();
@@ -149,7 +149,7 @@ void main() {
       badMagic[2] = 0x50; // 'P'
       badMagic[3] = 0x45; // 'E'
       await expectLater(
-        player.action.open(AudioSource.memory(badMagic)),
+        player.action.open(AudioSource(badMagic)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -157,7 +157,7 @@ void main() {
       final unknownFmt = Uint8List.fromList(validWav);
       ByteData.view(unknownFmt.buffer).setUint16(20, 0xFFFF, Endian.little);
       try {
-        await player.action.open(AudioSource.memory(unknownFmt));
+        await player.action.open(AudioSource(unknownFmt));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 30));
         await player.action.stop();
@@ -173,7 +173,7 @@ void main() {
       final truncatedAtHeader = validWav.sublist(0, 44);
       // Miniaudio may either open with 0 frames or fail gracefully, but must NOT crash
       try {
-        await player.action.open(AudioSource.memory(truncatedAtHeader));
+        await player.action.open(AudioSource(truncatedAtHeader));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await player.action.stop();
@@ -183,7 +183,7 @@ void main() {
 
       // Truncate halfway through data
       final truncatedHalf = validWav.sublist(0, validWav.length ~/ 2);
-      await player.action.open(AudioSource.memory(truncatedHalf));
+      await player.action.open(AudioSource(truncatedHalf));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(0));
@@ -203,13 +203,13 @@ void main() {
 
       // Must fail cleanly without SIGSEGV
       await expectLater(
-        player.action.open(tempFile!.path),
+        player.action.open(AudioSource(tempFile!.path)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
       // Also via openMemory
       await expectLater(
-        player.action.open(AudioSource.memory(garbage)),
+        player.action.open(AudioSource(garbage)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -221,7 +221,7 @@ void main() {
         injectDenormals: true,
       );
 
-      await player.action.open(AudioSource.memory(floatBytes));
+      await player.action.open(AudioSource(floatBytes));
       // Enable EQ, Limiter, Reverb, and Spatializer to stress DSP filter registers
       await player.action.setEqualizer(const Equalizer(hz1k: 6.0));
       await player.action.setLimiter(true);
@@ -245,7 +245,7 @@ void main() {
   group('Empirical Challenge: Hostile Network & Server Failure Modes', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -254,7 +254,7 @@ void main() {
       for (final code in [404, 403, 500]) {
         final errUrl = 'http://127.0.0.1:$serverPort/error/$code';
         await expectLater(
-          player.action.open(AudioSource.uri(errUrl)),
+          player.action.open(AudioSource(errUrl)),
           throwsA(isA<MiniaudioPlayerException>()),
         );
       }
@@ -263,7 +263,7 @@ void main() {
     test('C2.2: Server delivering malformed garbage headers throws cleanly', () async {
       final corruptUrl = 'http://127.0.0.1:$serverPort/corrupt/headers';
       await expectLater(
-        player.action.open(AudioSource.uri(corruptUrl)),
+        player.action.open(AudioSource(corruptUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
     });
@@ -273,7 +273,7 @@ void main() {
       // Server closes socket after 500 bytes (< 65536 prebuffer)
       // Player must throw or handle without unhandled future rejection or crash
       try {
-        await player.action.open(AudioSource.uri(dropUrl));
+        await player.action.open(AudioSource(dropUrl));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         await player.action.stop();
@@ -285,7 +285,7 @@ void main() {
     test('C2.4: Extreme trickle bandwidth (500 bytes/sec) handles starvation without deadlocks', () async {
       // 4 kbps = ~500 bytes/sec with 64KB initial burst
       final trickleUrl = 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=4&initial_burst=65536';
-      await player.action.open(AudioSource.uri(trickleUrl));
+      await player.action.open(AudioSource(trickleUrl));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -303,7 +303,7 @@ void main() {
 
     test('C2.5: HTTP Redirection (302 Found) to valid audio stream resolves seamlessly', () async {
       final redirectUrl = 'http://127.0.0.1:$serverPort/redirect/302?target=/music/salida.mp3';
-      await player.action.open(AudioSource.uri(redirectUrl));
+      await player.action.open(AudioSource(redirectUrl));
 
       expect(player.state.duration.inSeconds, greaterThan(0));
       await player.action.play();
@@ -316,9 +316,9 @@ void main() {
     test('C2.6: Rapid openUrl and immediate dispose before initial buffering completes', () async {
       final dropUrl = 'http://127.0.0.1:$serverPort/drop/salida.mp3?after=1024';
       for (int i = 0; i < 10; i++) {
-        final p = MiniaudioPlayer();
+        final p = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         // Fire open without awaiting, then immediately dispose
-        unawaited(p.action.open(AudioSource.uri(dropUrl)).catchError((_) {}));
+        unawaited(p.action.open(AudioSource(dropUrl)).catchError((_) {}));
         await Future<void>.delayed(const Duration(milliseconds: 5));
         await p.dispose();
       }
@@ -330,7 +330,7 @@ void main() {
   // =========================================================================
   group('Empirical Challenge: High Concurrency & Memory Churn', () {
     test('C3.1: 5 concurrent players streaming flaky & stalled endpoints simultaneously', () async {
-      final players = List.generate(5, (_) => MiniaudioPlayer());
+      final players = List.generate(5, (_) => MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
       addTearDown(() async {
         for (final p in players) {
           if (!p.isDisposed) await p.dispose();
@@ -345,7 +345,7 @@ void main() {
             : 'http://127.0.0.1:$serverPort/ratelimit/salida.mp3?kbps=64&initial_burst=32768';
 
         futures.add(() async {
-          await p.action.open(AudioSource.uri(url));
+          await p.action.open(AudioSource(url));
           await p.action.play();
           await Future<void>.delayed(const Duration(milliseconds: 300));
           await p.action.setVolume(0.8);
@@ -364,8 +364,8 @@ void main() {
       final wavBytes = SyntheticAudioGenerator.generateWavBytes(durationSeconds: 0.2);
 
       for (int i = 0; i < 40; i++) {
-        final p = MiniaudioPlayer();
-        await p.action.open(AudioSource.memory(wavBytes));
+        final p = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+        await p.action.open(AudioSource(wavBytes));
         await p.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 10));
         await p.dispose();

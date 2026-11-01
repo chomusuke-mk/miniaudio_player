@@ -144,9 +144,9 @@ void main() {
     expect(file.existsSync(), isTrue);
     final bytes = await file.readAsBytes();
 
-    final player = MiniaudioPlayer();
+    final player = MiniaudioPlayer(AudioSource(bytes));
     try {
-      await player.action.open(AudioSource.memory(bytes));
+      await player.waitUntilOpen;
       expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
 
       await player.action.play();
@@ -191,22 +191,22 @@ void main() {
     final bytes1 = await file1.readAsBytes();
     final bytes2 = await file2.readAsBytes();
 
-    final player = MiniaudioPlayer();
+    final player = MiniaudioPlayer(AudioSource(bytes1));
     try {
       // 1. Open track 1
-      await player.action.open(AudioSource.memory(bytes1));
+      await player.waitUntilOpen;
       expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
       await player.action.play();
       expect(player.state.playing, isTrue);
 
       // 2. Switch directly to track 2 while playing (previously caused crash/segfault)
-      await player.action.open(AudioSource.memory(bytes2));
+      await player.action.open(AudioSource(bytes2));
       expect(player.state.duration.inMilliseconds, inInclusiveRange(65000, 72000));
       await player.action.play();
       expect(player.state.playing, isTrue);
 
       // 3. Switch back to track 1
-      await player.action.open(AudioSource.memory(bytes1));
+      await player.action.open(AudioSource(bytes1));
       expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
     } finally {
       await player.dispose();

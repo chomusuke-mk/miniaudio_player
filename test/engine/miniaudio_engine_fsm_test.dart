@@ -83,8 +83,8 @@ void main() {
       'next() -> previous() within 100ms cancels crossfade, steps back to track 1, and leaves exactly one active deck',
       () async {
         await engine.action.open([
-          EngineItem.file(track1File.path, data: 'Track 1'),
-          EngineItem.file(track2File.path, data: 'Track 2'),
+          EngineItem.from(track1File.path, data: 'Track 1'),
+          EngineItem.from(track2File.path, data: 'Track 2'),
         ]);
 
         await engine.action.play();
@@ -146,8 +146,8 @@ void main() {
       'Case A: previous() during autoCrossfading aborts tentative crossfade and seeks to 0:00 because pos > 3s',
       () async {
         await engine.action.open([
-          EngineItem.file(track1File.path, data: 'Track 1'),
-          EngineItem.file(track2File.path, data: 'Track 2'),
+          EngineItem.from(track1File.path, data: 'Track 1'),
+          EngineItem.from(track2File.path, data: 'Track 2'),
         ]);
 
         await engine.action.play();
@@ -176,8 +176,8 @@ void main() {
       'Case B: next() during autoCrossfading promotes tentative fade into manualCrossfading without reopening Track 2',
       () async {
         await engine.action.open([
-          EngineItem.file(track1File.path, data: 'Track 1'),
-          EngineItem.file(track2File.path, data: 'Track 2'),
+          EngineItem.from(track1File.path, data: 'Track 1'),
+          EngineItem.from(track2File.path, data: 'Track 2'),
         ]);
 
         await engine.action.play();
@@ -230,12 +230,12 @@ void main() {
 
     test('burst of 5 un-awaited next() executes in FIFO order with zero zombie players', () async {
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
-        EngineItem.file(track2File.path, data: 'Track 2'),
-        EngineItem.file(track3File.path, data: 'Track 3'),
-        EngineItem.file(track4File.path, data: 'Track 4'),
-        EngineItem.file(track5File.path, data: 'Track 5'),
-        EngineItem.file(track6File.path, data: 'Track 6'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
+        EngineItem.from(track2File.path, data: 'Track 2'),
+        EngineItem.from(track3File.path, data: 'Track 3'),
+        EngineItem.from(track4File.path, data: 'Track 4'),
+        EngineItem.from(track5File.path, data: 'Track 5'),
+        EngineItem.from(track6File.path, data: 'Track 6'),
       ]);
 
       await engine.action.play();
@@ -283,8 +283,8 @@ void main() {
 
     test('seek() during autoCrossfading aborts auto crossfade and seeks on outgoing track', () async {
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
-        EngineItem.file(track2File.path, data: 'Track 2'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
+        EngineItem.from(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
@@ -305,8 +305,8 @@ void main() {
 
     test('seek() during manualCrossfading settles on incoming track and seeks there', () async {
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
-        EngineItem.file(track2File.path, data: 'Track 2'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
+        EngineItem.from(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
@@ -348,7 +348,7 @@ void main() {
       engine.stream.completed.listen(completedEvents.add);
 
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
       ]);
 
       await engine.action.play();
@@ -392,8 +392,8 @@ void main() {
       );
 
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
-        EngineItem.file(track2File.path, data: 'Track 2'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
+        EngineItem.from(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
@@ -431,8 +431,8 @@ void main() {
       );
 
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
-        EngineItem.file(track2File.path, data: 'Track 2'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
+        EngineItem.from(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
@@ -469,8 +469,8 @@ void main() {
       );
 
       await engine.action.open([
-        EngineItem.file(track1File.path, data: 'Track 1'),
-        EngineItem.file(track2File.path, data: 'Track 2'),
+        EngineItem.from(track1File.path, data: 'Track 1'),
+        EngineItem.from(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();

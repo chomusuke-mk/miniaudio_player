@@ -155,10 +155,10 @@ void main() {
       '1.1: Complete playback lifecycle creates 0 periodic timers',
       () async {
         await runWithZeroPeriodicTimerProof((tracker) async {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           try {
             expect(tracker.totalPeriodicCreated, equals(0));
-            await player.action.open(AudioSource.file(sampleWavFile.path));
+            await player.action.open(AudioSource(sampleWavFile.path));
             expect(tracker.totalPeriodicCreated, equals(0));
 
             await player.action.play();
@@ -195,14 +195,14 @@ void main() {
       '1.2: Active visualizer listening with live FFT telemetry creates 0 periodic timers',
       () async {
         await runWithZeroPeriodicTimerProof((tracker) async {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           final visEvents = <VisualizerData>[];
           StreamSubscription<VisualizerData>? sub;
 
           try {
             sub = player.stream.visualizer.listen(visEvents.add);
             await player.action.setVisualizerEnabled(true);
-            await player.action.open(AudioSource.file(sampleWavFile.path));
+            await player.action.open(AudioSource(sampleWavFile.path));
             await player.action.play();
 
             // Allow 600ms for native FFT telemetry to arrive
@@ -229,9 +229,9 @@ void main() {
       '1.3: In-memory audio playback (openMemory) creates 0 periodic timers',
       () async {
         await runWithZeroPeriodicTimerProof((tracker) async {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           try {
-            await player.action.open(AudioSource.memory(memoryWavBytes));
+            await player.action.open(AudioSource(memoryWavBytes));
             expect(tracker.totalPeriodicCreated, equals(0));
 
             await player.action.play();
@@ -257,9 +257,9 @@ void main() {
       '1.4: Rapid DSP parameter mutation bursts create 0 periodic timers',
       () async {
         await runWithZeroPeriodicTimerProof((tracker) async {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           try {
-            await player.action.open(AudioSource.file(sampleWavFile.path));
+            await player.action.open(AudioSource(sampleWavFile.path));
             await player.action.play();
 
             // Rapid burst of 50 mixed DSP setters
@@ -283,9 +283,9 @@ void main() {
 
     test('1.5: Audio device switching creates 0 periodic timers', () async {
       await runWithZeroPeriodicTimerProof((tracker) async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
-          await player.action.open(AudioSource.file(sampleWavFile.path));
+          await player.action.open(AudioSource(sampleWavFile.path));
 
           // Switch to Auto
           await player.action.setDevice(AudioDevice.auto);
@@ -312,9 +312,9 @@ void main() {
       '1.6: Natural track completion to EOF creates 0 periodic timers',
       () async {
         await runWithZeroPeriodicTimerProof((tracker) async {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           try {
-            await player.action.open(AudioSource.file(shortWavFile.path)); // 500ms duration
+            await player.action.open(AudioSource(shortWavFile.path)); // 500ms duration
             await player.action.play();
 
             int elapsed = 0;
@@ -362,7 +362,7 @@ void main() {
     test(
       '2.1: Exhaustive state transition matrix across all PlaybackStates',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         final observedStates = <PlaybackState>[];
         final sub = player.stream.playbackState.listen(observedStates.add);
 
@@ -374,7 +374,7 @@ void main() {
           expect(player.state.completed, isFalse);
 
           // 2. stopped -> opening -> stopped
-          final openFut = player.action.open(AudioSource.file(sampleWavFile.path));
+          final openFut = player.action.open(AudioSource(sampleWavFile.path));
           expect(player.state.opening, isTrue);
           expect(player.state.playbackState, equals(PlaybackState.opening));
           await openFut;
@@ -409,7 +409,7 @@ void main() {
 
           // 8. stopped -> opening -> error
           expect(
-            () => player.action.open(AudioSource.file('/tmp/invalid_ghost_file_987654.wav')),
+            () => player.action.open(AudioSource('/tmp/invalid_ghost_file_987654.wav')),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -433,9 +433,9 @@ void main() {
       '2.2: Rapid sequential lifecycle loop (open -> play -> pause -> seek -> stop -> open -> dispose) x 25',
       () async {
         for (int i = 0; i < 25; i++) {
-          final player = MiniaudioPlayer();
+          final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
           try {
-            await player.action.open(AudioSource.file(sampleWavFile.path));
+            await player.action.open(AudioSource(sampleWavFile.path));
             expect(player.state.playbackState, equals(PlaybackState.stopped));
 
             await player.action.play();
@@ -452,7 +452,7 @@ void main() {
             expect(player.state.position, equals(Duration.zero));
 
             // Re-open different file
-            await player.action.open(AudioSource.file(shortWavFile.path));
+            await player.action.open(AudioSource(shortWavFile.path));
             expect(player.state.playbackState, equals(PlaybackState.stopped));
           } finally {
             await player.dispose();
@@ -465,7 +465,7 @@ void main() {
     test(
       '2.3: Natural EOF completion triggers MAP_EVENT_IS_COMPLETED & MAP_EVENT_STATE without polling',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         final states = <PlaybackState>[];
         final completes = <bool>[];
         final playings = <bool>[];
@@ -475,7 +475,7 @@ void main() {
         final s3 = player.stream.playing.listen(playings.add);
 
         try {
-          await player.action.open(AudioSource.file(shortWavFile.path)); // 500ms duration
+          await player.action.open(AudioSource(shortWavFile.path)); // 500ms duration
           await player.action.play();
 
           // Wait for natural EOF (up to 1500ms)
@@ -508,14 +508,14 @@ void main() {
     test(
       '2.4: Seek-induced completion and reversible transition from completed to paused',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         final states = <PlaybackState>[];
         final completes = <bool>[];
         final sub1 = player.stream.playbackState.listen(states.add);
         final sub2 = player.stream.completed.listen(completes.add);
 
         try {
-          await player.action.open(AudioSource.file(sampleWavFile.path)); // 3.0s duration
+          await player.action.open(AudioSource(sampleWavFile.path)); // 3.0s duration
           final duration = player.state.duration;
 
           // Seek to exact duration -> completion
@@ -546,9 +546,9 @@ void main() {
     test(
       '2.5: Re-entrant unawaited lifecycle dispatches resolve cleanly',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
-          final openFut = player.action.open(AudioSource.file(sampleWavFile.path));
+          final openFut = player.action.open(AudioSource(sampleWavFile.path));
           // Concurrently fire transport commands without awaiting
           final playFut = player.action.play();
           final seekFut = player.action.seek(
@@ -571,14 +571,14 @@ void main() {
     );
 
     test('2.6: Zero stale events delivered after stop and dispose', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       final stateEvents = <PlaybackState>[];
       final positionEvents = <Duration>[];
       final subState = player.stream.playbackState.listen(stateEvents.add);
       final subPos = player.stream.position.listen(positionEvents.add);
 
       try {
-        await player.action.open(AudioSource.file(sampleWavFile.path));
+        await player.action.open(AudioSource(sampleWavFile.path));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -607,17 +607,17 @@ void main() {
     test(
       '3.1: Non-existent file error and recovery via valid file open',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
           expect(
-            () => player.action.open(AudioSource.file('/non_existent_audio_path_xyz_123.wav')),
+            () => player.action.open(AudioSource('/non_existent_audio_path_xyz_123.wav')),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 50));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery: open valid file
-          await player.action.open(AudioSource.file(sampleWavFile.path));
+          await player.action.open(AudioSource(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
           expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -638,42 +638,42 @@ void main() {
     test(
       '3.2: Corrupted audio file recovery (0-byte file, truncated header, random junk)',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
           // 1. Zero-byte file
           expect(
-            () => player.action.open(AudioSource.file(emptyWavFile.path)),
+            () => player.action.open(AudioSource(emptyWavFile.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 30));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery via openMemory
-          await player.action.open(AudioSource.memory(memoryWavBytes));
+          await player.action.open(AudioSource(memoryWavBytes));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // 2. Truncated header file
           expect(
-            () => player.action.open(AudioSource.file(truncatedHeaderFile.path)),
+            () => player.action.open(AudioSource(truncatedHeaderFile.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 30));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery via openFile
-          await player.action.open(AudioSource.file(sampleWavFile.path));
+          await player.action.open(AudioSource(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // 3. Random junk file
           expect(
-            () => player.action.open(AudioSource.file(corruptJunkFile.path)),
+            () => player.action.open(AudioSource(corruptJunkFile.path)),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           await Future<void>.delayed(const Duration(milliseconds: 30));
           expect(player.state.playbackState, equals(PlaybackState.error));
 
           // Recovery via valid file
-          await player.action.open(AudioSource.file(sampleWavFile.path));
+          await player.action.open(AudioSource(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // Play recovered track
@@ -689,11 +689,11 @@ void main() {
     test(
       '3.3: Boundary rejection and error safety (empty path, uninitialized seek)',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
           // Empty path fast rejection
           expect(
-            () => player.action.open(AudioSource.file('')),
+            () => player.action.open(AudioSource('')),
             throwsA(isA<MiniaudioPlayerException>()),
           );
           expect(player.state.playbackState, equals(PlaybackState.stopped));
@@ -706,7 +706,7 @@ void main() {
           expect(player.state.playbackState, equals(PlaybackState.stopped));
 
           // Open valid file
-          await player.action.open(AudioSource.file(sampleWavFile.path));
+          await player.action.open(AudioSource(sampleWavFile.path));
           expect(player.state.playbackState, equals(PlaybackState.stopped));
         } finally {
           await player.dispose();
@@ -717,18 +717,18 @@ void main() {
     test(
       '3.4: Cascading sequential errors and repeated recovery loop (5 cycles)',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
           for (int i = 0; i < 5; i++) {
             // Trigger error
             await expectLater(
-              player.action.open(AudioSource.file('/tmp/ghost_file_$i.wav')),
+              player.action.open(AudioSource('/tmp/ghost_file_$i.wav')),
               throwsA(isA<MiniaudioPlayerException>()),
             );
             expect(player.state.playbackState, equals(PlaybackState.error));
 
             // Recover
-            await player.action.open(AudioSource.memory(memoryWavBytes));
+            await player.action.open(AudioSource(memoryWavBytes));
             expect(player.state.playbackState, equals(PlaybackState.stopped));
 
             // Short play & stop
@@ -746,9 +746,9 @@ void main() {
     test(
       '3.5: Replay after EOF from in-memory audio (openMemory -> EOF -> play())',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
-          await player.action.open(AudioSource.memory(memoryWavBytes)); // 600ms duration
+          await player.action.open(AudioSource(memoryWavBytes)); // 600ms duration
           await player.action.play();
 
           int elapsed = 0;
@@ -779,9 +779,9 @@ void main() {
     test(
       '3.6: Replay after EOF from local file (openFile -> EOF -> play())',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
-          await player.action.open(AudioSource.file(sampleWavFile.path)); // 3.0s duration
+          await player.action.open(AudioSource(sampleWavFile.path)); // 3.0s duration
           // Seek near end to trigger EOF quickly
           await player.action.seek(const Duration(milliseconds: 2950));
           await player.action.play();
@@ -812,14 +812,14 @@ void main() {
     test(
       '3.7: Track substitution after EOF (open Track A -> EOF -> open Track B -> play)',
       () async {
-        final player = MiniaudioPlayer();
+        final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
-          await player.action.open(AudioSource.memory(memoryWavBytes));
+          await player.action.open(AudioSource(memoryWavBytes));
           await player.action.seek(player.state.duration);
           expect(player.state.completed, isTrue);
 
           // Open new file instead of replaying
-          await player.action.open(AudioSource.file(sampleWavFile.path));
+          await player.action.open(AudioSource(sampleWavFile.path));
           expect(player.state.completed, isFalse);
           expect(player.state.playbackState, equals(PlaybackState.stopped));
           expect(player.state.position, equals(Duration.zero));
@@ -842,8 +842,8 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() async {
-      player = MiniaudioPlayer();
-      await player.action.open(AudioSource.file(sampleWavFile.path));
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      await player.action.open(AudioSource(sampleWavFile.path));
     });
 
     tearDown(() async {
@@ -1081,8 +1081,8 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() async {
-      player = MiniaudioPlayer();
-      await player.action.open(AudioSource.file(sampleWavFile.path));
+      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      await player.action.open(AudioSource(sampleWavFile.path));
     });
 
     tearDown(() async {
@@ -1272,8 +1272,8 @@ void main() {
       late MiniaudioPlayer player;
 
       setUp(() async {
-        player = MiniaudioPlayer();
-        await player.action.open(AudioSource.file(sampleWavFile.path));
+        player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+        await player.action.open(AudioSource(sampleWavFile.path));
       });
 
       tearDown(() async {
@@ -1442,7 +1442,7 @@ void main() {
   group('Group 7: 100% Backward Compatibility & Contract Verification', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('7.1: All 33 streams on PlayerStream are broadcast streams', () {
@@ -1568,8 +1568,8 @@ void main() {
     test(
       '7.4: Post-disposal synchronous access to all 36 state getters is memory-safe',
       () async {
-        final tempPlayer = MiniaudioPlayer();
-        await tempPlayer.action.open(AudioSource.file(sampleWavFile.path));
+        final tempPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+        await tempPlayer.action.open(AudioSource(sampleWavFile.path));
         await tempPlayer.dispose();
         expect(tempPlayer.isDisposed, isTrue);
 
@@ -1674,10 +1674,10 @@ void main() {
     test(
       '7.6: Purely reactive telemetry updates without polling or periodic timers',
       () async {
-        final activePlayer = MiniaudioPlayer();
+        final activePlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
         try {
           await runWithZeroPeriodicTimerProof((tracker) async {
-            await activePlayer.action.open(AudioSource.file(sampleWavFile.path));
+            await activePlayer.action.open(AudioSource(sampleWavFile.path));
             expect(activePlayer.state.duration, greaterThan(Duration.zero));
 
             await activePlayer.action.play();

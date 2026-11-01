@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/engine.dart';
 import 'api/player.dart';
 import 'api/types.dart';
 import 'dart:async';
@@ -21,6 +22,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     required super.portManager,
   });
 
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RustEnginePtr =>
+      wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine;
+
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RustPlayerPtr =>
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer;
 
@@ -28,8 +32,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustEngine
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          dynamic raw);
+
+  @protected
   RustPlayer
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+          dynamic raw);
+
+  @protected
+  RustEngine
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
           dynamic raw);
 
   @protected
@@ -38,9 +52,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
+  RustEngine
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          dynamic raw);
+
+  @protected
   RustPlayer
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
           dynamic raw);
+
+  @protected
+  RustStreamSink<RustEngineEvent> dco_decode_StreamSink_rust_engine_event_Sse(
+      dynamic raw);
 
   @protected
   RustStreamSink<RustPlayerEvent> dco_decode_StreamSink_rust_player_event_Sse(
@@ -53,10 +76,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  double dco_decode_box_autoadd_f_32(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_i_32(dynamic raw);
+
+  @protected
   RustAudioDevice dco_decode_box_autoadd_rust_audio_device(dynamic raw);
 
   @protected
   RustBufferedRange dco_decode_box_autoadd_rust_buffered_range(dynamic raw);
+
+  @protected
+  RustCrossfadeConfig dco_decode_box_autoadd_rust_crossfade_config(dynamic raw);
 
   @protected
   RustDartReadRequest dco_decode_box_autoadd_rust_dart_read_request(
@@ -82,6 +114,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
+  BigInt dco_decode_box_autoadd_usize(dynamic raw);
+
+  @protected
   double dco_decode_f_32(dynamic raw);
 
   @protected
@@ -103,13 +138,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustAudioDevice> dco_decode_list_rust_audio_device(dynamic raw);
 
   @protected
+  List<RustEngineItem> dco_decode_list_rust_engine_item(dynamic raw);
+
+  @protected
+  List<RustHttpHeader> dco_decode_list_rust_http_header(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_32(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_i_32(dynamic raw);
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
+  BigInt? dco_decode_opt_box_autoadd_usize(dynamic raw);
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<RustHttpHeader>? dco_decode_opt_list_rust_http_header(dynamic raw);
 
   @protected
   RustAudioAnalysisResult dco_decode_rust_audio_analysis_result(dynamic raw);
@@ -121,10 +174,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustBufferedRange dco_decode_rust_buffered_range(dynamic raw);
 
   @protected
+  RustCrossfadeConfig dco_decode_rust_crossfade_config(dynamic raw);
+
+  @protected
   RustDartReadRequest dco_decode_rust_dart_read_request(dynamic raw);
 
   @protected
+  RustEngineEvent dco_decode_rust_engine_event(dynamic raw);
+
+  @protected
+  RustEngineItem dco_decode_rust_engine_item(dynamic raw);
+
+  @protected
   RustEqualizerParams dco_decode_rust_equalizer_params(dynamic raw);
+
+  @protected
+  RustHttpHeader dco_decode_rust_http_header(dynamic raw);
 
   @protected
   RustPlayerEvent dco_decode_rust_player_event(dynamic raw);
@@ -166,8 +231,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustEngine
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          SseDeserializer deserializer);
+
+  @protected
   RustPlayer
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+          SseDeserializer deserializer);
+
+  @protected
+  RustEngine
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
           SseDeserializer deserializer);
 
   @protected
@@ -176,9 +251,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
+  RustEngine
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          SseDeserializer deserializer);
+
+  @protected
   RustPlayer
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
           SseDeserializer deserializer);
+
+  @protected
+  RustStreamSink<RustEngineEvent> sse_decode_StreamSink_rust_engine_event_Sse(
+      SseDeserializer deserializer);
 
   @protected
   RustStreamSink<RustPlayerEvent> sse_decode_StreamSink_rust_player_event_Sse(
@@ -191,11 +275,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  double sse_decode_box_autoadd_f_32(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer);
+
+  @protected
   RustAudioDevice sse_decode_box_autoadd_rust_audio_device(
       SseDeserializer deserializer);
 
   @protected
   RustBufferedRange sse_decode_box_autoadd_rust_buffered_range(
+      SseDeserializer deserializer);
+
+  @protected
+  RustCrossfadeConfig sse_decode_box_autoadd_rust_crossfade_config(
       SseDeserializer deserializer);
 
   @protected
@@ -226,6 +320,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  BigInt sse_decode_box_autoadd_usize(SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
@@ -248,13 +345,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<RustEngineItem> sse_decode_list_rust_engine_item(
+      SseDeserializer deserializer);
+
+  @protected
+  List<RustHttpHeader> sse_decode_list_rust_http_header(
+      SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer);
+
+  @protected
+  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer);
 
   @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  BigInt? sse_decode_opt_box_autoadd_usize(SseDeserializer deserializer);
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<RustHttpHeader>? sse_decode_opt_list_rust_http_header(
+      SseDeserializer deserializer);
 
   @protected
   RustAudioAnalysisResult sse_decode_rust_audio_analysis_result(
@@ -268,12 +386,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustCrossfadeConfig sse_decode_rust_crossfade_config(
+      SseDeserializer deserializer);
+
+  @protected
   RustDartReadRequest sse_decode_rust_dart_read_request(
       SseDeserializer deserializer);
 
   @protected
+  RustEngineEvent sse_decode_rust_engine_event(SseDeserializer deserializer);
+
+  @protected
+  RustEngineItem sse_decode_rust_engine_item(SseDeserializer deserializer);
+
+  @protected
   RustEqualizerParams sse_decode_rust_equalizer_params(
       SseDeserializer deserializer);
+
+  @protected
+  RustHttpHeader sse_decode_rust_http_header(SseDeserializer deserializer);
 
   @protected
   RustPlayerEvent sse_decode_rust_player_event(SseDeserializer deserializer);
@@ -320,8 +451,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          RustEngine self, SseSerializer serializer);
+
+  @protected
+  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
           RustPlayer self, SseSerializer serializer);
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          RustEngine self, SseSerializer serializer);
 
   @protected
   void
@@ -330,8 +471,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          RustEngine self, SseSerializer serializer);
+
+  @protected
+  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
           RustPlayer self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_StreamSink_rust_engine_event_Sse(
+      RustStreamSink<RustEngineEvent> self, SseSerializer serializer);
 
   @protected
   void sse_encode_StreamSink_rust_player_event_Sse(
@@ -344,12 +494,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_buffered_range(
       RustBufferedRange self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_crossfade_config(
+      RustCrossfadeConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_dart_read_request(
@@ -379,6 +539,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_usize(BigInt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
@@ -403,14 +566,35 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustAudioDevice> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_rust_engine_item(
+      List<RustEngineItem> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_rust_http_header(
+      List<RustHttpHeader> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_32(double? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_usize(BigInt? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
       Uint8List? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_rust_http_header(
+      List<RustHttpHeader>? self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_audio_analysis_result(
@@ -425,12 +609,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustBufferedRange self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_crossfade_config(
+      RustCrossfadeConfig self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_dart_read_request(
       RustDartReadRequest self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_engine_event(
+      RustEngineEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_engine_item(
+      RustEngineItem self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_equalizer_params(
       RustEqualizerParams self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_http_header(
+      RustHttpHeader self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_player_event(
@@ -481,6 +681,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 class RustLibWire implements BaseWire {
   RustLibWire.fromExternalLibrary(ExternalLibrary lib);
 
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          int ptr) =>
+      wasmModule
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+              ptr);
+
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          int ptr) =>
+      wasmModule
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+              ptr);
+
   void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
           int ptr) =>
       wasmModule
@@ -500,6 +712,14 @@ external RustLibWasmModule get wasmModule;
 @JS()
 @anonymous
 extension type RustLibWasmModule._(JSObject _) implements JSObject {
+  external void
+      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          int ptr);
+
+  external void
+      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          int ptr);
+
   external void
       rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
           int ptr);

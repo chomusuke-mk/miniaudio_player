@@ -9,9 +9,9 @@ void main() {
     final wavFile = File('/home/javier/Descargas/test/SAD (FUNK)_22_1 (Copiar).wav');
     if (!wavFile.existsSync()) return;
 
-    final player = MiniaudioPlayer();
+    final player = MiniaudioPlayer(AudioSource(wavFile.path));
     final sw = Stopwatch()..start();
-    await player.action.open(AudioSource.file(wavFile.path));
+    await player.waitUntilOpen;
     sw.stop();
 
     print('WAV open time: ${sw.elapsedMilliseconds} ms (duration=${player.state.duration})');
@@ -30,10 +30,10 @@ void main() {
         .take(10)
         .toList();
 
-    final player = MiniaudioPlayer();
+    final player = MiniaudioPlayer(AudioSource(files.first.path));
     for (final f in files) {
       final sw = Stopwatch()..start();
-      await player.action.open(AudioSource.file(f.path));
+      await player.action.open(AudioSource(f.path));
       sw.stop();
       print('${f.path.split("/").last} -> ${sw.elapsedMilliseconds} ms (dur=${player.state.duration})');
     }
@@ -56,7 +56,7 @@ void main() {
     final items = [
       for (var i = 0; i < 1000; i++)
         EngineItem(
-          source: AudioSource.file(files[i].path),
+          source: AudioSource(files[i].path),
         ),
     ];
 

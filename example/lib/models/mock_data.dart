@@ -121,7 +121,7 @@ abstract final class MockData {
           addTrack(
             id: 'asset://$asset',
             title: filename,
-            source: AudioSource.uri('asset://$asset'),
+            source: AudioSource('asset://$asset'),
             artist: 'Local Asset Bundle',
           );
         }
@@ -142,7 +142,7 @@ abstract final class MockData {
         addTrack(
           id: 'asset://$asset',
           title: filename,
-          source: AudioSource.uri('asset://$asset'),
+          source: AudioSource('asset://$asset'),
           artist: 'Bundled Asset',
         );
       }
@@ -152,7 +152,7 @@ abstract final class MockData {
     addTrack(
       id: 'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3',
       title: 'Sample Track (Remote MP3, CORS)',
-      source: AudioSource.uri(
+      source: AudioSource(
         'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3',
       ),
       artist: 'Remote CDN',
@@ -161,7 +161,7 @@ abstract final class MockData {
     addTrack(
       id: 'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg',
       title: 'Joy to the World (Wikimedia OGG, CORS)',
-      source: AudioSource.uri(
+      source: AudioSource(
         'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg',
       ),
       artist: 'Wikimedia Commons',
@@ -171,7 +171,7 @@ abstract final class MockData {
     addTrack(
       id: 'icy://icecast.radiofrance.fr/fip-midfi.mp3',
       title: 'Radio FIP (Icecast Live Stream)',
-      source: AudioSource.uri('icy://icecast.radiofrance.fr/fip-midfi.mp3'),
+      source: AudioSource('icy://icecast.radiofrance.fr/fip-midfi.mp3'),
       artist: 'Radio France',
     );
 
@@ -181,7 +181,7 @@ abstract final class MockData {
     addTrack(
       id: 'data:audio/wav;base64,...',
       title: 'Synthesized 440Hz Tone (data: URI)',
-      source: AudioSource.uri('data:audio/wav;base64,$synthBase64'),
+      source: AudioSource('data:audio/wav;base64,$synthBase64'),
       isGenerated: true,
       artist: 'In-Memory DSP',
     );

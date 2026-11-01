@@ -122,7 +122,7 @@ void main() {
   group('Remote Formats Matrix Progressive Playback & Seeking', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     const testedFormats = [
@@ -152,7 +152,7 @@ void main() {
         stdout.writeln('>>> [DEBUG] 1.$fmt: Opening $url');
 
         // 1. Open remote URL
-        await player.action.open(AudioSource.uri(url));
+        await player.action.open(AudioSource(url));
         stdout.writeln('>>> [DEBUG] 1.$fmt: openUrl OK, dur=${player.state.duration.inMilliseconds}');
         expect(player.state.duration.inMilliseconds, greaterThan(0),
             reason: 'Duration must be resolved for $fmt');
@@ -205,7 +205,7 @@ void main() {
   group('Live Stream Matrix Streaming & Transitions', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     const liveFormats = ['mp3', 'wav', 'aac', 'ogg'];
@@ -219,9 +219,8 @@ void main() {
         final flakyPath = item['live_flaky'] as String;
 
         // 1. Open normal livestream
-        await player.action.open(AudioSource.uri(
+        await player.action.open(AudioSource(
           'http://127.0.0.1:$serverPort$normalPath',
-          isLive: true,
         ));
         expect(player.state.duration, equals(Duration.zero));
 
@@ -230,9 +229,8 @@ void main() {
         expect(player.state.playing, isTrue);
 
         // 2. Seamlessly switch to flaky live stream mid-stream
-        await player.action.open(AudioSource.uri(
+        await player.action.open(AudioSource(
           'http://127.0.0.1:$serverPort$flakyPath',
-          isLive: true,
         ));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -250,7 +248,7 @@ void main() {
   group('Corrupt Stream/File Resilience & Player State Recovery', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('3.1: Corrupt remote file triggers controlled error without breaking subsequent commands', () async {
@@ -261,7 +259,7 @@ void main() {
 
       // 1. Attempt to open corrupt audio file -> expect controlled exception
       await expectLater(
-        player.action.open(AudioSource.uri(corruptUrl)),
+        player.action.open(AudioSource(corruptUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -271,7 +269,7 @@ void main() {
       expect(player.state.playing, isFalse);
 
       // 3. Immediate recovery: player must cleanly open valid URL and play
-      await player.action.open(AudioSource.uri(normalUrl));
+      await player.action.open(AudioSource(normalUrl));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -288,7 +286,7 @@ void main() {
       final normalLive = 'http://127.0.0.1:$serverPort${item['live_normal']}';
 
       await expectLater(
-        player.action.open(AudioSource.uri(corruptLive, isLive: true)),
+        player.action.open(AudioSource(corruptLive)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -296,7 +294,7 @@ void main() {
       await player.action.stop();
 
       // Open valid live stream
-      await player.action.open(AudioSource.uri(normalLive, isLive: true));
+      await player.action.open(AudioSource(normalLive));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
@@ -311,7 +309,7 @@ void main() {
   group('Flaky Network & Burst Rate-Limiting with Range Stats', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('4.1: Rapid seeks across rate-limited flaky stream track request count and preserve pipeline', () async {
@@ -321,11 +319,7 @@ void main() {
       final url = 'http://127.0.0.1:$serverPort$flakyPath?burst_limit=3';
 
       await resetStats(serverPort!);
-      await player.action.open(AudioSource.uri(
-        url,
-        bufferAhead: const Duration(milliseconds: 500)),
-        bufferBehind: Duration.zero,
-      );
+      await player.action.open(AudioSource(url));
       await player.action.play();
 
       // Fire rapid consecutive seeks across unbuffered track regions
@@ -358,7 +352,7 @@ void main() {
   group('Chaotic Interleaved Controls Sequence', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async => await player.dispose());
 
     test('5.1: Comprehensive chaotic commands loop with detailed trace validation', () async {
@@ -376,7 +370,7 @@ void main() {
 
         // Step 1: Open track A and play
         trace.log('Step 1: openUrl(trackA)');
-        await player.action.open(AudioSource.uri(trackA));
+        await player.action.open(AudioSource(trackA));
         trace.log('Step 1.1: play()');
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -429,7 +423,7 @@ void main() {
         // Step 7: Open corrupt track mid-playback -> expect error, trace it
         trace.log('Step 7: open corrupt track');
         try {
-          await player.action.open(AudioSource.uri(corruptTrack));
+          await player.action.open(AudioSource(corruptTrack));
           fail('Opening corrupt track should throw MiniaudioPlayerException');
         } on MiniaudioPlayerException catch (err) {
           trace.log('Step 7.1: caught expected exception', {'error': err.message});
@@ -442,7 +436,7 @@ void main() {
 
         // Step 9: Switch to Live Stream
         trace.log('Step 9: openUrl(liveStream)');
-        await player.action.open(AudioSource.uri(liveStream, isLive: true));
+        await player.action.open(AudioSource(liveStream));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);
@@ -450,7 +444,7 @@ void main() {
 
         // Step 10: Switch directly from Live Stream to finite track B
         trace.log('Step 10: switch from live stream to track B (M4A/ALAC)');
-        await player.action.open(AudioSource.uri(trackB));
+        await player.action.open(AudioSource(trackB));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);

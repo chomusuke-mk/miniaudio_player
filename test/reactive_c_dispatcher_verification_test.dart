@@ -36,9 +36,9 @@ void main() {
 
   group('Reactive C Event Dispatcher - Non-Optimistic Stream Verification', () {
     test('Setters do not emit stream events before C confirms them', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
-        await player.action.open(AudioSource.file(sampleWav.path));
+        await player.action.open(AudioSource(sampleWav.path));
 
         // Volume
         final volumeEvents = <double>[];
@@ -78,7 +78,7 @@ void main() {
     });
 
     test('Invalid setter values throw on Dart side and never emit on stream', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final volumeEvents = <double>[];
         final volSub = player.stream.volume.listen(volumeEvents.add);
@@ -107,9 +107,9 @@ void main() {
 
   group('Reactive C Event Dispatcher - Deduplication & Anti-Flooding', () {
     test('Repeated identical setter calls are deduplicated in C and emit once', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
-        await player.action.open(AudioSource.file(sampleWav.path));
+        await player.action.open(AudioSource(sampleWav.path));
 
         // 1. Volume
         final volumeEvents = <double>[];
@@ -195,7 +195,7 @@ void main() {
     });
 
     test('Alternating parameter mutations emit strictly when value actually mutates', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final volumeEvents = <double>[];
         final sub = player.stream.volume.listen(volumeEvents.add);
@@ -223,9 +223,9 @@ void main() {
     });
 
     test('Compound DSP parameter deduplication (Preamp, ReplayGain, Equalizer, SilenceConfig)', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
-        await player.action.open(AudioSource.file(sampleWav.path));
+        await player.action.open(AudioSource(sampleWav.path));
 
         // Preamp
         final preampEvents = <double>[];
@@ -297,7 +297,7 @@ void main() {
     });
 
     test('Visualizer enabled state transitions reactively and deduplicates', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final vizEvents = <bool>[];
         final sub = player.stream.visualizerEnabled.listen(vizEvents.add);
@@ -321,9 +321,9 @@ void main() {
     });
 
     test('100 concurrent unawaited setter mutations resolve cleanly without deadlock', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
-        await player.action.open(AudioSource.file(sampleWav.path));
+        await player.action.open(AudioSource(sampleWav.path));
 
         final futures = <Future<void>>[];
         for (int i = 0; i < 100; i++) {
@@ -356,17 +356,17 @@ void main() {
         frequencyHz: 880.0,
       );
 
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         // Track 1
-        await player.action.open(AudioSource.memory(wav1Bytes));
+        await player.action.open(AudioSource(wav1Bytes));
         expect(player.state.duration.inMilliseconds, inInclusiveRange(450, 550));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 100));
         expect(player.state.playing, isTrue);
 
         // Track 2 replaces Track 1 mid-playback
-        await player.action.open(AudioSource.memory(wav2Bytes));
+        await player.action.open(AudioSource(wav2Bytes));
         expect(player.state.duration.inMilliseconds, inInclusiveRange(950, 1050));
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.position, equals(Duration.zero));
@@ -382,7 +382,7 @@ void main() {
 
   group('Reactive C Event Dispatcher - setDevice Future<void> Contract', () {
     test('setDevice returns Future<void> and updates stream.audioDevice', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final deviceEvents = <AudioDevice>[];
         final sub = player.stream.audioDevice.listen(deviceEvents.add);
@@ -403,7 +403,7 @@ void main() {
 
   group('Reactive C Event Dispatcher - Lifecycle & Zero Polling Proof', () {
     test('Zero periodic timers spawned during entire play, pause, seek, stop lifecycle', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       final List<Timer> timersCreated = [];
 
       final zoneSpec = ZoneSpecification(
@@ -416,7 +416,7 @@ void main() {
 
       await runZoned(() async {
         try {
-          await player.action.open(AudioSource.file(sampleWav.path));
+          await player.action.open(AudioSource(sampleWav.path));
           expect(player.state.duration, greaterThan(Duration.zero));
 
           await player.action.play();
@@ -455,7 +455,7 @@ void main() {
       final shortFile = File('${tempDir.path}/short_eof.wav');
       await shortFile.writeAsBytes(shortWavBytes, flush: true);
 
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final completedEvents = <bool>[];
         final stateEvents = <PlaybackState>[];
@@ -463,7 +463,7 @@ void main() {
         final cSub = player.stream.completed.listen(completedEvents.add);
         final sSub = player.stream.playbackState.listen(stateEvents.add);
 
-        await player.action.open(AudioSource.file(shortFile.path));
+        await player.action.open(AudioSource(shortFile.path));
         await player.action.play();
 
         final stopwatch = Stopwatch()..start();
@@ -496,9 +496,9 @@ void main() {
       final shortFile = File('${tempDir.path}/short_seek_eof.wav');
       await shortFile.writeAsBytes(shortWavBytes, flush: true);
 
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
-        await player.action.open(AudioSource.file(shortFile.path));
+        await player.action.open(AudioSource(shortFile.path));
         await player.action.play();
 
         final stopwatch = Stopwatch()..start();
@@ -522,13 +522,13 @@ void main() {
 
   group('Reactive C Event Dispatcher - Error State & Recovery', () {
     test('Non-existent file sets state to error and recovers with openMemory', () async {
-      final player = MiniaudioPlayer();
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
       try {
         final stateEvents = <PlaybackState>[];
         final sub = player.stream.playbackState.listen(stateEvents.add);
 
         expect(
-          () => player.action.open(AudioSource.file('/tmp/this_file_does_not_exist_12345.wav')),
+          () => player.action.open(AudioSource('/tmp/this_file_does_not_exist_12345.wav')),
           throwsA(isA<MiniaudioPlayerException>()),
         );
 
@@ -537,7 +537,7 @@ void main() {
         expect(stateEvents, contains(PlaybackState.error));
 
         // Recovery: open valid in-memory audio
-        await player.action.open(AudioSource.memory(sampleWavBytes));
+        await player.action.open(AudioSource(sampleWavBytes));
         expect(player.state.playbackState, equals(PlaybackState.stopped));
         expect(player.state.duration, greaterThan(Duration.zero));
 
@@ -555,8 +555,8 @@ void main() {
 
   group('Reactive C Event Dispatcher - Disposal Safety', () {
     test('Disposed player unbinds native callback safely and actions throw', () async {
-      final player = MiniaudioPlayer();
-      await player.action.open(AudioSource.memory(sampleWavBytes));
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      await player.action.open(AudioSource(sampleWavBytes));
       await player.dispose();
 
       expect(player.isDisposed, isTrue);

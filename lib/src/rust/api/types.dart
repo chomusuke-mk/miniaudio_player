@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
@@ -152,6 +152,34 @@ class RustBufferedRange {
           isEof == other.isEof;
 }
 
+class RustCrossfadeConfig {
+  final BigInt durationMs;
+  final BigInt manualDurationMs;
+  final int curve;
+
+  const RustCrossfadeConfig({
+    required this.durationMs,
+    required this.manualDurationMs,
+    required this.curve,
+  });
+
+  static Future<RustCrossfadeConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustCrossfadeConfigDefault();
+
+  @override
+  int get hashCode =>
+      durationMs.hashCode ^ manualDurationMs.hashCode ^ curve.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustCrossfadeConfig &&
+          runtimeType == other.runtimeType &&
+          durationMs == other.durationMs &&
+          manualDurationMs == other.manualDurationMs &&
+          curve == other.curve;
+}
+
 class RustDartReadRequest {
   final int streamId;
   final BigInt requestId;
@@ -183,6 +211,149 @@ class RustDartReadRequest {
           length == other.length;
 }
 
+@freezed
+sealed class RustEngineEvent with _$RustEngineEvent {
+  const RustEngineEvent._();
+
+  const factory RustEngineEvent.phase(
+    int field0,
+  ) = RustEngineEvent_Phase;
+  const factory RustEngineEvent.state(
+    int field0,
+  ) = RustEngineEvent_State;
+  const factory RustEngineEvent.position(
+    PlatformInt64 field0,
+  ) = RustEngineEvent_Position;
+  const factory RustEngineEvent.duration(
+    PlatformInt64 field0,
+  ) = RustEngineEvent_Duration;
+  const factory RustEngineEvent.isPlaying(
+    bool field0,
+  ) = RustEngineEvent_IsPlaying;
+  const factory RustEngineEvent.isBuffering(
+    bool field0,
+  ) = RustEngineEvent_IsBuffering;
+  const factory RustEngineEvent.isCompleted(
+    bool field0,
+  ) = RustEngineEvent_IsCompleted;
+  const factory RustEngineEvent.currentIndex(
+    int field0,
+  ) = RustEngineEvent_CurrentIndex;
+  const factory RustEngineEvent.queueChanged(
+    List<RustEngineItem> field0,
+  ) = RustEngineEvent_QueueChanged;
+  const factory RustEngineEvent.volume(
+    double field0,
+  ) = RustEngineEvent_Volume;
+  const factory RustEngineEvent.rate(
+    double field0,
+  ) = RustEngineEvent_Rate;
+  const factory RustEngineEvent.pitch(
+    double field0,
+  ) = RustEngineEvent_Pitch;
+  const factory RustEngineEvent.bitrate(
+    int field0,
+  ) = RustEngineEvent_Bitrate;
+  const factory RustEngineEvent.bufferSize(
+    int field0,
+  ) = RustEngineEvent_BufferSize;
+  const factory RustEngineEvent.device(
+    RustAudioDevice field0,
+  ) = RustEngineEvent_Device;
+  const factory RustEngineEvent.visualizer(
+    RustVisualizerData field0,
+  ) = RustEngineEvent_Visualizer;
+  const factory RustEngineEvent.visualizerEnabled(
+    bool field0,
+  ) = RustEngineEvent_VisualizerEnabled;
+  const factory RustEngineEvent.bufferedRange(
+    RustBufferedRange field0,
+  ) = RustEngineEvent_BufferedRange;
+  const factory RustEngineEvent.equalizer(
+    RustEqualizerParams field0,
+  ) = RustEngineEvent_Equalizer;
+  const factory RustEngineEvent.preamp(
+    double field0,
+  ) = RustEngineEvent_Preamp;
+  const factory RustEngineEvent.replayGain(
+    RustReplayGainConfig field0,
+  ) = RustEngineEvent_ReplayGain;
+  const factory RustEngineEvent.balance(
+    double field0,
+  ) = RustEngineEvent_Balance;
+  const factory RustEngineEvent.mono(
+    bool field0,
+  ) = RustEngineEvent_Mono;
+  const factory RustEngineEvent.crossfeed(
+    int field0,
+  ) = RustEngineEvent_Crossfeed;
+  const factory RustEngineEvent.spatializer({
+    required bool enabled,
+    required double width,
+  }) = RustEngineEvent_Spatializer;
+  const factory RustEngineEvent.reverb(
+    RustReverbParams field0,
+  ) = RustEngineEvent_Reverb;
+  const factory RustEngineEvent.limiter(
+    bool field0,
+  ) = RustEngineEvent_Limiter;
+  const factory RustEngineEvent.crossfadeConfig(
+    RustCrossfadeConfig field0,
+  ) = RustEngineEvent_CrossfadeConfig;
+  const factory RustEngineEvent.loopMode(
+    int field0,
+  ) = RustEngineEvent_LoopMode;
+  const factory RustEngineEvent.shuffle(
+    bool field0,
+  ) = RustEngineEvent_Shuffle;
+  const factory RustEngineEvent.error({
+    required String message,
+    required int code,
+  }) = RustEngineEvent_Error;
+}
+
+class RustEngineItem {
+  final PlatformInt64 id;
+  final String source;
+  final List<RustHttpHeader>? headers;
+  final Uint8List? dataBytes;
+  final double? replayGainDb;
+  final double? replayPeak;
+
+  const RustEngineItem({
+    required this.id,
+    required this.source,
+    this.headers,
+    this.dataBytes,
+    this.replayGainDb,
+    this.replayPeak,
+  });
+
+  static Future<RustEngineItem> default_() =>
+      RustLib.instance.api.crateApiTypesRustEngineItemDefault();
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      source.hashCode ^
+      headers.hashCode ^
+      dataBytes.hashCode ^
+      replayGainDb.hashCode ^
+      replayPeak.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustEngineItem &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          source == other.source &&
+          headers == other.headers &&
+          dataBytes == other.dataBytes &&
+          replayGainDb == other.replayGainDb &&
+          replayPeak == other.replayPeak;
+}
+
 class RustEqualizerParams {
   final Float32List gains;
   final bool enabled;
@@ -205,6 +376,30 @@ class RustEqualizerParams {
           runtimeType == other.runtimeType &&
           gains == other.gains &&
           enabled == other.enabled;
+}
+
+class RustHttpHeader {
+  final String key;
+  final String value;
+
+  const RustHttpHeader({
+    required this.key,
+    required this.value,
+  });
+
+  static Future<RustHttpHeader> default_() =>
+      RustLib.instance.api.crateApiTypesRustHttpHeaderDefault();
+
+  @override
+  int get hashCode => key.hashCode ^ value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustHttpHeader &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          value == other.value;
 }
 
 @freezed

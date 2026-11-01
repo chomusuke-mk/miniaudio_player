@@ -9,11 +9,11 @@ void main() {
   HttpOverrides.global = null;
 
   test('Kanye M4A reproduces cleanly with Tail Probing', () async {
-    final player = MiniaudioPlayer();
+    const url = "https://dn711104.ca.archive.org/0/items/kanyes-whole-discography/Kanye%27s%20Whole%20Discography%2F808%27s%26Heartbreak%2FAmazing%20%28feat.%20Young%20Jeezy%29.m4a";
+    final stopwatch = Stopwatch()..start();
+    final player = MiniaudioPlayer(AudioSource(url));
     try {
-      const url = "https://dn711104.ca.archive.org/0/items/kanyes-whole-discography/Kanye%27s%20Whole%20Discography%2F808%27s%26Heartbreak%2FAmazing%20%28feat.%20Young%20Jeezy%29.m4a";
-      final stopwatch = Stopwatch()..start();
-      await player.action.open(AudioSource.uri(url));
+      await player.waitUntilOpen;
       stopwatch.stop();
 
       // Opening non-faststart M4A with Tail Probing must be nearly instantaneous (< 5s), not downloading full 8.6MB

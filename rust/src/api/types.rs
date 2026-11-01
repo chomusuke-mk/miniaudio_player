@@ -1,5 +1,11 @@
 //! Strongly-typed models for Flutter <-> Rust communication.
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RustHttpHeader {
+    pub key: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RustDartReadRequest {
     pub stream_id: u32,
@@ -142,5 +148,67 @@ pub enum RustPlayerEvent {
     Reverb(RustReverbParams),
     Limiter(bool),
     DartReadRequest(RustDartReadRequest),
+    Error { message: String, code: i32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RustCrossfadeConfig {
+    pub duration_ms: u64,
+    pub manual_duration_ms: u64,
+    pub curve: i32, // 0: equalPower, 1: linear
+}
+
+impl Default for RustCrossfadeConfig {
+    fn default() -> Self {
+        Self {
+            duration_ms: 5000,
+            manual_duration_ms: 100,
+            curve: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RustEngineItem {
+    pub id: i64,
+    pub source: String,
+    pub headers: Option<Vec<RustHttpHeader>>,
+    pub data_bytes: Option<Vec<u8>>,
+    pub replay_gain_db: Option<f32>,
+    pub replay_peak: Option<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub enum RustEngineEvent {
+    Phase(i32),
+    State(i32),
+    Position(i64),
+    Duration(i64),
+    IsPlaying(bool),
+    IsBuffering(bool),
+    IsCompleted(bool),
+    CurrentIndex(i32),
+    QueueChanged(Vec<RustEngineItem>),
+    Volume(f32),
+    Rate(f32),
+    Pitch(f32),
+    Bitrate(u32),
+    BufferSize(u32),
+    Device(RustAudioDevice),
+    Visualizer(RustVisualizerData),
+    VisualizerEnabled(bool),
+    BufferedRange(RustBufferedRange),
+    Equalizer(RustEqualizerParams),
+    Preamp(f32),
+    ReplayGain(RustReplayGainConfig),
+    Balance(f32),
+    Mono(bool),
+    Crossfeed(i32),
+    Spatializer { enabled: bool, width: f32 },
+    Reverb(RustReverbParams),
+    Limiter(bool),
+    CrossfadeConfig(RustCrossfadeConfig),
+    LoopMode(i32),
+    Shuffle(bool),
     Error { message: String, code: i32 },
 }

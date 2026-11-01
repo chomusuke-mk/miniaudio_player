@@ -82,7 +82,7 @@ void main() {
         sampleRate: 44100,
         numChannels: 2,
       );
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(AudioSource(testWavFile.path));
     });
 
     tearDown(() async {
@@ -205,7 +205,7 @@ void main() {
     });
 
     test('Playback with full DSP chain enabled streams smoothly without crashing', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       // Configure complete DSP chain including Reverb
       await player.action.setReplayGain(gainDb: -10.0, peak: 0.95);
@@ -278,7 +278,7 @@ void main() {
     });
 
     test('DSP actions do NOT flood unrelated streams', () async {
-      await player.action.open(testWavFile.path);
+      await player.action.open(AudioSource(testWavFile.path));
 
       int positionEvents = 0;
       int playingEvents = 0;

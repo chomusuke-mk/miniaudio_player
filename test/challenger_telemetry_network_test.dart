@@ -83,7 +83,7 @@ void main() {
   group('Challenger: Stream Telemetry Order & Invariant Integrity', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -106,7 +106,7 @@ void main() {
       final s3 = player.stream.position.listen(recordedPositions.add);
 
       // Open local file
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
       await Future<void>.delayed(Duration.zero);
 
       expect(recordedOpening, containsAllInOrder([true, false]));
@@ -124,7 +124,7 @@ void main() {
       final stateTransitions = <PlaybackState>[];
       final sub = player.stream.playbackState.listen(stateTransitions.add);
 
-      final openFuture = player.action.open(localWavFile.path);
+      final openFuture = player.action.open(AudioSource(localWavFile.path));
       final playFuture = player.action.play();
 
       expect(player.state.playbackState, equals(PlaybackState.opening));
@@ -155,7 +155,7 @@ void main() {
       final sub2 = player.stream.playbackState.listen(stateEvents.add);
 
       await expectLater(
-        player.action.open(AudioSource.uri(badUrl)),
+        player.action.open(AudioSource(badUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -173,7 +173,7 @@ void main() {
     test('T1.4: Concurrent unawaited play() during failed open rejects or drops without freezing', () async {
       final badUrl = 'http://127.0.0.1:$serverPort/nonexistent_file_404.mp3';
 
-      final openFuture = player.action.open(AudioSource.uri(badUrl));
+      final openFuture = player.action.open(AudioSource(badUrl));
       final playFuture = player.action.play();
 
       // openFuture should fail
@@ -191,8 +191,8 @@ void main() {
     test('T1.5: Dispose during active open() shuts down cleanly without throwing unhandled exceptions', () async {
       final slowUrl = 'http://127.0.0.1:$serverPort/stall/salida.mp3?chunk_size=1024&stall_ms=500';
 
-      final playerToDispose = MiniaudioPlayer();
-      unawaited(playerToDispose.action.open(AudioSource.uri(slowUrl)).catchError((_) {}));
+      final playerToDispose = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      unawaited(playerToDispose.action.open(AudioSource(slowUrl)).catchError((_) {}));
 
       expect(playerToDispose.state.opening, isTrue);
 
@@ -209,7 +209,7 @@ void main() {
   group('Challenger: Out-Of-Bounds Seeks Resilience', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -218,7 +218,7 @@ void main() {
       final observedPositions = <Duration>[];
       final sub = player.stream.position.listen(observedPositions.add);
 
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
 
       // Seek to negative while stopped
       await player.action.seek(const Duration(seconds: -10));
@@ -241,7 +241,7 @@ void main() {
     });
 
     test('S2.2: Seeking far beyond duration is clamped cleanly without crashing', () async {
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
       final duration = player.state.duration;
       expect(duration.inSeconds, greaterThan(0));
 
@@ -258,20 +258,20 @@ void main() {
 
     test('S2.3: Unawaited negative and huge seeks during Opening gate execute accurately after open', () async {
       // Negative seek during open
-      final open1 = player.action.open(localWavFile.path);
+      final open1 = player.action.open(AudioSource(localWavFile.path));
       final seek1 = player.action.seek(const Duration(seconds: -30));
       await Future.wait([open1, seek1]);
       expect(player.state.position, equals(Duration.zero));
 
       // Beyond duration seek during open
-      final open2 = player.action.open(memoryWavBytes);
+      final open2 = player.action.open(AudioSource(memoryWavBytes));
       final seek2 = player.action.seek(const Duration(hours: 2));
       await Future.wait([open2, seek2]);
       expect(player.state.position.inMilliseconds, lessThanOrEqualTo(player.state.duration.inMilliseconds));
     });
 
     test('S2.4: Rapid alternating out-of-bounds seeks stress test', () async {
-      await player.action.open(localWavFile.path);
+      await player.action.open(AudioSource(localWavFile.path));
       await player.action.play();
 
       final hostileDurations = [
@@ -296,7 +296,7 @@ void main() {
 
     test('S2.5: Out-of-bounds seeks on active network HTTP stream clamp safely', () async {
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.open(AudioSource.uri(netUrl));
+      await player.action.open(AudioSource(netUrl));
       final duration = player.state.duration;
 
       // Negative seek on network stream
@@ -330,7 +330,7 @@ void main() {
   group('Challenger: Network Robustness & Connection Edge Cases', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer());
+    setUp(() => player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3')));
     tearDown(() async {
       if (!player.isDisposed) await player.dispose();
     });
@@ -341,7 +341,7 @@ void main() {
       final refusedUrl = 'http://127.0.0.1:$unusedPort/music/test.mp3';
 
       await expectLater(
-        player.action.open(AudioSource.uri(refusedUrl)),
+        player.action.open(AudioSource(refusedUrl)),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -353,7 +353,7 @@ void main() {
       final corruptUrl = 'http://127.0.0.1:$serverPort/corrupt/headers';
 
       try {
-        await player.action.open(AudioSource.uri(corruptUrl)).timeout(const Duration(seconds: 4));
+        await player.action.open(AudioSource(corruptUrl)).timeout(const Duration(seconds: 4));
       } catch (e) {
         expect(e, isA<Exception>());
       }
@@ -367,11 +367,11 @@ void main() {
       final url2 = 'http://127.0.0.1:$serverPort/music/test_24bit_stereo.wav';
 
       // Launch first open, then immediately launch second open without awaiting
-      unawaited(player.action.open(AudioSource.uri(url1)).catchError((_) {}));
+      unawaited(player.action.open(AudioSource(url1)).catchError((_) {}));
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       // Second open is the winner
-      await player.action.open(AudioSource.uri(url2));
+      await player.action.open(AudioSource(url2));
 
       expect(player.state.opening, isFalse);
       expect(player.state.playbackState, equals(PlaybackState.stopped));
@@ -386,7 +386,7 @@ void main() {
 
     test('N3.4: Network stream seek(Duration.zero) immediately rewinds without crashing or stalling', () async {
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
-      await player.action.open(AudioSource.uri(netUrl));
+      await player.action.open(AudioSource(netUrl));
       await player.action.play();
 
       // Let it play forward

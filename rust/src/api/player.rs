@@ -280,6 +280,20 @@ impl RustPlayer {
         }
     }
 
+    pub fn open_source(
+        &self,
+        source: String,
+        headers: Option<Vec<RustHttpHeader>>,
+    ) -> Result<(), String> {
+        let mut lock = self.inner.lock().unwrap();
+        let res = lock.open_source(&source, headers.as_deref());
+        if res == 0 {
+            Ok(())
+        } else {
+            Err(format!("open_source failed: error {}", res))
+        }
+    }
+
     pub fn open_file(&self, path: String) -> Result<(), String> {
         let mut lock = self.inner.lock().unwrap();
         let res = lock.open_file(&path);

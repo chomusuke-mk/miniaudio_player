@@ -63,18 +63,20 @@ void main() {
       await player.dispose();
     });
 
+    final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
+
     test('pauseOnDeviceChange defaults to false', () {
-      player = MiniaudioPlayer();
+      player = MiniaudioPlayer(dummySource);
       expect(player.state.pauseOnDeviceChange, isFalse);
     });
 
     test('pauseOnDeviceChange constructor option sets initial state', () {
-      player = MiniaudioPlayer(pauseOnDeviceChange: true);
+      player = MiniaudioPlayer(dummySource, pauseOnDeviceChange: true);
       expect(player.state.pauseOnDeviceChange, isTrue);
     });
 
     test('action.setPauseOnDeviceChange updates state and emits to stream', () async {
-      player = MiniaudioPlayer(pauseOnDeviceChange: false);
+      player = MiniaudioPlayer(dummySource, pauseOnDeviceChange: false);
       expect(player.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -205,9 +207,9 @@ void main() {
     });
 
     test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {
-      final player = MiniaudioPlayer(pauseOnDeviceChange: true);
+      final player = MiniaudioPlayer(AudioSource(testWavFile.path), pauseOnDeviceChange: true);
       try {
-        await player.action.open(AudioSource.file(testWavFile.path));
+        await player.waitUntilOpen;
         expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await player.action.play();
@@ -238,7 +240,7 @@ void main() {
     test('MiniaudioEngine with pauseOnDeviceChange handles seek and resume properly', () async {
       final engine = MiniaudioEngine(pauseOnDeviceChange: true);
       try {
-        await engine.action.open([EngineItem(source: AudioSource.file(testWavFile.path))]);
+        await engine.action.open([EngineItem(source: AudioSource(testWavFile.path))]);
         expect(engine.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await engine.action.play();

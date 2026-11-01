@@ -4,9 +4,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../equalizer.dart';
-import '../loader/audio_byte_provider.dart';
-import '../loader/hls/hls_byte_provider.dart';
-import '../loader/unified_audio_loader.dart';
+import '../loader/custom_byte_provider.dart';
+import '../platform/native/native_backend.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
@@ -23,21 +22,21 @@ class PlayerAction {
   Completer<void>? _openingCompleter;
   bool _playRequested = false;
   Future<void>? _pendingSeekFuture;
-  UnifiedAudioLoader? _activeLoader;
+  DartByteProviderBridge? _customBridge;
 
   PlayerAction(this._player);
 
-  /// Active unified audio loader instance, if a source is open.
-  UnifiedAudioLoader? get activeLoader => _activeLoader;
+  /// Awaits completion of the currently in-flight audio source opening operation.
+  Future<void> waitUntilOpen() => _openingCompleter?.future ?? Future.value();
 
-  /// Disposes any active loader sessions and cancels pending tasks.
+  /// Disposes any active bridge sessions and cancels pending tasks.
   void dispose() {
     _openGeneration++;
     _playRequested = false;
     _pendingSeekFuture = null;
-    final loader = _activeLoader;
-    _activeLoader = null;
-    loader?.dispose();
+    final bridge = _customBridge;
+    _customBridge = null;
+    bridge?.dispose();
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _openingCompleter!.complete();
     }
@@ -60,13 +59,13 @@ class PlayerAction {
     completer.future.ignore();
     _openingCompleter = completer;
 
-    final prevLoader = _activeLoader;
-    _activeLoader = null;
+    final prevBridge = _customBridge;
+    _customBridge = null;
 
     _player.resetMetadata();
     _player.notifyOpening();
 
-    await prevLoader?.dispose();
+    prevBridge?.dispose();
     if (_openGeneration != gen || _player.isDisposed) return;
 
     try {
@@ -92,9 +91,9 @@ class PlayerAction {
     } catch (error, stackTrace) {
       if (_openGeneration != gen) return;
 
-      final failedLoader = _activeLoader;
-      _activeLoader = null;
-      await failedLoader?.dispose();
+      final failedBridge = _customBridge;
+      _customBridge = null;
+      failedBridge?.dispose();
 
       _player.notifyOpenFailed(error);
 
@@ -106,241 +105,56 @@ class PlayerAction {
     }
   }
 
-  Future<void> _startUnifiedLoader(
-    AudioByteProvider provider, {
-    required int gen,
-    required Duration bufferAhead,
-    required Duration bufferBehind,
-  }) async {
-    if (_openGeneration != gen) {
-      await provider.close();
-      return;
-    }
-    final loader = UnifiedAudioLoader(
-      _player,
-      provider: provider,
-      bufferAhead: bufferAhead,
-      bufferBehind: bufferBehind,
-    );
-    _activeLoader = loader;
-    await loader.start();
-  }
-
-  /// Prepares an audio source for playback through the unified loader pipeline.
+  /// Prepares an audio source for playback.
   ///
-  /// Accepts an [AudioSource] instance or a raw source ([String] path/URL,
-  /// [Uri], [Uint8List] bytes, [AudioByteProvider], or filesystem entity)
-  /// resolved via [AudioSource.uri].
-  Future<void> open(
-    dynamic source, {
-    Duration? bufferAhead,
-    Duration? bufferBehind,
-  }) async {
+  /// Accepts an [AudioSource] instance.
+  Future<void> open(AudioSource source) async {
     _player.ensureNotDisposed();
 
-    final effectiveAhead = bufferAhead;
-    final effectiveBehind = bufferBehind;
+    _customBridge?.dispose();
+    _customBridge = null;
 
-    final AudioSource audioSource;
-    if (source is AudioSource) {
-      audioSource = source;
-    } else {
-      audioSource = AudioSource.uri(source, bufferAhead: effectiveAhead);
-    }
-
-    switch (audioSource) {
-      case FileAudioSource s:
-        if (s.path.isEmpty) {
-          throw const MiniaudioPlayerException('Cannot open empty file path');
-        }
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            FileByteProvider(s.path),
-            gen: gen,
-            bufferAhead: effectiveAhead ?? _player.bufferLocalDuration,
-            bufferBehind: effectiveBehind ?? _player.bufferBehindLocalDuration,
-          ),
-        );
-
-      case AssetAudioSource s:
-        if (s.assetKey.isEmpty) {
-          throw const MiniaudioPlayerException('Cannot open empty asset path');
-        }
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            AssetByteProvider(s.assetKey, package: s.package),
-            gen: gen,
-            bufferAhead: effectiveAhead ?? _player.bufferLocalDuration,
-            bufferBehind: effectiveBehind ?? _player.bufferBehindLocalDuration,
-          ),
-        );
-
-      case MemoryAudioSource s:
-        if (s.bytes.isEmpty) {
-          throw const MiniaudioPlayerException('Cannot open empty byte buffer');
-        }
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            MemoryByteProvider(s.bytes, uri: s.uri, contentType: s.mimeType),
-            gen: gen,
-            bufferAhead: effectiveAhead ?? _player.bufferLocalDuration,
-            bufferBehind: effectiveBehind ?? _player.bufferBehindLocalDuration,
-          ),
-        );
-
-      case LiveStreamAudioSource s:
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            LiveStreamByteProvider(
-              s.uri,
-              headers: s.headers,
-              onIcyMetaBytes: setIcyMeta,
-            ),
-            gen: gen,
-            bufferAhead: effectiveAhead ?? s.jitterBuffer,
-            bufferBehind: effectiveBehind ??
-                _player.bufferBehindLiveStreamDuration,
-          ),
-        );
-
-      case HlsAudioSource s:
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            HlsByteProvider(
-              s.uri,
-              headers: s.headers,
-              onMetadataBytes: setIcyMeta,
-              isLiveHint: s.isLive,
-            ),
-            gen: gen,
-            bufferAhead: effectiveAhead ??
-                s.jitterBuffer ??
-                _player.bufferLiveStreamDuration,
-            bufferBehind: effectiveBehind ??
-                _player.bufferBehindLiveStreamDuration,
-          ),
-        );
-
-      case NetworkAudioSource s:
-        final scheme = s.uri.scheme.toLowerCase();
-        var uri = s.uri;
-        var effectiveIsLive = s.isLive;
-        if (scheme == 'icy' || scheme == 'icyx') {
-          uri = Uri.parse(
-            uri.toString().replaceFirst(
-                  RegExp(r'^icyx?://', caseSensitive: false),
-                  'http://',
-                ),
-          );
-          effectiveIsLive = true;
-        } else if (scheme != 'http' && scheme != 'https' && scheme != 'blob') {
-          throw ArgumentError.value(
-            s.uri,
-            'uri',
-            'Invalid URL scheme: "${uri.scheme}" (expected http, https, icy, icyx, or blob)',
-          );
-        }
-        final ahead = effectiveAhead ??
-            s.bufferAhead ??
-            (effectiveIsLive
-                ? _player.bufferLiveStreamDuration
-                : _player.bufferNetworkDuration);
-        final behind = effectiveBehind ??
-            (effectiveIsLive
-                ? _player.bufferBehindLiveStreamDuration
-                : _player.bufferBehindNetworkDuration);
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            effectiveIsLive
-                ? LiveStreamByteProvider(
-                    uri,
-                    headers: s.headers,
-                    onIcyMetaBytes: setIcyMeta,
-                  )
-                : NetworkByteProvider(
-                    uri,
-                    headers: s.headers,
-                    onIcyMetaBytes: setIcyMeta,
-                  ),
-            gen: gen,
-            bufferAhead: ahead,
-            bufferBehind: behind,
-          ),
-        );
-
-      case ResolvingAudioSource s:
-        if (s.rejectedByPathTraversal) {
-          return _openGuarded((_) async {
-            throw MiniaudioPlayerException(
-              'Path traversal rejected in URI: ${s.uri}',
-              errorCode: MapResult.errorAccessDenied,
+    return _openGuarded((gen) async {
+      switch (source) {
+        case UriAudioSource s:
+          if (s.sourceString.isEmpty) {
+            throw const MiniaudioPlayerException(
+              'Cannot open empty source path or URL',
             );
-          });
-        }
-        return _openGuarded((gen) async {
-          final resolvingProvider = ResolvingByteProvider(
-            s.uri,
-            canonicalFilePath: s.canonicalFilePath,
-            headers: s.headers,
-            isLive: s.isLive,
-            ownFd: s.ownFd,
-            rejectedByPathTraversal: s.rejectedByPathTraversal,
-          );
-          final promoted = await resolvingProvider.resolveProvider(
-            isCancelled: () => _openGeneration != gen || _player.isDisposed,
-          );
-          if (_openGeneration != gen || _player.isDisposed) {
-            await promoted.close();
-            return;
           }
-          final ahead = effectiveAhead ??
-              s.bufferAhead ??
-              (promoted.isLiveStream
-                  ? _player.bufferLiveStreamDuration
-                  : (promoted.isNetwork
-                      ? _player.bufferNetworkDuration
-                      : _player.bufferLocalDuration));
-          final behind = effectiveBehind ??
-              (promoted.isLiveStream
-                  ? _player.bufferBehindLiveStreamDuration
-                  : (promoted.isNetwork
-                      ? _player.bufferBehindNetworkDuration
-                      : _player.bufferBehindLocalDuration));
-          await _startUnifiedLoader(
-            promoted,
-            gen: gen,
-            bufferAhead: ahead,
-            bufferBehind: behind,
-          );
-        });
-
-      case CustomAudioSource s:
-        if (s.provider.sourceId.trim().isEmpty) {
-          throw const MiniaudioPlayerException(
-            'Cannot open provider with empty sourceId',
-          );
-        }
-        final ahead = effectiveAhead ??
-            (s.provider.isLiveStream
-                ? _player.bufferLiveStreamDuration
-                : (s.provider.isNetwork
-                    ? _player.bufferNetworkDuration
-                    : _player.bufferLocalDuration));
-        final behind = effectiveBehind ??
-            (s.provider.isLiveStream
-                ? _player.bufferBehindLiveStreamDuration
-                : (s.provider.isNetwork
-                    ? _player.bufferBehindNetworkDuration
-                    : _player.bufferBehindLocalDuration));
-        return _openGuarded(
-          (gen) => _startUnifiedLoader(
-            s.provider,
-            gen: gen,
-            bufferAhead: ahead,
-            bufferBehind: behind,
-          ),
-        );
-    }
+          final str = s.sourceString;
+          if (str.startsWith('asset://') || str.startsWith('asset:')) {
+            final key = str.startsWith('asset://')
+                ? str.substring('asset://'.length)
+                : str.substring('asset:'.length);
+            final loader = MiniaudioPlayerGlobalConfig.assetLoader;
+            if (loader != null) {
+              try {
+                final bytes = await loader(key);
+                await _player.backend.openMemory(bytes);
+                return;
+              } catch (_) {}
+            }
+          }
+          await _player.backend.openSource(s.sourceString, headers: s.headers);
+        case MemoryAudioSource s:
+          if (s.bytes.isEmpty) {
+            throw const MiniaudioPlayerException('Cannot open empty byte buffer');
+          }
+          await _player.backend.openMemory(s.bytes);
+        case CustomAudioSource s:
+          final backend = _player.backend;
+          if (backend is NativePlayerBackend) {
+            final bridge = DartByteProviderBridge(backend, s.provider);
+            _customBridge = bridge;
+            await bridge.start();
+          } else {
+            throw UnimplementedError(
+              'CustomAudioSource is only supported on native platforms',
+            );
+          }
+      }
+    });
   }
 
   /// Starts or resumes audio playback.
@@ -367,11 +181,6 @@ class PlayerAction {
   }
 
   Future<void> _executePlay() async {
-    if (_activeLoader != null && _activeLoader!.isStopped) {
-      await _activeLoader!.onPlayFromStopped();
-    } else {
-      _activeLoader?.onPlay();
-    }
     if (_player.state.completed ||
         (_player.state.duration > Duration.zero &&
             _player.state.position >= _player.state.duration)) {
@@ -396,7 +205,6 @@ class PlayerAction {
   }
 
   Future<void> _executePause() async {
-    _activeLoader?.onPause();
     await _player.backend.pause();
   }
 
@@ -407,9 +215,9 @@ class PlayerAction {
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _openGeneration++;
       _playRequested = false;
-      final loader = _activeLoader;
-      _activeLoader = null;
-      await loader?.dispose();
+      final bridge = _customBridge;
+      _customBridge = null;
+      bridge?.dispose();
       try {
         await _player.backend.stop();
       } catch (_) {}
@@ -419,7 +227,6 @@ class PlayerAction {
       _player.notifyStopped();
       return;
     }
-    await _activeLoader?.stop();
     await _player.backend.stop();
   }
 
@@ -455,11 +262,7 @@ class PlayerAction {
   }
 
   Future<void> _executeSeek(Duration position) async {
-    if (_activeLoader != null) {
-      await _activeLoader!.seek(position);
-    } else {
-      await _player.backend.seek(position);
-    }
+    await _player.backend.seek(position);
   }
 
   /// Sets master volume as a linear amplitude scale from `0.0` (mute) to `1.0` (max volume).

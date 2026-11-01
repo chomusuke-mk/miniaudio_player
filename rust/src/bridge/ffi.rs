@@ -87,8 +87,8 @@ pub unsafe extern "C" fn rust_render_pcm_frames(
     frame_count: u32,
 ) {
     if !user_data.is_null() && !output_frames.is_null() && frame_count > 0 {
-        let renderer = &mut *(user_data as *mut crate::core::AudioRenderer);
-        renderer.render_pcm(output_frames, frame_count as usize);
+        let header = &*(user_data as *const crate::core::renderer::PcmRendererHeader);
+        (header.render_fn)(user_data, output_frames, frame_count as usize);
     }
 }
 
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn rust_on_device_notification(
     notification_type: i32,
 ) {
     if !user_data.is_null() {
-        let renderer = &*(user_data as *mut crate::core::AudioRenderer);
-        renderer.on_device_notification(notification_type);
+        let header = &*(user_data as *const crate::core::renderer::PcmRendererHeader);
+        (header.notif_fn)(user_data, notification_type);
     }
 }

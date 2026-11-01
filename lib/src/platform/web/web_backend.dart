@@ -387,6 +387,21 @@ class WebPlayerBackend implements PlayerBackend {
   }
 
   @override
+  Future<void> openSource(String source, {Map<String, String>? headers}) async {
+    throw UnimplementedError('openSource is handled natively on web');
+  }
+
+  @override
+  Future<void> openMemory(Uint8List bytes) async {
+    await openStreamEx(
+      initialBytes: bytes,
+      totalSize: bytes.length,
+      isLive: false,
+      bufferCapacityBytes: bytes.length,
+    );
+  }
+
+  @override
   Future<int> openStreamEx({
     required Uint8List initialBytes,
     Uint8List? tailBytes,

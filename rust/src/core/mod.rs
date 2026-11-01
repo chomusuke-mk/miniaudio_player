@@ -1,4 +1,5 @@
 pub mod config;
+pub mod engine;
 pub mod player;
 pub mod renderer;
 pub mod types;
