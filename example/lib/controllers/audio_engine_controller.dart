@@ -57,11 +57,13 @@ class AudioEngineController extends ChangeNotifier {
     notifyListeners();
   }
 
-  double get preampDb => engine.state.preamp;
+  double? _preampOverride;
+  double get preampDb => _preampOverride ?? engine.state.preamp;
 
   Future<void> setPreamp(double db) async {
-    await engine.action.setPreamp(db);
+    _preampOverride = db;
     notifyListeners();
+    await engine.action.setPreamp(db);
   }
 
   bool get replayGainEnabled => engine.state.volumeNormalization;
@@ -130,8 +132,12 @@ class AudioEngineController extends ChangeNotifier {
   bool get reverbEnabled => engine.state.reverb.enabled;
 
   CrossfeedMode get crossfeedMode => engine.state.crossfeed;
-  double get spatializerWidth => engine.state.spatializerWidth;
-  double get stereoBalance => engine.state.balance;
+  double? _spatializerWidthOverride;
+  double get spatializerWidth => _spatializerWidthOverride ?? engine.state.spatializerWidth;
+
+  double? _stereoBalanceOverride;
+  double get stereoBalance => _stereoBalanceOverride ?? engine.state.balance;
+
   bool get monoDownmix => engine.state.mono;
   bool get limiterEnabled => engine.state.limiterEnabled;
 
@@ -151,9 +157,14 @@ class AudioEngineController extends ChangeNotifier {
 
   bool get visualizerEnabled => engine.state.visualizerEnabled;
 
-  double get volume => engine.state.volume;
-  double get rate => engine.state.rate;
-  double get pitch => engine.state.pitch;
+  double? _volumeOverride;
+  double get volume => _volumeOverride ?? engine.state.volume;
+
+  double? _rateOverride;
+  double get rate => _rateOverride ?? engine.state.rate;
+
+  double? _pitchOverride;
+  double get pitch => _pitchOverride ?? engine.state.pitch;
   int get selectedBufferSize => engine.state.bufferSize;
   List<AudioDevice> get audioDevices => _audioDevices;
   AudioDevice get selectedDevice => engine.state.audioDevice;
@@ -206,12 +217,24 @@ class AudioEngineController extends ChangeNotifier {
     _subscriptions.add(engine.stream.queue.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.crossfadeConfig.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.playbackState.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.spatializerWidth.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.spatializerWidth.listen((_) {
+      _spatializerWidthOverride = null;
+      notifyListeners();
+    }));
     _subscriptions.add(engine.stream.spatializerEnabled.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.visualizerEnabled.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.volume.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.rate.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.pitch.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.volume.listen((_) {
+      _volumeOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.rate.listen((_) {
+      _rateOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.pitch.listen((_) {
+      _pitchOverride = null;
+      notifyListeners();
+    }));
     _subscriptions.add(engine.stream.equalizer.listen((eq) {
       _selectedPreset = _detectPreset(eq) ?? 'custom';
       notifyListeners();
@@ -220,7 +243,10 @@ class AudioEngineController extends ChangeNotifier {
       _selectedReverbPreset = _detectReverbPreset(rev) ?? 'Custom';
       notifyListeners();
     }));
-    _subscriptions.add(engine.stream.preamp.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.preamp.listen((_) {
+      _preampOverride = null;
+      notifyListeners();
+    }));
     _subscriptions.add(engine.stream.volumeNormalization.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.replayGainMode.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.defaultReplayGain.listen((_) => notifyListeners()));
@@ -417,13 +443,15 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   Future<void> setSpatializerWidth(double width) async {
-    await engine.action.setSpatializer(enabled: true, width: width);
+    _spatializerWidthOverride = width;
     notifyListeners();
+    await engine.action.setSpatializer(enabled: true, width: width);
   }
 
   Future<void> setStereoBalance(double balance) async {
-    await engine.action.setBalance(balance);
+    _stereoBalanceOverride = balance;
     notifyListeners();
+    await engine.action.setBalance(balance);
   }
 
   Future<void> setMonoDownmix(bool enabled) async {
@@ -506,18 +534,21 @@ class AudioEngineController extends ChangeNotifier {
 
   // --- Transport ---
   Future<void> setVolume(double val) async {
-    await engine.action.setVolume(val);
+    _volumeOverride = val;
     notifyListeners();
+    await engine.action.setVolume(val);
   }
 
   Future<void> setRate(double val) async {
-    await engine.action.setRate(val);
+    _rateOverride = val;
     notifyListeners();
+    await engine.action.setRate(val);
   }
 
   Future<void> setPitch(double val) async {
-    await engine.action.setPitch(val);
+    _pitchOverride = val;
     notifyListeners();
+    await engine.action.setPitch(val);
   }
 
   Future<void> setBufferSize(int size) async {

@@ -1106,10 +1106,29 @@ pub fn analyze_audio_memory(
     };
 
     let byte_size = data.len() as u64;
+    let sniffer_hint = if hint_extension.is_none() {
+        let (_status, boundary) = crate::decoder::sniffer::FormatSniffer::detect_head_boundary(&data, byte_size as i64);
+        match boundary.container {
+            crate::decoder::sniffer::ContainerFormat::Mp3 => Some("mp3".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Adts => Some("aac".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Flac => Some("flac".to_string()),
+            crate::decoder::sniffer::ContainerFormat::OggVorbis | crate::decoder::sniffer::ContainerFormat::OggOpus => Some("ogg".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Wav => Some("wav".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Mp4 => Some("mp4".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Matroska => Some("mka".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Dsf => Some("dsf".to_string()),
+            crate::decoder::sniffer::ContainerFormat::Ape => Some("ape".to_string()),
+            crate::decoder::sniffer::ContainerFormat::WavPack => Some("wv".to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let effective_hint = hint_extension.or(sniffer_hint);
     let cursor = std::io::Cursor::new(data);
     let result = crate::dsp::analysis::analyze_media_source(
         cursor,
-        hint_extension.as_deref(),
+        effective_hint.as_deref(),
         &config,
         byte_size,
     ).map_err(|e| format!("Analysis failed with error {}", e))?;

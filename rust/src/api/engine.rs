@@ -1,7 +1,7 @@
 //! High-level Rust Engine API exposed to Flutter/Dart via flutter_rust_bridge.
 
 use std::ffi::CString;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,6 +22,16 @@ use super::types::*;
 pub struct RustEngine {
     coordinator: Arc<Mutex<Box<EngineCoordinator>>>,
     event_sink: Arc<Mutex<Option<StreamSink<RustEngineEvent>>>>,
+    phase: Arc<AtomicI32>,
+    active_deck: Arc<AtomicI32>,
+    current_index: Arc<AtomicI64>,
+    deck_a_position: Arc<AtomicI64>,
+    deck_b_position: Arc<AtomicI64>,
+    deck_a_duration: Arc<AtomicI64>,
+    deck_b_duration: Arc<AtomicI64>,
+    deck_a_state: Arc<AtomicI32>,
+    deck_b_state: Arc<AtomicI32>,
+    volume: Arc<AtomicU32>,
 }
 
 #[inline]
@@ -44,6 +54,29 @@ fn queue_to_rust_items(q: &[EngineItemCore]) -> Vec<RustEngineItem> {
     }).collect()
 }
 
+fn get_extension_hint(source: &str) -> Option<&str> {
+    let clean = source.split('?').next().unwrap_or(source);
+    let ext = clean.rsplit('.').next()?;
+    match ext.to_lowercase().as_str() {
+        "mp3" => Some("mp3"),
+        "wav" | "bwf" => Some("wav"),
+        "flac" => Some("flac"),
+        "ogg" | "opus" => Some("ogg"),
+        "aac" => Some("aac"),
+        "m4a" | "mp4" => Some("mp4"),
+        "aif" | "aiff" | "aifc" => Some("aiff"),
+        "w64" => Some("w64"),
+        "rf64" => Some("rf64"),
+        "rifx" => Some("rifx"),
+        "dsf" => Some("dsf"),
+        "wv" => Some("wv"),
+        "ape" => Some("ape"),
+        "mka" => Some("mka"),
+        "webm" => Some("webm"),
+        _ => None,
+    }
+}
+
 impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn new(
@@ -61,6 +94,17 @@ impl RustEngine {
             period_size,
             dev_id_ptr,
         ).map_err(|e| format!("Failed to create engine coordinator: error {}", e))?;
+
+        let phase = coordinator.phase.clone();
+        let active_deck = coordinator.active_deck.clone();
+        let current_index = coordinator.current_index.clone();
+        let deck_a_position = coordinator.deck_a.position_ms.clone();
+        let deck_b_position = coordinator.deck_b.position_ms.clone();
+        let deck_a_duration = coordinator.deck_a.duration_ms.clone();
+        let deck_b_duration = coordinator.deck_b.duration_ms.clone();
+        let deck_a_state = coordinator.deck_a.state.clone();
+        let deck_b_state = coordinator.deck_b.state.clone();
+        let volume = coordinator.deck_a.volume.clone();
 
         let coord_arc = Arc::new(Mutex::new(coordinator));
         let event_sink: Arc<Mutex<Option<StreamSink<RustEngineEvent>>>> = Arc::new(Mutex::new(None));
@@ -113,12 +157,9 @@ impl RustEngine {
                             coord.deck_a.stop();
                         }
 
-                        // Advance current_index if an automatic crossfade completed
                         let auto_target = coord.auto_crossfade_target_index.swap(-1, Ordering::AcqRel);
                         if auto_target >= 0 {
-                            coord.current_index.store(auto_target, Ordering::Release);
-                            emit_event(&sink_clone, RustEngineEvent::CurrentIndex(auto_target as i32));
-                            crate::map_log!(3, "Auto-crossfade completed -> advanced to index {}", auto_target);
+                            crate::map_log!(3, "Auto-crossfade completed -> track index {}", auto_target);
                         }
 
                         coord.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
@@ -146,16 +187,21 @@ impl RustEngine {
                         let deck = if active_deck == 0 { &coord.deck_a } else { &coord.deck_b };
                         deck.state.load(Ordering::Relaxed)
                     };
-                    let is_eof = completed || deck_state == STATE_COMPLETED || (dur > 0 && pos >= dur && !is_xfading);
 
-                    // Auto-crossfade or completion trigger
+                    // Neither auto-crossfade nor EOF should EVER trigger if:
+                    // 1. Crossfade is currently active (is_xfading)
+                    // 2. Engine is not actively playing (phase != ENGINE_PHASE_PLAYING)
+                    let can_trigger_transition = !is_xfading && phase == ENGINE_PHASE_PLAYING && playing;
+
                     let auto_ms = coord.auto_crossfade_duration_ms.load(Ordering::Relaxed);
-                    let should_auto_xfade = auto_ms > 0
+                    let should_auto_xfade = can_trigger_transition
+                        && auto_ms > 0
                         && dur > (auto_ms as i64)
-                        && pos + (auto_ms as i64) >= dur
-                        && playing
-                        && !is_xfading
-                        && phase == ENGINE_PHASE_PLAYING;
+                        && pos + (auto_ms as i64) >= dur;
+
+                    let is_eof = can_trigger_transition
+                        && !should_auto_xfade
+                        && (completed || deck_state == STATE_COMPLETED || (dur > 0 && pos >= dur));
 
                     if should_auto_xfade || is_eof {
                         let q_len = coord.queue.read().unwrap().len();
@@ -182,8 +228,9 @@ impl RustEngine {
                                 let standby_is_b = active_deck == 0;
                                 let standby = if standby_is_b { &mut coord.deck_b } else { &mut coord.deck_a };
 
+                                let ext_hint = get_extension_hint(&item.source);
                                 let open_res = if let Some(ref data) = item.data_bytes {
-                                    standby.open_memory(data, false)
+                                    standby.open_memory_with_hint(data, ext_hint)
                                 } else {
                                     standby.open_source(&item.source, item.headers.as_deref())
                                 };
@@ -209,6 +256,9 @@ impl RustEngine {
                                     coord.crossfade.is_active.store(true, Ordering::Release);
 
                                     coord.auto_crossfade_target_index.store(next_idx as i64, Ordering::Release);
+                                    coord.current_index.store(next_idx as i64, Ordering::Release);
+                                    last_index = next_idx as i64;
+                                    emit_event(&sink_clone, RustEngineEvent::CurrentIndex(next_idx as i32));
 
                                     coord.phase.store(ENGINE_PHASE_AUTO_CROSSFADING, Ordering::Release);
                                     emit_event(&sink_clone, RustEngineEvent::Phase(ENGINE_PHASE_AUTO_CROSSFADING));
@@ -284,6 +334,16 @@ impl RustEngine {
         Ok(RustEngine {
             coordinator: coord_arc,
             event_sink,
+            phase,
+            active_deck,
+            current_index,
+            deck_a_position,
+            deck_b_position,
+            deck_a_duration,
+            deck_b_duration,
+            deck_a_state,
+            deck_b_state,
+            volume,
         })
     }
 
@@ -337,6 +397,7 @@ impl RustEngine {
     pub fn seek(&self, position_ms: i64) {
         let mut coord = self.coordinator.lock().unwrap();
         coord.auto_crossfade_target_index.store(-1, Ordering::Release);
+        coord.crossfade_completed_flag.store(false, Ordering::Release);
         if coord.phase.load(Ordering::Relaxed) == ENGINE_PHASE_AUTO_CROSSFADING {
             coord.crossfade.is_active.store(false, Ordering::Release);
             let active_id = coord.active_deck.load(Ordering::Relaxed);
@@ -381,7 +442,7 @@ impl RustEngine {
                 coord.current_index.store(idx as i64, Ordering::Release);
                 let item = &core_items[idx];
                 if let Some(ref data) = item.data_bytes {
-                    coord.active_deck_mut().open_memory(data, false);
+                    coord.active_deck_mut().open_memory_with_hint(data, get_extension_hint(&item.source));
                 } else {
                     coord.active_deck_mut().open_source(&item.source, item.headers.as_deref());
                 }
@@ -522,19 +583,6 @@ impl RustEngine {
             (cur + 1) as usize
         };
 
-        if coord.phase.load(Ordering::Relaxed) == ENGINE_PHASE_AUTO_CROSSFADING {
-            let dur_ms = crossfade_duration_ms.unwrap_or(coord.manual_crossfade_duration_ms.load(Ordering::Relaxed));
-            let sr = coord.deck_a.sample_rate.load(Ordering::Relaxed).max(1);
-            let total_frames = (dur_ms * sr as u64) / 1000;
-            coord.crossfade.current_frame.store(0, Ordering::Relaxed);
-            coord.crossfade.total_frames.store(total_frames.max(1), Ordering::Relaxed);
-            coord.current_index.store(next_idx as i64, Ordering::Release);
-            coord.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
-            emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(next_idx as i32));
-            emit_event(&self.event_sink, RustEngineEvent::Phase(ENGINE_PHASE_MANUAL_CROSSFADING));
-            return;
-        }
-
         self.perform_skip(&mut coord, next_idx, crossfade_duration_ms, curve);
     }
 
@@ -594,6 +642,7 @@ impl RustEngine {
         };
 
         coord.auto_crossfade_target_index.store(-1, Ordering::Release);
+        coord.crossfade_completed_flag.store(false, Ordering::Release);
 
         let active_id = coord.active_deck.load(Ordering::Relaxed);
         let cur_phase = coord.phase.load(Ordering::Relaxed);
@@ -603,8 +652,9 @@ impl RustEngine {
 
         if !was_playing {
             let active = if active_id == 0 { &mut coord.deck_a } else { &mut coord.deck_b };
+            let ext_hint = get_extension_hint(&item.source);
             if let Some(ref data) = item.data_bytes {
-                active.open_memory(data, false);
+                active.open_memory_with_hint(data, ext_hint);
             } else {
                 active.open_source(&item.source, item.headers.as_deref());
             }
@@ -618,8 +668,9 @@ impl RustEngine {
         let standby_id = if active_id == 0 { 1 } else { 0 };
 
         let standby = if standby_id == 1 { &mut coord.deck_b } else { &mut coord.deck_a };
+        let ext_hint = get_extension_hint(&item.source);
         if let Some(ref data) = item.data_bytes {
-            standby.open_memory(data, false);
+            standby.open_memory_with_hint(data, ext_hint);
         } else {
             standby.open_source(&item.source, item.headers.as_deref());
         }
@@ -796,6 +847,7 @@ impl RustEngine {
     pub fn set_visualizer_enabled(&self, enabled: bool) {
         let coord = self.coordinator.lock().unwrap();
         coord.visualizer_enabled.store(enabled, Ordering::Relaxed);
+        emit_event(&self.event_sink, RustEngineEvent::VisualizerEnabled(enabled));
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -828,46 +880,68 @@ impl RustEngine {
         coord.set_device(c_str.as_ptr());
     }
 
-    // Synchronous state snapshot getters
+    // Synchronous state snapshot getters (100% Lock-free atomics)
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_phase(&self) -> i32 {
-        self.coordinator.lock().unwrap().phase.load(Ordering::Relaxed)
+        self.phase.load(Ordering::Relaxed)
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_current_index(&self) -> Option<usize> {
-        let idx = self.coordinator.lock().unwrap().current_index.load(Ordering::Relaxed);
+        let idx = self.current_index.load(Ordering::Relaxed);
         if idx >= 0 { Some(idx as usize) } else { None }
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_position_ms(&self) -> i64 {
-        self.coordinator.lock().unwrap().active_deck_ref().position_ms.load(Ordering::Relaxed)
+        let active = self.active_deck.load(Ordering::Relaxed);
+        if active == 0 {
+            self.deck_a_position.load(Ordering::Relaxed)
+        } else {
+            self.deck_b_position.load(Ordering::Relaxed)
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_duration_ms(&self) -> i64 {
-        self.coordinator.lock().unwrap().active_deck_ref().duration_ms.load(Ordering::Relaxed)
+        let active = self.active_deck.load(Ordering::Relaxed);
+        if active == 0 {
+            self.deck_a_duration.load(Ordering::Relaxed)
+        } else {
+            self.deck_b_duration.load(Ordering::Relaxed)
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn is_playing(&self) -> bool {
-        self.coordinator.lock().unwrap().active_deck_ref().state.load(Ordering::Relaxed) == STATE_PLAYING
+        let active = self.active_deck.load(Ordering::Relaxed);
+        let state = if active == 0 {
+            self.deck_a_state.load(Ordering::Relaxed)
+        } else {
+            self.deck_b_state.load(Ordering::Relaxed)
+        };
+        state == STATE_PLAYING
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn is_buffering(&self) -> bool {
-        self.coordinator.lock().unwrap().active_deck_ref().state.load(Ordering::Relaxed) == STATE_BUFFERING
+        let active = self.active_deck.load(Ordering::Relaxed);
+        let state = if active == 0 {
+            self.deck_a_state.load(Ordering::Relaxed)
+        } else {
+            self.deck_b_state.load(Ordering::Relaxed)
+        };
+        state == STATE_BUFFERING
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn is_completed(&self) -> bool {
-        self.coordinator.lock().unwrap().phase.load(Ordering::Relaxed) == ENGINE_PHASE_COMPLETED
+        self.phase.load(Ordering::Relaxed) == ENGINE_PHASE_COMPLETED
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_volume(&self) -> f32 {
-        f32::from_bits(self.coordinator.lock().unwrap().deck_a.volume.load(Ordering::Relaxed))
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
     }
 
     #[flutter_rust_bridge::frb(sync)]

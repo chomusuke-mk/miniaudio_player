@@ -1148,18 +1148,46 @@ impl PlayerCoordinator {
             .and_then(|s| s.parse().ok())
             .unwrap_or(-1);
 
+        let content_type = res.header("content-type").map(|s| s.to_string());
+        let lower_url = url.to_lowercase();
+        let lower_ct = content_type.as_deref().unwrap_or("").to_lowercase();
+
+        let encoding_format = if lower_url.ends_with(".wav") || lower_ct.contains("audio/wav") || lower_ct.contains("audio/x-wav") {
+            1
+        } else if lower_url.ends_with(".flac") || lower_ct.contains("audio/flac") {
+            2
+        } else if lower_url.ends_with(".mp3") || lower_ct.contains("audio/mpeg") || lower_ct.contains("audio/mp3") {
+            3
+        } else if lower_url.ends_with(".ogg") || lower_url.ends_with(".opus") || lower_ct.contains("audio/ogg") || lower_ct.contains("audio/opus") {
+            4
+        } else if lower_url.ends_with(".aac") || lower_ct.contains("audio/aac") {
+            5
+        } else if lower_url.ends_with(".m4a") || lower_url.ends_with(".mp4") || lower_ct.contains("audio/mp4") {
+            6
+        } else {
+            0
+        };
+
         let mut reader = res.into_reader();
-        let mut initial_data = vec![0u8; 65536];
-        let mut n_read = 0;
-        while n_read < initial_data.len() {
-            match reader.read(&mut initial_data[n_read..]) {
+        let mut initial_data = Vec::with_capacity(131072);
+        let mut read_buf = [0u8; 32768];
+
+        loop {
+            match reader.read(&mut read_buf) {
                 Ok(0) => break,
-                Ok(n) => n_read += n,
+                Ok(n) => {
+                    initial_data.extend_from_slice(&read_buf[..n]);
+                    if initial_data.len() >= 65536 {
+                        let (status, _) = FormatSniffer::detect_head_boundary(&initial_data, content_length);
+                        if status != crate::decoder::sniffer::BoundaryStatus::NeedMore || initial_data.len() >= 512 * 1024 {
+                            break;
+                        }
+                    }
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
-        initial_data.truncate(n_read);
 
         if initial_data.is_empty() {
             self.state.store(STATE_ERROR, Ordering::Relaxed);
@@ -1177,7 +1205,7 @@ impl PlayerCoordinator {
             content_length,
             is_live,
             4 * 1024 * 1024,
-            0,
+            encoding_format,
         );
 
         if res_code != MAP_SUCCESS {
@@ -1274,10 +1302,31 @@ impl PlayerCoordinator {
     }
 
     pub fn open_memory(&mut self, data: &[u8], _take_ownership: bool) -> i32 {
+        self.open_memory_with_hint(data, None)
+    }
+
+    pub fn open_memory_with_hint(&mut self, data: &[u8], hint_ext: Option<&str>) -> i32 {
         let _ = self.begin_open();
 
+        let (_status, boundary) = FormatSniffer::detect_head_boundary(data, data.len() as i64);
+        let sniffer_hint = match boundary.container {
+            ContainerFormat::Mp3 => Some("mp3"),
+            ContainerFormat::Adts => Some("aac"),
+            ContainerFormat::Flac => Some("flac"),
+            ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
+            ContainerFormat::Wav => Some("wav"),
+            ContainerFormat::Mp4 => Some("mp4"),
+            ContainerFormat::Matroska => Some("mka"),
+            ContainerFormat::Dsf => Some("dsf"),
+            ContainerFormat::Ape => Some("ape"),
+            ContainerFormat::WavPack => Some("wv"),
+            ContainerFormat::Hls => Some("m3u8"),
+            ContainerFormat::Unknown => None,
+        };
+        let effective_hint = sniffer_hint.or(hint_ext);
+
         let cursor = Cursor::new(data.to_vec());
-        let eng = match SymphoniaEngine::new(cursor, None) {
+        let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
             Err(_) => {
                 self.state.store(STATE_ERROR, Ordering::Relaxed);
@@ -1360,6 +1409,8 @@ impl PlayerCoordinator {
                 2 => Some("flac"),
                 3 => Some("mp3"),
                 4 => Some("ogg"),
+                5 => Some("aac"),
+                6 => Some("mp4"),
                 _ => None,
             },
         };
@@ -1869,9 +1920,11 @@ impl PlayerCoordinator {
             }
         }
 
+        self.network_streamer_abort.store(true, Ordering::Release);
         self.decoder_eof.store(false, Ordering::Relaxed);
         if let Ok(guard) = self.trip_buffer.read() {
             if let Some(ref trip) = *guard {
+                trip.abort();
                 if trip.is_live() {
                     self.stream_reinit_needed.store(true, Ordering::Release);
                 }

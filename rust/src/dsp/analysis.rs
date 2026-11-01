@@ -317,8 +317,23 @@ pub fn analyze_file(path: &str, config: &AudioAnalysisConfig) -> Result<AudioAna
 
 pub fn analyze_memory(data: &[u8], config: &AudioAnalysisConfig) -> Result<AudioAnalysisResult, i32> {
     let byte_size = data.len() as u64;
+    let (_status, boundary) = crate::decoder::sniffer::FormatSniffer::detect_head_boundary(data, byte_size as i64);
+    let sniffer_hint = match boundary.container {
+        crate::decoder::sniffer::ContainerFormat::Mp3 => Some("mp3"),
+        crate::decoder::sniffer::ContainerFormat::Adts => Some("aac"),
+        crate::decoder::sniffer::ContainerFormat::Flac => Some("flac"),
+        crate::decoder::sniffer::ContainerFormat::OggVorbis | crate::decoder::sniffer::ContainerFormat::OggOpus => Some("ogg"),
+        crate::decoder::sniffer::ContainerFormat::Wav => Some("wav"),
+        crate::decoder::sniffer::ContainerFormat::Mp4 => Some("mp4"),
+        crate::decoder::sniffer::ContainerFormat::Matroska => Some("mka"),
+        crate::decoder::sniffer::ContainerFormat::Dsf => Some("dsf"),
+        crate::decoder::sniffer::ContainerFormat::Ape => Some("ape"),
+        crate::decoder::sniffer::ContainerFormat::WavPack => Some("wv"),
+        crate::decoder::sniffer::ContainerFormat::Hls => Some("m3u8"),
+        crate::decoder::sniffer::ContainerFormat::Unknown => None,
+    };
     let cursor = Cursor::new(data.to_vec());
-    analyze_media_source(cursor, None, config, byte_size)
+    analyze_media_source(cursor, sniffer_hint, config, byte_size)
 }
 
 pub fn free_analysis_result(result: &mut AudioAnalysisResult) {

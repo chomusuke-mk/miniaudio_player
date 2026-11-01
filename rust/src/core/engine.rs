@@ -346,9 +346,15 @@ impl EngineRenderer {
 
         // 4. Compute composite FFT visualizer data directly on the mixed output buffer
         if self.visualizer_enabled.load(Ordering::Relaxed) {
+            if !self.visualizer.is_enabled() {
+                self.visualizer.set_enabled(true);
+            }
             self.visualizer.process_frames(out_slice);
             let vis = self.visualizer.data();
             self.visualizer_seqlock.write(|v| *v = vis);
+        } else if self.visualizer.is_enabled() {
+            self.visualizer.set_enabled(false);
+            self.visualizer_seqlock.write(|v| *v = crate::dsp::visualizer::VisualizerData::default());
         }
     }
 }
