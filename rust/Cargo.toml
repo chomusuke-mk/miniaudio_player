@@ -2,17 +2,46 @@
 name = "miniaudio_player_rust"
 version = "3.1.0"
 edition = "2021"
+autotests = false
 
 [lib]
 name = "miniaudio_player"
 crate-type = ["cdylib", "staticlib", "rlib"]
+test = false
+
+[[test]]
+name = "sync_concurrency_test"
+path = "../test/rust/sync_concurrency_test.rs"
+
+[[test]]
+name = "buffer_and_source_test"
+path = "../test/rust/buffer_and_source_test.rs"
+
+[[test]]
+name = "hls_and_crypto_test"
+path = "../test/rust/hls_and_crypto_test.rs"
+
+[[test]]
+name = "decoder_and_formats_test"
+path = "../test/rust/decoder_and_formats_test.rs"
+
+[[test]]
+name = "dsp_and_spatial_test"
+path = "../test/rust/dsp_and_spatial_test.rs"
+
+[[test]]
+name = "core_and_lifecycle_test"
+path = "../test/rust/core_and_lifecycle_test.rs"
+
+[[test]]
+name = "benchmark_test"
+path = "../test/rust/benchmark_test.rs"
 
 [dependencies]
 # Decodificación y Demuxing 100% Rust
 symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats", "all-meta"] }
 symphonia-adapter-libopus = "0.3"
 symphonia-adapter-fdk-aac = "0.2"
-# libopus = "0.2"
 
 # Concurrencia Lock-Free y Tiempo Real
 log = "0.4"
@@ -42,6 +71,26 @@ cc = "1.2"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+invalid_atomic_ordering = "deny"
+static_mut_refs = "deny"
+mutable_transmutes = "deny"
+clashing_extern_declarations = "deny"
+improper_ctypes = "warn"
+improper_ctypes_definitions = "warn"
+
+[lints.clippy]
+arc_with_non_send_sync = "deny"
+rc_mutex = "deny"
+rc_buffer = "deny"
+mutex_atomic = "deny"
+await_holding_lock = "deny"
+ifs_same_cond = "deny"
+
+[profile.test]
+opt-level = 2
+debug = true
+debug-assertions = true
+overflow-checks = true
 
 [profile.release]
 opt-level = 3

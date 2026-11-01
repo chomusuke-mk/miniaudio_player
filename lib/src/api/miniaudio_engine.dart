@@ -25,11 +25,36 @@ import 'spatial.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
+/// Encapsulates a synchronous engine state value paired with a broadcast [StreamController].
+class _EngineProperty<V> {
+  V value;
+  final StreamController<V> controller;
+
+  _EngineProperty(
+    this.value, {
+    void Function()? onListen,
+    void Function()? onCancel,
+  }) : controller = StreamController<V>.broadcast(
+          onListen: onListen,
+          onCancel: onCancel,
+        );
+
+  void emit(V nextValue) {
+    value = nextValue;
+    if (!controller.isClosed) {
+      controller.add(nextValue);
+    }
+  }
+
+  Future<void> close() => controller.close();
+}
+
 /// Decoupled dual-deck audio engine with unified queue management,
 /// sample-accurate crossfade interpolation in Rust, and composite visualizer processing.
 class MiniaudioEngine<T> {
   rust_engine.RustEngine? _rustEngine;
   StreamSubscription<rust_types.RustEngineEvent>? _eventSub;
+  Future<void>? _initFuture;
   bool _isDisposed = false;
 
   /// Whether this engine instance has been disposed.
@@ -38,110 +63,73 @@ class MiniaudioEngine<T> {
   final List<EngineItem<T>> _queue = [];
   final Map<int, EngineItem<T>> _shadowItems = {};
   int _nextAutoId = 0;
-  int _currentIndex = -1;
-  LoopMode _loopMode = LoopMode.off;
-  bool _shuffle = false;
-  CrossfadeConfig _crossfadeConfig = CrossfadeConfig();
-  bool _volumeNormalization = true;
-  bool _infiniteMix = false;
-  double _defaultReplayGain = 0.0;
-  double? _forcedReplayGain;
 
-  // Cached state snapshots
-  EnginePhase _phase = EnginePhase.idle;
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  bool _playing = false;
-  bool _buffering = false;
-  bool _completed = false;
-  final bool _opening = false;
-  PlaybackState _playbackState = PlaybackState.stopped;
-  Duration _bufferedPosition = Duration.zero;
-  double _bufferedPercentage = 0.0;
-  BufferedRange _bufferedRange = const BufferedRange();
-  AudioTrackMetadata? _trackMetadata;
-  double _volume = 1.0;
-  double _rate = 1.0;
-  double _pitch = 1.0;
-  int _bufferSize = 0;
-  final int _audioBitrate = 0;
-  Equalizer _equalizer = Equalizer.flat;
-  AudioDevice _audioDevice = AudioDevice.auto;
-  bool _pauseOnDeviceChange = false;
-  SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
-  final Duration _silenceSavedDuration = Duration.zero;
-  VisualizerData _visualizer = VisualizerData.empty();
-  bool _visualizerEnabled = false;
   bool? _manualVisualizerOverride;
   bool _hasVisualizerListeners = false;
-  double _preamp = 0.0;
-  ReplayGainConfig _replayGain = const ReplayGainConfig();
-  double _balance = 0.0;
-  bool _mono = false;
-  CrossfeedMode _crossfeed = CrossfeedMode.off;
-  bool _spatializerEnabled = false;
-  double _spatializerWidth = 1.0;
-  Reverb _reverb = Reverb.off;
-  bool _limiterEnabled = true;
-  bool _isRecording = false;
-  bool _isMicrophoneEnabled = false;
-  double _micVolume = 1.0;
-  CueConfig _cueConfig = const CueConfig();
-  DuckingConfig _duckingConfig = const DuckingConfig();
 
-  // Broadcast stream controllers
-  final _phaseController = StreamController<EnginePhase>.broadcast();
-  final _positionController = StreamController<Duration>.broadcast();
-  final _durationController = StreamController<Duration>.broadcast();
-  final _playingController = StreamController<bool>.broadcast();
-  final _bufferingController = StreamController<bool>.broadcast();
-  final _completedController = StreamController<bool>.broadcast();
-  final _openingController = StreamController<bool>.broadcast();
-  final _playbackStateController = StreamController<PlaybackState>.broadcast();
-  final _bufferedPositionController = StreamController<Duration>.broadcast();
-  final _bufferedPercentageController = StreamController<double>.broadcast();
-  final _bufferedRangeController = StreamController<BufferedRange>.broadcast();
-  final _trackMetadataController = StreamController<AudioTrackMetadata?>.broadcast();
-  final _volumeController = StreamController<double>.broadcast();
-  final _rateController = StreamController<double>.broadcast();
-  final _pitchController = StreamController<double>.broadcast();
-  final _bufferSizeController = StreamController<int>.broadcast();
-  final _audioBitrateController = StreamController<int>.broadcast();
-  final _equalizerController = StreamController<Equalizer>.broadcast();
-  final _audioDeviceController = StreamController<AudioDevice>.broadcast();
-  final _pauseOnDeviceChangeController = StreamController<bool>.broadcast();
-  final _skipSilenceController = StreamController<bool>.broadcast();
-  final _silenceConfigController = StreamController<SilenceSkipConfig>.broadcast();
-  final _silenceSavedDurationController = StreamController<Duration>.broadcast();
-  late final StreamController<VisualizerData> _visualizerController;
-  final _visualizerEnabledController = StreamController<bool>.broadcast();
-  final _preampController = StreamController<double>.broadcast();
-  final _replayGainController = StreamController<ReplayGainConfig>.broadcast();
-  final _balanceController = StreamController<double>.broadcast();
-  final _monoController = StreamController<bool>.broadcast();
-  final _crossfeedController = StreamController<CrossfeedMode>.broadcast();
-  final _spatializerEnabledController = StreamController<bool>.broadcast();
-  final _spatializerWidthController = StreamController<double>.broadcast();
-  final _reverbController = StreamController<Reverb>.broadcast();
-  final _limiterEnabledController = StreamController<bool>.broadcast();
-  final _queueController = StreamController<List<EngineItem<T>>>.broadcast();
-  final _currentIndexController = StreamController<int>.broadcast();
-  final _currentItemController = StreamController<EngineItem<T>?>.broadcast();
-  final _currentDataController = StreamController<T?>.broadcast();
-  final _hasNextController = StreamController<bool>.broadcast();
-  final _hasPreviousController = StreamController<bool>.broadcast();
-  final _shuffleController = StreamController<bool>.broadcast();
-  final _loopModeController = StreamController<LoopMode>.broadcast();
-  final _crossfadeConfigController = StreamController<CrossfadeConfig>.broadcast();
-  final _isCrossfadingController = StreamController<bool>.broadcast();
-  final _volumeNormalizationController = StreamController<bool>.broadcast();
-  final _infiniteMixController = StreamController<bool>.broadcast();
-  final _needMoreTracksController = StreamController<NeedMoreTracksEvent>.broadcast();
-  final _isRecordingController = StreamController<bool>.broadcast();
-  final _isMicrophoneEnabledController = StreamController<bool>.broadcast();
-  final _micVolumeController = StreamController<double>.broadcast();
-  final _cueConfigController = StreamController<CueConfig>.broadcast();
-  final _duckingConfigController = StreamController<DuckingConfig>.broadcast();
+  // Reactive state & stream properties
+  final _phase = _EngineProperty<EnginePhase>(EnginePhase.idle);
+  final _position = _EngineProperty<Duration>(Duration.zero);
+  final _duration = _EngineProperty<Duration>(Duration.zero);
+  final _playing = _EngineProperty<bool>(false);
+  final _buffering = _EngineProperty<bool>(false);
+  final _completed = _EngineProperty<bool>(false);
+  final _opening = _EngineProperty<bool>(false);
+  final _playbackState = _EngineProperty<PlaybackState>(PlaybackState.stopped);
+  final _bufferedPosition = _EngineProperty<Duration>(Duration.zero);
+  final _bufferedPercentage = _EngineProperty<double>(0.0);
+  final _bufferedRange = _EngineProperty<BufferedRange>(const BufferedRange());
+  final _trackMetadata = _EngineProperty<AudioTrackMetadata?>(null);
+  final _volume = _EngineProperty<double>(1.0);
+  final _rate = _EngineProperty<double>(1.0);
+  final _pitch = _EngineProperty<double>(1.0);
+  late final _EngineProperty<int> _bufferSize;
+  final _audioBitrate = _EngineProperty<int>(0);
+  final _equalizer = _EngineProperty<Equalizer>(Equalizer.flat);
+  late final _EngineProperty<AudioDevice> _audioDevice;
+  late final _EngineProperty<bool> _pauseOnDeviceChange;
+  final _skipSilence = _EngineProperty<bool>(false);
+  final _silenceConfig =
+      _EngineProperty<SilenceSkipConfig>(const SilenceSkipConfig());
+  final _silenceSavedDuration = _EngineProperty<Duration>(Duration.zero);
+  late final _EngineProperty<VisualizerData> _visualizer;
+  final _visualizerEnabled = _EngineProperty<bool>(false);
+  final _preamp = _EngineProperty<double>(0.0);
+  final _replayGain =
+      _EngineProperty<ReplayGainConfig>(const ReplayGainConfig());
+  final _balance = _EngineProperty<double>(0.0);
+  final _mono = _EngineProperty<bool>(false);
+  final _crossfeed = _EngineProperty<CrossfeedMode>(CrossfeedMode.off);
+  final _spatializerEnabled = _EngineProperty<bool>(false);
+  final _spatializerWidth = _EngineProperty<double>(1.0);
+  final _reverb = _EngineProperty<Reverb>(Reverb.off);
+  final _limiterEnabled = _EngineProperty<bool>(true);
+  late final _EngineProperty<List<EngineItem<T>>> _queueProp;
+  final _currentIndex = _EngineProperty<int>(-1);
+  late final _EngineProperty<EngineItem<T>?> _currentItem;
+  late final _EngineProperty<T?> _currentData;
+  final _hasNext = _EngineProperty<bool>(false);
+  final _hasPrevious = _EngineProperty<bool>(false);
+  final _shuffle = _EngineProperty<bool>(false);
+  final _loopMode = _EngineProperty<LoopMode>(LoopMode.off);
+  late final _EngineProperty<CrossfadeConfig> _crossfadeConfig;
+  final _isCrossfading = _EngineProperty<bool>(false);
+  final _volumeNormalization = _EngineProperty<bool>(true);
+  final _infiniteMix = _EngineProperty<bool>(false);
+  final _defaultReplayGain = _EngineProperty<double>(0.0);
+  final _forcedReplayGain = _EngineProperty<double?>(null);
+  final _replayGainModeProp =
+      _EngineProperty<ReplayGainMode>(ReplayGainMode.track);
+  final _metaBytes = _EngineProperty<Uint8List?>(null);
+  final _isRecording = _EngineProperty<bool>(false);
+  final _isMicrophoneEnabled = _EngineProperty<bool>(false);
+  final _micVolume = _EngineProperty<double>(1.0);
+  final _cueConfig = _EngineProperty<CueConfig>(const CueConfig());
+  final _duckingConfig = _EngineProperty<DuckingConfig>(const DuckingConfig());
+  final _needMoreTracksController =
+      StreamController<NeedMoreTracksEvent>.broadcast();
+
+  late final List<_EngineProperty<Object?>> _allProperties;
 
   /// Action interface executing asynchronous playback, queue, and DSP controls.
   late final EngineAction<T> action;
@@ -162,12 +150,21 @@ class MiniaudioEngine<T> {
     bool pauseOnDeviceChange = false,
     CrossfadeConfig? crossfadeConfig,
   }) {
-    _bufferSize = bufferSize ?? MiniaudioPlayer.globalConfig.defaultBufferSize;
-    _audioDevice = defaultAudioDevice ?? MiniaudioPlayer.globalConfig.defaultAudioDevice;
-    _pauseOnDeviceChange = pauseOnDeviceChange;
-    _crossfadeConfig = crossfadeConfig ?? CrossfadeConfig();
+    _bufferSize = _EngineProperty<int>(
+      bufferSize ?? MiniaudioPlayer.globalConfig.defaultBufferSize,
+    );
+    _audioDevice = _EngineProperty<AudioDevice>(
+      defaultAudioDevice ?? MiniaudioPlayer.globalConfig.defaultAudioDevice,
+    );
+    _pauseOnDeviceChange = _EngineProperty<bool>(pauseOnDeviceChange);
+    _crossfadeConfig =
+        _EngineProperty<CrossfadeConfig>(crossfadeConfig ?? CrossfadeConfig());
+    _queueProp = _EngineProperty<List<EngineItem<T>>>(const []);
+    _currentItem = _EngineProperty<EngineItem<T>?>(null);
+    _currentData = _EngineProperty<T?>(null);
 
-    _visualizerController = StreamController<VisualizerData>.broadcast(
+    _visualizer = _EngineProperty<VisualizerData>(
+      VisualizerData.empty(),
       onListen: () {
         _hasVisualizerListeners = true;
         _updateVisualizerState();
@@ -178,202 +175,277 @@ class MiniaudioEngine<T> {
       },
     );
 
+    _allProperties = <_EngineProperty<Object?>>[
+      _phase,
+      _position,
+      _duration,
+      _playing,
+      _buffering,
+      _completed,
+      _opening,
+      _playbackState,
+      _bufferedPosition,
+      _bufferedPercentage,
+      _bufferedRange,
+      _trackMetadata,
+      _volume,
+      _rate,
+      _pitch,
+      _bufferSize,
+      _audioBitrate,
+      _equalizer,
+      _audioDevice,
+      _pauseOnDeviceChange,
+      _skipSilence,
+      _silenceConfig,
+      _silenceSavedDuration,
+      _visualizer,
+      _visualizerEnabled,
+      _preamp,
+      _replayGain,
+      _balance,
+      _mono,
+      _crossfeed,
+      _spatializerEnabled,
+      _spatializerWidth,
+      _reverb,
+      _limiterEnabled,
+      _queueProp,
+      _currentIndex,
+      _currentItem,
+      _currentData,
+      _hasNext,
+      _hasPrevious,
+      _shuffle,
+      _loopMode,
+      _crossfadeConfig,
+      _isCrossfading,
+      _volumeNormalization,
+      _infiniteMix,
+      _defaultReplayGain,
+      _forcedReplayGain,
+      _replayGainModeProp,
+      _metaBytes,
+      _isRecording,
+      _isMicrophoneEnabled,
+      _micVolume,
+      _cueConfig,
+      _duckingConfig,
+    ];
+
     action = EngineAction<T>(this);
 
     spatial = SpatialController(
       setEnabled: (enabled) {
-        if (_isDisposed) return;
-        _rustEngine?.setSpatialEnabled(enabled: enabled);
+        if (!_isDisposed) _rustEngine?.setSpatialEnabled(enabled: enabled);
       },
       setListener: (listener) {
-        if (_isDisposed) return;
-        _rustEngine?.setSpatialListener(listener: listener.toRust());
+        if (!_isDisposed) {
+          _rustEngine?.setSpatialListener(listener: listener.toRust());
+        }
       },
       setEmitter: (emitter) {
-        if (_isDisposed) return;
-        _rustEngine?.setSpatialEmitter(emitter: emitter.toRust());
+        if (!_isDisposed) {
+          _rustEngine?.setSpatialEmitter(emitter: emitter.toRust());
+        }
       },
       setDopplerFactor: (factor) {
-        if (_isDisposed) return;
-        _rustEngine?.setSpatialDopplerFactor(factor: factor);
+        if (!_isDisposed) {
+          _rustEngine?.setSpatialDopplerFactor(factor: factor);
+        }
       },
       setSpeedOfSound: (speed) {
-        if (_isDisposed) return;
-        _rustEngine?.setSpatialSpeedOfSound(speed: speed);
+        if (!_isDisposed) {
+          _rustEngine?.setSpatialSpeedOfSound(speed: speed);
+        }
       },
     );
 
     stream = EngineStream<T>(
-      phaseController: _phaseController,
-      positionController: _positionController,
-      durationController: _durationController,
-      playingController: _playingController,
-      bufferingController: _bufferingController,
-      completedController: _completedController,
-      openingController: _openingController,
-      playbackStateController: _playbackStateController,
-      bufferedPositionController: _bufferedPositionController,
-      bufferedPercentageController: _bufferedPercentageController,
-      bufferedRangeController: _bufferedRangeController,
-      trackMetadataController: _trackMetadataController,
-      volumeController: _volumeController,
-      rateController: _rateController,
-      pitchController: _pitchController,
-      bufferSizeController: _bufferSizeController,
-      audioBitrateController: _audioBitrateController,
-      equalizerController: _equalizerController,
-      audioDeviceController: _audioDeviceController,
-      pauseOnDeviceChangeController: _pauseOnDeviceChangeController,
-      skipSilenceController: _skipSilenceController,
-      silenceConfigController: _silenceConfigController,
-      silenceSavedDurationController: _silenceSavedDurationController,
-      visualizerController: _visualizerController,
-      visualizerEnabledController: _visualizerEnabledController,
-      preampController: _preampController,
-      replayGainController: _replayGainController,
-      balanceController: _balanceController,
-      monoController: _monoController,
-      crossfeedController: _crossfeedController,
-      spatializerEnabledController: _spatializerEnabledController,
-      spatializerWidthController: _spatializerWidthController,
-      reverbController: _reverbController,
-      limiterEnabledController: _limiterEnabledController,
-      queueController: _queueController,
-      currentIndexController: _currentIndexController,
-      currentItemController: _currentItemController,
-      currentDataController: _currentDataController,
-      hasNextController: _hasNextController,
-      hasPreviousController: _hasPreviousController,
-      shuffleController: _shuffleController,
-      loopModeController: _loopModeController,
-      crossfadeConfigController: _crossfadeConfigController,
-      isCrossfadingController: _isCrossfadingController,
-      volumeNormalizationController: _volumeNormalizationController,
-      infiniteMixController: _infiniteMixController,
+      phaseController: _phase.controller,
+      positionController: _position.controller,
+      durationController: _duration.controller,
+      playingController: _playing.controller,
+      bufferingController: _buffering.controller,
+      completedController: _completed.controller,
+      openingController: _opening.controller,
+      playbackStateController: _playbackState.controller,
+      bufferedPositionController: _bufferedPosition.controller,
+      bufferedPercentageController: _bufferedPercentage.controller,
+      bufferedRangeController: _bufferedRange.controller,
+      trackMetadataController: _trackMetadata.controller,
+      volumeController: _volume.controller,
+      rateController: _rate.controller,
+      pitchController: _pitch.controller,
+      bufferSizeController: _bufferSize.controller,
+      audioBitrateController: _audioBitrate.controller,
+      equalizerController: _equalizer.controller,
+      audioDeviceController: _audioDevice.controller,
+      pauseOnDeviceChangeController: _pauseOnDeviceChange.controller,
+      skipSilenceController: _skipSilence.controller,
+      silenceConfigController: _silenceConfig.controller,
+      silenceSavedDurationController: _silenceSavedDuration.controller,
+      visualizerController: _visualizer.controller,
+      visualizerEnabledController: _visualizerEnabled.controller,
+      preampController: _preamp.controller,
+      replayGainController: _replayGain.controller,
+      balanceController: _balance.controller,
+      monoController: _mono.controller,
+      crossfeedController: _crossfeed.controller,
+      spatializerEnabledController: _spatializerEnabled.controller,
+      spatializerWidthController: _spatializerWidth.controller,
+      reverbController: _reverb.controller,
+      limiterEnabledController: _limiterEnabled.controller,
+      queueController: _queueProp.controller,
+      currentIndexController: _currentIndex.controller,
+      currentItemController: _currentItem.controller,
+      currentDataController: _currentData.controller,
+      hasNextController: _hasNext.controller,
+      hasPreviousController: _hasPrevious.controller,
+      shuffleController: _shuffle.controller,
+      loopModeController: _loopMode.controller,
+      crossfadeConfigController: _crossfadeConfig.controller,
+      isCrossfadingController: _isCrossfading.controller,
+      volumeNormalizationController: _volumeNormalization.controller,
+      infiniteMixController: _infiniteMix.controller,
       needMoreTracksController: _needMoreTracksController,
-      isRecordingController: _isRecordingController,
-      isMicrophoneEnabledController: _isMicrophoneEnabledController,
-      micVolumeController: _micVolumeController,
-      cueConfigController: _cueConfigController,
-      duckingConfigController: _duckingConfigController,
+      defaultReplayGainController: _defaultReplayGain.controller,
+      forcedReplayGainController: _forcedReplayGain.controller,
+      replayGainModeController: _replayGainModeProp.controller,
+      metaBytesController: _metaBytes.controller,
+      isRecordingController: _isRecording.controller,
+      isMicrophoneEnabledController: _isMicrophoneEnabled.controller,
+      micVolumeController: _micVolume.controller,
+      cueConfigController: _cueConfig.controller,
+      duckingConfigController: _duckingConfig.controller,
     );
 
     state = EngineState<T>(
-      getPhase: () {
-        if (_rustEngine != null) {
-          final p = _rustEngine!.getPhase();
-          if (p >= 0 && p < EnginePhase.values.length) {
-            return EnginePhase.values[p];
-          }
-        }
-        return _phase;
-      },
-      getPosition: () {
-        if (_rustEngine != null) {
-          final ms = _rustEngine!.getPositionMs();
-          return Duration(milliseconds: ms.toInt());
-        }
-        return _position;
-      },
-      getDuration: () {
-        if (_rustEngine != null) {
-          final ms = _rustEngine!.getDurationMs();
-          if (ms > 0) return Duration(milliseconds: ms.toInt());
-        }
-        return _duration;
-      },
-      getPlaying: () => _rustEngine?.isPlaying() ?? _playing,
-      getBuffering: () => _rustEngine?.isBuffering() ?? _buffering,
-      getCompleted: () => _rustEngine?.isCompleted() ?? _completed,
-      getOpening: () => _opening,
-      getPlaybackState: () => _playbackState,
-      getBufferedPosition: () => _bufferedPosition,
-      getBufferedPercentage: () => _bufferedPercentage,
-      getBufferedRange: () => _bufferedRange,
-      getTrackMetadata: () => _trackMetadata,
-      getVolume: () => _rustEngine?.getVolume() ?? _volume,
-      getRate: () => _rate,
-      getPitch: () => _pitch,
-      getBufferSize: () => _bufferSize,
-      getAudioBitrate: () => _audioBitrate,
+      getPhase: _resolveCurrentPhase,
+      getPosition: _resolveCurrentPosition,
+      getDuration: _resolveCurrentDuration,
+      getPlaying: () => _rustEngine?.isPlaying() ?? _playing.value,
+      getBuffering: () => _rustEngine?.isBuffering() ?? _buffering.value,
+      getCompleted: () => _rustEngine?.isCompleted() ?? _completed.value,
+      getOpening: () => _opening.value,
+      getPlaybackState: () => _playbackState.value,
+      getBufferedPosition: () => _bufferedPosition.value,
+      getBufferedPercentage: () => _bufferedPercentage.value,
+      getBufferedRange: () => _bufferedRange.value,
+      getTrackMetadata: () => _trackMetadata.value,
+      getVolume: () => _rustEngine?.getVolume() ?? _volume.value,
+      getRate: () => _rate.value,
+      getPitch: () => _pitch.value,
+      getBufferSize: () => _bufferSize.value,
+      getAudioBitrate: () => _audioBitrate.value,
       getSampleRate: () => 44100,
       getChannels: () => 2,
-      getEqualizer: () => _equalizer,
-      getAudioDevice: () => _audioDevice,
-      getPauseOnDeviceChange: () => _pauseOnDeviceChange,
-      getSkipSilence: () => _silenceConfig.mode != SilenceSkipMode.disabled,
-      getSilenceSkipMode: () => _silenceConfig.mode,
-      getSilenceConfig: () => _silenceConfig,
-      getSilenceSavedDuration: () => _silenceSavedDuration,
-      getVisualizer: () => _visualizer,
-      getVisualizerEnabled: () => _visualizerEnabled,
-      getPreamp: () => _preamp,
-      getReplayGain: () => _replayGain,
-      getBalance: () => _balance,
-      getMono: () => _mono,
-      getCrossfeed: () => _crossfeed,
-      getSpatializerEnabled: () => _spatializerEnabled,
-      getSpatializerWidth: () => _spatializerWidth,
-      getReverb: () => _reverb,
-      getLimiterEnabled: () => _limiterEnabled,
+      getEqualizer: () => _equalizer.value,
+      getAudioDevice: () => _audioDevice.value,
+      getPauseOnDeviceChange: () => _pauseOnDeviceChange.value,
+      getSkipSilence: () =>
+          _silenceConfig.value.mode != SilenceSkipMode.disabled,
+      getSilenceSkipMode: () => _silenceConfig.value.mode,
+      getSilenceConfig: () => _silenceConfig.value,
+      getSilenceSavedDuration: () => _silenceSavedDuration.value,
+      getVisualizer: () => _visualizer.value,
+      getVisualizerEnabled: () => _visualizerEnabled.value,
+      getPreamp: () => _preamp.value,
+      getReplayGain: () => _replayGain.value,
+      getBalance: () => _balance.value,
+      getMono: () => _mono.value,
+      getCrossfeed: () => _crossfeed.value,
+      getSpatializerEnabled: () => _spatializerEnabled.value,
+      getSpatializerWidth: () => _spatializerWidth.value,
+      getReverb: () => _reverb.value,
+      getLimiterEnabled: () => _limiterEnabled.value,
       getQueue: () => List.unmodifiable(_queue),
       getOriginalQueue: () => List.unmodifiable(_queue),
-      getCurrentIndex: () => _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex,
+      getCurrentIndex: _resolveActiveQueueIndex,
       getCurrentItem: () {
-        final idx = _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex;
+        final idx = _resolveActiveQueueIndex();
         return idx >= 0 && idx < _queue.length ? _queue[idx] : null;
       },
       getNextItem: () {
-        final idx = _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex;
+        final idx = _resolveActiveQueueIndex();
         return idx + 1 < _queue.length ? _queue[idx + 1] : null;
       },
       getHasNext: () {
-        final idx = _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex;
-        return idx + 1 < _queue.length || _loopMode == LoopMode.all;
+        final idx = _resolveActiveQueueIndex();
+        return idx + 1 < _queue.length || _loopMode.value == LoopMode.all;
       },
       getHasPrevious: () {
-        final idx = _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex;
-        return idx > 0 || _loopMode == LoopMode.all;
+        final idx = _resolveActiveQueueIndex();
+        return idx > 0 || _loopMode.value == LoopMode.all;
       },
-      getShuffle: () => _shuffle,
-      getLoopMode: () => _loopMode,
-      getCrossfadeConfig: () => _crossfadeConfig,
-      getIsCrossfading: () => _phase == EnginePhase.autoCrossfading || _phase == EnginePhase.manualCrossfading,
+      getShuffle: () => _shuffle.value,
+      getLoopMode: () => _loopMode.value,
+      getCrossfadeConfig: () => _crossfadeConfig.value,
+      getIsCrossfading: () =>
+          _phase.value == EnginePhase.autoCrossfading ||
+          _phase.value == EnginePhase.manualCrossfading,
       getCrossfadeProgress: () => 0.0,
-      getVolumeNormalization: () => _volumeNormalization,
-      getInfiniteMixEnabled: () => _infiniteMix,
-      getIsLiveStream: () {
-        if (_trackMetadata?.isLiveStream == true) return true;
-        final idx = _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex;
-        if (idx >= 0 && idx < _queue.length) {
-          final cur = _queue[idx];
-          final src = cur.source;
-          if (src is UriAudioSource) {
-            final s = src.sourceString.toLowerCase();
-            if (s.contains('/live') || s.endsWith('.m3u8')) {
-              return true;
-            }
-          }
-        }
-        return false;
-      },
-      getDefaultReplayGain: () => _defaultReplayGain,
-      getForcedReplayGain: () => _forcedReplayGain,
+      getVolumeNormalization: () => _volumeNormalization.value,
+      getInfiniteMixEnabled: () => _infiniteMix.value,
+      getIsLiveStream: _resolveIsLiveStream,
+      getDefaultReplayGain: () => _defaultReplayGain.value,
+      getForcedReplayGain: () => _forcedReplayGain.value,
       getReplayGainMode: () => _replayGainMode,
-      getIsRecording: () => _rustEngine?.isRecording() ?? _isRecording,
-      getIsMicrophoneEnabled: () => _isMicrophoneEnabled,
-      getMicVolume: () => _micVolume,
-      getCueConfig: () => _cueConfig,
-      getDuckingConfig: () => _duckingConfig,
+      getMetaBytes: () => _metaBytes.value,
+      getIsRecording: () => _rustEngine?.isRecording() ?? _isRecording.value,
+      getIsMicrophoneEnabled: () => _isMicrophoneEnabled.value,
+      getMicVolume: () => _micVolume.value,
+      getCueConfig: () => _cueConfig.value,
+      getDuckingConfig: () => _duckingConfig.value,
     );
 
     _initFuture = _initRustEngine();
   }
 
+  int _resolveActiveQueueIndex() =>
+      _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex.value;
+
+  EnginePhase _resolveCurrentPhase() {
+    if (_rustEngine != null) {
+      final p = _rustEngine!.getPhase();
+      if (p >= 0 && p < EnginePhase.values.length) {
+        return EnginePhase.values[p];
+      }
+    }
+    return _phase.value;
+  }
+
+  Duration _resolveCurrentPosition() {
+    if (_rustEngine != null) {
+      return Duration(milliseconds: _rustEngine!.getPositionMs().toInt());
+    }
+    return _position.value;
+  }
+
+  Duration _resolveCurrentDuration() {
+    if (_rustEngine != null) {
+      final ms = _rustEngine!.getDurationMs();
+      if (ms > 0) return Duration(milliseconds: ms.toInt());
+    }
+    return _duration.value;
+  }
+
+  bool _resolveIsLiveStream() {
+    if (_trackMetadata.value?.isLiveStream == true) return true;
+    final idx = _resolveActiveQueueIndex();
+    if (idx >= 0 && idx < _queue.length) {
+      final src = _queue[idx].source;
+      if (src is UriAudioSource) {
+        final s = src.sourceString.toLowerCase();
+        return s.contains('/live') || s.endsWith('.m3u8');
+      }
+    }
+    return false;
+  }
+
   void _updateVisualizerState() {
     final effective = _manualVisualizerOverride ?? _hasVisualizerListeners;
-    _visualizerEnabled = effective;
-    _visualizerEnabledController.add(effective);
+    _visualizerEnabled.emit(effective);
     if (_rustEngine != null) {
       _rustEngine?.setVisualizerEnabled(enabled: effective);
     } else {
@@ -382,43 +454,56 @@ class MiniaudioEngine<T> {
   }
 
   ReplayGainMode get _replayGainMode {
-    if (!_volumeNormalization) return ReplayGainMode.disabled;
-    if (_forcedReplayGain != null) return ReplayGainMode.forced;
+    if (!_volumeNormalization.value) return ReplayGainMode.disabled;
+    if (_forcedReplayGain.value != null) return ReplayGainMode.forced;
     return ReplayGainMode.track;
   }
 
   void _updateReplayGainForCurrentItem() {
-    if (!_volumeNormalization) {
-      _replayGain = const ReplayGainConfig();
-      _replayGainController.add(_replayGain);
+    _replayGainModeProp.emit(_replayGainMode);
+    if (!_volumeNormalization.value) {
+      _replayGain.emit(const ReplayGainConfig());
       _rustEngine?.setReplayGain(gainDb: 0.0, peak: 1.0, preventClipping: true);
       return;
     }
+
     double gain = 0.0;
     double peak = 1.0;
-    if (_forcedReplayGain != null) {
-      gain = _forcedReplayGain!;
+    if (_forcedReplayGain.value != null) {
+      gain = _forcedReplayGain.value!;
     } else {
-      final idx = _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex;
+      final idx = _resolveActiveQueueIndex();
       final cur = idx >= 0 && idx < _queue.length ? _queue[idx] : null;
       if (cur?.replayGainDb != null) {
         gain = cur!.replayGainDb!;
         peak = cur.replayPeak ?? 1.0;
-      } else if (_defaultReplayGain != 0.0) {
-        gain = _defaultReplayGain;
+      } else if (_defaultReplayGain.value != 0.0) {
+        gain = _defaultReplayGain.value;
       }
     }
-    _replayGain = ReplayGainConfig(
+
+    final cfg = ReplayGainConfig(
       gainDb: gain,
       peak: peak,
       preventClipping: true,
       enabled: true,
     );
-    _replayGainController.add(_replayGain);
+    _replayGain.emit(cfg);
     _rustEngine?.setReplayGain(gainDb: gain, peak: peak, preventClipping: true);
   }
 
-  Future<void>? _initFuture;
+  void _syncQueueNavigationTelemetry(int activeIdx) {
+    _currentIndex.emit(activeIdx);
+    final item =
+        activeIdx >= 0 && activeIdx < _queue.length ? _queue[activeIdx] : null;
+    _currentItem.emit(item);
+    _currentData.emit(item?.data);
+    _hasNext.emit(
+      activeIdx + 1 < _queue.length || _loopMode.value == LoopMode.all,
+    );
+    _hasPrevious.emit(activeIdx > 0 || _loopMode.value == LoopMode.all);
+    _updateReplayGainForCurrentItem();
+  }
 
   Future<rust_engine.RustEngine?> _getEngine() async {
     if (_rustEngine != null) return _rustEngine;
@@ -432,23 +517,24 @@ class MiniaudioEngine<T> {
     await NativePlayerBackend.ensureRustInitialized();
     if (_rustEngine != null || _isDisposed) return;
     try {
-      final devId = (_audioDevice.id.isNotEmpty && _audioDevice.id != 'auto')
-          ? _audioDevice.id
+      final devId = (_audioDevice.value.id.isNotEmpty &&
+              _audioDevice.value.id != 'auto')
+          ? _audioDevice.value.id
           : null;
 
       final engine = rust_engine.RustEngine(
         sampleRate: 0,
         channels: 0,
-        periodSize: _bufferSize,
+        periodSize: _bufferSize.value,
         playbackDeviceId: devId,
       );
 
-      // Apply crossfade config synchronously
+      final xfade = _crossfadeConfig.value;
       engine.setCrossfadeConfig(
         config: rust_types.RustCrossfadeConfig(
-          durationMs: BigInt.from(_crossfadeConfig.duration.inMilliseconds),
-          manualDurationMs: BigInt.from(_crossfadeConfig.manualDuration.inMilliseconds),
-          curve: _crossfadeConfig.curve.index,
+          durationMs: BigInt.from(xfade.duration.inMilliseconds),
+          manualDurationMs: BigInt.from(xfade.manualDuration.inMilliseconds),
+          curve: xfade.curve.index,
         ),
       );
 
@@ -460,16 +546,17 @@ class MiniaudioEngine<T> {
         engine.setSpatialSpeedOfSound(speed: spatial.speedOfSound);
       }
 
-      if (_visualizerEnabled) {
+      if (_visualizerEnabled.value) {
         engine.setVisualizerEnabled(enabled: true);
       }
 
-      // Single unified event stream from Rust
       _eventSub = engine.subscribeEvents().listen(_handleRustEvent);
       _rustEngine = engine;
     } catch (e) {
       // ignore: avoid_print
-      print('[miniaudio_player][ERROR][engine] Failed to initialize RustEngine: $e');
+      print(
+        '[miniaudio_player][ERROR][engine] Failed to initialize RustEngine: $e',
+      );
     }
   }
 
@@ -478,16 +565,17 @@ class MiniaudioEngine<T> {
 
     switch (event) {
       case rust_types.RustEngineEvent_Phase(field0: final p):
-        _phase = EnginePhase.values.firstWhere(
-          (e) => e.index == p,
-          orElse: () => EnginePhase.idle,
+        final nextPhase = p >= 0 && p < EnginePhase.values.length
+            ? EnginePhase.values[p]
+            : EnginePhase.idle;
+        _phase.emit(nextPhase);
+        _isCrossfading.emit(
+          nextPhase == EnginePhase.autoCrossfading ||
+              nextPhase == EnginePhase.manualCrossfading,
         );
-        _phaseController.add(_phase);
-        final isXfading = _phase == EnginePhase.autoCrossfading || _phase == EnginePhase.manualCrossfading;
-        _isCrossfadingController.add(isXfading);
 
       case rust_types.RustEngineEvent_State(field0: final s):
-        _playbackState = switch (s) {
+        final nextState = switch (s) {
           1 => PlaybackState.playing,
           2 => PlaybackState.paused,
           3 => PlaybackState.completed,
@@ -496,93 +584,77 @@ class MiniaudioEngine<T> {
           6 => PlaybackState.opening,
           _ => PlaybackState.stopped,
         };
-        _playbackStateController.add(_playbackState);
+        _playbackState.emit(nextState);
 
       case rust_types.RustEngineEvent_Position(field0: final p):
-        _position = Duration(milliseconds: p.toInt());
-        _positionController.add(_position);
+        _position.emit(Duration(milliseconds: p.toInt()));
 
       case rust_types.RustEngineEvent_Duration(field0: final d):
-        _duration = Duration(milliseconds: d.toInt());
-        _durationController.add(_duration);
+        _duration.emit(Duration(milliseconds: d.toInt()));
 
       case rust_types.RustEngineEvent_IsPlaying(field0: final p):
-        _playing = p;
-        _playingController.add(p);
+        _playing.emit(p);
         if (!p) {
-          _visualizer = VisualizerData.empty();
-          _visualizerController.add(_visualizer);
+          _visualizer.emit(VisualizerData.empty());
         }
 
       case rust_types.RustEngineEvent_IsBuffering(field0: final b):
-        _buffering = b;
-        _bufferingController.add(b);
+        _buffering.emit(b);
 
       case rust_types.RustEngineEvent_IsCompleted(field0: final c):
-        _completed = c;
-        _completedController.add(c);
+        _completed.emit(c);
 
       case rust_types.RustEngineEvent_CurrentIndex(field0: final idx):
         if (idx < 0 && _queue.isNotEmpty) break;
-        _currentIndex = idx;
-        _currentIndexController.add(idx);
-        final item = idx >= 0 && idx < _queue.length ? _queue[idx] : null;
-        _currentItemController.add(item);
-        _currentDataController.add(item?.data);
-        _hasNextController.add(idx + 1 < _queue.length || _loopMode == LoopMode.all);
-        _hasPreviousController.add(idx > 0 || _loopMode == LoopMode.all);
-        _updateReplayGainForCurrentItem();
+        _syncQueueNavigationTelemetry(idx);
 
       case rust_types.RustEngineEvent_QueueChanged(field0: final rItems):
         _queue.clear();
         for (final r in rItems) {
           final id = r.id.toInt();
           final original = _shadowItems[id];
-          if (original != null) {
-            _queue.add(original);
-          } else {
-            _queue.add(EngineItem<T>(
-              source: AudioSource(r.source),
-              id: id,
-              replayGainDb: r.replayGainDb,
-              replayPeak: r.replayPeak,
-            ));
-          }
+          _queue.add(
+            original ??
+                EngineItem<T>(
+                  source: AudioSource(r.source),
+                  id: id,
+                  replayGainDb: r.replayGainDb,
+                  replayPeak: r.replayPeak,
+                ),
+          );
         }
-        _queueController.add(List.unmodifiable(_queue));
-        if (_currentIndex >= 0 && _currentIndex < _queue.length) {
-          _currentItemController.add(_queue[_currentIndex]);
-          _currentDataController.add(_queue[_currentIndex].data);
-        }
-        _hasNextController.add(_currentIndex + 1 < _queue.length || _loopMode == LoopMode.all);
-        _hasPreviousController.add(_currentIndex > 0 || _loopMode == LoopMode.all);
+        _queueProp.emit(List.unmodifiable(_queue));
+        _syncQueueNavigationTelemetry(_currentIndex.value);
 
       case rust_types.RustEngineEvent_NeedMoreTracks(
           currentTrackId: final tid,
           remainingTracks: final rem,
         ):
-        _needMoreTracksController.add(NeedMoreTracksEvent(
-          currentTrackId: tid.toInt(),
-          remainingTracks: rem.toInt(),
-        ));
+        if (!_needMoreTracksController.isClosed) {
+          _needMoreTracksController.add(
+            NeedMoreTracksEvent(
+              currentTrackId: tid.toInt(),
+              remainingTracks: rem.toInt(),
+            ),
+          );
+        }
 
       case rust_types.RustEngineEvent_Volume(field0: final v):
-        _volume = v;
-        _volumeController.add(v);
+        _volume.emit(v);
 
       case rust_types.RustEngineEvent_Visualizer(field0: final vz):
-        _visualizer = VisualizerData(
-          bands: vz.bands,
-          rms: vz.rms,
-          peak: vz.peak,
-          left: vz.left,
-          right: vz.right,
+        _visualizer.emit(
+          VisualizerData(
+            bands: vz.bands,
+            rms: vz.rms,
+            peak: vz.peak,
+            left: vz.left,
+            right: vz.right,
+          ),
         );
-        _visualizerController.add(_visualizer);
 
       case rust_types.RustEngineEvent_VisualizerEnabled(field0: final en):
-        _visualizerEnabled = en;
-        _visualizerEnabledController.add(en);
+        _visualizerEnabled.emit(en);
 
       case rust_types.RustEngineEvent_BufferedRange(field0: final br):
         final r = BufferedRange(
@@ -594,20 +666,51 @@ class MiniaudioEngine<T> {
           isBuffering: br.isBuffering,
           isEof: br.isEof,
         );
-        _bufferedRange = r;
-        _bufferedRangeController.add(r);
-        _bufferedPosition = r.end;
-        _bufferedPositionController.add(r.end);
-        _bufferedPercentage = r.percentage;
-        _bufferedPercentageController.add(r.percentage);
+        _bufferedRange.emit(r);
+        _bufferedPosition.emit(r.end);
+        _bufferedPercentage.emit(r.percentage);
 
-      case rust_types.RustEngineEvent_Error(message: final msg, code: final cd):
+      case rust_types.RustEngineEvent_Error(
+          message: final msg,
+          code: final cd,
+        ):
         // ignore: avoid_print
         print('[miniaudio_player][ERROR][engine] $msg ($cd)');
 
       default:
         break;
     }
+  }
+
+  Future<rust_types.RustEngineItem> _resolveRustEngineItem(
+    EngineItem<T> item,
+  ) async {
+    final effectiveId = item.id ?? ++_nextAutoId;
+    _shadowItems[effectiveId] = item;
+
+    if (item.source is UriAudioSource) {
+      final s = item.source as UriAudioSource;
+      final str = s.sourceString;
+      if (str.startsWith('asset://') || str.startsWith('asset:')) {
+        final key = str.startsWith('asset://')
+            ? str.substring('asset://'.length)
+            : str.substring('asset:'.length);
+        final loader = MiniaudioPlayerGlobalConfig.assetLoader;
+        if (loader != null) {
+          try {
+            final bytes = await loader(key);
+            return rust_types.RustEngineItem(
+              id: effectiveId,
+              source: str,
+              dataBytes: bytes,
+              replayGainDb: item.replayGainDb,
+              replayPeak: item.replayPeak,
+            );
+          } catch (_) {}
+        }
+      }
+    }
+    return item.toRustItem(effectiveId);
   }
 
   // --- Internal Methods Invoked by EngineAction ---
@@ -622,56 +725,25 @@ class MiniaudioEngine<T> {
     _queue.clear();
 
     final effectiveStart = startIndex ?? 0;
-    _currentIndex = effectiveStart;
+    _currentIndex.value = effectiveStart;
 
     final engine = await _getEngine();
     final rustItems = <rust_types.RustEngineItem>[];
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      final effectiveId = item.id ?? ++_nextAutoId;
-      _shadowItems[effectiveId] = item;
-
-      if (item.source is UriAudioSource) {
-        final s = item.source as UriAudioSource;
-        final str = s.sourceString;
-        if (str.startsWith('asset://') || str.startsWith('asset:')) {
-          final key = str.startsWith('asset://')
-              ? str.substring('asset://'.length)
-              : str.substring('asset:'.length);
-          final loader = MiniaudioPlayerGlobalConfig.assetLoader;
-          if (loader != null) {
-            try {
-              final bytes = await loader(key);
-              rustItems.add(rust_types.RustEngineItem(
-                id: effectiveId,
-                source: str,
-                dataBytes: bytes,
-                replayGainDb: item.replayGainDb,
-                replayPeak: item.replayPeak,
-              ));
-              continue;
-            } catch (_) {}
-          }
-        }
-      }
-      rustItems.add(item.toRustItem(effectiveId));
+    for (final item in items) {
+      rustItems.add(await _resolveRustEngineItem(item));
     }
     _queue.addAll(items);
-    _queueController.add(List.unmodifiable(_queue));
+    _queueProp.emit(List.unmodifiable(_queue));
 
     await engine?.setQueue(
       items: rustItems,
       startIndex: items.isNotEmpty ? BigInt.from(effectiveStart) : null,
     );
 
-    if (items.isNotEmpty && effectiveStart >= 0 && effectiveStart < items.length) {
-      _currentIndex = effectiveStart;
-      _currentItemController.add(items[effectiveStart]);
-      _currentDataController.add(items[effectiveStart].data);
-      _currentIndexController.add(effectiveStart);
-      _hasNextController.add(effectiveStart + 1 < items.length || _loopMode == LoopMode.all);
-      _hasPreviousController.add(effectiveStart > 0 || _loopMode == LoopMode.all);
-      _updateReplayGainForCurrentItem();
+    if (items.isNotEmpty &&
+        effectiveStart >= 0 &&
+        effectiveStart < items.length) {
+      _syncQueueNavigationTelemetry(effectiveStart);
     }
   }
 
@@ -686,7 +758,7 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> togglePlayPauseInternal() async {
-    if (_playing) {
+    if (_playing.value) {
       await pauseInternal();
     } else {
       await playInternal();
@@ -722,18 +794,15 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> insertNextInternal(EngineItem<T> item) async {
-    final effectiveId = item.id ?? ++_nextAutoId;
-    _shadowItems[effectiveId] = item;
+    final rustItem = await _resolveRustEngineItem(item);
     final engine = await _getEngine();
-    await engine?.insertNext(item: item.toRustItem(effectiveId));
+    await engine?.insertNext(item: rustItem);
   }
 
   Future<void> appendInternal(List<EngineItem<T>> items) async {
     final rustItems = <rust_types.RustEngineItem>[];
     for (final item in items) {
-      final effectiveId = item.id ?? ++_nextAutoId;
-      _shadowItems[effectiveId] = item;
-      rustItems.add(item.toRustItem(effectiveId));
+      rustItems.add(await _resolveRustEngineItem(item));
     }
     final engine = await _getEngine();
     await engine?.append(items: rustItems);
@@ -758,32 +827,29 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> setShuffleInternal(bool enabled) async {
-    _shuffle = enabled;
-    _shuffleController.add(enabled);
+    _shuffle.emit(enabled);
     _rustEngine?.setShuffle(enabled: enabled);
   }
 
   Future<bool> toggleShuffleInternal() async {
-    final next = !_shuffle;
+    final next = !_shuffle.value;
     await setShuffleInternal(next);
     return next;
   }
 
   Future<void> setLoopModeInternal(LoopMode mode) async {
-    _loopMode = mode;
-    _loopModeController.add(mode);
+    _loopMode.emit(mode);
     _rustEngine?.setLoopMode(mode: mode.index);
   }
 
   Future<LoopMode> cycleLoopModeInternal() async {
-    final next = _loopMode.next();
+    final next = _loopMode.value.next();
     await setLoopModeInternal(next);
     return next;
   }
 
   Future<void> setCrossfadeConfigInternal(CrossfadeConfig config) async {
-    _crossfadeConfig = config;
-    _crossfadeConfigController.add(config);
+    _crossfadeConfig.emit(config);
     _rustEngine?.setCrossfadeConfig(
       config: rust_types.RustCrossfadeConfig(
         durationMs: BigInt.from(config.duration.inMilliseconds),
@@ -794,74 +860,71 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> setVolumeNormalizationInternal(bool enabled) async {
-    _volumeNormalization = enabled;
-    _volumeNormalizationController.add(enabled);
+    _volumeNormalization.emit(enabled);
     _updateReplayGainForCurrentItem();
   }
 
   Future<void> setDefaultReplayGainInternal(double gainDb) async {
-    _defaultReplayGain = gainDb;
+    _defaultReplayGain.emit(gainDb);
     _updateReplayGainForCurrentItem();
   }
 
   Future<void> setForcedReplayGainInternal(double? gainDb) async {
-    _forcedReplayGain = gainDb;
+    _forcedReplayGain.emit(gainDb);
     _updateReplayGainForCurrentItem();
   }
 
   Future<void> setInfiniteMixInternal(bool enabled) async {
-    _infiniteMix = enabled;
-    _infiniteMixController.add(enabled);
+    _infiniteMix.emit(enabled);
     final engine = await _getEngine();
     engine?.setInfiniteMix(enabled: enabled);
   }
 
   Future<void> setVolumeInternal(double volume) async {
-    _volume = volume;
-    _volumeController.add(volume);
-    _rustEngine?.setVolume(volume: volume);
+    final clamped = volume.clamp(0.0, 2.0);
+    _volume.emit(clamped);
+    _rustEngine?.setVolume(volume: clamped);
   }
 
   Future<void> setRateInternal(double rate) async {
-    _rate = rate;
-    _rateController.add(rate);
-    _rustEngine?.setRate(rate: rate);
+    final clamped = rate.clamp(0.1, 4.0);
+    _rate.emit(clamped);
+    _rustEngine?.setRate(rate: clamped);
   }
 
   Future<void> setPitchInternal(double pitch) async {
-    _pitch = pitch;
-    _pitchController.add(pitch);
-    _rustEngine?.setPitch(pitch: pitch);
+    final clamped = pitch.clamp(0.5, 2.0);
+    _pitch.emit(clamped);
+    _rustEngine?.setPitch(pitch: clamped);
   }
 
   Future<void> setBufferSizeInternal(int bufferSize) async {
-    _bufferSize = bufferSize;
-    _bufferSizeController.add(bufferSize);
+    _bufferSize.emit(bufferSize);
   }
 
   void setIcyMetaInternal(Uint8List data) {}
   void probeTailInternal(Uint8List data, int tailOffset) {}
 
   Future<void> setEqualizerInternal(Equalizer eq) async {
-    _equalizer = eq;
-    _equalizerController.add(eq);
+    _equalizer.emit(eq);
     _rustEngine?.setEqualizer(
-      params: rust_types.RustEqualizerParams(gains: Float32List.fromList(eq.toList()), enabled: true),
+      params: rust_types.RustEqualizerParams(
+        gains: Float32List.fromList(eq.toList()),
+        enabled: true,
+      ),
     );
   }
 
   Future<void> setDeviceInternal(AudioDevice device) async {
-    _audioDevice = device;
-    _audioDeviceController.add(device);
+    _audioDevice.emit(device);
     if (device.id.isNotEmpty && device.id != 'auto') {
       _rustEngine?.setDevice(deviceId: device.id);
     }
   }
 
   void setPauseOnDeviceChangeInternal(bool enabled) {
-    if (_pauseOnDeviceChange == enabled) return;
-    _pauseOnDeviceChange = enabled;
-    _pauseOnDeviceChangeController.add(enabled);
+    if (_pauseOnDeviceChange.value == enabled) return;
+    _pauseOnDeviceChange.emit(enabled);
   }
 
   Future<void> setSkipSilenceInternal(
@@ -871,18 +934,20 @@ class MiniaudioEngine<T> {
     Duration? minSilenceDuration,
     Duration? padding,
   }) async {
-    _silenceConfig = SilenceSkipConfig(
+    final cur = _silenceConfig.value;
+    final nextConfig = SilenceSkipConfig(
       mode: enabled ? mode : SilenceSkipMode.disabled,
-      thresholdDb: thresholdDb ?? _silenceConfig.thresholdDb,
-      minSilenceDuration: minSilenceDuration ?? _silenceConfig.minSilenceDuration,
-      padding: padding ?? _silenceConfig.padding,
-    );
-    _silenceConfigController.add(_silenceConfig);
+      thresholdDb: thresholdDb ?? cur.thresholdDb,
+      minSilenceDuration: minSilenceDuration ?? cur.minSilenceDuration,
+      padding: padding ?? cur.padding,
+    ).validated();
+    await setSilenceConfigInternal(nextConfig);
   }
 
   Future<void> setSilenceConfigInternal(SilenceSkipConfig config) async {
-    _silenceConfig = config;
-    _silenceConfigController.add(config);
+    final valid = config.validated();
+    _skipSilence.emit(valid.mode != SilenceSkipMode.disabled);
+    _silenceConfig.emit(valid);
   }
 
   Future<void> setVisualizerOverrideInternal(bool? enabled) async {
@@ -896,41 +961,53 @@ class MiniaudioEngine<T> {
     bool preventClipping = true,
     bool force = false,
   }) async {
-    _replayGain = ReplayGainConfig(
+    if (force) {
+      _forcedReplayGain.emit(gainDb);
+    } else {
+      _defaultReplayGain.emit(gainDb);
+    }
+    final cfg = ReplayGainConfig(
       gainDb: gainDb,
       peak: peak ?? 1.0,
       preventClipping: preventClipping,
       enabled: true,
     );
-    _replayGainController.add(_replayGain);
+    _replayGain.emit(cfg);
+    _replayGainModeProp.emit(_replayGainMode);
+    _rustEngine?.setReplayGain(
+      gainDb: gainDb,
+      peak: peak ?? 1.0,
+      preventClipping: preventClipping,
+    );
   }
 
   Future<void> clearReplayGainInternal() async {
-    _replayGain = const ReplayGainConfig();
-    _replayGainController.add(_replayGain);
+    _forcedReplayGain.emit(null);
+    _defaultReplayGain.emit(0.0);
+    _replayGain.emit(const ReplayGainConfig());
+    _replayGainModeProp.emit(_replayGainMode);
+    _rustEngine?.setReplayGain(gainDb: 0.0, peak: 1.0, preventClipping: true);
   }
 
   Future<void> setPreampInternal(double preampDb) async {
-    _preamp = preampDb;
-    _preampController.add(preampDb);
-    _rustEngine?.setPreamp(preampDb: preampDb);
+    final clamped = preampDb.clamp(-24.0, 24.0);
+    _preamp.emit(clamped);
+    _rustEngine?.setPreamp(preampDb: clamped);
   }
 
   Future<void> setBalanceInternal(double pan) async {
-    _balance = pan;
-    _balanceController.add(pan);
-    _rustEngine?.setBalance(balance: pan);
+    final clamped = pan.clamp(-1.0, 1.0);
+    _balance.emit(clamped);
+    _rustEngine?.setBalance(balance: clamped);
   }
 
   Future<void> setMonoInternal(bool enabled) async {
-    _mono = enabled;
-    _monoController.add(enabled);
+    _mono.emit(enabled);
     _rustEngine?.setMono(enabled: enabled);
   }
 
   Future<void> setCrossfeedInternal(CrossfeedMode mode) async {
-    _crossfeed = mode;
-    _crossfeedController.add(mode);
+    _crossfeed.emit(mode);
     _rustEngine?.setCrossfeed(mode: mode.index);
   }
 
@@ -938,37 +1015,35 @@ class MiniaudioEngine<T> {
     required bool enabled,
     double width = 1.3,
   }) async {
-    _spatializerEnabled = enabled;
-    _spatializerWidth = width;
-    _spatializerEnabledController.add(enabled);
-    _spatializerWidthController.add(width);
-    _rustEngine?.setSpatializer(enabled: enabled, width: width);
+    final clampedWidth = width.clamp(1.0, 2.0);
+    _spatializerEnabled.emit(enabled);
+    _spatializerWidth.emit(clampedWidth);
+    _rustEngine?.setSpatializer(enabled: enabled, width: clampedWidth);
   }
 
   Future<void> setLimiterInternal(bool enabled) async {
-    _limiterEnabled = enabled;
-    _limiterEnabledController.add(enabled);
+    _limiterEnabled.emit(enabled);
     _rustEngine?.setLimiter(enabled: enabled);
   }
 
   Future<void> setReverbInternal(Reverb config) async {
-    _reverb = config;
-    _reverbController.add(config);
+    final valid = config.validated();
+    _reverb.emit(valid);
     _rustEngine?.setReverb(
       params: rust_types.RustReverbParams(
-        enabled: config.enabled,
-        roomSize: config.roomSize,
-        damping: config.damping,
-        width: config.width,
-        wet: config.wet,
-        dry: config.dry,
+        enabled: valid.enabled,
+        roomSize: valid.roomSize,
+        damping: valid.damping,
+        width: valid.width,
+        wet: valid.wet,
+        dry: valid.dry,
         mode: 0.0,
       ),
     );
   }
 
   // --------------------------------------------------------------------------
-  // Sinks Desacoplados, Grabación & Pre-escucha Cue
+  // Decoupled Sinks, Recording & Cue Pre-listening
   // --------------------------------------------------------------------------
 
   Future<void> startRecordingInternal(
@@ -977,21 +1052,18 @@ class MiniaudioEngine<T> {
   }) async {
     final engine = await _getEngine();
     engine?.startRecording(path: path, format: format.toRust());
-    _isRecording = true;
-    _isRecordingController.add(true);
+    _isRecording.emit(true);
   }
 
   Future<int> stopRecordingInternal() async {
     final engine = await _getEngine();
     final bytes = engine?.stopRecording() ?? BigInt.zero;
-    _isRecording = false;
-    _isRecordingController.add(false);
+    _isRecording.emit(false);
     return bytes.toInt();
   }
 
-  bool isRecordingInternal() {
-    return _rustEngine?.isRecording() ?? _isRecording;
-  }
+  bool isRecordingInternal() =>
+      _rustEngine?.isRecording() ?? _isRecording.value;
 
   Future<int> offlineBounceInternal(
     String path, {
@@ -1021,27 +1093,25 @@ class MiniaudioEngine<T> {
       duckingDb: duckingDb,
       thresholdDb: thresholdDb,
     );
-    _isMicrophoneEnabled = true;
-    _isMicrophoneEnabledController.add(true);
-    _duckingConfig = DuckingConfig(
-      enabled: autoDucking,
-      duckingDb: duckingDb,
-      thresholdDb: thresholdDb,
+    _isMicrophoneEnabled.emit(true);
+    _duckingConfig.emit(
+      DuckingConfig(
+        enabled: autoDucking,
+        duckingDb: duckingDb,
+        thresholdDb: thresholdDb,
+      ),
     );
-    _duckingConfigController.add(_duckingConfig);
   }
 
   Future<void> disableMicrophoneInternal() async {
     final engine = await _getEngine();
     engine?.disableMicrophone();
-    _isMicrophoneEnabled = false;
-    _isMicrophoneEnabledController.add(false);
+    _isMicrophoneEnabled.emit(false);
   }
 
   Future<void> setMicVolumeInternal(double volume) async {
     final v = volume.clamp(0.0, 2.0);
-    _micVolume = v;
-    _micVolumeController.add(v);
+    _micVolume.emit(v);
     final engine = await _getEngine();
     engine?.setMicVolume(volume: v);
   }
@@ -1058,36 +1128,41 @@ class MiniaudioEngine<T> {
       volume: v,
       mode: mode.value,
     );
-    _cueConfig = CueConfig(
-      enabled: true,
-      deviceId: deviceId,
-      volume: v,
-      mode: mode,
+    _cueConfig.emit(
+      CueConfig(
+        enabled: true,
+        deviceId: deviceId,
+        volume: v,
+        mode: mode,
+      ),
     );
-    _cueConfigController.add(_cueConfig);
   }
 
   Future<void> setCueVolumeInternal(double volume) async {
     final v = volume.clamp(0.0, 2.0);
-    _cueConfig = CueConfig(
-      enabled: _cueConfig.enabled,
-      deviceId: _cueConfig.deviceId,
-      volume: v,
-      mode: _cueConfig.mode,
+    final cur = _cueConfig.value;
+    _cueConfig.emit(
+      CueConfig(
+        enabled: cur.enabled,
+        deviceId: cur.deviceId,
+        volume: v,
+        mode: cur.mode,
+      ),
     );
-    _cueConfigController.add(_cueConfig);
     final engine = await _getEngine();
     engine?.setCueVolume(volume: v);
   }
 
   Future<void> setCueModeInternal(CueMode mode) async {
-    _cueConfig = CueConfig(
-      enabled: _cueConfig.enabled,
-      deviceId: _cueConfig.deviceId,
-      volume: _cueConfig.volume,
-      mode: mode,
+    final cur = _cueConfig.value;
+    _cueConfig.emit(
+      CueConfig(
+        enabled: cur.enabled,
+        deviceId: cur.deviceId,
+        volume: cur.volume,
+        mode: mode,
+      ),
     );
-    _cueConfigController.add(_cueConfig);
     final engine = await _getEngine();
     engine?.setCueMode(mode: mode.value);
   }
@@ -1095,13 +1170,15 @@ class MiniaudioEngine<T> {
   Future<void> disableCueOutputInternal() async {
     final engine = await _getEngine();
     engine?.disableCueOutput();
-    _cueConfig = CueConfig(
-      enabled: false,
-      deviceId: _cueConfig.deviceId,
-      volume: _cueConfig.volume,
-      mode: _cueConfig.mode,
+    final cur = _cueConfig.value;
+    _cueConfig.emit(
+      CueConfig(
+        enabled: false,
+        deviceId: cur.deviceId,
+        volume: cur.volume,
+        mode: cur.mode,
+      ),
     );
-    _cueConfigController.add(_cueConfig);
   }
 
   Future<void> configureOutputsInternal({
@@ -1115,7 +1192,8 @@ class MiniaudioEngine<T> {
     }
     if (cueDevice != null) {
       await configureCueOutputInternal(
-        deviceId: cueDevice.id == 'auto' || cueDevice.id.isEmpty ? null : cueDevice.id,
+        deviceId:
+            cueDevice.id == 'auto' || cueDevice.id.isEmpty ? null : cueDevice.id,
       );
     }
     if (recordPath != null) {
@@ -1126,62 +1204,14 @@ class MiniaudioEngine<T> {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
-    _eventSub?.cancel();
+    await _eventSub?.cancel();
     _eventSub = null;
     _rustEngine?.stop();
     _rustEngine = null;
 
-    await _phaseController.close();
-    await _positionController.close();
-    await _durationController.close();
-    await _playingController.close();
-    await _bufferingController.close();
-    await _completedController.close();
-    await _openingController.close();
-    await _playbackStateController.close();
-    await _bufferedPositionController.close();
-    await _bufferedPercentageController.close();
-    await _bufferedRangeController.close();
-    await _trackMetadataController.close();
-    await _volumeController.close();
-    await _rateController.close();
-    await _pitchController.close();
-    await _bufferSizeController.close();
-    await _audioBitrateController.close();
-    await _equalizerController.close();
-    await _audioDeviceController.close();
-    await _pauseOnDeviceChangeController.close();
-    await _skipSilenceController.close();
-    await _silenceConfigController.close();
-    await _silenceSavedDurationController.close();
-    await _visualizerController.close();
-    await _visualizerEnabledController.close();
-    await _preampController.close();
-    await _replayGainController.close();
-    await _balanceController.close();
-    await _monoController.close();
-    await _crossfeedController.close();
-    await _spatializerEnabledController.close();
-    await _spatializerWidthController.close();
-    await _reverbController.close();
-    await _limiterEnabledController.close();
-    await _queueController.close();
-    await _currentIndexController.close();
-    await _currentItemController.close();
-    await _currentDataController.close();
-    await _hasNextController.close();
-    await _hasPreviousController.close();
-    await _shuffleController.close();
-    await _loopModeController.close();
-    await _crossfadeConfigController.close();
-    await _isCrossfadingController.close();
-    await _volumeNormalizationController.close();
-    await _infiniteMixController.close();
     await _needMoreTracksController.close();
-    await _isRecordingController.close();
-    await _isMicrophoneEnabledController.close();
-    await _micVolumeController.close();
-    await _cueConfigController.close();
-    await _duckingConfigController.close();
+    for (final prop in _allProperties) {
+      await prop.close();
+    }
   }
 }

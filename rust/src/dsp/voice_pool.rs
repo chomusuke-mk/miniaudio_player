@@ -485,6 +485,10 @@ impl VoicePool {
         }
     }
 
+    pub fn get_voice(&self, voice_id: u32) -> Option<&Voice> {
+        self.voices.iter().find(|v| v.id == voice_id)
+    }
+
     /// Renders and mixes all active voices into the destination interleaved float PCM buffer.
     pub fn render_pcm(
         &mut self,
@@ -597,127 +601,3 @@ pub fn pseudo_random_jitter(seed: u32, salt: u32) -> f32 {
     val * 2.0 - 1.0
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sound_buffer_creation_and_frame_count() {
-        let samples = vec![0.1, -0.1, 0.2, -0.2, 0.3, -0.3];
-        let buf = SoundBuffer::new(samples, 48000, 2);
-        assert_eq!(buf.channels, 2);
-        assert_eq!(buf.sample_rate, 48000);
-        assert_eq!(buf.frame_count(), 3);
-        assert_eq!(buf.duration_ms, 0);
-    }
-
-    #[test]
-    fn test_voice_pool_plays_within_capacity() {
-        let mut pool = VoicePool::new(4, VoiceStealingPolicy::LowestPriority);
-        let samples = vec![1.0; 100];
-        let buf = SoundBuffer::new(samples, 44100, 1);
-
-        let id1 = pool.play_sound(buf.clone(), 1.0, 1.0, 100, false, None);
-        let id2 = pool.play_sound(buf.clone(), 1.0, 1.0, 100, false, None);
-        assert!(id1.is_some());
-        assert!(id2.is_some());
-        assert_eq!(pool.active_voice_count(), 2);
-    }
-
-    #[test]
-    fn test_voice_stealing_by_lowest_priority() {
-        let mut pool = VoicePool::new(2, VoiceStealingPolicy::LowestPriority);
-        let samples = vec![1.0; 100];
-        let buf = SoundBuffer::new(samples, 44100, 1);
-
-        let id_low = pool.play_sound(buf.clone(), 1.0, 1.0, 10, false, None).unwrap();
-        let id_high = pool.play_sound(buf.clone(), 1.0, 1.0, 200, false, None).unwrap();
-        assert_eq!(pool.active_voice_count(), 2);
-
-        let id_new = pool.play_sound(buf.clone(), 1.0, 1.0, 150, false, None);
-        assert!(id_new.is_some());
-        assert_eq!(pool.active_voice_count(), 2);
-
-        assert!(!pool.voices.iter().any(|v| v.id == id_low && v.is_active()));
-        assert!(pool.voices.iter().any(|v| v.id == id_high && v.is_active()));
-    }
-
-    #[test]
-    fn test_voice_stealing_rejects_lower_priority() {
-        let mut pool = VoicePool::new(2, VoiceStealingPolicy::LowestPriority);
-        let samples = vec![1.0; 100];
-        let buf = SoundBuffer::new(samples, 44100, 1);
-
-        pool.play_sound(buf.clone(), 1.0, 1.0, 100, false, None).unwrap();
-        pool.play_sound(buf.clone(), 1.0, 1.0, 100, false, None).unwrap();
-
-        let id_rejected = pool.play_sound(buf.clone(), 1.0, 1.0, 50, false, None);
-        assert!(id_rejected.is_none());
-        assert_eq!(pool.active_voice_count(), 2);
-    }
-
-    #[test]
-    fn test_one_shot_jitter_applies_variation() {
-        let mut pool = VoicePool::new(4, VoiceStealingPolicy::default());
-        let samples = vec![1.0; 100];
-        let buf = SoundBuffer::new(samples, 44100, 1);
-
-        let id = pool.play_one_shot(buf, 1.0, 1.0, 0.1, 0.1, 128, None);
-        assert!(id.is_some());
-        let voice = pool.voices.iter().find(|v| v.id == id.unwrap()).unwrap();
-        assert!(voice.pitch >= 0.89 && voice.pitch <= 1.11);
-        assert!(voice.volume >= 0.89 && voice.volume <= 1.11);
-    }
-
-    #[test]
-    fn test_render_pcm_mixes_voices_accurately() {
-        let mut pool = VoicePool::new(4, VoiceStealingPolicy::default());
-        let samples = vec![0.5, 0.5];
-        let buf = SoundBuffer::new(samples, 48000, 1);
-
-        pool.play_sound(buf.clone(), 1.0, 1.0, 128, false, None);
-        pool.play_sound(buf.clone(), 1.0, 1.0, 128, false, None);
-
-        let mut out = vec![0.0f32; 4];
-        let listener = SpatialListener::default();
-        pool.render_pcm(&mut out, 2, 48000, &listener);
-
-        assert!((out[0] - 1.0).abs() < 0.1);
-        assert!((out[1] - 1.0).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_time_scale_slows_or_speeds_playback() {
-        let mut pool = VoicePool::new(4, VoiceStealingPolicy::default());
-        let samples = vec![1.0; 100];
-        let buf = SoundBuffer::new(samples, 48000, 1);
-
-        pool.set_time_scale(0.5);
-        assert_eq!(pool.time_scale(), 0.5);
-
-        let id = pool.play_sound(buf, 1.0, 1.0, 128, false, None).unwrap();
-        let mut out = vec![0.0f32; 20];
-        let listener = SpatialListener::default();
-        pool.render_pcm(&mut out, 2, 48000, &listener);
-
-        let voice = pool.voices.iter().find(|v| v.id == id).unwrap();
-        assert!((voice.frame_cursor - 5.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_voice_runtime_volume_and_pitch_controls() {
-        let mut pool = VoicePool::new(4, VoiceStealingPolicy::default());
-        let samples = vec![1.0; 100];
-        let buf = SoundBuffer::new(samples, 48000, 1);
-
-        let id = pool.play_sound(buf, 1.0, 1.0, 128, false, None).unwrap();
-        assert!(pool.is_voice_playing(id));
-
-        pool.set_voice_volume(id, 0.4);
-        pool.set_voice_pitch(id, 1.8);
-
-        let voice = pool.voices.iter().find(|v| v.id == id).unwrap();
-        assert!((voice.volume - 0.4).abs() < 0.01);
-        assert!((voice.pitch - 1.8).abs() < 0.01);
-    }
-}

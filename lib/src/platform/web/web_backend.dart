@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
-import 'dart:math';
 import 'dart:typed_data';
-
 import 'package:web/web.dart' as web;
 
 import '../../api/audio_analysis_result.dart';
@@ -17,105 +15,98 @@ import '../../api/spatial.dart';
 import '../../api/visualizer_data.dart';
 import '../../equalizer.dart';
 import '../../reverb.dart';
+import '../../rust/api/types.dart' show RustDartReadRequest;
 import '../platform_backend.dart';
 import 'wasm_loader.dart';
 import 'web_interop.dart';
 import 'web_worker_blob.dart';
 
-class _SharedWebAudioContext {
-  static web.AudioContext? _instance;
-  static int _refCount = 0;
-  static bool _workletModuleLoaded = false;
-  static String? _workletBlobUrl;
-
-  static Future<web.AudioContext> acquire(int sampleRate) async {
-    _refCount++;
-    if (_instance == null) {
-      final options = web.AudioContextOptions(
-        sampleRate: sampleRate > 0 ? sampleRate.toDouble() : 48000.0,
-      );
-      _instance = web.AudioContext(options);
-    }
-    if (!_workletModuleLoaded) {
-      _workletBlobUrl ??= createWorkletBlobUrl();
-      await _instance!.audioWorklet.addModule(_workletBlobUrl!).toDart;
-      _workletModuleLoaded = true;
-    }
-    return _instance!;
-  }
-
-  static void release() {
-    _refCount = (_refCount > 0) ? _refCount - 1 : 0;
-    if (_refCount == 0 && _instance != null) {
-      _instance!.close();
-      _instance = null;
-      _workletModuleLoaded = false;
-    }
-  }
-
-  static void ensureResumed() {
-    if (_instance != null && _instance!.state != 'running' && _instance!.state != 'closed') {
-      try {
-        _instance!.resume();
-      } catch (_) {}
-    }
-  }
-}
-
-class _WebPlayerCleanupToken {
-  final web.Worker worker;
-  final web.AudioWorkletNode workletNode;
-  bool disposed = false;
-
-  _WebPlayerCleanupToken(this.worker, this.workletNode);
+class _WebCleanupToken {
+  web.Worker? worker;
+  web.AudioContext? audioCtx;
+  web.AudioWorkletNode? workletNode;
+  bool cleaned = false;
 
   void cleanup() {
-    if (disposed) return;
-    disposed = true;
+    if (cleaned) return;
+    cleaned = true;
     try {
-      worker.postMessage(WebWorkerCommand(type: 'destroy'));
-      worker.terminate();
-      workletNode.disconnect();
-      _SharedWebAudioContext.release();
+      worker?.postMessage(WebWorkerCommand(type: 'dispose'));
+      worker?.terminate();
+      workletNode?.disconnect();
+      audioCtx?.close();
     } catch (_) {}
+    worker = null;
+    workletNode = null;
+    audioCtx = null;
   }
 }
 
-final Finalizer<_WebPlayerCleanupToken> _webFinalizer =
-    Finalizer<_WebPlayerCleanupToken>((token) => token.cleanup());
+final Finalizer<_WebCleanupToken> _webFinalizer = Finalizer(
+  (token) => token.cleanup(),
+);
 
+/// WebAssembly + AudioWorklet + Web Worker implementation of [PlayerBackend].
 class WebPlayerBackend implements PlayerBackend {
-  static final Set<WebPlayerBackend> activeBackends = {};
+  static final Set<WebPlayerBackend> activeBackends = <WebPlayerBackend>{};
 
-  web.AudioContext? _audioContext;
-  web.AudioWorkletNode? _workletNode;
-  web.Worker? _worker;
-  _WebPlayerCleanupToken? _cleanupToken;
   PlayerBackendListener? _listener;
+  web.Worker? _worker;
+  web.AudioContext? _audioCtx;
+  _WebCleanupToken? _cleanupToken;
 
-  bool _isDisposed = false;
-  AudioDevice _currentDevice = AudioDevice.auto;
   Completer<void>? _initCompleter;
   Completer<int>? _openCompleter;
+
   int _sampleRate = 48000;
   int _channels = 2;
+  int _periodSize = 2048;
 
+  bool _isDisposed = false;
   int _pinnedHeadSize = 0;
-  int _audioDataOffset = 0;
-  int _totalSize = 0;
-  int _bufferCapacity = 2 * 1024 * 1024;
-  int _rangeStart = 0;
-  int _rangeEnd = 0;
-  int _readCursorByte = 0;
-  double _fillPercentage = 0.0;
-  bool _isBuffering = false;
-  bool _isEof = false;
+
+  double _volume = 1.0;
+  double _rate = 1.0;
+  double _pitch = 1.0;
   int _durationMs = 0;
+  int _positionMs = 0;
+  int _bitrate = 0;
+  int _silenceSavedMs = 0;
+  bool _isPlaying = false;
+  bool _isBuffering = false;
+  bool _isCompleted = false;
+  PlaybackState _playbackState = PlaybackState.stopped;
+
+  Equalizer _equalizer = Equalizer.flat;
+  AudioDevice _currentDevice = AudioDevice.auto;
+  SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
+  bool _visualizerEnabled = false;
+  double _preamp = 0.0;
+  ReplayGainConfig _replayGain = const ReplayGainConfig();
+  double _balance = 0.0;
+  bool _mono = false;
+  CrossfeedMode _crossfeed = CrossfeedMode.off;
+  bool _spatializerEnabled = false;
+  double _spatializerWidth = 1.0;
+  Reverb _reverb = Reverb.off;
+  bool _limiterEnabled = true;
+  bool _pauseOnDeviceChange = false;
+
+  WebPlayerBackend() {
+    activeBackends.add(this);
+  }
 
   @override
-  void setListener(PlayerBackendListener listener) {
-    _listener = listener;
-  }
+  Stream<RustDartReadRequest> get onDartReadRequest => const Stream.empty();
+
+  @override
+  dynamic get handle => null;
+
+  @override
+  int get sampleRate => _sampleRate;
+
+  @override
+  int get channels => _channels;
 
   @override
   int get pinnedHeadSize => _pinnedHeadSize;
@@ -124,314 +115,377 @@ class WebPlayerBackend implements PlayerBackend {
   Uint8List? getMetaBytes() => null;
 
   @override
-  void init({
-    required int sampleRate,
-    required int channels,
-    required int periodSize,
-    String? playbackDeviceId,
-  }) {
-    _initCompleter = Completer<void>();
-    _asyncInit(sampleRate, channels, periodSize, playbackDeviceId);
+  void setListener(PlayerBackendListener listener) {
+    _listener = listener;
   }
 
-  Future<void> _asyncInit(
-    int sampleRate,
-    int channels,
-    int periodSize,
+  @override
+  void init({
+    int sampleRate = 48000,
+    int channels = 2,
+    int periodSize = 2048,
     String? playbackDeviceId,
-  ) async {
-    try {
-      _sampleRate = sampleRate > 0 ? sampleRate : 48000;
-      _channels = channels > 0 ? channels : 2;
-      _audioContext = await _SharedWebAudioContext.acquire(sampleRate);
+  }) {
+    _sampleRate = sampleRate > 0 ? sampleRate : 48000;
+    _channels = channels > 0 ? channels : 2;
+    _periodSize = periodSize > 0 ? periodSize : 2048;
+    _ensureWorkerInitialized();
+  }
 
-      final workletOptions = web.AudioWorkletNodeOptions(
-        numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [2.toJS].toJS,
-      );
-      _workletNode = web.AudioWorkletNode(
-        _audioContext!,
-        'miniaudio-worklet-processor',
-        workletOptions,
-      );
-      _workletNode!.connect(_audioContext!.destination);
+  Future<void> _ensureWorkerInitialized() async {
+    if (_initCompleter != null) return _initCompleter!.future;
+    final completer = Completer<void>();
+    _initCompleter = completer;
+
+    try {
+      final wasmUrl = await WasmLoader.resolveWasmUrl();
+      if (_isDisposed) {
+        completer.complete();
+        return;
+      }
 
       final workerUrl = createEngineWorkerBlobUrl();
-      _worker = web.Worker(workerUrl.toJS);
-      activeBackends.add(this);
+      final worker = web.Worker(workerUrl.toJS);
+      _worker = worker;
 
-      _cleanupToken = _WebPlayerCleanupToken(_worker!, _workletNode!);
-      _webFinalizer.attach(this, _cleanupToken!, detach: this);
+      final token = _WebCleanupToken()..worker = worker;
+      _cleanupToken = token;
+      _webFinalizer.attach(this, token, detach: this);
 
-      final channel = web.MessageChannel();
-      _workletNode!.port.postMessage(
-        'connect'.toJS,
-        [channel.port2].toJS,
-      );
+      worker.onmessage = ((web.MessageEvent e) {
+        _handleWorkerMessage(e.data as WebWorkerMessage);
+      }).toJS;
 
-      _worker!.onmessage = (web.MessageEvent e) {
-        _handleWorkerMessage(e);
-      }.toJS;
+      worker.onerror = ((web.Event e) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            const MiniaudioPlayerException('Web Worker initialization failed'),
+          );
+        }
+      }).toJS;
 
-      final wasmUrl = await WasmLoader.resolveWasmUrl();
-      _worker!.postMessage(
+      worker.postMessage(
         WebWorkerCommand(
           type: 'init',
           wasmUrl: wasmUrl,
-          sampleRate: sampleRate,
-          channels: channels,
-          periodSize: periodSize,
+          sampleRate: _sampleRate,
+          channels: _channels,
+          periodSize: _periodSize,
           logLevel: MiniaudioPlayer.globalConfig.logLevel.value,
         ),
       );
-
-      _worker!.postMessage(
-        WebWorkerCommand(type: 'connectWorklet'),
-        [channel.port1].toJS,
-      );
-    } catch (e, st) {
-      // ignore: avoid_print
-      print('[miniaudio_player][ERROR][web] _asyncInit failed: $e\n$st');
-      if (_initCompleter != null && !_initCompleter!.isCompleted) {
-        _initCompleter!.completeError(e);
+    } catch (e) {
+      if (!completer.isCompleted) {
+        completer.completeError(e);
       }
     }
+
+    return completer.future;
   }
 
-  void _handleWorkerMessage(web.MessageEvent e) {
-    final msg = e.data as WebWorkerMessage;
-    final type = msg.type;
+  Future<void> _ensureAudioContextInitialized() async {
+    if (_audioCtx != null) {
+      if (_audioCtx!.state == 'suspended') {
+        try {
+          await _audioCtx!.resume().toDart;
+        } catch (_) {}
+      }
+      return;
+    }
 
-    switch (type) {
+    try {
+      final ctx = web.AudioContext(
+        web.AudioContextOptions(sampleRate: _sampleRate.toDouble()),
+      );
+      _audioCtx = ctx;
+      _cleanupToken?.audioCtx = ctx;
+
+      final workletUrl = createWorkletBlobUrl();
+      await ctx.audioWorklet.addModule(workletUrl).toDart;
+
+      final node = web.AudioWorkletNode(
+        ctx,
+        'miniaudio-processor',
+        web.AudioWorkletNodeOptions(
+          numberOfInputs: 0,
+          numberOfOutputs: 1,
+          outputChannelCount: [_channels.toJS].toJS,
+        ),
+      );
+      node.connect(ctx.destination);
+      _cleanupToken?.workletNode = node;
+
+      final channel = web.MessageChannel();
+      node.port.postMessage(
+        {'type': 'port', 'port': channel.port1}.jsify(),
+        [channel.port1].toJS,
+      );
+      _worker?.postMessage(
+        {'type': 'workletPort', 'port': channel.port2}.jsify(),
+        [channel.port2].toJS,
+      );
+
+      if (ctx.state == 'suspended') {
+        try {
+          await ctx.resume().toDart;
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  void _handleWorkerMessage(WebWorkerMessage msg) {
+    if (_isDisposed) return;
+
+    switch (msg.type) {
       case 'initialized':
         if (_initCompleter != null && !_initCompleter!.isCompleted) {
           _initCompleter!.complete();
         }
-        break;
+        _syncInitialDspStateToWorker();
 
       case 'opened':
         final res = msg.result ?? 0;
-        _audioDataOffset = msg.audioDataOffset ?? 0;
-        _pinnedHeadSize = msg.pinnedHeadSize ?? _audioDataOffset;
+        _pinnedHeadSize = msg.pinnedHeadSize ?? (msg.audioDataOffset ?? 0);
         if (_openCompleter != null && !_openCompleter!.isCompleted) {
-          _openCompleter!.complete(res);
+          if (res == 0) {
+            _openCompleter!.complete(0);
+          } else {
+            _openCompleter!.completeError(
+              MiniaudioPlayerException(
+                msg.error ?? 'Failed to open audio source in Web Worker',
+                errorCode: res,
+              ),
+            );
+          }
+          _openCompleter = null;
         }
-        break;
 
       case 'telemetry':
-        final dataArr = msg.data;
-        if (dataArr != null) {
-          _dispatchTelemetry(dataArr);
+        final arr = msg.data;
+        if (arr != null) {
+          _processTelemetryPacket(
+            arr.toDart.map((e) => e.toDartDouble).toList(),
+          );
         }
-        break;
+
+      case 'streamError':
+        _playbackState = PlaybackState.error;
+        _listener?.onState(PlaybackState.error);
+        _listener?.onError(
+          msg.error ?? 'Web stream error',
+          MapResult.errorDecodeFailed,
+        );
 
       case 'error':
-        final err = msg.error ?? 'Unknown worker error';
-        // ignore: avoid_print
-        print('[miniaudio_player][ERROR][web] Worker error: $err');
+        final err = msg.error ?? 'Web Worker error';
+        if (_initCompleter != null && !_initCompleter!.isCompleted) {
+          _initCompleter!.completeError(MiniaudioPlayerException(err));
+        }
         if (_openCompleter != null && !_openCompleter!.isCompleted) {
           _openCompleter!.completeError(MiniaudioPlayerException(err));
+          _openCompleter = null;
         }
-        break;
+        _playbackState = PlaybackState.error;
+        _listener?.onState(PlaybackState.error);
+        _listener?.onError(err, MapResult.errorGeneric);
     }
   }
 
-  void _dispatchTelemetry(JSArray<JSNumber> raw) {
-    if (_isDisposed || _listener == null) return;
+  void _syncInitialDspStateToWorker() {
+    final w = _worker;
+    if (w == null) return;
+    if (_volume != 1.0) setVolume(_volume);
+    if (_rate != 1.0) setRate(_rate);
+    if (_pitch != 1.0) setPitch(_pitch);
+    if (_equalizer != Equalizer.flat) setEqualizer(_equalizer);
+    if (_silenceConfig.mode != SilenceSkipMode.disabled) {
+      setSilenceSkip(_silenceConfig);
+    }
+    if (_visualizerEnabled) setVisualizerEnabled(true);
+    if (_preamp != 0.0) setPreamp(_preamp);
+    if (_replayGain.enabled) setReplayGain(_replayGain);
+    if (_balance != 0.0) setBalance(_balance);
+    if (_mono) setMono(true);
+    if (_crossfeed != CrossfeedMode.off) setCrossfeed(_crossfeed);
+    if (_spatializerEnabled) {
+      setSpatializer(enabled: true, width: _spatializerWidth);
+    }
+    if (_reverb.enabled) {
+      setReverb(
+        enabled: true,
+        roomSize: _reverb.roomSize,
+        damping: _reverb.damping,
+        width: _reverb.width,
+        wet: _reverb.wet,
+        dry: _reverb.dry,
+      );
+    }
+    if (!_limiterEnabled) setLimiterEnabled(false);
+  }
 
-    final double posMs = raw[0].toDartDouble;
-    final double durMs = raw[1].toDartDouble;
-    final int stateInt = raw[2].toDartInt;
-    final bool isPlaying = raw[3].toDartDouble != 0.0;
-    final bool isBuffering = raw[4].toDartDouble != 0.0;
-    final bool isCompleted = raw[5].toDartDouble != 0.0;
-    final int bitrate = raw[6].toDartInt;
-    final double silenceSavedMs = raw[9].toDartDouble;
+  void _processTelemetryPacket(List<double> data) {
+    if (data.length < 18) return;
+    final l = _listener;
+    if (l == null) return;
 
-    final double bufStartMs = raw[10].toDartDouble;
-    final double bufEndMs = raw[11].toDartDouble;
-    final double bufFillPct = raw[12].toDartDouble;
-    final double streamPct = raw[13].toDartDouble;
-    final bool isEof = raw[14].toDartDouble != 0.0;
+    final stateInt = data[0].round();
+    final posMs = data[1].round();
+    final durMs = data[2].round();
+    final playing = data[3] != 0.0;
+    final buffering = data[4] != 0.0;
+    final completed = data[5] != 0.0;
+    final vol = data[6];
+    final rt = data[7];
+    final pt = data[8];
+    final br = data[9].round();
+    final silenceMs = data[11].round();
+    final bufStartMs = data[12].round();
+    final bufEndMs = data[13].round();
+    final bufFillPct = data[14];
+    final bufStreamPct = data[15];
+    final bufEof = data[16] != 0.0;
 
-    _durationMs = durMs.round();
-    _fillPercentage = bufFillPct.clamp(0.0, 1.0);
-    _isBuffering = isBuffering;
-    _isEof = isEof;
-    if (raw.length > 46 && raw[46].toDartDouble >= 0) {
-      _readCursorByte = raw[46].toDartDouble.round();
-    } else if (_durationMs > 0 && _totalSize > 0) {
-      _readCursorByte = ((posMs / _durationMs) * _totalSize).round().clamp(0, _totalSize);
+    final newState = switch (stateInt) {
+      1 => PlaybackState.playing,
+      2 => PlaybackState.paused,
+      3 => PlaybackState.completed,
+      4 => PlaybackState.buffering,
+      5 => PlaybackState.error,
+      6 => PlaybackState.opening,
+      _ => PlaybackState.stopped,
+    };
+
+    if (_playbackState != newState) {
+      _playbackState = newState;
+      l.onState(newState);
+    }
+    if (_positionMs != posMs) {
+      _positionMs = posMs;
+      l.onPosition(Duration(milliseconds: posMs));
+    }
+    if (_durationMs != durMs && durMs >= 0) {
+      _durationMs = durMs;
+      l.onDuration(Duration(milliseconds: durMs));
+    }
+    if (_isPlaying != playing) {
+      _isPlaying = playing;
+      l.onPlaying(playing);
+    }
+    if (_isBuffering != buffering) {
+      _isBuffering = buffering;
+      l.onBuffering(buffering);
+    }
+    if (_isCompleted != completed) {
+      _isCompleted = completed;
+      l.onCompleted(completed);
+    }
+    if ((_volume - vol).abs() > 1e-4) {
+      _volume = vol;
+      l.onVolume(vol);
+    }
+    if ((_rate - rt).abs() > 1e-4) {
+      _rate = rt;
+      l.onRate(rt);
+    }
+    if ((_pitch - pt).abs() > 1e-4) {
+      _pitch = pt;
+      l.onPitch(pt);
+    }
+    if (_bitrate != br && br > 0) {
+      _bitrate = br;
+      l.onBitrate(br);
+    }
+    if (_silenceSavedMs != silenceMs) {
+      _silenceSavedMs = silenceMs;
+      l.onSilenceSaved(Duration(milliseconds: silenceMs));
     }
 
-    final bands = <double>[];
-    for (int b = 0; b < 10; b++) {
-      bands.add(raw[16 + b].toDartDouble);
-    }
-    final double rms = raw[26].toDartDouble;
-    final double peak = raw[27].toDartDouble;
-    final double left = raw[28].toDartDouble;
-    final double right = raw[29].toDartDouble;
-    final double volume = raw[30].toDartDouble;
-    final double rate = raw[31].toDartDouble;
-    final double pitch = raw.length > 32 ? raw[32].toDartDouble : 1.0;
-    final double balance = raw.length > 33 ? raw[33].toDartDouble : 0.0;
-    final bool mono = raw.length > 34 ? raw[34].toDartDouble != 0.0 : false;
-    final int crossfeedIndex = raw.length > 35 ? raw[35].toDartInt : 0;
-    final bool spatializer = raw.length > 36 ? raw[36].toDartDouble != 0.0 : false;
-    final double spatializerWidth = raw.length > 37 ? raw[37].toDartDouble : 1.0;
-    final bool reverbEnabled = raw.length > 38 ? raw[38].toDartDouble != 0.0 : false;
-    final bool limiter = raw.length > 39 ? raw[39].toDartDouble != 0.0 : false;
-    final double preampDb = raw.length > 40 ? raw[40].toDartDouble : 0.0;
-    final bool rgEnabled = raw.length > 41 ? raw[41].toDartDouble != 0.0 : false;
-    final double rgGainDb = raw.length > 42 ? raw[42].toDartDouble : 0.0;
-    final double rgPeak = raw.length > 43 ? raw[43].toDartDouble : 0.0;
-    final bool rgPreventClipping = raw.length > 45 ? raw[45].toDartDouble != 0.0 : true;
-
-    final bool visualizerEnabled = raw.length > 15 ? raw[15].toDartDouble != 0.0 : false;
-
-    PlaybackState state;
-    switch (stateInt) {
-      case 1:
-        state = PlaybackState.playing;
-        break;
-      case 2:
-        state = PlaybackState.paused;
-        break;
-      case 3:
-        state = PlaybackState.completed;
-        break;
-      case 4:
-        state = PlaybackState.buffering;
-        break;
-      case 5:
-        state = PlaybackState.error;
-        break;
-      case 6:
-        state = PlaybackState.opening;
-        break;
-      default:
-        state = PlaybackState.stopped;
-        break;
-    }
-
-    _listener?.onPosition(Duration(milliseconds: posMs.round()));
-    _listener?.onDuration(Duration(milliseconds: durMs.round()));
-    _listener?.onState(state);
-    _listener?.onPlaying(isPlaying);
-    _listener?.onBuffering(isBuffering);
-    _listener?.onCompleted(isCompleted);
-    _listener?.onBitrate(bitrate);
-    _listener?.onSilenceSaved(Duration(milliseconds: silenceSavedMs.round()));
-    _listener?.onBufferedRange(
+    l.onBufferedRange(
       BufferedRange(
-        start: Duration(milliseconds: bufStartMs.round()),
-        end: Duration(milliseconds: bufEndMs.round()),
-        duration: Duration(milliseconds: durMs.round()),
-        fillPercentage: bufFillPct.clamp(0.0, 1.0),
-        percentage: streamPct.clamp(0.0, 1.0),
-        isBuffering: isBuffering,
-        isEof: isEof,
+        start: Duration(milliseconds: bufStartMs),
+        end: Duration(milliseconds: bufEndMs),
+        duration: Duration(milliseconds: _durationMs),
+        fillPercentage: bufFillPct,
+        percentage: bufStreamPct,
+        isBuffering: buffering,
+        isEof: bufEof,
       ),
     );
-    _listener?.onVisualizer(
-      VisualizerData(
-        bands: bands,
-        rms: rms,
-        peak: peak,
-        left: left,
-        right: right,
-      ),
-    );
-    _listener?.onVisualizerEnabled(visualizerEnabled);
-    _listener?.onVolume(volume);
-    _listener?.onRate(rate);
-    _listener?.onPitch(pitch);
-    _listener?.onBalance(balance);
-    _listener?.onMono(mono);
-    if (crossfeedIndex >= 0 && crossfeedIndex < CrossfeedMode.values.length) {
-      _listener?.onCrossfeed(CrossfeedMode.values[crossfeedIndex]);
-    }
-    _listener?.onSpatializer(enabled: spatializer, width: spatializerWidth);
-    _listener?.onReverb(Reverb(enabled: reverbEnabled));
-    _listener?.onLimiter(limiter);
-    _listener?.onPreamp(preampDb);
-    _listener?.onReplayGain(
-      ReplayGainConfig(
-        enabled: rgEnabled,
-        gainDb: rgGainDb,
-        peak: rgPeak,
-        preventClipping: rgPreventClipping,
-      ),
-    );
-  }
 
-  Future<void> _ensureInitialized() async {
-    if (_initCompleter != null) {
-      await _initCompleter!.future;
+    if (_visualizerEnabled && data.length >= 32) {
+      l.onVisualizer(
+        VisualizerData(
+          bands: data.sublist(18, 28),
+          rms: data[28],
+          peak: data[29],
+          left: data[30],
+          right: data[31],
+        ),
+      );
     }
   }
 
-  // --- Unified Stream Lifecycle ---
+  void _ensureNotDisposed() {
+    if (_isDisposed) {
+      throw const MiniaudioPlayerException(
+        'Player is already disposed',
+        errorCode: MapResult.errorInvalidState,
+      );
+    }
+  }
+
+  Future<int> _awaitWorkerOpen(WebWorkerCommand command) async {
+    _ensureNotDisposed();
+    await _ensureWorkerInitialized();
+    _ensureNotDisposed();
+
+    final prev = _openCompleter;
+    if (prev != null && !prev.isCompleted) {
+      prev.complete(MapResult.errorInvalidState);
+    }
+    final completer = Completer<int>();
+    _openCompleter = completer;
+
+    _worker?.postMessage(command);
+    return completer.future;
+  }
 
   @override
   Future<void> beginOpen() async {
-    await _ensureInitialized();
+    _ensureNotDisposed();
+    await _ensureWorkerInitialized();
     _pinnedHeadSize = 0;
-    _audioDataOffset = 0;
-    _rangeStart = 0;
-    _rangeEnd = 0;
-    _readCursorByte = 0;
-    _isEof = false;
-    _worker?.postMessage(WebWorkerCommand(type: 'stop'));
+    _durationMs = 0;
+    _positionMs = 0;
+    _isPlaying = false;
+    _isCompleted = false;
+    _worker?.postMessage(WebWorkerCommand(type: 'beginOpen'));
   }
 
   @override
   Future<void> openSource(String source, {Map<String, String>? headers}) async {
-    throw UnimplementedError('openSource is handled natively on web');
+    final lower = source.toLowerCase();
+    final isLive = lower.contains('.m3u8') || lower.contains('/live');
+    await _awaitWorkerOpen(
+      WebWorkerCommand(
+        type: 'openStreamEx',
+        url: source,
+        isLive: isLive,
+        bufferCapacity: isLive ? 2 * 1024 * 1024 : 8 * 1024 * 1024,
+        encodingFormat: 0,
+        totalSize: isLive ? -1 : 0,
+      ),
+    );
   }
 
   @override
   Future<void> openMemory(Uint8List bytes) async {
-    await openStreamEx(
-      initialBytes: bytes,
-      totalSize: bytes.length,
-      isLive: false,
-      bufferCapacityBytes: bytes.length,
-    );
-  }
-
-  @override
-  Future<int> openStreamEx({
-    required Uint8List initialBytes,
-    Uint8List? tailBytes,
-    required int totalSize,
-    required bool isLive,
-    required int bufferCapacityBytes,
-    int encodingFormat = 0,
-  }) async {
-    await _ensureInitialized();
-    _totalSize = totalSize;
-    _bufferCapacity = bufferCapacityBytes > 0 ? bufferCapacityBytes : 2 * 1024 * 1024;
-    _rangeStart = 0;
-    _rangeEnd = initialBytes.length;
-    _readCursorByte = 0;
-    _isEof = !isLive && totalSize > 0 && initialBytes.length >= totalSize;
-
-    _openCompleter = Completer<int>();
-    _worker?.postMessage(
+    await _awaitWorkerOpen(
       WebWorkerCommand(
-        type: 'openStreamEx',
-        bytes: initialBytes.toJS,
-        tailBytes: tailBytes?.toJS,
-        totalSize: totalSize,
-        isLive: isLive,
-        bufferCapacity: _bufferCapacity,
-        encodingFormat: encodingFormat,
+        type: 'openMemory',
+        bytes: bytes.toJS,
       ),
     );
-    return await _openCompleter!.future;
   }
 
   @override
@@ -441,7 +495,7 @@ class WebPlayerBackend implements PlayerBackend {
     required bool isSeekable,
     required Uint8List initialBytes,
   }) async {
-    throw UnsupportedError('openCustomStream is not supported on web yet');
+    throw UnsupportedError('openCustomStream is only supported on native platforms');
   }
 
   @override
@@ -450,199 +504,236 @@ class WebPlayerBackend implements PlayerBackend {
     required int requestId,
     required Uint8List data,
     required bool isEof,
-  }) {
-    throw UnsupportedError('supplyCustomBytes is not supported on web yet');
-  }
+  }) {}
 
   @override
   void notifyCustomError({
     required int streamId,
     required int requestId,
     required String errorMessage,
-  }) {
-    throw UnsupportedError('notifyCustomError is not supported on web yet');
-  }
-
-  @override
-  int streamFeed(Uint8List chunk) {
-    if (_isDisposed || chunk.isEmpty) return MapResult.errorInvalidState;
-    if (_totalSize > 0 && (_rangeEnd - _readCursorByte) + chunk.length > _bufferCapacity) {
-      return MapResult.errorBusy;
-    }
-    _rangeEnd += chunk.length;
-    if (_rangeEnd - _rangeStart > _bufferCapacity) {
-      _rangeStart = _rangeEnd - _bufferCapacity;
-    }
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'streamFeed',
-        bytes: chunk.toJS,
-      ),
-    );
-    return MapResult.success;
-  }
-
-  @override
-  int streamFlush(int newStreamOffset) {
-    if (_isDisposed) return MapResult.errorInvalidState;
-    _rangeStart = newStreamOffset;
-    _rangeEnd = newStreamOffset;
-    _readCursorByte = newStreamOffset;
-    _isEof = false;
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'streamFlush',
-        newStreamOffset: newStreamOffset,
-      ),
-    );
-    return MapResult.success;
-  }
-
-  @override
-  int streamSeek(int positionMs, int newStreamOffset) {
-    if (_isDisposed) return MapResult.errorInvalidState;
-    final bool cacheHit =
-        newStreamOffset >= _rangeStart && newStreamOffset < _rangeEnd;
-    _readCursorByte = newStreamOffset;
-    if (!cacheHit) {
-      _rangeStart = newStreamOffset;
-      _rangeEnd = newStreamOffset;
-      _isEof = false;
-      _isBuffering = true;
-    }
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'streamSeek',
-        positionMs: positionMs.toDouble(),
-        newStreamOffset: newStreamOffset,
-      ),
-    );
-    return cacheHit ? 1 : 0;
-  }
-
-  @override
-  int streamGetSeekByte(int positionMs) {
-    if (_durationMs <= 0 || _totalSize <= _audioDataOffset) {
-      return _audioDataOffset;
-    }
-    final audioBytes = _totalSize - _audioDataOffset;
-    final offset = _audioDataOffset + ((positionMs * audioBytes) ~/ _durationMs);
-    return (offset ~/ 4) * 4;
-  }
-
-  @override
-  int getAudioDataOffset() => _audioDataOffset;
-
-  @override
-  int streamEnd() {
-    if (_isDisposed) return MapResult.errorInvalidState;
-    _isEof = true;
-    _worker?.postMessage(WebWorkerCommand(type: 'streamEnd'));
-    return MapResult.success;
-  }
+  }) {}
 
   @override
   void notifyOpenError(int errorCode) {
+    if (_isDisposed) return;
+    _playbackState = PlaybackState.error;
     _listener?.onState(PlaybackState.error);
-    _listener?.onError('Web error: $errorCode', errorCode);
+    _listener?.onError('Failed to open source', errorCode);
   }
-
-  @override
-  BackendStreamStatus? getStreamStatus() {
-    if (_isDisposed) return null;
-    final fill = max(0, _rangeEnd - _rangeStart);
-    return BackendStreamStatus(
-      bufferCapacity: _bufferCapacity,
-      bufferFill: fill,
-      fillPercentage: _fillPercentage,
-      isBuffering: _isBuffering,
-      isEof: _isEof,
-      readCursorByte: _readCursorByte,
-      rangeStart: _rangeStart,
-      rangeEnd: _rangeEnd,
-    );
-  }
-
-  // --- Transport Controls ---
 
   @override
   Future<void> play() async {
-    _SharedWebAudioContext.ensureResumed();
-    await _ensureInitialized();
-    _SharedWebAudioContext.ensureResumed();
+    _ensureNotDisposed();
+    await _ensureWorkerInitialized();
+    await _ensureAudioContextInitialized();
     _worker?.postMessage(WebWorkerCommand(type: 'play'));
+    _isPlaying = true;
+    _playbackState = PlaybackState.playing;
+    _listener?.onPlaying(true);
+    _listener?.onState(PlaybackState.playing);
   }
 
   @override
   Future<void> pause() async {
-    await _ensureInitialized();
+    _ensureNotDisposed();
     _worker?.postMessage(WebWorkerCommand(type: 'pause'));
+    _isPlaying = false;
+    _playbackState = PlaybackState.paused;
+    _listener?.onPlaying(false);
+    _listener?.onState(PlaybackState.paused);
   }
 
   @override
   Future<void> stop() async {
-    await _ensureInitialized();
-    _readCursorByte = _audioDataOffset;
+    _ensureNotDisposed();
     _worker?.postMessage(WebWorkerCommand(type: 'stop'));
+    _isPlaying = false;
+    _positionMs = 0;
+    _playbackState = PlaybackState.stopped;
+    _listener?.onPlaying(false);
+    _listener?.onPosition(Duration.zero);
+    _listener?.onState(PlaybackState.stopped);
   }
 
   @override
   Future<void> seek(Duration position) async {
-    await _ensureInitialized();
+    _ensureNotDisposed();
+    final targetMs = position.inMilliseconds < 0 ? 0 : position.inMilliseconds;
+    _positionMs = targetMs;
     _worker?.postMessage(
       WebWorkerCommand(
         type: 'seek',
-        positionMs: position.inMilliseconds.toDouble(),
+        positionMs: targetMs.toDouble(),
       ),
     );
+    _listener?.onPosition(Duration(milliseconds: targetMs));
+    if (_isCompleted) {
+      _isCompleted = false;
+      _listener?.onCompleted(false);
+      if (!_isPlaying) {
+        _playbackState = PlaybackState.paused;
+        _listener?.onState(PlaybackState.paused);
+      }
+    }
   }
-
-  // --- Audio & DSP Controls ---
 
   @override
   void setVolume(double volume) {
-    _worker?.postMessage(WebWorkerCommand(type: 'setVolume', volume: volume));
+    _ensureNotDisposed();
+    final clamped = volume.clamp(0.0, 2.0);
+    _volume = clamped;
+    _worker?.postMessage(WebWorkerCommand(type: 'setVolume', volume: clamped));
+    _listener?.onVolume(clamped);
   }
 
   @override
   void setRate(double rate) {
-    _worker?.postMessage(WebWorkerCommand(type: 'setRate', rate: rate));
+    _ensureNotDisposed();
+    final clamped = rate.clamp(0.1, 4.0);
+    _rate = clamped;
+    _worker?.postMessage(WebWorkerCommand(type: 'setRate', rate: clamped));
+    _listener?.onRate(clamped);
   }
 
   @override
   void setPitch(double pitch) {
-    _worker?.postMessage(WebWorkerCommand(type: 'setPitch', pitch: pitch));
+    _ensureNotDisposed();
+    final clamped = pitch.clamp(0.5, 2.0);
+    _pitch = clamped;
+    _worker?.postMessage(WebWorkerCommand(type: 'setPitch', pitch: clamped));
+    _listener?.onPitch(clamped);
   }
 
   @override
-  void setPan(double pan) {
-    _worker?.postMessage(WebWorkerCommand(type: 'setPan', pan: pan));
+  void setBufferSize(int frames) {
+    _ensureNotDisposed();
+    final size = frames < 0 ? 0 : frames;
+    _periodSize = size > 0 ? size : 2048;
+    _worker?.postMessage(
+      WebWorkerCommand(type: 'setBufferSize', periodSize: size),
+    );
+    _listener?.onBufferSize(size);
   }
 
   @override
-  void setBufferSize(int frames) {}
+  void setEqualizer(Equalizer equalizer) {
+    _ensureNotDisposed();
+    _equalizer = equalizer;
+    final jsBands = equalizer.toList().map((g) => g.toJS).toList().toJS;
+    _worker?.postMessage(
+      WebWorkerCommand(type: 'setEqualizer', gainsDb: jsBands),
+    );
+    _listener?.onEqualizer(equalizer);
+  }
 
   @override
-  void setEqualizerBand(int bandIndex, double gainDb) {
+  void setEqualizerBand(int band, double gainDb) {
+    _ensureNotDisposed();
+    _equalizer = _equalizer.withBand(band, gainDb);
+    final clamped = Equalizer.clampGain(gainDb);
     _worker?.postMessage(
       WebWorkerCommand(
         type: 'setEqualizerBand',
-        band: bandIndex,
-        gainDb: gainDb,
+        band: band,
+        gainDb: clamped,
       ),
     );
+    _listener?.onEqualizer(_equalizer);
   }
 
   @override
-  void setEqualizer(Equalizer params) {
-    final gains = params.toList();
-    final jsList = gains.map((g) => g.toJS).toList().toJS;
+  void setSilenceSkip(SilenceSkipConfig config) {
+    _ensureNotDisposed();
+    final valid = config.validated();
+    _silenceConfig = valid;
     _worker?.postMessage(
       WebWorkerCommand(
-        type: 'setEqualizerBands',
-        gainsDb: jsList,
+        type: 'setSilenceSkip',
+        mode: valid.mode.value,
+        thresholdDb: valid.thresholdDb,
+        minDurationMs: valid.minSilenceDuration.inMilliseconds,
       ),
     );
+    _listener?.onSilenceConfig(valid);
+  }
+
+  @override
+  void setVisualizerEnabled(bool enabled) {
+    _ensureNotDisposed();
+    _visualizerEnabled = enabled;
+    _worker?.postMessage(
+      WebWorkerCommand(type: 'setVisualizerEnabled', enabled: enabled),
+    );
+    _listener?.onVisualizerEnabled(enabled);
+  }
+
+  @override
+  void setReplayGain(ReplayGainConfig config) {
+    _ensureNotDisposed();
+    _replayGain = config;
+    final effectiveGain = config.enabled ? config.gainDb : 0.0;
+    final effectivePeak = config.peak > 0.0 ? config.peak : 1.0;
+    _worker?.postMessage(
+      WebWorkerCommand(
+        type: 'setReplayGain',
+        gainDb: effectiveGain,
+        peak: effectivePeak,
+        preventClipping: config.preventClipping,
+      ),
+    );
+    _listener?.onReplayGain(config);
+  }
+
+  @override
+  void setPreamp(double preampDb) {
+    _ensureNotDisposed();
+    final clamped = preampDb.clamp(-24.0, 24.0);
+    _preamp = clamped;
+    _worker?.postMessage(WebWorkerCommand(type: 'setPreamp', preampDb: clamped));
+    _listener?.onPreamp(clamped);
+  }
+
+  @override
+  void setBalance(double balance) {
+    _ensureNotDisposed();
+    final clamped = balance.clamp(-1.0, 1.0);
+    _balance = clamped;
+    _worker?.postMessage(WebWorkerCommand(type: 'setBalance', pan: clamped));
+    _listener?.onBalance(clamped);
+  }
+
+  @override
+  void setMono(bool enabled) {
+    _ensureNotDisposed();
+    _mono = enabled;
+    _worker?.postMessage(WebWorkerCommand(type: 'setMono', enabled: enabled));
+    _listener?.onMono(enabled);
+  }
+
+  @override
+  void setCrossfeed(CrossfeedMode mode) {
+    _ensureNotDisposed();
+    _crossfeed = mode;
+    _worker?.postMessage(
+      WebWorkerCommand(type: 'setCrossfeed', preset: mode.index),
+    );
+    _listener?.onCrossfeed(mode);
+  }
+
+  @override
+  void setSpatializer({required bool enabled, required double width}) {
+    _ensureNotDisposed();
+    final clampedWidth = width.clamp(1.0, 2.0);
+    _spatializerEnabled = enabled;
+    _spatializerWidth = clampedWidth;
+    _worker?.postMessage(
+      WebWorkerCommand(
+        type: 'setSpatializer',
+        enabled: enabled,
+        width: clampedWidth,
+      ),
+    );
+    _listener?.onSpatializer(enabled: enabled, width: clampedWidth);
   }
 
   @override
@@ -654,146 +745,36 @@ class WebPlayerBackend implements PlayerBackend {
     required double wet,
     required double dry,
   }) {
+    _ensureNotDisposed();
+    final rev = Reverb(
+      enabled: enabled,
+      roomSize: roomSize,
+      damping: damping,
+      width: width,
+      wet: wet,
+      dry: dry,
+    ).validated();
+    _reverb = rev;
     _worker?.postMessage(
       WebWorkerCommand(
-        type: 'setReverbConfig',
-        enabled: enabled,
-        roomSize: roomSize,
-        damping: damping,
-        width: width,
-        wet: wet,
-        dry: dry,
+        type: 'setReverb',
+        enabled: rev.enabled,
+        roomSize: rev.roomSize,
+        damping: rev.damping,
+        width: rev.width,
+        wet: rev.wet,
+        dry: rev.dry,
       ),
     );
-    _listener?.onReverb(
-      Reverb(
-        enabled: enabled,
-        roomSize: roomSize,
-        damping: damping,
-        width: width,
-        wet: wet,
-        dry: dry,
-      ),
-    );
-  }
-
-  @override
-  void setCrossfeed(CrossfeedMode mode) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setCrossfeed',
-        preset: mode.index,
-      ),
-    );
-    _listener?.onCrossfeed(mode);
+    _listener?.onReverb(rev);
   }
 
   @override
   void setLimiterEnabled(bool enabled) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setLimiterEnabled',
-        enabled: enabled,
-      ),
-    );
+    _ensureNotDisposed();
+    _limiterEnabled = enabled;
+    _worker?.postMessage(WebWorkerCommand(type: 'setLimiter', enabled: enabled));
     _listener?.onLimiter(enabled);
-  }
-
-  @override
-  void setSilenceSkip(SilenceSkipConfig config) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setSilenceSkip',
-        mode: config.mode.value,
-        thresholdDb: config.thresholdDb,
-        minDurationMs: config.minSilenceDuration.inMilliseconds,
-      ),
-    );
-    _listener?.onSilenceConfig(config);
-  }
-
-  bool _visualizerEnabled = false;
-
-  @override
-  bool get isVisualizerEnabled => _visualizerEnabled;
-
-  @override
-  void setVisualizerEnabled(bool enabled) {
-    _visualizerEnabled = enabled;
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setVisualizerEnabled',
-        enabled: enabled,
-      ),
-    );
-    _listener?.onVisualizerEnabled(enabled);
-  }
-
-  @override
-  void setPreamp(double preampDb) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setPreamp',
-        preampDb: preampDb,
-      ),
-    );
-    _listener?.onPreamp(preampDb);
-  }
-
-  @override
-  void setReplayGain(ReplayGainConfig config) {
-    if (config.enabled) {
-      _worker?.postMessage(
-        WebWorkerCommand(
-          type: 'setReplayGain',
-          enabled: true,
-          gainDb: config.gainDb,
-          peak: config.peak,
-          preventClipping: config.preventClipping,
-        ),
-      );
-    } else {
-      _worker?.postMessage(
-        WebWorkerCommand(
-          type: 'clearReplayGain',
-        ),
-      );
-    }
-    _listener?.onReplayGain(config);
-  }
-
-  @override
-  void setBalance(double balance) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setPan',
-        pan: balance,
-      ),
-    );
-    _listener?.onBalance(balance);
-  }
-
-  @override
-  void setMono(bool enabled) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setMono',
-        enabled: enabled,
-      ),
-    );
-    _listener?.onMono(enabled);
-  }
-
-  @override
-  void setSpatializer({required bool enabled, required double width}) {
-    _worker?.postMessage(
-      WebWorkerCommand(
-        type: 'setSpatializer',
-        enabled: enabled,
-        width: width,
-      ),
-    );
-    _listener?.onSpatializer(enabled: enabled, width: width);
   }
 
   @override
@@ -827,23 +808,14 @@ class WebPlayerBackend implements PlayerBackend {
   }
 
   @override
-  dynamic get handle => null;
-
-  @override
-  int get sampleRate => _sampleRate;
-
-  @override
-  int get channels => _channels;
-
-  bool _pauseOnDeviceChange = false;
-
-  @override
   Future<void> setDevice(String deviceId) async {
+    final isAuto = deviceId.isEmpty || deviceId == 'auto';
     _currentDevice = AudioDevice(
-      id: deviceId,
-      name: (deviceId.isEmpty || deviceId == 'auto') ? 'System Default' : deviceId,
-      isAuto: deviceId.isEmpty || deviceId == 'auto',
+      id: isAuto ? 'auto' : deviceId,
+      name: isAuto ? 'SYSTEM DEFAULT' : deviceId,
+      isAuto: isAuto,
     );
+    _listener?.onDevice(_currentDevice);
   }
 
   @override
@@ -868,31 +840,23 @@ class WebPlayerBackend implements PlayerBackend {
   }
 }
 
+/// Web implementation of [PlatformService].
 class WebPlatformService implements PlatformService {
   @override
-  Future<List<AudioDevice>> getAudioDevices() async {
-    return [AudioDevice.auto];
-  }
+  Future<List<AudioDevice>> getAudioDevices() async => [AudioDevice.auto];
 
   @override
-  Stream<List<AudioDevice>> getAudioDevicesStream() {
-    return Stream.value([AudioDevice.auto]);
-  }
+  Stream<List<AudioDevice>> getAudioDevicesStream() =>
+      Stream.value([AudioDevice.auto]);
 
   @override
-  List<AudioDevice> getAudioDevicesSync() {
-    return const [AudioDevice.auto];
-  }
+  List<AudioDevice> getAudioDevicesSync() => const [AudioDevice.auto];
 
   @override
-  Future<List<AudioDevice>> getCaptureDevices() async {
-    return [AudioDevice.auto];
-  }
+  Future<List<AudioDevice>> getCaptureDevices() async => [AudioDevice.auto];
 
   @override
-  List<AudioDevice> getCaptureDevicesSync() {
-    return const [AudioDevice.auto];
-  }
+  List<AudioDevice> getCaptureDevicesSync() => const [AudioDevice.auto];
 
   @override
   AudioAnalysisResult analyzeAudioSync(
@@ -942,10 +906,7 @@ class WebPlatformService implements PlatformService {
     worker.onmessage = (web.MessageEvent e) {
       final msg = e.data as WebWorkerMessage;
       if (msg.type == 'initialized') {
-        int flags = 0;
-        if (replayGain) flags |= 0x01;
-        if (waveform) flags |= 0x02;
-
+        final flags = (replayGain ? 0x01 : 0) | (waveform ? 0x02 : 0);
         worker.postMessage(
           WebWorkerCommand(
             type: 'analyzeAudioMemory',
@@ -959,37 +920,11 @@ class WebPlatformService implements PlatformService {
       } else if (msg.type == 'analysisResult') {
         try {
           if (msg.status == 0 && msg.analysisResult != null) {
-            final res = msg.analysisResult!;
-            final durMs = res.durationMs.round();
-            final sr = res.sampleRate.round();
-            final ch = res.channels.round();
-            final br = res.bitrate.round();
-            final pk = res.peak;
-
-            ReplayGainResult? rg;
-            if (replayGain && res.hasReplayGain) {
-              rg = ReplayGainResult(
-                gainDb: res.replayGainGainDb,
-                peak: res.replayGainPeak,
-                lufs: res.replayGainLufs,
-              );
-            }
-
-            WaveformResult? wf;
-            if (waveform && res.waveform != null) {
-              final dartList = res.waveform!.toDart;
-              wf = WaveformResult(points: dartList.map((e) => e.toDouble()).toList());
-            }
-
             completer.complete(
-              AudioAnalysisResult(
-                duration: Duration(milliseconds: durMs),
-                sampleRate: sr,
-                channels: ch,
-                bitrate: br,
-                peak: pk,
-                replayGain: rg,
-                waveform: wf,
+              _mapWebAnalysisResult(
+                msg.analysisResult!,
+                replayGain: replayGain,
+                waveform: waveform,
               ),
             );
           } else {
@@ -1024,13 +959,44 @@ class WebPlatformService implements PlatformService {
     return completer.future;
   }
 
+  static AudioAnalysisResult _mapWebAnalysisResult(
+    JSAnalysisResult res, {
+    required bool replayGain,
+    required bool waveform,
+  }) {
+    final rg = (replayGain && res.hasReplayGain)
+        ? ReplayGainResult(
+            gainDb: res.replayGainGainDb,
+            peak: res.replayGainPeak,
+            lufs: res.replayGainLufs,
+          )
+        : null;
+    final wf = (waveform && res.waveform != null)
+        ? WaveformResult(
+            points: res.waveform!.toDart.map((e) => e.toDouble()).toList(),
+          )
+        : null;
+
+    return AudioAnalysisResult(
+      duration: Duration(milliseconds: res.durationMs.round()),
+      sampleRate: res.sampleRate.round(),
+      channels: res.channels.round(),
+      bitrate: res.bitrate.round(),
+      peak: res.peak,
+      replayGain: rg,
+      waveform: wf,
+    );
+  }
+
   @override
   void setLogLevel(int level) {
     for (final b in WebPlayerBackend.activeBackends) {
-      b._worker?.postMessage(WebWorkerCommand(type: 'setLogLevel', logLevel: level));
+      b._worker?.postMessage(
+        WebWorkerCommand(type: 'setLogLevel', logLevel: level),
+      );
     }
   }
 }
 
-PlayerBackend createPlayerBackend([dynamic player]) => WebPlayerBackend();
+PlayerBackend createPlayerBackend([dynamic _]) => WebPlayerBackend();
 PlatformService getPlatformService() => WebPlatformService();

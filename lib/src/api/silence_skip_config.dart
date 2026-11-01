@@ -122,6 +122,21 @@ class SilenceSkipConfig {
     );
   }
 
+  /// Returns a deterministic [SilenceSkipConfig] with threshold and timing parameters
+  /// clamped to their valid DSP domain ranges.
+  SilenceSkipConfig validated() {
+    final clampedThreshold = thresholdDb.clamp(-90.0, -10.0);
+    final minMs = minSilenceDuration.inMilliseconds.clamp(50, 5000);
+    final maxPad = minMs ~/ 2;
+    final padMs = padding.inMilliseconds.clamp(0, maxPad);
+    return SilenceSkipConfig(
+      mode: mode,
+      thresholdDb: clampedThreshold,
+      minSilenceDuration: Duration(milliseconds: minMs),
+      padding: Duration(milliseconds: padMs),
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

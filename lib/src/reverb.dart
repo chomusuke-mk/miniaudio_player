@@ -142,6 +142,19 @@ class Reverb {
     );
   }
 
+  /// Returns a deterministic [Reverb] configuration with all acoustic parameters
+  /// clamped to their valid DSP domain ranges.
+  Reverb validated() {
+    return Reverb(
+      enabled: enabled,
+      roomSize: roomSize.clamp(0.0, 1.0),
+      damping: damping.clamp(0.0, 1.0),
+      width: width.clamp(0.0, 1.0),
+      wet: wet.clamp(0.0, 2.0),
+      dry: dry.clamp(0.0, 2.0),
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

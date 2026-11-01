@@ -208,6 +208,25 @@ class Equalizer {
     );
   }
 
+  /// Minimum supported band gain in decibels (`-24.0 dB`).
+  static const double minGainDb = -24.0;
+
+  /// Maximum supported band gain in decibels (`+24.0 dB`).
+  static const double maxGainDb = 24.0;
+
+  /// Clamps a band gain value in dB to `[minGainDb, maxGainDb]`.
+  static double clampGain(double gainDb) => gainDb.clamp(minGainDb, maxGainDb);
+
+  /// Returns a new [Equalizer] with the band at [index] (`0..9`) updated to [gainDb].
+  Equalizer withBand(int index, double gainDb) {
+    if (index < 0 || index >= 10) {
+      throw RangeError.range(index, 0, 9, 'index');
+    }
+    final bands = List<double>.from(toList());
+    bands[index] = clampGain(gainDb);
+    return Equalizer.fromList(bands);
+  }
+
   /// Converts this [Equalizer] to an ordered 10-element list of band gains in dB.
   List<double> toList() {
     return [hz31, hz63, hz125, hz250, hz500, hz1k, hz2k, hz4k, hz8k, hz16k];

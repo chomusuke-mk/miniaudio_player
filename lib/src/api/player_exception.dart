@@ -6,6 +6,26 @@ class MiniaudioPlayerException implements Exception {
 
   const MiniaudioPlayerException(this.message, {this.errorCode, this.details});
 
+  static final RegExp _rustErrorCodeRegex = RegExp(r'error (-?\d+)');
+
+  /// Constructs a deterministic [MiniaudioPlayerException] from a raw Rust/FFI exception.
+  factory MiniaudioPlayerException.fromRustError(
+    Object error, {
+    String prefix = 'Operation failed',
+  }) {
+    if (error is MiniaudioPlayerException) return error;
+    final raw = error.toString();
+    final match = _rustErrorCodeRegex.firstMatch(raw);
+    final code = match != null
+        ? int.parse(match.group(1)!)
+        : MapResult.errorGeneric;
+    return MiniaudioPlayerException(
+      '$prefix (code $code): $raw',
+      errorCode: code,
+      details: raw,
+    );
+  }
+
   @override
   String toString() {
     if (errorCode != null) {

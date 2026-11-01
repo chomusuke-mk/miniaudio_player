@@ -228,12 +228,8 @@ class EngineAction<T> {
 
   /// Updates a single equalizer band at [index] (`0..9`) with [gainDb] (`-24.0..+24.0`).
   Future<void> setEqualizerBand(int index, double gainDb) {
-    if (index < 0 || index >= 10) {
-      throw RangeError.range(index, 0, 9, 'index');
-    }
-    final bands = List<double>.from(_engine.state.equalizer.toList());
-    bands[index] = gainDb.clamp(-24.0, 24.0);
-    return _engine.setEqualizerInternal(Equalizer.fromList(bands));
+    final updated = _engine.state.equalizer.withBand(index, gainDb);
+    return _engine.setEqualizerInternal(updated);
   }
 
   /// Resets all 10 equalizer bands to `0.0 dB` ([Equalizer.flat]).

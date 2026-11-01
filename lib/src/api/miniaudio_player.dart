@@ -72,24 +72,20 @@ typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
 
 /// Global configuration container for [MiniaudioPlayer].
 class MiniaudioPlayerGlobalConfig {
-  /// Optional global loader for resolving Flutter assets (e.g. `(key) => (await rootBundle.load(key)).buffer.asUint8List()`).
+  /// Optional global loader for resolving Flutter assets.
   static AssetBytesLoader? assetLoader;
 
-  /// Default period buffer size in frames applied when instantiating new players
-  /// (0 = miniaudio device native default).
+  /// Default period buffer size in frames applied when instantiating new players.
   int defaultBufferSize;
 
   /// Global log level controlling native and engine log output.
   MiniaudioLogLevel logLevel;
 
-  /// Default audio output device applied when instantiating new players
-  /// (default: [AudioDevice.auto]).
+  /// Default audio output device applied when instantiating new players.
   AudioDevice defaultAudioDevice;
 
   /// Resolver function to format the user-friendly [AudioDevice.displayName]
   /// when an audio device is set to automatic/system default routing.
-  ///
-  /// Defaults to `"System Default ($resolvedName)"` (or `"System Default"` if empty).
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
 
   /// Default ahead buffer duration for local files (default: 30s).
@@ -130,10 +126,50 @@ class MiniaudioPlayerGlobalConfig {
   }
 }
 
+/// Encapsulates a synchronous state snapshot paired with a deduplicated broadcast [StreamController].
+class _ReactiveProperty<T> {
+  T _value;
+  T _lastEmitted;
+  final StreamController<T> controller;
+
+  _ReactiveProperty(
+    T initialValue, {
+    void Function()? onListen,
+    void Function()? onCancel,
+  })  : _value = initialValue,
+        _lastEmitted = initialValue,
+        controller = StreamController<T>.broadcast(
+          onListen: onListen,
+          onCancel: onCancel,
+        );
+
+  T get value => _value;
+
+  void setSnapshot(T nextValue) {
+    _value = nextValue;
+  }
+
+  void emitIfChanged(T nextValue) {
+    _value = nextValue;
+    if (_lastEmitted == nextValue) return;
+    _lastEmitted = nextValue;
+    if (!controller.isClosed) {
+      controller.add(nextValue);
+    }
+  }
+
+  void forceEmit(T nextValue) {
+    _value = nextValue;
+    _lastEmitted = nextValue;
+    if (!controller.isClosed) {
+      controller.add(nextValue);
+    }
+  }
+
+  Future<void> close() => controller.close();
+}
+
 /// Cross-platform, ultra-low-resource audio player for Flutter and Web.
-///
-/// Connects to the native C miniaudio engine on desktop/mobile and to
-/// WebAssembly + AudioWorklet + Web Workers on web.
 class MiniaudioPlayer implements PlayerBackendListener {
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
@@ -142,9 +178,8 @@ class MiniaudioPlayer implements PlayerBackendListener {
   static MiniaudioPlayerGlobalConfig get globalConfig => _globalConfig;
 
   /// Broadcast stream of system audio output device list changes.
-  static Stream<List<AudioDevice>> getAudioDevicesStream() {
-    return getPlatformService().getAudioDevicesStream();
-  }
+  static Stream<List<AudioDevice>> getAudioDevicesStream() =>
+      getPlatformService().getAudioDevicesStream();
 
   /// Global configuration accessor and updater for [MiniaudioPlayer].
   static MiniaudioPlayerGlobalConfig config({
@@ -209,24 +244,20 @@ class MiniaudioPlayer implements PlayerBackendListener {
   }
 
   /// Enumerates all available playback audio devices on the system.
-  static Future<List<AudioDevice>> getAudioDevices() async {
-    return getPlatformService().getAudioDevices();
-  }
+  static Future<List<AudioDevice>> getAudioDevices() =>
+      getPlatformService().getAudioDevices();
 
   /// Synchronous enumeration of all available playback audio devices on the system.
-  static List<AudioDevice> getAudioDevicesSync() {
-    return getPlatformService().getAudioDevicesSync();
-  }
+  static List<AudioDevice> getAudioDevicesSync() =>
+      getPlatformService().getAudioDevicesSync();
 
   /// Enumerates all available capture (microphone / line-in) audio devices on the system.
-  static Future<List<AudioDevice>> getCaptureDevices() async {
-    return getPlatformService().getCaptureDevices();
-  }
+  static Future<List<AudioDevice>> getCaptureDevices() =>
+      getPlatformService().getCaptureDevices();
 
   /// Synchronous enumeration of all available capture (microphone / line-in) audio devices on the system.
-  static List<AudioDevice> getCaptureDevicesSync() {
-    return getPlatformService().getCaptureDevicesSync();
-  }
+  static List<AudioDevice> getCaptureDevicesSync() =>
+      getPlatformService().getCaptureDevicesSync();
 
   /// Analyzes an audio file in a single, high-performance decoding pass.
   static Future<AudioAnalysisResult> analyzeAudio(
@@ -235,15 +266,14 @@ class MiniaudioPlayer implements PlayerBackendListener {
     bool waveform = true,
     int waveformPoints = 100,
     double targetLufs = -18.0,
-  }) {
-    return getPlatformService().analyzeAudio(
-      filePath,
-      replayGain: replayGain,
-      waveform: waveform,
-      waveformPoints: waveformPoints,
-      targetLufs: targetLufs,
-    );
-  }
+  }) =>
+      getPlatformService().analyzeAudio(
+        filePath,
+        replayGain: replayGain,
+        waveform: waveform,
+        waveformPoints: waveformPoints,
+        targetLufs: targetLufs,
+      );
 
   /// Synchronously analyzes an audio file in a single decoding pass.
   static AudioAnalysisResult analyzeAudioSync(
@@ -252,15 +282,14 @@ class MiniaudioPlayer implements PlayerBackendListener {
     bool waveform = true,
     int waveformPoints = 100,
     double targetLufs = -18.0,
-  }) {
-    return getPlatformService().analyzeAudioSync(
-      filePath,
-      replayGain: replayGain,
-      waveform: waveform,
-      waveformPoints: waveformPoints,
-      targetLufs: targetLufs,
-    );
-  }
+  }) =>
+      getPlatformService().analyzeAudioSync(
+        filePath,
+        replayGain: replayGain,
+        waveform: waveform,
+        waveformPoints: waveformPoints,
+        targetLufs: targetLufs,
+      );
 
   /// Analyzes audio directly from memory bytes.
   static Future<AudioAnalysisResult> analyzeAudioMemory(
@@ -269,148 +298,66 @@ class MiniaudioPlayer implements PlayerBackendListener {
     bool waveform = true,
     int waveformPoints = 100,
     double targetLufs = -18.0,
-  }) {
-    return getPlatformService().analyzeAudioMemory(
-      bytes,
-      replayGain: replayGain,
-      waveform: waveform,
-      waveformPoints: waveformPoints,
-      targetLufs: targetLufs,
-    );
-  }
+  }) =>
+      getPlatformService().analyzeAudioMemory(
+        bytes,
+        replayGain: replayGain,
+        waveform: waveform,
+        waveformPoints: waveformPoints,
+        targetLufs: targetLufs,
+      );
 
   late final PlayerBackend _backend;
 
   /// Internal platform backend instance.
   PlayerBackend get backend => _backend;
 
-  // Stream controllers (broadcast)
-  final StreamController<Duration> _positionController =
-      StreamController<Duration>.broadcast();
-  final StreamController<Duration> _durationController =
-      StreamController<Duration>.broadcast();
-  final StreamController<bool> _playingController =
-      StreamController<bool>.broadcast();
-  final StreamController<bool> _bufferingController =
-      StreamController<bool>.broadcast();
-  final StreamController<bool> _completedController =
-      StreamController<bool>.broadcast();
-  final StreamController<bool> _openingController =
-      StreamController<bool>.broadcast();
-  final StreamController<PlaybackState> _playbackStateController =
-      StreamController<PlaybackState>.broadcast();
-  final StreamController<Duration> _bufferedPositionController =
-      StreamController<Duration>.broadcast();
-  final StreamController<double> _bufferedPercentageController =
-      StreamController<double>.broadcast();
-  final StreamController<BufferedRange> _bufferedRangeController =
-      StreamController<BufferedRange>.broadcast();
-  final StreamController<AudioTrackMetadata?> _trackMetadataController =
-      StreamController<AudioTrackMetadata?>.broadcast();
-  final StreamController<double> _volumeController =
-      StreamController<double>.broadcast();
-  final StreamController<double> _rateController =
-      StreamController<double>.broadcast();
-  final StreamController<double> _pitchController =
-      StreamController<double>.broadcast();
-  final StreamController<int> _bufferSizeController =
-      StreamController<int>.broadcast();
-  final StreamController<int> _audioBitrateController =
-      StreamController<int>.broadcast();
-  final StreamController<Equalizer> _equalizerController =
-      StreamController<Equalizer>.broadcast();
-  final StreamController<AudioDevice> _audioDeviceController =
-      StreamController<AudioDevice>.broadcast();
-  final StreamController<bool> _pauseOnDeviceChangeController =
-      StreamController<bool>.broadcast();
-  final StreamController<bool> _skipSilenceController =
-      StreamController<bool>.broadcast();
-  final StreamController<SilenceSkipConfig> _silenceConfigController =
-      StreamController<SilenceSkipConfig>.broadcast();
-  final StreamController<Duration> _silenceSavedDurationController =
-      StreamController<Duration>.broadcast();
-  late final StreamController<VisualizerData> _visualizerController;
-  final StreamController<bool> _visualizerEnabledController =
-      StreamController<bool>.broadcast();
-  final StreamController<double> _preampController =
-      StreamController<double>.broadcast();
-  final StreamController<ReplayGainConfig> _replayGainController =
-      StreamController<ReplayGainConfig>.broadcast();
-  final StreamController<double> _balanceController =
-      StreamController<double>.broadcast();
-  final StreamController<bool> _monoController =
-      StreamController<bool>.broadcast();
-  final StreamController<CrossfeedMode> _crossfeedController =
-      StreamController<CrossfeedMode>.broadcast();
-  final StreamController<bool> _spatializerEnabledController =
-      StreamController<bool>.broadcast();
-  final StreamController<double> _spatializerWidthController =
-      StreamController<double>.broadcast();
-  final StreamController<Reverb> _reverbController =
-      StreamController<Reverb>.broadcast();
-  final StreamController<bool> _limiterEnabledController =
-      StreamController<bool>.broadcast();
-  final StreamController<Uint8List?> _metaBytesController =
-      StreamController<Uint8List?>.broadcast();
+  // Reactive state properties
+  final _position = _ReactiveProperty<Duration>(Duration.zero);
+  final _duration = _ReactiveProperty<Duration>(Duration.zero);
+  final _playing = _ReactiveProperty<bool>(false);
+  final _buffering = _ReactiveProperty<bool>(false);
+  final _completed = _ReactiveProperty<bool>(false);
+  final _opening = _ReactiveProperty<bool>(false);
+  final _playbackState = _ReactiveProperty<PlaybackState>(PlaybackState.stopped);
+  final _bufferedPosition = _ReactiveProperty<Duration>(Duration.zero);
+  final _bufferedPercentage = _ReactiveProperty<double>(0.0);
+  final _bufferedRange = _ReactiveProperty<BufferedRange>(const BufferedRange());
+  final _trackMetadata = _ReactiveProperty<AudioTrackMetadata?>(null);
+  final _volume = _ReactiveProperty<double>(1.0);
+  final _rate = _ReactiveProperty<double>(1.0);
+  final _pitch = _ReactiveProperty<double>(1.0);
+  late final _ReactiveProperty<int> _bufferSize;
+  final _audioBitrate = _ReactiveProperty<int>(0);
+  final _equalizer = _ReactiveProperty<Equalizer>(Equalizer.flat);
+  late final _ReactiveProperty<AudioDevice> _audioDevice;
+  late final _ReactiveProperty<bool> _pauseOnDeviceChange;
+  final _skipSilence = _ReactiveProperty<bool>(false);
+  final _silenceConfig =
+      _ReactiveProperty<SilenceSkipConfig>(const SilenceSkipConfig());
+  final _silenceSavedDuration = _ReactiveProperty<Duration>(Duration.zero);
+  late final _ReactiveProperty<VisualizerData> _visualizer;
+  final _visualizerEnabled = _ReactiveProperty<bool>(false);
+  final _preamp = _ReactiveProperty<double>(0.0);
+  final _replayGain =
+      _ReactiveProperty<ReplayGainConfig>(const ReplayGainConfig());
+  final _balance = _ReactiveProperty<double>(0.0);
+  final _mono = _ReactiveProperty<bool>(false);
+  final _crossfeed = _ReactiveProperty<CrossfeedMode>(CrossfeedMode.off);
+  final _spatializerEnabled = _ReactiveProperty<bool>(false);
+  final _spatializerWidth = _ReactiveProperty<double>(1.0);
+  final _reverb = _ReactiveProperty<Reverb>(Reverb.off);
+  final _limiterEnabled = _ReactiveProperty<bool>(true);
+  final _metaBytes = _ReactiveProperty<Uint8List?>(null);
 
-  // Cached synchronous state snapshot
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  bool _playing = false;
-  bool _buffering = false;
-  bool _completed = false;
-  bool _opening = false;
-  PlaybackState _playbackState = PlaybackState.stopped;
-  Duration _bufferedPosition = Duration.zero;
-  double _bufferedPercentage = 0.0;
-  BufferedRange _bufferedRange = const BufferedRange();
-  AudioTrackMetadata? _trackMetadata;
-  BufferedRange? _lastBufferedRange;
-  AudioTrackMetadata? _lastTrackMetadata;
-  double _volume = 1.0;
-  double _lastEmittedVolume = 1.0;
-  double _rate = 1.0;
-  double _lastEmittedRate = 1.0;
-  double _pitch = 1.0;
-  double _lastEmittedPitch = 1.0;
-  int _bufferSize = _globalConfig.defaultBufferSize;
-  int _lastEmittedBufferSize = _globalConfig.defaultBufferSize;
-  int _audioBitrate = 0;
-  Equalizer _equalizer = Equalizer.flat;
-  Equalizer _lastEmittedEqualizer = Equalizer.flat;
-  AudioDevice _audioDevice = _globalConfig.defaultAudioDevice;
-  bool _pauseOnDeviceChange = false;
-  SilenceSkipConfig _silenceConfig = const SilenceSkipConfig();
-  SilenceSkipConfig _lastEmittedSilenceConfig = const SilenceSkipConfig();
-  Duration _silenceSavedDuration = Duration.zero;
-  VisualizerData _visualizer = VisualizerData.empty();
-  bool _visualizerEnabled = false;
+  late final List<_ReactiveProperty<Object?>> _allProperties;
+
   bool? _manualVisualizerOverride;
   bool _hasVisualizerListeners = false;
+  bool _isDisposed = false;
 
-  /// Returns whether the visualizer DSP is currently active.
   bool get _isVisualizerActive =>
       _manualVisualizerOverride ?? _hasVisualizerListeners;
-  double _preamp = 0.0;
-  double _lastEmittedPreamp = 0.0;
-  ReplayGainConfig _replayGain = const ReplayGainConfig();
-  ReplayGainConfig _lastEmittedReplayGain = const ReplayGainConfig();
-  double _balance = 0.0;
-  double _lastEmittedBalance = 0.0;
-  bool _mono = false;
-  bool _lastEmittedMono = false;
-  CrossfeedMode _crossfeed = CrossfeedMode.off;
-  CrossfeedMode _lastEmittedCrossfeed = CrossfeedMode.off;
-  bool _spatializerEnabled = false;
-  bool _lastEmittedSpatializerEnabled = false;
-  double _spatializerWidth = 1.0;
-  double _lastEmittedSpatializerWidth = 1.0;
-  Reverb _reverb = Reverb.off;
-  Reverb _lastEmittedReverb = Reverb.off;
-  bool _limiterEnabled = true;
-  bool _lastEmittedLimiterEnabled = true;
-
-  bool _isDisposed = false;
 
   /// Action interface for controlling playback, volume, rate, pitch, buffer size, and DSP.
   late final PlayerAction action;
@@ -424,20 +371,22 @@ class MiniaudioPlayer implements PlayerBackendListener {
   /// 3D Spatial Audio and Doppler effect controller.
   late final SpatialController spatial;
 
-  /// Creates a [MiniaudioPlayer] instance bound to the provided [AudioSource], initialized
-  /// with [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
-  /// [MiniaudioPlayerGlobalConfig.defaultAudioDevice].
+  /// Creates a [MiniaudioPlayer] instance bound to the provided [AudioSource].
   MiniaudioPlayer(
     AudioSource source, {
     int? bufferSize,
     AudioDevice? defaultAudioDevice,
     bool pauseOnDeviceChange = false,
   }) {
-    _bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
-    _audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
-    _pauseOnDeviceChange = pauseOnDeviceChange;
-
-    _visualizerController = StreamController<VisualizerData>.broadcast(
+    _bufferSize = _ReactiveProperty<int>(
+      bufferSize ?? _globalConfig.defaultBufferSize,
+    );
+    _audioDevice = _ReactiveProperty<AudioDevice>(
+      defaultAudioDevice ?? _globalConfig.defaultAudioDevice,
+    );
+    _pauseOnDeviceChange = _ReactiveProperty<bool>(pauseOnDeviceChange);
+    _visualizer = _ReactiveProperty<VisualizerData>(
+      VisualizerData.empty(),
       onListen: () {
         _hasVisualizerListeners = true;
         _updateNativeVisualizerState();
@@ -448,6 +397,43 @@ class MiniaudioPlayer implements PlayerBackendListener {
       },
     );
 
+    _allProperties = <_ReactiveProperty<Object?>>[
+      _position,
+      _duration,
+      _playing,
+      _buffering,
+      _completed,
+      _opening,
+      _playbackState,
+      _bufferedPosition,
+      _bufferedPercentage,
+      _bufferedRange,
+      _trackMetadata,
+      _volume,
+      _rate,
+      _pitch,
+      _bufferSize,
+      _audioBitrate,
+      _equalizer,
+      _audioDevice,
+      _pauseOnDeviceChange,
+      _skipSilence,
+      _silenceConfig,
+      _silenceSavedDuration,
+      _visualizer,
+      _visualizerEnabled,
+      _preamp,
+      _replayGain,
+      _balance,
+      _mono,
+      _crossfeed,
+      _spatializerEnabled,
+      _spatializerWidth,
+      _reverb,
+      _limiterEnabled,
+      _metaBytes,
+    ];
+
     if (_globalConfig.logLevel.value > 0) {
       try {
         getPlatformService().setLogLevel(_globalConfig.logLevel.value);
@@ -457,14 +443,15 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _backend = createPlayerBackend(this);
     _backend.setListener(this);
 
-    final devId = (_audioDevice.id.isNotEmpty && _audioDevice.id != 'auto')
-        ? _audioDevice.id
-        : null;
+    final devId =
+        (_audioDevice.value.id.isNotEmpty && _audioDevice.value.id != 'auto')
+            ? _audioDevice.value.id
+            : null;
 
     _backend.init(
       sampleRate: 0,
       channels: 0,
-      periodSize: _bufferSize > 0 ? _bufferSize : 0,
+      periodSize: _bufferSize.value > 0 ? _bufferSize.value : 0,
       playbackDeviceId: devId,
     );
 
@@ -472,105 +459,101 @@ class MiniaudioPlayer implements PlayerBackendListener {
       _backend.setPauseOnDeviceChange(true);
     }
 
-    _audioDevice = _backend.getCurrentDevice();
+    _audioDevice.setSnapshot(_backend.getCurrentDevice());
 
     action = PlayerAction(this);
 
     spatial = SpatialController(
       setEnabled: (enabled) {
-        if (_isDisposed) return;
-        _backend.setSpatialEnabled(enabled);
+        if (!_isDisposed) _backend.setSpatialEnabled(enabled);
       },
       setListener: (listener) {
-        if (_isDisposed) return;
-        _backend.setSpatialListener(listener);
+        if (!_isDisposed) _backend.setSpatialListener(listener);
       },
       setEmitter: (emitter) {
-        if (_isDisposed) return;
-        _backend.setSpatialEmitter(emitter);
+        if (!_isDisposed) _backend.setSpatialEmitter(emitter);
       },
       setDopplerFactor: (factor) {
-        if (_isDisposed) return;
-        _backend.setSpatialDopplerFactor(factor);
+        if (!_isDisposed) _backend.setSpatialDopplerFactor(factor);
       },
       setSpeedOfSound: (speed) {
-        if (_isDisposed) return;
-        _backend.setSpatialSpeedOfSound(speed);
+        if (!_isDisposed) _backend.setSpatialSpeedOfSound(speed);
       },
     );
 
     stream = PlayerStream(
-      positionController: _positionController,
-      durationController: _durationController,
-      playingController: _playingController,
-      bufferingController: _bufferingController,
-      completedController: _completedController,
-      openingController: _openingController,
-      playbackStateController: _playbackStateController,
-      bufferedPositionController: _bufferedPositionController,
-      bufferedPercentageController: _bufferedPercentageController,
-      bufferedRangeController: _bufferedRangeController,
-      trackMetadataController: _trackMetadataController,
-      volumeController: _volumeController,
-      rateController: _rateController,
-      pitchController: _pitchController,
-      bufferSizeController: _bufferSizeController,
-      audioBitrateController: _audioBitrateController,
-      equalizerController: _equalizerController,
-      audioDeviceController: _audioDeviceController,
-      pauseOnDeviceChangeController: _pauseOnDeviceChangeController,
-      skipSilenceController: _skipSilenceController,
-      silenceConfigController: _silenceConfigController,
-      silenceSavedDurationController: _silenceSavedDurationController,
-      visualizerController: _visualizerController,
-      visualizerEnabledController: _visualizerEnabledController,
-      preampController: _preampController,
-      replayGainController: _replayGainController,
-      balanceController: _balanceController,
-      monoController: _monoController,
-      crossfeedController: _crossfeedController,
-      spatializerEnabledController: _spatializerEnabledController,
-      spatializerWidthController: _spatializerWidthController,
-      reverbController: _reverbController,
-      limiterEnabledController: _limiterEnabledController,
-      metaBytesController: _metaBytesController,
+      positionController: _position.controller,
+      durationController: _duration.controller,
+      playingController: _playing.controller,
+      bufferingController: _buffering.controller,
+      completedController: _completed.controller,
+      openingController: _opening.controller,
+      playbackStateController: _playbackState.controller,
+      bufferedPositionController: _bufferedPosition.controller,
+      bufferedPercentageController: _bufferedPercentage.controller,
+      bufferedRangeController: _bufferedRange.controller,
+      trackMetadataController: _trackMetadata.controller,
+      volumeController: _volume.controller,
+      rateController: _rate.controller,
+      pitchController: _pitch.controller,
+      bufferSizeController: _bufferSize.controller,
+      audioBitrateController: _audioBitrate.controller,
+      equalizerController: _equalizer.controller,
+      audioDeviceController: _audioDevice.controller,
+      pauseOnDeviceChangeController: _pauseOnDeviceChange.controller,
+      skipSilenceController: _skipSilence.controller,
+      silenceConfigController: _silenceConfig.controller,
+      silenceSavedDurationController: _silenceSavedDuration.controller,
+      visualizerController: _visualizer.controller,
+      visualizerEnabledController: _visualizerEnabled.controller,
+      preampController: _preamp.controller,
+      replayGainController: _replayGain.controller,
+      balanceController: _balance.controller,
+      monoController: _mono.controller,
+      crossfeedController: _crossfeed.controller,
+      spatializerEnabledController: _spatializerEnabled.controller,
+      spatializerWidthController: _spatializerWidth.controller,
+      reverbController: _reverb.controller,
+      limiterEnabledController: _limiterEnabled.controller,
+      metaBytesController: _metaBytes.controller,
     );
 
     state = PlayerState(
-      getPosition: () => _position,
-      getDuration: () => _duration,
-      getPlaying: () => _playing,
-      getBuffering: () => _buffering,
-      getCompleted: () => _completed,
-      getOpening: () => _opening,
-      getPlaybackState: () => _playbackState,
-      getBufferedPosition: () => _bufferedPosition,
-      getBufferedPercentage: () => _bufferedPercentage,
-      getBufferedRange: () => _bufferedRange,
-      getTrackMetadata: () => _trackMetadata,
-      getVolume: () => _volume,
-      getRate: () => _rate,
-      getPitch: () => _pitch,
-      getBufferSize: () => _bufferSize,
-      getAudioBitrate: () => _audioBitrate,
-      getEqualizer: () => _equalizer,
+      getPosition: () => _position.value,
+      getDuration: () => _duration.value,
+      getPlaying: () => _playing.value,
+      getBuffering: () => _buffering.value,
+      getCompleted: () => _completed.value,
+      getOpening: () => _opening.value,
+      getPlaybackState: () => _playbackState.value,
+      getBufferedPosition: () => _bufferedPosition.value,
+      getBufferedPercentage: () => _bufferedPercentage.value,
+      getBufferedRange: () => _bufferedRange.value,
+      getTrackMetadata: () => _trackMetadata.value,
+      getVolume: () => _volume.value,
+      getRate: () => _rate.value,
+      getPitch: () => _pitch.value,
+      getBufferSize: () => _bufferSize.value,
+      getAudioBitrate: () => _audioBitrate.value,
+      getEqualizer: () => _equalizer.value,
       getAudioDevice: getAudioDevice,
-      getPauseOnDeviceChange: () => _pauseOnDeviceChange,
-      getSkipSilence: () => _silenceConfig.mode != SilenceSkipMode.disabled,
-      getSilenceSkipMode: () => _silenceConfig.mode,
-      getSilenceConfig: () => _silenceConfig,
-      getSilenceSavedDuration: () => _silenceSavedDuration,
-      getVisualizer: () => _visualizer,
+      getPauseOnDeviceChange: () => _pauseOnDeviceChange.value,
+      getSkipSilence: () =>
+          _silenceConfig.value.mode != SilenceSkipMode.disabled,
+      getSilenceSkipMode: () => _silenceConfig.value.mode,
+      getSilenceConfig: () => _silenceConfig.value,
+      getSilenceSavedDuration: () => _silenceSavedDuration.value,
+      getVisualizer: () => _visualizer.value,
       getVisualizerEnabled: () => _isVisualizerActive,
-      getPreamp: () => _preamp,
-      getReplayGain: () => _replayGain,
-      getBalance: () => _balance,
-      getMono: () => _mono,
-      getCrossfeed: () => _crossfeed,
-      getSpatializerEnabled: () => _spatializerEnabled,
-      getSpatializerWidth: () => _spatializerWidth,
-      getReverb: () => _reverb,
-      getLimiterEnabled: () => _limiterEnabled,
+      getPreamp: () => _preamp.value,
+      getReplayGain: () => _replayGain.value,
+      getBalance: () => _balance.value,
+      getMono: () => _mono.value,
+      getCrossfeed: () => _crossfeed.value,
+      getSpatializerEnabled: () => _spatializerEnabled.value,
+      getSpatializerWidth: () => _spatializerWidth.value,
+      getReverb: () => _reverb.value,
+      getLimiterEnabled: () => _limiterEnabled.value,
       getMetaBytes: _getMetaBytes,
     );
 
@@ -580,40 +563,30 @@ class MiniaudioPlayer implements PlayerBackendListener {
   /// Awaits completion of the initial audio source opening triggered by the constructor.
   Future<void> get waitUntilOpen => action.waitUntilOpen();
 
+  /// Whether this player instance has been disposed.
+  bool get isDisposed => _isDisposed;
+
   /// Returns the currently active audio output device.
-  AudioDevice getAudioDevice() {
-    if (_isDisposed) {
-      return _audioDevice;
-    }
-    return _backend.getCurrentDevice();
-  }
+  AudioDevice getAudioDevice() =>
+      _isDisposed ? _audioDevice.value : _backend.getCurrentDevice();
 
   /// Updates pause on device change setting and propagates to native backend and stream.
   void setPauseOnDeviceChangeInternal(bool enabled) {
-    if (_pauseOnDeviceChange == enabled) return;
-    _pauseOnDeviceChange = enabled;
+    if (_pauseOnDeviceChange.value == enabled) return;
     if (!_isDisposed) {
       _backend.setPauseOnDeviceChange(enabled);
     }
-    if (!_pauseOnDeviceChangeController.isClosed) {
-      _pauseOnDeviceChangeController.add(enabled);
-    }
+    _pauseOnDeviceChange.emitIfChanged(enabled);
   }
 
   /// Internal handle to the native miniaudio player.
   dynamic get handle => _backend.handle;
 
   /// Audio sampling rate in Hz of the currently active source (or engine default).
-  int get sampleRate {
-    if (_isDisposed) return 0;
-    return _backend.sampleRate;
-  }
+  int get sampleRate => _isDisposed ? 0 : _backend.sampleRate;
 
   /// Channel count of the currently active source (e.g. 1 for mono, 2 for stereo).
-  int get channels {
-    if (_isDisposed) return 0;
-    return _backend.channels;
-  }
+  int get channels => _isDisposed ? 0 : _backend.channels;
 
   /// Default ahead buffer window for local files.
   Duration get bufferLocalDuration => _globalConfig.bufferLocalDuration;
@@ -622,7 +595,8 @@ class MiniaudioPlayer implements PlayerBackendListener {
   Duration get bufferNetworkDuration => _globalConfig.bufferNetworkDuration;
 
   /// Default ahead buffer window for continuous live streams.
-  Duration get bufferLiveStreamDuration => _globalConfig.bufferLiveStreamDuration;
+  Duration get bufferLiveStreamDuration =>
+      _globalConfig.bufferLiveStreamDuration;
 
   /// Default behind buffer window retained in circular RAM cache for local files.
   Duration get bufferBehindLocalDuration =>
@@ -636,10 +610,13 @@ class MiniaudioPlayer implements PlayerBackendListener {
   Duration get bufferBehindLiveStreamDuration =>
       _globalConfig.bufferBehindLiveStreamDuration;
 
+  /// Returns the current number of bytes retained in the pinned Head cache.
+  int get pinnedHeadSize => _isDisposed ? 0 : _backend.pinnedHeadSize;
+
   /// Ensures that the player has not been disposed.
   void ensureNotDisposed() {
     if (_isDisposed) {
-      throw MiniaudioPlayerException(
+      throw const MiniaudioPlayerException(
         'Player is already disposed',
         errorCode: MapResult.errorInvalidState,
       );
@@ -651,9 +628,9 @@ class MiniaudioPlayer implements PlayerBackendListener {
     final shouldEnable = _isVisualizerActive;
     _backend.setVisualizerEnabled(shouldEnable);
     if (!shouldEnable) {
-      _visualizer = VisualizerData.empty();
-      if (!_visualizerController.isClosed && _hasVisualizerListeners) {
-        _visualizerController.add(VisualizerData.empty());
+      _visualizer.setSnapshot(VisualizerData.empty());
+      if (_hasVisualizerListeners) {
+        _visualizer.forceEmit(VisualizerData.empty());
       }
     }
   }
@@ -665,115 +642,97 @@ class MiniaudioPlayer implements PlayerBackendListener {
   }
 
   /// Sets whether the visualizer DSP is manually forced enabled or disabled.
-  void setManualVisualizerEnabled(bool enabled) {
-    setManualVisualizerOverride(enabled);
-  }
+  void setManualVisualizerEnabled(bool enabled) =>
+      setManualVisualizerOverride(enabled);
 
   /// Synchronously transitions player into Opening state and flushes all stale telemetry.
   void notifyOpening() {
     if (_isDisposed) return;
-    _opening = true;
-    _playbackState = PlaybackState.opening;
-    _playing = false;
-    _buffering = false;
-    _completed = false;
-    _position = Duration.zero;
-    _duration = Duration.zero;
-    _bufferedPosition = Duration.zero;
-    _bufferedPercentage = 0.0;
-    _bufferedRange = const BufferedRange();
-    _lastBufferedRange = const BufferedRange();
+    _opening.forceEmit(true);
+    _playbackState.forceEmit(PlaybackState.opening);
+    _playing.forceEmit(false);
+    _buffering.forceEmit(false);
+    _completed.forceEmit(false);
+    _position.forceEmit(Duration.zero);
+    _duration.forceEmit(Duration.zero);
+    _bufferedPosition.forceEmit(Duration.zero);
+    _bufferedPercentage.forceEmit(0.0);
+    _bufferedRange.forceEmit(const BufferedRange());
     resetMetadata();
-
-    if (!_openingController.isClosed) {
-      _openingController.add(true);
-    }
-    if (!_playbackStateController.isClosed) {
-      _playbackStateController.add(PlaybackState.opening);
-    }
-    if (!_playingController.isClosed) {
-      _playingController.add(false);
-    }
-    if (!_bufferingController.isClosed) {
-      _bufferingController.add(false);
-    }
-    if (!_completedController.isClosed) {
-      _completedController.add(false);
-    }
-    if (!_positionController.isClosed) {
-      _positionController.add(Duration.zero);
-    }
-    if (!_durationController.isClosed) {
-      _durationController.add(Duration.zero);
-    }
-    if (!_bufferedPositionController.isClosed) {
-      _bufferedPositionController.add(Duration.zero);
-    }
-    if (!_bufferedPercentageController.isClosed) {
-      _bufferedPercentageController.add(0.0);
-    }
-    if (!_bufferedRangeController.isClosed) {
-      _bufferedRangeController.add(const BufferedRange());
-    }
-    if (!_trackMetadataController.isClosed) {
-      _trackMetadataController.add(null);
-    }
   }
 
   /// Notifies that opening completed successfully.
   void notifyOpenCompleted() {
     if (_isDisposed) return;
-    _opening = false;
-    if (_playbackState == PlaybackState.opening) {
-      _playbackState = PlaybackState.stopped;
-    }
-    if (!_openingController.isClosed) {
-      _openingController.add(false);
-    }
-    if (!_playbackStateController.isClosed &&
-        _playbackState == PlaybackState.stopped) {
-      _playbackStateController.add(PlaybackState.stopped);
+    _opening.forceEmit(false);
+    if (_playbackState.value == PlaybackState.opening) {
+      _playbackState.forceEmit(PlaybackState.stopped);
     }
     _getMetaBytes();
   }
 
+  void notifyOpenComplete() => notifyOpenCompleted();
+
+  /// Notifies that opening failed due to an error.
+  void notifyOpenFailed([Object? error]) {
+    if (_isDisposed) return;
+    final errCode =
+        (error is MiniaudioPlayerException && error.errorCode != null)
+            ? error.errorCode!
+            : MapResult.errorDecodeFailed;
+    try {
+      _backend.notifyOpenError(errCode);
+    } catch (_) {}
+    _opening.forceEmit(false);
+    _playbackState.forceEmit(PlaybackState.error);
+  }
+
+  /// Notifies the player that playback was stopped manually.
+  void notifyStopped() {
+    if (_isDisposed) return;
+    final wasPlaying = _playing.value;
+    final wasCompleted = _completed.value;
+    final wasOpening = _opening.value;
+
+    _opening.setSnapshot(false);
+    _playbackState.setSnapshot(PlaybackState.stopped);
+    _playing.setSnapshot(false);
+    _completed.setSnapshot(false);
+    _position.setSnapshot(Duration.zero);
+    _visualizer.setSnapshot(VisualizerData.empty());
+
+    if (_isVisualizerActive) {
+      _visualizer.forceEmit(VisualizerData.empty());
+    }
+    if (wasOpening) _opening.forceEmit(false);
+    _playbackState.forceEmit(PlaybackState.stopped);
+    if (wasPlaying) _playing.forceEmit(false);
+    if (wasCompleted) _completed.forceEmit(false);
+    _position.forceEmit(Duration.zero);
+  }
+
   /// Updates buffering state and notifies listeners if changed.
   void notifyBuffering(bool isBuffering) {
-    if (_isDisposed) return;
-    if (_buffering != isBuffering) {
-      _buffering = isBuffering;
-      if (!_bufferingController.isClosed) {
-        _bufferingController.add(isBuffering);
-      }
-    }
+    if (!_isDisposed) _buffering.emitIfChanged(isBuffering);
   }
 
   /// Explicitly resets cached metadata to null and emits null on the metadata stream.
   void resetMetadata() {
-    _trackMetadata = null;
-    _lastTrackMetadata = null;
-    if (!_metaBytesController.isClosed) {
-      _metaBytesController.add(null);
-    }
-    if (!_trackMetadataController.isClosed) {
-      _trackMetadataController.add(null);
-    }
+    _trackMetadata.forceEmit(null);
+    _metaBytes.forceEmit(null);
   }
 
-  /// Synthesizes or retrieves cached metadata container bytes.
   Uint8List? _getMetaBytes() {
     if (_isDisposed) return null;
     final bytes = _backend.getMetaBytes();
-    if (bytes != null && !_metaBytesController.isClosed) {
-      _metaBytesController.add(bytes);
+    if (bytes != null) {
+      _metaBytes.forceEmit(bytes);
     }
     return bytes;
   }
 
   /// Checks if native metadata has updated and updates cached copy if so.
-  void checkMetaBytesUpdated() {
-    _getMetaBytes();
-  }
+  void checkMetaBytesUpdated() => _getMetaBytes();
 
   /// Ingests dynamic ICY livestream metadata received over network.
   void setIcyMeta(Uint8List data) => action.setIcyMeta(data);
@@ -782,67 +741,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
   void probeTail(Uint8List data, int tailOffset) =>
       action.probeTail(data, tailOffset);
 
-  /// Returns the current number of bytes retained in the pinned Head cache.
-  int get pinnedHeadSize {
-    if (_isDisposed) return 0;
-    return _backend.pinnedHeadSize;
-  }
-
-  void notifyOpenComplete() => notifyOpenCompleted();
-
-  /// Notifies that opening failed due to an error.
-  void notifyOpenFailed([Object? error]) {
-    if (_isDisposed) return;
-    final int errCode = (error is MiniaudioPlayerException && error.errorCode != null)
-        ? error.errorCode!
-        : MapResult.errorDecodeFailed;
-    try {
-      _backend.notifyOpenError(errCode);
-    } catch (_) {}
-    _opening = false;
-    _playbackState = PlaybackState.error;
-    if (!_openingController.isClosed) {
-      _openingController.add(false);
-    }
-    if (!_playbackStateController.isClosed) {
-      _playbackStateController.add(PlaybackState.error);
-    }
-  }
-
-  /// Notifies the player that playback was stopped manually.
-  void notifyStopped() {
-    if (_isDisposed) return;
-    final wasPlaying = _playing;
-    final wasCompleted = _completed;
-    final wasOpening = _opening;
-    _opening = false;
-    _playbackState = PlaybackState.stopped;
-    _playing = false;
-    _completed = false;
-    _position = Duration.zero;
-    _visualizer = VisualizerData.empty();
-
-    if (!_visualizerController.isClosed && _isVisualizerActive) {
-      _visualizerController.add(VisualizerData.empty());
-    }
-
-    if (!_openingController.isClosed && wasOpening) {
-      _openingController.add(false);
-    }
-    if (!_playbackStateController.isClosed) {
-      _playbackStateController.add(PlaybackState.stopped);
-    }
-    if (!_playingController.isClosed && wasPlaying) {
-      _playingController.add(false);
-    }
-    if (!_completedController.isClosed && wasCompleted) {
-      _completedController.add(false);
-    }
-    if (!_positionController.isClosed) {
-      _positionController.add(Duration.zero);
-    }
-  }
-
   // =========================================================================
   // PlayerBackendListener Callbacks
   // =========================================================================
@@ -850,531 +748,293 @@ class MiniaudioPlayer implements PlayerBackendListener {
   @override
   void onState(PlaybackState newState) {
     if (_isDisposed) return;
-    if (_playbackState == PlaybackState.error &&
+    if (_playbackState.value == PlaybackState.error &&
         newState == PlaybackState.stopped) {
       return;
     }
-    final bool isOpening = newState == PlaybackState.opening;
-    if (isOpening != _opening) {
-      _opening = isOpening;
-      if (!_openingController.isClosed) {
-        _openingController.add(isOpening);
-      }
-    }
+    _opening.emitIfChanged(newState == PlaybackState.opening);
+
     if (newState == PlaybackState.stopped ||
         newState == PlaybackState.playing ||
         newState == PlaybackState.paused) {
-      if (_completed) {
-        _completed = false;
-        if (!_completedController.isClosed) {
-          _completedController.add(false);
-        }
+      if (_completed.value) {
+        _completed.emitIfChanged(false);
       }
     }
     if (newState == PlaybackState.stopped) {
-      if (_playing) {
-        _playing = false;
-        if (!_playingController.isClosed) {
-          _playingController.add(false);
-        }
-      }
-      if (_position != Duration.zero) {
-        _position = Duration.zero;
-        if (!_positionController.isClosed) {
-          _positionController.add(Duration.zero);
-        }
+      if (_playing.value) _playing.emitIfChanged(false);
+      if (_position.value != Duration.zero) {
+        _position.emitIfChanged(Duration.zero);
       }
     }
-    if (_playbackState != newState) {
-      _playbackState = newState;
-      if (!_playbackStateController.isClosed) {
-        _playbackStateController.add(newState);
-      }
-    }
+    _playbackState.emitIfChanged(newState);
   }
 
   @override
   void onPosition(Duration pos) {
-    if (_isDisposed) return;
-    if (_position != pos) {
-      _position = pos;
-      if (!_positionController.isClosed) {
-        _positionController.add(pos);
-      }
-    }
+    if (!_isDisposed) _position.emitIfChanged(pos);
   }
 
   @override
   void onDuration(Duration dur) {
-    if (_isDisposed) return;
-    if (_duration != dur) {
-      _duration = dur;
-      if (!_durationController.isClosed) {
-        _durationController.add(dur);
-      }
-    }
+    if (!_isDisposed) _duration.emitIfChanged(dur);
   }
 
   @override
   void onPlaying(bool isPlaying) {
     if (_isDisposed) return;
-    if (_playing != isPlaying) {
-      _playing = isPlaying;
-      if (!_playingController.isClosed) {
-        _playingController.add(isPlaying);
-      }
+    if (_playing.value != isPlaying) {
+      _playing.emitIfChanged(isPlaying);
       if (!isPlaying) {
-        _visualizer = VisualizerData.empty();
-        if (!_visualizerController.isClosed && _isVisualizerActive) {
-          _visualizerController.add(VisualizerData.empty());
+        _visualizer.setSnapshot(VisualizerData.empty());
+        if (_isVisualizerActive) {
+          _visualizer.forceEmit(VisualizerData.empty());
         }
       }
     }
   }
 
   @override
-  void onBuffering(bool isBuffering) {
-    notifyBuffering(isBuffering);
-  }
+  void onBuffering(bool isBuffering) => notifyBuffering(isBuffering);
 
   @override
   void onCompleted(bool isCompleted) {
-    if (_isDisposed) return;
-    if (_completed != isCompleted) {
-      _completed = isCompleted;
-      if (!_completedController.isClosed) {
-        _completedController.add(isCompleted);
+    if (_isDisposed || _completed.value == isCompleted) return;
+    _completed.emitIfChanged(isCompleted);
+    if (isCompleted) {
+      _playing.forceEmit(false);
+      _playbackState.forceEmit(PlaybackState.completed);
+      _position.forceEmit(_duration.value);
+      _visualizer.setSnapshot(VisualizerData.empty());
+      if (_isVisualizerActive) {
+        _visualizer.forceEmit(VisualizerData.empty());
       }
-      if (isCompleted) {
-        _playing = false;
-        if (!_playingController.isClosed) {
-          _playingController.add(false);
-        }
-        _playbackState = PlaybackState.completed;
-        if (!_playbackStateController.isClosed) {
-          _playbackStateController.add(PlaybackState.completed);
-        }
-        _position = _duration;
-        if (!_positionController.isClosed) {
-          _positionController.add(_duration);
-        }
-        _visualizer = VisualizerData.empty();
-        if (!_visualizerController.isClosed && _isVisualizerActive) {
-          _visualizerController.add(VisualizerData.empty());
-        }
-      } else if (_playbackState == PlaybackState.completed) {
-        _playbackState = PlaybackState.paused;
-        if (!_playbackStateController.isClosed) {
-          _playbackStateController.add(PlaybackState.paused);
-        }
-      }
+    } else if (_playbackState.value == PlaybackState.completed) {
+      _playbackState.forceEmit(PlaybackState.paused);
     }
   }
 
   @override
-  void onVolume(double volume) {
-    notifyVolumeChanged(volume);
-  }
+  void onVolume(double volume) => notifyVolumeChanged(volume);
 
   @override
-  void onRate(double rate) {
-    notifyRateChanged(rate);
-  }
+  void onRate(double rate) => notifyRateChanged(rate);
 
   @override
-  void onPitch(double pitch) {
-    notifyPitchChanged(pitch);
-  }
+  void onPitch(double pitch) => notifyPitchChanged(pitch);
 
   @override
   void onBitrate(int bitrate) {
-    if (_isDisposed) return;
-    if (_audioBitrate != bitrate) {
-      _audioBitrate = bitrate;
-      if (!_audioBitrateController.isClosed) {
-        _audioBitrateController.add(bitrate);
-      }
-    }
+    if (!_isDisposed) _audioBitrate.emitIfChanged(bitrate);
   }
 
   @override
-  void onBufferSize(int bufferSize) {
-    notifyBufferSizeChanged(bufferSize);
-  }
+  void onBufferSize(int bufferSize) => notifyBufferSizeChanged(bufferSize);
 
   @override
   void onSilenceSaved(Duration duration) {
-    if (_isDisposed) return;
-    if (_silenceSavedDuration != duration) {
-      _silenceSavedDuration = duration;
-      if (!_silenceSavedDurationController.isClosed) {
-        _silenceSavedDurationController.add(duration);
-      }
-    }
+    if (!_isDisposed) _silenceSavedDuration.emitIfChanged(duration);
   }
 
   @override
-  void onSilenceConfig(SilenceSkipConfig config) {
-    notifySilenceConfigChanged(config);
-  }
+  void onSilenceConfig(SilenceSkipConfig config) =>
+      notifySilenceConfigChanged(config);
 
   @override
   void onBufferedRange(BufferedRange br) {
-    if (_isDisposed) return;
-    if (_lastBufferedRange != br) {
-      _lastBufferedRange = br;
-      _bufferedRange = br;
-      _bufferedPosition = br.end;
-      _bufferedPercentage = br.percentage;
-      if (!_bufferedRangeController.isClosed) {
-        _bufferedRangeController.add(br);
-      }
-      if (!_bufferedPositionController.isClosed) {
-        _bufferedPositionController.add(br.end);
-      }
-      if (!_bufferedPercentageController.isClosed) {
-        _bufferedPercentageController.add(br.percentage);
-      }
-    }
+    if (_isDisposed || _bufferedRange.value == br) return;
+    _bufferedRange.forceEmit(br);
+    _bufferedPosition.forceEmit(br.end);
+    _bufferedPercentage.forceEmit(br.percentage);
   }
 
   @override
   void onVisualizer(VisualizerData data) {
     if (_isDisposed || !_isVisualizerActive) return;
-    _visualizer = _playing ? data : VisualizerData.empty();
-    if (!_visualizerController.isClosed) {
-      _visualizerController.add(_visualizer);
-    }
+    final frame = _playing.value ? data : VisualizerData.empty();
+    _visualizer.forceEmit(frame);
   }
 
   @override
-  void onVisualizerEnabled(bool enabled) {
-    notifyVisualizerEnabledChanged(enabled);
-  }
+  void onVisualizerEnabled(bool enabled) =>
+      notifyVisualizerEnabledChanged(enabled);
 
   @override
-  void onDevice(AudioDevice device) {
-    notifyDeviceChanged(device);
-  }
+  void onDevice(AudioDevice device) => notifyDeviceChanged(device);
 
   @override
-  void onTrackMetadata(AudioTrackMetadata? metadata) {
-    setTrackMetadata(metadata);
-  }
+  void onTrackMetadata(AudioTrackMetadata? metadata) =>
+      setTrackMetadata(metadata);
 
   @override
-  void onEqualizer(Equalizer equalizer) {
-    notifyEqualizerChanged(equalizer);
-  }
+  void onEqualizer(Equalizer equalizer) => notifyEqualizerChanged(equalizer);
 
   @override
-  void onPreamp(double preampDb) {
-    notifyPreampChanged(preampDb);
-  }
+  void onPreamp(double preampDb) => notifyPreampChanged(preampDb);
 
   @override
-  void onReplayGain(ReplayGainConfig config) {
-    notifyReplayGainChanged(config);
-  }
+  void onReplayGain(ReplayGainConfig config) => notifyReplayGainChanged(config);
 
   @override
-  void onBalance(double balance) {
-    notifyBalanceChanged(balance);
-  }
+  void onBalance(double balance) => notifyBalanceChanged(balance);
 
   @override
-  void onMono(bool enabled) {
-    notifyMonoChanged(enabled);
-  }
+  void onMono(bool enabled) => notifyMonoChanged(enabled);
 
   @override
-  void onCrossfeed(CrossfeedMode mode) {
-    notifyCrossfeedChanged(mode);
-  }
+  void onCrossfeed(CrossfeedMode mode) => notifyCrossfeedChanged(mode);
 
   @override
-  void onSpatializer({required bool enabled, required double width}) {
-    notifySpatializerChanged(enabled: enabled, width: width);
-  }
+  void onSpatializer({required bool enabled, required double width}) =>
+      notifySpatializerChanged(enabled: enabled, width: width);
 
   @override
-  void onReverb(Reverb reverb) {
-    notifyReverbChanged(reverb);
-  }
+  void onReverb(Reverb reverb) => notifyReverbChanged(reverb);
 
   @override
-  void onLimiter(bool enabled) {
-    notifyLimiterChanged(enabled);
-  }
+  void onLimiter(bool enabled) => notifyLimiterChanged(enabled);
 
   @override
   void onError(String message, int errorCode) {
-    if (_isDisposed) return;
-    if (_playbackState != PlaybackState.error) {
-      _playbackState = PlaybackState.error;
-      if (!_playbackStateController.isClosed) {
-        _playbackStateController.add(PlaybackState.error);
-      }
-    }
+    if (!_isDisposed) _playbackState.emitIfChanged(PlaybackState.error);
   }
 
+  // =========================================================================
+  // Synchronous State Snapshot & Stream Notification Helpers
+  // =========================================================================
+
   void setVolumeSnapshot(double volume) {
-    if (_isDisposed) return;
-    _volume = volume;
+    if (!_isDisposed) _volume.setSnapshot(volume);
   }
 
   void setRateSnapshot(double rate) {
-    if (_isDisposed) return;
-    _rate = rate;
+    if (!_isDisposed) _rate.setSnapshot(rate);
   }
 
   void setPitchSnapshot(double pitch) {
-    if (_isDisposed) return;
-    _pitch = pitch;
+    if (!_isDisposed) _pitch.setSnapshot(pitch);
   }
 
   void setBufferSizeSnapshot(int bufferSize) {
-    if (_isDisposed) return;
-    _bufferSize = bufferSize;
+    if (!_isDisposed) _bufferSize.setSnapshot(bufferSize);
   }
 
   void setEqualizerSnapshot(Equalizer equalizer) {
-    if (_isDisposed) return;
-    _equalizer = equalizer;
+    if (!_isDisposed) _equalizer.setSnapshot(equalizer);
   }
 
   void setSilenceConfigSnapshot(SilenceSkipConfig config) {
-    if (_isDisposed) return;
-    _silenceConfig = config;
+    if (!_isDisposed) _silenceConfig.setSnapshot(config);
   }
 
   void setReplayGainSnapshot(ReplayGainConfig config) {
-    if (_isDisposed) return;
-    _replayGain = config;
+    if (!_isDisposed) _replayGain.setSnapshot(config);
   }
 
   void setPreampSnapshot(double preampDb) {
-    if (_isDisposed) return;
-    _preamp = preampDb;
+    if (!_isDisposed) _preamp.setSnapshot(preampDb);
   }
 
   void setBalanceSnapshot(double balance) {
-    if (_isDisposed) return;
-    _balance = balance;
+    if (!_isDisposed) _balance.setSnapshot(balance);
   }
 
   void setMonoSnapshot(bool mono) {
-    if (_isDisposed) return;
-    _mono = mono;
+    if (!_isDisposed) _mono.setSnapshot(mono);
   }
 
   void setCrossfeedSnapshot(CrossfeedMode crossfeed) {
-    if (_isDisposed) return;
-    _crossfeed = crossfeed;
+    if (!_isDisposed) _crossfeed.setSnapshot(crossfeed);
   }
 
   void setSpatializerSnapshot({required bool enabled, required double width}) {
     if (_isDisposed) return;
-    _spatializerEnabled = enabled;
-    _spatializerWidth = width;
+    _spatializerEnabled.setSnapshot(enabled);
+    _spatializerWidth.setSnapshot(width);
   }
 
   void setLimiterSnapshot(bool enabled) {
-    if (_isDisposed) return;
-    _limiterEnabled = enabled;
+    if (!_isDisposed) _limiterEnabled.setSnapshot(enabled);
   }
 
   void setReverbSnapshot(Reverb reverb) {
-    if (_isDisposed) return;
-    _reverb = reverb;
+    if (!_isDisposed) _reverb.setSnapshot(reverb);
   }
 
   void notifyVolumeChanged(double volume) {
-    if (_isDisposed) return;
-    _volume = volume;
-    if (_lastEmittedVolume == volume) return;
-    _lastEmittedVolume = volume;
-    if (!_volumeController.isClosed) {
-      _volumeController.add(volume);
-    }
+    if (!_isDisposed) _volume.emitIfChanged(volume);
   }
 
   void notifyRateChanged(double rate) {
-    if (_isDisposed) return;
-    _rate = rate;
-    if (_lastEmittedRate == rate) return;
-    _lastEmittedRate = rate;
-    if (!_rateController.isClosed) {
-      _rateController.add(rate);
-    }
+    if (!_isDisposed) _rate.emitIfChanged(rate);
   }
 
   void notifyPitchChanged(double pitch) {
-    if (_isDisposed) return;
-    _pitch = pitch;
-    if (_lastEmittedPitch == pitch) return;
-    _lastEmittedPitch = pitch;
-    if (!_pitchController.isClosed) {
-      _pitchController.add(pitch);
-    }
+    if (!_isDisposed) _pitch.emitIfChanged(pitch);
   }
 
   void notifyBufferSizeChanged(int bufferSize) {
-    if (_isDisposed) return;
-    _bufferSize = bufferSize;
-    if (_lastEmittedBufferSize == bufferSize) return;
-    _lastEmittedBufferSize = bufferSize;
-    if (!_bufferSizeController.isClosed) {
-      _bufferSizeController.add(bufferSize);
-    }
+    if (!_isDisposed) _bufferSize.emitIfChanged(bufferSize);
   }
 
   void notifyEqualizerChanged(Equalizer equalizer) {
-    if (_isDisposed) return;
-    _equalizer = equalizer;
-    if (_lastEmittedEqualizer == equalizer) return;
-    _lastEmittedEqualizer = equalizer;
-    if (!_equalizerController.isClosed) {
-      _equalizerController.add(equalizer);
-    }
+    if (!_isDisposed) _equalizer.emitIfChanged(equalizer);
   }
 
   void notifyDeviceChanged(AudioDevice device) {
-    if (_isDisposed) return;
-    if (_audioDevice == device) return;
-    _audioDevice = device;
-    if (!_audioDeviceController.isClosed) {
-      _audioDeviceController.add(device);
-    }
+    if (!_isDisposed) _audioDevice.emitIfChanged(device);
   }
 
   void notifySilenceConfigChanged(SilenceSkipConfig config) {
     if (_isDisposed) return;
-    _silenceConfig = config;
-    if (_lastEmittedSilenceConfig == config) return;
-    final wasEnabled =
-        _lastEmittedSilenceConfig.mode != SilenceSkipMode.disabled;
-    final isEnabled = config.mode != SilenceSkipMode.disabled;
-    _lastEmittedSilenceConfig = config;
-
-    if (wasEnabled != isEnabled && !_skipSilenceController.isClosed) {
-      _skipSilenceController.add(isEnabled);
-    }
-    if (!_silenceConfigController.isClosed) {
-      _silenceConfigController.add(config);
-    }
+    _skipSilence.emitIfChanged(config.mode != SilenceSkipMode.disabled);
+    _silenceConfig.emitIfChanged(config);
   }
 
   void notifyReplayGainChanged(ReplayGainConfig config) {
-    if (_isDisposed) return;
-    _replayGain = config;
-    if (_lastEmittedReplayGain == config) return;
-    _lastEmittedReplayGain = config;
-    if (!_replayGainController.isClosed) {
-      _replayGainController.add(config);
-    }
+    if (!_isDisposed) _replayGain.emitIfChanged(config);
   }
 
   void notifyPreampChanged(double preampDb) {
-    if (_isDisposed) return;
-    _preamp = preampDb;
-    if (_lastEmittedPreamp == preampDb) return;
-    _lastEmittedPreamp = preampDb;
-    if (!_preampController.isClosed) {
-      _preampController.add(preampDb);
-    }
+    if (!_isDisposed) _preamp.emitIfChanged(preampDb);
   }
 
   void notifyBalanceChanged(double balance) {
-    if (_isDisposed) return;
-    _balance = balance;
-    if (_lastEmittedBalance == balance) return;
-    _lastEmittedBalance = balance;
-    if (!_balanceController.isClosed) {
-      _balanceController.add(balance);
-    }
+    if (!_isDisposed) _balance.emitIfChanged(balance);
   }
 
   void notifyMonoChanged(bool mono) {
-    if (_isDisposed) return;
-    _mono = mono;
-    if (_lastEmittedMono == mono) return;
-    _lastEmittedMono = mono;
-    if (!_monoController.isClosed) {
-      _monoController.add(mono);
-    }
+    if (!_isDisposed) _mono.emitIfChanged(mono);
   }
 
   void notifyCrossfeedChanged(CrossfeedMode crossfeed) {
-    if (_isDisposed) return;
-    _crossfeed = crossfeed;
-    if (_lastEmittedCrossfeed == crossfeed) return;
-    _lastEmittedCrossfeed = crossfeed;
-    if (!_crossfeedController.isClosed) {
-      _crossfeedController.add(crossfeed);
-    }
+    if (!_isDisposed) _crossfeed.emitIfChanged(crossfeed);
   }
 
-  void notifySpatializerChanged({required bool enabled, required double width}) {
+  void notifySpatializerChanged({
+    required bool enabled,
+    required double width,
+  }) {
     if (_isDisposed) return;
-    _spatializerEnabled = enabled;
-    _spatializerWidth = width;
-    if (_lastEmittedSpatializerEnabled != enabled) {
-      _lastEmittedSpatializerEnabled = enabled;
-      if (!_spatializerEnabledController.isClosed) {
-        _spatializerEnabledController.add(enabled);
-      }
-    }
-    if (_lastEmittedSpatializerWidth != width) {
-      _lastEmittedSpatializerWidth = width;
-      if (!_spatializerWidthController.isClosed) {
-        _spatializerWidthController.add(width);
-      }
-    }
+    _spatializerEnabled.emitIfChanged(enabled);
+    _spatializerWidth.emitIfChanged(width);
   }
 
   void notifyLimiterChanged(bool enabled) {
-    if (_isDisposed) return;
-    _limiterEnabled = enabled;
-    if (_lastEmittedLimiterEnabled == enabled) return;
-    _lastEmittedLimiterEnabled = enabled;
-    if (!_limiterEnabledController.isClosed) {
-      _limiterEnabledController.add(enabled);
-    }
+    if (!_isDisposed) _limiterEnabled.emitIfChanged(enabled);
   }
 
   void notifyReverbChanged(Reverb reverb) {
-    if (_isDisposed) return;
-    _reverb = reverb;
-    if (_lastEmittedReverb == reverb) return;
-    _lastEmittedReverb = reverb;
-    if (!_reverbController.isClosed) {
-      _reverbController.add(reverb);
-    }
+    if (!_isDisposed) _reverb.emitIfChanged(reverb);
   }
 
   void notifyVisualizerEnabledChanged(bool enabled) {
-    if (_isDisposed) return;
-    if (_visualizerEnabled == enabled) return;
-    _visualizerEnabled = enabled;
-    if (!_visualizerEnabledController.isClosed) {
-      _visualizerEnabledController.add(enabled);
-    }
+    if (!_isDisposed) _visualizerEnabled.emitIfChanged(enabled);
   }
-
-  /// Whether this player instance has been disposed.
-  bool get isDisposed => _isDisposed;
 
   /// Updates current track metadata and notifies listeners.
   void setTrackMetadata(AudioTrackMetadata? metadata) {
-    if (_isDisposed) return;
-    _trackMetadata = metadata;
-    if (_lastTrackMetadata != metadata) {
-      _lastTrackMetadata = metadata;
-      if (!_trackMetadataController.isClosed) {
-        _trackMetadataController.add(metadata);
-      }
-    }
+    if (!_isDisposed) _trackMetadata.emitIfChanged(metadata);
   }
 
   /// Destroys the player instance and frees audio engine resources.
@@ -1383,43 +1043,11 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _isDisposed = true;
 
     resetMetadata();
-
     action.dispose();
     await _backend.dispose();
 
-    await _positionController.close();
-    await _durationController.close();
-    await _playingController.close();
-    await _bufferingController.close();
-    await _completedController.close();
-    await _openingController.close();
-    await _playbackStateController.close();
-    await _bufferedPositionController.close();
-    await _bufferedPercentageController.close();
-    await _bufferedRangeController.close();
-    await _trackMetadataController.close();
-    await _volumeController.close();
-    await _rateController.close();
-    await _pitchController.close();
-    await _bufferSizeController.close();
-    await _audioBitrateController.close();
-    await _equalizerController.close();
-    await _audioDeviceController.close();
-    await _pauseOnDeviceChangeController.close();
-    await _skipSilenceController.close();
-    await _silenceConfigController.close();
-    await _silenceSavedDurationController.close();
-    await _visualizerController.close();
-    await _visualizerEnabledController.close();
-    await _preampController.close();
-    await _replayGainController.close();
-    await _balanceController.close();
-    await _monoController.close();
-    await _crossfeedController.close();
-    await _spatializerEnabledController.close();
-    await _spatializerWidthController.close();
-    await _reverbController.close();
-    await _limiterEnabledController.close();
-    await _metaBytesController.close();
+    for (final prop in _allProperties) {
+      await prop.close();
+    }
   }
 }

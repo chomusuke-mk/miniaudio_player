@@ -12,41 +12,14 @@ import '../api/track_metadata.dart';
 import '../api/visualizer_data.dart';
 import '../equalizer.dart';
 import '../reverb.dart';
+import '../rust/api/types.dart' show RustDartReadRequest;
 
-/// Snapshot of the C high-level tripartite buffer (`map_buffer_t`) cursors and state.
-class BackendStreamStatus {
-  final int bufferCapacity;
-  final int bufferFill;
-  final double fillPercentage;
-  final bool isBuffering;
-  final bool isEof;
-  final int readCursorByte;
-  final int rangeStart;
-  final int rangeEnd;
-
-  const BackendStreamStatus({
-    required this.bufferCapacity,
-    required this.bufferFill,
-    required this.fillPercentage,
-    required this.isBuffering,
-    required this.isEof,
-    required this.readCursorByte,
-    required this.rangeStart,
-    required this.rangeEnd,
-  });
-
-  int get aheadHeadroomBytes {
-    if (readCursorByte < rangeStart) return 0;
-    final h = rangeEnd - readCursorByte;
-    return h < 0 ? 0 : h;
-  }
-}
-
-/// Callback listener receiving reactive state and telemetry updates from [PlayerBackend].
+/// Listener interface receiving deterministic state and telemetry callbacks
+/// from a [PlayerBackend].
 abstract class PlayerBackendListener {
-  void onState(PlaybackState newState);
-  void onPosition(Duration pos);
-  void onDuration(Duration dur);
+  void onState(PlaybackState state);
+  void onPosition(Duration position);
+  void onDuration(Duration duration);
   void onPlaying(bool isPlaying);
   void onBuffering(bool isBuffering);
   void onCompleted(bool isCompleted);
@@ -57,7 +30,7 @@ abstract class PlayerBackendListener {
   void onBufferSize(int bufferSize);
   void onSilenceSaved(Duration duration);
   void onSilenceConfig(SilenceSkipConfig config);
-  void onBufferedRange(BufferedRange br);
+  void onBufferedRange(BufferedRange range);
   void onVisualizer(VisualizerData data);
   void onVisualizerEnabled(bool enabled);
   void onDevice(AudioDevice device);
@@ -74,8 +47,7 @@ abstract class PlayerBackendListener {
   void onError(String message, int errorCode);
 }
 
-/// Abstract platform interface bridging the Dart API with the underlying
-/// audio engine (Native FFI vs Web WASM Worker).
+/// Abstract platform backend contract for single-player audio execution.
 abstract class PlayerBackend {
   dynamic get handle;
   int get sampleRate;
@@ -87,70 +59,60 @@ abstract class PlayerBackend {
   void setListener(PlayerBackendListener listener);
 
   void init({
-    required int sampleRate,
-    required int channels,
-    required int periodSize,
+    int sampleRate = 48000,
+    int channels = 2,
+    int periodSize = 2048,
     String? playbackDeviceId,
   });
 
-  // --- Unified Stream Lifecycle (UnifiedAudioLoader -> map_buffer_t -> map_source) ---
   Future<void> beginOpen();
-
   Future<void> openSource(String source, {Map<String, String>? headers});
   Future<void> openMemory(Uint8List bytes);
-
-  Future<int> openStreamEx({
-    required Uint8List initialBytes,
-    Uint8List? tailBytes,
-    required int totalSize,
-    required bool isLive,
-    required int bufferCapacityBytes,
-    int encodingFormat = 0,
-  });
 
   Future<void> openCustomStream({
     required int streamId,
     int? totalSize,
     required bool isSeekable,
     required Uint8List initialBytes,
-  }) async {}
+  });
 
   void supplyCustomBytes({
     required int streamId,
     required int requestId,
     required Uint8List data,
     required bool isEof,
-  }) {}
+  });
 
   void notifyCustomError({
     required int streamId,
     required int requestId,
     required String errorMessage,
-  }) {}
+  });
 
-  int streamFeed(Uint8List chunk);
-  int streamFlush(int newStreamOffset);
-  int streamSeek(int positionMs, int newStreamOffset);
-  int streamGetSeekByte(int positionMs);
-  int getAudioDataOffset();
-  int streamEnd();
+  Stream<RustDartReadRequest> get onDartReadRequest;
+
   void notifyOpenError(int errorCode);
-  BackendStreamStatus? getStreamStatus();
 
-  // --- Transport Controls ---
   Future<void> play();
   Future<void> pause();
   Future<void> stop();
   Future<void> seek(Duration position);
 
-  // --- Audio & DSP Controls ---
   void setVolume(double volume);
   void setRate(double rate);
   void setPitch(double pitch);
-  void setPan(double pan);
   void setBufferSize(int frames);
-  void setEqualizerBand(int bandIndex, double gainDb);
-  void setEqualizer(Equalizer params);
+
+  void setEqualizer(Equalizer equalizer);
+  void setEqualizerBand(int band, double gainDb);
+  void setSilenceSkip(SilenceSkipConfig config);
+  void setVisualizerEnabled(bool enabled);
+  void setReplayGain(ReplayGainConfig config);
+  void setPreamp(double preampDb);
+  void setBalance(double balance);
+  void setMono(bool enabled);
+  void setCrossfeed(CrossfeedMode mode);
+  void setSpatializer({required bool enabled, required double width});
   void setReverb({
     required bool enabled,
     required double roomSize,
@@ -159,38 +121,30 @@ abstract class PlayerBackend {
     required double wet,
     required double dry,
   });
-  void setCrossfeed(CrossfeedMode mode);
   void setLimiterEnabled(bool enabled);
-  void setSilenceSkip(SilenceSkipConfig config);
-  void setVisualizerEnabled(bool enabled);
-  bool get isVisualizerEnabled => false;
-  void setPreamp(double preampDb);
-  void setReplayGain(ReplayGainConfig config);
-  void setBalance(double balance);
-  void setMono(bool enabled);
-  void setSpatializer({required bool enabled, required double width});
+
   void setSpatialEnabled(bool enabled);
   void setSpatialListener(SpatialListener listener);
   void setSpatialEmitter(SpatialEmitter emitter);
   void setSpatialDopplerFactor(double factor);
   void setSpatialSpeedOfSound(double speed);
+
   void setIcyMeta(Uint8List data);
   void probeTail(Uint8List data, int tailOffset);
+
   Future<void> setDevice(String deviceId);
   AudioDevice getCurrentDevice();
   void setPauseOnDeviceChange(bool enabled);
   bool getPauseOnDeviceChange();
 
-  // --- Lifecycle ---
   Future<void> dispose();
 }
 
-/// Platform-level audio device enumeration, analysis, and logging service.
+/// Platform-level audio device enumeration, offline acoustic analysis, and logging service.
 abstract class PlatformService {
   Future<List<AudioDevice>> getAudioDevices();
   Stream<List<AudioDevice>> getAudioDevicesStream();
   List<AudioDevice> getAudioDevicesSync();
-
   Future<List<AudioDevice>> getCaptureDevices();
   List<AudioDevice> getCaptureDevicesSync();
 

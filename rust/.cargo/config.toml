@@ -4,3 +4,9 @@ rustflags = [
     "-C", "link-arg=-Wl,--as-needed",
     "-C", "link-arg=-Wl,-O1",
 ]
+
+[env]
+RUST_BACKTRACE = "1"
+
+[alias]
+test-strict = "test -- --test-threads=8 --nocapture"

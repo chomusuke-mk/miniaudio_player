@@ -196,39 +196,3 @@ impl DeviceCaptureNode {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_capture_receiver_transfers_frames_lock_free() {
-        let (producer, mut consumer) = rtrb::RingBuffer::new(1024);
-        let is_active = Arc::new(AtomicBool::new(true));
-
-        let mut receiver = CaptureReceiver {
-            header: PcmCaptureHeader {
-                capture_fn: capture_receiver_capture_trampoline,
-                notif_fn: capture_receiver_notif_trampoline,
-            },
-            producer,
-            is_active,
-            channels: 1,
-        };
-
-        let input_samples = [0.1f32, 0.2f32, 0.3f32, 0.4f32];
-        receiver.on_captured_pcm(input_samples.as_ptr(), input_samples.len());
-
-        assert_eq!(consumer.slots(), 4);
-        let mut read_buf = [0.0f32; 4];
-        if let Ok(chunk) = consumer.read_chunk(4) {
-            let (s1, s2) = chunk.as_slices();
-            read_buf[..s1.len()].copy_from_slice(s1);
-            if !s2.is_empty() {
-                read_buf[s1.len()..].copy_from_slice(s2);
-            }
-            chunk.commit_all();
-        }
-
-        assert_eq!(read_buf, input_samples);
-    }
-}

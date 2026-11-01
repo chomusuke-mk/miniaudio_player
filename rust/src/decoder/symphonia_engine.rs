@@ -211,6 +211,9 @@ impl SymphoniaTrackSession {
                     }
                     out_pcm.clear();
                     decoded.copy_to_vec_interleaved(out_pcm);
+                    if out_pcm.is_empty() {
+                        continue;
+                    }
                     return Ok(true);
                 }
                 Err(SymphoniaError::DecodeError(err)) => {
