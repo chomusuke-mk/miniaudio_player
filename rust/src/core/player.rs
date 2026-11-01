@@ -340,6 +340,9 @@ impl PlayerCoordinator {
             sonic_in_buf: vec![0.0f32; 16384],
             visualizer_seqlock: visualizer_seqlock.clone(),
             visualizer_enabled: visualizer_enabled.clone(),
+            spatial: crate::dsp::spatial::SpatialProcessor::default(),
+            listener: crate::dsp::spatial::SpatialListener::default(),
+            emitter: crate::dsp::spatial::SpatialEmitter::default(),
             notification_callback: Some(notif_cb),
         };
         let renderer_ptr = Box::into_raw(Box::new(renderer));
@@ -438,6 +441,26 @@ impl PlayerCoordinator {
                 let _ = prod.push(cmd);
             }
         }
+    }
+
+    pub fn set_spatial_enabled(&mut self, enabled: bool) {
+        self.send_dsp_command(DspCommand::SetSpatialEnabled(enabled));
+    }
+
+    pub fn set_spatial_listener(&mut self, listener: crate::dsp::spatial::SpatialListener) {
+        self.send_dsp_command(DspCommand::SetSpatialListener(listener));
+    }
+
+    pub fn set_spatial_emitter(&mut self, emitter: crate::dsp::spatial::SpatialEmitter) {
+        self.send_dsp_command(DspCommand::SetSpatialEmitter(emitter));
+    }
+
+    pub fn set_spatial_doppler_factor(&mut self, factor: f32) {
+        self.send_dsp_command(DspCommand::SetSpatialDopplerFactor(factor));
+    }
+
+    pub fn set_spatial_speed_of_sound(&mut self, speed: f32) {
+        self.send_dsp_command(DspCommand::SetSpatialSpeedOfSound(speed));
     }
 
     fn start_decoder_loop(&mut self) {
@@ -571,6 +594,10 @@ impl PlayerCoordinator {
                             if target_seek == 0 && is_stream_arc.load(Ordering::Relaxed) {
                                 if let Ok(guard) = trip_buf_arc.read() {
                                     if let Some(ref trip) = *guard {
+                                        let (hit, contig) = trip.try_seek_cached(0);
+                                        if !hit || !contig {
+                                            trip.flush(0);
+                                        }
                                         let reader = trip.create_reader();
                                         if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
                                             *eng_lock = Some(new_eng);
@@ -1478,6 +1505,10 @@ impl PlayerCoordinator {
 
         let (_, cvar) = &*self.decoder_wake;
         cvar.notify_all();
+    }
+
+    pub fn is_live_stream(&self) -> bool {
+        self.trip_buffer.read().map(|g| g.as_ref().map(|t| t.is_live()).unwrap_or(false)).unwrap_or(false)
     }
 
     pub fn stream_feed(&mut self, data: &[u8]) -> i32 {

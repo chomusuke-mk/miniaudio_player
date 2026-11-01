@@ -261,7 +261,11 @@ void main() {
 
         // Call play() directly on EOF
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 150));
+        int waitAdvanceMs = 0;
+        while (player.state.position.inMilliseconds == 0 && waitAdvanceMs < 1000) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          waitAdvanceMs += 50;
+        }
 
         expect(player.state.playing, isTrue);
         expect(player.state.completed, isFalse);

@@ -217,6 +217,12 @@ impl RustPlayer {
     }
 
     #[flutter_rust_bridge::frb(sync)]
+    pub fn is_live_stream(&self) -> bool {
+        let lock = self.inner.lock().unwrap();
+        lock.is_live_stream()
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
     pub fn get_audio_data_offset(&self) -> i64 {
         let lock = self.inner.lock().unwrap();
         lock.get_audio_data_offset()
@@ -733,6 +739,41 @@ impl RustPlayer {
         } else {
             Err(format!("set_spatializer failed: error {}", res))
         }
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_enabled(&self, enabled: bool) -> Result<(), String> {
+        let mut lock = self.inner.lock().unwrap();
+        lock.set_spatial_enabled(enabled);
+        Ok(())
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_listener(&self, listener: RustSpatialListener) -> Result<(), String> {
+        let mut lock = self.inner.lock().unwrap();
+        lock.set_spatial_listener(listener.into());
+        Ok(())
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_emitter(&self, emitter: RustSpatialEmitter) -> Result<(), String> {
+        let mut lock = self.inner.lock().unwrap();
+        lock.set_spatial_emitter(emitter.into());
+        Ok(())
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_doppler_factor(&self, factor: f32) -> Result<(), String> {
+        let mut lock = self.inner.lock().unwrap();
+        lock.set_spatial_doppler_factor(factor);
+        Ok(())
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_speed_of_sound(&self, speed: f32) -> Result<(), String> {
+        let mut lock = self.inner.lock().unwrap();
+        lock.set_spatial_speed_of_sound(speed);
+        Ok(())
     }
 
     #[flutter_rust_bridge::frb(sync)]

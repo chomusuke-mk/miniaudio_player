@@ -11,6 +11,8 @@ import '../../api/dsp_config.dart';
 import '../../api/player_exception.dart';
 import '../../api/player_state.dart';
 import '../../api/silence_skip_config.dart';
+import '../../api/spatial.dart';
+import '../../api/track_metadata.dart';
 import '../../api/visualizer_data.dart';
 import '../../equalizer.dart';
 import '../../reverb.dart';
@@ -249,6 +251,47 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
     }
   }
 
+  MiniaudioPlayerException _toPlayerException(Object error) {
+    if (error is MiniaudioPlayerException) return error;
+    final str = error.toString();
+    final match = RegExp(r'error (-?\d+)').firstMatch(str);
+    final code = match != null ? int.parse(match.group(1)!) : MapResult.errorGeneric;
+    return MiniaudioPlayerException(str, errorCode: code);
+  }
+
+  AudioTrackMetadata _buildMetadata({
+    required String? sourcePath,
+    required Uint8List? bytes,
+    required bool isNetwork,
+  }) {
+    final metaBytes = bytes ?? _rustPlayer?.getMetaBytes();
+    final codec = (metaBytes != null && metaBytes.isNotEmpty)
+        ? AudioCodec.detect(metaBytes)
+        : AudioCodec.unknown;
+    final durMs = _rustPlayer?.getDurationMs().toInt() ?? 0;
+    final bitrate = _rustPlayer?.getBitrate() ?? 0;
+    final sampleRate = _rustPlayer?.getSampleRate() ?? 0;
+    final channels = _rustPlayer?.getChannels() ?? 0;
+    final isLive = _rustPlayer?.isLiveStream() ?? false;
+    final offset = _rustPlayer?.getAudioDataOffset().toInt() ?? 0;
+    final format = AudioFormat.fromCodec(codec);
+
+    return AudioTrackMetadata(
+      codec: codec,
+      format: format,
+      formatName: format.extension,
+      duration: Duration(milliseconds: durMs > 0 ? durMs : 0),
+      totalBytes: isLive ? -1 : 0,
+      bitrate: bitrate,
+      sampleRate: sampleRate,
+      channels: channels,
+      isNetwork: isNetwork,
+      isLiveStream: isLive,
+      audioDataOffset: offset,
+      uri: sourcePath != null ? Uri.tryParse(sourcePath) : null,
+    );
+  }
+
   // --- Unified Stream Lifecycle ---
 
   @override
@@ -264,13 +307,26 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
           .toList();
     }
 
-    await _rustPlayer!.openSource(source: source, headers: rustHeaders);
+    try {
+      await _rustPlayer!.openSource(source: source, headers: rustHeaders);
+    } catch (e) {
+      throw _toPlayerException(e);
+    }
     final durMs = _rustPlayer!.getDurationMs().toInt();
     final bitrate = _rustPlayer!.getBitrate();
+    final isNet = source.startsWith('http://') ||
+        source.startsWith('https://') ||
+        source.startsWith('icy://');
+    final meta = _buildMetadata(
+      sourcePath: source,
+      bytes: null,
+      isNetwork: isNet,
+    );
     _listener?.onDuration(Duration(milliseconds: durMs > 0 ? durMs : 0));
     _listener?.onBitrate(bitrate > 0 ? bitrate : 0);
     _listener?.onPosition(Duration.zero);
     _listener?.onCompleted(false);
+    _listener?.onTrackMetadata(meta);
   }
 
   @override
@@ -279,13 +335,23 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
     await ensureRustInitialized();
     _createPlayer();
 
-    await _rustPlayer!.openMemory(data: bytes);
+    try {
+      await _rustPlayer!.openMemory(data: bytes);
+    } catch (e) {
+      throw _toPlayerException(e);
+    }
     final durMs = _rustPlayer!.getDurationMs().toInt();
     final bitrate = _rustPlayer!.getBitrate();
+    final meta = _buildMetadata(
+      sourcePath: null,
+      bytes: bytes,
+      isNetwork: false,
+    );
     _listener?.onDuration(Duration(milliseconds: durMs > 0 ? durMs : 0));
     _listener?.onBitrate(bitrate > 0 ? bitrate : 0);
     _listener?.onPosition(Duration.zero);
     _listener?.onCompleted(false);
+    _listener?.onTrackMetadata(meta);
   }
 
   @override
@@ -343,17 +409,27 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
     await ensureRustInitialized();
     _createPlayer();
 
-    await _rustPlayer!.openCustomStream(
-      streamId: streamId,
-      totalSize: totalSize != null ? BigInt.from(totalSize) : null,
-      isSeekable: isSeekable,
-      initialBytes: initialBytes,
-    );
+    try {
+      await _rustPlayer!.openCustomStream(
+        streamId: streamId,
+        totalSize: totalSize != null ? BigInt.from(totalSize) : null,
+        isSeekable: isSeekable,
+        initialBytes: initialBytes,
+      );
+    } catch (e) {
+      throw _toPlayerException(e);
+    }
 
     final durMs = _rustPlayer!.getDurationMs().toInt();
     final bitrate = _rustPlayer!.getBitrate();
+    final meta = _buildMetadata(
+      sourcePath: null,
+      bytes: initialBytes,
+      isNetwork: false,
+    );
     _listener?.onDuration(Duration(milliseconds: durMs > 0 ? durMs : 0));
     _listener?.onBitrate(bitrate > 0 ? bitrate : 0);
+    _listener?.onTrackMetadata(meta);
   }
 
   @override
@@ -700,6 +776,36 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
   void setSpatializer({required bool enabled, required double width}) {
     _ensureNotDisposed();
     _rustPlayer?.setSpatializer(enabled: enabled, width: width);
+  }
+
+  @override
+  void setSpatialEnabled(bool enabled) {
+    _ensureNotDisposed();
+    _rustPlayer?.setSpatialEnabled(enabled: enabled);
+  }
+
+  @override
+  void setSpatialListener(SpatialListener listener) {
+    _ensureNotDisposed();
+    _rustPlayer?.setSpatialListener(listener: listener.toRust());
+  }
+
+  @override
+  void setSpatialEmitter(SpatialEmitter emitter) {
+    _ensureNotDisposed();
+    _rustPlayer?.setSpatialEmitter(emitter: emitter.toRust());
+  }
+
+  @override
+  void setSpatialDopplerFactor(double factor) {
+    _ensureNotDisposed();
+    _rustPlayer?.setSpatialDopplerFactor(factor: factor);
+  }
+
+  @override
+  void setSpatialSpeedOfSound(double speed) {
+    _ensureNotDisposed();
+    _rustPlayer?.setSpatialSpeedOfSound(speed: speed);
   }
 
   @override

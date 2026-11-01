@@ -469,4 +469,29 @@ impl EngineCoordinator {
             self.deck_b.stop();
         }
     }
+
+    pub fn set_spatial_enabled(&mut self, enabled: bool) {
+        self.deck_a.set_spatial_enabled(enabled);
+        self.deck_b.set_spatial_enabled(enabled);
+    }
+
+    pub fn set_spatial_listener(&mut self, listener: crate::dsp::spatial::SpatialListener) {
+        self.deck_a.set_spatial_listener(listener);
+        self.deck_b.set_spatial_listener(listener);
+    }
+
+    pub fn set_spatial_emitter(&mut self, emitter: crate::dsp::spatial::SpatialEmitter) {
+        self.deck_a.set_spatial_emitter(emitter);
+        self.deck_b.set_spatial_emitter(emitter);
+    }
+
+    pub fn set_spatial_doppler_factor(&mut self, factor: f32) {
+        self.deck_a.set_spatial_doppler_factor(factor);
+        self.deck_b.set_spatial_doppler_factor(factor);
+    }
+
+    pub fn set_spatial_speed_of_sound(&mut self, speed: f32) {
+        self.deck_a.set_spatial_speed_of_sound(speed);
+        self.deck_b.set_spatial_speed_of_sound(speed);
+    }
 }

@@ -213,3 +213,110 @@ pub enum RustEngineEvent {
     Shuffle(bool),
     Error { message: String, code: i32 },
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RustVector3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustDistanceModel {
+    #[default]
+    Inverse,
+    Linear,
+    Exponential,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RustSpatialListener {
+    pub position: RustVector3,
+    pub velocity: RustVector3,
+    pub forward: RustVector3,
+    pub up: RustVector3,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RustSpatialEmitter {
+    pub position: RustVector3,
+    pub velocity: RustVector3,
+    pub direction: Option<RustVector3>,
+    pub min_distance: f32,
+    pub max_distance: f32,
+    pub rolloff_factor: f32,
+    pub doppler_factor: f32,
+    pub inner_angle_rad: f32,
+    pub outer_angle_rad: f32,
+    pub outer_gain: f32,
+    pub distance_model: RustDistanceModel,
+}
+
+impl Default for RustSpatialEmitter {
+    fn default() -> Self {
+        Self {
+            position: RustVector3::default(),
+            velocity: RustVector3::default(),
+            direction: None,
+            min_distance: 1.0,
+            max_distance: 1000.0,
+            rolloff_factor: 1.0,
+            doppler_factor: 1.0,
+            inner_angle_rad: std::f32::consts::PI * 2.0,
+            outer_angle_rad: std::f32::consts::PI * 2.0,
+            outer_gain: 0.0,
+            distance_model: RustDistanceModel::Inverse,
+        }
+    }
+}
+
+impl From<RustVector3> for crate::dsp::spatial::Vector3 {
+    fn from(v: RustVector3) -> Self {
+        Self { x: v.x, y: v.y, z: v.z }
+    }
+}
+
+impl From<crate::dsp::spatial::Vector3> for RustVector3 {
+    fn from(v: crate::dsp::spatial::Vector3) -> Self {
+        Self { x: v.x, y: v.y, z: v.z }
+    }
+}
+
+impl From<RustDistanceModel> for crate::dsp::spatial::DistanceModel {
+    fn from(m: RustDistanceModel) -> Self {
+        match m {
+            RustDistanceModel::Inverse => Self::Inverse,
+            RustDistanceModel::Linear => Self::Linear,
+            RustDistanceModel::Exponential => Self::Exponential,
+        }
+    }
+}
+
+impl From<RustSpatialListener> for crate::dsp::spatial::SpatialListener {
+    fn from(l: RustSpatialListener) -> Self {
+        Self {
+            position: l.position.into(),
+            velocity: l.velocity.into(),
+            forward: l.forward.into(),
+            up: l.up.into(),
+        }
+    }
+}
+
+impl From<RustSpatialEmitter> for crate::dsp::spatial::SpatialEmitter {
+    fn from(e: RustSpatialEmitter) -> Self {
+        Self {
+            position: e.position.into(),
+            velocity: e.velocity.into(),
+            direction: e.direction.map(Into::into),
+            min_distance: e.min_distance,
+            max_distance: e.max_distance,
+            rolloff_factor: e.rolloff_factor,
+            doppler_factor: e.doppler_factor,
+            inner_angle_rad: e.inner_angle_rad,
+            outer_angle_rad: e.outer_angle_rad,
+            outer_gain: e.outer_gain,
+            distance_model: e.distance_model.into(),
+        }
+    }
+}

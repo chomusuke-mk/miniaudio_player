@@ -609,6 +609,9 @@ fn test_instant_rate_and_pitch_response_consumer_side() {
         sonic_in_buf: vec![0.0f32; 16384],
         visualizer_seqlock: visualizer_seqlock.clone(),
         visualizer_enabled: visualizer_enabled.clone(),
+        spatial: miniaudio_player::dsp::spatial::SpatialProcessor::default(),
+        listener: miniaudio_player::dsp::spatial::SpatialListener::default(),
+        emitter: miniaudio_player::dsp::spatial::SpatialEmitter::default(),
         notification_callback: None,
     };
 

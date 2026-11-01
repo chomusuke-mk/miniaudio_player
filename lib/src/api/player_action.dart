@@ -12,7 +12,9 @@ import 'audio_source.dart';
 import 'dsp_config.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
+import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
+import 'spatial.dart';
 
 /// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
 class PlayerAction {
@@ -23,6 +25,7 @@ class PlayerAction {
   bool _playRequested = false;
   Future<void>? _pendingSeekFuture;
   DartByteProviderBridge? _customBridge;
+  AudioSource? _currentSource;
 
   PlayerAction(this._player);
 
@@ -110,6 +113,7 @@ class PlayerAction {
   /// Accepts an [AudioSource] instance.
   Future<void> open(AudioSource source) async {
     _player.ensureNotDisposed();
+    _currentSource = source;
 
     _customBridge?.dispose();
     _customBridge = null;
@@ -181,6 +185,12 @@ class PlayerAction {
   }
 
   Future<void> _executePlay() async {
+    if (_player.state.trackMetadata?.isLiveStream == true &&
+        _player.state.playbackState == PlaybackState.stopped &&
+        _currentSource != null) {
+      final src = _currentSource!;
+      await open(src);
+    }
     if (_player.state.completed ||
         (_player.state.duration > Duration.zero &&
             _player.state.position >= _player.state.duration)) {
@@ -495,6 +505,70 @@ class PlayerAction {
       enabled: enabled,
       width: clampedWidth,
     );
+  }
+
+  /// Enables or disables 3D spatial audio and Doppler shift processing.
+  Future<void> setSpatialEnabled(bool enabled) async {
+    _player.ensureNotDisposed();
+    _player.spatial.setEnabled(enabled);
+  }
+
+  /// Sets the 3D spatial listener state.
+  Future<void> setSpatialListener({
+    Vector3? position,
+    Vector3? velocity,
+    Vector3? forward,
+    Vector3? up,
+  }) async {
+    _player.ensureNotDisposed();
+    _player.spatial.setListener(
+      position: position,
+      velocity: velocity,
+      forward: forward,
+      up: up,
+    );
+  }
+
+  /// Sets the 3D spatial emitter state.
+  Future<void> setSpatialEmitter({
+    Vector3? position,
+    Vector3? velocity,
+    Vector3? direction,
+    double? minDistance,
+    double? maxDistance,
+    double? rolloff,
+    double? dopplerFactor,
+    double? innerAngleRad,
+    double? outerAngleRad,
+    double? outerGain,
+    DistanceModel? distanceModel,
+  }) async {
+    _player.ensureNotDisposed();
+    _player.spatial.setEmitter(
+      position: position,
+      velocity: velocity,
+      direction: direction,
+      minDistance: minDistance,
+      maxDistance: maxDistance,
+      rolloff: rolloff,
+      dopplerFactor: dopplerFactor,
+      innerAngleRad: innerAngleRad,
+      outerAngleRad: outerAngleRad,
+      outerGain: outerGain,
+      distanceModel: distanceModel,
+    );
+  }
+
+  /// Sets the Doppler effect exaggeration/reduction factor (default 1.0, 0.0 disables Doppler).
+  Future<void> setSpatialDopplerFactor(double factor) async {
+    _player.ensureNotDisposed();
+    _player.spatial.setDopplerFactor(factor);
+  }
+
+  /// Sets the medium speed of sound in m/s (default 343.3 m/s).
+  Future<void> setSpatialSpeedOfSound(double speed) async {
+    _player.ensureNotDisposed();
+    _player.spatial.setSpeedOfSound(speed);
   }
 
   /// Enables or disables the True-Peak soft-knee output limiter protector.

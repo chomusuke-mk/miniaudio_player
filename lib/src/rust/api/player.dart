@@ -115,6 +115,8 @@ abstract class RustPlayer implements RustOpaqueInterface {
 
   bool isCompleted();
 
+  bool isLiveStream();
+
   bool isPlaying();
 
   bool isVisualizerEnabled();
@@ -201,6 +203,16 @@ abstract class RustPlayer implements RustOpaqueInterface {
   void setReverb({required RustReverbParams params});
 
   void setSilenceConfig({required RustSilenceConfig config});
+
+  void setSpatialDopplerFactor({required double factor});
+
+  void setSpatialEmitter({required RustSpatialEmitter emitter});
+
+  void setSpatialEnabled({required bool enabled});
+
+  void setSpatialListener({required RustSpatialListener listener});
+
+  void setSpatialSpeedOfSound({required double speed});
 
   void setSpatializer({required bool enabled, required double width});
 

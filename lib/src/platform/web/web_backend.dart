@@ -13,6 +13,7 @@ import '../../api/miniaudio_player.dart';
 import '../../api/player_exception.dart';
 import '../../api/player_state.dart';
 import '../../api/silence_skip_config.dart';
+import '../../api/spatial.dart';
 import '../../api/visualizer_data.dart';
 import '../../equalizer.dart';
 import '../../reverb.dart';
@@ -794,6 +795,21 @@ class WebPlayerBackend implements PlayerBackend {
     );
     _listener?.onSpatializer(enabled: enabled, width: width);
   }
+
+  @override
+  void setSpatialEnabled(bool enabled) {}
+
+  @override
+  void setSpatialListener(SpatialListener listener) {}
+
+  @override
+  void setSpatialEmitter(SpatialEmitter emitter) {}
+
+  @override
+  void setSpatialDopplerFactor(double factor) {}
+
+  @override
+  void setSpatialSpeedOfSound(double speed) {}
 
   @override
   void setIcyMeta(Uint8List data) {}

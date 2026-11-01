@@ -20,6 +20,7 @@ import 'miniaudio_player.dart';
 import 'need_more_tracks_event.dart';
 import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
+import 'spatial.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
@@ -140,6 +141,9 @@ class MiniaudioEngine<T> {
   /// Synchronous state snapshot interface.
   late final EngineState<T> state;
 
+  /// 3D Spatial Audio and Doppler effect controller.
+  late final SpatialController spatial;
+
   /// Creates a [MiniaudioEngine] instance backed by Rust dual decks and lock-free mixer.
   MiniaudioEngine({
     int? bufferSize,
@@ -164,6 +168,29 @@ class MiniaudioEngine<T> {
     );
 
     action = EngineAction<T>(this);
+
+    spatial = SpatialController(
+      setEnabled: (enabled) {
+        if (_isDisposed) return;
+        _rustEngine?.setSpatialEnabled(enabled: enabled);
+      },
+      setListener: (listener) {
+        if (_isDisposed) return;
+        _rustEngine?.setSpatialListener(listener: listener.toRust());
+      },
+      setEmitter: (emitter) {
+        if (_isDisposed) return;
+        _rustEngine?.setSpatialEmitter(emitter: emitter.toRust());
+      },
+      setDopplerFactor: (factor) {
+        if (_isDisposed) return;
+        _rustEngine?.setSpatialDopplerFactor(factor: factor);
+      },
+      setSpeedOfSound: (speed) {
+        if (_isDisposed) return;
+        _rustEngine?.setSpatialSpeedOfSound(speed: speed);
+      },
+    );
 
     stream = EngineStream<T>(
       phaseController: _phaseController,
@@ -399,6 +426,14 @@ class MiniaudioEngine<T> {
           curve: _crossfadeConfig.curve.index,
         ),
       );
+
+      if (spatial.isEnabled) {
+        engine.setSpatialEnabled(enabled: true);
+        engine.setSpatialListener(listener: spatial.listener.toRust());
+        engine.setSpatialEmitter(emitter: spatial.emitter.toRust());
+        engine.setSpatialDopplerFactor(factor: spatial.dopplerFactor);
+        engine.setSpatialSpeedOfSound(speed: spatial.speedOfSound);
+      }
 
       // Single unified event stream from Rust
       _eventSub = engine.subscribeEvents().listen(_handleRustEvent);

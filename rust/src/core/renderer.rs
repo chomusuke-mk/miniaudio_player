@@ -35,6 +35,11 @@ pub enum DspCommand {
     SetLimiter(bool),
     SetVisualizerEnabled(bool),
     SetSampleRate(u32),
+    SetSpatialEnabled(bool),
+    SetSpatialListener(crate::dsp::spatial::SpatialListener),
+    SetSpatialEmitter(crate::dsp::spatial::SpatialEmitter),
+    SetSpatialDopplerFactor(f32),
+    SetSpatialSpeedOfSound(f32),
 }
 
 #[repr(C)]
@@ -97,6 +102,10 @@ pub struct AudioRenderer {
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     pub visualizer_enabled: Arc<AtomicBool>,
 
+    pub spatial: crate::dsp::spatial::SpatialProcessor,
+    pub listener: crate::dsp::spatial::SpatialListener,
+    pub emitter: crate::dsp::spatial::SpatialEmitter,
+
     pub notification_callback: Option<Arc<dyn Fn(i32) + Send + Sync>>,
 }
 
@@ -143,6 +152,11 @@ impl AudioRenderer {
                             let ch = self.device_channels.load(Ordering::Relaxed) as usize;
                             self.sonic = SonicStream::new(*sr, ch.clamp(1, 8));
                         }
+                        DspCommand::SetSpatialEnabled(en) => self.spatial.set_enabled(*en),
+                        DspCommand::SetSpatialListener(l) => self.listener = *l,
+                        DspCommand::SetSpatialEmitter(e) => self.emitter = *e,
+                        DspCommand::SetSpatialDopplerFactor(factor) => self.emitter.doppler_factor = *factor,
+                        DspCommand::SetSpatialSpeedOfSound(c) => self.spatial.speed_of_sound = *c,
                     }
                 }
                 chunk.commit_all();
@@ -168,9 +182,27 @@ impl AudioRenderer {
             return;
         }
 
-        // 3. Read chunk from audio consumer with on-demand zero-latency time-stretching
-        let cur_rate = f32::from_bits(self.rate.load(Ordering::Relaxed)).clamp(0.25, 4.0);
-        let cur_pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed)).clamp(0.5, 2.0);
+        // 3. Read chunk from audio consumer with on-demand zero-latency time-stretching & Doppler
+        let (spatial_doppler, spatial_gain, spatial_pan) = if self.spatial.is_enabled() {
+            let eval = crate::dsp::spatial::SpatialProcessor::evaluate(
+                &self.listener,
+                &self.emitter,
+                self.spatial.speed_of_sound,
+            );
+            let sr = self.device_sample_rate.load(Ordering::Relaxed).max(1) as f32;
+            let dt = frame_count as f32 / sr;
+            self.spatial.update_smoothed(&eval, dt);
+            (
+                self.spatial.current_doppler_ratio(),
+                self.spatial.current_gain(),
+                self.spatial.current_pan(),
+            )
+        } else {
+            (1.0, 1.0, 0.0)
+        };
+
+        let cur_rate = (f32::from_bits(self.rate.load(Ordering::Relaxed)) * spatial_doppler).clamp(0.1, 4.0);
+        let cur_pitch = (f32::from_bits(self.pitch.load(Ordering::Relaxed)) * spatial_doppler).clamp(0.1, 4.0);
         let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;
 
         let (read_samples, un_stretched_frames_consumed) = if !is_stretched {
@@ -227,8 +259,12 @@ impl AudioRenderer {
         }
 
         // 4. In-place real-time DSP
-        let vol = f32::from_bits(self.volume.load(Ordering::Relaxed));
+        let base_vol = f32::from_bits(self.volume.load(Ordering::Relaxed));
+        let vol = (base_vol * spatial_gain).clamp(0.0, 2.0);
         self.dsp.set_volume(vol);
+        if self.spatial.is_enabled() {
+            self.dsp.set_balance(spatial_pan);
+        }
         self.dsp.process_frames(out_slice);
 
         // 5. Update lock-free visualizer snapshot for non-blocking telemetry query

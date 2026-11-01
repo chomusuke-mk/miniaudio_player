@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
@@ -209,6 +209,16 @@ class RustDartReadRequest {
           requestId == other.requestId &&
           offset == other.offset &&
           length == other.length;
+}
+
+enum RustDistanceModel {
+  inverse,
+  linear,
+  exponential,
+  ;
+
+  static Future<RustDistanceModel> default_() =>
+      RustLib.instance.api.crateApiTypesRustDistanceModelDefault();
 }
 
 @freezed
@@ -682,6 +692,99 @@ class RustSilenceConfig {
           enabled == other.enabled;
 }
 
+class RustSpatialEmitter {
+  final RustVector3 position;
+  final RustVector3 velocity;
+  final RustVector3? direction;
+  final double minDistance;
+  final double maxDistance;
+  final double rolloffFactor;
+  final double dopplerFactor;
+  final double innerAngleRad;
+  final double outerAngleRad;
+  final double outerGain;
+  final RustDistanceModel distanceModel;
+
+  const RustSpatialEmitter({
+    required this.position,
+    required this.velocity,
+    this.direction,
+    required this.minDistance,
+    required this.maxDistance,
+    required this.rolloffFactor,
+    required this.dopplerFactor,
+    required this.innerAngleRad,
+    required this.outerAngleRad,
+    required this.outerGain,
+    required this.distanceModel,
+  });
+
+  static Future<RustSpatialEmitter> default_() =>
+      RustLib.instance.api.crateApiTypesRustSpatialEmitterDefault();
+
+  @override
+  int get hashCode =>
+      position.hashCode ^
+      velocity.hashCode ^
+      direction.hashCode ^
+      minDistance.hashCode ^
+      maxDistance.hashCode ^
+      rolloffFactor.hashCode ^
+      dopplerFactor.hashCode ^
+      innerAngleRad.hashCode ^
+      outerAngleRad.hashCode ^
+      outerGain.hashCode ^
+      distanceModel.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustSpatialEmitter &&
+          runtimeType == other.runtimeType &&
+          position == other.position &&
+          velocity == other.velocity &&
+          direction == other.direction &&
+          minDistance == other.minDistance &&
+          maxDistance == other.maxDistance &&
+          rolloffFactor == other.rolloffFactor &&
+          dopplerFactor == other.dopplerFactor &&
+          innerAngleRad == other.innerAngleRad &&
+          outerAngleRad == other.outerAngleRad &&
+          outerGain == other.outerGain &&
+          distanceModel == other.distanceModel;
+}
+
+class RustSpatialListener {
+  final RustVector3 position;
+  final RustVector3 velocity;
+  final RustVector3 forward;
+  final RustVector3 up;
+
+  const RustSpatialListener({
+    required this.position,
+    required this.velocity,
+    required this.forward,
+    required this.up,
+  });
+
+  static Future<RustSpatialListener> default_() =>
+      RustLib.instance.api.crateApiTypesRustSpatialListenerDefault();
+
+  @override
+  int get hashCode =>
+      position.hashCode ^ velocity.hashCode ^ forward.hashCode ^ up.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustSpatialListener &&
+          runtimeType == other.runtimeType &&
+          position == other.position &&
+          velocity == other.velocity &&
+          forward == other.forward &&
+          up == other.up;
+}
+
 class RustStreamStatus {
   final BigInt bufferCapacity;
   final BigInt bufferFill;
@@ -730,6 +833,33 @@ class RustStreamStatus {
           readCursorByte == other.readCursorByte &&
           rangeStart == other.rangeStart &&
           rangeEnd == other.rangeEnd;
+}
+
+class RustVector3 {
+  final double x;
+  final double y;
+  final double z;
+
+  const RustVector3({
+    required this.x,
+    required this.y,
+    required this.z,
+  });
+
+  static Future<RustVector3> default_() =>
+      RustLib.instance.api.crateApiTypesRustVector3Default();
+
+  @override
+  int get hashCode => x.hashCode ^ y.hashCode ^ z.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustVector3 &&
+          runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y &&
+          z == other.z;
 }
 
 class RustVisualizerData {

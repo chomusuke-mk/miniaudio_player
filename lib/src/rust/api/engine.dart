@@ -105,6 +105,16 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void setShuffle({required bool enabled});
 
+  void setSpatialDopplerFactor({required double factor});
+
+  void setSpatialEmitter({required RustSpatialEmitter emitter});
+
+  void setSpatialEnabled({required bool enabled});
+
+  void setSpatialListener({required RustSpatialListener listener});
+
+  void setSpatialSpeedOfSound({required double speed});
+
   void setSpatializer({required bool enabled, required double width});
 
   void setVisualizerEnabled({required bool enabled});

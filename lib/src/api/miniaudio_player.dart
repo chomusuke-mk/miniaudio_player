@@ -15,6 +15,7 @@ import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
 import 'silence_skip_config.dart';
+import 'spatial.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
@@ -410,6 +411,9 @@ class MiniaudioPlayer implements PlayerBackendListener {
   /// Synchronous state snapshot interface.
   late final PlayerState state;
 
+  /// 3D Spatial Audio and Doppler effect controller.
+  late final SpatialController spatial;
+
   /// Creates a [MiniaudioPlayer] instance bound to the provided [AudioSource], initialized
   /// with [MiniaudioPlayerGlobalConfig.defaultBufferSize] and
   /// [MiniaudioPlayerGlobalConfig.defaultAudioDevice].
@@ -461,6 +465,29 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _audioDevice = _backend.getCurrentDevice();
 
     action = PlayerAction(this);
+
+    spatial = SpatialController(
+      setEnabled: (enabled) {
+        if (_isDisposed) return;
+        _backend.setSpatialEnabled(enabled);
+      },
+      setListener: (listener) {
+        if (_isDisposed) return;
+        _backend.setSpatialListener(listener);
+      },
+      setEmitter: (emitter) {
+        if (_isDisposed) return;
+        _backend.setSpatialEmitter(emitter);
+      },
+      setDopplerFactor: (factor) {
+        if (_isDisposed) return;
+        _backend.setSpatialDopplerFactor(factor);
+      },
+      setSpeedOfSound: (speed) {
+        if (_isDisposed) return;
+        _backend.setSpatialSpeedOfSound(speed);
+      },
+    );
 
     stream = PlayerStream(
       positionController: _positionController,

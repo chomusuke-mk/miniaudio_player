@@ -750,6 +750,36 @@ impl RustEngine {
     }
 
     #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_enabled(&self, enabled: bool) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.set_spatial_enabled(enabled);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_listener(&self, listener: RustSpatialListener) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.set_spatial_listener(listener.into());
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_emitter(&self, emitter: RustSpatialEmitter) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.set_spatial_emitter(emitter.into());
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_doppler_factor(&self, factor: f32) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.set_spatial_doppler_factor(factor);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_spatial_speed_of_sound(&self, speed: f32) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.set_spatial_speed_of_sound(speed);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
     pub fn set_visualizer_enabled(&self, enabled: bool) {
         let coord = self.coordinator.lock().unwrap();
         coord.visualizer_enabled.store(enabled, Ordering::Relaxed);

@@ -9,6 +9,7 @@ import 'engine_item.dart';
 import 'loop_mode.dart';
 import 'miniaudio_engine.dart';
 import 'silence_skip_config.dart';
+import 'spatial.dart';
 
 /// Action interface executing asynchronous playback, queue navigation,
 /// crossfade configuration, and DSP controls on [MiniaudioEngine].
@@ -319,6 +320,65 @@ class EngineAction<T> {
     double width = 1.3,
   }) =>
       _engine.setSpatializerInternal(enabled: enabled, width: width);
+
+  /// Enables or disables 3D spatial audio and Doppler shift processing.
+  Future<void> setSpatialEnabled(bool enabled) async {
+    _engine.spatial.setEnabled(enabled);
+  }
+
+  /// Sets the 3D spatial listener state.
+  Future<void> setSpatialListener({
+    Vector3? position,
+    Vector3? velocity,
+    Vector3? forward,
+    Vector3? up,
+  }) async {
+    _engine.spatial.setListener(
+      position: position,
+      velocity: velocity,
+      forward: forward,
+      up: up,
+    );
+  }
+
+  /// Sets the 3D spatial emitter state.
+  Future<void> setSpatialEmitter({
+    Vector3? position,
+    Vector3? velocity,
+    Vector3? direction,
+    double? minDistance,
+    double? maxDistance,
+    double? rolloff,
+    double? dopplerFactor,
+    double? innerAngleRad,
+    double? outerAngleRad,
+    double? outerGain,
+    DistanceModel? distanceModel,
+  }) async {
+    _engine.spatial.setEmitter(
+      position: position,
+      velocity: velocity,
+      direction: direction,
+      minDistance: minDistance,
+      maxDistance: maxDistance,
+      rolloff: rolloff,
+      dopplerFactor: dopplerFactor,
+      innerAngleRad: innerAngleRad,
+      outerAngleRad: outerAngleRad,
+      outerGain: outerGain,
+      distanceModel: distanceModel,
+    );
+  }
+
+  /// Sets the Doppler effect exaggeration/reduction factor (default 1.0, 0.0 disables Doppler).
+  Future<void> setSpatialDopplerFactor(double factor) async {
+    _engine.spatial.setDopplerFactor(factor);
+  }
+
+  /// Sets the medium speed of sound in m/s (default 343.3 m/s).
+  Future<void> setSpatialSpeedOfSound(double speed) async {
+    _engine.spatial.setSpeedOfSound(speed);
+  }
 
   /// Enables or disables the True-Peak soft-knee output limiter across both decks.
   Future<void> setLimiter(bool enabled) => _engine.setLimiterInternal(enabled);

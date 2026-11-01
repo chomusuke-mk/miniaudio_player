@@ -112,6 +112,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustSilenceConfig dco_decode_box_autoadd_rust_silence_config(dynamic raw);
 
   @protected
+  RustSpatialEmitter dco_decode_box_autoadd_rust_spatial_emitter(dynamic raw);
+
+  @protected
+  RustSpatialListener dco_decode_box_autoadd_rust_spatial_listener(dynamic raw);
+
+  @protected
+  RustVector3 dco_decode_box_autoadd_rust_vector_3(dynamic raw);
+
+  @protected
   RustVisualizerData dco_decode_box_autoadd_rust_visualizer_data(dynamic raw);
 
   @protected
@@ -160,6 +169,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
+  RustVector3? dco_decode_opt_box_autoadd_rust_vector_3(dynamic raw);
+
+  @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -185,6 +197,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustDartReadRequest dco_decode_rust_dart_read_request(dynamic raw);
+
+  @protected
+  RustDistanceModel dco_decode_rust_distance_model(dynamic raw);
 
   @protected
   RustEngineEvent dco_decode_rust_engine_event(dynamic raw);
@@ -214,7 +229,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustSilenceConfig dco_decode_rust_silence_config(dynamic raw);
 
   @protected
+  RustSpatialEmitter dco_decode_rust_spatial_emitter(dynamic raw);
+
+  @protected
+  RustSpatialListener dco_decode_rust_spatial_listener(dynamic raw);
+
+  @protected
   RustStreamStatus dco_decode_rust_stream_status(dynamic raw);
+
+  @protected
+  RustVector3 dco_decode_rust_vector_3(dynamic raw);
 
   @protected
   RustVisualizerData dco_decode_rust_visualizer_data(dynamic raw);
@@ -327,6 +351,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustSpatialEmitter sse_decode_box_autoadd_rust_spatial_emitter(
+      SseDeserializer deserializer);
+
+  @protected
+  RustSpatialListener sse_decode_box_autoadd_rust_spatial_listener(
+      SseDeserializer deserializer);
+
+  @protected
+  RustVector3 sse_decode_box_autoadd_rust_vector_3(
+      SseDeserializer deserializer);
+
+  @protected
   RustVisualizerData sse_decode_box_autoadd_rust_visualizer_data(
       SseDeserializer deserializer);
 
@@ -379,6 +415,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  RustVector3? sse_decode_opt_box_autoadd_rust_vector_3(
+      SseDeserializer deserializer);
+
+  @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
@@ -408,6 +448,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustDartReadRequest sse_decode_rust_dart_read_request(
+      SseDeserializer deserializer);
+
+  @protected
+  RustDistanceModel sse_decode_rust_distance_model(
       SseDeserializer deserializer);
 
   @protected
@@ -441,7 +485,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustSpatialEmitter sse_decode_rust_spatial_emitter(
+      SseDeserializer deserializer);
+
+  @protected
+  RustSpatialListener sse_decode_rust_spatial_listener(
+      SseDeserializer deserializer);
+
+  @protected
   RustStreamStatus sse_decode_rust_stream_status(SseDeserializer deserializer);
+
+  @protected
+  RustVector3 sse_decode_rust_vector_3(SseDeserializer deserializer);
 
   @protected
   RustVisualizerData sse_decode_rust_visualizer_data(
@@ -557,6 +612,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustSilenceConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_spatial_emitter(
+      RustSpatialEmitter self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_spatial_listener(
+      RustSpatialListener self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_vector_3(
+      RustVector3 self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_visualizer_data(
       RustVisualizerData self, SseSerializer serializer);
 
@@ -612,6 +679,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PlatformInt64? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_rust_vector_3(
+      RustVector3? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
@@ -644,6 +715,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_dart_read_request(
       RustDartReadRequest self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_distance_model(
+      RustDistanceModel self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_engine_event(
@@ -682,8 +757,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustSilenceConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_spatial_emitter(
+      RustSpatialEmitter self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_spatial_listener(
+      RustSpatialListener self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_stream_status(
       RustStreamStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_vector_3(RustVector3 self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_visualizer_data(
