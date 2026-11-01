@@ -1,4 +1,9 @@
 fn main() {
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    if target_arch == "wasm32" {
+        return;
+    }
+
     let mut build = cc::Build::new();
     build
         .file("c_src/miniaudio_device_bridge.c")

@@ -5,7 +5,9 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
-use std::time::{Duration, Instant};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use std::time::Duration;
 
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
@@ -315,11 +317,53 @@ pub type EventCallback = unsafe extern "C" fn(user_data: *mut c_void, event: *co
 pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>;
 pub type TypedEventCallback = Box<dyn Fn(&TelemetryEvent) + Send + Sync>;
 
-static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+/// Cross-platform monotonic instant that uses `std::time::Instant` on native targets
+/// and `js_sys::Date::now()` on `wasm32-unknown-unknown` (avoiding `Instant::now()` panics).
+#[derive(Debug, Clone, Copy)]
+pub struct MonotonicInstant {
+    #[cfg(not(target_arch = "wasm32"))]
+    inner: Instant,
+    #[cfg(target_arch = "wasm32")]
+    ms: f64,
+}
+
+impl MonotonicInstant {
+    #[inline]
+    pub fn now() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self {
+                inner: Instant::now(),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self {
+                ms: flutter_rust_bridge::for_generated::js_sys::Date::now(),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn elapsed(&self) -> Duration {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.inner.elapsed()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let now = flutter_rust_bridge::for_generated::js_sys::Date::now();
+            let diff_ms = (now - self.ms).max(0.0);
+            Duration::from_micros((diff_ms * 1000.0) as u64)
+        }
+    }
+}
+
+static START_TIME: std::sync::OnceLock<MonotonicInstant> = std::sync::OnceLock::new();
 
 #[inline]
 pub fn monotonic_now_ns() -> i64 {
-    let start = START_TIME.get_or_init(Instant::now);
+    let start = START_TIME.get_or_init(MonotonicInstant::now);
     start.elapsed().as_nanos() as i64
 }
 
@@ -425,6 +469,7 @@ pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callbacks: Arc<CallbackRegistry>,
     arena: Arc<EventRingArena>,
+    #[allow(dead_code)]
     tx: crossbeam_channel::Sender<TelemetryEvent>,
     worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -449,6 +494,16 @@ impl TelemetryDispatcher {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn spawn_worker(
+        _is_running: Arc<AtomicBool>,
+        _callbacks: Arc<CallbackRegistry>,
+        _rx: crossbeam_channel::Receiver<TelemetryEvent>,
+    ) -> Option<thread::JoinHandle<()>> {
+        None
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn spawn_worker(
         is_running: Arc<AtomicBool>,
         callbacks: Arc<CallbackRegistry>,
@@ -497,7 +552,16 @@ impl TelemetryDispatcher {
         let event_ptr = self.arena.write_slot(map_event);
 
         self.callbacks.notify_immediate(event_type, &map_event.data, event_ptr);
-        let _ = self.tx.send(event);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut last_pos = -1;
+            self.callbacks
+                .notify_typed_batch(std::slice::from_ref(&event), &mut last_pos);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = self.tx.send(event);
+        }
     }
 
     #[inline]

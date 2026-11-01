@@ -1,18 +1,4 @@
-import 'dart:async';
-import 'dart:typed_data';
-
-import '../equalizer.dart';
-import '../loader/custom_byte_provider.dart';
-import '../platform/native/native_backend.dart';
-import '../reverb.dart';
-import 'audio_device.dart';
-import 'audio_source.dart';
-import 'dsp_config.dart';
-import 'miniaudio_player.dart';
-import 'player_exception.dart';
-import 'player_state.dart' show PlaybackState;
-import 'silence_skip_config.dart';
-import 'spatial.dart';
+part of 'miniaudio_player.dart';
 
 /// Deterministic numeric validator for audio and DSP parameters.
 abstract final class _AudioParamValidator {
@@ -55,13 +41,12 @@ class PlayerAction {
   DartByteProviderBridge? _customBridge;
   AudioSource? _currentSource;
 
-  PlayerAction(this._player);
+  PlayerAction._(this._player);
 
   /// Awaits completion of the currently in-flight audio source opening operation.
   Future<void> waitUntilOpen() => _openingCompleter?.future ?? Future.value();
 
-  /// Disposes any active bridge sessions and cancels pending tasks.
-  void dispose() {
+  void _dispose() {
     _openGeneration++;
     _playRequested = false;
     _pendingSeekFuture = null;
@@ -81,7 +66,7 @@ class PlayerAction {
   Future<void> _openGuarded(
     Future<void> Function(int generation) openTask,
   ) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
 
     final gen = ++_openGeneration;
     _playRequested = false;
@@ -97,20 +82,17 @@ class PlayerAction {
     final prevBridge = _customBridge;
     _customBridge = null;
 
-    _player.resetMetadata();
-    _player.notifyOpening();
+    _player._resetMetadata();
+    _player._notifyOpening();
 
     prevBridge?.dispose();
-    if (_openGeneration != gen || _player.isDisposed) return;
-
-    await _resetBackendForOpen();
-    if (_openGeneration != gen || _player.isDisposed) return;
+    if (_openGeneration != gen || _player._isDisposed) return;
 
     try {
       await openTask(gen);
       if (_openGeneration != gen) return;
 
-      _player.notifyOpenCompleted();
+      _player._notifyOpenCompleted();
       if (!completer.isCompleted) {
         completer.complete();
       }
@@ -118,7 +100,7 @@ class PlayerAction {
       if (_openGeneration != gen) return;
 
       _disposeCustomBridge();
-      _player.notifyOpenFailed(error);
+      _player._notifyOpenFailed();
 
       if (!completer.isCompleted) {
         completer.future.ignore();
@@ -128,19 +110,9 @@ class PlayerAction {
     }
   }
 
-  Future<void> _resetBackendForOpen() async {
-    try {
-      await _player.backend.beginOpen();
-    } catch (_) {
-      try {
-        await _player.backend.stop();
-      } catch (_) {}
-    }
-  }
-
   /// Prepares an audio source for playback.
   Future<void> open(AudioSource source) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _currentSource = source;
     _disposeCustomBridge();
 
@@ -165,10 +137,10 @@ class PlayerAction {
     }
     final assetBytes = await _tryLoadFlutterAsset(str);
     if (assetBytes != null) {
-      await _player.backend.openMemory(assetBytes);
+      await _player._backend.openMemory(assetBytes);
       return;
     }
-    await _player.backend.openSource(str, headers: source.headers);
+    await _player._backend.openSource(str, headers: source.headers);
   }
 
   Future<Uint8List?> _tryLoadFlutterAsset(String uriString) async {
@@ -192,24 +164,18 @@ class PlayerAction {
     if (source.bytes.isEmpty) {
       throw const MiniaudioPlayerException('Cannot open empty byte buffer');
     }
-    await _player.backend.openMemory(source.bytes);
+    await _player._backend.openMemory(source.bytes);
   }
 
   Future<void> _openCustomSource(CustomAudioSource source) async {
-    final backend = _player.backend;
-    if (backend is! NativePlayerBackend) {
-      throw UnimplementedError(
-        'CustomAudioSource is only supported on native platforms',
-      );
-    }
-    final bridge = DartByteProviderBridge(backend, source.provider);
+    final bridge = DartByteProviderBridge(_player._backend, source.provider);
     _customBridge = bridge;
     await bridge.start();
   }
 
   /// Starts or resumes audio playback.
   Future<void> play() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _playRequested = true;
       final gen = _openGeneration;
@@ -244,42 +210,42 @@ class PlayerAction {
         _pendingSeekFuture = null;
       }
     }
-    await _player.backend.play();
+    await _player._backend.play();
   }
 
   /// Pauses audio playback at the current position.
   Future<void> pause() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _playRequested = false;
       return;
     }
-    await _player.backend.pause();
+    await _player._backend.pause();
   }
 
   /// Stops audio playback and resets the position to the beginning.
   Future<void> stop() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _pendingSeekFuture = null;
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _openGeneration++;
       _playRequested = false;
       _disposeCustomBridge();
       try {
-        await _player.backend.stop();
+        await _player._backend.stop();
       } catch (_) {}
       if (!_openingCompleter!.isCompleted) {
         _openingCompleter!.complete();
       }
-      _player.notifyStopped();
+      _player._notifyStopped();
       return;
     }
-    await _player.backend.stop();
+    await _player._backend.stop();
   }
 
   /// Seeks to the specified [position].
   Future<void> seek(Duration position) {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final targetPosition = position < Duration.zero ? Duration.zero : position;
     final thisSeekGen = ++_seekGeneration;
 
@@ -303,39 +269,39 @@ class PlayerAction {
   }
 
   Future<void> _executeSeek(Duration position) async {
-    await _player.backend.seek(position);
+    await _player._backend.seek(position);
   }
 
   /// Sets master volume as a linear amplitude scale (`0.0` to `2.0`).
   Future<void> setVolume(double volume) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFiniteNonNegative(volume, 'volume', 'Volume');
     final clamped = volume.clamp(0.0, 2.0);
-    _player.setVolumeSnapshot(clamped);
-    _player.backend.setVolume(clamped);
+    _player._volume.setSnapshot(clamped);
+    _player._backend.setVolume(clamped);
   }
 
   /// Sets playback speed/rate (`0.1` to `4.0`, where `1.0` is normal).
   Future<void> setRate(double rate) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFinitePositive(rate, 'rate', 'Rate');
     final clamped = rate.clamp(0.1, 4.0);
-    _player.setRateSnapshot(clamped);
-    _player.backend.setRate(clamped);
+    _player._rate.setSnapshot(clamped);
+    _player._backend.setRate(clamped);
   }
 
   /// Sets playback pitch scale (`0.5` to `2.0`, where `1.0` is original pitch).
   Future<void> setPitch(double pitch) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFinitePositive(pitch, 'pitch', 'Pitch');
     final clamped = pitch.clamp(0.5, 2.0);
-    _player.setPitchSnapshot(clamped);
-    _player.backend.setPitch(clamped);
+    _player._pitch.setSnapshot(clamped);
+    _player._backend.setPitch(clamped);
   }
 
   /// Dynamically updates the audio output period buffer size in frames.
   Future<void> setBufferSize(int bufferSize) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (bufferSize < 0) {
       throw ArgumentError.value(
         bufferSize,
@@ -343,37 +309,37 @@ class PlayerAction {
         'Buffer size must be non-negative',
       );
     }
-    _player.setBufferSizeSnapshot(bufferSize);
-    _player.backend.setBufferSize(bufferSize);
+    _player._bufferSize.setSnapshot(bufferSize);
+    _player._backend.setBufferSize(bufferSize);
   }
 
   /// Updates all 10 equalizer bands atomically from an [Equalizer] instance.
   Future<void> setEqualizer(Equalizer equalizer) async {
-    _player.ensureNotDisposed();
-    _player.setEqualizerSnapshot(equalizer);
-    _player.backend.setEqualizer(equalizer);
+    _player._ensureNotDisposed();
+    _player._equalizer.setSnapshot(equalizer);
+    _player._backend.setEqualizer(equalizer);
   }
 
   /// Sets the gain of an individual equalizer band by index (`0` to `9`).
   Future<void> setEqualizerBand(int bandIndex, double gainDb) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(gainDb, 'gainDb', 'Gain');
     final updated = _player.state.equalizer.withBand(bandIndex, gainDb);
-    _player.setEqualizerSnapshot(updated);
-    _player.backend.setEqualizerBand(bandIndex, gainDb);
+    _player._equalizer.setSnapshot(updated);
+    _player._backend.setEqualizerBand(bandIndex, gainDb);
   }
 
   /// Switches audio output routing to the specified [AudioDevice].
   Future<void> setDevice(AudioDevice device) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final deviceId = (device.isAuto || device.id == 'auto') ? '' : device.id;
-    await _player.backend.setDevice(deviceId);
+    await _player._backend.setDevice(deviceId);
   }
 
   /// Sets whether playback should automatically pause when the active audio output endpoint changes.
   void setPauseOnDeviceChange(bool enabled) {
-    _player.ensureNotDisposed();
-    _player.setPauseOnDeviceChangeInternal(enabled);
+    _player._ensureNotDisposed();
+    _player._setPauseOnDeviceChange(enabled);
   }
 
   /// Sets whether silence skipping is enabled, optionally configuring mode and thresholds.
@@ -400,22 +366,22 @@ class PlayerAction {
 
   /// Configures dynamic silence detection and skipping.
   Future<void> setSilenceConfig(SilenceSkipConfig config) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final valid = config.validated();
-    _player.setSilenceConfigSnapshot(valid);
-    _player.backend.setSilenceSkip(valid);
+    _player._silenceConfig.setSnapshot(valid);
+    _player._backend.setSilenceSkip(valid);
   }
 
   /// Enables or disables real-time audio visualizer DSP analysis.
   Future<void> setVisualizerEnabled(bool enabled) async {
-    _player.ensureNotDisposed();
-    _player.setManualVisualizerOverride(enabled);
+    _player._ensureNotDisposed();
+    _player._setManualVisualizerOverride(enabled);
   }
 
   /// Clears any manual visualizer override, reverting to reactive on-demand control.
   Future<void> clearVisualizerOverride() async {
-    _player.ensureNotDisposed();
-    _player.setManualVisualizerOverride(null);
+    _player._ensureNotDisposed();
+    _player._setManualVisualizerOverride(null);
   }
 
   /// Sets replay gain normalization for the track.
@@ -424,55 +390,55 @@ class PlayerAction {
     double? peak,
     bool preventClipping = true,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final cfg = ReplayGainConfig(
       enabled: true,
       gainDb: gainDb,
       peak: (peak != null && peak > 0.0) ? peak : 0.0,
       preventClipping: preventClipping,
     );
-    _player.setReplayGainSnapshot(cfg);
-    _player.backend.setReplayGain(cfg);
+    _player._replayGain.setSnapshot(cfg);
+    _player._backend.setReplayGain(cfg);
   }
 
   /// Clears replay gain normalization back to unity gain (`0.0 dB`).
   Future<void> clearReplayGain() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     const cfg = ReplayGainConfig(enabled: false);
-    _player.setReplayGainSnapshot(cfg);
-    _player.backend.setReplayGain(cfg);
+    _player._replayGain.setSnapshot(cfg);
+    _player._backend.setReplayGain(cfg);
   }
 
   /// Sets standalone manual preamp gain in decibels applied prior to the equalizer.
   Future<void> setPreamp(double preampDb) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(preampDb, 'preampDb', 'Preamp');
     final clamped = preampDb.clamp(-24.0, 24.0);
-    _player.setPreampSnapshot(clamped);
-    _player.backend.setPreamp(clamped);
+    _player._preamp.setSnapshot(clamped);
+    _player._backend.setPreamp(clamped);
   }
 
   /// Sets stereo channel balance (`-1.0` full left, `0.0` center, `+1.0` full right).
   Future<void> setBalance(double pan) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(pan, 'pan', 'Balance');
     final clamped = pan.clamp(-1.0, 1.0);
-    _player.setBalanceSnapshot(clamped);
-    _player.backend.setBalance(clamped);
+    _player._balance.setSnapshot(clamped);
+    _player._backend.setBalance(clamped);
   }
 
   /// Sets whether mono downmix is enabled for accessibility or single speakers.
   Future<void> setMono(bool enabled) async {
-    _player.ensureNotDisposed();
-    _player.setMonoSnapshot(enabled);
-    _player.backend.setMono(enabled);
+    _player._ensureNotDisposed();
+    _player._mono.setSnapshot(enabled);
+    _player._backend.setMono(enabled);
   }
 
   /// Configures headphone binaural crossfeed (Bauer bs2b).
   Future<void> setCrossfeed(CrossfeedMode mode) async {
-    _player.ensureNotDisposed();
-    _player.setCrossfeedSnapshot(mode);
-    _player.backend.setCrossfeed(mode);
+    _player._ensureNotDisposed();
+    _player._crossfeed.setSnapshot(mode);
+    _player._backend.setCrossfeed(mode);
   }
 
   /// Configures the stereo widener / spatializer.
@@ -480,16 +446,17 @@ class PlayerAction {
     required bool enabled,
     double width = 1.3,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(width, 'width', 'Spatializer width');
     final clampedWidth = width.clamp(1.0, 2.0);
-    _player.setSpatializerSnapshot(enabled: enabled, width: clampedWidth);
-    _player.backend.setSpatializer(enabled: enabled, width: clampedWidth);
+    _player._spatializerEnabled.setSnapshot(enabled);
+    _player._spatializerWidth.setSnapshot(clampedWidth);
+    _player._backend.setSpatializer(enabled: enabled, width: clampedWidth);
   }
 
   /// Enables or disables 3D spatial audio and Doppler shift processing.
   Future<void> setSpatialEnabled(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _player.spatial.setEnabled(enabled);
   }
 
@@ -500,7 +467,7 @@ class PlayerAction {
     Vector3? forward,
     Vector3? up,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _player.spatial.setListener(
       position: position,
       velocity: velocity,
@@ -523,7 +490,7 @@ class PlayerAction {
     double? outerGain,
     DistanceModel? distanceModel,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _player.spatial.setEmitter(
       position: position,
       velocity: velocity,
@@ -541,29 +508,29 @@ class PlayerAction {
 
   /// Sets the Doppler effect exaggeration/reduction factor (default 1.0, 0.0 disables Doppler).
   Future<void> setSpatialDopplerFactor(double factor) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _player.spatial.setDopplerFactor(factor);
   }
 
   /// Sets the medium speed of sound in m/s (default 343.3 m/s).
   Future<void> setSpatialSpeedOfSound(double speed) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _player.spatial.setSpeedOfSound(speed);
   }
 
   /// Enables or disables the True-Peak soft-knee output limiter protector.
   Future<void> setLimiter(bool enabled) async {
-    _player.ensureNotDisposed();
-    _player.setLimiterSnapshot(enabled);
-    _player.backend.setLimiterEnabled(enabled);
+    _player._ensureNotDisposed();
+    _player._limiterEnabled.setSnapshot(enabled);
+    _player._backend.setLimiterEnabled(enabled);
   }
 
   /// Configures studio-grade algorithmic reverberation.
   Future<void> setReverb(Reverb config) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final valid = config.validated();
-    _player.setReverbSnapshot(valid);
-    _player.backend.setReverb(
+    _player._reverb.setSnapshot(valid);
+    _player._backend.setReverb(
       enabled: valid.enabled,
       roomSize: valid.roomSize,
       damping: valid.damping,
@@ -571,21 +538,5 @@ class PlayerAction {
       wet: valid.wet,
       dry: valid.dry,
     );
-  }
-
-  /// Sets dynamic ICY livestream metadata received over network.
-  void setIcyMeta(Uint8List data) {
-    _player.ensureNotDisposed();
-    if (data.isEmpty) return;
-    _player.backend.setIcyMeta(data);
-    _player.checkMetaBytesUpdated();
-  }
-
-  /// Probes tail metadata (ID3v1, APEv2, MP4 moov, etc.) directly into buffer Tail.
-  void probeTail(Uint8List data, int tailOffset) {
-    _player.ensureNotDisposed();
-    if (data.isEmpty) return;
-    _player.backend.probeTail(data, tailOffset);
-    _player.checkMetaBytesUpdated();
   }
 }

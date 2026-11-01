@@ -51,6 +51,12 @@ impl RustVoicePool {
         })
     }
 
+    pub fn load_sound_file(&self, path: String) -> Result<RustSoundBufferInfo, String> {
+        let bytes = std::fs::read(&path)
+            .map_err(|e| format!("Failed to read sound file '{}': {}", path, e))?;
+        self.load_sound(bytes)
+    }
+
     #[flutter_rust_bridge::frb(sync)]
     pub fn unload_sound(&self, buffer_id: u64) -> bool {
         self.coordinator.unload_sound(buffer_id)

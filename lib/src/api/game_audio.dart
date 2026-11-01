@@ -1,10 +1,9 @@
-import 'dart:io';
 import 'dart:typed_data' hide Uint64List;
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Uint64List;
 
-import '../platform/native/native_backend.dart';
+import '../platform/platform_select.dart';
 import '../rust/api/game.dart';
 import '../rust/api/types.dart';
 import 'spatial.dart';
@@ -23,30 +22,14 @@ enum VoiceStealingPolicy {
   /// Steal the voice that is spatially farthest from the listener.
   farthest;
 
-  RustVoiceStealingPolicy toRust() {
-    switch (this) {
-      case VoiceStealingPolicy.lowestPriority:
-        return RustVoiceStealingPolicy.lowestPriority;
-      case VoiceStealingPolicy.oldest:
-        return RustVoiceStealingPolicy.oldest;
-      case VoiceStealingPolicy.quietest:
-        return RustVoiceStealingPolicy.quietest;
-      case VoiceStealingPolicy.farthest:
-        return RustVoiceStealingPolicy.farthest;
-    }
-  }
-
-  static VoiceStealingPolicy fromRust(RustVoiceStealingPolicy rust) {
-    switch (rust) {
-      case RustVoiceStealingPolicy.lowestPriority:
-        return VoiceStealingPolicy.lowestPriority;
-      case RustVoiceStealingPolicy.oldest:
-        return VoiceStealingPolicy.oldest;
-      case RustVoiceStealingPolicy.quietest:
-        return VoiceStealingPolicy.quietest;
-      case RustVoiceStealingPolicy.farthest:
-        return VoiceStealingPolicy.farthest;
-    }
+  RustVoiceStealingPolicy _toRust() {
+    return switch (this) {
+      VoiceStealingPolicy.lowestPriority =>
+        RustVoiceStealingPolicy.lowestPriority,
+      VoiceStealingPolicy.oldest => RustVoiceStealingPolicy.oldest,
+      VoiceStealingPolicy.quietest => RustVoiceStealingPolicy.quietest,
+      VoiceStealingPolicy.farthest => RustVoiceStealingPolicy.farthest,
+    };
   }
 }
 
@@ -75,7 +58,7 @@ class SoundBuffer {
     required this.frameCount,
   });
 
-  factory SoundBuffer.fromRust(RustSoundBufferInfo info) {
+  factory SoundBuffer._fromRust(RustSoundBufferInfo info) {
     return SoundBuffer(
       id: info.id,
       sampleRate: info.sampleRate,
@@ -114,7 +97,7 @@ class MiniaudioVoicePool {
     String? playbackDeviceId,
     int maxVoices = 64,
   }) async {
-    await NativePlayerBackend.ensureRustInitialized();
+    await ensureRustInitialized();
     final rust = RustVoicePool(
       sampleRate: sampleRate,
       channels: channels,
@@ -130,15 +113,14 @@ class MiniaudioVoicePool {
   Future<SoundBuffer> loadSound(Uint8List bytes) async {
     _ensureNotDisposed();
     final info = await _rust.loadSound(bytes: bytes);
-    return SoundBuffer.fromRust(info);
+    return SoundBuffer._fromRust(info);
   }
 
   /// Loads an audio file from the file system into a RAM-resident [SoundBuffer].
   Future<SoundBuffer> loadSoundFromFile(String filePath) async {
     _ensureNotDisposed();
-    final file = File(filePath);
-    final bytes = await file.readAsBytes();
-    return loadSound(bytes);
+    final info = await _rust.loadSoundFile(path: filePath);
+    return SoundBuffer._fromRust(info);
   }
 
   /// Unloads a pre-decoded buffer from RAM.
@@ -204,7 +186,8 @@ class MiniaudioVoicePool {
     bool looping = false,
   }) {
     _ensureNotDisposed();
-    final bufIds = Uint64List.fromList(buffers.map((b) => b.id.toInt()).toList());
+    final bufIds =
+        Uint64List.fromList(buffers.map((b) => b.id.toInt()).toList());
     final vols = volumes ?? List.filled(buffers.length, 1.0);
     final res = _rust.playStems(
       bufferIds: bufIds,
@@ -260,7 +243,7 @@ class MiniaudioVoicePool {
   /// Sets the voice stealing eviction policy.
   void setPolicy(VoiceStealingPolicy policy) {
     _ensureNotDisposed();
-    _rust.setPolicy(policy: policy.toRust());
+    _rust.setPolicy(policy: policy._toRust());
   }
 
   /// Updates the 3D spatial listener (player / camera) position, velocity, and orientation.

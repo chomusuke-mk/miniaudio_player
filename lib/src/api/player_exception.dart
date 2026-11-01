@@ -12,13 +12,14 @@ class MiniaudioPlayerException implements Exception {
   factory MiniaudioPlayerException.fromRustError(
     Object error, {
     String prefix = 'Operation failed',
+    int defaultErrorCode = MapResult.errorGeneric,
   }) {
     if (error is MiniaudioPlayerException) return error;
     final raw = error.toString();
     final match = _rustErrorCodeRegex.firstMatch(raw);
     final code = match != null
         ? int.parse(match.group(1)!)
-        : MapResult.errorGeneric;
+        : defaultErrorCode;
     return MiniaudioPlayerException(
       '$prefix (code $code): $raw',
       errorCode: code,

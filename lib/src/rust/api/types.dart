@@ -8,7 +8,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
@@ -894,56 +895,6 @@ class RustSpatialListener {
           velocity == other.velocity &&
           forward == other.forward &&
           up == other.up;
-}
-
-class RustStreamStatus {
-  final BigInt bufferCapacity;
-  final BigInt bufferFill;
-  final double fillPercentage;
-  final bool isBuffering;
-  final bool isEof;
-  final PlatformInt64 readCursorByte;
-  final PlatformInt64 rangeStart;
-  final PlatformInt64 rangeEnd;
-
-  const RustStreamStatus({
-    required this.bufferCapacity,
-    required this.bufferFill,
-    required this.fillPercentage,
-    required this.isBuffering,
-    required this.isEof,
-    required this.readCursorByte,
-    required this.rangeStart,
-    required this.rangeEnd,
-  });
-
-  static Future<RustStreamStatus> default_() =>
-      RustLib.instance.api.crateApiTypesRustStreamStatusDefault();
-
-  @override
-  int get hashCode =>
-      bufferCapacity.hashCode ^
-      bufferFill.hashCode ^
-      fillPercentage.hashCode ^
-      isBuffering.hashCode ^
-      isEof.hashCode ^
-      readCursorByte.hashCode ^
-      rangeStart.hashCode ^
-      rangeEnd.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RustStreamStatus &&
-          runtimeType == other.runtimeType &&
-          bufferCapacity == other.bufferCapacity &&
-          bufferFill == other.bufferFill &&
-          fillPercentage == other.fillPercentage &&
-          isBuffering == other.isBuffering &&
-          isEof == other.isEof &&
-          readCursorByte == other.readCursorByte &&
-          rangeStart == other.rangeStart &&
-          rangeEnd == other.rangeEnd;
 }
 
 class RustVector3 {

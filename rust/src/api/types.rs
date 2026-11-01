@@ -64,33 +64,6 @@ impl From<&crate::sync::telemetry::DeviceInfo> for RustAudioDevice {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RustStreamStatus {
-    pub buffer_capacity: usize,
-    pub buffer_fill: usize,
-    pub fill_percentage: f32,
-    pub is_buffering: bool,
-    pub is_eof: bool,
-    pub read_cursor_byte: i64,
-    pub range_start: i64,
-    pub range_end: i64,
-}
-
-impl From<crate::core::player::MiniaudioStreamStatus> for RustStreamStatus {
-    fn from(status: crate::core::player::MiniaudioStreamStatus) -> Self {
-        Self {
-            buffer_capacity: status.buffer_capacity,
-            buffer_fill: status.buffer_fill,
-            fill_percentage: status.fill_percentage,
-            is_buffering: status.is_buffering != 0,
-            is_eof: status.is_eof != 0,
-            read_cursor_byte: status.read_cursor_byte,
-            range_start: status.range_start,
-            range_end: status.range_end,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct RustBufferedRange {
     pub start_ms: i64,
     pub end_ms: i64,

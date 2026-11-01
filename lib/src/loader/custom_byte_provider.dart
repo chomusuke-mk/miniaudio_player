@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import '../platform/native/native_backend.dart';
+import '../platform/platform_backend.dart';
 import '../rust/api/types.dart';
 
 /// Contract for asynchronous custom byte streams in Dart (DRM, encrypted streams, tokenized storage).
@@ -27,7 +27,7 @@ abstract class CustomByteProvider {
 
 /// Bridges a Dart [CustomByteProvider] to the Rust `CustomDartByteSource` over FRB.
 class DartByteProviderBridge {
-  final NativePlayerBackend _backend;
+  final PlayerBackend _backend;
   final CustomByteProvider _provider;
   StreamSubscription<RustDartReadRequest>? _subscription;
 
@@ -35,29 +35,7 @@ class DartByteProviderBridge {
 
   /// Starts the custom byte bridge by reading initial bytes and opening the stream in Rust.
   Future<void> start() async {
-    _subscription = _backend.onDartReadRequest.listen((req) async {
-      if (req.streamId == _provider.streamId) {
-        try {
-          final chunk = await _provider.readBytes(
-            req.offset.toInt(),
-            req.length,
-          );
-          final isEof = chunk.length < req.length;
-          _backend.supplyCustomBytes(
-            streamId: _provider.streamId,
-            requestId: req.requestId.toInt(),
-            data: chunk,
-            isEof: isEof,
-          );
-        } catch (e) {
-          _backend.notifyCustomError(
-            streamId: _provider.streamId,
-            requestId: req.requestId.toInt(),
-            errorMessage: e.toString(),
-          );
-        }
-      }
-    });
+    _subscription = _backend.onDartReadRequest.listen(_handleReadRequest);
 
     final initial = await _provider.readInitialBytes();
     await _backend.openCustomStream(
@@ -66,6 +44,29 @@ class DartByteProviderBridge {
       isSeekable: _provider.isSeekable,
       initialBytes: initial,
     );
+  }
+
+  Future<void> _handleReadRequest(RustDartReadRequest req) async {
+    if (req.streamId != _provider.streamId) return;
+    try {
+      final chunk = await _provider.readBytes(
+        req.offset.toInt(),
+        req.length,
+      );
+      final isEof = chunk.length < req.length;
+      _backend.supplyCustomBytes(
+        streamId: _provider.streamId,
+        requestId: req.requestId.toInt(),
+        data: chunk,
+        isEof: isEof,
+      );
+    } catch (e) {
+      _backend.notifyCustomError(
+        streamId: _provider.streamId,
+        requestId: req.requestId.toInt(),
+        errorMessage: e.toString(),
+      );
+    }
   }
 
   /// Cancels active subscriptions and closes the underlying provider.

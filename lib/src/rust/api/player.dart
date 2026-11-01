@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `c_buf_to_string`, `map_telemetry_event`
+// These functions are ignored because they are not marked as `pub`: `build_analysis_config`, `check_map_result`, `enumerate_ffi_devices`, `map_telemetry_event`
 
 Future<List<RustAudioDevice>> getAudioDevices() =>
     RustLib.instance.api.crateApiPlayerGetAudioDevices();
@@ -20,9 +20,6 @@ Future<List<RustAudioDevice>> getCaptureDevices() =>
 
 List<RustAudioDevice> getCaptureDevicesSync() =>
     RustLib.instance.api.crateApiPlayerGetCaptureDevicesSync();
-
-Future<RustAudioDevice> getDefaultDevice() =>
-    RustLib.instance.api.crateApiPlayerGetDefaultDevice();
 
 Future<RustAudioAnalysisResult> analyzeAudioFile(
         {required String path,
@@ -68,16 +65,8 @@ Future<RustAudioAnalysisResult> analyzeAudioMemory(
         waveformPoints: waveformPoints,
         targetLufs: targetLufs);
 
-String saludar({required String nombre}) =>
-    RustLib.instance.api.crateApiPlayerSaludar(nombre: nombre);
-
-Future<int> calculoPesado({required int a, required int b}) =>
-    RustLib.instance.api.crateApiPlayerCalculoPesado(a: a, b: b);
-
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustPlayer>>
 abstract class RustPlayer implements RustOpaqueInterface {
-  Future<void> beginOpen();
-
   void clearReplayGain();
 
   @override
@@ -107,15 +96,11 @@ abstract class RustPlayer implements RustOpaqueInterface {
 
   RustPlayerStatus getPlayerStatus();
 
-  BigInt getRawHandle();
-
   int getSampleRate();
 
   RustSilenceConfig getSilenceConfig();
 
   PlatformInt64 getSilenceSavedMs();
-
-  RustStreamStatus getStreamStatus();
 
   RustVisualizerData getVisualizerData();
 
@@ -143,35 +128,20 @@ abstract class RustPlayer implements RustOpaqueInterface {
       required BigInt requestId,
       required String errorMessage});
 
-  void notifyOpenError({required int errorCode});
-
   Future<void> openCustomStream(
       {required int streamId,
       BigInt? totalSize,
       required bool isSeekable,
       required List<int> initialBytes});
 
-  Future<void> openFile({required String path});
-
   Future<void> openMemory({required List<int> data});
 
   Future<void> openSource(
       {required String source, List<RustHttpHeader>? headers});
 
-  Future<int> openStreamEx(
-      {required List<int> initialBytes,
-      Uint8List? tailBytes,
-      required PlatformInt64 totalBytes,
-      required bool isLive,
-      required BigInt bufferCapacityBytes,
-      required int encodingFormat});
-
   Future<void> pause();
 
   Future<void> play();
-
-  void probeTail(
-      {required List<int> tailBytes, required PlatformInt64 tailOffset});
 
   Future<void> seek({required PlatformInt64 positionMs});
 
@@ -186,8 +156,6 @@ abstract class RustPlayer implements RustOpaqueInterface {
   void setEqualizer({required RustEqualizerParams params});
 
   void setEqualizerBand({required int band, required double gainDb});
-
-  void setIcyMeta({required List<int> data});
 
   void setLimiter({required bool enabled});
 
@@ -222,26 +190,11 @@ abstract class RustPlayer implements RustOpaqueInterface {
 
   void setSpatializer({required bool enabled, required double width});
 
-  void setStreamTail(
-      {required List<int> tailBytes, required PlatformInt64 tailOffset});
-
   void setVisualizerEnabled({required bool enabled});
 
   void setVolume({required double volume});
 
   Future<void> stop();
-
-  int streamEnd();
-
-  int streamFeed({required List<int> data});
-
-  int streamFlush({required PlatformInt64 newStreamOffset});
-
-  PlatformInt64 streamGetSeekByte({required PlatformInt64 positionMs});
-
-  int streamSeek(
-      {required PlatformInt64 positionMs,
-      required PlatformInt64 newStreamOffset});
 
   Stream<RustPlayerEvent> subscribeEvents();
 

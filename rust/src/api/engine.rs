@@ -3,7 +3,9 @@
 use std::ffi::CString;
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use crate::core::engine::{
@@ -334,24 +336,31 @@ impl EngineMonitorWorker {
         }
     }
 
-    fn run(&mut self) {
+    fn tick(&mut self) -> bool {
         let coord_arc = self.coordinator.clone();
+        let Ok(mut coord) = coord_arc.lock() else {
+            return false;
+        };
+        if !coord.thread_running.load(Ordering::Relaxed) {
+            return false;
+        }
+
+        self.check_crossfade_completion(&mut coord);
+        let mut snap = self.capture_active_deck_snapshot(&coord);
+        self.evaluate_auto_transition(&mut coord, &mut snap);
+        self.dispatch_telemetry_diff(&snap);
+        self.check_infinite_mix_lookahead(&coord, &snap);
+        self.dispatch_visualizer(&coord);
+        true
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run(&mut self) {
         loop {
             thread::sleep(Duration::from_millis(30));
-
-            let Ok(mut coord) = coord_arc.lock() else {
-                break;
-            };
-            if !coord.thread_running.load(Ordering::Relaxed) {
+            if !self.tick() {
                 break;
             }
-
-            self.check_crossfade_completion(&mut coord);
-            let mut snap = self.capture_active_deck_snapshot(&coord);
-            self.evaluate_auto_transition(&mut coord, &mut snap);
-            self.dispatch_telemetry_diff(&snap);
-            self.check_infinite_mix_lookahead(&coord, &snap);
-            self.dispatch_visualizer(&coord);
         }
     }
 }
@@ -405,9 +414,16 @@ impl RustEngine {
             Arc::new(Mutex::new(None));
 
         let mut monitor = EngineMonitorWorker::new(coord_arc.clone(), event_sink.clone());
-        let _ = thread::Builder::new()
-            .name("miniaudio-engine-monitor".to_string())
-            .spawn(move || monitor.run());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = thread::Builder::new()
+                .name("miniaudio-engine-monitor".to_string())
+                .spawn(move || monitor.run());
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::bridge::ffi::wasm_register_monitor_task(Box::new(move || monitor.tick()));
+        }
 
         Ok(RustEngine {
             coordinator: coord_arc,

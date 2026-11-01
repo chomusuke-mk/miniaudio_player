@@ -4,7 +4,6 @@ library;
 
 export 'src/api/audio_device.dart';
 export 'src/api/miniaudio_player.dart';
-export 'src/api/player_action.dart';
 export 'src/api/player_exception.dart' show MiniaudioPlayerException;
 export 'src/api/player_state.dart';
 export 'src/api/player_stream.dart';
@@ -23,7 +22,6 @@ export 'src/api/crossfade_config.dart';
 export 'src/api/engine_item.dart';
 export 'src/api/engine_state.dart';
 export 'src/api/engine_stream.dart';
-export 'src/api/engine_action.dart';
 export 'src/api/need_more_tracks_event.dart';
 export 'src/api/recording.dart';
 export 'src/api/miniaudio_engine.dart';

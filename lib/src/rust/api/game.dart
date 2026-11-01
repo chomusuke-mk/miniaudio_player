@@ -13,6 +13,8 @@ abstract class RustVoicePool implements RustOpaqueInterface {
 
   Future<RustSoundBufferInfo> loadSound({required List<int> bytes});
 
+  Future<RustSoundBufferInfo> loadSoundFile({required String path});
+
   factory RustVoicePool(
           {required int sampleRate,
           required int channels,

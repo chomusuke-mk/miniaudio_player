@@ -3,7 +3,10 @@
 //! Strictly separates byte storage and sliding-window backpressure from format sniffing.
 
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::sync::MonotonicInstant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferState {
@@ -436,6 +439,9 @@ impl TripartiteBuffer {
         out: &mut [u8],
         timeout: Option<Duration>,
     ) -> Result<usize, BufferError> {
+        #[cfg(target_arch = "wasm32")]
+        let remaining = timeout.unwrap_or(Duration::from_millis(2000));
+        #[cfg(not(target_arch = "wasm32"))]
         let mut remaining = timeout.unwrap_or(Duration::from_millis(2000));
 
         loop {
@@ -448,18 +454,28 @@ impl TripartiteBuffer {
                     }
                     b.state = BufferState::Buffering;
 
-                    let start_wait = Instant::now();
-                    let (guard, wait_res) = self.data_ready_cond.wait_timeout(b, remaining).unwrap();
-                    if guard.should_abort || guard.state == BufferState::Aborted {
-                        return Err(BufferError::Aborted);
-                    }
-                    drop(guard);
-
-                    let elapsed = start_wait.elapsed();
-                    if wait_res.timed_out() || elapsed >= remaining {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = remaining;
                         return Err(BufferError::WouldBlock);
                     }
-                    remaining = remaining.saturating_sub(elapsed);
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let start_wait = MonotonicInstant::now();
+                        let (guard, wait_res) =
+                            self.data_ready_cond.wait_timeout(b, remaining).unwrap();
+                        if guard.should_abort || guard.state == BufferState::Aborted {
+                            return Err(BufferError::Aborted);
+                        }
+                        drop(guard);
+
+                        let elapsed = start_wait.elapsed();
+                        if wait_res.timed_out() || elapsed >= remaining {
+                            return Err(BufferError::WouldBlock);
+                        }
+                        remaining = remaining.saturating_sub(elapsed);
+                    }
                 }
                 Err(e) => return Err(e),
             }

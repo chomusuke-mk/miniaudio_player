@@ -8,7 +8,7 @@ use crate::bridge::ffi::{
     map_device_enumerate_capture_devices, map_device_enumerate_devices, map_device_free_devices,
     MapDeviceInfo, MiniaudioBufferedRange,
 };
-use crate::core::player::{MiniaudioPlayerStatus, MiniaudioStreamStatus, PlayerCoordinator};
+use crate::core::player::{MiniaudioPlayerStatus, PlayerCoordinator};
 use crate::dsp::analysis::{
     analyze_file, analyze_media_source, AudioAnalysisConfig, MAP_ANALYSIS_FLAG_REPLAY_GAIN,
     MAP_ANALYSIS_FLAG_WAVEFORM,
@@ -18,7 +18,7 @@ use crate::dsp::silence::SilenceConfig;
 use crate::dsp::visualizer::VisualizerData;
 use crate::frb_generated::StreamSink;
 use crate::sync::telemetry::{TelemetryDispatcher, TelemetryEvent};
-use crate::{STATE_COMPLETED, STATE_ERROR, STATE_PLAYING};
+use crate::{STATE_COMPLETED, STATE_PLAYING};
 
 use super::types::*;
 
@@ -85,7 +85,6 @@ fn map_telemetry_event(event: &TelemetryEvent) -> Option<RustPlayerEvent> {
 pub struct RustPlayer {
     inner: Arc<Mutex<Box<PlayerCoordinator>>>,
     telemetry: Arc<TelemetryDispatcher>,
-    raw_ptr: usize,
     event_sink: Arc<Mutex<Option<StreamSink<RustPlayerEvent>>>>,
     custom_handle: Arc<Mutex<Option<crate::buffer::CustomByteSourceHandle>>>,
 }
@@ -114,14 +113,11 @@ impl RustPlayer {
         )
         .map_err(|e| format!("Failed to create player coordinator: error {}", e))?;
 
-        let raw_ref: &PlayerCoordinator = &boxed;
-        let raw_ptr = raw_ref as *const PlayerCoordinator as usize;
         let telemetry = boxed.telemetry.clone();
 
         Ok(RustPlayer {
             inner: Arc::new(Mutex::new(boxed)),
             telemetry,
-            raw_ptr,
             event_sink: Arc::new(Mutex::new(None)),
             custom_handle: Arc::new(Mutex::new(None)),
         })
@@ -137,11 +133,6 @@ impl RustPlayer {
                 }
             })));
         Ok(())
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn get_raw_handle(&self) -> usize {
-        self.raw_ptr
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -185,29 +176,6 @@ impl RustPlayer {
     }
 
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_icy_meta(&self, data: Vec<u8>) {
-        self.inner.lock().unwrap().set_icy_meta(&data);
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn probe_tail(&self, tail_bytes: Vec<u8>, tail_offset: i64) -> Result<(), String> {
-        let res = self
-            .inner
-            .lock()
-            .unwrap()
-            .probe_tail(&tail_bytes, tail_offset);
-        check_map_result(res, "probe_tail")
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn notify_open_error(&self, error_code: i32) {
-        let lock = self.inner.lock().unwrap();
-        lock.state.store(STATE_ERROR, Ordering::Relaxed);
-        lock.telemetry.post(TelemetryEvent::State(STATE_ERROR));
-        lock.telemetry.post(TelemetryEvent::Error(error_code));
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
     pub fn get_pinned_head_size(&self) -> i64 {
         self.inner.lock().unwrap().stream_get_pinned_head_size()
     }
@@ -229,11 +197,6 @@ impl RustPlayer {
         }
     }
 
-    pub fn begin_open(&self) -> Result<(), String> {
-        let res = self.inner.lock().unwrap().begin_open();
-        check_map_result(res, "begin_open")
-    }
-
     pub fn open_source(
         &self,
         source: String,
@@ -247,33 +210,9 @@ impl RustPlayer {
         check_map_result(res, "open_source")
     }
 
-    pub fn open_file(&self, path: String) -> Result<(), String> {
-        let res = self.inner.lock().unwrap().open_file(&path);
-        check_map_result(res, "open_file")
-    }
-
     pub fn open_memory(&self, data: Vec<u8>) -> Result<(), String> {
         let res = self.inner.lock().unwrap().open_memory(&data, false);
         check_map_result(res, "open_memory")
-    }
-
-    pub fn open_stream_ex(
-        &self,
-        initial_bytes: Vec<u8>,
-        tail_bytes: Option<Vec<u8>>,
-        total_bytes: i64,
-        is_live: bool,
-        buffer_capacity_bytes: usize,
-        encoding_format: i32,
-    ) -> i32 {
-        self.inner.lock().unwrap().open_stream_ex(
-            &initial_bytes,
-            tail_bytes.as_deref(),
-            total_bytes,
-            is_live,
-            buffer_capacity_bytes,
-            encoding_format,
-        )
     }
 
     pub fn open_custom_stream(
@@ -341,59 +280,12 @@ impl RustPlayer {
     }
 
     #[flutter_rust_bridge::frb(sync)]
-    pub fn stream_feed(&self, data: Vec<u8>) -> i32 {
-        self.inner.lock().unwrap().stream_feed(&data)
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn stream_flush(&self, new_stream_offset: i64) -> i32 {
-        self.inner.lock().unwrap().stream_flush(new_stream_offset)
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn stream_seek(&self, position_ms: i64, new_stream_offset: i64) -> i32 {
-        self.inner
-            .lock()
-            .unwrap()
-            .stream_seek(position_ms, new_stream_offset)
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn stream_end(&self) -> i32 {
-        self.inner.lock().unwrap().stream_end()
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn get_stream_status(&self) -> Result<RustStreamStatus, String> {
-        let lock = self.inner.lock().unwrap();
-        let mut status = MiniaudioStreamStatus::default();
-        let res = lock.stream_get_status(&mut status);
-        check_map_result(res, "stream_get_status")?;
-        Ok(RustStreamStatus::from(status))
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
     pub fn get_buffered_range(&self) -> Result<RustBufferedRange, String> {
         let lock = self.inner.lock().unwrap();
         let mut range = MiniaudioBufferedRange::default();
         let res = lock.get_buffered_range(&mut range);
         check_map_result(res, "get_buffered_range")?;
         Ok(RustBufferedRange::from(range))
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn stream_get_seek_byte(&self, position_ms: i64) -> i64 {
-        self.inner.lock().unwrap().stream_get_seek_byte(position_ms)
-    }
-
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn set_stream_tail(&self, tail_bytes: Vec<u8>, tail_offset: i64) -> Result<(), String> {
-        let res = self
-            .inner
-            .lock()
-            .unwrap()
-            .probe_tail(&tail_bytes, tail_offset);
-        check_map_result(res, "set_stream_tail")
     }
 
     pub fn play(&self) -> Result<(), String> {
@@ -750,23 +642,6 @@ pub fn get_capture_devices_sync() -> Vec<RustAudioDevice> {
     get_capture_devices()
 }
 
-pub fn get_default_device() -> RustAudioDevice {
-    let devices = get_audio_devices();
-    if let Some(def) = devices.iter().find(|d| d.is_default) {
-        def.clone()
-    } else if let Some(first) = devices.first() {
-        first.clone()
-    } else {
-        RustAudioDevice {
-            id: "auto".to_string(),
-            effective_id: "auto".to_string(),
-            name: "Default Playback Device".to_string(),
-            is_default: true,
-            is_auto: true,
-        }
-    }
-}
-
 fn build_analysis_config(
     replay_gain: bool,
     waveform: bool,
@@ -846,13 +721,4 @@ pub fn analyze_audio_memory(
 #[flutter_rust_bridge::frb(init)]
 pub fn init_player_system() {
     flutter_rust_bridge::setup_default_user_utils();
-}
-
-#[flutter_rust_bridge::frb(sync)]
-pub fn saludar(nombre: String) -> String {
-    format!("¡Hola desde Rust, {}!", nombre)
-}
-
-pub fn calculo_pesado(a: i32, b: i32) -> i32 {
-    a + b
 }

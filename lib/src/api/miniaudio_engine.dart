@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../equalizer.dart';
-import '../platform/native/native_backend.dart';
+import '../platform/platform_select.dart';
 import '../reverb.dart';
 import '../rust/api/engine.dart' as rust_engine;
 import '../rust/api/types.dart' as rust_types;
@@ -11,7 +11,6 @@ import 'audio_source.dart';
 import 'buffered_range.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
-import 'engine_action.dart';
 import 'engine_item.dart';
 import 'engine_state.dart';
 import 'engine_stream.dart';
@@ -24,6 +23,8 @@ import 'silence_skip_config.dart';
 import 'spatial.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
+
+part 'engine_action.dart';
 
 /// Encapsulates a synchronous engine state value paired with a broadcast [StreamController].
 class _EngineProperty<V> {
@@ -67,7 +68,7 @@ class MiniaudioEngine<T> {
   bool? _manualVisualizerOverride;
   bool _hasVisualizerListeners = false;
 
-  // Reactive state & stream properties
+  // Private reactive state & stream properties
   final _phase = _EngineProperty<EnginePhase>(EnginePhase.idle);
   final _position = _EngineProperty<Duration>(Duration.zero);
   final _duration = _EngineProperty<Duration>(Duration.zero);
@@ -233,7 +234,7 @@ class MiniaudioEngine<T> {
       _duckingConfig,
     ];
 
-    action = EngineAction<T>(this);
+    action = EngineAction<T>._(this);
 
     spatial = SpatialController(
       setEnabled: (enabled) {
@@ -514,7 +515,7 @@ class MiniaudioEngine<T> {
 
   Future<void> _initRustEngine() async {
     if (_rustEngine != null || _isDisposed) return;
-    await NativePlayerBackend.ensureRustInitialized();
+    await ensureRustInitialized();
     if (_rustEngine != null || _isDisposed) return;
     try {
       final devId = (_audioDevice.value.id.isNotEmpty &&
@@ -713,9 +714,7 @@ class MiniaudioEngine<T> {
     return item.toRustItem(effectiveId);
   }
 
-  // --- Internal Methods Invoked by EngineAction ---
-
-  Future<void> openQueueInternal(
+  Future<void> _openQueue(
     List<EngineItem<T>> items, {
     int? startIndex,
     bool shuffle = false,
@@ -735,6 +734,11 @@ class MiniaudioEngine<T> {
     _queue.addAll(items);
     _queueProp.emit(List.unmodifiable(_queue));
 
+    if (shuffle != _shuffle.value) {
+      _shuffle.emit(shuffle);
+      engine?.setShuffle(enabled: shuffle);
+    }
+
     await engine?.setQueue(
       items: rustItems,
       startIndex: items.isNotEmpty ? BigInt.from(effectiveStart) : null,
@@ -747,59 +751,59 @@ class MiniaudioEngine<T> {
     }
   }
 
-  Future<void> playInternal() async {
+  Future<void> _play() async {
     final engine = await _getEngine();
     engine?.play();
   }
 
-  Future<void> pauseInternal() async {
+  Future<void> _pause() async {
     final engine = await _getEngine();
     engine?.pause();
   }
 
-  Future<void> togglePlayPauseInternal() async {
+  Future<void> _togglePlayPause() async {
     if (_playing.value) {
-      await pauseInternal();
+      await _pause();
     } else {
-      await playInternal();
+      await _play();
     }
   }
 
-  Future<void> stopInternal() async {
+  Future<void> _stop() async {
     final engine = await _getEngine();
     engine?.stop();
   }
 
-  Future<void> seekInternal(Duration position) async {
+  Future<void> _seek(Duration position) async {
     final engine = await _getEngine();
     engine?.seek(positionMs: position.inMilliseconds);
   }
 
-  Future<void> nextInternal() async {
+  Future<void> _next() async {
     final engine = await _getEngine();
     await engine?.next();
     _updateReplayGainForCurrentItem();
   }
 
-  Future<void> previousInternal() async {
+  Future<void> _previous() async {
     final engine = await _getEngine();
     await engine?.previous();
     _updateReplayGainForCurrentItem();
   }
 
-  Future<void> skipToIndexInternal(int index) async {
+  Future<void> _skipToIndex(int index) async {
     final engine = await _getEngine();
     await engine?.skipToIndex(index: BigInt.from(index));
     _updateReplayGainForCurrentItem();
   }
 
-  Future<void> insertNextInternal(EngineItem<T> item) async {
+  Future<void> _insertNext(EngineItem<T> item) async {
     final rustItem = await _resolveRustEngineItem(item);
     final engine = await _getEngine();
     await engine?.insertNext(item: rustItem);
   }
 
-  Future<void> appendInternal(List<EngineItem<T>> items) async {
+  Future<void> _append(List<EngineItem<T>> items) async {
     final rustItems = <rust_types.RustEngineItem>[];
     for (final item in items) {
       rustItems.add(await _resolveRustEngineItem(item));
@@ -808,17 +812,17 @@ class MiniaudioEngine<T> {
     await engine?.append(items: rustItems);
   }
 
-  Future<void> removeAtInternal(int index) async {
+  Future<void> _removeAt(int index) async {
     final engine = await _getEngine();
     await engine?.removeAt(index: BigInt.from(index));
   }
 
-  Future<void> reorderInternal(int from, int to) async {
+  Future<void> _reorder(int from, int to) async {
     final engine = await _getEngine();
     await engine?.reorder(from: BigInt.from(from), to: BigInt.from(to));
   }
 
-  Future<void> clearQueueInternal({bool keepCurrent = true}) async {
+  Future<void> _clearQueue({bool keepCurrent = true}) async {
     final engine = await _getEngine();
     await engine?.clearQueue(keepCurrent: keepCurrent);
     if (!keepCurrent) {
@@ -826,29 +830,29 @@ class MiniaudioEngine<T> {
     }
   }
 
-  Future<void> setShuffleInternal(bool enabled) async {
+  Future<void> _setShuffle(bool enabled) async {
     _shuffle.emit(enabled);
     _rustEngine?.setShuffle(enabled: enabled);
   }
 
-  Future<bool> toggleShuffleInternal() async {
+  Future<bool> _toggleShuffle() async {
     final next = !_shuffle.value;
-    await setShuffleInternal(next);
+    await _setShuffle(next);
     return next;
   }
 
-  Future<void> setLoopModeInternal(LoopMode mode) async {
+  Future<void> _setLoopMode(LoopMode mode) async {
     _loopMode.emit(mode);
     _rustEngine?.setLoopMode(mode: mode.index);
   }
 
-  Future<LoopMode> cycleLoopModeInternal() async {
+  Future<LoopMode> _cycleLoopMode() async {
     final next = _loopMode.value.next();
-    await setLoopModeInternal(next);
+    await _setLoopMode(next);
     return next;
   }
 
-  Future<void> setCrossfadeConfigInternal(CrossfadeConfig config) async {
+  Future<void> _setCrossfadeConfig(CrossfadeConfig config) async {
     _crossfadeConfig.emit(config);
     _rustEngine?.setCrossfadeConfig(
       config: rust_types.RustCrossfadeConfig(
@@ -859,53 +863,50 @@ class MiniaudioEngine<T> {
     );
   }
 
-  Future<void> setVolumeNormalizationInternal(bool enabled) async {
+  Future<void> _setVolumeNormalization(bool enabled) async {
     _volumeNormalization.emit(enabled);
     _updateReplayGainForCurrentItem();
   }
 
-  Future<void> setDefaultReplayGainInternal(double gainDb) async {
+  Future<void> _setDefaultReplayGain(double gainDb) async {
     _defaultReplayGain.emit(gainDb);
     _updateReplayGainForCurrentItem();
   }
 
-  Future<void> setForcedReplayGainInternal(double? gainDb) async {
+  Future<void> _setForcedReplayGain(double? gainDb) async {
     _forcedReplayGain.emit(gainDb);
     _updateReplayGainForCurrentItem();
   }
 
-  Future<void> setInfiniteMixInternal(bool enabled) async {
+  Future<void> _setInfiniteMix(bool enabled) async {
     _infiniteMix.emit(enabled);
     final engine = await _getEngine();
     engine?.setInfiniteMix(enabled: enabled);
   }
 
-  Future<void> setVolumeInternal(double volume) async {
+  Future<void> _setVolume(double volume) async {
     final clamped = volume.clamp(0.0, 2.0);
     _volume.emit(clamped);
     _rustEngine?.setVolume(volume: clamped);
   }
 
-  Future<void> setRateInternal(double rate) async {
+  Future<void> _setRate(double rate) async {
     final clamped = rate.clamp(0.1, 4.0);
     _rate.emit(clamped);
     _rustEngine?.setRate(rate: clamped);
   }
 
-  Future<void> setPitchInternal(double pitch) async {
+  Future<void> _setPitch(double pitch) async {
     final clamped = pitch.clamp(0.5, 2.0);
     _pitch.emit(clamped);
     _rustEngine?.setPitch(pitch: clamped);
   }
 
-  Future<void> setBufferSizeInternal(int bufferSize) async {
+  Future<void> _setBufferSize(int bufferSize) async {
     _bufferSize.emit(bufferSize);
   }
 
-  void setIcyMetaInternal(Uint8List data) {}
-  void probeTailInternal(Uint8List data, int tailOffset) {}
-
-  Future<void> setEqualizerInternal(Equalizer eq) async {
+  Future<void> _setEqualizer(Equalizer eq) async {
     _equalizer.emit(eq);
     _rustEngine?.setEqualizer(
       params: rust_types.RustEqualizerParams(
@@ -915,19 +916,19 @@ class MiniaudioEngine<T> {
     );
   }
 
-  Future<void> setDeviceInternal(AudioDevice device) async {
+  Future<void> _setDevice(AudioDevice device) async {
     _audioDevice.emit(device);
     if (device.id.isNotEmpty && device.id != 'auto') {
       _rustEngine?.setDevice(deviceId: device.id);
     }
   }
 
-  void setPauseOnDeviceChangeInternal(bool enabled) {
+  void _setPauseOnDeviceChange(bool enabled) {
     if (_pauseOnDeviceChange.value == enabled) return;
     _pauseOnDeviceChange.emit(enabled);
   }
 
-  Future<void> setSkipSilenceInternal(
+  Future<void> _setSkipSilence(
     bool enabled, {
     SilenceSkipMode mode = SilenceSkipMode.continuous,
     double? thresholdDb,
@@ -941,21 +942,21 @@ class MiniaudioEngine<T> {
       minSilenceDuration: minSilenceDuration ?? cur.minSilenceDuration,
       padding: padding ?? cur.padding,
     ).validated();
-    await setSilenceConfigInternal(nextConfig);
+    await _setSilenceConfig(nextConfig);
   }
 
-  Future<void> setSilenceConfigInternal(SilenceSkipConfig config) async {
+  Future<void> _setSilenceConfig(SilenceSkipConfig config) async {
     final valid = config.validated();
     _skipSilence.emit(valid.mode != SilenceSkipMode.disabled);
     _silenceConfig.emit(valid);
   }
 
-  Future<void> setVisualizerOverrideInternal(bool? enabled) async {
+  Future<void> _setVisualizerOverride(bool? enabled) async {
     _manualVisualizerOverride = enabled;
     _updateVisualizerState();
   }
 
-  Future<void> setReplayGainInternal({
+  Future<void> _setReplayGain({
     required double gainDb,
     double? peak,
     bool preventClipping = true,
@@ -981,7 +982,7 @@ class MiniaudioEngine<T> {
     );
   }
 
-  Future<void> clearReplayGainInternal() async {
+  Future<void> _clearReplayGain() async {
     _forcedReplayGain.emit(null);
     _defaultReplayGain.emit(0.0);
     _replayGain.emit(const ReplayGainConfig());
@@ -989,29 +990,29 @@ class MiniaudioEngine<T> {
     _rustEngine?.setReplayGain(gainDb: 0.0, peak: 1.0, preventClipping: true);
   }
 
-  Future<void> setPreampInternal(double preampDb) async {
+  Future<void> _setPreamp(double preampDb) async {
     final clamped = preampDb.clamp(-24.0, 24.0);
     _preamp.emit(clamped);
     _rustEngine?.setPreamp(preampDb: clamped);
   }
 
-  Future<void> setBalanceInternal(double pan) async {
+  Future<void> _setBalance(double pan) async {
     final clamped = pan.clamp(-1.0, 1.0);
     _balance.emit(clamped);
     _rustEngine?.setBalance(balance: clamped);
   }
 
-  Future<void> setMonoInternal(bool enabled) async {
+  Future<void> _setMono(bool enabled) async {
     _mono.emit(enabled);
     _rustEngine?.setMono(enabled: enabled);
   }
 
-  Future<void> setCrossfeedInternal(CrossfeedMode mode) async {
+  Future<void> _setCrossfeed(CrossfeedMode mode) async {
     _crossfeed.emit(mode);
     _rustEngine?.setCrossfeed(mode: mode.index);
   }
 
-  Future<void> setSpatializerInternal({
+  Future<void> _setSpatializer({
     required bool enabled,
     double width = 1.3,
   }) async {
@@ -1021,12 +1022,12 @@ class MiniaudioEngine<T> {
     _rustEngine?.setSpatializer(enabled: enabled, width: clampedWidth);
   }
 
-  Future<void> setLimiterInternal(bool enabled) async {
+  Future<void> _setLimiter(bool enabled) async {
     _limiterEnabled.emit(enabled);
     _rustEngine?.setLimiter(enabled: enabled);
   }
 
-  Future<void> setReverbInternal(Reverb config) async {
+  Future<void> _setReverb(Reverb config) async {
     final valid = config.validated();
     _reverb.emit(valid);
     _rustEngine?.setReverb(
@@ -1042,11 +1043,7 @@ class MiniaudioEngine<T> {
     );
   }
 
-  // --------------------------------------------------------------------------
-  // Decoupled Sinks, Recording & Cue Pre-listening
-  // --------------------------------------------------------------------------
-
-  Future<void> startRecordingInternal(
+  Future<void> _startRecording(
     String path, {
     WavFormat format = WavFormat.pcm16,
   }) async {
@@ -1055,17 +1052,17 @@ class MiniaudioEngine<T> {
     _isRecording.emit(true);
   }
 
-  Future<int> stopRecordingInternal() async {
+  Future<int> _stopRecording() async {
     final engine = await _getEngine();
     final bytes = engine?.stopRecording() ?? BigInt.zero;
     _isRecording.emit(false);
     return bytes.toInt();
   }
 
-  bool isRecordingInternal() =>
+  bool _checkIsRecording() =>
       _rustEngine?.isRecording() ?? _isRecording.value;
 
-  Future<int> offlineBounceInternal(
+  Future<int> _offlineBounce(
     String path, {
     WavFormat format = WavFormat.pcm16,
     required Duration duration,
@@ -1080,7 +1077,7 @@ class MiniaudioEngine<T> {
     return bytes.toInt();
   }
 
-  Future<void> enableMicrophoneInternal({
+  Future<void> _enableMicrophone({
     String? captureDeviceId,
     bool autoDucking = true,
     double duckingDb = -14.0,
@@ -1103,20 +1100,20 @@ class MiniaudioEngine<T> {
     );
   }
 
-  Future<void> disableMicrophoneInternal() async {
+  Future<void> _disableMicrophone() async {
     final engine = await _getEngine();
     engine?.disableMicrophone();
     _isMicrophoneEnabled.emit(false);
   }
 
-  Future<void> setMicVolumeInternal(double volume) async {
+  Future<void> _setMicVolume(double volume) async {
     final v = volume.clamp(0.0, 2.0);
     _micVolume.emit(v);
     final engine = await _getEngine();
     engine?.setMicVolume(volume: v);
   }
 
-  Future<void> configureCueOutputInternal({
+  Future<void> _configureCueOutput({
     String? deviceId,
     double volume = 1.0,
     CueMode mode = CueMode.deckA,
@@ -1138,7 +1135,7 @@ class MiniaudioEngine<T> {
     );
   }
 
-  Future<void> setCueVolumeInternal(double volume) async {
+  Future<void> _setCueVolume(double volume) async {
     final v = volume.clamp(0.0, 2.0);
     final cur = _cueConfig.value;
     _cueConfig.emit(
@@ -1153,7 +1150,7 @@ class MiniaudioEngine<T> {
     engine?.setCueVolume(volume: v);
   }
 
-  Future<void> setCueModeInternal(CueMode mode) async {
+  Future<void> _setCueMode(CueMode mode) async {
     final cur = _cueConfig.value;
     _cueConfig.emit(
       CueConfig(
@@ -1167,7 +1164,7 @@ class MiniaudioEngine<T> {
     engine?.setCueMode(mode: mode.value);
   }
 
-  Future<void> disableCueOutputInternal() async {
+  Future<void> _disableCueOutput() async {
     final engine = await _getEngine();
     engine?.disableCueOutput();
     final cur = _cueConfig.value;
@@ -1181,23 +1178,23 @@ class MiniaudioEngine<T> {
     );
   }
 
-  Future<void> configureOutputsInternal({
+  Future<void> _configureOutputs({
     AudioDevice? masterDevice,
     AudioDevice? cueDevice,
     String? recordPath,
     WavFormat format = WavFormat.pcm16,
   }) async {
     if (masterDevice != null) {
-      await setDeviceInternal(masterDevice);
+      await _setDevice(masterDevice);
     }
     if (cueDevice != null) {
-      await configureCueOutputInternal(
+      await _configureCueOutput(
         deviceId:
             cueDevice.id == 'auto' || cueDevice.id.isEmpty ? null : cueDevice.id,
       );
     }
     if (recordPath != null) {
-      await startRecordingInternal(recordPath, format: format);
+      await _startRecording(recordPath, format: format);
     }
   }
 

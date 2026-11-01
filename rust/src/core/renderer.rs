@@ -154,7 +154,7 @@ impl AudioRenderer {
     }
 
     #[inline]
-    fn acknowledge_flush_if_needed(&mut self) {
+    pub fn acknowledge_flush_if_needed(&mut self) {
         let current_flush = self.flush_generation.load(Ordering::Acquire);
         if current_flush != self.local_flush_gen {
             self.local_flush_gen = current_flush;

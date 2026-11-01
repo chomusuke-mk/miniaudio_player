@@ -5,8 +5,10 @@ use std::fs::File;
 use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+#[cfg(not(target_arch = "wasm32"))]
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use crate::bridge::ffi::*;
 use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, TripartiteBuffer};
@@ -24,8 +26,8 @@ use crate::dsp::DspChain;
 use crate::sync::ring_buffer::{AudioProducer, AudioRingBuffer};
 use crate::sync::seqlock::CachePaddedSeqlock;
 use crate::sync::telemetry::{
-    DeviceInfo as TelemetryDeviceInfo, EventCallback, EventType, MapEventData, SpatializerData,
-    TelemetryDispatcher,
+    DeviceInfo as TelemetryDeviceInfo, EventCallback, EventType, MapEventData, MonotonicInstant,
+    SpatializerData, TelemetryDispatcher,
 };
 
 pub const STATE_STOPPED: i32 = 0;
@@ -139,6 +141,7 @@ fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
     let lower_url = url.to_lowercase();
     let lower_ct = content_type.unwrap_or("").to_lowercase();
@@ -173,6 +176,7 @@ fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) -> Vec<u8> {
     let mut initial_data = Vec::with_capacity(131072);
     let mut read_buf = [0u8; 32768];
@@ -200,6 +204,7 @@ fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) ->
     initial_data
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn spawn_network_streamer_thread(
     mut reader: Box<dyn Read + Send>,
     trip: TripartiteBuffer,
@@ -387,6 +392,7 @@ impl PcmAdaptationPipeline {
 /// seek synchronization, PCM adaptation, and ring-buffer feeding.
 struct DecoderWorker {
     running: Arc<AtomicBool>,
+    #[allow(dead_code)]
     wake: Arc<(Mutex<bool>, Condvar)>,
     state: Arc<AtomicI32>,
     engine_arc: Arc<Mutex<Option<SymphoniaEngine>>>,
@@ -411,22 +417,28 @@ struct DecoderWorker {
     visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     visualizer_enabled: Arc<AtomicBool>,
     completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
+    #[allow(dead_code)]
     flush_generation: Arc<AtomicU64>,
+    #[allow(dead_code)]
     flush_acknowledged: Arc<AtomicU64>,
     stream_reinit_needed: Arc<AtomicBool>,
 
     pipeline: PcmAdaptationPipeline,
     frame_buf: Vec<f32>,
     last_tele_pos: i64,
-    last_vis_instant: Instant,
+    last_vis_instant: MonotonicInstant,
 }
 
 impl DecoderWorker {
+    #[cfg(not(target_arch = "wasm32"))]
     fn wait_for_wake(&self, timeout_ms: u64) {
         let (lock, cvar) = &*self.wake;
         let guard = lock.lock().unwrap();
         let _ = cvar.wait_timeout(guard, Duration::from_millis(timeout_ms));
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn wait_for_wake(&self, _timeout_ms: u64) {}
 
     fn available_producer_slots(&self) -> usize {
         self.producer_arc
@@ -529,9 +541,10 @@ impl DecoderWorker {
             return true;
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
             let cur_flush = self.flush_generation.load(Ordering::Acquire);
-            let start_wait = Instant::now();
+            let start_wait = MonotonicInstant::now();
             while self.flush_acknowledged.load(Ordering::Acquire) < cur_flush
                 && start_wait.elapsed() < Duration::from_millis(15)
             {
@@ -646,7 +659,7 @@ impl DecoderWorker {
         if self.visualizer_enabled.load(Ordering::Relaxed)
             && self.last_vis_instant.elapsed() >= Duration::from_millis(33)
         {
-            self.last_vis_instant = Instant::now();
+            self.last_vis_instant = MonotonicInstant::now();
             let vis = self.visualizer_seqlock.read();
             self.tele
                 .post_event(EventType::Visualizer, MapEventData { visualizer: vis });
@@ -694,6 +707,7 @@ impl DecoderWorker {
 
             if !is_buf_eof {
                 self.transition_to_buffering();
+                #[cfg(not(target_arch = "wasm32"))]
                 thread::sleep(Duration::from_millis(15));
                 return;
             }
@@ -710,6 +724,7 @@ impl DecoderWorker {
         }
 
         self.decoder_eof_arc.store(true, Ordering::Relaxed);
+        #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_millis(20));
     }
 
@@ -741,6 +756,7 @@ impl DecoderWorker {
                             {
                                 self.transition_to_buffering();
                             }
+                            #[cfg(not(target_arch = "wasm32"))]
                             thread::sleep(Duration::from_millis(10));
                             return;
                         } else {
@@ -792,6 +808,7 @@ impl DecoderWorker {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn run(&mut self) {
         while self.running.load(Ordering::Relaxed) {
             self.poll_renderer_flags();
@@ -826,6 +843,46 @@ impl DecoderWorker {
 
             self.decode_and_process_step();
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn step_quantum(&mut self) -> bool {
+        if !self.running.load(Ordering::Relaxed) {
+            return false;
+        }
+
+        self.poll_renderer_flags();
+
+        if self.handle_pending_seek() {
+            return true;
+        }
+
+        let cur_state = self.state.load(Ordering::Relaxed);
+        if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
+            return true;
+        }
+
+        if !self.ensure_stream_initialized() {
+            return true;
+        }
+
+        self.dispatch_periodic_telemetry();
+        self.check_buffering_recovery();
+
+        for _ in 0..8 {
+            if !self.pipeline.drain_pending_to(&self.producer_arc) {
+                break;
+            }
+            if self.available_producer_slots() < 2048 {
+                break;
+            }
+            if self.decoder_eof_arc.load(Ordering::Relaxed) {
+                break;
+            }
+            self.decode_and_process_step();
+        }
+
+        true
     }
 }
 
@@ -1231,13 +1288,21 @@ impl PlayerCoordinator {
             pipeline: PcmAdaptationPipeline::new(cur_sr, cur_ch, cur_dev_sr, cur_dev_ch),
             frame_buf: Vec::new(),
             last_tele_pos: -1,
-            last_vis_instant: Instant::now(),
+            last_vis_instant: MonotonicInstant::now(),
         };
 
-        self.decoder_thread = thread::Builder::new()
-            .name("map-decoder".to_string())
-            .spawn(move || worker.run())
-            .ok();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.decoder_thread = thread::Builder::new()
+                .name("map-decoder".to_string())
+                .spawn(move || worker.run())
+                .ok();
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::bridge::ffi::wasm_register_decoder_task(Box::new(move || worker.step_quantum()));
+        }
     }
 
     fn post_current_device_telemetry(&self) {
@@ -1336,6 +1401,16 @@ impl PlayerCoordinator {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn open_network(
+        &mut self,
+        _url: &str,
+        _headers: Option<&[crate::api::types::RustHttpHeader]>,
+    ) -> i32 {
+        self.mark_open_error(MAP_ERROR_UNSUPPORTED)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_network(
         &mut self,
         url: &str,
@@ -1667,6 +1742,12 @@ impl PlayerCoordinator {
             self.position_ms.store(0, Ordering::SeqCst);
             self.position_frames.store(0, Ordering::SeqCst);
             self.flush_generation.fetch_add(1, Ordering::SeqCst);
+            #[cfg(target_arch = "wasm32")]
+            if !self.renderer_ptr.is_null() {
+                unsafe {
+                    (*self.renderer_ptr).acknowledge_flush_if_needed();
+                }
+            }
         }
 
         self.send_dsp_command(DspCommand::SetSampleRate(
@@ -1678,6 +1759,23 @@ impl PlayerCoordinator {
             .post_event(EventType::Duration, MapEventData { duration_ms: dur });
         self.telemetry
             .post_event(EventType::Bitrate, MapEventData { bitrate });
+        let mut br = MiniaudioBufferedRange::default();
+        if self.get_buffered_range(&mut br) == MAP_SUCCESS {
+            self.telemetry.post_event(
+                EventType::BufferedRange,
+                MapEventData {
+                    buffered_range: crate::sync::telemetry::BufferedRange {
+                        start_ms: br.start_ms,
+                        end_ms: br.end_ms,
+                        duration_ms: br.duration_ms,
+                        fill_percentage: br.fill_percentage,
+                        stream_percentage: br.stream_percentage,
+                        is_buffering: br.is_buffering,
+                        is_eof: br.is_eof,
+                    },
+                },
+            );
+        }
         self.telemetry.post_event(
             EventType::State,
             MapEventData {
@@ -1717,6 +1815,12 @@ impl PlayerCoordinator {
             trip.flush(new_stream_offset as u64);
             self.decoder_eof.store(false, Ordering::Relaxed);
             self.flush_generation.fetch_add(1, Ordering::Release);
+        #[cfg(target_arch = "wasm32")]
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                (*self.renderer_ptr).acknowledge_flush_if_needed();
+            }
+        }
             if trip.is_live() {
                 self.stream_reinit_needed.store(true, Ordering::Release);
             }
@@ -1743,6 +1847,12 @@ impl PlayerCoordinator {
         );
         self.seek_request_ms.store(-1, Ordering::SeqCst);
         self.flush_generation.fetch_add(1, Ordering::Release);
+        #[cfg(target_arch = "wasm32")]
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                (*self.renderer_ptr).acknowledge_flush_if_needed();
+            }
+        }
 
         self.telemetry
             .post_event(EventType::Position, MapEventData { position_ms: dur });
@@ -1785,6 +1895,12 @@ impl PlayerCoordinator {
             );
         }
         self.flush_generation.fetch_add(1, Ordering::Release);
+        #[cfg(target_arch = "wasm32")]
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                (*self.renderer_ptr).acknowledge_flush_if_needed();
+            }
+        }
 
         self.position_ms.store(position_ms, Ordering::Relaxed);
         let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
@@ -1859,9 +1975,9 @@ impl PlayerCoordinator {
     }
 
     pub fn get_buffered_range(&self, out_range: &mut MiniaudioBufferedRange) -> i32 {
+        let duration = self.duration_ms.load(Ordering::Relaxed);
         if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
             let r = trip.get_range();
-            let duration = self.duration_ms.load(Ordering::Relaxed);
             out_range.start_ms = 0;
             out_range.duration_ms = duration;
             out_range.fill_percentage = r.fill_percentage * 100.0;
@@ -1877,7 +1993,14 @@ impl PlayerCoordinator {
             out_range.is_eof = r.is_eof;
             MAP_SUCCESS
         } else {
-            MAP_ERROR_INVALID_STATE
+            out_range.start_ms = 0;
+            out_range.end_ms = duration.max(0);
+            out_range.duration_ms = duration.max(0);
+            out_range.fill_percentage = if duration > 0 { 100.0 } else { 0.0 };
+            out_range.stream_percentage = if duration > 0 { 100.0 } else { 0.0 };
+            out_range.is_buffering = 0;
+            out_range.is_eof = 1;
+            MAP_SUCCESS
         }
     }
 
@@ -2037,6 +2160,13 @@ impl PlayerCoordinator {
             return MAP_ERROR_INVALID_STATE;
         }
 
+        #[cfg(target_arch = "wasm32")]
+        if !self.device_ctx.is_null() {
+            unsafe {
+                map_device_stop(self.device_ctx);
+            }
+        }
+
         self.state.store(STATE_PAUSED, Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
@@ -2079,6 +2209,12 @@ impl PlayerCoordinator {
             );
         }
         self.flush_generation.fetch_add(1, Ordering::Release);
+        #[cfg(target_arch = "wasm32")]
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                (*self.renderer_ptr).acknowledge_flush_if_needed();
+            }
+        }
 
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
         self.position_ms.store(0, Ordering::Relaxed);

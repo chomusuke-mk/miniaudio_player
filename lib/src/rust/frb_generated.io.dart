@@ -277,9 +277,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustSpatialListener dco_decode_rust_spatial_listener(dynamic raw);
 
   @protected
-  RustStreamStatus dco_decode_rust_stream_status(dynamic raw);
-
-  @protected
   RustVector3 dco_decode_rust_vector_3(dynamic raw);
 
   @protected
@@ -578,9 +575,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustSpatialListener sse_decode_rust_spatial_listener(
       SseDeserializer deserializer);
-
-  @protected
-  RustStreamStatus sse_decode_rust_stream_status(SseDeserializer deserializer);
 
   @protected
   RustVector3 sse_decode_rust_vector_3(SseDeserializer deserializer);
@@ -899,10 +893,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_spatial_listener(
       RustSpatialListener self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_rust_stream_status(
-      RustStreamStatus self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_vector_3(RustVector3 self, SseSerializer serializer);

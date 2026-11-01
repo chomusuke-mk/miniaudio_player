@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../equalizer.dart';
+import '../loader/custom_byte_provider.dart';
 import '../platform/platform_backend.dart';
 import '../platform/platform_select.dart';
 import '../reverb.dart';
@@ -10,7 +11,6 @@ import 'audio_device.dart';
 import 'audio_source.dart';
 import 'buffered_range.dart';
 import 'dsp_config.dart';
-import 'player_action.dart';
 import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
@@ -18,6 +18,8 @@ import 'silence_skip_config.dart';
 import 'spatial.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
+
+part 'player_action.dart';
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
 const List<String> miniAudioPlayerSupportedExtensions = [
@@ -44,16 +46,35 @@ const List<String> miniAudioPlayerSupportedExtensions = [
   'caf',
 ];
 
-/// Logging severity levels for miniaudio and internal player engine.
+/// Log verbosity levels for native miniaudio and sonic engine diagnostics.
 enum MiniaudioLogLevel {
+  /// Disables all native logging output (`0`).
   none(0),
+
+  /// Alias for [none] (`0`).
+  off(0),
+
+  /// Logs only unrecoverable or critical native errors (`1`).
   error(1),
+
+  /// Logs errors and non-fatal warnings (`2`).
   warning(2),
+
+  /// Alias for [warning] (`2`).
+  warn(2),
+
+  /// Logs high-level lifecycle events (device init, open, seek, stop) (`3`).
   info(3),
+
+  /// Logs verbose frame-level, buffer, and streaming diagnostics (`4`).
   debug(4),
+
+  /// Logs maximum trace-level diagnostics (`5`).
   verbose(5);
 
+  /// Integer representation passed to native C/WASM engine.
   final int value;
+
   const MiniaudioLogLevel(this.value);
 
   static MiniaudioLogLevel fromValue(int value) {
@@ -70,40 +91,42 @@ typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
 /// Optional resolver for loading Flutter bundle assets.
 typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
 
-/// Global configuration container for [MiniaudioPlayer].
+/// Global configuration parameters for all [MiniaudioPlayer] instances.
 class MiniaudioPlayerGlobalConfig {
-  /// Optional global loader for resolving Flutter assets.
+  /// Optional custom loader callback for resolving Flutter assets (e.g. `rootBundle.load`).
   static AssetBytesLoader? assetLoader;
 
-  /// Default period buffer size in frames applied when instantiating new players.
+  /// Default output period buffer size in frames (`0` = native default, `~2048` frames).
   int defaultBufferSize;
 
-  /// Global log level controlling native and engine log output.
+  /// Verbosity level for native C/WASM diagnostic logs (default: [MiniaudioLogLevel.none]).
   MiniaudioLogLevel logLevel;
 
-  /// Default audio output device applied when instantiating new players.
+  /// Default audio output device (`AudioDevice.auto` = system default).
   AudioDevice defaultAudioDevice;
 
   /// Resolver function to format the user-friendly [AudioDevice.displayName]
   /// when an audio device is set to automatic/system default routing.
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
 
-  /// Default ahead buffer duration for local files (default: 30s).
+  /// Target duration of audio to buffer ahead for local files (default: `30s`).
   Duration bufferLocalDuration;
 
-  /// Default ahead buffer duration for progressive network streams (default: 30s).
+  /// Target duration of audio to buffer ahead for HTTP/HTTPS progressive streams (default: `30s`).
   Duration bufferNetworkDuration;
 
-  /// Default ahead buffer duration for continuous live streams (default: 15s).
+  /// Target duration of audio to buffer ahead for live streams (default: `15s`).
   Duration bufferLiveStreamDuration;
 
-  /// Default behind buffer duration retained in circular RAM cache for local files (default: 10s).
+  /// Duration of already-played audio retained in the circular buffer for instant
+  /// backward seeking on local files (default: `10s`).
   Duration bufferBehindLocalDuration;
 
-  /// Default behind buffer duration retained in circular RAM cache for network streams (default: 15s).
+  /// Duration of already-played audio retained in the circular buffer for instant
+  /// backward seeking on network streams (default: `15s`).
   Duration bufferBehindNetworkDuration;
 
-  /// Default behind buffer duration retained in circular RAM cache for live streams (default: 5s).
+  /// Duration of already-played audio retained in the circular buffer for live streams (default: `5s`).
   Duration bufferBehindLiveStreamDuration;
 
   MiniaudioPlayerGlobalConfig({
@@ -126,41 +149,35 @@ class MiniaudioPlayerGlobalConfig {
   }
 }
 
-/// Encapsulates a synchronous state snapshot paired with a deduplicated broadcast [StreamController].
+/// Encapsulates a synchronous state value paired with a broadcast [StreamController].
 class _ReactiveProperty<T> {
-  T _value;
-  T _lastEmitted;
+  T value;
   final StreamController<T> controller;
 
   _ReactiveProperty(
-    T initialValue, {
+    this.value, {
     void Function()? onListen,
     void Function()? onCancel,
-  })  : _value = initialValue,
-        _lastEmitted = initialValue,
-        controller = StreamController<T>.broadcast(
+  }) : controller = StreamController<T>.broadcast(
           onListen: onListen,
           onCancel: onCancel,
         );
 
-  T get value => _value;
-
   void setSnapshot(T nextValue) {
-    _value = nextValue;
+    value = nextValue;
   }
 
   void emitIfChanged(T nextValue) {
-    _value = nextValue;
-    if (_lastEmitted == nextValue) return;
-    _lastEmitted = nextValue;
-    if (!controller.isClosed) {
-      controller.add(nextValue);
+    if (value != nextValue) {
+      value = nextValue;
+      if (!controller.isClosed) {
+        controller.add(nextValue);
+      }
     }
   }
 
   void forceEmit(T nextValue) {
-    _value = nextValue;
-    _lastEmitted = nextValue;
+    value = nextValue;
     if (!controller.isClosed) {
       controller.add(nextValue);
     }
@@ -169,13 +186,128 @@ class _ReactiveProperty<T> {
   Future<void> close() => controller.close();
 }
 
-/// Cross-platform, ultra-low-resource audio player for Flutter and Web.
-class MiniaudioPlayer implements PlayerBackendListener {
-  static final MiniaudioPlayerGlobalConfig _globalConfig =
+/// Private telemetry listener routing backend callbacks into [MiniaudioPlayer] state.
+final class _PlayerTelemetryListener implements PlayerBackendListener {
+  final MiniaudioPlayer _player;
+
+  const _PlayerTelemetryListener(this._player);
+
+  @override
+  void onState(PlaybackState newState) => _player._onState(newState);
+
+  @override
+  void onPosition(Duration position) => _player._onPosition(position);
+
+  @override
+  void onDuration(Duration duration) => _player._onDuration(duration);
+
+  @override
+  void onPlaying(bool isPlaying) => _player._onPlaying(isPlaying);
+
+  @override
+  void onBuffering(bool isBuffering) => _player._onBuffering(isBuffering);
+
+  @override
+  void onCompleted(bool isCompleted) => _player._onCompleted(isCompleted);
+
+  @override
+  void onVolume(double volume) => _player._volume.emitIfChanged(volume);
+
+  @override
+  void onRate(double rate) => _player._rate.emitIfChanged(rate);
+
+  @override
+  void onPitch(double pitch) => _player._pitch.emitIfChanged(pitch);
+
+  @override
+  void onBitrate(int bitrate) => _player._audioBitrate.emitIfChanged(bitrate);
+
+  @override
+  void onBufferSize(int bufferSize) =>
+      _player._bufferSize.emitIfChanged(bufferSize);
+
+  @override
+  void onSilenceSaved(Duration duration) =>
+      _player._silenceSavedDuration.emitIfChanged(duration);
+
+  @override
+  void onSilenceConfig(SilenceSkipConfig config) =>
+      _player._onSilenceConfig(config);
+
+  @override
+  void onBufferedRange(BufferedRange range) =>
+      _player._onBufferedRange(range);
+
+  @override
+  void onVisualizer(VisualizerData data) => _player._onVisualizer(data);
+
+  @override
+  void onVisualizerEnabled(bool enabled) =>
+      _player._visualizerEnabled.emitIfChanged(enabled);
+
+  @override
+  void onDevice(AudioDevice device) =>
+      _player._audioDevice.emitIfChanged(device);
+
+  @override
+  void onTrackMetadata(AudioTrackMetadata? metadata) =>
+      _player._trackMetadata.emitIfChanged(metadata);
+
+  @override
+  void onEqualizer(Equalizer equalizer) =>
+      _player._equalizer.emitIfChanged(equalizer);
+
+  @override
+  void onPreamp(double preampDb) => _player._preamp.emitIfChanged(preampDb);
+
+  @override
+  void onReplayGain(ReplayGainConfig config) =>
+      _player._replayGain.emitIfChanged(config);
+
+  @override
+  void onBalance(double balance) => _player._balance.emitIfChanged(balance);
+
+  @override
+  void onMono(bool enabled) => _player._mono.emitIfChanged(enabled);
+
+  @override
+  void onCrossfeed(CrossfeedMode mode) =>
+      _player._crossfeed.emitIfChanged(mode);
+
+  @override
+  void onSpatializer({required bool enabled, required double width}) {
+    _player._spatializerEnabled.emitIfChanged(enabled);
+    _player._spatializerWidth.emitIfChanged(width);
+  }
+
+  @override
+  void onReverb(Reverb reverb) => _player._reverb.emitIfChanged(reverb);
+
+  @override
+  void onLimiter(bool enabled) =>
+      _player._limiterEnabled.emitIfChanged(enabled);
+
+  @override
+  void onError(String message, int errorCode) =>
+      _player._playbackState.emitIfChanged(PlaybackState.error);
+}
+
+/// Ultra-low-resource cross-platform audio player using Rust Symphonia and miniaudio.
+///
+/// Features an event-driven architecture organized into 3 clean namespaces:
+/// - `player.action` : Asynchronous methods to control playback, seeking, volume, rate, pitch, and DSP.
+/// - `player.stream` : Reactive broadcast streams for UI bindings.
+/// - `player.state`  : Synchronous getters for instant state inspection.
+class MiniaudioPlayer {
+  static MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
-  /// Currently active global player configuration.
+  /// Current global configuration applied to newly created players.
   static MiniaudioPlayerGlobalConfig get globalConfig => _globalConfig;
+
+  /// Reactive broadcast stream of available audio output devices on the system.
+  static Stream<List<AudioDevice>> get audioDevicesStream =>
+      getPlatformService().getAudioDevicesStream();
 
   /// Broadcast stream of system audio output device list changes.
   static Stream<List<AudioDevice>> getAudioDevicesStream() =>
@@ -243,23 +375,64 @@ class MiniaudioPlayer implements PlayerBackendListener {
     return _globalConfig;
   }
 
-  /// Enumerates all available playback audio devices on the system.
+  /// Alias for [config].
+  static MiniaudioPlayerGlobalConfig configure({
+    int? defaultBufferSize,
+    MiniaudioLogLevel? logLevel,
+    AudioDevice? defaultAudioDevice,
+    DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
+    Duration? bufferLocalDuration,
+    Duration? bufferNetworkDuration,
+    Duration? bufferLiveStreamDuration,
+    Duration? bufferBehindLocalDuration,
+    Duration? bufferBehindNetworkDuration,
+    Duration? bufferBehindLiveStreamDuration,
+    AssetBytesLoader? assetLoader,
+  }) =>
+      config(
+        defaultBufferSize: defaultBufferSize,
+        logLevel: logLevel,
+        defaultAudioDevice: defaultAudioDevice,
+        defaultDeviceDisplayNameResolver: defaultDeviceDisplayNameResolver,
+        bufferLocalDuration: bufferLocalDuration,
+        bufferNetworkDuration: bufferNetworkDuration,
+        bufferLiveStreamDuration: bufferLiveStreamDuration,
+        bufferBehindLocalDuration: bufferBehindLocalDuration,
+        bufferBehindNetworkDuration: bufferBehindNetworkDuration,
+        bufferBehindLiveStreamDuration: bufferBehindLiveStreamDuration,
+        assetLoader: assetLoader,
+      );
+
+  /// Resets global configuration to factory defaults.
+  static void resetGlobalConfig() {
+    _globalConfig = MiniaudioPlayerGlobalConfig();
+    MiniaudioPlayerGlobalConfig.assetLoader = null;
+  }
+
+  /// Registers a custom asset loader function (e.g. `(key) async => (await rootBundle.load(key)).buffer.asUint8List()`).
+  static void registerAssetLoader(
+    Future<Uint8List> Function(String assetKey) loader,
+  ) {
+    MiniaudioPlayerGlobalConfig.assetLoader = loader;
+  }
+
+  /// Enumerates all available audio playback devices on the system.
   static Future<List<AudioDevice>> getAudioDevices() =>
       getPlatformService().getAudioDevices();
 
-  /// Synchronous enumeration of all available playback audio devices on the system.
+  /// Synchronously enumerates all available audio playback devices on the system.
   static List<AudioDevice> getAudioDevicesSync() =>
       getPlatformService().getAudioDevicesSync();
 
-  /// Enumerates all available capture (microphone / line-in) audio devices on the system.
+  /// Enumerates all available audio capture (microphone / line-in) devices on the system.
   static Future<List<AudioDevice>> getCaptureDevices() =>
       getPlatformService().getCaptureDevices();
 
-  /// Synchronous enumeration of all available capture (microphone / line-in) audio devices on the system.
+  /// Synchronously enumerates all available audio capture devices on the system.
   static List<AudioDevice> getCaptureDevicesSync() =>
       getPlatformService().getCaptureDevicesSync();
 
-  /// Analyzes an audio file in a single, high-performance decoding pass.
+  /// Performs a fast, offline acoustic scan of an audio file on a background isolate.
   static Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {
     bool replayGain = true,
@@ -275,7 +448,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
         targetLufs: targetLufs,
       );
 
-  /// Synchronously analyzes an audio file in a single decoding pass.
+  /// Performs a synchronous offline acoustic scan of an audio file on the calling thread.
   static AudioAnalysisResult analyzeAudioSync(
     String filePath, {
     bool replayGain = true,
@@ -291,7 +464,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
         targetLufs: targetLufs,
       );
 
-  /// Analyzes audio directly from memory bytes.
+  /// Performs an offline acoustic scan of an audio buffer in memory.
   static Future<AudioAnalysisResult> analyzeAudioMemory(
     Uint8List bytes, {
     bool replayGain = true,
@@ -309,10 +482,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
 
   late final PlayerBackend _backend;
 
-  /// Internal platform backend instance.
-  PlayerBackend get backend => _backend;
-
-  // Reactive state properties
+  // Private reactive state properties
   final _position = _ReactiveProperty<Duration>(Duration.zero);
   final _duration = _ReactiveProperty<Duration>(Duration.zero);
   final _playing = _ReactiveProperty<bool>(false);
@@ -440,8 +610,8 @@ class MiniaudioPlayer implements PlayerBackendListener {
       } catch (_) {}
     }
 
-    _backend = createPlayerBackend(this);
-    _backend.setListener(this);
+    _backend = createPlayerBackend();
+    _backend.setListener(_PlayerTelemetryListener(this));
 
     final devId =
         (_audioDevice.value.id.isNotEmpty && _audioDevice.value.id != 'auto')
@@ -461,7 +631,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
 
     _audioDevice.setSnapshot(_backend.getCurrentDevice());
 
-    action = PlayerAction(this);
+    action = PlayerAction._(this);
 
     spatial = SpatialController(
       setEnabled: (enabled) {
@@ -570,18 +740,6 @@ class MiniaudioPlayer implements PlayerBackendListener {
   AudioDevice getAudioDevice() =>
       _isDisposed ? _audioDevice.value : _backend.getCurrentDevice();
 
-  /// Updates pause on device change setting and propagates to native backend and stream.
-  void setPauseOnDeviceChangeInternal(bool enabled) {
-    if (_pauseOnDeviceChange.value == enabled) return;
-    if (!_isDisposed) {
-      _backend.setPauseOnDeviceChange(enabled);
-    }
-    _pauseOnDeviceChange.emitIfChanged(enabled);
-  }
-
-  /// Internal handle to the native miniaudio player.
-  dynamic get handle => _backend.handle;
-
   /// Audio sampling rate in Hz of the currently active source (or engine default).
   int get sampleRate => _isDisposed ? 0 : _backend.sampleRate;
 
@@ -613,14 +771,21 @@ class MiniaudioPlayer implements PlayerBackendListener {
   /// Returns the current number of bytes retained in the pinned Head cache.
   int get pinnedHeadSize => _isDisposed ? 0 : _backend.pinnedHeadSize;
 
-  /// Ensures that the player has not been disposed.
-  void ensureNotDisposed() {
+  void _ensureNotDisposed() {
     if (_isDisposed) {
       throw const MiniaudioPlayerException(
         'Player is already disposed',
         errorCode: MapResult.errorInvalidState,
       );
     }
+  }
+
+  void _setPauseOnDeviceChange(bool enabled) {
+    if (_pauseOnDeviceChange.value == enabled) return;
+    if (!_isDisposed) {
+      _backend.setPauseOnDeviceChange(enabled);
+    }
+    _pauseOnDeviceChange.emitIfChanged(enabled);
   }
 
   void _updateNativeVisualizerState() {
@@ -635,18 +800,12 @@ class MiniaudioPlayer implements PlayerBackendListener {
     }
   }
 
-  /// Sets or clears the explicit manual visualizer override.
-  void setManualVisualizerOverride(bool? override) {
+  void _setManualVisualizerOverride(bool? override) {
     _manualVisualizerOverride = override;
     _updateNativeVisualizerState();
   }
 
-  /// Sets whether the visualizer DSP is manually forced enabled or disabled.
-  void setManualVisualizerEnabled(bool enabled) =>
-      setManualVisualizerOverride(enabled);
-
-  /// Synchronously transitions player into Opening state and flushes all stale telemetry.
-  void notifyOpening() {
+  void _notifyOpening() {
     if (_isDisposed) return;
     _opening.forceEmit(true);
     _playbackState.forceEmit(PlaybackState.opening);
@@ -658,11 +817,10 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _bufferedPosition.forceEmit(Duration.zero);
     _bufferedPercentage.forceEmit(0.0);
     _bufferedRange.forceEmit(const BufferedRange());
-    resetMetadata();
+    _resetMetadata();
   }
 
-  /// Notifies that opening completed successfully.
-  void notifyOpenCompleted() {
+  void _notifyOpenCompleted() {
     if (_isDisposed) return;
     _opening.forceEmit(false);
     if (_playbackState.value == PlaybackState.opening) {
@@ -671,24 +829,13 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _getMetaBytes();
   }
 
-  void notifyOpenComplete() => notifyOpenCompleted();
-
-  /// Notifies that opening failed due to an error.
-  void notifyOpenFailed([Object? error]) {
+  void _notifyOpenFailed() {
     if (_isDisposed) return;
-    final errCode =
-        (error is MiniaudioPlayerException && error.errorCode != null)
-            ? error.errorCode!
-            : MapResult.errorDecodeFailed;
-    try {
-      _backend.notifyOpenError(errCode);
-    } catch (_) {}
     _opening.forceEmit(false);
     _playbackState.forceEmit(PlaybackState.error);
   }
 
-  /// Notifies the player that playback was stopped manually.
-  void notifyStopped() {
+  void _notifyStopped() {
     if (_isDisposed) return;
     final wasPlaying = _playing.value;
     final wasCompleted = _completed.value;
@@ -711,13 +858,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _position.forceEmit(Duration.zero);
   }
 
-  /// Updates buffering state and notifies listeners if changed.
-  void notifyBuffering(bool isBuffering) {
-    if (!_isDisposed) _buffering.emitIfChanged(isBuffering);
-  }
-
-  /// Explicitly resets cached metadata to null and emits null on the metadata stream.
-  void resetMetadata() {
+  void _resetMetadata() {
     _trackMetadata.forceEmit(null);
     _metaBytes.forceEmit(null);
   }
@@ -731,22 +872,7 @@ class MiniaudioPlayer implements PlayerBackendListener {
     return bytes;
   }
 
-  /// Checks if native metadata has updated and updates cached copy if so.
-  void checkMetaBytesUpdated() => _getMetaBytes();
-
-  /// Ingests dynamic ICY livestream metadata received over network.
-  void setIcyMeta(Uint8List data) => action.setIcyMeta(data);
-
-  /// Probes tail metadata (ID3v1, APEv2, MP4 moov, etc.) directly into buffer Tail.
-  void probeTail(Uint8List data, int tailOffset) =>
-      action.probeTail(data, tailOffset);
-
-  // =========================================================================
-  // PlayerBackendListener Callbacks
-  // =========================================================================
-
-  @override
-  void onState(PlaybackState newState) {
+  void _onState(PlaybackState newState) {
     if (_isDisposed) return;
     if (_playbackState.value == PlaybackState.error &&
         newState == PlaybackState.stopped) {
@@ -770,18 +896,15 @@ class MiniaudioPlayer implements PlayerBackendListener {
     _playbackState.emitIfChanged(newState);
   }
 
-  @override
-  void onPosition(Duration pos) {
+  void _onPosition(Duration pos) {
     if (!_isDisposed) _position.emitIfChanged(pos);
   }
 
-  @override
-  void onDuration(Duration dur) {
+  void _onDuration(Duration dur) {
     if (!_isDisposed) _duration.emitIfChanged(dur);
   }
 
-  @override
-  void onPlaying(bool isPlaying) {
+  void _onPlaying(bool isPlaying) {
     if (_isDisposed) return;
     if (_playing.value != isPlaying) {
       _playing.emitIfChanged(isPlaying);
@@ -794,11 +917,11 @@ class MiniaudioPlayer implements PlayerBackendListener {
     }
   }
 
-  @override
-  void onBuffering(bool isBuffering) => notifyBuffering(isBuffering);
+  void _onBuffering(bool isBuffering) {
+    if (!_isDisposed) _buffering.emitIfChanged(isBuffering);
+  }
 
-  @override
-  void onCompleted(bool isCompleted) {
+  void _onCompleted(bool isCompleted) {
     if (_isDisposed || _completed.value == isCompleted) return;
     _completed.emitIfChanged(isCompleted);
     if (isCompleted) {
@@ -814,227 +937,23 @@ class MiniaudioPlayer implements PlayerBackendListener {
     }
   }
 
-  @override
-  void onVolume(double volume) => notifyVolumeChanged(volume);
-
-  @override
-  void onRate(double rate) => notifyRateChanged(rate);
-
-  @override
-  void onPitch(double pitch) => notifyPitchChanged(pitch);
-
-  @override
-  void onBitrate(int bitrate) {
-    if (!_isDisposed) _audioBitrate.emitIfChanged(bitrate);
+  void _onSilenceConfig(SilenceSkipConfig config) {
+    if (_isDisposed) return;
+    _skipSilence.emitIfChanged(config.mode != SilenceSkipMode.disabled);
+    _silenceConfig.emitIfChanged(config);
   }
 
-  @override
-  void onBufferSize(int bufferSize) => notifyBufferSizeChanged(bufferSize);
-
-  @override
-  void onSilenceSaved(Duration duration) {
-    if (!_isDisposed) _silenceSavedDuration.emitIfChanged(duration);
-  }
-
-  @override
-  void onSilenceConfig(SilenceSkipConfig config) =>
-      notifySilenceConfigChanged(config);
-
-  @override
-  void onBufferedRange(BufferedRange br) {
+  void _onBufferedRange(BufferedRange br) {
     if (_isDisposed || _bufferedRange.value == br) return;
     _bufferedRange.forceEmit(br);
     _bufferedPosition.forceEmit(br.end);
     _bufferedPercentage.forceEmit(br.percentage);
   }
 
-  @override
-  void onVisualizer(VisualizerData data) {
+  void _onVisualizer(VisualizerData data) {
     if (_isDisposed || !_isVisualizerActive) return;
     final frame = _playing.value ? data : VisualizerData.empty();
     _visualizer.forceEmit(frame);
-  }
-
-  @override
-  void onVisualizerEnabled(bool enabled) =>
-      notifyVisualizerEnabledChanged(enabled);
-
-  @override
-  void onDevice(AudioDevice device) => notifyDeviceChanged(device);
-
-  @override
-  void onTrackMetadata(AudioTrackMetadata? metadata) =>
-      setTrackMetadata(metadata);
-
-  @override
-  void onEqualizer(Equalizer equalizer) => notifyEqualizerChanged(equalizer);
-
-  @override
-  void onPreamp(double preampDb) => notifyPreampChanged(preampDb);
-
-  @override
-  void onReplayGain(ReplayGainConfig config) => notifyReplayGainChanged(config);
-
-  @override
-  void onBalance(double balance) => notifyBalanceChanged(balance);
-
-  @override
-  void onMono(bool enabled) => notifyMonoChanged(enabled);
-
-  @override
-  void onCrossfeed(CrossfeedMode mode) => notifyCrossfeedChanged(mode);
-
-  @override
-  void onSpatializer({required bool enabled, required double width}) =>
-      notifySpatializerChanged(enabled: enabled, width: width);
-
-  @override
-  void onReverb(Reverb reverb) => notifyReverbChanged(reverb);
-
-  @override
-  void onLimiter(bool enabled) => notifyLimiterChanged(enabled);
-
-  @override
-  void onError(String message, int errorCode) {
-    if (!_isDisposed) _playbackState.emitIfChanged(PlaybackState.error);
-  }
-
-  // =========================================================================
-  // Synchronous State Snapshot & Stream Notification Helpers
-  // =========================================================================
-
-  void setVolumeSnapshot(double volume) {
-    if (!_isDisposed) _volume.setSnapshot(volume);
-  }
-
-  void setRateSnapshot(double rate) {
-    if (!_isDisposed) _rate.setSnapshot(rate);
-  }
-
-  void setPitchSnapshot(double pitch) {
-    if (!_isDisposed) _pitch.setSnapshot(pitch);
-  }
-
-  void setBufferSizeSnapshot(int bufferSize) {
-    if (!_isDisposed) _bufferSize.setSnapshot(bufferSize);
-  }
-
-  void setEqualizerSnapshot(Equalizer equalizer) {
-    if (!_isDisposed) _equalizer.setSnapshot(equalizer);
-  }
-
-  void setSilenceConfigSnapshot(SilenceSkipConfig config) {
-    if (!_isDisposed) _silenceConfig.setSnapshot(config);
-  }
-
-  void setReplayGainSnapshot(ReplayGainConfig config) {
-    if (!_isDisposed) _replayGain.setSnapshot(config);
-  }
-
-  void setPreampSnapshot(double preampDb) {
-    if (!_isDisposed) _preamp.setSnapshot(preampDb);
-  }
-
-  void setBalanceSnapshot(double balance) {
-    if (!_isDisposed) _balance.setSnapshot(balance);
-  }
-
-  void setMonoSnapshot(bool mono) {
-    if (!_isDisposed) _mono.setSnapshot(mono);
-  }
-
-  void setCrossfeedSnapshot(CrossfeedMode crossfeed) {
-    if (!_isDisposed) _crossfeed.setSnapshot(crossfeed);
-  }
-
-  void setSpatializerSnapshot({required bool enabled, required double width}) {
-    if (_isDisposed) return;
-    _spatializerEnabled.setSnapshot(enabled);
-    _spatializerWidth.setSnapshot(width);
-  }
-
-  void setLimiterSnapshot(bool enabled) {
-    if (!_isDisposed) _limiterEnabled.setSnapshot(enabled);
-  }
-
-  void setReverbSnapshot(Reverb reverb) {
-    if (!_isDisposed) _reverb.setSnapshot(reverb);
-  }
-
-  void notifyVolumeChanged(double volume) {
-    if (!_isDisposed) _volume.emitIfChanged(volume);
-  }
-
-  void notifyRateChanged(double rate) {
-    if (!_isDisposed) _rate.emitIfChanged(rate);
-  }
-
-  void notifyPitchChanged(double pitch) {
-    if (!_isDisposed) _pitch.emitIfChanged(pitch);
-  }
-
-  void notifyBufferSizeChanged(int bufferSize) {
-    if (!_isDisposed) _bufferSize.emitIfChanged(bufferSize);
-  }
-
-  void notifyEqualizerChanged(Equalizer equalizer) {
-    if (!_isDisposed) _equalizer.emitIfChanged(equalizer);
-  }
-
-  void notifyDeviceChanged(AudioDevice device) {
-    if (!_isDisposed) _audioDevice.emitIfChanged(device);
-  }
-
-  void notifySilenceConfigChanged(SilenceSkipConfig config) {
-    if (_isDisposed) return;
-    _skipSilence.emitIfChanged(config.mode != SilenceSkipMode.disabled);
-    _silenceConfig.emitIfChanged(config);
-  }
-
-  void notifyReplayGainChanged(ReplayGainConfig config) {
-    if (!_isDisposed) _replayGain.emitIfChanged(config);
-  }
-
-  void notifyPreampChanged(double preampDb) {
-    if (!_isDisposed) _preamp.emitIfChanged(preampDb);
-  }
-
-  void notifyBalanceChanged(double balance) {
-    if (!_isDisposed) _balance.emitIfChanged(balance);
-  }
-
-  void notifyMonoChanged(bool mono) {
-    if (!_isDisposed) _mono.emitIfChanged(mono);
-  }
-
-  void notifyCrossfeedChanged(CrossfeedMode crossfeed) {
-    if (!_isDisposed) _crossfeed.emitIfChanged(crossfeed);
-  }
-
-  void notifySpatializerChanged({
-    required bool enabled,
-    required double width,
-  }) {
-    if (_isDisposed) return;
-    _spatializerEnabled.emitIfChanged(enabled);
-    _spatializerWidth.emitIfChanged(width);
-  }
-
-  void notifyLimiterChanged(bool enabled) {
-    if (!_isDisposed) _limiterEnabled.emitIfChanged(enabled);
-  }
-
-  void notifyReverbChanged(Reverb reverb) {
-    if (!_isDisposed) _reverb.emitIfChanged(reverb);
-  }
-
-  void notifyVisualizerEnabledChanged(bool enabled) {
-    if (!_isDisposed) _visualizerEnabled.emitIfChanged(enabled);
-  }
-
-  /// Updates current track metadata and notifies listeners.
-  void setTrackMetadata(AudioTrackMetadata? metadata) {
-    if (!_isDisposed) _trackMetadata.emitIfChanged(metadata);
   }
 
   /// Destroys the player instance and frees audio engine resources.
@@ -1042,8 +961,8 @@ class MiniaudioPlayer implements PlayerBackendListener {
     if (_isDisposed) return;
     _isDisposed = true;
 
-    resetMetadata();
-    action.dispose();
+    _resetMetadata();
+    action._dispose();
     await _backend.dispose();
 
     for (final prop in _allProperties) {

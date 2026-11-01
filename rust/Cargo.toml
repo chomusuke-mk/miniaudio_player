@@ -40,8 +40,6 @@ path = "../test/rust/benchmark_test.rs"
 [dependencies]
 # Decodificación y Demuxing 100% Rust
 symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats", "all-meta"] }
-symphonia-adapter-libopus = "0.3"
-symphonia-adapter-fdk-aac = "0.2"
 
 # Concurrencia Lock-Free y Tiempo Real
 log = "0.4"
@@ -64,7 +62,14 @@ cbc = "0.1"
 # Formatos Adicionales Audiófilos (MIT / Apache-2.0)
 ape-decoder = "0.3"
 wavicle = "0.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+symphonia-adapter-libopus = "0.3"
+symphonia-adapter-fdk-aac = "0.2"
 ureq = { version = "2.10", features = ["tls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
 
 [build-dependencies]
 cc = "1.2"
@@ -98,3 +103,6 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "unwind"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-mutable-globals", "--enable-nontrapping-float-to-int", "--enable-sign-ext"]

@@ -7,7 +7,9 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit_event`, `perform_skip`, `queue_to_rust_items`
+// These functions are ignored because they are not marked as `pub`: `abort_active_crossfade`, `capture_active_deck_snapshot`, `check_crossfade_completion`, `check_infinite_mix_lookahead`, `dispatch_telemetry_diff`, `dispatch_visualizer`, `emit_event`, `emit_queue_and_index`, `evaluate_auto_transition`, `new`, `open_item_on_deck`, `perform_skip`, `queue_to_rust_items`, `resolve_next_queue_index`, `run`, `tick`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ActiveDeckSnapshot`, `EngineMonitorWorker`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustEngine>>
 abstract class RustEngine implements RustOpaqueInterface {
