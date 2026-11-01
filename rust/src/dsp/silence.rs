@@ -96,10 +96,11 @@ impl SilenceDetector {
         let prev_mode = self.config.mode;
         self.config = config;
         self.update_params();
-        if prev_mode != config.mode && matches!(config.mode, SilenceMode::TrimEdges | SilenceMode::All) {
-            if self.silence_saved_frames == 0 {
-                self.lead_in_active = true;
-            }
+        if prev_mode != config.mode
+            && matches!(config.mode, SilenceMode::TrimEdges | SilenceMode::All)
+            && self.silence_saved_frames == 0
+        {
+            self.lead_in_active = true;
         }
     }
 
@@ -136,11 +137,8 @@ impl SilenceDetector {
 
         if is_start {
             self.silence_saved_frames = 0;
-            if matches!(self.config.mode, SilenceMode::TrimEdges | SilenceMode::All) {
-                self.lead_in_active = true;
-            } else {
-                self.lead_in_active = false;
-            }
+            self.lead_in_active =
+                matches!(self.config.mode, SilenceMode::TrimEdges | SilenceMode::All);
         } else {
             self.lead_in_active = false;
         }
@@ -172,58 +170,28 @@ impl SilenceDetector {
 
     /// Process input PCM frames from `input` and writes non-silent audio frames to `output`.
     /// Returns `(frames_written_to_output, input_frames_consumed)`.
-    pub fn process_frames(
-        &mut self,
-        input: &[f32],
-        output: &mut [f32],
-    ) -> (usize, usize) {
+    pub fn process_frames(&mut self, input: &[f32], output: &mut [f32]) -> (usize, usize) {
+        let input_frames = input.len() / self.channels;
+        let output_frames_cap = output.len() / self.channels;
+
         if self.config.mode == SilenceMode::Disabled || input.is_empty() {
-            let frames_in = input.len() / self.channels;
-            let frames_out_cap = output.len() / self.channels;
-            let to_copy = frames_in.min(frames_out_cap);
+            let to_copy = input_frames.min(output_frames_cap);
             let samples = to_copy * self.channels;
             output[..samples].copy_from_slice(&input[..samples]);
             return (to_copy, to_copy);
         }
 
-        let input_frames = input.len() / self.channels;
-        let output_frames_cap = output.len() / self.channels;
-
         let mut in_pos = 0;
         let mut out_pos = 0;
+        let body_skip_enabled =
+            matches!(self.config.mode, SilenceMode::Continuous | SilenceMode::All);
 
         while (in_pos < input_frames || self.hold_frames_read_pos < self.hold_frames_count)
             && out_pos < output_frames_cap
         {
-            // 1. Drain held frames if not in HOLDING state
-            if self.state != SilenceState::Holding && self.hold_frames_read_pos < self.hold_frames_count {
-                let avail = self.hold_frames_count - self.hold_frames_read_pos;
-                let to_copy = avail.min(output_frames_cap - out_pos);
-
-                let src_start = self.hold_frames_read_pos * self.channels;
-                let src_end = (self.hold_frames_read_pos + to_copy) * self.channels;
-                let dst_start = out_pos * self.channels;
-                let dst_end = (out_pos + to_copy) * self.channels;
-
-                output[dst_start..dst_end].copy_from_slice(&self.hold_buffer[src_start..src_end]);
-
-                if to_copy > 0 {
-                    let last_idx = (self.hold_frames_read_pos + to_copy - 1) * self.channels;
-                    for c in 0..self.channels.min(8) {
-                        self.last_sample[c] = self.hold_buffer[last_idx + c];
-                    }
-                }
-
-                self.hold_frames_read_pos += to_copy;
-                out_pos += to_copy;
-
-                if self.hold_frames_read_pos >= self.hold_frames_count {
-                    self.hold_frames_read_pos = 0;
-                    self.hold_frames_count = 0;
-                }
+            if self.drain_held_frames(output, &mut out_pos, output_frames_cap) {
                 continue;
             }
-
             if in_pos >= input_frames {
                 break;
             }
@@ -232,65 +200,30 @@ impl SilenceDetector {
             let frame = &input[frame_start..frame_start + self.channels];
             in_pos += 1;
 
-            let mut peak: f32 = 0.0;
-            for &s in frame {
-                let abs_s = s.abs();
-                if abs_s > peak {
-                    peak = abs_s;
-                }
-            }
-
+            let peak = Self::frame_peak(frame);
             let is_silent_enter = peak <= self.threshold_amp_linear;
             let is_silent_exit = peak <= self.threshold_amp_exit;
 
-            // Lead-in silence trim
             if self.lead_in_active {
                 if is_silent_enter {
                     self.silence_saved_frames += 1;
                     continue;
-                } else {
-                    self.lead_in_active = false;
-                    self.crossfade_remaining = self.crossfade_length;
-                    self.last_sample = [0.0; 8];
                 }
+                self.lead_in_active = false;
+                self.crossfade_remaining = self.crossfade_length;
+                self.last_sample = [0.0; 8];
             }
 
-            let body_skip_enabled = matches!(
-                self.config.mode,
-                SilenceMode::Continuous | SilenceMode::All
-            );
-
             if !body_skip_enabled {
-                let dst_start = out_pos * self.channels;
-                for c in 0..self.channels {
-                    output[dst_start + c] = frame[c];
-                    if c < 8 {
-                        self.last_sample[c] = frame[c];
-                    }
-                }
-                out_pos += 1;
+                self.crossfade_remaining = 0;
+                self.emit_voice_frame(frame, output, &mut out_pos);
                 continue;
             }
 
             match self.state {
                 SilenceState::Voice => {
                     if !is_silent_enter {
-                        let dst_start = out_pos * self.channels;
-                        if self.crossfade_remaining > 0 && self.crossfade_length > 0 {
-                            let alpha = 1.0
-                                - (self.crossfade_remaining as f32 / self.crossfade_length as f32);
-                            for c in 0..self.channels {
-                                let last = if c < 8 { self.last_sample[c] } else { 0.0 };
-                                output[dst_start + c] = (1.0 - alpha) * last + alpha * frame[c];
-                            }
-                            self.crossfade_remaining -= 1;
-                        } else {
-                            output[dst_start..dst_start + self.channels].copy_from_slice(frame);
-                        }
-                        for c in 0..self.channels.min(8) {
-                            self.last_sample[c] = frame[c];
-                        }
-                        out_pos += 1;
+                        self.emit_voice_frame(frame, output, &mut out_pos);
                     } else {
                         self.state = SilenceState::Holding;
                         self.hold_frames_count = 0;
@@ -309,10 +242,8 @@ impl SilenceDetector {
                             self.state = SilenceState::Skipping;
                         }
                     } else {
-                        // Voice resumed before min_silence_frames
                         self.state = SilenceState::Voice;
                         self.hold_frames_read_pos = 0;
-                        // Rewind current frame so it gets processed after held frames drain
                         in_pos -= 1;
                     }
                 }
@@ -320,32 +251,83 @@ impl SilenceDetector {
                     if is_silent_exit {
                         self.silence_saved_frames += 1;
                     } else {
-                        // Voice resumed
                         self.state = SilenceState::Voice;
                         self.crossfade_remaining = self.crossfade_length;
-
-                        let dst_start = out_pos * self.channels;
-                        if self.crossfade_remaining > 0 && self.crossfade_length > 0 {
-                            let alpha = 1.0
-                                - (self.crossfade_remaining as f32 / self.crossfade_length as f32);
-                            for c in 0..self.channels {
-                                let last = if c < 8 { self.last_sample[c] } else { 0.0 };
-                                output[dst_start + c] = (1.0 - alpha) * last + alpha * frame[c];
-                            }
-                            self.crossfade_remaining -= 1;
-                        } else {
-                            output[dst_start..dst_start + self.channels].copy_from_slice(frame);
-                        }
-                        for c in 0..self.channels.min(8) {
-                            self.last_sample[c] = frame[c];
-                        }
-                        out_pos += 1;
+                        self.emit_voice_frame(frame, output, &mut out_pos);
                     }
                 }
             }
         }
 
         (out_pos, in_pos)
+    }
+
+    #[inline]
+    fn frame_peak(frame: &[f32]) -> f32 {
+        let mut peak: f32 = 0.0;
+        for &s in frame {
+            let abs_s = s.abs();
+            if abs_s > peak {
+                peak = abs_s;
+            }
+        }
+        peak
+    }
+
+    fn drain_held_frames(
+        &mut self,
+        output: &mut [f32],
+        out_pos: &mut usize,
+        output_frames_cap: usize,
+    ) -> bool {
+        if self.state == SilenceState::Holding || self.hold_frames_read_pos >= self.hold_frames_count {
+            return false;
+        }
+
+        let avail = self.hold_frames_count - self.hold_frames_read_pos;
+        let to_copy = avail.min(output_frames_cap - *out_pos);
+
+        let src_start = self.hold_frames_read_pos * self.channels;
+        let src_end = (self.hold_frames_read_pos + to_copy) * self.channels;
+        let dst_start = *out_pos * self.channels;
+        let dst_end = (*out_pos + to_copy) * self.channels;
+
+        output[dst_start..dst_end].copy_from_slice(&self.hold_buffer[src_start..src_end]);
+
+        if to_copy > 0 {
+            let last_idx = (self.hold_frames_read_pos + to_copy - 1) * self.channels;
+            for c in 0..self.channels.min(8) {
+                self.last_sample[c] = self.hold_buffer[last_idx + c];
+            }
+        }
+
+        self.hold_frames_read_pos += to_copy;
+        *out_pos += to_copy;
+
+        if self.hold_frames_read_pos >= self.hold_frames_count {
+            self.hold_frames_read_pos = 0;
+            self.hold_frames_count = 0;
+        }
+        true
+    }
+
+    #[inline]
+    fn emit_voice_frame(&mut self, frame: &[f32], output: &mut [f32], out_pos: &mut usize) {
+        let dst_start = *out_pos * self.channels;
+        if self.crossfade_remaining > 0 && self.crossfade_length > 0 {
+            let alpha = 1.0 - (self.crossfade_remaining as f32 / self.crossfade_length as f32);
+            for c in 0..self.channels {
+                let last = if c < 8 { self.last_sample[c] } else { 0.0 };
+                output[dst_start + c] = (1.0 - alpha) * last + alpha * frame[c];
+            }
+            self.crossfade_remaining -= 1;
+        } else {
+            output[dst_start..dst_start + self.channels].copy_from_slice(frame);
+        }
+        for c in 0..self.channels.min(8) {
+            self.last_sample[c] = frame[c];
+        }
+        *out_pos += 1;
     }
 
     fn append_hold_frame(&mut self, frame: &[f32]) {

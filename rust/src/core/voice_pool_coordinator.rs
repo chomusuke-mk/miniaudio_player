@@ -71,9 +71,69 @@ pub unsafe extern "C" fn voice_pool_renderer_render_trampoline(
 pub unsafe extern "C" fn voice_pool_renderer_notif_trampoline(
     _ptr: *mut c_void,
     _notif: i32,
-) {}
+) {
+}
 
 impl VoicePoolRenderer {
+    #[inline]
+    fn drain_commands(&mut self) {
+        while let Ok(cmd) = self.cmd_consumer.pop() {
+            self.apply_command(&cmd);
+        }
+    }
+
+    #[inline]
+    fn apply_command(&mut self, cmd: &VoicePoolCommand) {
+        match cmd {
+            VoicePoolCommand::PlaySound {
+                voice_id,
+                buffer,
+                volume,
+                pitch,
+                priority,
+                looping,
+                emitter,
+            } => {
+                self.voice_pool.play_sound_with_id(
+                    *voice_id,
+                    buffer.clone(),
+                    *volume,
+                    *pitch,
+                    *priority,
+                    *looping,
+                    *emitter,
+                );
+            }
+            VoicePoolCommand::StopVoice(id) => {
+                self.voice_pool.stop_voice(*id, self.sample_rate);
+            }
+            VoicePoolCommand::StopAll => {
+                self.voice_pool.stop_all();
+            }
+            VoicePoolCommand::SetMasterVolume(v) => {
+                self.voice_pool.set_master_volume(*v);
+            }
+            VoicePoolCommand::SetTimeScale(s) => {
+                self.voice_pool.set_time_scale(*s);
+            }
+            VoicePoolCommand::SetPolicy(p) => {
+                self.voice_pool.set_policy(*p);
+            }
+            VoicePoolCommand::SetListener(l) => {
+                self.listener = *l;
+            }
+            VoicePoolCommand::SetVoiceVolume { voice_id, volume } => {
+                self.voice_pool.set_voice_volume(*voice_id, *volume);
+            }
+            VoicePoolCommand::SetVoicePitch { voice_id, pitch } => {
+                self.voice_pool.set_voice_pitch(*voice_id, *pitch);
+            }
+            VoicePoolCommand::SetVoiceEmitter { voice_id, emitter } => {
+                self.voice_pool.set_voice_emitter(*voice_id, *emitter);
+            }
+        }
+    }
+
     #[inline]
     pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
         if output_frames.is_null() || frame_count == 0 {
@@ -83,81 +143,12 @@ impl VoicePoolRenderer {
         let total_samples = frame_count * self.channels;
         let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
 
-        // 1. Drain pending wait-free commands
-        let available = self.cmd_consumer.slots();
-        if available > 0 {
-            if let Ok(chunk) = self.cmd_consumer.read_chunk(available) {
-                let (s1, s2) = chunk.as_slices();
-                for cmd in s1.iter().chain(s2.iter()) {
-                    match cmd {
-                        VoicePoolCommand::PlaySound {
-                            voice_id,
-                            buffer,
-                            volume,
-                            pitch,
-                            priority,
-                            looping,
-                            emitter,
-                        } => {
-                            self.voice_pool.play_sound_with_id(
-                                *voice_id,
-                                buffer.clone(),
-                                *volume,
-                                *pitch,
-                                *priority,
-                                *looping,
-                                *emitter,
-                            );
-                        }
-                        VoicePoolCommand::StopVoice(id) => {
-                            self.voice_pool.stop_voice(*id, self.sample_rate);
-                        }
-                        VoicePoolCommand::StopAll => {
-                            self.voice_pool.stop_all();
-                        }
-                        VoicePoolCommand::SetMasterVolume(v) => {
-                            self.voice_pool.set_master_volume(*v);
-                        }
-                        VoicePoolCommand::SetTimeScale(s) => {
-                            self.voice_pool.set_time_scale(*s);
-                        }
-                        VoicePoolCommand::SetPolicy(p) => {
-                            self.voice_pool.set_policy(*p);
-                        }
-                        VoicePoolCommand::SetListener(l) => {
-                            self.listener = *l;
-                        }
-                        VoicePoolCommand::SetVoiceVolume { voice_id, volume } => {
-                            self.voice_pool.set_voice_volume(*voice_id, *volume);
-                        }
-                        VoicePoolCommand::SetVoicePitch { voice_id, pitch } => {
-                            self.voice_pool.set_voice_pitch(*voice_id, *pitch);
-                        }
-                        VoicePoolCommand::SetVoiceEmitter { voice_id, emitter } => {
-                            self.voice_pool.set_voice_emitter(*voice_id, *emitter);
-                        }
-                    }
-                }
-                chunk.commit_all();
-            }
-        }
-
-        // 2. Clear output buffer to zero
+        self.drain_commands();
         out_slice.fill(0.0);
-
-        // 3. Render and mix voices
-        self.voice_pool.render_pcm(
-            out_slice,
-            self.channels,
-            self.sample_rate,
-            &self.listener,
-        );
-
-        // 4. Update atomic active voice count
-        self.active_voices.store(
-            self.voice_pool.active_voice_count() as u32,
-            Ordering::Relaxed,
-        );
+        self.voice_pool
+            .render_pcm(out_slice, self.channels, self.sample_rate, &self.listener);
+        self.active_voices
+            .store(self.voice_pool.active_voice_count() as u32, Ordering::Relaxed);
     }
 }
 
@@ -266,6 +257,13 @@ impl VoicePoolCoordinator {
         }))
     }
 
+    #[inline]
+    fn dispatch_command(&self, cmd: VoicePoolCommand) {
+        if let Ok(mut prod) = self.cmd_producer.write() {
+            let _ = prod.push(cmd);
+        }
+    }
+
     /// Loads an encoded audio file/bytes into pre-decoded PCM RAM and stores it in the buffer registry.
     pub fn load_sound(&self, bytes: &[u8]) -> Result<(u64, SoundBuffer), String> {
         let buffer = SoundBuffer::decode_from_bytes(bytes)?;
@@ -299,7 +297,7 @@ impl VoicePoolCoordinator {
         };
 
         let voice_id = self.next_voice_id.fetch_add(1, Ordering::Relaxed);
-        let cmd = VoicePoolCommand::PlaySound {
+        self.dispatch_command(VoicePoolCommand::PlaySound {
             voice_id,
             buffer,
             volume: volume.clamp(0.0, 2.0),
@@ -307,11 +305,7 @@ impl VoicePoolCoordinator {
             priority,
             looping,
             emitter,
-        };
-
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(cmd);
-        }
+        });
 
         Ok(voice_id)
     }
@@ -374,63 +368,45 @@ impl VoicePoolCoordinator {
     }
 
     pub fn stop_voice(&self, voice_id: u32) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::StopVoice(voice_id));
-        }
+        self.dispatch_command(VoicePoolCommand::StopVoice(voice_id));
     }
 
     pub fn stop_all(&self) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::StopAll);
-        }
+        self.dispatch_command(VoicePoolCommand::StopAll);
     }
 
     pub fn set_voice_volume(&self, voice_id: u32, volume: f32) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetVoiceVolume {
-                voice_id,
-                volume: volume.clamp(0.0, 2.0),
-            });
-        }
+        self.dispatch_command(VoicePoolCommand::SetVoiceVolume {
+            voice_id,
+            volume: volume.clamp(0.0, 2.0),
+        });
     }
 
     pub fn set_voice_pitch(&self, voice_id: u32, pitch: f32) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetVoicePitch {
-                voice_id,
-                pitch: pitch.clamp(0.1, 4.0),
-            });
-        }
+        self.dispatch_command(VoicePoolCommand::SetVoicePitch {
+            voice_id,
+            pitch: pitch.clamp(0.1, 4.0),
+        });
     }
 
     pub fn set_voice_emitter(&self, voice_id: u32, emitter: Option<SpatialEmitter>) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetVoiceEmitter { voice_id, emitter });
-        }
+        self.dispatch_command(VoicePoolCommand::SetVoiceEmitter { voice_id, emitter });
     }
 
     pub fn set_master_volume(&self, volume: f32) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetMasterVolume(volume.clamp(0.0, 2.0)));
-        }
+        self.dispatch_command(VoicePoolCommand::SetMasterVolume(volume.clamp(0.0, 2.0)));
     }
 
     pub fn set_time_scale(&self, scale: f32) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetTimeScale(scale.clamp(0.01, 10.0)));
-        }
+        self.dispatch_command(VoicePoolCommand::SetTimeScale(scale.clamp(0.01, 10.0)));
     }
 
     pub fn set_policy(&self, policy: VoiceStealingPolicy) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetPolicy(policy));
-        }
+        self.dispatch_command(VoicePoolCommand::SetPolicy(policy));
     }
 
     pub fn set_listener(&self, listener: SpatialListener) {
-        if let Ok(mut prod) = self.cmd_producer.write() {
-            let _ = prod.push(VoicePoolCommand::SetListener(listener));
-        }
+        self.dispatch_command(VoicePoolCommand::SetListener(listener));
     }
 
     pub fn active_voices_count(&self) -> u32 {

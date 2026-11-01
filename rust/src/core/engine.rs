@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 
 use crate::bridge::ffi::{
-    map_device_create, map_device_destroy, map_device_set_device,
-    map_device_start, map_device_stop, MapDeviceContext, MAP_SUCCESS,
+    map_device_create, map_device_destroy, map_device_set_device, map_device_start,
+    map_device_stop, MapDeviceContext, MAP_SUCCESS,
 };
 use crate::core::capture::DeviceCaptureNode;
 use crate::core::player::PlayerCoordinator;
@@ -47,6 +47,72 @@ impl Default for CrossfadeAtomic {
             total_frames: AtomicU64::new(0),
             curve: AtomicI32::new(0),
         }
+    }
+}
+
+impl CrossfadeAtomic {
+    #[inline]
+    pub fn begin(&self, from_deck: i32, to_deck: i32, total_frames: u64, curve: i32) {
+        self.from_deck.store(from_deck, Ordering::Relaxed);
+        self.to_deck.store(to_deck, Ordering::Relaxed);
+        self.current_frame.store(0, Ordering::Relaxed);
+        self.total_frames
+            .store(total_frames.max(1), Ordering::Relaxed);
+        self.curve.store(curve, Ordering::Relaxed);
+        self.is_active.store(true, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn abort(&self) {
+        self.is_active.store(false, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn compute_gains(curve: i32, progress: f32) -> (f32, f32) {
+        let p = progress.clamp(0.0, 1.0);
+        if curve == 1 {
+            (1.0 - p, p)
+        } else {
+            let angle = p * std::f32::consts::FRAC_PI_2;
+            (angle.cos(), angle.sin())
+        }
+    }
+}
+
+#[inline]
+fn push_to_ring_buffer(producer: &mut rtrb::Producer<f32>, src: &[f32]) {
+    let to_write = producer.slots().min(src.len());
+    if to_write == 0 {
+        return;
+    }
+    if let Ok(mut chunk) = producer.write_chunk(to_write) {
+        let (s1, s2) = chunk.as_mut_slices();
+        let n1 = s1.len();
+        s1.copy_from_slice(&src[..n1]);
+        if !s2.is_empty() {
+            s2.copy_from_slice(&src[n1..to_write]);
+        }
+        chunk.commit_all();
+    }
+}
+
+#[inline]
+fn pull_from_ring_buffer(consumer: &mut rtrb::Consumer<f32>, dst: &mut [f32]) -> usize {
+    let to_read = consumer.slots().min(dst.len());
+    if to_read == 0 {
+        return 0;
+    }
+    if let Ok(chunk) = consumer.read_chunk(to_read) {
+        let (s1, s2) = chunk.as_slices();
+        let n1 = s1.len();
+        dst[..n1].copy_from_slice(s1);
+        if !s2.is_empty() {
+            dst[n1..to_read].copy_from_slice(s2);
+        }
+        chunk.commit_all();
+        to_read
+    } else {
+        0
     }
 }
 
@@ -96,10 +162,7 @@ pub unsafe extern "C" fn engine_renderer_render_trampoline(
     r.render_pcm(output, count);
 }
 
-pub unsafe extern "C" fn engine_renderer_notif_trampoline(
-    _ptr: *mut c_void,
-    _notif: i32,
-) {
+pub unsafe extern "C" fn engine_renderer_notif_trampoline(_ptr: *mut c_void, _notif: i32) {
     // Hardware notification callback
 }
 
@@ -123,10 +186,7 @@ pub unsafe extern "C" fn cue_renderer_render_trampoline(
     r.render_pcm(output, count);
 }
 
-pub unsafe extern "C" fn cue_renderer_notif_trampoline(
-    _ptr: *mut c_void,
-    _notif: i32,
-) {}
+pub unsafe extern "C" fn cue_renderer_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
 
 impl CueRenderer {
     #[inline]
@@ -143,25 +203,7 @@ impl CueRenderer {
             return;
         }
 
-        let slots = self.consumer.slots();
-        let to_read = slots.min(total_samples);
-        let read = if to_read > 0 {
-            if let Ok(chunk) = self.consumer.read_chunk(to_read) {
-                let (s1, s2) = chunk.as_slices();
-                let n1 = s1.len();
-                out_slice[..n1].copy_from_slice(s1);
-                if !s2.is_empty() {
-                    out_slice[n1..to_read].copy_from_slice(s2);
-                }
-                chunk.commit_all();
-                to_read
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
+        let read = pull_from_ring_buffer(&mut self.consumer, out_slice);
         if read < total_samples {
             out_slice[read..].fill(0.0);
         }
@@ -177,174 +219,163 @@ impl CueRenderer {
 
 impl EngineRenderer {
     #[inline]
-    pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
-        if output_frames.is_null() || frame_count == 0 {
-            return;
-        }
-
-        let total_samples = frame_count * self.channels;
-        let is_xfading = self.crossfade.is_active.load(Ordering::Acquire);
-
-        if !is_xfading {
-            let active = self.active_deck.load(Ordering::Acquire);
-            let target_renderer = if active == 0 { self.renderer_a } else { self.renderer_b };
-            if !target_renderer.is_null() {
-                unsafe {
-                    (*target_renderer).render_pcm(output_frames, frame_count);
-                }
-            } else {
-                unsafe {
-                    std::ptr::write_bytes(output_frames, 0, total_samples);
-                }
+    fn render_single_deck(
+        &mut self,
+        output_frames: *mut f32,
+        frame_count: usize,
+        total_samples: usize,
+    ) {
+        let active = self.active_deck.load(Ordering::Acquire);
+        let target_renderer = if active == 0 {
+            self.renderer_a
+        } else {
+            self.renderer_b
+        };
+        if !target_renderer.is_null() {
+            unsafe {
+                (*target_renderer).render_pcm(output_frames, frame_count);
             }
         } else {
-            // Allocate / resize scratch buffers if needed
-            if self.scratch_a.len() < total_samples {
-                self.scratch_a.resize(total_samples, 0.0);
-            }
-            if self.scratch_b.len() < total_samples {
-                self.scratch_b.resize(total_samples, 0.0);
-            }
-
-            // Zero scratch buffers
-            self.scratch_a[..total_samples].fill(0.0);
-            self.scratch_b[..total_samples].fill(0.0);
-
-            if !self.renderer_a.is_null() {
-                unsafe {
-                    (*self.renderer_a).render_pcm(self.scratch_a.as_mut_ptr(), frame_count);
-                }
-            }
-            if !self.renderer_b.is_null() {
-                unsafe {
-                    (*self.renderer_b).render_pcm(self.scratch_b.as_mut_ptr(), frame_count);
-                }
-            }
-
-            let from_deck = self.crossfade.from_deck.load(Ordering::Relaxed);
-            let curve = self.crossfade.curve.load(Ordering::Relaxed);
-            let cur_frame = self.crossfade.current_frame.load(Ordering::Relaxed);
-            let tot_frames = self.crossfade.total_frames.load(Ordering::Relaxed).max(1);
-
-            let (from_buf, to_buf) = if from_deck == 0 {
-                (&self.scratch_a, &self.scratch_b)
-            } else {
-                (&self.scratch_b, &self.scratch_a)
-            };
-
-            let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
-
-            for k in 0..frame_count {
-                let frame_idx = cur_frame + k as u64;
-                let progress = (frame_idx as f32 / tot_frames as f32).clamp(0.0, 1.0);
-
-                let (gain_out, gain_in) = if curve == 1 {
-                    // Linear
-                    (1.0 - progress, progress)
-                } else {
-                    // Equal Power
-                    let angle = progress * std::f32::consts::FRAC_PI_2;
-                    (angle.cos(), angle.sin())
-                };
-
-                for c in 0..self.channels {
-                    let idx = k * self.channels + c;
-                    out_slice[idx] = gain_out * from_buf[idx] + gain_in * to_buf[idx];
-                }
-            }
-
-            let next_frame = cur_frame + frame_count as u64;
-            self.crossfade.current_frame.store(next_frame, Ordering::Relaxed);
-
-            if next_frame >= tot_frames {
-                self.crossfade.is_active.store(false, Ordering::Release);
-                let to_deck = self.crossfade.to_deck.load(Ordering::Relaxed);
-                self.active_deck.store(to_deck, Ordering::Release);
-                self.crossfade_completed_flag.store(true, Ordering::Release);
+            unsafe {
+                std::ptr::write_bytes(output_frames, 0, total_samples);
             }
         }
+    }
+
+    #[inline]
+    fn render_crossfade_mix(
+        &mut self,
+        output_frames: *mut f32,
+        frame_count: usize,
+        total_samples: usize,
+    ) {
+        if self.scratch_a.len() < total_samples {
+            self.scratch_a.resize(total_samples, 0.0);
+        }
+        if self.scratch_b.len() < total_samples {
+            self.scratch_b.resize(total_samples, 0.0);
+        }
+
+        self.scratch_a[..total_samples].fill(0.0);
+        self.scratch_b[..total_samples].fill(0.0);
+
+        if !self.renderer_a.is_null() {
+            unsafe {
+                (*self.renderer_a).render_pcm(self.scratch_a.as_mut_ptr(), frame_count);
+            }
+        }
+        if !self.renderer_b.is_null() {
+            unsafe {
+                (*self.renderer_b).render_pcm(self.scratch_b.as_mut_ptr(), frame_count);
+            }
+        }
+
+        let from_deck = self.crossfade.from_deck.load(Ordering::Relaxed);
+        let curve = self.crossfade.curve.load(Ordering::Relaxed);
+        let cur_frame = self.crossfade.current_frame.load(Ordering::Relaxed);
+        let tot_frames = self.crossfade.total_frames.load(Ordering::Relaxed).max(1);
+
+        let (from_buf, to_buf) = if from_deck == 0 {
+            (&self.scratch_a, &self.scratch_b)
+        } else {
+            (&self.scratch_b, &self.scratch_a)
+        };
 
         let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
 
-        // 1. Microphone & Auto-Ducking
-        if self.mic_enabled.load(Ordering::Relaxed) {
-            if let Ok(mut mic_guard) = self.mic_consumer.try_lock() {
-                if let Some(ref mut mic_c) = *mic_guard {
-                    let slots = mic_c.slots();
-                    let to_read = slots.min(total_samples);
-                    if to_read > 0 {
-                        if self.scratch_mic.len() < to_read {
-                            self.scratch_mic.resize(to_read, 0.0);
-                        }
-                        if let Ok(chunk) = mic_c.read_chunk(to_read) {
-                            let (s1, s2) = chunk.as_slices();
-                            let n1 = s1.len();
-                            self.scratch_mic[..n1].copy_from_slice(s1);
-                            if !s2.is_empty() {
-                                self.scratch_mic[n1..to_read].copy_from_slice(s2);
-                            }
-                            chunk.commit_all();
+        for k in 0..frame_count {
+            let frame_idx = cur_frame + k as u64;
+            let progress = frame_idx as f32 / tot_frames as f32;
+            let (gain_out, gain_in) = CrossfadeAtomic::compute_gains(curve, progress);
 
-                            // Process sidechain auto-ducking on music
-                            self.ducker.process_sidechain(&self.scratch_mic[..to_read], out_slice, self.channels);
-
-                            // Mix microphone into master output
-                            let mic_gain = f32::from_bits(self.mic_volume.load(Ordering::Relaxed));
-                            let min_len = to_read.min(total_samples);
-                            for i in 0..min_len {
-                                out_slice[i] += mic_gain * self.scratch_mic[i];
-                            }
-                        }
-                    }
-                }
+            for c in 0..self.channels {
+                let idx = k * self.channels + c;
+                out_slice[idx] = gain_out * from_buf[idx] + gain_in * to_buf[idx];
             }
         }
 
-        // 2. Cue Output Push
-        if self.cue_enabled.load(Ordering::Relaxed) {
-            if let Some(ref mut cue_p) = self.cue_producer {
-                let slots = cue_p.slots();
-                let to_write = slots.min(total_samples);
-                if to_write > 0 {
-                    let mode = self.cue_mode.load(Ordering::Relaxed);
-                    let src = match mode {
-                        0 => if self.scratch_a.len() >= to_write { &self.scratch_a[..to_write] } else { &out_slice[..to_write] },
-                        1 => if self.scratch_b.len() >= to_write { &self.scratch_b[..to_write] } else { &out_slice[..to_write] },
-                        _ => &out_slice[..to_write],
-                    };
-                    if let Ok(mut chunk) = cue_p.write_chunk(to_write) {
-                        let (s1, s2) = chunk.as_mut_slices();
-                        let n1 = s1.len();
-                        s1.copy_from_slice(&src[..n1]);
-                        if !s2.is_empty() {
-                            s2.copy_from_slice(&src[n1..to_write]);
-                        }
-                        chunk.commit_all();
-                    }
-                }
-            }
+        let next_frame = cur_frame + frame_count as u64;
+        self.crossfade
+            .current_frame
+            .store(next_frame, Ordering::Relaxed);
+
+        if next_frame >= tot_frames {
+            self.crossfade.is_active.store(false, Ordering::Release);
+            let to_deck = self.crossfade.to_deck.load(Ordering::Relaxed);
+            self.active_deck.store(to_deck, Ordering::Release);
+            self.crossfade_completed_flag.store(true, Ordering::Release);
+        }
+    }
+
+    #[inline]
+    fn process_microphone_and_ducking(&mut self, out_slice: &mut [f32], total_samples: usize) {
+        if !self.mic_enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        let Ok(mut mic_guard) = self.mic_consumer.try_lock() else {
+            return;
+        };
+        let Some(ref mut mic_c) = *mic_guard else {
+            return;
+        };
+
+        let to_read = mic_c.slots().min(total_samples);
+        if to_read == 0 {
+            return;
+        }
+        if self.scratch_mic.len() < to_read {
+            self.scratch_mic.resize(to_read, 0.0);
         }
 
-        // 3. Live Recording Sink Push
-        if self.is_recording.load(Ordering::Relaxed) {
-            if let Some(ref mut rec_p) = self.record_producer {
-                let slots = rec_p.slots();
-                let to_write = slots.min(total_samples);
-                if to_write > 0 {
-                    if let Ok(mut chunk) = rec_p.write_chunk(to_write) {
-                        let (s1, s2) = chunk.as_mut_slices();
-                        let n1 = s1.len();
-                        s1.copy_from_slice(&out_slice[..n1]);
-                        if !s2.is_empty() {
-                            s2.copy_from_slice(&out_slice[n1..to_write]);
-                        }
-                        chunk.commit_all();
-                    }
-                }
-            }
+        let read = pull_from_ring_buffer(mic_c, &mut self.scratch_mic[..to_read]);
+        if read == 0 {
+            return;
         }
 
-        // 4. Compute composite FFT visualizer data directly on the mixed output buffer
+        self.ducker
+            .process_sidechain(&self.scratch_mic[..read], out_slice, self.channels);
+
+        let mic_gain = f32::from_bits(self.mic_volume.load(Ordering::Relaxed));
+        let min_len = read.min(total_samples);
+        for i in 0..min_len {
+            out_slice[i] += mic_gain * self.scratch_mic[i];
+        }
+    }
+
+    #[inline]
+    fn route_cue_output(&mut self, out_slice: &[f32], total_samples: usize) {
+        if !self.cue_enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some(ref mut cue_p) = self.cue_producer else {
+            return;
+        };
+        let to_write = cue_p.slots().min(total_samples);
+        if to_write == 0 {
+            return;
+        }
+
+        let mode = self.cue_mode.load(Ordering::Relaxed);
+        let src = match mode {
+            0 if self.scratch_a.len() >= to_write => &self.scratch_a[..to_write],
+            1 if self.scratch_b.len() >= to_write => &self.scratch_b[..to_write],
+            _ => &out_slice[..to_write],
+        };
+        push_to_ring_buffer(cue_p, src);
+    }
+
+    #[inline]
+    fn route_recording_output(&mut self, out_slice: &[f32], total_samples: usize) {
+        if !self.is_recording.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Some(ref mut rec_p) = self.record_producer {
+            push_to_ring_buffer(rec_p, &out_slice[..total_samples]);
+        }
+    }
+
+    #[inline]
+    fn update_composite_visualizer(&mut self, out_slice: &[f32]) {
         if self.visualizer_enabled.load(Ordering::Relaxed) {
             if !self.visualizer.is_enabled() {
                 self.visualizer.set_enabled(true);
@@ -354,8 +385,29 @@ impl EngineRenderer {
             self.visualizer_seqlock.write(|v| *v = vis);
         } else if self.visualizer.is_enabled() {
             self.visualizer.set_enabled(false);
-            self.visualizer_seqlock.write(|v| *v = crate::dsp::visualizer::VisualizerData::default());
+            self.visualizer_seqlock
+                .write(|v| *v = VisualizerData::default());
         }
+    }
+
+    #[inline]
+    pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
+        if output_frames.is_null() || frame_count == 0 {
+            return;
+        }
+
+        let total_samples = frame_count * self.channels;
+        if self.crossfade.is_active.load(Ordering::Acquire) {
+            self.render_crossfade_mix(output_frames, frame_count, total_samples);
+        } else {
+            self.render_single_deck(output_frames, frame_count, total_samples);
+        }
+
+        let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
+        self.process_microphone_and_ducking(out_slice, total_samples);
+        self.route_cue_output(out_slice, total_samples);
+        self.route_recording_output(out_slice, total_samples);
+        self.update_composite_visualizer(out_slice);
     }
 }
 
@@ -599,7 +651,11 @@ impl EngineCoordinator {
             visualizer_seqlock,
             visualizer_enabled,
 
-            live_recorder: Arc::new(RwLock::new(LiveRecorder::new(sr, ch as usize, WavFormat::Pcm16))),
+            live_recorder: Arc::new(RwLock::new(LiveRecorder::new(
+                sr,
+                ch as usize,
+                WavFormat::Pcm16,
+            ))),
             is_recording,
             record_consumer: Arc::new(Mutex::new(record_consumer)),
 
@@ -703,7 +759,8 @@ impl EngineCoordinator {
                 self.deck_a.stop();
                 self.deck_b.stop();
             } else if cur >= q.len() as i64 {
-                self.current_index.store((q.len() - 1) as i64, Ordering::Release);
+                self.current_index
+                    .store((q.len() - 1) as i64, Ordering::Release);
             }
         }
         Some(removed)
@@ -817,7 +874,10 @@ impl EngineCoordinator {
         threshold_db: f32,
     ) -> Result<(), String> {
         let dev_id_c = capture_device_id.map(|s| std::ffi::CString::new(s).unwrap_or_default());
-        let dev_id_ptr = dev_id_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+        let dev_id_ptr = dev_id_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null());
 
         let sr = unsafe { (*self.renderer_ptr).sample_rate };
         let (node, consumer) = DeviceCaptureNode::new(sr, 1, 512, dev_id_ptr)
@@ -858,7 +918,8 @@ impl EngineCoordinator {
     }
 
     pub fn set_mic_volume(&self, volume: f32) {
-        self.mic_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.mic_volume
+            .store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
     }
 
     pub fn configure_cue_output(
@@ -868,7 +929,10 @@ impl EngineCoordinator {
         mode: i32,
     ) -> Result<(), String> {
         let dev_id_c = cue_device_id.map(|s| std::ffi::CString::new(s).unwrap_or_default());
-        let dev_id_ptr = dev_id_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+        let dev_id_ptr = dev_id_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null());
 
         let sr = unsafe { (*self.renderer_ptr).sample_rate };
         let ch = unsafe { (*self.renderer_ptr).channels } as u32;
@@ -890,7 +954,9 @@ impl EngineCoordinator {
             }
             let start_res = unsafe { map_device_start(ctx) };
             if start_res != 0 {
-                unsafe { map_device_destroy(ctx); }
+                unsafe {
+                    map_device_destroy(ctx);
+                }
                 return Err(format!("Failed to start cue device: error {}", start_res));
             }
             self.cue_device_ctx = ctx;
@@ -900,14 +966,16 @@ impl EngineCoordinator {
             }
         }
 
-        self.cue_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.cue_volume
+            .store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
         self.cue_mode.store(mode.clamp(0, 2), Ordering::Relaxed);
         self.cue_enabled.store(true, Ordering::Release);
         Ok(())
     }
 
     pub fn set_cue_volume(&self, volume: f32) {
-        self.cue_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.cue_volume
+            .store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
     }
 
     pub fn set_cue_mode(&self, mode: i32) {

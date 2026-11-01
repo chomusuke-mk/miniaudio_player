@@ -1,4 +1,4 @@
-//! Audio stream format detection, header sniffing and duration estimation in pure Rust.
+//! Deterministic Audio Stream Format Detection, Header Sniffing, and Boundary Calculation.
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,27 @@ pub enum ContainerFormat {
     Ape = 10,
     WavPack = 11,
     Hls = 12,
+}
+
+impl ContainerFormat {
+    /// Returns the canonical Symphonia hint extension for this container format.
+    #[inline]
+    pub const fn hint_extension(self) -> Option<&'static str> {
+        match self {
+            Self::Mp3 => Some("mp3"),
+            Self::Adts => Some("aac"),
+            Self::Flac => Some("flac"),
+            Self::OggVorbis | Self::OggOpus => Some("ogg"),
+            Self::Wav => Some("wav"),
+            Self::Mp4 => Some("mp4"),
+            Self::Matroska => Some("mkv"),
+            Self::Dsf => Some("dsf"),
+            Self::Ape => Some("ape"),
+            Self::WavPack => Some("wv"),
+            Self::Hls => Some("m3u8"),
+            Self::Unknown => None,
+        }
+    }
 }
 
 #[repr(C)]
@@ -64,14 +85,54 @@ impl BoundaryInfo {
     pub fn reset(&mut self) {
         *self = Self::new();
     }
+
+    #[inline]
+    fn set_direct_container(&mut self, container: ContainerFormat, start: i64, total_size: i64) {
+        self.container = container;
+        self.audio_start = start;
+        self.audio_end = total_size;
+    }
 }
 
 const MAX_HEAD_SCAN: i64 = 64 * 1024 * 1024;
 const SYNC_SCAN_LIMIT: i64 = 65536;
 
+const W64_RIFF_MAGIC: [u8; 16] = [
+    0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00, 0x00,
+];
+const W64_WAVE_MAGIC: [u8; 16] = [
+    0x77, 0x61, 0x76, 0x65, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
+];
+
 pub struct FormatSniffer;
 
 impl FormatSniffer {
+    /// Extracts a normalized file extension hint from a path or URL (ignoring query strings).
+    pub fn extract_extension_hint(source: &str) -> Option<&'static str> {
+        let clean = source.split('?').next().unwrap_or(source);
+        let ext = clean.rsplit('.').next()?;
+        match ext.to_ascii_lowercase().as_str() {
+            "mp3" => Some("mp3"),
+            "wav" | "bwf" => Some("wav"),
+            "flac" => Some("flac"),
+            "ogg" | "oga" | "opus" => Some("ogg"),
+            "aac" | "adts" => Some("aac"),
+            "m4a" | "mp4" | "m4b" => Some("mp4"),
+            "aif" | "aiff" | "aifc" => Some("aiff"),
+            "w64" => Some("w64"),
+            "rf64" => Some("rf64"),
+            "rifx" => Some("rifx"),
+            "dsf" => Some("dsf"),
+            "wv" => Some("wv"),
+            "ape" => Some("ape"),
+            "mkv" | "mka" => Some("mka"),
+            "webm" => Some("webm"),
+            "m3u8" | "m3u" => Some("m3u8"),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn container_needs_tail_scan(container: ContainerFormat) -> bool {
         matches!(
             container,
@@ -89,119 +150,99 @@ impl FormatSniffer {
         }
 
         if (data.starts_with(b"RIFF") || data.starts_with(b"RF64")) && &data[8..12] == b"WAVE" {
-            let status = Self::detect_wav(data, total_size, &mut info);
-            return (status, info);
+            return (Self::detect_wav(data, total_size, &mut info), info);
         }
-        if data.starts_with(b"RIFX") && data.len() >= 12 && &data[8..12] == b"WAVE" {
-            let status = Self::detect_rifx(data, total_size, &mut info);
-            return (status, info);
+        if data.starts_with(b"RIFX") && &data[8..12] == b"WAVE" {
+            return (Self::detect_rifx(data, total_size, &mut info), info);
         }
-        if data.starts_with(&[0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00, 0x00])
-            && data.len() >= 40
-            && &data[24..40] == &[0x77, 0x61, 0x76, 0x65, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a]
+        if data.starts_with(&W64_RIFF_MAGIC)
+            && avail >= 40
+            && data[24..40] == W64_WAVE_MAGIC
         {
-            let status = Self::detect_w64(data, total_size, &mut info);
-            return (status, info);
+            return (Self::detect_w64(data, total_size, &mut info), info);
         }
         if data.starts_with(b"fLaC") {
-            let status = Self::detect_flac(data, total_size, 0, &mut info);
-            return (status, info);
+            return (Self::detect_flac(data, total_size, 0, &mut info), info);
         }
         if data.starts_with(b"OggS") {
-            let status = Self::detect_ogg(data, total_size, &mut info);
-            return (status, info);
+            return (Self::detect_ogg(data, total_size, &mut info), info);
         }
-        if data.len() >= 8 && &data[4..8] == b"ftyp" {
-            let status = Self::detect_mp4(data, total_size, &mut info);
-            return (status, info);
+        if &data[4..8] == b"ftyp" {
+            return (Self::detect_mp4(data, total_size, &mut info), info);
         }
         if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-            info.container = ContainerFormat::Matroska;
-            info.audio_start = 0;
-            info.audio_end = total_size;
-            return (BoundaryStatus::Found, info);
-        }
-        if data.starts_with(b"DSD ") {
-            info.container = ContainerFormat::Dsf;
-            info.audio_start = 0;
-            info.audio_end = total_size;
-            return (BoundaryStatus::Found, info);
-        }
-        if data.starts_with(b"MAC ") {
-            info.container = ContainerFormat::Ape;
-            info.audio_start = 0;
-            info.audio_end = total_size;
-            return (BoundaryStatus::Found, info);
-        }
-        if data.starts_with(b"wvpk") {
-            info.container = ContainerFormat::WavPack;
-            info.audio_start = 0;
-            info.audio_end = total_size;
+            info.set_direct_container(ContainerFormat::Matroska, 0, total_size);
             return (BoundaryStatus::Found, info);
         }
         if data.starts_with(b"#EXTM3U") || data.starts_with(b"#EXT-X-") {
-            info.container = ContainerFormat::Hls;
-            info.audio_start = 0;
-            info.audio_end = total_size;
+            info.set_direct_container(ContainerFormat::Hls, 0, total_size);
+            return (BoundaryStatus::Found, info);
+        }
+        if let Some(container) = Self::match_lossless_magic(data) {
+            info.set_direct_container(container, 0, total_size);
             return (BoundaryStatus::Found, info);
         }
 
-        // Leading ID3v2 tags
-        let mut p: usize = 0;
+        // Advance past any leading ID3v2 tags
+        let p = match Self::skip_id3v2_chain(data, total_size, &mut info) {
+            Ok(offset) => offset,
+            Err(status) => return (status, info),
+        };
+
+        if p + 4 > avail {
+            return (Self::need_more(&mut info, (p + 4) as i64, total_size, avail), info);
+        }
+
+        if data[p..].starts_with(b"fLaC") {
+            return (Self::detect_flac(data, total_size, p as i64, &mut info), info);
+        }
+        if let Some(container) = Self::match_lossless_magic(&data[p..]) {
+            info.set_direct_container(container, p as i64, total_size);
+            return (BoundaryStatus::Found, info);
+        }
+
+        (Self::detect_mpeg(data, total_size, p as i64, &mut info), info)
+    }
+
+    fn match_lossless_magic(slice: &[u8]) -> Option<ContainerFormat> {
+        if slice.starts_with(b"DSD ") {
+            Some(ContainerFormat::Dsf)
+        } else if slice.starts_with(b"MAC ") {
+            Some(ContainerFormat::Ape)
+        } else if slice.starts_with(b"wvpk") {
+            Some(ContainerFormat::WavPack)
+        } else {
+            None
+        }
+    }
+
+    fn skip_id3v2_chain(
+        data: &[u8],
+        total_size: i64,
+        info: &mut BoundaryInfo,
+    ) -> Result<usize, BoundaryStatus> {
+        let avail = data.len();
+        let mut p = 0usize;
         loop {
             if p + 10 > avail {
-                let status = Self::need_more(&mut info, (p + 10) as i64, total_size, avail);
-                return (status, info);
+                return Err(Self::need_more(info, (p + 10) as i64, total_size, avail));
             }
             let t = &data[p..];
-            if t[0] == b'I'
-                && t[1] == b'D'
-                && t[2] == b'3'
+            if &t[0..3] == b"ID3"
                 && t[3] != 0xFF
                 && t[4] != 0xFF
                 && ((t[6] | t[7] | t[8] | t[9]) & 0x80) == 0
             {
-                let tag_size = synchsafe32(&t[6..10]);
+                let tag_size = synchsafe32(&t[6..10]) as usize;
                 let footer = if (t[5] & 0x10) != 0 { 10 } else { 0 };
-                p += 10 + tag_size as usize + footer;
+                p += 10 + tag_size + footer;
                 if p as i64 > MAX_HEAD_SCAN || (total_size > 0 && p as i64 > total_size) {
-                    return (BoundaryStatus::Unsupported, info);
+                    return Err(BoundaryStatus::Unsupported);
                 }
                 continue;
             }
-            break;
+            return Ok(p);
         }
-
-        if p + 4 > avail {
-            let status = Self::need_more(&mut info, (p + 4) as i64, total_size, avail);
-            return (status, info);
-        }
-
-        if data[p..].starts_with(b"fLaC") {
-            let status = Self::detect_flac(data, total_size, p as i64, &mut info);
-            return (status, info);
-        }
-        if data[p..].starts_with(b"MAC ") {
-            info.container = ContainerFormat::Ape;
-            info.audio_start = p as i64;
-            info.audio_end = total_size;
-            return (BoundaryStatus::Found, info);
-        }
-        if data[p..].starts_with(b"wvpk") {
-            info.container = ContainerFormat::WavPack;
-            info.audio_start = p as i64;
-            info.audio_end = total_size;
-            return (BoundaryStatus::Found, info);
-        }
-        if data[p..].starts_with(b"DSD ") {
-            info.container = ContainerFormat::Dsf;
-            info.audio_start = p as i64;
-            info.audio_end = total_size;
-            return (BoundaryStatus::Found, info);
-        }
-
-        let status = Self::detect_mpeg(data, total_size, p as i64, &mut info);
-        (status, info)
     }
 
     pub fn detect_tail_boundary(
@@ -221,103 +262,163 @@ impl FormatSniffer {
             return (BoundaryStatus::Unsupported, total_size);
         }
 
-        let audio_start = audio_start.max(0);
+        let floor = audio_start.max(0);
         let mut end = total_size;
-        let mut status = BoundaryStatus::Found;
-        let mut changed = true;
 
-        while changed {
-            changed = false;
-
-            // 1. ID3v1 (128 bytes) & ID3v1 Enhanced (227 bytes)
-            if end - 128 >= audio_start {
-                if end - 128 < tail_offset {
-                    status = BoundaryStatus::NeedMore;
-                    break;
-                }
-                let idx = (end - 128 - tail_offset) as usize;
-                let t = &tail[idx..];
-                if t.starts_with(b"TAG") {
-                    end -= 128;
-                    if end - 227 >= audio_start && end - 227 >= tail_offset {
-                        let e_idx = (end - 227 - tail_offset) as usize;
-                        if tail[e_idx..].starts_with(b"TAG+") {
-                            end -= 227;
-                        }
-                    }
-                    changed = true;
-                    continue;
-                }
-            }
-
-            // 2. APEv2 / APEv1 footer (32 bytes)
-            if end - 32 >= audio_start && end - 32 >= tail_offset {
-                let idx = (end - 32 - tail_offset) as usize;
-                if tail[idx..].starts_with(b"APETAGEX") {
-                    let f = &tail[idx..];
-                    let ape_size = le32(&f[12..16]);
-                    let ape_flags = le32(&f[20..24]);
-                    let ape_total = ape_size as i64 + if (ape_flags & 0x80000000) != 0 { 32 } else { 0 };
-                    if ape_total >= 32 && end - ape_total >= audio_start {
-                        end -= ape_total;
-                        changed = true;
-                        if end < tail_offset {
-                            status = BoundaryStatus::NeedMore;
-                            break;
-                        }
+        loop {
+            if let Some(res) = Self::strip_id3v1_tail(tail, tail_offset, floor, end) {
+                match res {
+                    Ok(new_end) => {
+                        end = new_end;
                         continue;
                     }
+                    Err(status) => return (status, end),
                 }
             }
-
-            // 3. Lyrics3v2: "<6 ascii digits>LYRICS200"
-            if end - 15 >= audio_start && end - 15 >= tail_offset {
-                let lyr_idx = (end - 9 - tail_offset) as usize;
-                if tail[lyr_idx..].starts_with(b"LYRICS200") {
-                    let s_idx = (end - 15 - tail_offset) as usize;
-                    let s = &tail[s_idx..s_idx + 6];
-                    let mut lyrics_size: i64 = 0;
-                    let mut valid = true;
-                    for &b in s {
-                        if !b.is_ascii_digit() {
-                            valid = false;
-                            break;
-                        }
-                        lyrics_size = lyrics_size * 10 + (b - b'0') as i64;
-                    }
-                    let lyr_total = lyrics_size + 6 + 9;
-                    if valid && end - lyr_total >= audio_start {
-                        end -= lyr_total;
-                        changed = true;
-                        if end < tail_offset {
-                            status = BoundaryStatus::NeedMore;
-                            break;
-                        }
+            if let Some(res) = Self::strip_ape_tail(tail, tail_offset, floor, end) {
+                match res {
+                    Ok(new_end) => {
+                        end = new_end;
                         continue;
                     }
+                    Err(status) => return (status, end),
                 }
             }
-
-            // 4. Appended ID3v2 tag with footer ("3DI")
-            if end - 10 >= audio_start && end - 10 >= tail_offset {
-                let idx = (end - 10 - tail_offset) as usize;
-                let f = &tail[idx..];
-                if f.starts_with(b"3DI") && ((f[6] | f[7] | f[8] | f[9]) & 0x80) == 0 {
-                    let id3_total = synchsafe32(&f[6..10]) as i64 + 20;
-                    if end - id3_total >= audio_start {
-                        end -= id3_total;
-                        changed = true;
-                        if end < tail_offset {
-                            status = BoundaryStatus::NeedMore;
-                            break;
-                        }
+            if let Some(res) = Self::strip_lyrics3v2_tail(tail, tail_offset, floor, end) {
+                match res {
+                    Ok(new_end) => {
+                        end = new_end;
                         continue;
                     }
+                    Err(status) => return (status, end),
                 }
             }
+            if let Some(res) = Self::strip_id3v2_footer_tail(tail, tail_offset, floor, end) {
+                match res {
+                    Ok(new_end) => {
+                        end = new_end;
+                        continue;
+                    }
+                    Err(status) => return (status, end),
+                }
+            }
+            break;
         }
 
-        (status, end)
+        (BoundaryStatus::Found, end)
+    }
+
+    fn strip_id3v1_tail(
+        tail: &[u8],
+        tail_offset: i64,
+        floor: i64,
+        end: i64,
+    ) -> Option<Result<i64, BoundaryStatus>> {
+        if end - 128 < floor {
+            return None;
+        }
+        if end - 128 < tail_offset {
+            return Some(Err(BoundaryStatus::NeedMore));
+        }
+        let idx = (end - 128 - tail_offset) as usize;
+        if !tail[idx..].starts_with(b"TAG") {
+            return None;
+        }
+        let mut new_end = end - 128;
+        if new_end - 227 >= floor && new_end - 227 >= tail_offset {
+            let e_idx = (new_end - 227 - tail_offset) as usize;
+            if tail[e_idx..].starts_with(b"TAG+") {
+                new_end -= 227;
+            }
+        }
+        Some(Ok(new_end))
+    }
+
+    fn strip_ape_tail(
+        tail: &[u8],
+        tail_offset: i64,
+        floor: i64,
+        end: i64,
+    ) -> Option<Result<i64, BoundaryStatus>> {
+        if end - 32 < floor || end - 32 < tail_offset {
+            return None;
+        }
+        let idx = (end - 32 - tail_offset) as usize;
+        let f = &tail[idx..];
+        if !f.starts_with(b"APETAGEX") {
+            return None;
+        }
+        let ape_size = le32(&f[12..16]);
+        let ape_flags = le32(&f[20..24]);
+        let ape_total = ape_size as i64 + if (ape_flags & 0x80000000) != 0 { 32 } else { 0 };
+        if ape_total < 32 || end - ape_total < floor {
+            return None;
+        }
+        let new_end = end - ape_total;
+        if new_end < tail_offset {
+            Some(Err(BoundaryStatus::NeedMore))
+        } else {
+            Some(Ok(new_end))
+        }
+    }
+
+    fn strip_lyrics3v2_tail(
+        tail: &[u8],
+        tail_offset: i64,
+        floor: i64,
+        end: i64,
+    ) -> Option<Result<i64, BoundaryStatus>> {
+        if end - 15 < floor || end - 15 < tail_offset {
+            return None;
+        }
+        let lyr_idx = (end - 9 - tail_offset) as usize;
+        if !tail[lyr_idx..].starts_with(b"LYRICS200") {
+            return None;
+        }
+        let s_idx = (end - 15 - tail_offset) as usize;
+        let mut lyrics_size = 0i64;
+        for &b in &tail[s_idx..s_idx + 6] {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            lyrics_size = lyrics_size * 10 + (b - b'0') as i64;
+        }
+        let lyr_total = lyrics_size + 15;
+        if end - lyr_total < floor {
+            return None;
+        }
+        let new_end = end - lyr_total;
+        if new_end < tail_offset {
+            Some(Err(BoundaryStatus::NeedMore))
+        } else {
+            Some(Ok(new_end))
+        }
+    }
+
+    fn strip_id3v2_footer_tail(
+        tail: &[u8],
+        tail_offset: i64,
+        floor: i64,
+        end: i64,
+    ) -> Option<Result<i64, BoundaryStatus>> {
+        if end - 10 < floor || end - 10 < tail_offset {
+            return None;
+        }
+        let idx = (end - 10 - tail_offset) as usize;
+        let f = &tail[idx..];
+        if !f.starts_with(b"3DI") || ((f[6] | f[7] | f[8] | f[9]) & 0x80) != 0 {
+            return None;
+        }
+        let id3_total = synchsafe32(&f[6..10]) as i64 + 20;
+        if end - id3_total < floor {
+            return None;
+        }
+        let new_end = end - id3_total;
+        if new_end < tail_offset {
+            Some(Err(BoundaryStatus::NeedMore))
+        } else {
+            Some(Ok(new_end))
+        }
     }
 
     pub fn extract_tail_duration_ms(
@@ -331,7 +432,11 @@ impl FormatSniffer {
         if !matches!(container, ContainerFormat::OggVorbis | ContainerFormat::OggOpus) {
             return None;
         }
-        let srate = if container == ContainerFormat::OggOpus { 48000 } else { sample_rate };
+        let srate = if container == ContainerFormat::OggOpus {
+            48000
+        } else {
+            sample_rate
+        };
         if srate == 0 {
             return None;
         }
@@ -353,36 +458,11 @@ impl FormatSniffer {
 
     pub fn sniff_mp3_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         let avail = data.len();
-        if avail < 10 {
+        if avail < 10 || Self::has_non_mpeg_magic(data) {
             return None;
         }
 
-        if avail >= 4 {
-            if data.starts_with(b"RIFF")
-                || data.starts_with(b"RF64")
-                || data.starts_with(b"fLaC")
-                || data.starts_with(b"FORM")
-                || data.starts_with(b"OggS")
-            {
-                return None;
-            }
-        }
-        if avail >= 8 && &data[4..8] == b"ftyp" {
-            return None;
-        }
-
-        let mut start_offset = 0;
-        let mut id3_total_size = 0;
-
-        if data.starts_with(b"ID3") && avail >= 10 {
-            let id3_size = synchsafe32(&data[6..10]);
-            id3_total_size = 10 + id3_size;
-            if (data[5] & 0x10) != 0 {
-                id3_total_size += 10;
-            }
-            start_offset = (id3_total_size as usize).min(avail);
-        }
-
+        let (start_offset, id3_total_size) = Self::initial_id3v2_skip(data);
         if start_offset + 4 > avail {
             return None;
         }
@@ -402,50 +482,13 @@ impl FormatSniffer {
                 }
             }
 
-            // Check Xing / Info / VBRI header
-            let xing_offset = 4 + (if hdr.has_crc { 2 } else { 0 }) + hdr.side_info as usize;
-            if hdr.layer == 1 && i + xing_offset + 12 <= avail {
-                let tag = &data[i + xing_offset..];
-                if tag.starts_with(b"Xing") || tag.starts_with(b"Info") {
-                    let flags = be32(&tag[4..8]);
-                    if (flags & 0x01) != 0 {
-                        let total_mpeg_frames = be32(&tag[8..12]);
-                        let samples_per_frame = if hdr.ver == 3 { 1152 } else { 576 };
-                        let total_pcm = total_mpeg_frames as u64 * samples_per_frame as u64;
-                        let duration_ms = (total_pcm as f64 * 1000.0 / hdr.sample_rate as f64 + 0.5) as i64;
-                        let bitrate = if (flags & 0x02) != 0 && duration_ms > 0 {
-                            let total_audio_bytes = be32(&tag[12..16]);
-                            ((total_audio_bytes as u64 * 8000) / duration_ms as u64) as u32
-                        } else if total_size > 0 && duration_ms > 0 {
-                            ((total_size as u64 * 8000) / duration_ms as u64) as u32
-                        } else {
-                            hdr.bitrate_kbps * 1000
-                        };
-                        return Some((bitrate, duration_ms));
-                    }
-                }
+            if let Some(info) = Self::try_parse_xing_vbr(data, i, avail, total_size, &hdr) {
+                return Some(info);
+            }
+            if let Some(info) = Self::try_parse_vbri(data, i, avail, &hdr) {
+                return Some(info);
             }
 
-            // VBRI
-            let vbri_offset = 4 + (if hdr.has_crc { 2 } else { 0 }) + 32;
-            if hdr.layer == 1 && i + vbri_offset + 18 <= avail {
-                let tag = &data[i + vbri_offset..];
-                if tag.starts_with(b"VBRI") {
-                    let total_mpeg_frames = be32(&tag[14..18]);
-                    let samples_per_frame = if hdr.ver == 3 { 1152 } else { 576 };
-                    let total_pcm = total_mpeg_frames as u64 * samples_per_frame as u64;
-                    let duration_ms = (total_pcm as f64 * 1000.0 / hdr.sample_rate as f64 + 0.5) as i64;
-                    let bitrate = if duration_ms > 0 {
-                        let total_audio_bytes = be32(&tag[10..14]);
-                        ((total_audio_bytes as u64 * 8000) / duration_ms as u64) as u32
-                    } else {
-                        hdr.bitrate_kbps * 1000
-                    };
-                    return Some((bitrate, duration_ms));
-                }
-            }
-
-            // Standard CBR
             let bitrate = hdr.bitrate_kbps * 1000;
             let duration_ms = if total_size > 0 {
                 let audio_bytes = if total_size > id3_total_size as i64 {
@@ -461,6 +504,92 @@ impl FormatSniffer {
         }
 
         None
+    }
+
+    fn has_non_mpeg_magic(data: &[u8]) -> bool {
+        if data.len() >= 4
+            && (data.starts_with(b"RIFF")
+                || data.starts_with(b"RF64")
+                || data.starts_with(b"fLaC")
+                || data.starts_with(b"FORM")
+                || data.starts_with(b"OggS"))
+        {
+            return true;
+        }
+        data.len() >= 8 && &data[4..8] == b"ftyp"
+    }
+
+    fn initial_id3v2_skip(data: &[u8]) -> (usize, u32) {
+        if data.starts_with(b"ID3") && data.len() >= 10 {
+            let mut id3_total = 10 + synchsafe32(&data[6..10]);
+            if (data[5] & 0x10) != 0 {
+                id3_total += 10;
+            }
+            ((id3_total as usize).min(data.len()), id3_total)
+        } else {
+            (0, 0)
+        }
+    }
+
+    fn try_parse_xing_vbr(
+        data: &[u8],
+        frame_offset: usize,
+        avail: usize,
+        total_size: i64,
+        hdr: &MpegHeader,
+    ) -> Option<(u32, i64)> {
+        let xing_offset = 4 + (if hdr.has_crc { 2 } else { 0 }) + hdr.side_info as usize;
+        if hdr.layer != 1 || frame_offset + xing_offset + 12 > avail {
+            return None;
+        }
+        let tag = &data[frame_offset + xing_offset..];
+        if !tag.starts_with(b"Xing") && !tag.starts_with(b"Info") {
+            return None;
+        }
+        let flags = be32(&tag[4..8]);
+        if (flags & 0x01) == 0 {
+            return None;
+        }
+        let total_mpeg_frames = be32(&tag[8..12]);
+        let samples_per_frame = if hdr.ver == 3 { 1152 } else { 576 };
+        let total_pcm = total_mpeg_frames as u64 * samples_per_frame as u64;
+        let duration_ms = (total_pcm as f64 * 1000.0 / hdr.sample_rate as f64 + 0.5) as i64;
+        let bitrate = if (flags & 0x02) != 0 && duration_ms > 0 && tag.len() >= 16 {
+            let total_audio_bytes = be32(&tag[12..16]);
+            ((total_audio_bytes as u64 * 8000) / duration_ms as u64) as u32
+        } else if total_size > 0 && duration_ms > 0 {
+            ((total_size as u64 * 8000) / duration_ms as u64) as u32
+        } else {
+            hdr.bitrate_kbps * 1000
+        };
+        Some((bitrate, duration_ms))
+    }
+
+    fn try_parse_vbri(
+        data: &[u8],
+        frame_offset: usize,
+        avail: usize,
+        hdr: &MpegHeader,
+    ) -> Option<(u32, i64)> {
+        let vbri_offset = 4 + (if hdr.has_crc { 2 } else { 0 }) + 32;
+        if hdr.layer != 1 || frame_offset + vbri_offset + 18 > avail {
+            return None;
+        }
+        let tag = &data[frame_offset + vbri_offset..];
+        if !tag.starts_with(b"VBRI") {
+            return None;
+        }
+        let total_mpeg_frames = be32(&tag[14..18]);
+        let samples_per_frame = if hdr.ver == 3 { 1152 } else { 576 };
+        let total_pcm = total_mpeg_frames as u64 * samples_per_frame as u64;
+        let duration_ms = (total_pcm as f64 * 1000.0 / hdr.sample_rate as f64 + 0.5) as i64;
+        let bitrate = if duration_ms > 0 {
+            let total_audio_bytes = be32(&tag[10..14]);
+            ((total_audio_bytes as u64 * 8000) / duration_ms as u64) as u32
+        } else {
+            hdr.bitrate_kbps * 1000
+        };
+        Some((bitrate, duration_ms))
     }
 
     pub fn sniff_ogg_vorbis_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
@@ -516,11 +645,9 @@ impl FormatSniffer {
         for i in 0..scan_limit.saturating_sub(18) {
             if data[i..].starts_with(b"OpusHead") {
                 if total_size > 0 && data.len() as i64 >= total_size {
-                    if let Some(dur_ms) = Self::extract_tail_duration_ms(
-                        ContainerFormat::OggOpus,
-                        48000,
-                        data,
-                    ) {
+                    if let Some(dur_ms) =
+                        Self::extract_tail_duration_ms(ContainerFormat::OggOpus, 48000, data)
+                    {
                         let br = ((total_size as u64 * 8000) / dur_ms as u64) as u32;
                         return Some((br, dur_ms));
                     }
@@ -543,18 +670,19 @@ impl FormatSniffer {
         if data.len() < 7 || total_size <= 0 {
             return None;
         }
-        let sample_rates = [
-            96000, 88200, 64000, 48000, 44100, 32000,
-            24000, 22050, 16000, 12000, 11025, 8000, 7350,
+        const SAMPLE_RATES: [u32; 13] = [
+            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
+            7350,
         ];
         let scan_limit = data.len().saturating_sub(6).min(4096);
         for i in 0..scan_limit {
             let h = &data[i..];
             if is_adts_sync(h) {
                 let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
-                if sr_idx < sample_rates.len() {
-                    let sr = sample_rates[sr_idx];
-                    let frame_len = (((h[3] as u32 & 0x03) << 11) | ((h[4] as u32) << 3) | ((h[5] as u32) >> 5)) as u64;
+                if let Some(&sr) = SAMPLE_RATES.get(sr_idx) {
+                    let frame_len = (((h[3] as u32 & 0x03) << 11)
+                        | ((h[4] as u32) << 3)
+                        | ((h[5] as u32) >> 5)) as u64;
                     if frame_len >= 7 {
                         let bitrate = ((frame_len * 8 * sr as u64) / 1024) as u32;
                         if bitrate > 0 {
@@ -569,23 +697,18 @@ impl FormatSniffer {
     }
 
     pub fn sniff_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
-        if let Some(res) = Self::sniff_mp3_stream_info(data, total_size) {
-            return Some(res);
-        }
-        if let Some(res) = Self::sniff_adts_stream_info(data, total_size) {
-            return Some(res);
-        }
-        if let Some(res) = Self::sniff_ogg_vorbis_stream_info(data, total_size) {
-            return Some(res);
-        }
-        if let Some(res) = Self::sniff_ogg_opus_stream_info(data, total_size) {
-            return Some(res);
-        }
-        None
+        Self::sniff_mp3_stream_info(data, total_size)
+            .or_else(|| Self::sniff_adts_stream_info(data, total_size))
+            .or_else(|| Self::sniff_ogg_vorbis_stream_info(data, total_size))
+            .or_else(|| Self::sniff_ogg_opus_stream_info(data, total_size))
     }
 
-    // Helper functions
-    fn need_more(out: &mut BoundaryInfo, needed: i64, total_size: i64, available: usize) -> BoundaryStatus {
+    fn need_more(
+        out: &mut BoundaryInfo,
+        needed: i64,
+        total_size: i64,
+        available: usize,
+    ) -> BoundaryStatus {
         let mut n = needed;
         if n > MAX_HEAD_SCAN {
             return BoundaryStatus::Unsupported;
@@ -785,10 +908,7 @@ impl FormatSniffer {
                 return Self::need_more(out, (p + 27 + nseg) as i64, total, d.len());
             }
 
-            let mut body: usize = 0;
-            for i in 0..nseg {
-                body += d[p + 27 + i] as usize;
-            }
+            let body: usize = d[p + 27..p + 27 + nseg].iter().map(|&b| b as usize).sum();
             let body_start = p + 27 + nseg;
             let page_end = body_start + body;
             let ser = le32(&d[p + 14..p + 18]);
@@ -816,8 +936,8 @@ impl FormatSniffer {
             }
 
             if ser == serial {
-                for i in 0..nseg {
-                    if d[p + 27 + i] < 255 {
+                for &seg_len in &d[p + 27..p + 27 + nseg] {
+                    if seg_len < 255 {
                         packets += 1;
                         if packets >= required {
                             out.container = container;
@@ -913,9 +1033,9 @@ impl FormatSniffer {
                 continue;
             }
 
-            // AAC ADTS
             if is_adts_sync(h) {
-                let flen = (((h[3] & 0x03) as u32) << 11) | ((h[4] as u32) << 3) | ((h[5] as u32) >> 5);
+                let flen =
+                    (((h[3] & 0x03) as u32) << 11) | ((h[4] as u32) << 3) | ((h[5] as u32) >> 5);
                 if flen < 7 {
                     continue;
                 }
@@ -934,7 +1054,6 @@ impl FormatSniffer {
                 return BoundaryStatus::Found;
             }
 
-            // MPEG audio
             let mut hdr = MpegHeader::default();
             if !parse_mpeg_header(h, &mut hdr) {
                 continue;
@@ -954,23 +1073,14 @@ impl FormatSniffer {
             out.audio_start = i;
             out.audio_end = -1;
 
-            // Xing / Info / VBRI: belongs to HEAD
             if hdr.layer == 1 && next <= d.len() as i64 {
                 let xing = i + 4 + (if hdr.has_crc { 2 } else { 0 }) + hdr.side_info as i64;
                 let vbri = i + 4 + 32;
-                let mut is_vbr_frame = false;
-                if xing + 4 <= next {
-                    let t = &d[xing as usize..];
-                    if t.starts_with(b"Xing") || t.starts_with(b"Info") {
-                        is_vbr_frame = true;
-                    }
-                }
-                if !is_vbr_frame && vbri + 4 <= next {
-                    let t = &d[vbri as usize..];
-                    if t.starts_with(b"VBRI") {
-                        is_vbr_frame = true;
-                    }
-                }
+                let is_vbr_frame = (xing + 4 <= next
+                    && (d[xing as usize..].starts_with(b"Xing")
+                        || d[xing as usize..].starts_with(b"Info")))
+                    || (vbri + 4 <= next && d[vbri as usize..].starts_with(b"VBRI"));
+
                 if is_vbr_frame {
                     out.audio_start = next;
                     out.head_has_mpeg_frame = 1;
@@ -1018,17 +1128,22 @@ fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
     let padding = ((h[2] >> 1) & 0x01) as u32;
     let channel_mode = ((h[3] >> 6) & 0x03) as u32;
 
-    if ver == 1 || layer == 0 || br_idx == 0 || br_idx == 15 || sr_idx == 3 {
-        return false;
-    }
-    if (h[3] & 0x03) == 2 {
+    if ver == 1 || layer == 0 || br_idx == 0 || br_idx == 15 || sr_idx == 3 || (h[3] & 0x03) == 2 {
         return false;
     }
 
     let kbps = if ver == 3 {
-        if layer == 1 { MPEG1_L3[br_idx] } else if layer == 2 { MPEG1_L2[br_idx] } else { MPEG1_L1[br_idx] }
+        if layer == 1 {
+            MPEG1_L3[br_idx]
+        } else if layer == 2 {
+            MPEG1_L2[br_idx]
+        } else {
+            MPEG1_L1[br_idx]
+        }
+    } else if layer == 3 {
+        MPEG2_L1[br_idx]
     } else {
-        if layer == 3 { MPEG2_L1[br_idx] } else { MPEG2_L23[br_idx] }
+        MPEG2_L23[br_idx]
     };
 
     let sr = RATES[ver][sr_idx];
@@ -1056,8 +1171,10 @@ fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
     out.side_info = if layer == 1 {
         if ver == 3 {
             if channel_mode == 3 { 17 } else { 32 }
+        } else if channel_mode == 3 {
+            9
         } else {
-            if channel_mode == 3 { 9 } else { 17 }
+            17
         }
     } else {
         0
@@ -1066,6 +1183,7 @@ fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
     true
 }
 
+#[inline]
 fn is_adts_sync(h: &[u8]) -> bool {
     h.len() >= 3
         && h[0] == 0xFF
@@ -1113,8 +1231,31 @@ fn be64(b: &[u8]) -> u64 {
 }
 
 // ----------------------------------------------------------------------------
-// C ABI compatibility functions
+// C-ABI Compatibility Layer
 // ----------------------------------------------------------------------------
+
+unsafe fn invoke_c_stream_sniffer(
+    data: *const u8,
+    data_size: usize,
+    total_size: i64,
+    out_bitrate: *mut u32,
+    out_duration_ms: *mut i64,
+    sniffer: fn(&[u8], i64) -> Option<(u32, i64)>,
+) -> i32 {
+    if data.is_null() || out_bitrate.is_null() || out_duration_ms.is_null() {
+        return 0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(data, data_size) };
+    if let Some((br, dur)) = sniffer(slice, total_size) {
+        unsafe {
+            *out_bitrate = br;
+            *out_duration_ms = dur;
+        }
+        1
+    } else {
+        0
+    }
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn map_boundary_info_reset(info: *mut BoundaryInfo) {
@@ -1127,7 +1268,7 @@ pub unsafe extern "C" fn map_boundary_info_reset(info: *mut BoundaryInfo) {
 
 #[no_mangle]
 pub extern "C" fn map_container_needs_tail_scan(container: ContainerFormat) -> i32 {
-    if FormatSniffer::container_needs_tail_scan(container) { 1 } else { 0 }
+    i32::from(FormatSniffer::container_needs_tail_scan(container))
 }
 
 #[no_mangle]
@@ -1227,18 +1368,15 @@ pub unsafe extern "C" fn map_sniff_mp3_stream_info(
     out_bitrate: *mut u32,
     out_duration_ms: *mut i64,
 ) -> i32 {
-    if data.is_null() || out_bitrate.is_null() || out_duration_ms.is_null() {
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(data, data_size) };
-    if let Some((br, dur)) = FormatSniffer::sniff_mp3_stream_info(slice, total_size) {
-        unsafe {
-            *out_bitrate = br;
-            *out_duration_ms = dur;
-        }
-        1
-    } else {
-        0
+    unsafe {
+        invoke_c_stream_sniffer(
+            data,
+            data_size,
+            total_size,
+            out_bitrate,
+            out_duration_ms,
+            FormatSniffer::sniff_mp3_stream_info,
+        )
     }
 }
 
@@ -1250,18 +1388,15 @@ pub unsafe extern "C" fn map_sniff_ogg_vorbis_stream_info(
     out_bitrate: *mut u32,
     out_duration_ms: *mut i64,
 ) -> i32 {
-    if data.is_null() || out_bitrate.is_null() || out_duration_ms.is_null() {
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(data, data_size) };
-    if let Some((br, dur)) = FormatSniffer::sniff_ogg_vorbis_stream_info(slice, total_size) {
-        unsafe {
-            *out_bitrate = br;
-            *out_duration_ms = dur;
-        }
-        1
-    } else {
-        0
+    unsafe {
+        invoke_c_stream_sniffer(
+            data,
+            data_size,
+            total_size,
+            out_bitrate,
+            out_duration_ms,
+            FormatSniffer::sniff_ogg_vorbis_stream_info,
+        )
     }
 }
 
@@ -1273,18 +1408,15 @@ pub unsafe extern "C" fn map_sniff_ogg_opus_stream_info(
     out_bitrate: *mut u32,
     out_duration_ms: *mut i64,
 ) -> i32 {
-    if data.is_null() || out_bitrate.is_null() || out_duration_ms.is_null() {
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(data, data_size) };
-    if let Some((br, dur)) = FormatSniffer::sniff_ogg_opus_stream_info(slice, total_size) {
-        unsafe {
-            *out_bitrate = br;
-            *out_duration_ms = dur;
-        }
-        1
-    } else {
-        0
+    unsafe {
+        invoke_c_stream_sniffer(
+            data,
+            data_size,
+            total_size,
+            out_bitrate,
+            out_duration_ms,
+            FormatSniffer::sniff_ogg_opus_stream_info,
+        )
     }
 }
 
@@ -1296,17 +1428,14 @@ pub unsafe extern "C" fn map_sniff_stream_info(
     out_bitrate: *mut u32,
     out_duration_ms: *mut i64,
 ) -> i32 {
-    if data.is_null() || out_bitrate.is_null() || out_duration_ms.is_null() {
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(data, data_size) };
-    if let Some((br, dur)) = FormatSniffer::sniff_stream_info(slice, total_size) {
-        unsafe {
-            *out_bitrate = br;
-            *out_duration_ms = dur;
-        }
-        1
-    } else {
-        0
+    unsafe {
+        invoke_c_stream_sniffer(
+            data,
+            data_size,
+            total_size,
+            out_bitrate,
+            out_duration_ms,
+            FormatSniffer::sniff_stream_info,
+        )
     }
 }

@@ -1,9 +1,9 @@
 //! Rust-Native Byte Provider Subsystem & Dart Custom Source Bridge.
 //!
 //! Provides a unified `ByteSource` trait hierarchy across:
-//! - `FileByteSource`: Zero-overhead buffered local filesystem access.
+//! - `FileByteSource`: Buffered local filesystem access.
 //! - `MemoryByteSource`: In-memory cursor access.
-//! - `TripartiteByteSource`: Advanced progressive HTTP streaming with sliding cache.
+//! - `TripartiteByteSource`: Progressive HTTP streaming with sliding cache.
 //! - `CustomDartByteSource`: Asynchronous Pull-with-Prefetch bridge for Dart DRM/decryption.
 
 use std::fs::File;
@@ -11,7 +11,7 @@ use std::io::{
     BufReader, Cursor, Error as IoError, ErrorKind, Read, Result as IoResult, Seek, SeekFrom,
 };
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use symphonia::core::io::MediaSource;
 
 use super::stream_reader::BufferStreamReader;
@@ -27,9 +27,9 @@ pub enum SourceKind {
     CustomDart,
 }
 
-/// Unified abstraction for all byte streams consumed by the Symphonia decoding engine.
+/// Unified black-box abstraction for all byte streams consumed by the decoding engine.
 pub trait ByteSource: Read + Seek + Send + Sync + 'static {
-    /// Total stream length in bytes, or None for live/indeterminate streams.
+    /// Total stream length in bytes, or `None` for live/indeterminate streams.
     fn total_bytes(&self) -> Option<u64>;
 
     /// Whether random-access seeking is supported.
@@ -84,54 +84,6 @@ impl<S: ByteSource> MediaSource for ByteSourceStream<S> {
     }
 }
 
-impl MediaSource for FileByteSource {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        Some(self.size)
-    }
-}
-
-impl MediaSource for MemoryByteSource {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        Some(self.size)
-    }
-}
-
-impl MediaSource for TripartiteByteSource {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        !self.reader.buffer().is_live()
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        self.reader.buffer().total_size()
-    }
-}
-
-impl MediaSource for CustomDartByteSource {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        self.seekable
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        self.total_size
-    }
-}
-
 // ----------------------------------------------------------------------------
 // 1. FileByteSource
 // ----------------------------------------------------------------------------
@@ -142,10 +94,12 @@ pub struct FileByteSource {
 }
 
 impl FileByteSource {
+    pub const BUFFER_CAPACITY: usize = 64 * 1024;
+
     pub fn new(file: File) -> IoResult<Self> {
         let size = file.metadata()?.len();
         Ok(Self {
-            reader: BufReader::with_capacity(64 * 1024, file),
+            reader: BufReader::with_capacity(Self::BUFFER_CAPACITY, file),
             size,
         })
     }
@@ -155,6 +109,7 @@ impl FileByteSource {
         Self::new(file)
     }
 
+    #[inline]
     pub fn size(&self) -> u64 {
         self.size
     }
@@ -185,6 +140,18 @@ impl ByteSource for FileByteSource {
 
     fn source_kind(&self) -> SourceKind {
         SourceKind::File
+    }
+}
+
+impl MediaSource for FileByteSource {
+    #[inline]
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.size)
     }
 }
 
@@ -235,6 +202,18 @@ impl ByteSource for MemoryByteSource {
     }
 }
 
+impl MediaSource for MemoryByteSource {
+    #[inline]
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.size)
+    }
+}
+
 // ----------------------------------------------------------------------------
 // 3. TripartiteByteSource (Progressive HTTP & Sliding Buffer)
 // ----------------------------------------------------------------------------
@@ -250,6 +229,7 @@ impl TripartiteByteSource {
         }
     }
 
+    #[inline]
     pub fn buffer(&self) -> &TripartiteBuffer {
         self.reader.buffer()
     }
@@ -292,6 +272,18 @@ impl ByteSource for TripartiteByteSource {
     }
 }
 
+impl MediaSource for TripartiteByteSource {
+    #[inline]
+    fn is_seekable(&self) -> bool {
+        !self.reader.buffer().is_live()
+    }
+
+    #[inline]
+    fn byte_len(&self) -> Option<u64> {
+        self.reader.buffer().total_size()
+    }
+}
+
 // ----------------------------------------------------------------------------
 // 4. CustomDartByteSource (Asynchronous Pull-with-Prefetch Bridge)
 // ----------------------------------------------------------------------------
@@ -310,6 +302,38 @@ struct CustomSharedState {
     received_data: Option<Result<Vec<u8>, String>>,
     is_eof: bool,
     aborted: bool,
+}
+
+impl CustomSharedState {
+    fn drain_into(&mut self, out: &mut [u8]) -> Option<IoResult<usize>> {
+        if self.aborted {
+            return Some(Err(IoError::new(
+                ErrorKind::Interrupted,
+                "custom stream aborted",
+            )));
+        }
+        let res = self.received_data.as_mut()?;
+        match res {
+            Ok(data) if !data.is_empty() => {
+                let to_copy = data.len().min(out.len());
+                out[..to_copy].copy_from_slice(&data[..to_copy]);
+                data.drain(..to_copy);
+                if data.is_empty() && !self.is_eof {
+                    self.received_data = None;
+                }
+                Some(Ok(to_copy))
+            }
+            Ok(_) => {
+                if self.is_eof {
+                    Some(Ok(0))
+                } else {
+                    self.received_data = None;
+                    None
+                }
+            }
+            Err(err) => Some(Err(IoError::new(ErrorKind::Other, err.clone()))),
+        }
+    }
 }
 
 /// Thread-safe controller handle for supplying bytes or error notifications to a `CustomDartByteSource`.
@@ -351,6 +375,9 @@ pub struct CustomDartByteSource {
 }
 
 impl CustomDartByteSource {
+    pub const MIN_PREFETCH_BYTES: usize = 32 * 1024;
+    pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
     pub fn new(
         stream_id: u32,
         total_size: Option<u64>,
@@ -359,11 +386,7 @@ impl CustomDartByteSource {
         request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
     ) -> (Self, CustomByteSourceHandle) {
         let initial_len = initial_data.len();
-        let initial_eof = if let Some(tot) = total_size {
-            initial_len as u64 >= tot
-        } else {
-            false
-        };
+        let initial_eof = total_size.map(|tot| initial_len as u64 >= tot).unwrap_or(false);
 
         let shared = Arc::new((
             Mutex::new(CustomSharedState {
@@ -401,6 +424,81 @@ impl CustomDartByteSource {
             shared: self.shared.clone(),
         }
     }
+
+    fn request_and_await_chunk(&mut self, min_len: usize) -> IoResult<()> {
+        self.request_counter += 1;
+        let req_id = self.request_counter;
+        let req_len = min_len.max(Self::MIN_PREFETCH_BYTES) as u32;
+
+        let (lock, cvar) = &*self.shared;
+        {
+            let mut guard = lock.lock().unwrap();
+            guard.pending_request_id = req_id;
+            guard.received_data = None;
+        }
+
+        (self.request_sender)(DartReadRequest {
+            stream_id: self.stream_id,
+            request_id: req_id,
+            offset: self.cursor,
+            length: req_len,
+        });
+
+        let mut guard = lock.lock().unwrap();
+        let start = Instant::now();
+        while guard.received_data.is_none() && !guard.aborted {
+            let elapsed = start.elapsed();
+            if elapsed >= Self::RESPONSE_TIMEOUT {
+                return Err(IoError::new(
+                    ErrorKind::TimedOut,
+                    "timed out waiting for Dart bytes",
+                ));
+            }
+            let remaining = Self::RESPONSE_TIMEOUT - elapsed;
+            let (new_guard, wait_res) = cvar.wait_timeout(guard, remaining).unwrap();
+            guard = new_guard;
+            if wait_res.timed_out() && guard.received_data.is_none() {
+                return Err(IoError::new(
+                    ErrorKind::TimedOut,
+                    "timed out waiting for Dart bytes",
+                ));
+            }
+        }
+
+        if guard.aborted {
+            return Err(IoError::new(
+                ErrorKind::Interrupted,
+                "custom stream aborted",
+            ));
+        }
+        Ok(())
+    }
+
+    fn resolve_seek_target(&self, pos: SeekFrom) -> IoResult<u64> {
+        match pos {
+            SeekFrom::Start(off) => Ok(off),
+            SeekFrom::Current(off) => {
+                let target = (self.cursor as i64) + off;
+                if target < 0 {
+                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
+                }
+                Ok(target as u64)
+            }
+            SeekFrom::End(off) => {
+                let Some(tot) = self.total_size else {
+                    return Err(IoError::new(
+                        ErrorKind::Unsupported,
+                        "cannot seek from end without total size",
+                    ));
+                };
+                let target = (tot as i64) + off;
+                if target < 0 {
+                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
+                }
+                Ok(target as u64)
+            }
+        }
+    }
 }
 
 impl Read for CustomDartByteSource {
@@ -409,98 +507,26 @@ impl Read for CustomDartByteSource {
             return Ok(0);
         }
 
-        let (lock, cvar) = &*self.shared;
-
-        // Check if there is already data buffered in received_data
         {
+            let (lock, _) = &*self.shared;
             let mut guard = lock.lock().unwrap();
-            if guard.aborted {
-                return Err(IoError::new(ErrorKind::Interrupted, "custom stream aborted"));
-            }
-
-            if let Some(ref mut res) = guard.received_data {
-                match res {
-                    Ok(data) if !data.is_empty() => {
-                        let to_copy = data.len().min(buf.len());
-                        buf[..to_copy].copy_from_slice(&data[..to_copy]);
-                        data.drain(..to_copy);
-                        self.cursor += to_copy as u64;
-                        let is_now_empty = data.is_empty();
-                        if is_now_empty && !guard.is_eof {
-                            guard.received_data = None;
-                        }
-                        return Ok(to_copy);
-                    }
-                    Ok(_) => {
-                        if guard.is_eof {
-                            return Ok(0);
-                        }
-                        guard.received_data = None;
-                    }
-                    Err(err) => {
-                        let msg = err.clone();
-                        return Err(IoError::new(ErrorKind::Other, msg));
-                    }
-                }
+            if let Some(result) = guard.drain_into(buf) {
+                let bytes = result?;
+                self.cursor += bytes as u64;
+                return Ok(bytes);
             }
         }
 
-        // Need to request bytes from Dart
-        self.request_counter += 1;
-        let req_id = self.request_counter;
-        let req_len = buf.len().max(32 * 1024) as u32;
+        self.request_and_await_chunk(buf.len())?;
 
-        {
-            let mut guard = lock.lock().unwrap();
-            guard.pending_request_id = req_id;
-            guard.received_data = None;
-        }
-
-        // Dispatch request to Dart
-        (self.request_sender)(DartReadRequest {
-            stream_id: self.stream_id,
-            request_id: req_id,
-            offset: self.cursor,
-            length: req_len,
-        });
-
-        // Wait for Dart response with timeout
+        let (lock, _) = &*self.shared;
         let mut guard = lock.lock().unwrap();
-        let timeout = Duration::from_secs(10);
-        let start = std::time::Instant::now();
-
-        while guard.received_data.is_none() && !guard.aborted {
-            let elapsed = start.elapsed();
-            if elapsed >= timeout {
-                return Err(IoError::new(ErrorKind::TimedOut, "timed out waiting for Dart bytes"));
+        match guard.drain_into(buf) {
+            Some(Ok(bytes)) => {
+                self.cursor += bytes as u64;
+                Ok(bytes)
             }
-            let remaining = timeout - elapsed;
-            let (new_guard, wait_res) = cvar.wait_timeout(guard, remaining).unwrap();
-            guard = new_guard;
-            if wait_res.timed_out() && guard.received_data.is_none() {
-                return Err(IoError::new(ErrorKind::TimedOut, "timed out waiting for Dart bytes"));
-            }
-        }
-
-        if guard.aborted {
-            return Err(IoError::new(ErrorKind::Interrupted, "custom stream aborted"));
-        }
-
-        match guard.received_data.take() {
-            Some(Ok(mut data)) => {
-                if data.is_empty() {
-                    return Ok(0);
-                }
-                let to_copy = data.len().min(buf.len());
-                buf[..to_copy].copy_from_slice(&data[..to_copy]);
-                data.drain(..to_copy);
-                self.cursor += to_copy as u64;
-                if !data.is_empty() {
-                    guard.received_data = Some(Ok(data));
-                }
-                Ok(to_copy)
-            }
-            Some(Err(err)) => Err(IoError::new(ErrorKind::Other, err)),
+            Some(Err(e)) => Err(e),
             None => Ok(0),
         }
     }
@@ -515,38 +541,13 @@ impl Seek for CustomDartByteSource {
             ));
         }
 
-        let new_cursor = match pos {
-            SeekFrom::Start(off) => off,
-            SeekFrom::Current(off) => {
-                let target = (self.cursor as i64) + off;
-                if target < 0 {
-                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
-                }
-                target as u64
-            }
-            SeekFrom::End(off) => {
-                let Some(tot) = self.total_size else {
-                    return Err(IoError::new(
-                        ErrorKind::Unsupported,
-                        "cannot seek from end without total size",
-                    ));
-                };
-                let target = (tot as i64) + off;
-                if target < 0 {
-                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
-                }
-                target as u64
-            }
-        };
-
-        // If seek target changed position, clear any pre-buffered chunks
+        let new_cursor = self.resolve_seek_target(pos)?;
         if new_cursor != self.cursor {
             let (lock, _) = &*self.shared;
             let mut guard = lock.lock().unwrap();
             guard.received_data = None;
             self.cursor = new_cursor;
         }
-
         Ok(self.cursor)
     }
 }
@@ -570,5 +571,17 @@ impl ByteSource for CustomDartByteSource {
         guard.aborted = true;
         cvar.notify_all();
         Ok(())
+    }
+}
+
+impl MediaSource for CustomDartByteSource {
+    #[inline]
+    fn is_seekable(&self) -> bool {
+        self.seekable
+    }
+
+    #[inline]
+    fn byte_len(&self) -> Option<u64> {
+        self.total_size
     }
 }

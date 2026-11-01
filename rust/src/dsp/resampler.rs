@@ -13,10 +13,8 @@ pub struct RubatoResampler {
     chunk_size_in: usize,
     chunk_size_out: usize,
 
-    // Preallocated deinterleaved channel buffers for processing
     in_buffers: Vec<Vec<f32>>,
     out_buffers: Vec<Vec<f32>>,
-    // Internal FIFO queue to accumulate input frames
     in_fifo: Vec<Vec<f32>>,
 }
 
@@ -107,44 +105,29 @@ impl RubatoResampler {
             return Ok(0);
         }
 
-        // Passthrough if input and output sample rates match
         if self.resampler.is_none() {
             output.extend_from_slice(input);
             return Ok(input.len() / self.channels);
         }
 
-        let frames_in = input.len() / self.channels;
-        for f in 0..frames_in {
-            let offset = f * self.channels;
-            for c in 0..self.channels {
-                self.in_fifo[c].push(input[offset + c]);
-            }
-        }
+        self.deinterleave_into_fifo(input);
 
         let mut frames_written = 0;
-        let resampler = self.resampler.as_mut().unwrap();
-
         while self.in_fifo[0].len() >= self.chunk_size_in {
-            // Fill preallocated channel buffers
             for c in 0..self.channels {
                 self.in_buffers[c].copy_from_slice(&self.in_fifo[c][..self.chunk_size_in]);
                 self.in_fifo[c].drain(..self.chunk_size_in);
             }
 
-            let (_, out_frames) = resampler
-                .process_into_buffer(&self.in_buffers, &mut self.out_buffers, None)
-                .map_err(|e| format!("Rubato processing error: {:?}", e))?;
+            let out_frames = {
+                let resampler = self.resampler.as_mut().unwrap();
+                let (_, out_frames) = resampler
+                    .process_into_buffer(&self.in_buffers, &mut self.out_buffers, None)
+                    .map_err(|e| format!("Rubato processing error: {:?}", e))?;
+                out_frames
+            };
 
-            // Interleave into output
-            let start_len = output.len();
-            output.resize(start_len + out_frames * self.channels, 0.0);
-            for f in 0..out_frames {
-                let out_idx = start_len + f * self.channels;
-                for c in 0..self.channels {
-                    output[out_idx + c] = self.out_buffers[c][f];
-                }
-            }
-
+            self.interleave_out_buffers(out_frames, output);
             frames_written += out_frames;
         }
 
@@ -162,31 +145,25 @@ impl RubatoResampler {
             return Ok(0);
         }
 
-        // Pad to chunk_size_in with silence
         for c in 0..self.channels {
             self.in_fifo[c].resize(self.chunk_size_in, 0.0);
             self.in_buffers[c].copy_from_slice(&self.in_fifo[c][..self.chunk_size_in]);
             self.in_fifo[c].clear();
         }
 
-        let resampler = self.resampler.as_mut().unwrap();
-        let (_, out_frames) = resampler
-            .process_into_buffer(&self.in_buffers, &mut self.out_buffers, None)
-            .map_err(|e| format!("Rubato flush error: {:?}", e))?;
+        let out_frames = {
+            let resampler = self.resampler.as_mut().unwrap();
+            let (_, out_frames) = resampler
+                .process_into_buffer(&self.in_buffers, &mut self.out_buffers, None)
+                .map_err(|e| format!("Rubato flush error: {:?}", e))?;
+            out_frames
+        };
 
-        // Calculate proportional valid frames from padding
-        let valid_out = ((remaining as f64 / self.chunk_size_in as f64) * out_frames as f64).round() as usize;
+        let valid_out = ((remaining as f64 / self.chunk_size_in as f64) * out_frames as f64)
+            .round() as usize;
         let valid_out = valid_out.min(out_frames);
 
-        let start_len = output.len();
-        output.resize(start_len + valid_out * self.channels, 0.0);
-        for f in 0..valid_out {
-            let out_idx = start_len + f * self.channels;
-            for c in 0..self.channels {
-                output[out_idx + c] = self.out_buffers[c][f];
-            }
-        }
-
+        self.interleave_out_buffers(valid_out, output);
         Ok(valid_out)
     }
 
@@ -197,6 +174,29 @@ impl RubatoResampler {
         }
         if let Some(ref mut resampler) = self.resampler {
             let _ = resampler.reset();
+        }
+    }
+
+    #[inline]
+    fn deinterleave_into_fifo(&mut self, input: &[f32]) {
+        let frames_in = input.len() / self.channels;
+        for f in 0..frames_in {
+            let offset = f * self.channels;
+            for c in 0..self.channels {
+                self.in_fifo[c].push(input[offset + c]);
+            }
+        }
+    }
+
+    #[inline]
+    fn interleave_out_buffers(&self, num_frames: usize, output: &mut Vec<f32>) {
+        let start_len = output.len();
+        output.resize(start_len + num_frames * self.channels, 0.0);
+        for f in 0..num_frames {
+            let out_idx = start_len + f * self.channels;
+            for c in 0..self.channels {
+                output[out_idx + c] = self.out_buffers[c][f];
+            }
         }
     }
 }

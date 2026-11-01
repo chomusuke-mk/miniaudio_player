@@ -1,10 +1,18 @@
-//! High-performance offline and streaming audio analysis (ReplayGain, LUFS BS.1770, and Waveform).
+//! Offline & Streaming Audio Analysis Pipeline (ITU-R BS.1770-4 LUFS, ReplayGain, and Waveform).
+//!
+//! Decomposes audio analysis into single-responsibility pipeline components:
+//! - [`Bs1770LoudnessAnalyzer`]: K-weighting biquad cascade + 400 ms dual-gated LUFS integrator.
+//! - [`WaveformAccumulator`]: Frame peak collector and deterministic downsampler.
 
+use std::f64::consts::PI;
 use std::fs::File;
 use std::io::Cursor;
 use symphonia::core::io::MediaSource;
 
+use crate::decoder::sniffer::FormatSniffer;
 use crate::decoder::SymphoniaEngine;
+
+use super::biquad::BiquadDf2t;
 
 pub const MAP_ANALYSIS_FLAG_REPLAY_GAIN: u32 = 1 << 0;
 pub const MAP_ANALYSIS_FLAG_WAVEFORM: u32 = 1 << 1;
@@ -36,19 +44,10 @@ pub struct ReplayGainData {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct WaveformData {
     pub point_count: u32,
     pub points: Vec<f32>,
-}
-
-impl Default for WaveformData {
-    fn default() -> Self {
-        Self {
-            point_count: 0,
-            points: Vec::new(),
-        }
-    }
 }
 
 #[repr(C)]
@@ -68,7 +67,216 @@ pub struct AudioAnalysisResult {
     pub waveform: WaveformData,
 }
 
-use super::biquad::BiquadDf2t;
+/// ITU-R BS.1770-4 K-Weighting Filter Pair and Dual-Gated Loudness Integrator.
+pub struct Bs1770LoudnessAnalyzer {
+    hs_l: BiquadDf2t,
+    hp_l: BiquadDf2t,
+    hs_r: BiquadDf2t,
+    hp_r: BiquadDf2t,
+    samples_per_100ms: usize,
+    current_interval_samples: usize,
+    current_interval_sq: [f64; 2],
+    interval_energies: Vec<f32>,
+}
+
+impl Bs1770LoudnessAnalyzer {
+    pub fn new(sample_rate: u32) -> Self {
+        let (hs, hp) = Self::design_k_weighting_filters(sample_rate);
+        let samples_per_100ms = (0.1 * (sample_rate as f64) + 0.5).max(1.0) as usize;
+        Self {
+            hs_l: hs,
+            hp_l: hp,
+            hs_r: hs,
+            hp_r: hp,
+            samples_per_100ms,
+            current_interval_samples: 0,
+            current_interval_sq: [0.0; 2],
+            interval_energies: Vec::new(),
+        }
+    }
+
+    fn design_k_weighting_filters(sample_rate: u32) -> (BiquadDf2t, BiquadDf2t) {
+        if sample_rate == 0 {
+            return (BiquadDf2t::identity(), BiquadDf2t::identity());
+        }
+        let fs = sample_rate as f64;
+
+        // Stage 1: Acoustic head-model high-shelf pre-filter
+        let f0_hs = 1681.974450955533f64;
+        let g_hs = 3.999843853973347f64;
+        let q_hs = 0.7071752369554196f64;
+        let k_hs = (PI * f0_hs / fs).tan();
+        let vh = 10.0f64.powf(g_hs / 20.0);
+        let vb = vh.powf(0.4996667741545416);
+        let a0_hs = 1.0 + k_hs / q_hs + k_hs * k_hs;
+
+        let hs = BiquadDf2t::new(
+            ((vh + vb * k_hs / q_hs + k_hs * k_hs) / a0_hs) as f32,
+            (2.0 * (k_hs * k_hs - vh) / a0_hs) as f32,
+            ((vh - vb * k_hs / q_hs + k_hs * k_hs) / a0_hs) as f32,
+            (2.0 * (k_hs * k_hs - 1.0) / a0_hs) as f32,
+            ((1.0 - k_hs / q_hs + k_hs * k_hs) / a0_hs) as f32,
+        );
+
+        // Stage 2: RLB high-pass weighting filter
+        let f0_hp = 38.13547087602444f64;
+        let q_hp = 0.5003270373238773f64;
+        let k_hp = (PI * f0_hp / fs).tan();
+        let ra0 = 1.0 + k_hp / q_hp + k_hp * k_hp;
+
+        let hp = BiquadDf2t::new(
+            1.0,
+            -2.0,
+            1.0,
+            (2.0 * (k_hp * k_hp - 1.0) / ra0) as f32,
+            ((1.0 - k_hp / q_hp + k_hp * k_hp) / ra0) as f32,
+        );
+
+        (hs, hp)
+    }
+
+    #[inline]
+    pub fn push_stereo_frame(&mut self, s_l: f32, s_r: f32) {
+        let y_l = self.hp_l.process(self.hs_l.process(s_l));
+        let y_r = self.hp_r.process(self.hs_r.process(s_r));
+
+        self.current_interval_sq[0] += (y_l as f64) * (y_l as f64);
+        self.current_interval_sq[1] += (y_r as f64) * (y_r as f64);
+        self.current_interval_samples += 1;
+
+        if self.current_interval_samples >= self.samples_per_100ms {
+            let energy = (self.current_interval_sq[0] + self.current_interval_sq[1])
+                / (self.samples_per_100ms as f64);
+            self.current_interval_sq = [0.0, 0.0];
+            self.current_interval_samples = 0;
+            self.interval_energies.push(energy as f32);
+        }
+    }
+
+    pub fn finalize(mut self, target_lufs: f32, peak: f32) -> ReplayGainData {
+        if self.current_interval_samples > 0 {
+            let energy = (self.current_interval_sq[0] + self.current_interval_sq[1])
+                / (self.current_interval_samples as f64);
+            self.interval_energies.push(energy as f32);
+        }
+
+        let lufs = Self::compute_gated_lufs(&self.interval_energies);
+        let eff_target = if target_lufs == 0.0 { -18.0 } else { target_lufs };
+        let gain_db = if lufs <= -70.0 { 0.0 } else { eff_target - lufs };
+
+        ReplayGainData {
+            gain_db,
+            peak,
+            lufs,
+        }
+    }
+
+    fn compute_gated_lufs(interval_energies: &[f32]) -> f32 {
+        const ABS_GATE_LUFS: f32 = -70.0;
+
+        if interval_energies.len() < 4 {
+            if interval_energies.is_empty() {
+                return ABS_GATE_LUFS;
+            }
+            let mean_e: f64 = interval_energies.iter().map(|&e| e as f64).sum::<f64>()
+                / (interval_energies.len() as f64);
+            return if mean_e > 0.0 {
+                (-0.691 + 10.0 * mean_e.log10()) as f32
+            } else {
+                ABS_GATE_LUFS
+            };
+        }
+
+        let num_blocks = interval_energies.len() - 3;
+        let mut block_energies = Vec::with_capacity(num_blocks);
+        let mut block_loudness = Vec::with_capacity(num_blocks);
+        let mut z_unmasked = 0.0f64;
+        let mut count_unmasked = 0usize;
+
+        for window in interval_energies.windows(4) {
+            let e4 = ((window[0] + window[1] + window[2] + window[3]) as f64) * 0.25;
+            block_energies.push(e4 as f32);
+            let loud = if e4 > 0.0 {
+                (-0.691 + 10.0 * e4.log10()) as f32
+            } else {
+                -100.0f32
+            };
+            block_loudness.push(loud);
+
+            if loud > ABS_GATE_LUFS {
+                z_unmasked += e4;
+                count_unmasked += 1;
+            }
+        }
+
+        if count_unmasked == 0 {
+            return ABS_GATE_LUFS;
+        }
+
+        z_unmasked /= count_unmasked as f64;
+        let rel_thresh = (-0.691 + 10.0 * z_unmasked.log10() - 10.0) as f32;
+
+        let mut z_gated_sum = 0.0f64;
+        let mut count_gated = 0usize;
+
+        for (k, &loud) in block_loudness.iter().enumerate() {
+            if loud > ABS_GATE_LUFS && loud > rel_thresh {
+                z_gated_sum += block_energies[k] as f64;
+                count_gated += 1;
+            }
+        }
+
+        let final_energy = if count_gated > 0 {
+            z_gated_sum / (count_gated as f64)
+        } else {
+            z_unmasked
+        };
+        (-0.691 + 10.0 * final_energy.log10()) as f32
+    }
+}
+
+/// Deterministic Waveform Peak Accumulator and Downsampler.
+#[derive(Default)]
+pub struct WaveformAccumulator {
+    peaks: Vec<f32>,
+}
+
+impl WaveformAccumulator {
+    #[inline]
+    pub fn push_peak(&mut self, frame_peak: f32) {
+        self.peaks.push(frame_peak);
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.peaks.is_empty()
+    }
+
+    pub fn finalize(self, target_points: u32) -> WaveformData {
+        if self.peaks.is_empty() {
+            return WaveformData::default();
+        }
+        let n_points = target_points.max(1) as usize;
+        let mut points = Vec::with_capacity(n_points);
+        let chunk_size = (self.peaks.len() as f64) / (n_points as f64);
+
+        for i in 0..n_points {
+            let start = (i as f64 * chunk_size) as usize;
+            let end = (((i + 1) as f64 * chunk_size) as usize).min(self.peaks.len());
+            let chunk_peak = self.peaks[start..end]
+                .iter()
+                .copied()
+                .fold(0.0f32, f32::max)
+                .clamp(0.0, 1.0);
+            points.push(chunk_peak);
+        }
+
+        WaveformData {
+            point_count: n_points as u32,
+            points,
+        }
+    }
+}
 
 pub fn analyze_media_source<M: MediaSource + 'static>(
     source: M,
@@ -76,106 +284,39 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
     config: &AudioAnalysisConfig,
     byte_size: u64,
 ) -> Result<AudioAnalysisResult, i32> {
-    let mut engine = match SymphoniaEngine::new(source, hint_ext) {
-        Ok(e) => e,
-        Err(_) => return Err(-6), // MAP_ERROR_DECODE_FAILED
-    };
+    let mut engine = SymphoniaEngine::new(source, hint_ext).map_err(|_| -6)?;
 
     let sample_rate = engine.sample_rate();
     let channels = engine.channels().max(1);
+    let ch_usize = channels as usize;
     let duration_ms = engine.duration_ms().unwrap_or(0) as i64;
 
+    let calc_rg = (config.flags & MAP_ANALYSIS_FLAG_REPLAY_GAIN) != 0;
+    let calc_wf = (config.flags & MAP_ANALYSIS_FLAG_WAVEFORM) != 0;
+
+    let mut rg_analyzer = calc_rg.then(|| Bs1770LoudnessAnalyzer::new(sample_rate));
+    let mut wf_accumulator = WaveformAccumulator::default();
     let mut peak = 0.0f32;
     let mut frame_buf = Vec::new();
 
-    // Estructuras de acumulación
-    let mut all_peaks = Vec::new();
-
-    // ReplayGain ITU-R BS.1770 K-weighting filters
-    let calc_rg = (config.flags & MAP_ANALYSIS_FLAG_REPLAY_GAIN) != 0;
-    let (mut hs_l, mut hp_l, mut hs_r, mut hp_r) = if calc_rg && sample_rate > 0 {
-        let f0_hs = 1681.974450955533f64;
-        let g_hs = 3.999843853973347f64;
-        let q_hs = 0.7071752369554196f64;
-        let k_hs = (std::f64::consts::PI * f0_hs / (sample_rate as f64)).tan();
-        let vh = 10.0f64.powf(g_hs / 20.0);
-        let vb = vh.powf(0.4996667741545416);
-        let a0_hs = 1.0 + k_hs / q_hs + k_hs * k_hs;
-
-        let b0_hs = ((vh + vb * k_hs / q_hs + k_hs * k_hs) / a0_hs) as f32;
-        let b1_hs = (2.0 * (k_hs * k_hs - vh) / a0_hs) as f32;
-        let b2_hs = ((vh - vb * k_hs / q_hs + k_hs * k_hs) / a0_hs) as f32;
-        let a1_hs = (2.0 * (k_hs * k_hs - 1.0) / a0_hs) as f32;
-        let a2_hs = ((1.0 - k_hs / q_hs + k_hs * k_hs) / a0_hs) as f32;
-
-        let hs1 = BiquadDf2t::new(b0_hs, b1_hs, b2_hs, a1_hs, a2_hs);
-        let hs2 = BiquadDf2t::new(b0_hs, b1_hs, b2_hs, a1_hs, a2_hs);
-
-        let f0_hp = 38.13547087602444f64;
-        let q_hp = 0.5003270373238773f64;
-        let k_hp = (std::f64::consts::PI * f0_hp / (sample_rate as f64)).tan();
-        let ra0 = 1.0 + k_hp / q_hp + k_hp * k_hp;
-
-        let a1_hp = (2.0 * (k_hp * k_hp - 1.0) / ra0) as f32;
-        let a2_hp = ((1.0 - k_hp / q_hp + k_hp * k_hp) / ra0) as f32;
-
-        let hp1 = BiquadDf2t::new(1.0, -2.0, 1.0, a1_hp, a2_hp);
-        let hp2 = BiquadDf2t::new(1.0, -2.0, 1.0, a1_hp, a2_hp);
-
-        (hs1, hp1, hs2, hp2)
-    } else {
-        (BiquadDf2t::default(), BiquadDf2t::default(), BiquadDf2t::default(), BiquadDf2t::default())
-    };
-
-    let samples_per_100ms = (0.1 * (sample_rate as f64) + 0.5).max(1.0) as usize;
-    let mut current_interval_samples = 0usize;
-    let mut current_interval_sq = [0.0f64; 2];
-    let mut interval_energies: Vec<f32> = Vec::new();
-
     while let Ok(true) = engine.decode_next_frame(&mut frame_buf) {
-        if frame_buf.is_empty() {
-            continue;
-        }
-
-        let num_frames = frame_buf.len() / (channels as usize);
-        for f in 0..num_frames {
-            let raw_l = frame_buf[f * (channels as usize) + 0];
-            let raw_r = if channels > 1 {
-                frame_buf[f * (channels as usize) + 1]
+        for frame in frame_buf.chunks_exact(ch_usize) {
+            let s_l = frame[0].clamp(-1.0, 1.0);
+            let s_r = if ch_usize > 1 {
+                frame[1].clamp(-1.0, 1.0)
             } else {
-                raw_l
+                s_l
             };
 
-            let s_l = raw_l.clamp(-1.0, 1.0);
-            let s_r = raw_r.clamp(-1.0, 1.0);
-
-            let abs_l = s_l.abs();
-            let abs_r = s_r.abs();
-            let frame_max = abs_l.max(abs_r);
+            let frame_max = s_l.abs().max(s_r.abs());
             if frame_max > peak {
                 peak = frame_max;
             }
-
-            if (config.flags & MAP_ANALYSIS_FLAG_WAVEFORM) != 0 {
-                all_peaks.push(frame_max);
+            if calc_wf {
+                wf_accumulator.push_peak(frame_max);
             }
-
-            if calc_rg {
-                let y1_l = hs_l.process(s_l);
-                let y2_l = hp_l.process(y1_l);
-                let y1_r = hs_r.process(s_r);
-                let y2_r = hp_r.process(y1_r);
-
-                current_interval_sq[0] += (y2_l as f64) * (y2_l as f64);
-                current_interval_sq[1] += (y2_r as f64) * (y2_r as f64);
-                current_interval_samples += 1;
-
-                if current_interval_samples >= samples_per_100ms {
-                    let interval_e = (current_interval_sq[0] + current_interval_sq[1]) / (samples_per_100ms as f64);
-                    current_interval_sq = [0.0, 0.0];
-                    current_interval_samples = 0;
-                    interval_energies.push(interval_e as f32);
-                }
+            if let Some(ref mut rg) = rg_analyzer {
+                rg.push_stereo_frame(s_l, s_r);
             }
         }
     }
@@ -186,152 +327,48 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
         0
     };
 
-    let mut result = AudioAnalysisResult {
+    let (has_replay_gain, replay_gain) = match rg_analyzer {
+        Some(rg) => (1, rg.finalize(config.target_lufs, peak)),
+        None => (0, ReplayGainData::default()),
+    };
+
+    let (has_waveform, waveform) = if calc_wf && !wf_accumulator.is_empty() {
+        (1, wf_accumulator.finalize(config.waveform_points))
+    } else {
+        (0, WaveformData::default())
+    };
+
+    Ok(AudioAnalysisResult {
         status: 0,
         duration_ms,
         sample_rate,
         channels,
         bitrate,
         peak,
-        has_replay_gain: 0,
-        replay_gain: ReplayGainData::default(),
-        has_waveform: 0,
-        waveform: WaveformData::default(),
-    };
-
-    // ReplayGain / Loudness estimation (ITU-R BS.1770-4 gated)
-    if calc_rg {
-        if current_interval_samples > 0 {
-            let interval_e = (current_interval_sq[0] + current_interval_sq[1]) / (current_interval_samples as f64);
-            interval_energies.push(interval_e as f32);
-        }
-
-        let mut lufs = -70.0f32;
-        if interval_energies.len() >= 4 {
-            let num_blocks = interval_energies.len() - 3;
-            let mut block_energies = Vec::with_capacity(num_blocks);
-            let mut block_loudness = Vec::with_capacity(num_blocks);
-
-            let abs_thresh = -70.0f32;
-            let mut z_unmasked = 0.0f64;
-            let mut count_unmasked = 0usize;
-
-            for k in 0..num_blocks {
-                let e4 = ((interval_energies[k] + interval_energies[k + 1] + interval_energies[k + 2] + interval_energies[k + 3]) as f64) * 0.25;
-                block_energies.push(e4 as f32);
-                let loud = if e4 > 0.0 {
-                    (-0.691 + 10.0 * e4.log10()) as f32
-                } else {
-                    -100.0f32
-                };
-                block_loudness.push(loud);
-
-                if loud > abs_thresh {
-                    z_unmasked += e4;
-                    count_unmasked += 1;
-                }
-            }
-
-            if count_unmasked > 0 {
-                z_unmasked /= count_unmasked as f64;
-                let rel_thresh = (-0.691 + 10.0 * z_unmasked.log10() - 10.0) as f32;
-
-                let mut z_gated_sum = 0.0f64;
-                let mut count_gated = 0usize;
-
-                for k in 0..num_blocks {
-                    if block_loudness[k] > abs_thresh && block_loudness[k] > rel_thresh {
-                        z_gated_sum += block_energies[k] as f64;
-                        count_gated += 1;
-                    }
-                }
-
-                if count_gated > 0 {
-                    let z_final = z_gated_sum / (count_gated as f64);
-                    lufs = (-0.691 + 10.0 * z_final.log10()) as f32;
-                } else {
-                    lufs = (-0.691 + 10.0 * z_unmasked.log10()) as f32;
-                }
-            }
-        } else if !interval_energies.is_empty() {
-            let total_e: f64 = interval_energies.iter().map(|&e| e as f64).sum::<f64>() / (interval_energies.len() as f64);
-            if total_e > 0.0 {
-                lufs = (-0.691 + 10.0 * total_e.log10()) as f32;
-            }
-        }
-
-        let target_lufs = if config.target_lufs == 0.0 { -18.0 } else { config.target_lufs };
-        let gain_db = if lufs <= -70.0 {
-            0.0
-        } else {
-            target_lufs - lufs
-        };
-
-        result.has_replay_gain = 1;
-        result.replay_gain = ReplayGainData {
-            gain_db,
-            peak,
-            lufs,
-        };
-    }
-
-    // Waveform downsampling
-    if (config.flags & MAP_ANALYSIS_FLAG_WAVEFORM) != 0 && !all_peaks.is_empty() {
-        let target_points = config.waveform_points.max(1) as usize;
-        let mut points = Vec::with_capacity(target_points);
-
-        let chunk_size = (all_peaks.len() as f64) / (target_points as f64);
-        for i in 0..target_points {
-            let start = (i as f64 * chunk_size) as usize;
-            let end = (((i + 1) as f64 * chunk_size) as usize).min(all_peaks.len());
-            let mut chunk_peak = 0.0f32;
-            for j in start..end {
-                if all_peaks[j] > chunk_peak {
-                    chunk_peak = all_peaks[j];
-                }
-            }
-            points.push(chunk_peak.clamp(0.0, 1.0));
-        }
-
-        result.waveform = WaveformData {
-            point_count: target_points as u32,
-            points,
-        };
-        result.has_waveform = 1;
-    }
-
-    Ok(result)
+        has_replay_gain,
+        replay_gain,
+        has_waveform,
+        waveform,
+    })
 }
 
 pub fn analyze_file(path: &str, config: &AudioAnalysisConfig) -> Result<AudioAnalysisResult, i32> {
-    let file = File::open(path).map_err(|_| -5)?; // MAP_ERROR_FILE_NOT_FOUND
+    let file = File::open(path).map_err(|_| -5)?;
     let byte_size = file.metadata().map(|m| m.len()).unwrap_or(0);
     if byte_size == 0 {
-        return Err(-6); // MAP_ERROR_DECODE_FAILED
+        return Err(-6);
     }
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str());
+    let ext = FormatSniffer::extract_extension_hint(path);
     analyze_media_source(file, ext, config, byte_size)
 }
 
-pub fn analyze_memory(data: &[u8], config: &AudioAnalysisConfig) -> Result<AudioAnalysisResult, i32> {
+pub fn analyze_memory(
+    data: &[u8],
+    config: &AudioAnalysisConfig,
+) -> Result<AudioAnalysisResult, i32> {
     let byte_size = data.len() as u64;
-    let (_status, boundary) = crate::decoder::sniffer::FormatSniffer::detect_head_boundary(data, byte_size as i64);
-    let sniffer_hint = match boundary.container {
-        crate::decoder::sniffer::ContainerFormat::Mp3 => Some("mp3"),
-        crate::decoder::sniffer::ContainerFormat::Adts => Some("aac"),
-        crate::decoder::sniffer::ContainerFormat::Flac => Some("flac"),
-        crate::decoder::sniffer::ContainerFormat::OggVorbis | crate::decoder::sniffer::ContainerFormat::OggOpus => Some("ogg"),
-        crate::decoder::sniffer::ContainerFormat::Wav => Some("wav"),
-        crate::decoder::sniffer::ContainerFormat::Mp4 => Some("mp4"),
-        crate::decoder::sniffer::ContainerFormat::Matroska => Some("mka"),
-        crate::decoder::sniffer::ContainerFormat::Dsf => Some("dsf"),
-        crate::decoder::sniffer::ContainerFormat::Ape => Some("ape"),
-        crate::decoder::sniffer::ContainerFormat::WavPack => Some("wv"),
-        crate::decoder::sniffer::ContainerFormat::Hls => Some("m3u8"),
-        crate::decoder::sniffer::ContainerFormat::Unknown => None,
-    };
+    let (_status, boundary) = FormatSniffer::detect_head_boundary(data, byte_size as i64);
+    let sniffer_hint = boundary.container.hint_extension();
     let cursor = Cursor::new(data.to_vec());
     analyze_media_source(cursor, sniffer_hint, config, byte_size)
 }

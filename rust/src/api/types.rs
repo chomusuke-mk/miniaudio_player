@@ -1,5 +1,10 @@
 //! Strongly-typed models for Flutter <-> Rust communication.
 
+pub(crate) fn c_buf_to_string(buf: &[u8]) -> String {
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..len]).to_string()
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RustHttpHeader {
     pub key: String,
@@ -14,6 +19,17 @@ pub struct RustDartReadRequest {
     pub length: u32,
 }
 
+impl From<crate::buffer::DartReadRequest> for RustDartReadRequest {
+    fn from(req: crate::buffer::DartReadRequest) -> Self {
+        Self {
+            stream_id: req.stream_id,
+            request_id: req.request_id,
+            offset: req.offset,
+            length: req.length,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustAudioDevice {
     pub id: String,
@@ -21,6 +37,30 @@ pub struct RustAudioDevice {
     pub name: String,
     pub is_default: bool,
     pub is_auto: bool,
+}
+
+impl From<&crate::bridge::ffi::MapDeviceInfo> for RustAudioDevice {
+    fn from(d: &crate::bridge::ffi::MapDeviceInfo) -> Self {
+        Self {
+            id: c_buf_to_string(&d.id),
+            effective_id: c_buf_to_string(&d.effective_id),
+            name: c_buf_to_string(&d.name),
+            is_default: d.is_default != 0,
+            is_auto: d.is_auto != 0,
+        }
+    }
+}
+
+impl From<&crate::sync::telemetry::DeviceInfo> for RustAudioDevice {
+    fn from(d: &crate::sync::telemetry::DeviceInfo) -> Self {
+        Self {
+            id: c_buf_to_string(&d.id),
+            effective_id: c_buf_to_string(&d.effective_id),
+            name: c_buf_to_string(&d.name),
+            is_default: d.is_default != 0,
+            is_auto: d.is_auto != 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -35,6 +75,21 @@ pub struct RustStreamStatus {
     pub range_end: i64,
 }
 
+impl From<crate::core::player::MiniaudioStreamStatus> for RustStreamStatus {
+    fn from(status: crate::core::player::MiniaudioStreamStatus) -> Self {
+        Self {
+            buffer_capacity: status.buffer_capacity,
+            buffer_fill: status.buffer_fill,
+            fill_percentage: status.fill_percentage,
+            is_buffering: status.is_buffering != 0,
+            is_eof: status.is_eof != 0,
+            read_cursor_byte: status.read_cursor_byte,
+            range_start: status.range_start,
+            range_end: status.range_end,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustBufferedRange {
     pub start_ms: i64,
@@ -46,10 +101,64 @@ pub struct RustBufferedRange {
     pub is_eof: bool,
 }
 
+impl From<crate::bridge::ffi::MiniaudioBufferedRange> for RustBufferedRange {
+    fn from(r: crate::bridge::ffi::MiniaudioBufferedRange) -> Self {
+        Self {
+            start_ms: r.start_ms,
+            end_ms: r.end_ms,
+            duration_ms: r.duration_ms,
+            fill_percentage: r.fill_percentage,
+            stream_percentage: r.stream_percentage,
+            is_buffering: r.is_buffering != 0,
+            is_eof: r.is_eof != 0,
+        }
+    }
+}
+
+impl From<crate::sync::telemetry::BufferedRange> for RustBufferedRange {
+    fn from(r: crate::sync::telemetry::BufferedRange) -> Self {
+        Self {
+            start_ms: r.start_ms,
+            end_ms: r.end_ms,
+            duration_ms: r.duration_ms,
+            fill_percentage: r.fill_percentage,
+            stream_percentage: r.stream_percentage,
+            is_buffering: r.is_buffering != 0,
+            is_eof: r.is_eof != 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustEqualizerParams {
     pub gains: Vec<f32>,
     pub enabled: bool,
+}
+
+impl From<RustEqualizerParams> for crate::dsp::equalizer::EqualizerParams {
+    fn from(params: RustEqualizerParams) -> Self {
+        Self {
+            hz31: params.gains.first().copied().unwrap_or(0.0),
+            hz63: params.gains.get(1).copied().unwrap_or(0.0),
+            hz125: params.gains.get(2).copied().unwrap_or(0.0),
+            hz250: params.gains.get(3).copied().unwrap_or(0.0),
+            hz500: params.gains.get(4).copied().unwrap_or(0.0),
+            hz1k: params.gains.get(5).copied().unwrap_or(0.0),
+            hz2k: params.gains.get(6).copied().unwrap_or(0.0),
+            hz4k: params.gains.get(7).copied().unwrap_or(0.0),
+            hz8k: params.gains.get(8).copied().unwrap_or(0.0),
+            hz16k: params.gains.get(9).copied().unwrap_or(0.0),
+        }
+    }
+}
+
+impl From<crate::dsp::equalizer::EqualizerParams> for RustEqualizerParams {
+    fn from(eq: crate::dsp::equalizer::EqualizerParams) -> Self {
+        Self {
+            gains: eq.as_array().to_vec(),
+            enabled: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -58,6 +167,17 @@ pub struct RustReplayGainConfig {
     pub peak: f32,
     pub prevent_clipping: bool,
     pub enabled: bool,
+}
+
+impl From<crate::dsp::equalizer::ReplayGainConfig> for RustReplayGainConfig {
+    fn from(rg: crate::dsp::equalizer::ReplayGainConfig) -> Self {
+        Self {
+            gain_db: rg.gain_db,
+            peak: rg.peak,
+            prevent_clipping: rg.prevent_clipping != 0,
+            enabled: rg.enabled != 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,6 +191,20 @@ pub struct RustReverbParams {
     pub enabled: bool,
 }
 
+impl From<crate::dsp::reverb::ReverbConfig> for RustReverbParams {
+    fn from(rv: crate::dsp::reverb::ReverbConfig) -> Self {
+        Self {
+            room_size: rv.room_size,
+            damping: rv.damping,
+            wet: rv.wet,
+            dry: rv.dry,
+            width: rv.width,
+            mode: 0.0,
+            enabled: rv.enabled != 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustSilenceConfig {
     pub mode: i32,
@@ -80,6 +214,35 @@ pub struct RustSilenceConfig {
     pub enabled: bool,
 }
 
+impl From<crate::dsp::silence::SilenceConfig> for RustSilenceConfig {
+    fn from(sc: crate::dsp::silence::SilenceConfig) -> Self {
+        Self {
+            mode: sc.mode as i32,
+            threshold_db: sc.threshold_db,
+            min_silence_duration_ms: sc.min_silence_duration_ms,
+            padding_ms: sc.padding_ms,
+            enabled: sc.mode != crate::dsp::silence::SilenceMode::Disabled,
+        }
+    }
+}
+
+impl From<RustSilenceConfig> for crate::dsp::silence::SilenceConfig {
+    fn from(config: RustSilenceConfig) -> Self {
+        let mode = match config.mode {
+            1 => crate::dsp::silence::SilenceMode::TrimEdges,
+            2 => crate::dsp::silence::SilenceMode::Continuous,
+            3 => crate::dsp::silence::SilenceMode::All,
+            _ => crate::dsp::silence::SilenceMode::Disabled,
+        };
+        Self {
+            mode,
+            threshold_db: config.threshold_db,
+            min_silence_duration_ms: config.min_silence_duration_ms,
+            padding_ms: config.padding_ms,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustVisualizerData {
     pub bands: Vec<f32>,
@@ -87,6 +250,18 @@ pub struct RustVisualizerData {
     pub peak: f32,
     pub left: f32,
     pub right: f32,
+}
+
+impl From<crate::dsp::visualizer::VisualizerData> for RustVisualizerData {
+    fn from(vis: crate::dsp::visualizer::VisualizerData) -> Self {
+        Self {
+            bands: vis.bands.to_vec(),
+            rms: vis.rms,
+            peak: vis.peak,
+            left: vis.left,
+            right: vis.right,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -105,6 +280,25 @@ pub struct RustPlayerStatus {
     pub channels: u32,
 }
 
+impl From<crate::core::player::MiniaudioPlayerStatus> for RustPlayerStatus {
+    fn from(status: crate::core::player::MiniaudioPlayerStatus) -> Self {
+        Self {
+            position_ms: status.position_ms,
+            duration_ms: status.duration_ms,
+            state: status.state,
+            is_playing: status.is_playing != 0,
+            is_buffering: status.is_buffering != 0,
+            is_completed: status.is_completed != 0,
+            volume: status.volume,
+            rate: status.rate,
+            pitch: status.pitch,
+            bitrate: status.bitrate,
+            sample_rate: status.sample_rate,
+            channels: status.channels,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RustAudioAnalysisResult {
     pub duration_ms: i64,
@@ -117,6 +311,36 @@ pub struct RustAudioAnalysisResult {
     pub spectral_centroid: f32,
     pub frequency_bands: Vec<f32>,
     pub waveform_peaks: Vec<f32>,
+}
+
+impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult {
+    fn from(result: crate::dsp::analysis::AudioAnalysisResult) -> Self {
+        let waveform_peaks = if result.has_waveform != 0 {
+            result.waveform.points
+        } else {
+            Vec::new()
+        };
+        Self {
+            duration_ms: result.duration_ms,
+            sample_rate: result.sample_rate,
+            channels: result.channels,
+            peak_amplitude: result.peak,
+            rms_amplitude: result.peak,
+            integrated_lufs: if result.has_replay_gain != 0 {
+                result.replay_gain.lufs
+            } else {
+                0.0
+            },
+            replay_gain_db: if result.has_replay_gain != 0 {
+                result.replay_gain.gain_db
+            } else {
+                0.0
+            },
+            spectral_centroid: 0.0,
+            frequency_bands: Vec::new(),
+            waveform_peaks,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +402,32 @@ pub struct RustEngineItem {
     pub replay_peak: Option<f32>,
 }
 
+impl From<RustEngineItem> for crate::core::engine::EngineItemCore {
+    fn from(it: RustEngineItem) -> Self {
+        Self {
+            id: it.id,
+            source: it.source,
+            headers: it.headers,
+            data_bytes: it.data_bytes,
+            replay_gain_db: it.replay_gain_db,
+            replay_peak: it.replay_peak,
+        }
+    }
+}
+
+impl From<&crate::core::engine::EngineItemCore> for RustEngineItem {
+    fn from(it: &crate::core::engine::EngineItemCore) -> Self {
+        Self {
+            id: it.id,
+            source: it.source.clone(),
+            headers: it.headers.clone(),
+            data_bytes: it.data_bytes.clone(),
+            replay_gain_db: it.replay_gain_db,
+            replay_peak: it.replay_peak,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum RustEngineEvent {
     Phase(i32),
@@ -189,7 +439,10 @@ pub enum RustEngineEvent {
     IsCompleted(bool),
     CurrentIndex(i32),
     QueueChanged(Vec<RustEngineItem>),
-    NeedMoreTracks { current_track_id: i64, remaining_tracks: usize },
+    NeedMoreTracks {
+        current_track_id: i64,
+        remaining_tracks: usize,
+    },
     Volume(f32),
     Rate(f32),
     Pitch(f32),
@@ -272,13 +525,21 @@ impl Default for RustSpatialEmitter {
 
 impl From<RustVector3> for crate::dsp::spatial::Vector3 {
     fn from(v: RustVector3) -> Self {
-        Self { x: v.x, y: v.y, z: v.z }
+        Self {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        }
     }
 }
 
 impl From<crate::dsp::spatial::Vector3> for RustVector3 {
     fn from(v: crate::dsp::spatial::Vector3) -> Self {
-        Self { x: v.x, y: v.y, z: v.z }
+        Self {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        }
     }
 }
 

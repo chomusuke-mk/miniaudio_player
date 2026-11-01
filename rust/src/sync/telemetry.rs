@@ -5,8 +5,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
@@ -46,8 +45,44 @@ pub enum EventType {
     Error = 27,
 }
 
+impl EventType {
+    #[inline]
+    pub fn from_i32(code: i32) -> Self {
+        match code {
+            1 => Self::State,
+            2 => Self::Position,
+            3 => Self::Duration,
+            4 => Self::IsPlaying,
+            5 => Self::IsBuffering,
+            6 => Self::IsCompleted,
+            7 => Self::Volume,
+            8 => Self::Rate,
+            9 => Self::Pitch,
+            10 => Self::Bitrate,
+            11 => Self::BufferSize,
+            12 => Self::Device,
+            13 => Self::Visualizer,
+            14 => Self::VisualizerEnabled,
+            15 => Self::BufferedRange,
+            16 => Self::SilenceConfig,
+            17 => Self::SilenceSaved,
+            18 => Self::Equalizer,
+            19 => Self::Preamp,
+            20 => Self::ReplayGain,
+            21 => Self::Balance,
+            22 => Self::Mono,
+            23 => Self::Crossfeed,
+            24 => Self::Spatializer,
+            25 => Self::Reverb,
+            26 => Self::Limiter,
+            27 => Self::Error,
+            _ => Self::None,
+        }
+    }
+}
+
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BufferedRange {
     pub start_ms: i64,
     pub end_ms: i64,
@@ -56,20 +91,6 @@ pub struct BufferedRange {
     pub stream_percentage: f32,
     pub is_buffering: i32,
     pub is_eof: i32,
-}
-
-impl Default for BufferedRange {
-    fn default() -> Self {
-        Self {
-            start_ms: 0,
-            end_ms: 0,
-            duration_ms: 0,
-            fill_percentage: 0.0,
-            stream_percentage: 0.0,
-            is_buffering: 0,
-            is_eof: 0,
-        }
-    }
 }
 
 #[repr(C)]
@@ -95,13 +116,13 @@ impl Default for DeviceInfo {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SpatializerData {
     pub enabled: i32,
     pub width: f32,
 }
 
-/// Strongly-typed, compiler-enforced telemetry events replacing untagged C unions.
+/// Strongly-typed, deterministic telemetry events.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TelemetryEvent {
     None,
@@ -135,103 +156,115 @@ pub enum TelemetryEvent {
 }
 
 impl TelemetryEvent {
+    #[inline]
     pub fn event_type(&self) -> EventType {
         match self {
-            TelemetryEvent::None => EventType::None,
-            TelemetryEvent::State(_) => EventType::State,
-            TelemetryEvent::Position(_) => EventType::Position,
-            TelemetryEvent::Duration(_) => EventType::Duration,
-            TelemetryEvent::IsPlaying(_) => EventType::IsPlaying,
-            TelemetryEvent::IsBuffering(_) => EventType::IsBuffering,
-            TelemetryEvent::IsCompleted(_) => EventType::IsCompleted,
-            TelemetryEvent::Volume(_) => EventType::Volume,
-            TelemetryEvent::Rate(_) => EventType::Rate,
-            TelemetryEvent::Pitch(_) => EventType::Pitch,
-            TelemetryEvent::Bitrate(_) => EventType::Bitrate,
-            TelemetryEvent::BufferSize(_) => EventType::BufferSize,
-            TelemetryEvent::Device(_) => EventType::Device,
-            TelemetryEvent::Visualizer(_) => EventType::Visualizer,
-            TelemetryEvent::VisualizerEnabled(_) => EventType::VisualizerEnabled,
-            TelemetryEvent::BufferedRange(_) => EventType::BufferedRange,
-            TelemetryEvent::SilenceConfig(_) => EventType::SilenceConfig,
-            TelemetryEvent::SilenceSaved(_) => EventType::SilenceSaved,
-            TelemetryEvent::Equalizer(_) => EventType::Equalizer,
-            TelemetryEvent::Preamp(_) => EventType::Preamp,
-            TelemetryEvent::ReplayGain(_) => EventType::ReplayGain,
-            TelemetryEvent::Balance(_) => EventType::Balance,
-            TelemetryEvent::Mono(_) => EventType::Mono,
-            TelemetryEvent::Crossfeed(_) => EventType::Crossfeed,
-            TelemetryEvent::Spatializer(_) => EventType::Spatializer,
-            TelemetryEvent::Reverb(_) => EventType::Reverb,
-            TelemetryEvent::Limiter(_) => EventType::Limiter,
-            TelemetryEvent::Error(_) => EventType::Error,
+            Self::None => EventType::None,
+            Self::State(_) => EventType::State,
+            Self::Position(_) => EventType::Position,
+            Self::Duration(_) => EventType::Duration,
+            Self::IsPlaying(_) => EventType::IsPlaying,
+            Self::IsBuffering(_) => EventType::IsBuffering,
+            Self::IsCompleted(_) => EventType::IsCompleted,
+            Self::Volume(_) => EventType::Volume,
+            Self::Rate(_) => EventType::Rate,
+            Self::Pitch(_) => EventType::Pitch,
+            Self::Bitrate(_) => EventType::Bitrate,
+            Self::BufferSize(_) => EventType::BufferSize,
+            Self::Device(_) => EventType::Device,
+            Self::Visualizer(_) => EventType::Visualizer,
+            Self::VisualizerEnabled(_) => EventType::VisualizerEnabled,
+            Self::BufferedRange(_) => EventType::BufferedRange,
+            Self::SilenceConfig(_) => EventType::SilenceConfig,
+            Self::SilenceSaved(_) => EventType::SilenceSaved,
+            Self::Equalizer(_) => EventType::Equalizer,
+            Self::Preamp(_) => EventType::Preamp,
+            Self::ReplayGain(_) => EventType::ReplayGain,
+            Self::Balance(_) => EventType::Balance,
+            Self::Mono(_) => EventType::Mono,
+            Self::Crossfeed(_) => EventType::Crossfeed,
+            Self::Spatializer(_) => EventType::Spatializer,
+            Self::Reverb(_) => EventType::Reverb,
+            Self::Limiter(_) => EventType::Limiter,
+            Self::Error(_) => EventType::Error,
         }
     }
 
+    #[inline]
     pub fn to_map_event_data(&self) -> MapEventData {
         match self {
-            TelemetryEvent::None => MapEventData { state: 0 },
-            TelemetryEvent::State(s) => MapEventData { state: *s },
-            TelemetryEvent::Position(p) => MapEventData { position_ms: *p },
-            TelemetryEvent::Duration(d) => MapEventData { duration_ms: *d },
-            TelemetryEvent::IsPlaying(p) => MapEventData { is_playing: if *p { 1 } else { 0 } },
-            TelemetryEvent::IsBuffering(b) => MapEventData { is_buffering: if *b { 1 } else { 0 } },
-            TelemetryEvent::IsCompleted(c) => MapEventData { is_completed: if *c { 1 } else { 0 } },
-            TelemetryEvent::Volume(v) => MapEventData { volume: *v },
-            TelemetryEvent::Rate(r) => MapEventData { rate: *r },
-            TelemetryEvent::Pitch(p) => MapEventData { pitch: *p },
-            TelemetryEvent::Bitrate(b) => MapEventData { bitrate: *b },
-            TelemetryEvent::BufferSize(b) => MapEventData { buffer_size: *b },
-            TelemetryEvent::Device(d) => MapEventData { device: **d },
-            TelemetryEvent::Visualizer(v) => MapEventData { visualizer: *v },
-            TelemetryEvent::VisualizerEnabled(e) => MapEventData { visualizer_enabled: if *e { 1 } else { 0 } },
-            TelemetryEvent::BufferedRange(br) => MapEventData { buffered_range: *br },
-            TelemetryEvent::SilenceConfig(sc) => MapEventData { silence_config: *sc },
-            TelemetryEvent::SilenceSaved(s) => MapEventData { silence_saved_ms: *s },
-            TelemetryEvent::Equalizer(eq) => MapEventData { equalizer: *eq },
-            TelemetryEvent::Preamp(p) => MapEventData { preamp_db: *p },
-            TelemetryEvent::ReplayGain(rg) => MapEventData { replay_gain: *rg },
-            TelemetryEvent::Balance(b) => MapEventData { balance: *b },
-            TelemetryEvent::Mono(m) => MapEventData { mono_enabled: if *m { 1 } else { 0 } },
-            TelemetryEvent::Crossfeed(c) => MapEventData { crossfeed_mode: *c },
-            TelemetryEvent::Spatializer(sp) => MapEventData { spatializer: *sp },
-            TelemetryEvent::Reverb(rv) => MapEventData { reverb: *rv },
-            TelemetryEvent::Limiter(l) => MapEventData { limiter_enabled: if *l { 1 } else { 0 } },
-            TelemetryEvent::Error(e) => MapEventData { error_code: *e },
+            Self::None => MapEventData { state: 0 },
+            Self::State(s) => MapEventData { state: *s },
+            Self::Position(p) => MapEventData { position_ms: *p },
+            Self::Duration(d) => MapEventData { duration_ms: *d },
+            Self::IsPlaying(p) => MapEventData { is_playing: i32::from(*p) },
+            Self::IsBuffering(b) => MapEventData { is_buffering: i32::from(*b) },
+            Self::IsCompleted(c) => MapEventData { is_completed: i32::from(*c) },
+            Self::Volume(v) => MapEventData { volume: *v },
+            Self::Rate(r) => MapEventData { rate: *r },
+            Self::Pitch(p) => MapEventData { pitch: *p },
+            Self::Bitrate(b) => MapEventData { bitrate: *b },
+            Self::BufferSize(b) => MapEventData { buffer_size: *b },
+            Self::Device(d) => MapEventData { device: **d },
+            Self::Visualizer(v) => MapEventData { visualizer: *v },
+            Self::VisualizerEnabled(e) => MapEventData { visualizer_enabled: i32::from(*e) },
+            Self::BufferedRange(br) => MapEventData { buffered_range: *br },
+            Self::SilenceConfig(sc) => MapEventData { silence_config: *sc },
+            Self::SilenceSaved(s) => MapEventData { silence_saved_ms: *s },
+            Self::Equalizer(eq) => MapEventData { equalizer: *eq },
+            Self::Preamp(p) => MapEventData { preamp_db: *p },
+            Self::ReplayGain(rg) => MapEventData { replay_gain: *rg },
+            Self::Balance(b) => MapEventData { balance: *b },
+            Self::Mono(m) => MapEventData { mono_enabled: i32::from(*m) },
+            Self::Crossfeed(c) => MapEventData { crossfeed_mode: *c },
+            Self::Spatializer(sp) => MapEventData { spatializer: *sp },
+            Self::Reverb(rv) => MapEventData { reverb: *rv },
+            Self::Limiter(l) => MapEventData { limiter_enabled: i32::from(*l) },
+            Self::Error(e) => MapEventData { error_code: *e },
+        }
+    }
+
+    #[inline]
+    pub fn to_map_event(&self) -> MapEvent {
+        MapEvent {
+            event_type: self.event_type() as i32,
+            padding: 0,
+            timestamp_ns: monotonic_now_ns(),
+            data: self.to_map_event_data(),
         }
     }
 
     pub fn from_raw(event_type: EventType, data: &MapEventData) -> Self {
         unsafe {
             match event_type {
-                EventType::None => TelemetryEvent::None,
-                EventType::State => TelemetryEvent::State(data.state),
-                EventType::Position => TelemetryEvent::Position(data.position_ms),
-                EventType::Duration => TelemetryEvent::Duration(data.duration_ms),
-                EventType::IsPlaying => TelemetryEvent::IsPlaying(data.is_playing != 0),
-                EventType::IsBuffering => TelemetryEvent::IsBuffering(data.is_buffering != 0),
-                EventType::IsCompleted => TelemetryEvent::IsCompleted(data.is_completed != 0),
-                EventType::Volume => TelemetryEvent::Volume(data.volume),
-                EventType::Rate => TelemetryEvent::Rate(data.rate),
-                EventType::Pitch => TelemetryEvent::Pitch(data.pitch),
-                EventType::Bitrate => TelemetryEvent::Bitrate(data.bitrate),
-                EventType::BufferSize => TelemetryEvent::BufferSize(data.buffer_size),
-                EventType::Device => TelemetryEvent::Device(Box::new(data.device)),
-                EventType::Visualizer => TelemetryEvent::Visualizer(data.visualizer),
-                EventType::VisualizerEnabled => TelemetryEvent::VisualizerEnabled(data.visualizer_enabled != 0),
-                EventType::BufferedRange => TelemetryEvent::BufferedRange(data.buffered_range),
-                EventType::SilenceConfig => TelemetryEvent::SilenceConfig(data.silence_config),
-                EventType::SilenceSaved => TelemetryEvent::SilenceSaved(data.silence_saved_ms),
-                EventType::Equalizer => TelemetryEvent::Equalizer(data.equalizer),
-                EventType::Preamp => TelemetryEvent::Preamp(data.preamp_db),
-                EventType::ReplayGain => TelemetryEvent::ReplayGain(data.replay_gain),
-                EventType::Balance => TelemetryEvent::Balance(data.balance),
-                EventType::Mono => TelemetryEvent::Mono(data.mono_enabled != 0),
-                EventType::Crossfeed => TelemetryEvent::Crossfeed(data.crossfeed_mode),
-                EventType::Spatializer => TelemetryEvent::Spatializer(data.spatializer),
-                EventType::Reverb => TelemetryEvent::Reverb(data.reverb),
-                EventType::Limiter => TelemetryEvent::Limiter(data.limiter_enabled != 0),
-                EventType::Error => TelemetryEvent::Error(data.error_code),
+                EventType::None => Self::None,
+                EventType::State => Self::State(data.state),
+                EventType::Position => Self::Position(data.position_ms),
+                EventType::Duration => Self::Duration(data.duration_ms),
+                EventType::IsPlaying => Self::IsPlaying(data.is_playing != 0),
+                EventType::IsBuffering => Self::IsBuffering(data.is_buffering != 0),
+                EventType::IsCompleted => Self::IsCompleted(data.is_completed != 0),
+                EventType::Volume => Self::Volume(data.volume),
+                EventType::Rate => Self::Rate(data.rate),
+                EventType::Pitch => Self::Pitch(data.pitch),
+                EventType::Bitrate => Self::Bitrate(data.bitrate),
+                EventType::BufferSize => Self::BufferSize(data.buffer_size),
+                EventType::Device => Self::Device(Box::new(data.device)),
+                EventType::Visualizer => Self::Visualizer(data.visualizer),
+                EventType::VisualizerEnabled => Self::VisualizerEnabled(data.visualizer_enabled != 0),
+                EventType::BufferedRange => Self::BufferedRange(data.buffered_range),
+                EventType::SilenceConfig => Self::SilenceConfig(data.silence_config),
+                EventType::SilenceSaved => Self::SilenceSaved(data.silence_saved_ms),
+                EventType::Equalizer => Self::Equalizer(data.equalizer),
+                EventType::Preamp => Self::Preamp(data.preamp_db),
+                EventType::ReplayGain => Self::ReplayGain(data.replay_gain),
+                EventType::Balance => Self::Balance(data.balance),
+                EventType::Mono => Self::Mono(data.mono_enabled != 0),
+                EventType::Crossfeed => Self::Crossfeed(data.crossfeed_mode),
+                EventType::Spatializer => Self::Spatializer(data.spatializer),
+                EventType::Reverb => Self::Reverb(data.reverb),
+                EventType::Limiter => Self::Limiter(data.limiter_enabled != 0),
+                EventType::Error => Self::Error(data.error_code),
             }
         }
     }
@@ -284,6 +317,7 @@ pub type TypedEventCallback = Box<dyn Fn(&TelemetryEvent) + Send + Sync>;
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
+#[inline]
 pub fn monotonic_now_ns() -> i64 {
     let start = START_TIME.get_or_init(Instant::now);
     start.elapsed().as_nanos() as i64
@@ -291,222 +325,202 @@ pub fn monotonic_now_ns() -> i64 {
 
 pub const MAP_EVENT_RING_CAPACITY: usize = 128;
 
-pub struct TelemetryDispatcher {
-    is_running: Arc<AtomicBool>,
-    callback: Arc<RwLock<Option<(EventCallback, usize)>>>,
-    rust_callback: Arc<RwLock<Option<RustEventCallback>>>,
-    typed_callback: Arc<RwLock<Option<TypedEventCallback>>>,
-    ring: Arc<Vec<UnsafeCell<MapEvent>>>,
-    ring_head: Arc<AtomicUsize>,
-    tx: crossbeam_channel::Sender<TelemetryEvent>,
-    worker_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+/// Fixed-capacity circular arena for C-ABI `MapEvent` pointers.
+struct EventRingArena {
+    slots: Vec<UnsafeCell<MapEvent>>,
+    head: AtomicUsize,
 }
 
-unsafe impl Send for TelemetryDispatcher {}
-unsafe impl Sync for TelemetryDispatcher {}
+unsafe impl Send for EventRingArena {}
+unsafe impl Sync for EventRingArena {}
 
-impl TelemetryDispatcher {
-    #[allow(clippy::arc_with_non_send_sync)]
-    pub fn new(callback: Option<EventCallback>, user_data: *mut c_void) -> Self {
-        let is_running = Arc::new(AtomicBool::new(true));
-        let callback_slot = Arc::new(RwLock::new(
-            callback.map(|cb| (cb, user_data as usize)),
-        ));
-        let rust_callback = Arc::new(RwLock::new(None));
-        let typed_callback: Arc<RwLock<Option<TypedEventCallback>>> = Arc::new(RwLock::new(None));
-
-        let mut ring_vec = Vec::with_capacity(MAP_EVENT_RING_CAPACITY);
-        for _ in 0..MAP_EVENT_RING_CAPACITY {
-            ring_vec.push(UnsafeCell::new(MapEvent {
+impl EventRingArena {
+    fn new(capacity: usize) -> Self {
+        let mut slots = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
+            slots.push(UnsafeCell::new(MapEvent {
                 event_type: 0,
                 padding: 0,
                 timestamp_ns: 0,
                 data: MapEventData { state: 0 },
             }));
         }
+        Self {
+            slots,
+            head: AtomicUsize::new(0),
+        }
+    }
 
+    #[inline]
+    fn write_slot(&self, event: MapEvent) -> *const MapEvent {
+        let idx = self.head.fetch_add(1, Ordering::Relaxed) % self.slots.len();
+        let ptr = self.slots[idx].get();
+        unsafe {
+            *ptr = event;
+        }
+        ptr
+    }
+}
+
+/// Encapsulates all registered telemetry callbacks with single-responsibility notification methods.
+#[derive(Default)]
+struct CallbackRegistry {
+    c_callback: RwLock<Option<(EventCallback, usize)>>,
+    rust_callback: RwLock<Option<RustEventCallback>>,
+    typed_callback: RwLock<Option<TypedEventCallback>>,
+}
+
+impl CallbackRegistry {
+    fn set_c(&self, cb: Option<EventCallback>, user_data: *mut c_void) {
+        if let Ok(mut guard) = self.c_callback.write() {
+            *guard = cb.map(|f| (f, user_data as usize));
+        }
+    }
+
+    fn set_rust(&self, cb: Option<RustEventCallback>) {
+        if let Ok(mut guard) = self.rust_callback.write() {
+            *guard = cb;
+        }
+    }
+
+    fn set_typed(&self, cb: Option<TypedEventCallback>) {
+        if let Ok(mut guard) = self.typed_callback.write() {
+            *guard = cb;
+        }
+    }
+
+    fn notify_immediate(&self, event_type: EventType, data: &MapEventData, event_ptr: *const MapEvent) {
+        if let Ok(guard) = self.rust_callback.read() {
+            if let Some(cb) = guard.as_ref() {
+                cb(event_type, data);
+            }
+        }
+        if let Ok(guard) = self.c_callback.read() {
+            if let Some((cb, user_data_addr)) = *guard {
+                unsafe {
+                    cb(user_data_addr as *mut c_void, event_ptr);
+                }
+            }
+        }
+    }
+
+    fn notify_typed_batch(&self, batch: &[TelemetryEvent], last_position: &mut i64) {
+        if let Ok(guard) = self.typed_callback.read() {
+            if let Some(cb) = guard.as_ref() {
+                for ev in batch {
+                    if let TelemetryEvent::Position(pos) = *ev {
+                        if pos == *last_position {
+                            continue;
+                        }
+                        *last_position = pos;
+                    }
+                    cb(ev);
+                }
+            }
+        }
+    }
+}
+
+pub struct TelemetryDispatcher {
+    is_running: Arc<AtomicBool>,
+    callbacks: Arc<CallbackRegistry>,
+    arena: Arc<EventRingArena>,
+    tx: crossbeam_channel::Sender<TelemetryEvent>,
+    worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl TelemetryDispatcher {
+    pub fn new(callback: Option<EventCallback>, user_data: *mut c_void) -> Self {
+        let is_running = Arc::new(AtomicBool::new(true));
+        let callbacks = Arc::new(CallbackRegistry::default());
+        callbacks.set_c(callback, user_data);
+
+        let arena = Arc::new(EventRingArena::new(MAP_EVENT_RING_CAPACITY));
         let (tx, rx) = crossbeam_channel::unbounded::<TelemetryEvent>();
-        let is_running_clone = is_running.clone();
-        let typed_cb_clone = typed_callback.clone();
 
-        let handle = thread::Builder::new()
+        let worker_handle = Self::spawn_worker(is_running.clone(), callbacks.clone(), rx);
+
+        Self {
+            is_running,
+            callbacks,
+            arena,
+            tx,
+            worker_handle: Mutex::new(worker_handle),
+        }
+    }
+
+    fn spawn_worker(
+        is_running: Arc<AtomicBool>,
+        callbacks: Arc<CallbackRegistry>,
+        rx: crossbeam_channel::Receiver<TelemetryEvent>,
+    ) -> Option<thread::JoinHandle<()>> {
+        thread::Builder::new()
             .name("map-telemetry".to_string())
             .spawn(move || {
                 let mut last_position: i64 = -1;
-                while is_running_clone.load(Ordering::Relaxed) {
+                while is_running.load(Ordering::Relaxed) {
                     match rx.recv_timeout(Duration::from_millis(25)) {
                         Ok(first_event) => {
                             let mut batch = vec![first_event];
                             while let Ok(ev) = rx.try_recv() {
                                 batch.push(ev);
                             }
-                            if let Ok(guard) = typed_cb_clone.read() {
-                                if let Some(ref cb) = *guard {
-                                    for ev in batch {
-                                        if let TelemetryEvent::Position(pos) = ev {
-                                            if pos == last_position {
-                                                continue;
-                                            }
-                                            last_position = pos;
-                                        }
-                                        cb(&ev);
-                                    }
-                                }
-                            }
+                            callbacks.notify_typed_batch(&batch, &mut last_position);
                         }
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                         Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             })
-            .ok();
-
-        Self {
-            is_running,
-            callback: callback_slot,
-            rust_callback,
-            typed_callback,
-            ring: Arc::new(ring_vec),
-            ring_head: Arc::new(AtomicUsize::new(0)),
-            tx,
-            worker_handle: Arc::new(Mutex::new(handle)),
-        }
+            .ok()
     }
 
     pub fn set_callback(&self, callback: Option<EventCallback>, user_data: *mut c_void) {
-        if let Ok(mut lock) = self.callback.write() {
-            *lock = callback.map(|cb| (cb, user_data as usize));
-        }
+        self.callbacks.set_c(callback, user_data);
     }
 
     pub fn set_rust_callback(&self, callback: Option<RustEventCallback>) {
-        if let Ok(mut lock) = self.rust_callback.write() {
-            *lock = callback;
-        }
+        self.callbacks.set_rust(callback);
     }
 
     pub fn set_typed_callback(&self, callback: Option<TypedEventCallback>) {
-        if let Ok(mut lock) = self.typed_callback.write() {
-            *lock = callback;
-        }
+        self.callbacks.set_typed(callback);
     }
 
-    /// Strongly-typed, compiler-enforced telemetry dispatch.
-    ///
-    /// GUARANTEES:
-    /// - 100% Lock-Free & Wait-Free: Audio and decoding threads NEVER block or invoke Dart FFI.
-    /// - All Dart FFI dispatch is executed asynchronously by the dedicated `map-telemetry` thread.
+    /// Primary deterministic telemetry dispatch entry point.
     pub fn post(&self, event: TelemetryEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
         }
-
+        let map_event = event.to_map_event();
         let event_type = event.event_type();
-        let data = event.to_map_event_data();
+        let event_ptr = self.arena.write_slot(map_event);
 
-        let slot = self.ring_head.fetch_add(1, Ordering::Relaxed) % MAP_EVENT_RING_CAPACITY;
-        let event_ptr = self.ring[slot].get();
-        unsafe {
-            *event_ptr = MapEvent {
-                event_type: event_type as i32,
-                padding: 0,
-                timestamp_ns: monotonic_now_ns(),
-                data,
-            };
-        }
-
-        if let Ok(guard) = self.rust_callback.read() {
-            if let Some(cb) = guard.as_ref() {
-                cb(event_type, &data);
-            }
-        }
-
-        if let Ok(guard) = self.callback.read() {
-            if let Some((cb, user_data_addr)) = *guard {
-                unsafe {
-                    cb(user_data_addr as *mut c_void, event_ptr);
-                }
-            }
-        }
-
-        // Asynchronous, lock-free dispatch to the dedicated map-telemetry thread
+        self.callbacks.notify_immediate(event_type, &map_event.data, event_ptr);
         let _ = self.tx.send(event);
     }
 
+    #[inline]
     pub fn post_event(&self, event_type: EventType, data: MapEventData) {
-        let typed_event = TelemetryEvent::from_raw(event_type, &data);
-        self.post(typed_event);
+        self.post(TelemetryEvent::from_raw(event_type, &data));
     }
 
     pub fn dispatch(&self, event: MapEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
         }
-
-        let slot = self.ring_head.fetch_add(1, Ordering::Relaxed) % MAP_EVENT_RING_CAPACITY;
-        let event_ptr = self.ring[slot].get();
-        unsafe {
-            *event_ptr = event;
-        }
-
-        let event_type = match event.event_type {
-            1 => EventType::State,
-            2 => EventType::Position,
-            3 => EventType::Duration,
-            4 => EventType::IsPlaying,
-            5 => EventType::IsBuffering,
-            6 => EventType::IsCompleted,
-            7 => EventType::Volume,
-            8 => EventType::Rate,
-            9 => EventType::Pitch,
-            10 => EventType::Bitrate,
-            11 => EventType::BufferSize,
-            12 => EventType::Device,
-            13 => EventType::Visualizer,
-            14 => EventType::VisualizerEnabled,
-            15 => EventType::BufferedRange,
-            16 => EventType::SilenceConfig,
-            17 => EventType::SilenceSaved,
-            18 => EventType::Equalizer,
-            19 => EventType::Preamp,
-            20 => EventType::ReplayGain,
-            21 => EventType::Balance,
-            22 => EventType::Mono,
-            23 => EventType::Crossfeed,
-            24 => EventType::Spatializer,
-            25 => EventType::Reverb,
-            26 => EventType::Limiter,
-            27 => EventType::Error,
-            _ => EventType::None,
-        };
-
+        let event_type = EventType::from_i32(event.event_type);
         let typed = TelemetryEvent::from_raw(event_type, &event.data);
-        if let Ok(guard) = self.typed_callback.read() {
-            if let Some(cb) = guard.as_ref() {
-                cb(&typed);
-            }
-        }
+        let event_ptr = self.arena.write_slot(event);
 
-        if let Ok(guard) = self.rust_callback.read() {
-            if let Some(cb) = guard.as_ref() {
-                cb(event_type, &event.data);
-            }
-        }
-
-        if let Ok(guard) = self.callback.read() {
-            if let Some((cb, user_data_addr)) = *guard {
-                unsafe {
-                    cb(user_data_addr as *mut c_void, event_ptr);
-                }
-            }
-        }
+        let mut last_pos = -1;
+        self.callbacks.notify_typed_batch(std::slice::from_ref(&typed), &mut last_pos);
+        self.callbacks.notify_immediate(event_type, &event.data, event_ptr);
     }
 
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
-        if let Ok(mut lock) = self.callback.write() {
-            *lock = None;
-        }
+        self.callbacks.set_c(None, std::ptr::null_mut());
         if let Ok(mut handle_guard) = self.worker_handle.lock() {
             if let Some(handle) = handle_guard.take() {
                 let _ = handle.join();

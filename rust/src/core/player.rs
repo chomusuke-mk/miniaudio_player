@@ -2,11 +2,11 @@
 
 use std::ffi::{c_char, c_void};
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::bridge::ffi::*;
 use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, TripartiteBuffer};
@@ -24,8 +24,8 @@ use crate::dsp::DspChain;
 use crate::sync::ring_buffer::{AudioProducer, AudioRingBuffer};
 use crate::sync::seqlock::CachePaddedSeqlock;
 use crate::sync::telemetry::{
-    DeviceInfo as TelemetryDeviceInfo, EventCallback, EventType, MapEventData,
-    SpatializerData, TelemetryDispatcher,
+    DeviceInfo as TelemetryDeviceInfo, EventCallback, EventType, MapEventData, SpatializerData,
+    TelemetryDispatcher,
 };
 
 pub const STATE_STOPPED: i32 = 0;
@@ -86,6 +86,748 @@ pub struct MiniaudioPlayerStatus {
 }
 
 pub type CompletionCallback = unsafe extern "C" fn(user_data: *mut c_void);
+
+pub fn strip_file_prefix(source: &str) -> String {
+    let s = source.trim();
+    if let Some(stripped) = s.strip_prefix("file://localhost/") {
+        format!("/{}", stripped.trim_start_matches('/'))
+    } else if let Some(stripped) = s.strip_prefix("file:///") {
+        let bytes = stripped.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            stripped.to_string()
+        } else {
+            format!("/{}", stripped.trim_start_matches('/'))
+        }
+    } else if let Some(stripped) = s.strip_prefix("file://") {
+        if let Some(path) = stripped.strip_prefix('/') {
+            format!("/{}", path)
+        } else {
+            format!("/{}", stripped)
+        }
+    } else {
+        s.to_string()
+    }
+}
+
+fn resolve_local_source_path(trimmed: &str) -> String {
+    let raw_path = if let Some(stripped) = trimmed.strip_prefix("asset://") {
+        stripped.strip_prefix('/').unwrap_or(stripped).to_string()
+    } else if let Some(stripped) = trimmed.strip_prefix("asset:") {
+        stripped.strip_prefix('/').unwrap_or(stripped).to_string()
+    } else {
+        strip_file_prefix(trimmed)
+    };
+
+    if !std::path::Path::new(&raw_path).exists() {
+        let candidate = format!("example/{}", raw_path);
+        if std::path::Path::new(&candidate).exists() {
+            return candidate;
+        }
+    }
+    raw_path
+}
+
+fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
+    match encoding_format {
+        1 => Some("wav"),
+        2 => Some("flac"),
+        3 => Some("mp3"),
+        4 => Some("ogg"),
+        5 => Some("aac"),
+        6 => Some("mp4"),
+        _ => None,
+    }
+}
+
+fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
+    let lower_url = url.to_lowercase();
+    let lower_ct = content_type.unwrap_or("").to_lowercase();
+
+    if lower_url.ends_with(".wav")
+        || lower_ct.contains("audio/wav")
+        || lower_ct.contains("audio/x-wav")
+    {
+        1
+    } else if lower_url.ends_with(".flac") || lower_ct.contains("audio/flac") {
+        2
+    } else if lower_url.ends_with(".mp3")
+        || lower_ct.contains("audio/mpeg")
+        || lower_ct.contains("audio/mp3")
+    {
+        3
+    } else if lower_url.ends_with(".ogg")
+        || lower_url.ends_with(".opus")
+        || lower_ct.contains("audio/ogg")
+        || lower_ct.contains("audio/opus")
+    {
+        4
+    } else if lower_url.ends_with(".aac") || lower_ct.contains("audio/aac") {
+        5
+    } else if lower_url.ends_with(".m4a")
+        || lower_url.ends_with(".mp4")
+        || lower_ct.contains("audio/mp4")
+    {
+        6
+    } else {
+        0
+    }
+}
+
+fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) -> Vec<u8> {
+    let mut initial_data = Vec::with_capacity(131072);
+    let mut read_buf = [0u8; 32768];
+
+    loop {
+        match reader.read(&mut read_buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                initial_data.extend_from_slice(&read_buf[..n]);
+                if initial_data.len() >= 65536 {
+                    let (status, _) =
+                        FormatSniffer::detect_head_boundary(&initial_data, content_length);
+                    if status != crate::decoder::sniffer::BoundaryStatus::NeedMore
+                        || initial_data.len() >= 512 * 1024
+                    {
+                        break;
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+
+    initial_data
+}
+
+fn spawn_network_streamer_thread(
+    mut reader: Box<dyn Read + Send>,
+    trip: TripartiteBuffer,
+    abort_stream: Arc<AtomicBool>,
+    decoder_running: Arc<AtomicBool>,
+) {
+    let _ = std::thread::Builder::new()
+        .name("miniaudio-net-streamer".to_string())
+        .spawn(move || {
+            let mut chunk = vec![0u8; 32768];
+            while !abort_stream.load(Ordering::Relaxed) && decoder_running.load(Ordering::Relaxed) {
+                match reader.read(&mut chunk) {
+                    Ok(0) => {
+                        trip.mark_eof();
+                        break;
+                    }
+                    Ok(n) => {
+                        let mut offset = 0;
+                        while offset < n
+                            && !abort_stream.load(Ordering::Relaxed)
+                            && decoder_running.load(Ordering::Relaxed)
+                        {
+                            match trip.feed_chunk(&chunk[offset..n]) {
+                                Ok(written) => offset += written,
+                                Err(crate::buffer::BufferError::Busy) => {
+                                    std::thread::sleep(Duration::from_millis(20));
+                                }
+                                Err(_) => return,
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+}
+
+/// Deterministic black-box PCM adaptation pipeline:
+/// `SilenceDetector` -> `ChannelMatrix` -> `RubatoResampler` -> pending PCM staging buffer.
+struct PcmAdaptationPipeline {
+    silence_detector: SilenceDetector,
+    channel_matrix: ChannelMatrix,
+    resampler: RubatoResampler,
+    active_buf: Vec<f32>,
+    matrix_buf: Vec<f32>,
+    resampler_out: Vec<f32>,
+    pending_pcm: Vec<f32>,
+    pending_offset: usize,
+}
+
+impl PcmAdaptationPipeline {
+    fn new(track_sr: u32, track_ch: usize, dev_sr: u32, dev_ch: usize) -> Self {
+        let sr = track_sr.max(8000);
+        let ch = track_ch.clamp(1, 16);
+        let d_sr = dev_sr.max(8000);
+        let d_ch = dev_ch.clamp(1, 16);
+
+        let resampler = RubatoResampler::new(sr, d_sr, d_ch, 1024)
+            .unwrap_or_else(|_| RubatoResampler::new(48000, 48000, d_ch, 1024).unwrap());
+
+        Self {
+            silence_detector: SilenceDetector::new(ch, sr),
+            channel_matrix: ChannelMatrix::new(ch, d_ch),
+            resampler,
+            active_buf: Vec::new(),
+            matrix_buf: Vec::new(),
+            resampler_out: Vec::new(),
+            pending_pcm: Vec::new(),
+            pending_offset: 0,
+        }
+    }
+
+    fn sync_silence_format(&mut self, sr: u32, ch: usize) {
+        if sr > 0
+            && ch > 0
+            && (sr != self.silence_detector.sample_rate()
+                || ch != self.silence_detector.channels())
+        {
+            self.silence_detector.set_sample_rate(sr);
+            self.silence_detector.set_channels(ch);
+        }
+    }
+
+    fn reset(&mut self, reset_saved_ms: bool) {
+        self.silence_detector.reset(reset_saved_ms);
+        self.pending_pcm.clear();
+        self.pending_offset = 0;
+        self.resampler.reset();
+    }
+
+    fn clear_pending_and_resampler(&mut self) {
+        self.pending_pcm.clear();
+        self.pending_offset = 0;
+        self.resampler.reset();
+    }
+
+    fn flush_resampler_into_pending(&mut self) {
+        if self.pending_pcm.is_empty() {
+            let _ = self.resampler.flush(&mut self.pending_pcm);
+            self.pending_offset = 0;
+        }
+    }
+
+    /// Drains any staged PCM samples into `producer_arc`.
+    /// Returns `true` if all staged PCM samples have been completely written.
+    fn drain_pending_to(&mut self, producer_arc: &Arc<Mutex<Option<AudioProducer>>>) -> bool {
+        if self.pending_offset >= self.pending_pcm.len() {
+            self.pending_pcm.clear();
+            self.pending_offset = 0;
+            return true;
+        }
+
+        let slice_to_write = &self.pending_pcm[self.pending_offset..];
+        let written = producer_arc
+            .lock()
+            .ok()
+            .and_then(|mut g| g.as_mut().map(|p| p.write_chunk(slice_to_write)))
+            .unwrap_or(0);
+
+        self.pending_offset += written;
+        if self.pending_offset >= self.pending_pcm.len() {
+            self.pending_pcm.clear();
+            self.pending_offset = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Processes a decoded interleaved frame buffer through silence trimming, channel matrixing,
+    /// and high-precision resampling, staging the result in `pending_pcm`.
+    /// Returns the total `saved_ms` accumulated by the silence detector.
+    fn process_frame(
+        &mut self,
+        frame_buf: &[f32],
+        track_sr: u32,
+        track_ch: usize,
+        dev_sr: u32,
+        dev_ch: usize,
+        silence_cfg: SilenceConfig,
+    ) -> i64 {
+        self.sync_silence_format(track_sr, track_ch);
+        self.silence_detector.set_config(silence_cfg);
+
+        if self.active_buf.len() < frame_buf.len() {
+            self.active_buf.resize(frame_buf.len(), 0.0);
+        }
+        let (frames_out, _) = self
+            .silence_detector
+            .process_frames(frame_buf, &mut self.active_buf);
+        let saved_ms = self.silence_detector.saved_ms() as i64;
+
+        let samples_out = frames_out * track_ch;
+        if samples_out == 0 {
+            return saved_ms;
+        }
+        let active_slice = &self.active_buf[..samples_out];
+
+        self.channel_matrix.set_channels(track_ch, dev_ch);
+        self.channel_matrix
+            .process_interleaved(active_slice, &mut self.matrix_buf);
+
+        if self.resampler.sample_rate_in() != track_sr
+            || self.resampler.sample_rate_out() != dev_sr
+            || self.resampler.channels() != dev_ch
+        {
+            if let Ok(new_res) = RubatoResampler::new(track_sr, dev_sr, dev_ch, 1024) {
+                self.resampler = new_res;
+            }
+        }
+
+        self.resampler_out.clear();
+        let _ = self
+            .resampler
+            .process_interleaved(&self.matrix_buf, &mut self.resampler_out);
+
+        self.pending_pcm.extend_from_slice(&self.resampler_out);
+        self.pending_offset = 0;
+        saved_ms
+    }
+}
+
+/// Background decoding worker orchestrating decoder lifecycle, stream re-init,
+/// seek synchronization, PCM adaptation, and ring-buffer feeding.
+struct DecoderWorker {
+    running: Arc<AtomicBool>,
+    wake: Arc<(Mutex<bool>, Condvar)>,
+    state: Arc<AtomicI32>,
+    engine_arc: Arc<Mutex<Option<SymphoniaEngine>>>,
+    producer_arc: Arc<Mutex<Option<AudioProducer>>>,
+    seek_req: Arc<AtomicI64>,
+    pos_ms: Arc<AtomicI64>,
+    pos_frames: Arc<AtomicI64>,
+    dur_ms: Arc<AtomicI64>,
+    sr_arc: Arc<AtomicU32>,
+    ch_arc: Arc<AtomicU32>,
+    dev_sr_arc: Arc<AtomicU32>,
+    dev_ch_arc: Arc<AtomicU32>,
+    silence_cfg_arc: Arc<RwLock<SilenceConfig>>,
+    silence_saved_arc: Arc<AtomicI64>,
+    is_stream_arc: Arc<AtomicBool>,
+    trip_buf_arc: Arc<RwLock<Option<TripartiteBuffer>>>,
+    decoder_eof_arc: Arc<AtomicBool>,
+    tele: Arc<TelemetryDispatcher>,
+    completed_flag: Arc<AtomicBool>,
+    buffering_flag: Arc<AtomicBool>,
+    buffering_resumed_flag: Arc<AtomicBool>,
+    visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
+    visualizer_enabled: Arc<AtomicBool>,
+    completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
+    flush_generation: Arc<AtomicU64>,
+    flush_acknowledged: Arc<AtomicU64>,
+    stream_reinit_needed: Arc<AtomicBool>,
+
+    pipeline: PcmAdaptationPipeline,
+    frame_buf: Vec<f32>,
+    last_tele_pos: i64,
+    last_vis_instant: Instant,
+}
+
+impl DecoderWorker {
+    fn wait_for_wake(&self, timeout_ms: u64) {
+        let (lock, cvar) = &*self.wake;
+        let guard = lock.lock().unwrap();
+        let _ = cvar.wait_timeout(guard, Duration::from_millis(timeout_ms));
+    }
+
+    fn available_producer_slots(&self) -> usize {
+        self.producer_arc
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|p| p.slots_available()))
+            .unwrap_or(0)
+    }
+
+    fn is_producer_empty(&self) -> bool {
+        self.producer_arc
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|p| p.slots_available() >= p.capacity()))
+            .unwrap_or(true)
+    }
+
+    fn poll_renderer_flags(&mut self) {
+        if self.completed_flag.swap(false, Ordering::AcqRel) {
+            let dur = self.dur_ms.load(Ordering::Relaxed);
+            self.tele
+                .post_event(EventType::Position, MapEventData { position_ms: dur });
+            self.tele
+                .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+            self.tele
+                .post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
+            self.tele.post_event(
+                EventType::State,
+                MapEventData {
+                    state: STATE_COMPLETED,
+                },
+            );
+            if let Ok(guard) = self.completion_cb.read() {
+                if let Some((cb, udata)) = *guard {
+                    unsafe {
+                        cb(udata as *mut c_void);
+                    }
+                }
+            }
+        }
+
+        if self.buffering_flag.swap(false, Ordering::AcqRel) {
+            self.tele
+                .post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
+            self.tele.post_event(
+                EventType::State,
+                MapEventData {
+                    state: STATE_BUFFERING,
+                },
+            );
+        }
+        if self.buffering_resumed_flag.swap(false, Ordering::AcqRel) {
+            self.tele
+                .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
+            self.tele.post_event(
+                EventType::State,
+                MapEventData {
+                    state: STATE_PLAYING,
+                },
+            );
+        }
+
+        let cur_sr = self.sr_arc.load(Ordering::Relaxed);
+        let cur_ch = self.ch_arc.load(Ordering::Relaxed) as usize;
+        self.pipeline.sync_silence_format(cur_sr, cur_ch);
+    }
+
+    /// Processes a pending seek request if one exists.
+    /// Returns `true` if the main worker loop should `continue` immediately.
+    fn handle_pending_seek(&mut self) -> bool {
+        let target_seek = self.seek_req.swap(-1, Ordering::SeqCst);
+        if target_seek < 0 {
+            return false;
+        }
+
+        let cur_dev_sr = self.dev_sr_arc.load(Ordering::Relaxed).max(8000) as i64;
+        let dur = self.dur_ms.load(Ordering::Relaxed);
+        if dur > 0 && target_seek >= dur {
+            self.decoder_eof_arc.store(true, Ordering::Relaxed);
+            self.state.store(STATE_COMPLETED, Ordering::Relaxed);
+            self.pos_ms.store(dur, Ordering::Relaxed);
+            let f = if cur_dev_sr > 0 {
+                (dur * cur_dev_sr * 1024) / 1000
+            } else {
+                0
+            };
+            self.pos_frames.store(f, Ordering::Relaxed);
+            self.tele
+                .post_event(EventType::Position, MapEventData { position_ms: dur });
+            self.tele
+                .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+            self.tele
+                .post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
+            self.tele.post_event(
+                EventType::State,
+                MapEventData {
+                    state: STATE_COMPLETED,
+                },
+            );
+            return true;
+        }
+
+        if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
+            let cur_flush = self.flush_generation.load(Ordering::Acquire);
+            let start_wait = Instant::now();
+            while self.flush_acknowledged.load(Ordering::Acquire) < cur_flush
+                && start_wait.elapsed() < Duration::from_millis(15)
+            {
+                std::thread::yield_now();
+            }
+        }
+
+        self.decoder_eof_arc.store(false, Ordering::Relaxed);
+        if let Ok(mut eng_lock) = self.engine_arc.lock() {
+            let mut reinit = false;
+            if target_seek == 0 && self.is_stream_arc.load(Ordering::Relaxed) {
+                if let Ok(guard) = self.trip_buf_arc.read() {
+                    if let Some(ref trip) = *guard {
+                        let (hit, contig) = trip.try_seek_cached(0);
+                        if !hit || !contig {
+                            trip.flush(0);
+                        }
+                        let reader = trip.create_reader();
+                        if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
+                            *eng_lock = Some(new_eng);
+                            reinit = true;
+                        }
+                    }
+                }
+            }
+            if !reinit {
+                if let Some(ref mut eng) = *eng_lock {
+                    let _ = eng.seek_ms(target_seek as u64);
+                }
+            }
+        }
+
+        self.pipeline.reset(target_seek == 0);
+        self.silence_saved_arc.store(0, Ordering::Relaxed);
+        self.tele.post_event(
+            EventType::SilenceSaved,
+            MapEventData {
+                silence_saved_ms: 0,
+            },
+        );
+        self.pos_ms.store(target_seek, Ordering::Relaxed);
+        let f = if cur_dev_sr > 0 {
+            (target_seek * cur_dev_sr * 1024) / 1000
+        } else {
+            0
+        };
+        self.pos_frames.store(f, Ordering::Relaxed);
+        self.tele.post_event(
+            EventType::Position,
+            MapEventData {
+                position_ms: target_seek,
+            },
+        );
+        false
+    }
+
+    /// Ensures a flushed live stream re-initializes its `SymphoniaEngine` once data arrives.
+    /// Returns `true` if ready to proceed, `false` if waiting for stream bytes.
+    fn ensure_stream_initialized(&mut self) -> bool {
+        if !self.stream_reinit_needed.load(Ordering::Acquire) {
+            return true;
+        }
+
+        let maybe_reader = self.trip_buf_arc.read().ok().and_then(|guard| {
+            let trip = guard.as_ref()?;
+            let has_data =
+                trip.head_size() > 0 || trip.range_end() > trip.range_start() || trip.is_eof();
+            if has_data {
+                Some(trip.create_reader())
+            } else {
+                None
+            }
+        });
+
+        let Some(reader) = maybe_reader else {
+            return false;
+        };
+
+        if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
+            let new_sr = new_eng.sample_rate();
+            let new_ch = new_eng.channels();
+            if new_sr > 0 {
+                self.sr_arc.store(new_sr, Ordering::Relaxed);
+            }
+            if new_ch > 0 {
+                self.ch_arc.store(new_ch, Ordering::Relaxed);
+            }
+            if let Ok(mut eng_lock) = self.engine_arc.lock() {
+                *eng_lock = Some(new_eng);
+            }
+            self.stream_reinit_needed.store(false, Ordering::Release);
+            self.decoder_eof_arc.store(false, Ordering::Relaxed);
+            self.pipeline.clear_pending_and_resampler();
+        }
+        true
+    }
+
+    fn dispatch_periodic_telemetry(&mut self) {
+        let cur_pos = self.pos_ms.load(Ordering::Relaxed);
+        if cur_pos != self.last_tele_pos
+            && (cur_pos / 33 != self.last_tele_pos / 33 || cur_pos == 0)
+        {
+            self.last_tele_pos = cur_pos;
+            self.tele.post_event(
+                EventType::Position,
+                MapEventData {
+                    position_ms: cur_pos,
+                },
+            );
+        }
+
+        if self.visualizer_enabled.load(Ordering::Relaxed)
+            && self.last_vis_instant.elapsed() >= Duration::from_millis(33)
+        {
+            self.last_vis_instant = Instant::now();
+            let vis = self.visualizer_seqlock.read();
+            self.tele
+                .post_event(EventType::Visualizer, MapEventData { visualizer: vis });
+        }
+    }
+
+    fn check_buffering_recovery(&self) {
+        if self.state.load(Ordering::Relaxed) == STATE_BUFFERING && !self.is_producer_empty() {
+            self.transition_to_playing_from_buffering();
+        }
+    }
+
+    fn transition_to_playing_from_buffering(&self) {
+        self.state.store(STATE_PLAYING, Ordering::Relaxed);
+        self.tele
+            .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
+        self.tele.post_event(
+            EventType::State,
+            MapEventData {
+                state: STATE_PLAYING,
+            },
+        );
+    }
+
+    fn transition_to_buffering(&self) {
+        self.state.store(STATE_BUFFERING, Ordering::Relaxed);
+        self.tele
+            .post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
+        self.tele.post_event(
+            EventType::State,
+            MapEventData {
+                state: STATE_BUFFERING,
+            },
+        );
+    }
+
+    fn handle_eof(&mut self) {
+        if self.is_stream_arc.load(Ordering::Relaxed) {
+            let is_buf_eof = self
+                .trip_buf_arc
+                .read()
+                .ok()
+                .and_then(|g| g.as_ref().map(|b| b.is_eof()))
+                .unwrap_or(true);
+
+            if !is_buf_eof {
+                self.transition_to_buffering();
+                thread::sleep(Duration::from_millis(15));
+                return;
+            }
+        }
+
+        self.pipeline.flush_resampler_into_pending();
+        if !self.pipeline.drain_pending_to(&self.producer_arc) {
+            self.wait_for_wake(4);
+            return;
+        }
+
+        if self.state.load(Ordering::Relaxed) == STATE_BUFFERING {
+            self.transition_to_playing_from_buffering();
+        }
+
+        self.decoder_eof_arc.store(true, Ordering::Relaxed);
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    fn decode_and_process_step(&mut self) {
+        let mut decoded_ok = false;
+        let mut eof_reached = false;
+
+        if let Ok(mut eng_lock) = self.engine_arc.lock() {
+            if let Some(ref mut eng) = *eng_lock {
+                match eng.decode_next_frame(&mut self.frame_buf) {
+                    Ok(true) => {
+                        decoded_ok = true;
+                        let new_sr = eng.sample_rate();
+                        let new_ch = eng.channels();
+                        if new_sr > 0 && new_sr != self.sr_arc.load(Ordering::Relaxed) {
+                            self.sr_arc.store(new_sr, Ordering::Relaxed);
+                        }
+                        if new_ch > 0 && new_ch != self.ch_arc.load(Ordering::Relaxed) {
+                            self.ch_arc.store(new_ch, Ordering::Relaxed);
+                        }
+                    }
+                    Ok(false) => {
+                        eof_reached = true;
+                    }
+                    Err(err) => {
+                        if self.is_stream_arc.load(Ordering::Relaxed) {
+                            if self.is_producer_empty()
+                                && self.state.load(Ordering::Relaxed) != STATE_BUFFERING
+                            {
+                                self.transition_to_buffering();
+                            }
+                            thread::sleep(Duration::from_millis(10));
+                            return;
+                        } else {
+                            log::error!("Decoder error: {}", err);
+                            eof_reached = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if eof_reached {
+            self.handle_eof();
+            return;
+        }
+
+        if decoded_ok && !self.frame_buf.is_empty() {
+            self.decoder_eof_arc.store(false, Ordering::Relaxed);
+            if self.state.load(Ordering::Relaxed) == STATE_BUFFERING {
+                self.transition_to_playing_from_buffering();
+            }
+
+            let cur_track_sr = self.sr_arc.load(Ordering::Relaxed).max(8000);
+            let cur_track_ch = (self.ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+            let cur_dev_sr = self.dev_sr_arc.load(Ordering::Relaxed).max(8000);
+            let cur_dev_ch = (self.dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+            let cur_silence_cfg = *self.silence_cfg_arc.read().unwrap();
+
+            let new_saved = self.pipeline.process_frame(
+                &self.frame_buf,
+                cur_track_sr,
+                cur_track_ch,
+                cur_dev_sr,
+                cur_dev_ch,
+                cur_silence_cfg,
+            );
+
+            let old_saved = self.silence_saved_arc.swap(new_saved, Ordering::Relaxed);
+            if new_saved != old_saved {
+                self.tele.post_event(
+                    EventType::SilenceSaved,
+                    MapEventData {
+                        silence_saved_ms: new_saved,
+                    },
+                );
+            }
+
+            let _ = self.pipeline.drain_pending_to(&self.producer_arc);
+        }
+    }
+
+    fn run(&mut self) {
+        while self.running.load(Ordering::Relaxed) {
+            self.poll_renderer_flags();
+
+            if self.handle_pending_seek() {
+                continue;
+            }
+
+            let cur_state = self.state.load(Ordering::Relaxed);
+            if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
+                self.wait_for_wake(30);
+                continue;
+            }
+
+            if !self.ensure_stream_initialized() {
+                self.wait_for_wake(10);
+                continue;
+            }
+
+            self.dispatch_periodic_telemetry();
+            self.check_buffering_recovery();
+
+            if !self.pipeline.drain_pending_to(&self.producer_arc) {
+                self.wait_for_wake(3);
+                continue;
+            }
+
+            if self.available_producer_slots() < 2048 {
+                self.wait_for_wake(3);
+                continue;
+            }
+
+            self.decode_and_process_step();
+        }
+    }
+}
 
 pub struct PlayerCoordinator {
     pub device_ctx: *mut MapDeviceContext,
@@ -155,28 +897,6 @@ pub struct PlayerCoordinator {
 unsafe impl Send for PlayerCoordinator {}
 unsafe impl Sync for PlayerCoordinator {}
 
-pub fn strip_file_prefix(source: &str) -> String {
-    let s = source.trim();
-    if let Some(stripped) = s.strip_prefix("file://localhost/") {
-        format!("/{}", stripped.trim_start_matches('/'))
-    } else if let Some(stripped) = s.strip_prefix("file:///") {
-        let bytes = stripped.as_bytes();
-        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-            stripped.to_string()
-        } else {
-            format!("/{}", stripped.trim_start_matches('/'))
-        }
-    } else if let Some(stripped) = s.strip_prefix("file://") {
-        if let Some(path) = stripped.strip_prefix('/') {
-            format!("/{}", path)
-        } else {
-            format!("/{}", stripped)
-        }
-    } else {
-        s.to_string()
-    }
-}
-
 impl PlayerCoordinator {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(
@@ -224,8 +944,16 @@ impl PlayerCoordinator {
         user_data: *mut c_void,
         with_device: bool,
     ) -> Result<Box<Self>, i32> {
-        let sr = if target_sample_rate > 0 { target_sample_rate } else { 44100 };
-        let ch = if target_channels > 0 { target_channels } else { 2 };
+        let sr = if target_sample_rate > 0 {
+            target_sample_rate
+        } else {
+            44100
+        };
+        let ch = if target_channels > 0 {
+            target_channels
+        } else {
+            2
+        };
         let period = if period_size > 0 { period_size } else { 1024 };
 
         let state = Arc::new(AtomicI32::new(STATE_STOPPED));
@@ -295,18 +1023,17 @@ impl PlayerCoordinator {
         let state_for_notif = state.clone();
         let tele_for_notif = telemetry.clone();
         let notif_cb: Arc<dyn Fn(i32) + Send + Sync> = Arc::new(move |_notification_type: i32| {
-            if pause_on_device.load(Ordering::Relaxed) {
-                if state_for_notif.load(Ordering::Relaxed) == STATE_PLAYING {
-                    state_for_notif.store(STATE_PAUSED, Ordering::Relaxed);
-                    tele_for_notif.post_event(
-                        EventType::IsPlaying,
-                        MapEventData { is_playing: 0 },
-                    );
-                    tele_for_notif.post_event(
-                        EventType::State,
-                        MapEventData { state: STATE_PAUSED },
-                    );
-                }
+            if pause_on_device.load(Ordering::Relaxed)
+                && state_for_notif.load(Ordering::Relaxed) == STATE_PLAYING
+            {
+                state_for_notif.store(STATE_PAUSED, Ordering::Relaxed);
+                tele_for_notif.post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+                tele_for_notif.post_event(
+                    EventType::State,
+                    MapEventData {
+                        state: STATE_PAUSED,
+                    },
+                );
             }
         });
 
@@ -364,7 +1091,9 @@ impl PlayerCoordinator {
             };
 
             if device_ctx.is_null() || dev_res != 0 {
-                unsafe { drop(Box::from_raw(renderer_ptr)); }
+                unsafe {
+                    drop(Box::from_raw(renderer_ptr));
+                }
                 return Err(dev_res);
             }
 
@@ -432,9 +1161,7 @@ impl PlayerCoordinator {
             decoder_thread: None,
         });
 
-        // Spawn background decoder loop
         coordinator.start_decoder_loop();
-
         Ok(coordinator)
     }
 
@@ -467,566 +1194,89 @@ impl PlayerCoordinator {
     }
 
     fn start_decoder_loop(&mut self) {
-        let running = self.decoder_running.clone();
-        let wake = self.decoder_wake.clone();
-        let state = self.state.clone();
-        let engine_arc = self.engine.clone();
-        let producer_arc = self.audio_producer.clone();
-        let seek_req = self.seek_request_ms.clone();
-        let pos_ms = self.position_ms.clone();
-        let pos_frames = self.position_frames.clone();
-        let dur_ms = self.duration_ms.clone();
-        let sr_arc = self.sample_rate.clone();
-        let ch_arc = self.channels.clone();
-        let silence_cfg_arc = self.silence_config.clone();
-        let silence_saved_arc = self.silence_saved_ms.clone();
-        let is_stream_arc = self.is_stream.clone();
-        let trip_buf_arc = self.trip_buffer.clone();
-        let decoder_eof_arc = self.decoder_eof.clone();
-        let tele = self.telemetry.clone();
-        let completed_flag = self.completed_flag.clone();
-        let buffering_flag = self.buffering_flag.clone();
-        let buffering_resumed_flag = self.buffering_resumed_flag.clone();
-        let visualizer_seqlock = self.visualizer_seqlock.clone();
-        let visualizer_enabled = self.visualizer_enabled.clone();
-        let completion_cb = self.completion_cb.clone();
-        let flush_generation = self.flush_generation.clone();
-        let flush_acknowledged = self.flush_acknowledged.clone();
-        let stream_reinit_needed = self.stream_reinit_needed.clone();
+        let cur_sr = self.sample_rate.load(Ordering::Relaxed).max(8000);
+        let cur_ch = (self.channels.load(Ordering::Relaxed) as usize).clamp(1, 16);
+        let cur_dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000);
+        let cur_dev_ch = (self.device_channels.load(Ordering::Relaxed) as usize).clamp(1, 16);
 
-        let dev_sr_arc = self.device_sample_rate.clone();
-        let dev_ch_arc = self.device_channels.clone();
-        let handle = thread::Builder::new()
+        let mut worker = DecoderWorker {
+            running: self.decoder_running.clone(),
+            wake: self.decoder_wake.clone(),
+            state: self.state.clone(),
+            engine_arc: self.engine.clone(),
+            producer_arc: self.audio_producer.clone(),
+            seek_req: self.seek_request_ms.clone(),
+            pos_ms: self.position_ms.clone(),
+            pos_frames: self.position_frames.clone(),
+            dur_ms: self.duration_ms.clone(),
+            sr_arc: self.sample_rate.clone(),
+            ch_arc: self.channels.clone(),
+            dev_sr_arc: self.device_sample_rate.clone(),
+            dev_ch_arc: self.device_channels.clone(),
+            silence_cfg_arc: self.silence_config.clone(),
+            silence_saved_arc: self.silence_saved_ms.clone(),
+            is_stream_arc: self.is_stream.clone(),
+            trip_buf_arc: self.trip_buffer.clone(),
+            decoder_eof_arc: self.decoder_eof.clone(),
+            tele: self.telemetry.clone(),
+            completed_flag: self.completed_flag.clone(),
+            buffering_flag: self.buffering_flag.clone(),
+            buffering_resumed_flag: self.buffering_resumed_flag.clone(),
+            visualizer_seqlock: self.visualizer_seqlock.clone(),
+            visualizer_enabled: self.visualizer_enabled.clone(),
+            completion_cb: self.completion_cb.clone(),
+            flush_generation: self.flush_generation.clone(),
+            flush_acknowledged: self.flush_acknowledged.clone(),
+            stream_reinit_needed: self.stream_reinit_needed.clone(),
+            pipeline: PcmAdaptationPipeline::new(cur_sr, cur_ch, cur_dev_sr, cur_dev_ch),
+            frame_buf: Vec::new(),
+            last_tele_pos: -1,
+            last_vis_instant: Instant::now(),
+        };
+
+        self.decoder_thread = thread::Builder::new()
             .name("map-decoder".to_string())
-            .spawn(move || {
-                let mut frame_buf = Vec::new();
-                let mut active_buf = Vec::new();
-                let mut matrix_buf = Vec::new();
-                let mut resampler_out = Vec::new();
-                let mut pending_pcm: Vec<f32> = Vec::new();
-                let mut pending_offset: usize = 0;
-
-                let cur_sr = sr_arc.load(Ordering::Relaxed).max(8000);
-                let cur_ch = (ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
-                let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000);
-                let cur_dev_ch = (dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
-
-                let mut silence_detector = SilenceDetector::new(cur_ch, cur_sr);
-                let mut channel_matrix = ChannelMatrix::new(cur_ch, cur_dev_ch);
-                let mut resampler = RubatoResampler::new(cur_sr, cur_dev_sr, cur_dev_ch, 1024)
-                    .unwrap_or_else(|_| RubatoResampler::new(48000, 48000, cur_dev_ch, 1024).unwrap());
-
-                let mut last_tele_pos: i64 = -1;
-                let mut last_vis_instant = std::time::Instant::now();
-
-                while running.load(Ordering::Relaxed) {
-                    // 1. Check completed flag from AudioRenderer
-                    if completed_flag.swap(false, Ordering::AcqRel) {
-                        let dur = dur_ms.load(Ordering::Relaxed);
-                        tele.post_event(EventType::Position, MapEventData { position_ms: dur });
-                        tele.post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
-                        tele.post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
-                        tele.post_event(EventType::State, MapEventData { state: STATE_COMPLETED });
-                        if let Ok(guard) = completion_cb.read() {
-                            if let Some((cb, udata)) = *guard {
-                                unsafe { cb(udata as *mut c_void); }
-                            }
-                        }
-                    }
-
-                    // 2. Check buffering flags from AudioRenderer
-                    if buffering_flag.swap(false, Ordering::AcqRel) {
-                        tele.post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
-                        tele.post_event(EventType::State, MapEventData { state: STATE_BUFFERING });
-                    }
-                    if buffering_resumed_flag.swap(false, Ordering::AcqRel) {
-                        tele.post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
-                        tele.post_event(EventType::State, MapEventData { state: STATE_PLAYING });
-                    }
-
-                    let cur_sr = sr_arc.load(Ordering::Relaxed);
-                    let cur_ch = ch_arc.load(Ordering::Relaxed) as usize;
-                    if cur_sr > 0 && cur_ch > 0 && (cur_sr != silence_detector.sample_rate() || cur_ch != silence_detector.channels()) {
-                        silence_detector.set_sample_rate(cur_sr);
-                        silence_detector.set_channels(cur_ch);
-                    }
-
-                    // Check for seek request
-                    let target_seek = seek_req.swap(-1, Ordering::SeqCst);
-                    if target_seek >= 0 {
-                        let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000) as i64;
-                        let dur = dur_ms.load(Ordering::Relaxed);
-                        if dur > 0 && target_seek >= dur {
-                            decoder_eof_arc.store(true, Ordering::Relaxed);
-                            state.store(STATE_COMPLETED, Ordering::Relaxed);
-                            pos_ms.store(dur, Ordering::Relaxed);
-                            let f = if cur_dev_sr > 0 { (dur * cur_dev_sr * 1024) / 1000 } else { 0 };
-                            pos_frames.store(f, Ordering::Relaxed);
-                            tele.post_event(
-                                EventType::Position,
-                                MapEventData { position_ms: dur },
-                            );
-                            tele.post_event(
-                                EventType::IsPlaying,
-                                MapEventData { is_playing: 0 },
-                            );
-                            tele.post_event(
-                                EventType::IsCompleted,
-                                MapEventData { is_completed: 1 },
-                            );
-                            tele.post_event(
-                                EventType::State,
-                                MapEventData { state: STATE_COMPLETED },
-                            );
-                            continue;
-                        }
-
-                        // Wait for flush to be acknowledged by renderer (up to 15ms only if active)
-                        let is_rendering = state.load(Ordering::Relaxed) == STATE_PLAYING;
-                        if is_rendering {
-                            let cur_flush = flush_generation.load(Ordering::Acquire);
-                            let start_wait = std::time::Instant::now();
-                            while flush_acknowledged.load(Ordering::Acquire) < cur_flush && start_wait.elapsed() < Duration::from_millis(15) {
-                                std::thread::yield_now();
-                            }
-                        }
-
-                        decoder_eof_arc.store(false, Ordering::Relaxed);
-                        if let Ok(mut eng_lock) = engine_arc.lock() {
-                            let mut reinit = false;
-                            if target_seek == 0 && is_stream_arc.load(Ordering::Relaxed) {
-                                if let Ok(guard) = trip_buf_arc.read() {
-                                    if let Some(ref trip) = *guard {
-                                        let (hit, contig) = trip.try_seek_cached(0);
-                                        if !hit || !contig {
-                                            trip.flush(0);
-                                        }
-                                        let reader = trip.create_reader();
-                                        if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
-                                            *eng_lock = Some(new_eng);
-                                            reinit = true;
-                                        }
-                                    }
-                                }
-                            }
-                            if !reinit {
-                                if let Some(ref mut eng) = *eng_lock {
-                                    let _ = eng.seek_ms(target_seek as u64);
-                                }
-                            }
-                        }
-                        silence_detector.reset(target_seek == 0);
-                        silence_saved_arc.store(0, Ordering::Relaxed);
-                        pending_pcm.clear();
-                        pending_offset = 0;
-                        resampler.reset();
-                        tele.post_event(
-                            EventType::SilenceSaved,
-                            MapEventData {
-                                silence_saved_ms: 0,
-                            },
-                        );
-                        pos_ms.store(target_seek, Ordering::Relaxed);
-                        let f = if cur_dev_sr > 0 { (target_seek * cur_dev_sr * 1024) / 1000 } else { 0 };
-                        pos_frames.store(f, Ordering::Relaxed);
-                        tele.post_event(
-                            EventType::Position,
-                            MapEventData {
-                                position_ms: target_seek,
-                            },
-                        );
-                    }
-
-                    let cur_state = state.load(Ordering::Relaxed);
-                    if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
-                        let (lock, cvar) = &*wake;
-                        let guard = lock.lock().unwrap();
-                        let _ = cvar.wait_timeout(guard, Duration::from_millis(30));
-                        continue;
-                    }
-
-                    // Reinitialize engine if live stream was flushed/reopened
-                    if stream_reinit_needed.load(Ordering::Acquire) {
-                        let can_init = {
-                            if let Ok(guard) = trip_buf_arc.read() {
-                                if let Some(ref trip) = *guard {
-                                    trip.head_size() > 0 || trip.range_end() > trip.range_start() || trip.is_eof()
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        };
-                        if can_init {
-                            let maybe_reader = {
-                                if let Ok(guard) = trip_buf_arc.read() {
-                                    guard.as_ref().map(|t| t.create_reader())
-                                } else {
-                                    None
-                                }
-                            };
-                            if let Some(reader) = maybe_reader {
-                                if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
-                                    let new_sr = new_eng.sample_rate();
-                                    let new_ch = new_eng.channels();
-                                    if new_sr > 0 {
-                                        sr_arc.store(new_sr, Ordering::Relaxed);
-                                    }
-                                    if new_ch > 0 {
-                                        ch_arc.store(new_ch as u32, Ordering::Relaxed);
-                                    }
-                                    if let Ok(mut eng_lock) = engine_arc.lock() {
-                                        *eng_lock = Some(new_eng);
-                                    }
-                                    stream_reinit_needed.store(false, Ordering::Release);
-                                    decoder_eof_arc.store(false, Ordering::Relaxed);
-                                    pending_pcm.clear();
-                                    pending_offset = 0;
-                                    resampler.reset();
-                                }
-                            }
-                        } else {
-                            let (lock, cvar) = &*wake;
-                            let guard = lock.lock().unwrap();
-                            let _ = cvar.wait_timeout(guard, Duration::from_millis(10));
-                            continue;
-                        }
-                    }
-
-                    // 3. Periodic Position Telemetry dispatch (active playback only)
-                    let cur_pos = pos_ms.load(Ordering::Relaxed);
-                    if cur_pos != last_tele_pos && (cur_pos / 33 != last_tele_pos / 33 || cur_pos == 0) {
-                        last_tele_pos = cur_pos;
-                        tele.post_event(EventType::Position, MapEventData { position_ms: cur_pos });
-                    }
-
-                    // 4. Periodic Visualizer Telemetry dispatch (~30fps, active playback only)
-                    if visualizer_enabled.load(Ordering::Relaxed) && last_vis_instant.elapsed() >= Duration::from_millis(33) {
-                        last_vis_instant = std::time::Instant::now();
-                        let vis = visualizer_seqlock.read();
-                        tele.post_event(EventType::Visualizer, MapEventData { visualizer: vis });
-                    }
-
-                    if state.load(Ordering::Relaxed) == STATE_BUFFERING {
-                        let has_enough_audio = {
-                            if let Ok(guard) = producer_arc.lock() {
-                                if let Some(ref prod) = *guard {
-                                    prod.slots_available() < prod.capacity()
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        };
-                        if has_enough_audio {
-                            state.store(STATE_PLAYING, Ordering::Relaxed);
-                            tele.post_event(
-                                EventType::IsBuffering,
-                                MapEventData { is_buffering: 0 },
-                            );
-                            tele.post_event(
-                                EventType::State,
-                                MapEventData { state: STATE_PLAYING },
-                            );
-                        }
-                    }
-
-                    // 1. Drain pending PCM from previous packet first (Zero-loss backpressure guarantee)
-                    if pending_offset < pending_pcm.len() {
-                        let slice_to_write = &pending_pcm[pending_offset..];
-                        let written = {
-                            if let Ok(mut guard) = producer_arc.lock() {
-                                if let Some(ref mut prod) = *guard {
-                                    prod.write_chunk(slice_to_write)
-                                } else {
-                                    0
-                                }
-                            } else {
-                                0
-                            }
-                        };
-                        pending_offset += written;
-                        if pending_offset < pending_pcm.len() {
-                            let (lock, cvar) = &*wake;
-                            let guard = lock.lock().unwrap();
-                            let _ = cvar.wait_timeout(guard, Duration::from_millis(3));
-                            continue;
-                        } else {
-                            pending_pcm.clear();
-                            pending_offset = 0;
-                        }
-                    }
-
-                    // 2. Check producer slots before decoding a new packet
-                    let slots = {
-                        if let Ok(guard) = producer_arc.lock() {
-                            if let Some(ref prod) = *guard {
-                                prod.slots_available()
-                            } else {
-                                0
-                            }
-                        } else {
-                            0
-                        }
-                    };
-
-                    if slots < 2048 {
-                        let (lock, cvar) = &*wake;
-                        let guard = lock.lock().unwrap();
-                        let _ = cvar.wait_timeout(guard, Duration::from_millis(3));
-                        continue;
-                    }
-
-                    // 3. Decode next frame
-                    let mut decoded_ok = false;
-                    let mut eof_reached = false;
-
-                    if let Ok(mut eng_lock) = engine_arc.lock() {
-                        if let Some(ref mut eng) = *eng_lock {
-                            match eng.decode_next_frame(&mut frame_buf) {
-                                Ok(true) => {
-                                    decoded_ok = true;
-                                    let new_sr = eng.sample_rate();
-                                    let new_ch = eng.channels();
-                                    if new_sr > 0 && new_sr != sr_arc.load(Ordering::Relaxed) {
-                                        sr_arc.store(new_sr, Ordering::Relaxed);
-                                    }
-                                    if new_ch > 0 && new_ch != ch_arc.load(Ordering::Relaxed) {
-                                        ch_arc.store(new_ch, Ordering::Relaxed);
-                                    }
-                                }
-                                Ok(false) => {
-                                    eof_reached = true;
-                                }
-                                Err(err) => {
-                                    if is_stream_arc.load(Ordering::Relaxed) {
-                                        let is_empty = {
-                                            if let Ok(guard) = producer_arc.lock() {
-                                                if let Some(ref prod) = *guard {
-                                                    prod.slots_available() >= prod.capacity()
-                                                } else {
-                                                    true
-                                                }
-                                            } else {
-                                                true
-                                            }
-                                        };
-                                        if is_empty && state.load(Ordering::Relaxed) != STATE_BUFFERING {
-                                            state.store(STATE_BUFFERING, Ordering::Relaxed);
-                                            tele.post_event(
-                                                EventType::IsBuffering,
-                                                MapEventData { is_buffering: 1 },
-                                            );
-                                            tele.post_event(
-                                                EventType::State,
-                                                MapEventData { state: STATE_BUFFERING },
-                                            );
-                                        }
-                                        thread::sleep(Duration::from_millis(10));
-                                        continue;
-                                    } else {
-                                        log::error!("Decoder error: {}", err);
-                                        eof_reached = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if eof_reached {
-                        if is_stream_arc.load(Ordering::Relaxed) {
-                            let is_buf_eof = {
-                                if let Ok(guard) = trip_buf_arc.read() {
-                                    guard.as_ref().map(|b| b.is_eof()).unwrap_or(true)
-                                } else {
-                                    true
-                                }
-                            };
-
-                            if !is_buf_eof {
-                                state.store(STATE_BUFFERING, Ordering::Relaxed);
-                                tele.post_event(
-                                    EventType::IsBuffering,
-                                    MapEventData { is_buffering: 1 },
-                                );
-                                tele.post_event(
-                                    EventType::State,
-                                    MapEventData { state: STATE_BUFFERING },
-                                );
-                                thread::sleep(Duration::from_millis(15));
-                                continue;
-                            }
-                        }
-
-                        // Flush any remaining resampler frames
-                        if pending_pcm.is_empty() {
-                            let _ = resampler.flush(&mut pending_pcm);
-                            pending_offset = 0;
-                        }
-                        if pending_offset < pending_pcm.len() {
-                            let slice = &pending_pcm[pending_offset..];
-                            let written = {
-                                if let Ok(mut guard) = producer_arc.lock() {
-                                    if let Some(ref mut prod) = *guard {
-                                        prod.write_chunk(slice)
-                                    } else {
-                                        0
-                                    }
-                                } else {
-                                    0
-                                }
-                            };
-                            pending_offset += written;
-                            if pending_offset < pending_pcm.len() {
-                                let (lock, cvar) = &*wake;
-                                let guard = lock.lock().unwrap();
-                                let _ = cvar.wait_timeout(guard, Duration::from_millis(4));
-                                continue;
-                            } else {
-                                pending_pcm.clear();
-                                pending_offset = 0;
-                            }
-                        }
-
-                        if state.load(Ordering::Relaxed) == STATE_BUFFERING {
-                            state.store(STATE_PLAYING, Ordering::Relaxed);
-                            tele.post_event(
-                                EventType::IsBuffering,
-                                MapEventData { is_buffering: 0 },
-                            );
-                            tele.post_event(
-                                EventType::State,
-                                MapEventData { state: STATE_PLAYING },
-                            );
-                        }
-
-                        decoder_eof_arc.store(true, Ordering::Relaxed);
-                        thread::sleep(Duration::from_millis(20));
-                        continue;
-                    }
-
-                    if decoded_ok && !frame_buf.is_empty() {
-                        decoder_eof_arc.store(false, Ordering::Relaxed);
-                        if state.load(Ordering::Relaxed) == STATE_BUFFERING {
-                            state.store(STATE_PLAYING, Ordering::Relaxed);
-                            tele.post_event(
-                                EventType::IsBuffering,
-                                MapEventData { is_buffering: 0 },
-                            );
-                            tele.post_event(
-                                EventType::State,
-                                MapEventData { state: STATE_PLAYING },
-                            );
-                        }
-
-                        let cur_track_sr = sr_arc.load(Ordering::Relaxed).max(8000);
-                        let cur_track_ch = (ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
-                        let cur_dev_sr = dev_sr_arc.load(Ordering::Relaxed).max(8000);
-                        let cur_dev_ch = (dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
-
-                        if cur_track_sr > 0 && cur_track_ch > 0 && (cur_track_sr != silence_detector.sample_rate() || cur_track_ch != silence_detector.channels()) {
-                            silence_detector.set_sample_rate(cur_track_sr);
-                            silence_detector.set_channels(cur_track_ch);
-                        }
-
-                        // Silence Detection
-                        let cur_silence_cfg = *silence_cfg_arc.read().unwrap();
-                        silence_detector.set_config(cur_silence_cfg);
-
-                        if active_buf.len() < frame_buf.len() {
-                            active_buf.resize(frame_buf.len(), 0.0);
-                        }
-                        let (frames_out, _) = silence_detector.process_frames(
-                            &frame_buf,
-                            &mut active_buf,
-                        );
-                        let new_saved = silence_detector.saved_ms() as i64;
-                        let old_saved = silence_saved_arc.swap(new_saved, Ordering::Relaxed);
-                        if new_saved != old_saved {
-                            tele.post_event(
-                                EventType::SilenceSaved,
-                                MapEventData {
-                                    silence_saved_ms: new_saved,
-                                },
-                            );
-                        }
-
-                        let samples_out = frames_out * cur_track_ch;
-                        if samples_out == 0 {
-                            continue;
-                        }
-                        let active_slice = &active_buf[..samples_out];
-
-                        // Channel Matrix Adaptation (e.g. Mono -> Stereo, 5.1 -> Stereo, 5.1 -> 7.1, etc.)
-                        channel_matrix.set_channels(cur_track_ch, cur_dev_ch);
-                        channel_matrix.process_interleaved(active_slice, &mut matrix_buf);
-
-                        // High-Fidelity Resampling (e.g. 44.1k -> 48k, 192k -> 48k, or passthrough)
-                        if resampler.sample_rate_in() != cur_track_sr
-                            || resampler.sample_rate_out() != cur_dev_sr
-                            || resampler.channels() != cur_dev_ch
-                        {
-                            if let Ok(new_res) = RubatoResampler::new(cur_track_sr, cur_dev_sr, cur_dev_ch, 1024) {
-                                resampler = new_res;
-                            }
-                        }
-                        resampler_out.clear();
-                        let _ = resampler.process_interleaved(&matrix_buf, &mut resampler_out);
-
-                        // Commit to pending buffer and write first chunk
-                        pending_pcm.extend_from_slice(&resampler_out);
-                        pending_offset = 0;
-
-                        let written = {
-                            if let Ok(mut guard) = producer_arc.lock() {
-                                if let Some(ref mut prod) = *guard {
-                                    prod.write_chunk(&pending_pcm[pending_offset..])
-                                } else {
-                                    0
-                                }
-                            } else {
-                                0
-                            }
-                        };
-                        pending_offset += written;
-                        if pending_offset >= pending_pcm.len() {
-                            pending_pcm.clear();
-                            pending_offset = 0;
-                        }
-                    }
-                }
-            })
+            .spawn(move || worker.run())
             .ok();
+    }
 
-        self.decoder_thread = handle;
+    fn post_current_device_telemetry(&self) {
+        let mut dev_info = MapDeviceInfo::default();
+        let _ = self.get_current_device(&mut dev_info);
+        let tele_dev = TelemetryDeviceInfo {
+            id: dev_info.id,
+            effective_id: dev_info.effective_id,
+            name: dev_info.name,
+            is_default: dev_info.is_default,
+            is_auto: dev_info.is_auto,
+        };
+        self.telemetry
+            .post_event(EventType::Device, MapEventData { device: tele_dev });
     }
 
     pub fn on_device_notification(&mut self, _notification_type: i32) {
-        if self.pause_on_device_change.load(Ordering::Relaxed) {
-            if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
-                let _ = self.pause();
-            }
+        if self.pause_on_device_change.load(Ordering::Relaxed)
+            && self.state.load(Ordering::Relaxed) == STATE_PLAYING
+        {
+            let _ = self.pause();
         }
-        let mut dev_info = MapDeviceInfo::default();
-        let _ = self.get_current_device(&mut dev_info);
-        let mut tele_dev = TelemetryDeviceInfo::default();
-        tele_dev.id = dev_info.id;
-        tele_dev.effective_id = dev_info.effective_id;
-        tele_dev.name = dev_info.name;
-        tele_dev.is_default = dev_info.is_default;
-        tele_dev.is_auto = dev_info.is_auto;
-
-        self.telemetry.post_event(
-            EventType::Device,
-            MapEventData { device: tele_dev },
-        );
+        self.post_current_device_telemetry();
     }
 
-    pub fn set_event_callback(&self, callback: Option<EventCallback>, user_data: *mut c_void) -> i32 {
+    pub fn set_event_callback(
+        &self,
+        callback: Option<EventCallback>,
+        user_data: *mut c_void,
+    ) -> i32 {
         self.telemetry.set_callback(callback, user_data);
         MAP_SUCCESS
+    }
+
+    fn mark_open_error(&self, err_code: i32) -> i32 {
+        self.state.store(STATE_ERROR, Ordering::Relaxed);
+        self.telemetry
+            .post_event(EventType::State, MapEventData { state: STATE_ERROR });
+        err_code
     }
 
     pub fn begin_open(&mut self) -> i32 {
@@ -1046,7 +1296,9 @@ impl PlayerCoordinator {
         self.silence_saved_ms.store(0, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::SilenceSaved,
-            MapEventData { silence_saved_ms: 0 },
+            MapEventData {
+                silence_saved_ms: 0,
+            },
         );
         self.state.store(STATE_OPENING, Ordering::Relaxed);
         self.position_ms.store(0, Ordering::Relaxed);
@@ -1055,7 +1307,9 @@ impl PlayerCoordinator {
         self.bitrate.store(0, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::State,
-            MapEventData { state: STATE_OPENING },
+            MapEventData {
+                state: STATE_OPENING,
+            },
         );
         MAP_SUCCESS
     }
@@ -1066,7 +1320,10 @@ impl PlayerCoordinator {
         headers: Option<&[crate::api::types::RustHttpHeader]>,
     ) -> i32 {
         let trimmed = source.trim();
-        if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("icy://") {
+        if trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || trimmed.starts_with("icy://")
+        {
             let url = if let Some(stripped) = trimmed.strip_prefix("icy://") {
                 format!("http://{}", stripped)
             } else {
@@ -1074,33 +1331,7 @@ impl PlayerCoordinator {
             };
             self.open_network(&url, headers)
         } else {
-            let path = if let Some(stripped) = trimmed.strip_prefix("asset://") {
-                let p = stripped.strip_prefix('/').unwrap_or(stripped);
-                if std::path::Path::new(p).exists() {
-                    p.to_string()
-                } else if std::path::Path::new(&format!("example/{}", p)).exists() {
-                    format!("example/{}", p)
-                } else {
-                    p.to_string()
-                }
-            } else if let Some(stripped) = trimmed.strip_prefix("asset:") {
-                let p = stripped.strip_prefix('/').unwrap_or(stripped);
-                if std::path::Path::new(p).exists() {
-                    p.to_string()
-                } else if std::path::Path::new(&format!("example/{}", p)).exists() {
-                    format!("example/{}", p)
-                } else {
-                    p.to_string()
-                }
-            } else {
-                strip_file_prefix(trimmed)
-            };
-
-            let resolved = if !std::path::Path::new(&path).exists() && std::path::Path::new(&format!("example/{}", path)).exists() {
-                format!("example/{}", path)
-            } else {
-                path
-            };
+            let resolved = resolve_local_source_path(trimmed);
             self.open_file(&resolved)
         }
     }
@@ -1122,80 +1353,27 @@ impl PlayerCoordinator {
         let res = match req.call() {
             Ok(r) => r,
             Err(ureq::Error::Status(code, _)) => {
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return if code == 404 {
+                let err = if code == 404 {
                     MAP_ERROR_FILE_NOT_FOUND
                 } else {
                     MAP_ERROR_DECODE_FAILED
                 };
+                return self.mark_open_error(err);
             }
-            Err(_) => {
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return MAP_ERROR_FILE_NOT_FOUND;
-            }
+            Err(_) => return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND),
         };
 
         let content_length: i64 = res
             .header("content-length")
             .and_then(|s| s.parse().ok())
             .unwrap_or(-1);
-
         let content_type = res.header("content-type").map(|s| s.to_string());
-        let lower_url = url.to_lowercase();
-        let lower_ct = content_type.as_deref().unwrap_or("").to_lowercase();
-
-        let encoding_format = if lower_url.ends_with(".wav") || lower_ct.contains("audio/wav") || lower_ct.contains("audio/x-wav") {
-            1
-        } else if lower_url.ends_with(".flac") || lower_ct.contains("audio/flac") {
-            2
-        } else if lower_url.ends_with(".mp3") || lower_ct.contains("audio/mpeg") || lower_ct.contains("audio/mp3") {
-            3
-        } else if lower_url.ends_with(".ogg") || lower_url.ends_with(".opus") || lower_ct.contains("audio/ogg") || lower_ct.contains("audio/opus") {
-            4
-        } else if lower_url.ends_with(".aac") || lower_ct.contains("audio/aac") {
-            5
-        } else if lower_url.ends_with(".m4a") || lower_url.ends_with(".mp4") || lower_ct.contains("audio/mp4") {
-            6
-        } else {
-            0
-        };
+        let encoding_format = infer_network_encoding_format(url, content_type.as_deref());
 
         let mut reader = res.into_reader();
-        let mut initial_data = Vec::with_capacity(131072);
-        let mut read_buf = [0u8; 32768];
-
-        loop {
-            match reader.read(&mut read_buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    initial_data.extend_from_slice(&read_buf[..n]);
-                    if initial_data.len() >= 65536 {
-                        let (status, _) = FormatSniffer::detect_head_boundary(&initial_data, content_length);
-                        if status != crate::decoder::sniffer::BoundaryStatus::NeedMore || initial_data.len() >= 512 * 1024 {
-                            break;
-                        }
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => break,
-            }
-        }
-
+        let initial_data = prefetch_initial_stream_bytes(&mut reader, content_length);
         if initial_data.is_empty() {
-            self.state.store(STATE_ERROR, Ordering::Relaxed);
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData { state: STATE_ERROR },
-            );
-            return MAP_ERROR_DECODE_FAILED;
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         }
 
         let is_live = content_length <= 0;
@@ -1207,50 +1385,29 @@ impl PlayerCoordinator {
             4 * 1024 * 1024,
             encoding_format,
         );
-
         if res_code != MAP_SUCCESS {
             return res_code;
         }
 
-        crate::map_log!(3, "Network stream opened: {} (content_length={}, is_live={})", url, content_length, is_live);
+        crate::map_log!(
+            3,
+            "Network stream opened: {} (content_length={}, is_live={})",
+            url,
+            content_length,
+            is_live
+        );
 
         self.network_streamer_abort.store(true, Ordering::Release);
         let new_abort = Arc::new(AtomicBool::new(false));
         self.network_streamer_abort = new_abort.clone();
 
-        let trip_opt = self.trip_buffer.read().unwrap().clone();
-        if let Some(trip) = trip_opt {
-            let abort_flag = self.decoder_running.clone();
-            std::thread::Builder::new()
-                .name("miniaudio-net-streamer".to_string())
-                .spawn(move || {
-                    let mut chunk = vec![0u8; 32768];
-                    while !new_abort.load(Ordering::Relaxed) && abort_flag.load(Ordering::Relaxed) {
-                        match reader.read(&mut chunk) {
-                            Ok(0) => {
-                                trip.mark_eof();
-                                break;
-                            }
-                            Ok(n) => {
-                                let mut offset = 0;
-                                while offset < n && !new_abort.load(Ordering::Relaxed) && abort_flag.load(Ordering::Relaxed) {
-                                    match trip.feed_chunk(&chunk[offset..n]) {
-                                        Ok(written) => {
-                                            offset += written;
-                                        }
-                                        Err(crate::buffer::BufferError::Busy) => {
-                                            std::thread::sleep(std::time::Duration::from_millis(20));
-                                        }
-                                        Err(_) => return,
-                                    }
-                                }
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                            Err(_) => break,
-                        }
-                    }
-                })
-                .ok();
+        if let Some(trip) = self.trip_buffer.read().unwrap().clone() {
+            spawn_network_streamer_thread(
+                Box::new(reader),
+                trip,
+                new_abort,
+                self.decoder_running.clone(),
+            );
         }
 
         MAP_SUCCESS
@@ -1261,14 +1418,7 @@ impl PlayerCoordinator {
 
         let source = match crate::buffer::FileByteSource::open(std::path::Path::new(path)) {
             Ok(s) => s,
-            Err(_) => {
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return MAP_ERROR_FILE_NOT_FOUND;
-            }
+            Err(_) => return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND),
         };
 
         let file_size = source.size();
@@ -1278,20 +1428,12 @@ impl PlayerCoordinator {
 
         let eng = match SymphoniaEngine::new(source, ext) {
             Ok(e) => e,
-            Err(_) => {
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return MAP_ERROR_DECODE_FAILED;
-            }
+            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
         };
 
         let mut header = [0u8; 8192];
         let mut header_len = 0;
         if let Ok(mut f) = File::open(path) {
-            use std::io::Read;
             if let Ok(n) = f.read(&mut header) {
                 header_len = n;
             }
@@ -1309,33 +1451,12 @@ impl PlayerCoordinator {
         let _ = self.begin_open();
 
         let (_status, boundary) = FormatSniffer::detect_head_boundary(data, data.len() as i64);
-        let sniffer_hint = match boundary.container {
-            ContainerFormat::Mp3 => Some("mp3"),
-            ContainerFormat::Adts => Some("aac"),
-            ContainerFormat::Flac => Some("flac"),
-            ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
-            ContainerFormat::Wav => Some("wav"),
-            ContainerFormat::Mp4 => Some("mp4"),
-            ContainerFormat::Matroska => Some("mka"),
-            ContainerFormat::Dsf => Some("dsf"),
-            ContainerFormat::Ape => Some("ape"),
-            ContainerFormat::WavPack => Some("wv"),
-            ContainerFormat::Hls => Some("m3u8"),
-            ContainerFormat::Unknown => None,
-        };
-        let effective_hint = sniffer_hint.or(hint_ext);
+        let effective_hint = boundary.container.hint_extension().or(hint_ext);
 
         let cursor = Cursor::new(data.to_vec());
         let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
-            Err(_) => {
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return MAP_ERROR_DECODE_FAILED;
-            }
+            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
         };
 
         self.init_engine(eng, false, data.len() as u64, data);
@@ -1359,7 +1480,11 @@ impl PlayerCoordinator {
             TripartiteBuffer::DEFAULT_RING_CAPACITY
         };
 
-        let tot = if total_size > 0 { Some(total_size as u64) } else { None };
+        let tot = if total_size > 0 {
+            Some(total_size as u64)
+        } else {
+            None
+        };
         let trip = TripartiteBuffer::new(cap, tot, is_live);
 
         let mut container = ContainerFormat::Unknown;
@@ -1382,8 +1507,7 @@ impl PlayerCoordinator {
             if boundary.audio_end > 0 {
                 trip.set_audio_end(boundary.audio_end as u64);
             }
-            let mut lock_b = self.boundary_info.write().unwrap();
-            *lock_b = Some(boundary);
+            *self.boundary_info.write().unwrap() = Some(boundary);
         }
 
         if let Some(tail) = tail_data {
@@ -1392,40 +1516,14 @@ impl PlayerCoordinator {
             }
         }
 
-        let hint = match container {
-            ContainerFormat::Mp3 => Some("mp3"),
-            ContainerFormat::Adts => Some("aac"),
-            ContainerFormat::Flac => Some("flac"),
-            ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
-            ContainerFormat::Wav => Some("wav"),
-            ContainerFormat::Mp4 => Some("mp4"),
-            ContainerFormat::Matroska => Some("mka"),
-            ContainerFormat::Dsf => Some("dsf"),
-            ContainerFormat::Ape => Some("ape"),
-            ContainerFormat::WavPack => Some("wv"),
-            ContainerFormat::Hls => Some("m3u8"),
-            ContainerFormat::Unknown => match encoding_format {
-                1 => Some("wav"),
-                2 => Some("flac"),
-                3 => Some("mp3"),
-                4 => Some("ogg"),
-                5 => Some("aac"),
-                6 => Some("mp4"),
-                _ => None,
-            },
-        };
+        let hint = container
+            .hint_extension()
+            .or_else(|| encoding_format_to_extension(encoding_format));
 
         let reader = trip.create_reader();
         let eng = match SymphoniaEngine::new(reader, hint) {
             Ok(e) => e,
-            Err(_) => {
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return MAP_ERROR_DECODE_FAILED;
-            }
+            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
         };
 
         let tot = trip.total_size().unwrap_or(0);
@@ -1444,27 +1542,15 @@ impl PlayerCoordinator {
     ) -> i32 {
         let _ = self.begin_open();
 
-        let mut hint = None;
-        if !initial_bytes.is_empty() {
+        let hint = if !initial_bytes.is_empty() {
             let (_status, boundary) = FormatSniffer::detect_head_boundary(
                 initial_bytes,
                 total_size.map(|s| s as i64).unwrap_or(-1),
             );
-            hint = match boundary.container {
-                ContainerFormat::Mp3 => Some("mp3"),
-                ContainerFormat::Adts => Some("aac"),
-                ContainerFormat::Flac => Some("flac"),
-                ContainerFormat::OggVorbis | ContainerFormat::OggOpus => Some("ogg"),
-                ContainerFormat::Wav => Some("wav"),
-                ContainerFormat::Mp4 => Some("mp4"),
-                ContainerFormat::Matroska => Some("mka"),
-                ContainerFormat::Dsf => Some("dsf"),
-                ContainerFormat::Ape => Some("ape"),
-                ContainerFormat::WavPack => Some("wv"),
-                ContainerFormat::Hls => Some("m3u8"),
-                ContainerFormat::Unknown => None,
-            };
-        }
+            boundary.container.hint_extension()
+        } else {
+            None
+        };
 
         *self.custom_source_handle.write().unwrap() = Some(handle);
 
@@ -1472,20 +1558,26 @@ impl PlayerCoordinator {
             Ok(e) => e,
             Err(_) => {
                 *self.custom_source_handle.write().unwrap() = None;
-                self.state.store(STATE_ERROR, Ordering::Relaxed);
-                self.telemetry.post_event(
-                    EventType::State,
-                    MapEventData { state: STATE_ERROR },
-                );
-                return MAP_ERROR_DECODE_FAILED;
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
             }
         };
 
-        self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), initial_bytes);
+        self.init_engine(
+            eng,
+            !is_seekable,
+            total_size.unwrap_or(0),
+            initial_bytes,
+        );
         MAP_SUCCESS
     }
 
-    pub fn supply_custom_bytes(&self, _stream_id: u32, request_id: u64, data: Vec<u8>, is_eof: bool) -> i32 {
+    pub fn supply_custom_bytes(
+        &self,
+        _stream_id: u32,
+        request_id: u64,
+        data: Vec<u8>,
+        is_eof: bool,
+    ) -> i32 {
         if let Some(ref handle) = *self.custom_source_handle.read().unwrap() {
             handle.supply_bytes(request_id, data, is_eof);
             MAP_SUCCESS
@@ -1494,7 +1586,12 @@ impl PlayerCoordinator {
         }
     }
 
-    pub fn notify_custom_error(&self, _stream_id: u32, request_id: u64, error_message: String) -> i32 {
+    pub fn notify_custom_error(
+        &self,
+        _stream_id: u32,
+        request_id: u64,
+        error_message: String,
+    ) -> i32 {
         if let Some(ref handle) = *self.custom_source_handle.read().unwrap() {
             handle.notify_error(request_id, error_message);
             MAP_SUCCESS
@@ -1503,11 +1600,21 @@ impl PlayerCoordinator {
         }
     }
 
-    fn init_engine(&mut self, eng: SymphoniaEngine, is_stream: bool, total_bytes: u64, initial_data: &[u8]) {
-        let is_live = self.trip_buffer.read().map(|g| g.as_ref().map(|t| t.is_live()).unwrap_or(false)).unwrap_or(false);
+    fn init_engine(
+        &mut self,
+        eng: SymphoniaEngine,
+        is_stream: bool,
+        total_bytes: u64,
+        initial_data: &[u8],
+    ) {
+        let is_live = self.is_live_stream();
         let sr = eng.sample_rate();
         let ch = eng.channels();
-        let mut dur = if is_live { 0 } else { eng.duration_ms().unwrap_or(0) as i64 };
+        let mut dur = if is_live {
+            0
+        } else {
+            eng.duration_ms().unwrap_or(0) as i64
+        };
 
         if !is_live && dur <= 0 {
             if let Ok(guard) = self.trip_buffer.read() {
@@ -1516,7 +1623,11 @@ impl PlayerCoordinator {
                     if !tail.is_empty() {
                         if let Ok(b_guard) = self.boundary_info.read() {
                             if let Some(boundary) = *b_guard {
-                                if let Some(d) = FormatSniffer::extract_tail_duration_ms(boundary.container, sr, &tail) {
+                                if let Some(d) = FormatSniffer::extract_tail_duration_ms(
+                                    boundary.container,
+                                    sr,
+                                    &tail,
+                                ) {
                                     dur = d;
                                 }
                             }
@@ -1527,7 +1638,9 @@ impl PlayerCoordinator {
         }
 
         if !is_live && dur <= 0 && total_bytes > 0 && !initial_data.is_empty() {
-            if let Some((_br, d)) = FormatSniffer::sniff_stream_info(initial_data, total_bytes as i64) {
+            if let Some((_br, d)) =
+                FormatSniffer::sniff_stream_info(initial_data, total_bytes as i64)
+            {
                 if d > 0 {
                     dur = d;
                 }
@@ -1556,20 +1669,20 @@ impl PlayerCoordinator {
             self.flush_generation.fetch_add(1, Ordering::SeqCst);
         }
 
-        self.send_dsp_command(DspCommand::SetSampleRate(self.device_sample_rate.load(Ordering::Relaxed)));
+        self.send_dsp_command(DspCommand::SetSampleRate(
+            self.device_sample_rate.load(Ordering::Relaxed),
+        ));
 
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::Duration,
-            MapEventData { duration_ms: dur },
-        );
-        self.telemetry.post_event(
-            EventType::Bitrate,
-            MapEventData { bitrate },
-        );
+        self.telemetry
+            .post_event(EventType::Duration, MapEventData { duration_ms: dur });
+        self.telemetry
+            .post_event(EventType::Bitrate, MapEventData { bitrate });
         self.telemetry.post_event(
             EventType::State,
-            MapEventData { state: STATE_STOPPED },
+            MapEventData {
+                state: STATE_STOPPED,
+            },
         );
 
         let (_, cvar) = &*self.decoder_wake;
@@ -1577,7 +1690,10 @@ impl PlayerCoordinator {
     }
 
     pub fn is_live_stream(&self) -> bool {
-        self.trip_buffer.read().map(|g| g.as_ref().map(|t| t.is_live()).unwrap_or(false)).unwrap_or(false)
+        self.trip_buffer
+            .read()
+            .map(|g| g.as_ref().map(|t| t.is_live()).unwrap_or(false))
+            .unwrap_or(false)
     }
 
     pub fn stream_feed(&mut self, data: &[u8]) -> i32 {
@@ -1612,6 +1728,82 @@ impl PlayerCoordinator {
         }
     }
 
+    fn complete_at_duration(&self, dur: i64) {
+        self.decoder_eof.store(true, Ordering::Relaxed);
+        self.state.store(STATE_COMPLETED, Ordering::Relaxed);
+        self.position_ms.store(dur, Ordering::Relaxed);
+        let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
+        self.position_frames.store(
+            if dev_sr > 0 {
+                (dur * dev_sr * 1024) / 1000
+            } else {
+                0
+            },
+            Ordering::Relaxed,
+        );
+        self.seek_request_ms.store(-1, Ordering::SeqCst);
+        self.flush_generation.fetch_add(1, Ordering::Release);
+
+        self.telemetry
+            .post_event(EventType::Position, MapEventData { position_ms: dur });
+        self.telemetry
+            .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+        self.telemetry
+            .post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
+        self.telemetry.post_event(
+            EventType::State,
+            MapEventData {
+                state: STATE_COMPLETED,
+            },
+        );
+        if let Ok(guard) = self.completion_cb.read() {
+            if let Some((cb, udata)) = *guard {
+                unsafe {
+                    cb(udata as *mut c_void);
+                }
+            }
+        }
+    }
+
+    fn dispatch_seek_to_decoder(&mut self, position_ms: i64) {
+        let dur = self.duration_ms.load(Ordering::Relaxed);
+        if dur > 0 && position_ms >= dur {
+            self.complete_at_duration(dur);
+            return;
+        }
+
+        self.decoder_eof.store(false, Ordering::Relaxed);
+        self.telemetry
+            .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
+        if self.state.load(Ordering::Relaxed) == STATE_COMPLETED {
+            self.state.store(STATE_PAUSED, Ordering::Relaxed);
+            self.telemetry.post_event(
+                EventType::State,
+                MapEventData {
+                    state: STATE_PAUSED,
+                },
+            );
+        }
+        self.flush_generation.fetch_add(1, Ordering::Release);
+
+        self.position_ms.store(position_ms, Ordering::Relaxed);
+        let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
+        self.position_frames.store(
+            if dev_sr > 0 {
+                (position_ms * dev_sr * 1024) / 1000
+            } else {
+                0
+            },
+            Ordering::Relaxed,
+        );
+        self.telemetry
+            .post_event(EventType::Position, MapEventData { position_ms });
+
+        self.seek_request_ms.store(position_ms, Ordering::SeqCst);
+        let (_, cvar) = &*self.decoder_wake;
+        cvar.notify_all();
+    }
+
     pub fn stream_seek(&mut self, position_ms: i64, new_stream_offset: i64) -> i32 {
         let (is_hit, is_contiguous) = {
             if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
@@ -1632,65 +1824,7 @@ impl PlayerCoordinator {
             MAP_STREAM_SEEK_CACHE_MISS
         };
 
-        let dur = self.duration_ms.load(Ordering::Relaxed);
-        if dur > 0 && position_ms >= dur {
-            self.decoder_eof.store(true, Ordering::Relaxed);
-            self.state.store(STATE_COMPLETED, Ordering::Relaxed);
-            self.position_ms.store(dur, Ordering::Relaxed);
-            let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
-            self.position_frames.store(if dev_sr > 0 { (dur * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
-            self.seek_request_ms.store(-1, Ordering::SeqCst);
-            self.flush_generation.fetch_add(1, Ordering::Release);
-
-            self.telemetry.post_event(
-                EventType::Position,
-                MapEventData { position_ms: dur },
-            );
-            self.telemetry.post_event(
-                EventType::IsPlaying,
-                MapEventData { is_playing: 0 },
-            );
-            self.telemetry.post_event(
-                EventType::IsCompleted,
-                MapEventData { is_completed: 1 },
-            );
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData { state: STATE_COMPLETED },
-            );
-            if let Ok(guard) = self.completion_cb.read() {
-                if let Some((cb, udata)) = *guard {
-                    unsafe { cb(udata as *mut c_void); }
-                }
-            }
-            return code;
-        }
-
-        self.decoder_eof.store(false, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::IsCompleted,
-            MapEventData { is_completed: 0 },
-        );
-        if self.state.load(Ordering::Relaxed) == STATE_COMPLETED {
-            self.state.store(STATE_PAUSED, Ordering::Relaxed);
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData { state: STATE_PAUSED },
-            );
-        }
-        self.flush_generation.fetch_add(1, Ordering::Release);
-
-        self.position_ms.store(position_ms, Ordering::Relaxed);
-        let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
-        self.position_frames.store(if dev_sr > 0 { (position_ms * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::Position,
-            MapEventData { position_ms },
-        );
-
-        self.seek_request_ms.store(position_ms, Ordering::SeqCst);
-        let (_, cvar) = &*self.decoder_wake;
-        cvar.notify_all();
+        self.dispatch_seek_to_decoder(position_ms);
         code
     }
 
@@ -1712,7 +1846,8 @@ impl PlayerCoordinator {
             out_status.buffer_capacity = cap;
             out_status.buffer_fill = (r.end_byte.saturating_sub(r.start_byte)).max(0) as usize;
             out_status.fill_percentage = r.fill_percentage * 100.0;
-            out_status.is_buffering = (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
+            out_status.is_buffering =
+                (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
             out_status.is_eof = r.is_eof;
             out_status.read_cursor_byte = r.read_cursor_byte;
             out_status.range_start = r.start_byte;
@@ -1732,11 +1867,13 @@ impl PlayerCoordinator {
             out_range.fill_percentage = r.fill_percentage * 100.0;
             out_range.stream_percentage = r.stream_percentage * 100.0;
             if r.total_bytes > 0 && duration > 0 {
-                out_range.end_ms = ((r.end_byte as f64 / r.total_bytes as f64) * duration as f64) as i64;
+                out_range.end_ms =
+                    ((r.end_byte as f64 / r.total_bytes as f64) * duration as f64) as i64;
             } else {
                 out_range.end_ms = 0;
             }
-            out_range.is_buffering = (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
+            out_range.is_buffering =
+                (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
             out_range.is_eof = r.is_eof;
             MAP_SUCCESS
         } else {
@@ -1823,12 +1960,14 @@ impl PlayerCoordinator {
                 let sr = self.sample_rate.load(Ordering::Relaxed);
                 if let Ok(b_guard) = self.boundary_info.read() {
                     if let Some(boundary) = *b_guard {
-                        if let Some(dur) = FormatSniffer::extract_tail_duration_ms(boundary.container, sr, tail_data) {
+                        if let Some(dur) = FormatSniffer::extract_tail_duration_ms(
+                            boundary.container,
+                            sr,
+                            tail_data,
+                        ) {
                             self.duration_ms.store(dur, Ordering::Relaxed);
-                            self.telemetry.post_event(
-                                EventType::Duration,
-                                MapEventData { duration_ms: dur },
-                            );
+                            self.telemetry
+                                .post_event(EventType::Duration, MapEventData { duration_ms: dur });
                         }
                     }
                 }
@@ -1867,10 +2006,8 @@ impl PlayerCoordinator {
         }
 
         self.decoder_eof.store(false, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::IsCompleted,
-            MapEventData { is_completed: 0 },
-        );
+        self.telemetry
+            .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
 
         if !self.device_ctx.is_null() {
             unsafe {
@@ -1879,13 +2016,13 @@ impl PlayerCoordinator {
         }
 
         self.state.store(STATE_PLAYING, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::IsPlaying,
-            MapEventData { is_playing: 1 },
-        );
+        self.telemetry
+            .post_event(EventType::IsPlaying, MapEventData { is_playing: 1 });
         self.telemetry.post_event(
             EventType::State,
-            MapEventData { state: STATE_PLAYING },
+            MapEventData {
+                state: STATE_PLAYING,
+            },
         );
 
         let (_, cvar) = &*self.decoder_wake;
@@ -1901,13 +2038,13 @@ impl PlayerCoordinator {
         }
 
         self.state.store(STATE_PAUSED, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::IsPlaying,
-            MapEventData { is_playing: 0 },
-        );
+        self.telemetry
+            .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
         self.telemetry.post_event(
             EventType::State,
-            MapEventData { state: STATE_PAUSED },
+            MapEventData {
+                state: STATE_PAUSED,
+            },
         );
 
         MAP_SUCCESS
@@ -1930,15 +2067,15 @@ impl PlayerCoordinator {
                 }
             }
         }
-        self.telemetry.post_event(
-            EventType::IsCompleted,
-            MapEventData { is_completed: 0 },
-        );
+        self.telemetry
+            .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
         if self.state.load(Ordering::Relaxed) == STATE_COMPLETED {
             self.state.store(STATE_PAUSED, Ordering::Relaxed);
             self.telemetry.post_event(
                 EventType::State,
-                MapEventData { state: STATE_PAUSED },
+                MapEventData {
+                    state: STATE_PAUSED,
+                },
             );
         }
         self.flush_generation.fetch_add(1, Ordering::Release);
@@ -1949,19 +2086,19 @@ impl PlayerCoordinator {
         self.silence_saved_ms.store(0, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::SilenceSaved,
-            MapEventData { silence_saved_ms: 0 },
+            MapEventData {
+                silence_saved_ms: 0,
+            },
         );
-        self.telemetry.post_event(
-            EventType::IsPlaying,
-            MapEventData { is_playing: 0 },
-        );
-        self.telemetry.post_event(
-            EventType::Position,
-            MapEventData { position_ms: 0 },
-        );
+        self.telemetry
+            .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+        self.telemetry
+            .post_event(EventType::Position, MapEventData { position_ms: 0 });
         self.telemetry.post_event(
             EventType::State,
-            MapEventData { state: STATE_STOPPED },
+            MapEventData {
+                state: STATE_STOPPED,
+            },
         );
 
         MAP_SUCCESS
@@ -1973,66 +2110,7 @@ impl PlayerCoordinator {
             return MAP_ERROR_INVALID_STATE;
         }
 
-        let dur = self.duration_ms.load(Ordering::Relaxed);
-        if dur > 0 && position_ms >= dur {
-            self.decoder_eof.store(true, Ordering::Relaxed);
-            self.state.store(STATE_COMPLETED, Ordering::Relaxed);
-            self.position_ms.store(dur, Ordering::Relaxed);
-            let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
-            self.position_frames.store(if dev_sr > 0 { (dur * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
-            self.seek_request_ms.store(-1, Ordering::SeqCst);
-            self.flush_generation.fetch_add(1, Ordering::Release);
-
-            self.telemetry.post_event(
-                EventType::Position,
-                MapEventData { position_ms: dur },
-            );
-            self.telemetry.post_event(
-                EventType::IsPlaying,
-                MapEventData { is_playing: 0 },
-            );
-            self.telemetry.post_event(
-                EventType::IsCompleted,
-                MapEventData { is_completed: 1 },
-            );
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData { state: STATE_COMPLETED },
-            );
-            if let Ok(guard) = self.completion_cb.read() {
-                if let Some((cb, udata)) = *guard {
-                    unsafe { cb(udata as *mut c_void); }
-                }
-            }
-            return MAP_SUCCESS;
-        }
-
-        self.decoder_eof.store(false, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::IsCompleted,
-            MapEventData { is_completed: 0 },
-        );
-        if self.state.load(Ordering::Relaxed) == STATE_COMPLETED {
-            self.state.store(STATE_PAUSED, Ordering::Relaxed);
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData { state: STATE_PAUSED },
-            );
-        }
-        self.flush_generation.fetch_add(1, Ordering::Release);
-
-        self.position_ms.store(position_ms, Ordering::Relaxed);
-        let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
-        self.position_frames.store(if dev_sr > 0 { (position_ms * dev_sr * 1024) / 1000 } else { 0 }, Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::Position,
-            MapEventData { position_ms },
-        );
-
-        self.seek_request_ms.store(position_ms, Ordering::SeqCst);
-        let (_, cvar) = &*self.decoder_wake;
-        cvar.notify_all();
-
+        self.dispatch_seek_to_decoder(position_ms);
         MAP_SUCCESS
     }
 
@@ -2040,30 +2118,24 @@ impl PlayerCoordinator {
         let vol = volume.max(0.0);
         self.volume.store(vol.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetVolume(vol));
-        self.telemetry.post_event(
-            EventType::Volume,
-            MapEventData { volume: vol },
-        );
+        self.telemetry
+            .post_event(EventType::Volume, MapEventData { volume: vol });
         MAP_SUCCESS
     }
 
     pub fn set_rate(&mut self, rate: f32) -> i32 {
         let r = rate.clamp(0.25, 4.0);
         self.rate.store(r.to_bits(), Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::Rate,
-            MapEventData { rate: r },
-        );
+        self.telemetry
+            .post_event(EventType::Rate, MapEventData { rate: r });
         MAP_SUCCESS
     }
 
     pub fn set_pitch(&mut self, pitch: f32) -> i32 {
         let p = pitch.clamp(0.5, 2.0);
         self.pitch.store(p.to_bits(), Ordering::Relaxed);
-        self.telemetry.post_event(
-            EventType::Pitch,
-            MapEventData { pitch: p },
-        );
+        self.telemetry
+            .post_event(EventType::Pitch, MapEventData { pitch: p });
         MAP_SUCCESS
     }
 
@@ -2071,7 +2143,9 @@ impl PlayerCoordinator {
         self.period_size_in_frames.store(frames, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::BufferSize,
-            MapEventData { buffer_size: frames },
+            MapEventData {
+                buffer_size: frames,
+            },
         );
         MAP_SUCCESS
     }
@@ -2085,22 +2159,8 @@ impl PlayerCoordinator {
         if self.device_ctx.is_null() {
             return MAP_ERROR_INVALID_STATE;
         }
-        let ret = unsafe {
-            map_device_set_device(self.device_ctx, device_id)
-        };
-        let mut dev_info = MapDeviceInfo::default();
-        let _ = self.get_current_device(&mut dev_info);
-        let mut tele_dev = TelemetryDeviceInfo::default();
-        tele_dev.id = dev_info.id;
-        tele_dev.effective_id = dev_info.effective_id;
-        tele_dev.name = dev_info.name;
-        tele_dev.is_default = dev_info.is_default;
-        tele_dev.is_auto = dev_info.is_auto;
-
-        self.telemetry.post_event(
-            EventType::Device,
-            MapEventData { device: tele_dev },
-        );
+        let ret = unsafe { map_device_set_device(self.device_ctx, device_id) };
+        self.post_current_device_telemetry();
         ret
     }
 
@@ -2114,7 +2174,8 @@ impl PlayerCoordinator {
     }
 
     pub fn set_pause_on_device_change(&mut self, enabled: i32) -> i32 {
-        self.pause_on_device_change.store(enabled != 0, Ordering::Relaxed);
+        self.pause_on_device_change
+            .store(enabled != 0, Ordering::Relaxed);
         MAP_SUCCESS
     }
 
@@ -2125,16 +2186,20 @@ impl PlayerCoordinator {
     pub fn set_equalizer(&mut self, params: &EqualizerParams) -> i32 {
         *self.eq_params.write().unwrap() = *params;
         self.send_dsp_command(DspCommand::SetEqualizerParams(*params));
-        self.telemetry.post_event(
-            EventType::Equalizer,
-            MapEventData { equalizer: *params },
-        );
+        self.telemetry
+            .post_event(EventType::Equalizer, MapEventData { equalizer: *params });
         MAP_SUCCESS
     }
 
     pub fn set_equalizer_band(&mut self, band: u32, gain_db: f32) -> i32 {
-        self.eq_params.write().unwrap().set_band(band as usize, gain_db);
-        self.send_dsp_command(DspCommand::SetEqualizerBand { band: band as usize, gain_db });
+        self.eq_params
+            .write()
+            .unwrap()
+            .set_band(band as usize, gain_db);
+        self.send_dsp_command(DspCommand::SetEqualizerBand {
+            band: band as usize,
+            gain_db,
+        });
         MAP_SUCCESS
     }
 
@@ -2152,10 +2217,8 @@ impl PlayerCoordinator {
         };
         *self.replay_gain.write().unwrap() = rg;
         self.send_dsp_command(DspCommand::SetReplayGain(rg));
-        self.telemetry.post_event(
-            EventType::ReplayGain,
-            MapEventData { replay_gain: rg },
-        );
+        self.telemetry
+            .post_event(EventType::ReplayGain, MapEventData { replay_gain: rg });
         MAP_SUCCESS
     }
 
@@ -2163,30 +2226,24 @@ impl PlayerCoordinator {
         let rg = ReplayGainConfig::default();
         *self.replay_gain.write().unwrap() = rg;
         self.send_dsp_command(DspCommand::SetReplayGain(rg));
-        self.telemetry.post_event(
-            EventType::ReplayGain,
-            MapEventData { replay_gain: rg },
-        );
+        self.telemetry
+            .post_event(EventType::ReplayGain, MapEventData { replay_gain: rg });
         MAP_SUCCESS
     }
 
     pub fn set_preamp(&mut self, preamp_db: f32) -> i32 {
         self.preamp_db.store(preamp_db.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetPreamp(preamp_db));
-        self.telemetry.post_event(
-            EventType::Preamp,
-            MapEventData { preamp_db },
-        );
+        self.telemetry
+            .post_event(EventType::Preamp, MapEventData { preamp_db });
         MAP_SUCCESS
     }
 
     pub fn set_balance(&mut self, pan: f32) -> i32 {
         self.balance.store(pan.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetBalance(pan));
-        self.telemetry.post_event(
-            EventType::Balance,
-            MapEventData { balance: pan },
-        );
+        self.telemetry
+            .post_event(EventType::Balance, MapEventData { balance: pan });
         MAP_SUCCESS
     }
 
@@ -2196,7 +2253,9 @@ impl PlayerCoordinator {
         self.send_dsp_command(DspCommand::SetMono(mono));
         self.telemetry.post_event(
             EventType::Mono,
-            MapEventData { mono_enabled: enabled },
+            MapEventData {
+                mono_enabled: enabled,
+            },
         );
         MAP_SUCCESS
     }
@@ -2209,25 +2268,21 @@ impl PlayerCoordinator {
         };
         self.crossfeed_mode.store(mode, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetCrossfeed(cf_mode));
-        self.telemetry.post_event(
-            EventType::Crossfeed,
-            MapEventData { crossfeed_mode: mode },
-        );
+        self.telemetry
+            .post_event(EventType::Crossfeed, MapEventData { crossfeed_mode: mode });
         MAP_SUCCESS
     }
 
     pub fn set_spatializer(&mut self, enabled: i32, width: f32) -> i32 {
         let en = enabled != 0;
         self.spatializer_enabled.store(en, Ordering::Relaxed);
-        self.spatializer_width.store(width.to_bits(), Ordering::Relaxed);
+        self.spatializer_width
+            .store(width.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetSpatializer { enabled: en, width });
         self.telemetry.post_event(
             EventType::Spatializer,
             MapEventData {
-                spatializer: SpatializerData {
-                    enabled,
-                    width,
-                },
+                spatializer: SpatializerData { enabled, width },
             },
         );
         MAP_SUCCESS
@@ -2252,10 +2307,8 @@ impl PlayerCoordinator {
         };
         *self.reverb_config.write().unwrap() = rev;
         self.send_dsp_command(DspCommand::SetReverb(rev));
-        self.telemetry.post_event(
-            EventType::Reverb,
-            MapEventData { reverb: rev },
-        );
+        self.telemetry
+            .post_event(EventType::Reverb, MapEventData { reverb: rev });
         MAP_SUCCESS
     }
 
@@ -2265,7 +2318,9 @@ impl PlayerCoordinator {
         self.send_dsp_command(DspCommand::SetLimiter(en));
         self.telemetry.post_event(
             EventType::Limiter,
-            MapEventData { limiter_enabled: enabled },
+            MapEventData {
+                limiter_enabled: enabled,
+            },
         );
         MAP_SUCCESS
     }
@@ -2274,7 +2329,9 @@ impl PlayerCoordinator {
         *self.silence_config.write().unwrap() = *config;
         self.telemetry.post_event(
             EventType::SilenceConfig,
-            MapEventData { silence_config: *config },
+            MapEventData {
+                silence_config: *config,
+            },
         );
         MAP_SUCCESS
     }
@@ -2295,14 +2352,14 @@ impl PlayerCoordinator {
         if !en {
             let zero_vis = VisualizerData::default();
             self.visualizer_seqlock.write(|v| *v = zero_vis);
-            self.telemetry.post_event(
-                EventType::Visualizer,
-                MapEventData { visualizer: zero_vis },
-            );
+            self.telemetry
+                .post_event(EventType::Visualizer, MapEventData { visualizer: zero_vis });
         }
         self.telemetry.post_event(
             EventType::VisualizerEnabled,
-            MapEventData { visualizer_enabled: enabled },
+            MapEventData {
+                visualizer_enabled: enabled,
+            },
         );
         MAP_SUCCESS
     }

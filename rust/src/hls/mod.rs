@@ -3,10 +3,30 @@ pub mod m3u8_parser;
 pub mod mpegts;
 
 pub use crypto::Aes128SegmentDecryptor;
-pub use m3u8_parser::{EncryptionKeyInfo, M3u8Parser, ParsedHlsPlaylist, SegmentInfo, VariantStreamInfo};
+pub use m3u8_parser::{
+    EncryptionKeyInfo, M3u8Parser, ParsedHlsPlaylist, SegmentInfo, VariantStreamInfo,
+};
 pub use mpegts::{MpegTsDemuxResult, MpegTsDemuxer, TsAudioCodec};
 
-/// C-ABI exports for native high-performance HLS parsing, TS demuxing, and AES-128 decryption.
+/// Transfers ownership of a `Vec<u8>` buffer to C-ABI output pointers.
+#[inline]
+unsafe fn export_c_buffer(bytes: Vec<u8>, out_ptr: *mut *mut u8, out_len: *mut usize) {
+    if bytes.is_empty() {
+        unsafe {
+            *out_ptr = std::ptr::null_mut();
+            *out_len = 0;
+        }
+        return;
+    }
+    let mut boxed = bytes.into_boxed_slice();
+    let ptr = boxed.as_mut_ptr();
+    let len = boxed.len();
+    std::mem::forget(boxed);
+    unsafe {
+        *out_ptr = ptr;
+        *out_len = len;
+    }
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn map_hls_is_m3u8(data: *const u8, len: usize) -> i32 {
@@ -14,11 +34,7 @@ pub unsafe extern "C" fn map_hls_is_m3u8(data: *const u8, len: usize) -> i32 {
         return 0;
     }
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    if M3u8Parser::is_m3u8(slice) {
-        1
-    } else {
-        0
-    }
+    i32::from(M3u8Parser::is_m3u8(slice))
 }
 
 #[no_mangle]
@@ -27,11 +43,7 @@ pub unsafe extern "C" fn map_hls_is_mpeg_ts(data: *const u8, len: usize) -> i32 
         return 0;
     }
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    if MpegTsDemuxer::is_mpeg_ts(slice) {
-        1
-    } else {
-        0
-    }
+    i32::from(MpegTsDemuxer::is_mpeg_ts(slice))
 }
 
 #[no_mangle]
@@ -42,7 +54,11 @@ pub unsafe extern "C" fn map_hls_demux_ts(
     out_audio_len: *mut usize,
     out_codec: *mut i32,
 ) -> i32 {
-    if ts_data.is_null() || out_audio_data.is_null() || out_audio_len.is_null() || out_codec.is_null() {
+    if ts_data.is_null()
+        || out_audio_data.is_null()
+        || out_audio_len.is_null()
+        || out_codec.is_null()
+    {
         return -1;
     }
 
@@ -57,24 +73,7 @@ pub unsafe extern "C" fn map_hls_demux_ts(
     };
     unsafe {
         *out_codec = codec_id;
-    }
-
-    if result.audio_bytes.is_empty() {
-        unsafe {
-            *out_audio_data = std::ptr::null_mut();
-            *out_audio_len = 0;
-        }
-        return 0;
-    }
-
-    let mut boxed_slice = result.audio_bytes.into_boxed_slice();
-    let ptr = boxed_slice.as_mut_ptr();
-    let len = boxed_slice.len();
-    std::mem::forget(boxed_slice);
-
-    unsafe {
-        *out_audio_data = ptr;
-        *out_audio_len = len;
+        export_c_buffer(result.audio_bytes, out_audio_data, out_audio_len);
     }
     0
 }
@@ -113,21 +112,8 @@ pub unsafe extern "C" fn map_hls_decrypt_aes128(
 
     match Aes128SegmentDecryptor::decrypt_segment(enc_slice, key_arr, iv_arr) {
         Ok(decrypted) => {
-            if decrypted.is_empty() {
-                unsafe {
-                    *out_decrypted_data = std::ptr::null_mut();
-                    *out_decrypted_len = 0;
-                }
-                return 0;
-            }
-            let mut boxed_slice = decrypted.into_boxed_slice();
-            let ptr = boxed_slice.as_mut_ptr();
-            let len = boxed_slice.len();
-            std::mem::forget(boxed_slice);
-
             unsafe {
-                *out_decrypted_data = ptr;
-                *out_decrypted_len = len;
+                export_c_buffer(decrypted, out_decrypted_data, out_decrypted_len);
             }
             0
         }
