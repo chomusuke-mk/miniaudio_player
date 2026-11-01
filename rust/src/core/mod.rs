@@ -1,6 +1,8 @@
+pub mod capture;
 pub mod config;
 pub mod engine;
 pub mod player;
+pub mod recording;
 pub mod renderer;
 pub mod types;
 pub mod typestate;

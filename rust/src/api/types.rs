@@ -360,3 +360,59 @@ pub struct RustSoundBufferInfo {
     pub duration_ms: i64,
     pub frame_count: usize,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustWavFormat {
+    #[default]
+    Pcm16,
+    Float32,
+}
+
+impl From<RustWavFormat> for crate::core::recording::WavFormat {
+    fn from(f: RustWavFormat) -> Self {
+        match f {
+            RustWavFormat::Pcm16 => Self::Pcm16,
+            RustWavFormat::Float32 => Self::Float32,
+        }
+    }
+}
+
+impl From<crate::core::recording::WavFormat> for RustWavFormat {
+    fn from(f: crate::core::recording::WavFormat) -> Self {
+        match f {
+            crate::core::recording::WavFormat::Pcm16 => Self::Pcm16,
+            crate::core::recording::WavFormat::Float32 => Self::Float32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RustDuckingConfig {
+    pub enabled: bool,
+    pub ducking_db: f32,
+    pub threshold_db: f32,
+    pub attack_ms: f32,
+    pub hold_ms: f32,
+    pub release_ms: f32,
+}
+
+impl Default for RustDuckingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ducking_db: -14.0,
+            threshold_db: -30.0,
+            attack_ms: 30.0,
+            hold_ms: 250.0,
+            release_ms: 400.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RustCueConfig {
+    pub enabled: bool,
+    pub device_id: Option<String>,
+    pub volume: f32,
+    pub mode: i32, // 0: Deck A, 1: Deck B, 2: Master
+}

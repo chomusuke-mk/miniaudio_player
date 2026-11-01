@@ -15,6 +15,7 @@ import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
+import 'recording.dart';
 
 /// Reactive broadcast stream interface for observing [MiniaudioEngine] changes.
 ///
@@ -73,6 +74,11 @@ class EngineStream<T> {
   final StreamController<double?>? _forcedReplayGainController;
   final StreamController<ReplayGainMode>? _replayGainModeController;
   final StreamController<Uint8List?>? _metaBytesController;
+  final StreamController<bool>? _isRecordingController;
+  final StreamController<bool>? _isMicrophoneEnabledController;
+  final StreamController<double>? _micVolumeController;
+  final StreamController<CueConfig>? _cueConfigController;
+  final StreamController<DuckingConfig>? _duckingConfigController;
 
   /// Creates an [EngineStream] bound to internal broadcast controllers.
   EngineStream({
@@ -127,6 +133,11 @@ class EngineStream<T> {
     StreamController<double?>? forcedReplayGainController,
     StreamController<ReplayGainMode>? replayGainModeController,
     StreamController<Uint8List?>? metaBytesController,
+    StreamController<bool>? isRecordingController,
+    StreamController<bool>? isMicrophoneEnabledController,
+    StreamController<double>? micVolumeController,
+    StreamController<CueConfig>? cueConfigController,
+    StreamController<DuckingConfig>? duckingConfigController,
   })  : _phaseController = phaseController,
         _positionController = positionController,
         _durationController = durationController,
@@ -177,7 +188,12 @@ class EngineStream<T> {
         _defaultReplayGainController = defaultReplayGainController,
         _forcedReplayGainController = forcedReplayGainController,
         _replayGainModeController = replayGainModeController,
-        _metaBytesController = metaBytesController;
+        _metaBytesController = metaBytesController,
+        _isRecordingController = isRecordingController,
+        _isMicrophoneEnabledController = isMicrophoneEnabledController,
+        _micVolumeController = micVolumeController,
+        _cueConfigController = cueConfigController,
+        _duckingConfigController = duckingConfigController;
 
   // --------------------------------------------------------------------------
   // Base PlayerStream Broadcast Streams
@@ -352,4 +368,24 @@ class EngineStream<T> {
   /// Broadcast stream emitting when the queue has fewer than 2 items remaining under Infinite Mix.
   Stream<NeedMoreTracksEvent> get needMoreTracks =>
       _needMoreTracksController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting live recording active status changes.
+  Stream<bool> get isRecording =>
+      _isRecordingController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting microphone capture enabled status changes.
+  Stream<bool> get isMicrophoneEnabled =>
+      _isMicrophoneEnabledController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting microphone input gain level changes.
+  Stream<double> get micVolume =>
+      _micVolumeController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting DJ cue output configuration changes.
+  Stream<CueConfig> get cueConfig =>
+      _cueConfigController?.stream ?? const Stream.empty();
+
+  /// Broadcast stream emitting microphone auto-ducking configuration changes.
+  Stream<DuckingConfig> get duckingConfig =>
+      _duckingConfigController?.stream ?? const Stream.empty();
 }

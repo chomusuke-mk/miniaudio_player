@@ -925,6 +925,31 @@ class NativePlatformService implements PlatformService {
   }
 
   @override
+  Future<List<AudioDevice>> getCaptureDevices() async {
+    await NativePlayerBackend.ensureRustInitialized();
+    final list = await rust.getCaptureDevices();
+    final result = <AudioDevice>[AudioDevice.auto];
+    for (final d in list) {
+      result.add(_toAudioDevice(d));
+    }
+    return result;
+  }
+
+  @override
+  List<AudioDevice> getCaptureDevicesSync() {
+    try {
+      final list = rust.getCaptureDevicesSync();
+      final result = <AudioDevice>[AudioDevice.auto];
+      for (final d in list) {
+        result.add(_toAudioDevice(d));
+      }
+      return result;
+    } catch (_) {
+      return [AudioDevice.auto];
+    }
+  }
+
+  @override
   Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {
     bool replayGain = true,

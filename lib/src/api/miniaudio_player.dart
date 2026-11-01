@@ -218,6 +218,16 @@ class MiniaudioPlayer implements PlayerBackendListener {
     return getPlatformService().getAudioDevicesSync();
   }
 
+  /// Enumerates all available capture (microphone / line-in) audio devices on the system.
+  static Future<List<AudioDevice>> getCaptureDevices() async {
+    return getPlatformService().getCaptureDevices();
+  }
+
+  /// Synchronous enumeration of all available capture (microphone / line-in) audio devices on the system.
+  static List<AudioDevice> getCaptureDevicesSync() {
+    return getPlatformService().getCaptureDevicesSync();
+  }
+
   /// Analyzes an audio file in a single, high-performance decoding pass.
   static Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {

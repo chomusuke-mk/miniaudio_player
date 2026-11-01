@@ -868,4 +868,79 @@ impl RustEngine {
             right: vis.right,
         }
     }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn start_recording(&self, path: String, format: RustWavFormat) -> Result<(), String> {
+        self.coordinator.lock().unwrap().start_recording(&path, format.into())
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn stop_recording(&self) -> Result<u64, String> {
+        self.coordinator.lock().unwrap().stop_recording()
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn is_recording(&self) -> bool {
+        self.coordinator.lock().unwrap().is_recording()
+    }
+
+    pub fn offline_bounce(
+        &self,
+        path: String,
+        format: RustWavFormat,
+        duration_ms: i64,
+    ) -> Result<u64, String> {
+        self.coordinator.lock().unwrap().offline_bounce(&path, format.into(), duration_ms)
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn enable_microphone(
+        &self,
+        capture_device_id: Option<String>,
+        auto_ducking: bool,
+        ducking_db: f32,
+        threshold_db: f32,
+    ) -> Result<(), String> {
+        self.coordinator.lock().unwrap().enable_microphone(
+            capture_device_id,
+            auto_ducking,
+            ducking_db,
+            threshold_db,
+        )
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn disable_microphone(&self) {
+        self.coordinator.lock().unwrap().disable_microphone();
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_mic_volume(&self, volume: f32) {
+        self.coordinator.lock().unwrap().set_mic_volume(volume);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn configure_cue_output(
+        &self,
+        cue_device_id: Option<String>,
+        volume: f32,
+        mode: i32,
+    ) -> Result<(), String> {
+        self.coordinator.lock().unwrap().configure_cue_output(cue_device_id, volume, mode)
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_cue_volume(&self, volume: f32) {
+        self.coordinator.lock().unwrap().set_cue_volume(volume);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_cue_mode(&self, mode: i32) {
+        self.coordinator.lock().unwrap().set_cue_mode(mode);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn disable_cue_output(&self) {
+        self.coordinator.lock().unwrap().disable_cue_output();
+    }
 }

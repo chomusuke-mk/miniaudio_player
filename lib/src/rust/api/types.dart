@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
@@ -180,6 +180,37 @@ class RustCrossfadeConfig {
           curve == other.curve;
 }
 
+class RustCueConfig {
+  final bool enabled;
+  final String? deviceId;
+  final double volume;
+  final int mode;
+
+  const RustCueConfig({
+    required this.enabled,
+    this.deviceId,
+    required this.volume,
+    required this.mode,
+  });
+
+  static Future<RustCueConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustCueConfigDefault();
+
+  @override
+  int get hashCode =>
+      enabled.hashCode ^ deviceId.hashCode ^ volume.hashCode ^ mode.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustCueConfig &&
+          runtimeType == other.runtimeType &&
+          enabled == other.enabled &&
+          deviceId == other.deviceId &&
+          volume == other.volume &&
+          mode == other.mode;
+}
+
 class RustDartReadRequest {
   final int streamId;
   final BigInt requestId;
@@ -219,6 +250,48 @@ enum RustDistanceModel {
 
   static Future<RustDistanceModel> default_() =>
       RustLib.instance.api.crateApiTypesRustDistanceModelDefault();
+}
+
+class RustDuckingConfig {
+  final bool enabled;
+  final double duckingDb;
+  final double thresholdDb;
+  final double attackMs;
+  final double holdMs;
+  final double releaseMs;
+
+  const RustDuckingConfig({
+    required this.enabled,
+    required this.duckingDb,
+    required this.thresholdDb,
+    required this.attackMs,
+    required this.holdMs,
+    required this.releaseMs,
+  });
+
+  static Future<RustDuckingConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustDuckingConfigDefault();
+
+  @override
+  int get hashCode =>
+      enabled.hashCode ^
+      duckingDb.hashCode ^
+      thresholdDb.hashCode ^
+      attackMs.hashCode ^
+      holdMs.hashCode ^
+      releaseMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustDuckingConfig &&
+          runtimeType == other.runtimeType &&
+          enabled == other.enabled &&
+          duckingDb == other.duckingDb &&
+          thresholdDb == other.thresholdDb &&
+          attackMs == other.attackMs &&
+          holdMs == other.holdMs &&
+          releaseMs == other.releaseMs;
 }
 
 @freezed
@@ -947,4 +1020,13 @@ enum RustVoiceStealingPolicy {
 
   static Future<RustVoiceStealingPolicy> default_() =>
       RustLib.instance.api.crateApiTypesRustVoiceStealingPolicyDefault();
+}
+
+enum RustWavFormat {
+  pcm16,
+  float32,
+  ;
+
+  static Future<RustWavFormat> default_() =>
+      RustLib.instance.api.crateApiTypesRustWavFormatDefault();
 }

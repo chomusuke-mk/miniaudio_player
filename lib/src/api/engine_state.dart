@@ -12,6 +12,7 @@ import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
+import 'recording.dart';
 
 /// Explicit finite state machine (FSM) phases of [MiniaudioEngine].
 ///
@@ -116,6 +117,11 @@ class EngineState<T> {
   final double? Function() _getForcedReplayGain;
   final ReplayGainMode Function() _getReplayGainMode;
   final Uint8List? Function()? _getMetaBytes;
+  final bool Function()? _getIsRecording;
+  final bool Function()? _getIsMicrophoneEnabled;
+  final double Function()? _getMicVolume;
+  final CueConfig Function()? _getCueConfig;
+  final DuckingConfig Function()? _getDuckingConfig;
 
   /// Creates an [EngineState] view bound to [MiniaudioEngine] state getters.
   EngineState({
@@ -175,6 +181,11 @@ class EngineState<T> {
     double? Function()? getForcedReplayGain,
     ReplayGainMode Function()? getReplayGainMode,
     Uint8List? Function()? getMetaBytes,
+    bool Function()? getIsRecording,
+    bool Function()? getIsMicrophoneEnabled,
+    double Function()? getMicVolume,
+    CueConfig Function()? getCueConfig,
+    DuckingConfig Function()? getDuckingConfig,
   })  : _getPhase = getPhase,
         _getPosition = getPosition,
         _getDuration = getDuration,
@@ -235,7 +246,12 @@ class EngineState<T> {
                 : ((getForcedReplayGain != null && getForcedReplayGain() != null)
                     ? ReplayGainMode.forced
                     : ReplayGainMode.track)),
-        _getMetaBytes = getMetaBytes;
+        _getMetaBytes = getMetaBytes,
+        _getIsRecording = getIsRecording,
+        _getIsMicrophoneEnabled = getIsMicrophoneEnabled,
+        _getMicVolume = getMicVolume,
+        _getCueConfig = getCueConfig,
+        _getDuckingConfig = getDuckingConfig;
 
   // --------------------------------------------------------------------------
   // Base PlayerState Properties
@@ -449,4 +465,19 @@ class EngineState<T> {
 
   /// Whether the currently active item is a continuous livestream.
   bool get isLiveStream => _getIsLiveStream();
+
+  /// Whether output recording to WAV file is currently active.
+  bool get isRecording => _getIsRecording?.call() ?? false;
+
+  /// Whether microphone capture is currently enabled and routed to the mix.
+  bool get isMicrophoneEnabled => _getIsMicrophoneEnabled?.call() ?? false;
+
+  /// Microphone input volume gain factor (0.0 to 2.0).
+  double get micVolume => _getMicVolume?.call() ?? 1.0;
+
+  /// Secondary DJ cue / headphone pre-listening device configuration.
+  CueConfig get cueConfig => _getCueConfig?.call() ?? const CueConfig();
+
+  /// Microphone auto-ducking / sidechain compression configuration.
+  DuckingConfig get duckingConfig => _getDuckingConfig?.call() ?? const DuckingConfig();
 }

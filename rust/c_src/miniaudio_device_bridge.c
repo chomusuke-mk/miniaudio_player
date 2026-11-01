@@ -99,6 +99,14 @@ static void map_device_data_callback(ma_device* pDevice, void* pOutput, const vo
     }
 }
 
+static void map_capture_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+    (void)pOutput;
+    map_device_context_t* ctx = (map_device_context_t*)pDevice->pUserData;
+    if (ctx != NULL && pInput != NULL) {
+        rust_capture_pcm_frames(ctx->rust_user_data, (const float*)pInput, (uint32_t)frameCount);
+    }
+}
+
 static void map_device_notification_callback(const ma_device_notification* pNotification) {
     if (pNotification == NULL || pNotification->pDevice == NULL) {
         return;
@@ -375,6 +383,133 @@ int32_t map_device_enumerate_devices(map_device_info_t** out_devices, uint32_t* 
 
     ma_context_uninit(&context);
     return 0;
+}
+
+int32_t map_device_enumerate_capture_devices(map_device_info_t** out_devices, uint32_t* out_count) {
+    if (out_devices == NULL || out_count == NULL) return -2;
+    *out_devices = NULL;
+    *out_count = 0;
+
+    ma_context context;
+    ma_result res = ma_context_init(NULL, 0, NULL, &context);
+    if (res != MA_SUCCESS) {
+        return -4;
+    }
+
+    ma_device_info* pCaptureInfos = NULL;
+    ma_uint32 captureCount = 0;
+    res = ma_context_get_devices(&context, NULL, NULL, &pCaptureInfos, &captureCount);
+    if (res != MA_SUCCESS) {
+        ma_context_uninit(&context);
+        return -4;
+    }
+
+    if (captureCount > 0) {
+        map_device_info_t* devices = (map_device_info_t*)calloc(captureCount, sizeof(map_device_info_t));
+        if (devices == NULL) {
+            ma_context_uninit(&context);
+            return -3;
+        }
+
+        for (ma_uint32 i = 0; i < captureCount; ++i) {
+            strncpy(devices[i].name, pCaptureInfos[i].name, sizeof(devices[i].name) - 1);
+            devices[i].name[sizeof(devices[i].name) - 1] = '\0';
+            map_device_id_to_string(&pCaptureInfos[i].id, devices[i].id, sizeof(devices[i].id));
+            map_device_id_to_string(&pCaptureInfos[i].id, devices[i].effective_id, sizeof(devices[i].effective_id));
+            devices[i].is_default = pCaptureInfos[i].isDefault;
+            devices[i].is_auto = 0;
+        }
+
+        *out_devices = devices;
+        *out_count = captureCount;
+    }
+
+    ma_context_uninit(&context);
+    return 0;
+}
+
+map_device_context_t* map_capture_device_create(
+    uint32_t sample_rate,
+    uint32_t channels,
+    uint32_t period_size_in_frames,
+    const char* capture_device_id,
+    void* rust_user_data,
+    int32_t* out_result
+) {
+    map_device_context_t* ctx = (map_device_context_t*)calloc(1, sizeof(map_device_context_t));
+    if (ctx == NULL) {
+        if (out_result) *out_result = -3; /* OUT_OF_MEMORY */
+        return NULL;
+    }
+
+    ctx->rust_user_data = rust_user_data;
+    ctx->sample_rate = sample_rate ? sample_rate : 44100;
+    ctx->channels = channels ? channels : 1;
+    ctx->period_size_in_frames = period_size_in_frames;
+
+    ma_context_config ctx_cfg = ma_context_config_init();
+    ma_result res = ma_context_init(NULL, 0, &ctx_cfg, &ctx->context);
+    if (res != MA_SUCCESS) {
+        free(ctx);
+        if (out_result) *out_result = -4; /* ENGINE_INIT */
+        return NULL;
+    }
+    ctx->has_context = MA_TRUE;
+
+    ma_device_config dev_cfg = ma_device_config_init(ma_device_type_capture);
+    dev_cfg.capture.format = ma_format_f32;
+    dev_cfg.capture.channels = ctx->channels;
+    dev_cfg.sampleRate = ctx->sample_rate;
+    dev_cfg.periodSizeInFrames = period_size_in_frames;
+    dev_cfg.dataCallback = map_capture_data_callback;
+    dev_cfg.notificationCallback = map_device_notification_callback;
+    dev_cfg.pUserData = ctx;
+
+    ma_device_id custom_id;
+    ma_bool32 found = MA_FALSE;
+    if (capture_device_id != NULL && strlen(capture_device_id) > 0 && strcmp(capture_device_id, "auto") != 0) {
+        ma_device_info* pCaptureInfos = NULL;
+        ma_uint32 captureCount = 0;
+        if (ma_context_get_devices(&ctx->context, NULL, NULL, &pCaptureInfos, &captureCount) == MA_SUCCESS) {
+            for (ma_uint32 i = 0; i < captureCount; ++i) {
+                char dev_hex[sizeof(ma_device_id) * 2 + 1];
+                map_device_id_to_string(&pCaptureInfos[i].id, dev_hex, sizeof(dev_hex));
+                if (strcmp(pCaptureInfos[i].name, capture_device_id) == 0 ||
+                    strcmp(dev_hex, capture_device_id) == 0) {
+                    custom_id = pCaptureInfos[i].id;
+                    dev_cfg.capture.pDeviceID = &custom_id;
+                    found = MA_TRUE;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            if (map_string_to_device_id(capture_device_id, &custom_id)) {
+                dev_cfg.capture.pDeviceID = &custom_id;
+                found = MA_TRUE;
+            }
+        }
+    }
+
+    res = ma_device_init(&ctx->context, &dev_cfg, &ctx->device);
+    if (res != MA_SUCCESS && dev_cfg.capture.pDeviceID != NULL) {
+        dev_cfg.capture.pDeviceID = NULL;
+        res = ma_device_init(&ctx->context, &dev_cfg, &ctx->device);
+    }
+    if (res != MA_SUCCESS) {
+        ma_context_uninit(&ctx->context);
+        free(ctx);
+        if (out_result) *out_result = -4; /* ENGINE_INIT */
+        return NULL;
+    }
+    ctx->is_device_init = MA_TRUE;
+    ctx->sample_rate = ctx->device.sampleRate;
+    ctx->channels = ctx->device.capture.channels;
+    map_device_id_to_string(&ctx->device.capture.id, ctx->current_device_info.effective_id, sizeof(ctx->current_device_info.effective_id));
+    strncpy(ctx->current_device_info.name, ctx->device.capture.name, sizeof(ctx->current_device_info.name) - 1);
+
+    if (out_result) *out_result = 0;
+    return ctx;
 }
 
 void map_device_free_devices(map_device_info_t* devices) {

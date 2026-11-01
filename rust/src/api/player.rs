@@ -979,6 +979,35 @@ pub fn get_audio_devices_sync() -> Vec<RustAudioDevice> {
     get_audio_devices()
 }
 
+pub fn get_capture_devices() -> Vec<RustAudioDevice> {
+    let mut dev_ptr = std::ptr::null_mut();
+    let mut count = 0u32;
+    let res = unsafe { crate::bridge::ffi::map_device_enumerate_capture_devices(&mut dev_ptr, &mut count) };
+    if res != 0 || dev_ptr.is_null() || count == 0 {
+        return Vec::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(dev_ptr, count as usize) };
+    let devices: Vec<RustAudioDevice> = slice
+        .iter()
+        .map(|d| RustAudioDevice {
+            id: c_buf_to_string(&d.id),
+            effective_id: c_buf_to_string(&d.effective_id),
+            name: c_buf_to_string(&d.name),
+            is_default: d.is_default != 0,
+            is_auto: d.is_auto != 0,
+        })
+        .collect();
+    unsafe {
+        map_device_free_devices(dev_ptr);
+    }
+    devices
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn get_capture_devices_sync() -> Vec<RustAudioDevice> {
+    get_capture_devices()
+}
+
 pub fn get_default_device() -> RustAudioDevice {
     let devices = get_audio_devices();
     if let Some(def) = devices.iter().find(|d| d.is_default) {

@@ -44,6 +44,14 @@ class AudioDevice {
     isAuto: true,
   );
 
+  /// Enumerates all capture (microphone / line-in) audio devices on the system.
+  static Future<List<AudioDevice>> getCaptureDevices() =>
+      MiniaudioPlayer.getCaptureDevices();
+
+  /// Synchronously enumerates all capture (microphone / line-in) audio devices on the system.
+  static List<AudioDevice> getCaptureDevicesSync() =>
+      MiniaudioPlayer.getCaptureDevicesSync();
+
   /// User-friendly display name.
   ///
   /// Uses [MiniaudioPlayerGlobalConfig.defaultDeviceDisplayNameResolver] if this

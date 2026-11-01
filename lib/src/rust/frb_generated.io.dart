@@ -229,10 +229,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustCrossfadeConfig dco_decode_rust_crossfade_config(dynamic raw);
 
   @protected
+  RustCueConfig dco_decode_rust_cue_config(dynamic raw);
+
+  @protected
   RustDartReadRequest dco_decode_rust_dart_read_request(dynamic raw);
 
   @protected
   RustDistanceModel dco_decode_rust_distance_model(dynamic raw);
+
+  @protected
+  RustDuckingConfig dco_decode_rust_ducking_config(dynamic raw);
 
   @protected
   RustEngineEvent dco_decode_rust_engine_event(dynamic raw);
@@ -281,6 +287,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustVoiceStealingPolicy dco_decode_rust_voice_stealing_policy(dynamic raw);
+
+  @protected
+  RustWavFormat dco_decode_rust_wav_format(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -514,11 +523,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustCueConfig sse_decode_rust_cue_config(SseDeserializer deserializer);
+
+  @protected
   RustDartReadRequest sse_decode_rust_dart_read_request(
       SseDeserializer deserializer);
 
   @protected
   RustDistanceModel sse_decode_rust_distance_model(
+      SseDeserializer deserializer);
+
+  @protected
+  RustDuckingConfig sse_decode_rust_ducking_config(
       SseDeserializer deserializer);
 
   @protected
@@ -576,6 +592,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustVoiceStealingPolicy sse_decode_rust_voice_stealing_policy(
       SseDeserializer deserializer);
+
+  @protected
+  RustWavFormat sse_decode_rust_wav_format(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -819,12 +838,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustCrossfadeConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_cue_config(RustCueConfig self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_dart_read_request(
       RustDartReadRequest self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_distance_model(
       RustDistanceModel self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_ducking_config(
+      RustDuckingConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_engine_event(
@@ -888,6 +914,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_voice_stealing_policy(
       RustVoiceStealingPolicy self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_wav_format(RustWavFormat self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

@@ -62,6 +62,15 @@ extern "C" {
         out_result: *mut i32,
     ) -> *mut MapDeviceContext;
 
+    pub fn map_capture_device_create(
+        sample_rate: u32,
+        channels: u32,
+        period_size_in_frames: u32,
+        capture_device_id: *const c_char,
+        rust_user_data: *mut c_void,
+        out_result: *mut i32,
+    ) -> *mut MapDeviceContext;
+
     pub fn map_device_start(ctx: *mut MapDeviceContext) -> i32;
     pub fn map_device_stop(ctx: *mut MapDeviceContext) -> i32;
     pub fn map_device_destroy(ctx: *mut MapDeviceContext) -> i32;
@@ -77,7 +86,17 @@ extern "C" {
         out_devices: *mut *mut MapDeviceInfo,
         out_count: *mut u32,
     ) -> i32;
+    pub fn map_device_enumerate_capture_devices(
+        out_devices: *mut *mut MapDeviceInfo,
+        out_count: *mut u32,
+    ) -> i32;
     pub fn map_device_free_devices(devices: *mut MapDeviceInfo);
+}
+
+#[repr(C)]
+pub struct PcmCaptureHeader {
+    pub capture_fn: unsafe extern "C" fn(ptr: *mut c_void, input: *const f32, count: usize),
+    pub notif_fn: unsafe extern "C" fn(ptr: *mut c_void, notif: i32),
 }
 
 #[no_mangle]
@@ -89,6 +108,18 @@ pub unsafe extern "C" fn rust_render_pcm_frames(
     if !user_data.is_null() && !output_frames.is_null() && frame_count > 0 {
         let header = &*(user_data as *const crate::core::renderer::PcmRendererHeader);
         (header.render_fn)(user_data, output_frames, frame_count as usize);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_capture_pcm_frames(
+    user_data: *mut c_void,
+    input_frames: *const f32,
+    frame_count: u32,
+) {
+    if !user_data.is_null() && !input_frames.is_null() && frame_count > 0 {
+        let header = &*(user_data as *const PcmCaptureHeader);
+        (header.capture_fn)(user_data, input_frames, frame_count as usize);
     }
 }
 

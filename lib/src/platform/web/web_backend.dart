@@ -885,6 +885,16 @@ class WebPlatformService implements PlatformService {
   }
 
   @override
+  Future<List<AudioDevice>> getCaptureDevices() async {
+    return [AudioDevice.auto];
+  }
+
+  @override
+  List<AudioDevice> getCaptureDevicesSync() {
+    return const [AudioDevice.auto];
+  }
+
+  @override
   AudioAnalysisResult analyzeAudioSync(
     String filePath, {
     bool replayGain = true,

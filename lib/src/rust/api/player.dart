@@ -15,6 +15,12 @@ Future<List<RustAudioDevice>> getAudioDevices() =>
 List<RustAudioDevice> getAudioDevicesSync() =>
     RustLib.instance.api.crateApiPlayerGetAudioDevicesSync();
 
+Future<List<RustAudioDevice>> getCaptureDevices() =>
+    RustLib.instance.api.crateApiPlayerGetCaptureDevices();
+
+List<RustAudioDevice> getCaptureDevicesSync() =>
+    RustLib.instance.api.crateApiPlayerGetCaptureDevicesSync();
+
 Future<RustAudioDevice> getDefaultDevice() =>
     RustLib.instance.api.crateApiPlayerGetDefaultDevice();
 

@@ -22,6 +22,9 @@ typedef struct
 /* Callback exportado por Rust para renderizar tramas PCM f32 entrelazadas */
 extern void rust_render_pcm_frames(void* user_data, float* output_frames, uint32_t frame_count);
 
+/* Callback exportado por Rust para recibir tramas PCM f32 capturadas de micrófono */
+extern void rust_capture_pcm_frames(void* user_data, const float* input_frames, uint32_t frame_count);
+
 /* Callback exportado por Rust para recibir notificaciones de hardware del SO */
 extern void rust_on_device_notification(void* user_data, int32_t notification_type);
 
@@ -31,6 +34,15 @@ map_device_context_t* map_device_create(
     uint32_t channels,
     uint32_t period_size_in_frames,
     const char* playback_device_id,
+    void* rust_user_data,
+    int32_t* out_result
+);
+
+map_device_context_t* map_capture_device_create(
+    uint32_t sample_rate,
+    uint32_t channels,
+    uint32_t period_size_in_frames,
+    const char* capture_device_id,
     void* rust_user_data,
     int32_t* out_result
 );
@@ -45,6 +57,7 @@ int32_t map_device_set_device(map_device_context_t* ctx, const char* device_id);
 int32_t map_device_get_current_device_info(const map_device_context_t* ctx, map_device_info_t* out_device);
 
 int32_t map_device_enumerate_devices(map_device_info_t** out_devices, uint32_t* out_count);
+int32_t map_device_enumerate_capture_devices(map_device_info_t** out_devices, uint32_t* out_count);
 void map_device_free_devices(map_device_info_t* devices);
 
 #ifdef __cplusplus

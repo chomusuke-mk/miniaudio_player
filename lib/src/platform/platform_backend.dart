@@ -191,6 +191,9 @@ abstract class PlatformService {
   Stream<List<AudioDevice>> getAudioDevicesStream();
   List<AudioDevice> getAudioDevicesSync();
 
+  Future<List<AudioDevice>> getCaptureDevices();
+  List<AudioDevice> getCaptureDevicesSync();
+
   Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {
     bool replayGain = true,

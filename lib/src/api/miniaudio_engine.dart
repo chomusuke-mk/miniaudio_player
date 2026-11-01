@@ -19,6 +19,7 @@ import 'loop_mode.dart';
 import 'miniaudio_player.dart';
 import 'need_more_tracks_event.dart';
 import 'player_state.dart' show PlaybackState;
+import 'recording.dart';
 import 'silence_skip_config.dart';
 import 'spatial.dart';
 import 'track_metadata.dart';
@@ -82,6 +83,11 @@ class MiniaudioEngine<T> {
   double _spatializerWidth = 1.0;
   Reverb _reverb = Reverb.off;
   bool _limiterEnabled = true;
+  bool _isRecording = false;
+  bool _isMicrophoneEnabled = false;
+  double _micVolume = 1.0;
+  CueConfig _cueConfig = const CueConfig();
+  DuckingConfig _duckingConfig = const DuckingConfig();
 
   // Broadcast stream controllers
   final _phaseController = StreamController<EnginePhase>.broadcast();
@@ -131,6 +137,11 @@ class MiniaudioEngine<T> {
   final _volumeNormalizationController = StreamController<bool>.broadcast();
   final _infiniteMixController = StreamController<bool>.broadcast();
   final _needMoreTracksController = StreamController<NeedMoreTracksEvent>.broadcast();
+  final _isRecordingController = StreamController<bool>.broadcast();
+  final _isMicrophoneEnabledController = StreamController<bool>.broadcast();
+  final _micVolumeController = StreamController<double>.broadcast();
+  final _cueConfigController = StreamController<CueConfig>.broadcast();
+  final _duckingConfigController = StreamController<DuckingConfig>.broadcast();
 
   /// Action interface executing asynchronous playback, queue, and DSP controls.
   late final EngineAction<T> action;
@@ -240,6 +251,11 @@ class MiniaudioEngine<T> {
       volumeNormalizationController: _volumeNormalizationController,
       infiniteMixController: _infiniteMixController,
       needMoreTracksController: _needMoreTracksController,
+      isRecordingController: _isRecordingController,
+      isMicrophoneEnabledController: _isMicrophoneEnabledController,
+      micVolumeController: _micVolumeController,
+      cueConfigController: _cueConfigController,
+      duckingConfigController: _duckingConfigController,
     );
 
     state = EngineState<T>(
@@ -344,6 +360,11 @@ class MiniaudioEngine<T> {
       getDefaultReplayGain: () => _defaultReplayGain,
       getForcedReplayGain: () => _forcedReplayGain,
       getReplayGainMode: () => _replayGainMode,
+      getIsRecording: () => _rustEngine?.isRecording() ?? _isRecording,
+      getIsMicrophoneEnabled: () => _isMicrophoneEnabled,
+      getMicVolume: () => _micVolume,
+      getCueConfig: () => _cueConfig,
+      getDuckingConfig: () => _duckingConfig,
     );
 
     _initFuture = _initRustEngine();
@@ -938,6 +959,162 @@ class MiniaudioEngine<T> {
     );
   }
 
+  // --------------------------------------------------------------------------
+  // Sinks Desacoplados, Grabación & Pre-escucha Cue
+  // --------------------------------------------------------------------------
+
+  Future<void> startRecordingInternal(
+    String path, {
+    WavFormat format = WavFormat.pcm16,
+  }) async {
+    final engine = await _getEngine();
+    engine?.startRecording(path: path, format: format.toRust());
+    _isRecording = true;
+    _isRecordingController.add(true);
+  }
+
+  Future<int> stopRecordingInternal() async {
+    final engine = await _getEngine();
+    final bytes = engine?.stopRecording() ?? BigInt.zero;
+    _isRecording = false;
+    _isRecordingController.add(false);
+    return bytes.toInt();
+  }
+
+  bool isRecordingInternal() {
+    return _rustEngine?.isRecording() ?? _isRecording;
+  }
+
+  Future<int> offlineBounceInternal(
+    String path, {
+    WavFormat format = WavFormat.pcm16,
+    required Duration duration,
+  }) async {
+    final engine = await _getEngine();
+    if (engine == null) return 0;
+    final bytes = await engine.offlineBounce(
+      path: path,
+      format: format.toRust(),
+      durationMs: duration.inMilliseconds,
+    );
+    return bytes.toInt();
+  }
+
+  Future<void> enableMicrophoneInternal({
+    String? captureDeviceId,
+    bool autoDucking = true,
+    double duckingDb = -14.0,
+    double thresholdDb = -30.0,
+  }) async {
+    final engine = await _getEngine();
+    engine?.enableMicrophone(
+      captureDeviceId: captureDeviceId,
+      autoDucking: autoDucking,
+      duckingDb: duckingDb,
+      thresholdDb: thresholdDb,
+    );
+    _isMicrophoneEnabled = true;
+    _isMicrophoneEnabledController.add(true);
+    _duckingConfig = DuckingConfig(
+      enabled: autoDucking,
+      duckingDb: duckingDb,
+      thresholdDb: thresholdDb,
+    );
+    _duckingConfigController.add(_duckingConfig);
+  }
+
+  Future<void> disableMicrophoneInternal() async {
+    final engine = await _getEngine();
+    engine?.disableMicrophone();
+    _isMicrophoneEnabled = false;
+    _isMicrophoneEnabledController.add(false);
+  }
+
+  Future<void> setMicVolumeInternal(double volume) async {
+    final v = volume.clamp(0.0, 2.0);
+    _micVolume = v;
+    _micVolumeController.add(v);
+    final engine = await _getEngine();
+    engine?.setMicVolume(volume: v);
+  }
+
+  Future<void> configureCueOutputInternal({
+    String? deviceId,
+    double volume = 1.0,
+    CueMode mode = CueMode.deckA,
+  }) async {
+    final v = volume.clamp(0.0, 2.0);
+    final engine = await _getEngine();
+    engine?.configureCueOutput(
+      cueDeviceId: deviceId,
+      volume: v,
+      mode: mode.value,
+    );
+    _cueConfig = CueConfig(
+      enabled: true,
+      deviceId: deviceId,
+      volume: v,
+      mode: mode,
+    );
+    _cueConfigController.add(_cueConfig);
+  }
+
+  Future<void> setCueVolumeInternal(double volume) async {
+    final v = volume.clamp(0.0, 2.0);
+    _cueConfig = CueConfig(
+      enabled: _cueConfig.enabled,
+      deviceId: _cueConfig.deviceId,
+      volume: v,
+      mode: _cueConfig.mode,
+    );
+    _cueConfigController.add(_cueConfig);
+    final engine = await _getEngine();
+    engine?.setCueVolume(volume: v);
+  }
+
+  Future<void> setCueModeInternal(CueMode mode) async {
+    _cueConfig = CueConfig(
+      enabled: _cueConfig.enabled,
+      deviceId: _cueConfig.deviceId,
+      volume: _cueConfig.volume,
+      mode: mode,
+    );
+    _cueConfigController.add(_cueConfig);
+    final engine = await _getEngine();
+    engine?.setCueMode(mode: mode.value);
+  }
+
+  Future<void> disableCueOutputInternal() async {
+    final engine = await _getEngine();
+    engine?.disableCueOutput();
+    _cueConfig = CueConfig(
+      enabled: false,
+      deviceId: _cueConfig.deviceId,
+      volume: _cueConfig.volume,
+      mode: _cueConfig.mode,
+    );
+    _cueConfigController.add(_cueConfig);
+  }
+
+  Future<void> configureOutputsInternal({
+    AudioDevice? masterDevice,
+    AudioDevice? cueDevice,
+    String? recordPath,
+    WavFormat format = WavFormat.pcm16,
+  }) async {
+    if (masterDevice != null) {
+      await setDeviceInternal(masterDevice);
+    }
+    if (cueDevice != null) {
+      await configureCueOutputInternal(
+        deviceId: cueDevice.id == 'auto' || cueDevice.id.isEmpty ? null : cueDevice.id,
+      );
+    }
+    if (recordPath != null) {
+      await startRecordingInternal(recordPath, format: format);
+    }
+  }
+
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
@@ -993,5 +1170,10 @@ class MiniaudioEngine<T> {
     await _volumeNormalizationController.close();
     await _infiniteMixController.close();
     await _needMoreTracksController.close();
+    await _isRecordingController.close();
+    await _isMicrophoneEnabledController.close();
+    await _micVolumeController.close();
+    await _cueConfigController.close();
+    await _duckingConfigController.close();
   }
 }

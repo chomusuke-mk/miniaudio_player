@@ -10,6 +10,7 @@ import 'loop_mode.dart';
 import 'miniaudio_engine.dart';
 import 'silence_skip_config.dart';
 import 'spatial.dart';
+import 'recording.dart';
 
 /// Action interface executing asynchronous playback, queue navigation,
 /// crossfade configuration, and DSP controls on [MiniaudioEngine].
@@ -385,4 +386,91 @@ class EngineAction<T> {
 
   /// Configures studio-grade algorithmic reverberation ([Reverb]) across both decks.
   Future<void> setReverb(Reverb config) => _engine.setReverbInternal(config);
+
+  // --------------------------------------------------------------------------
+  // Sinks Desacoplados, Grabación & Pre-escucha Cue
+  // --------------------------------------------------------------------------
+
+  /// Starts live background recording of the mixed audio output to a RIFF WAV file at [path].
+  Future<void> startRecording(
+    String path, {
+    WavFormat format = WavFormat.pcm16,
+  }) =>
+      _engine.startRecordingInternal(path, format: format);
+
+  /// Stops the active recording session, finalizes RIFF WAV chunk sizes, and flushes to disk.
+  ///
+  /// Returns the total number of audio data bytes written to disk.
+  Future<int> stopRecording() => _engine.stopRecordingInternal();
+
+  /// Whether a live recording session is currently active.
+  bool isRecording() => _engine.isRecordingInternal();
+
+  /// Renders a fast offline mix (bounce) of the current queue directly to a WAV file at [path].
+  ///
+  /// Runs at 100% of available CPU speed without real-time playback delays.
+  /// Returns the total number of audio data bytes written to disk.
+  Future<int> offlineBounce(
+    String path, {
+    WavFormat format = WavFormat.pcm16,
+    required Duration duration,
+  }) =>
+      _engine.offlineBounceInternal(path, format: format, duration: duration);
+
+  /// Enables real-time microphone / line-in capture into the mix with optional auto-ducking sidechain.
+  Future<void> enableMicrophone({
+    String? captureDeviceId,
+    bool autoDucking = true,
+    double duckingDb = -14.0,
+    double thresholdDb = -30.0,
+  }) =>
+      _engine.enableMicrophoneInternal(
+        captureDeviceId: captureDeviceId,
+        autoDucking: autoDucking,
+        duckingDb: duckingDb,
+        thresholdDb: thresholdDb,
+      );
+
+  /// Disables microphone capture and tears down the hardware capture device node.
+  Future<void> disableMicrophone() => _engine.disableMicrophoneInternal();
+
+  /// Sets the input volume multiplier for captured microphone audio (0.0 to 2.0).
+  Future<void> setMicVolume(double volume) =>
+      _engine.setMicVolumeInternal(volume);
+
+  /// Configures a secondary audio output device for DJ cue pre-listening or voice chat.
+  Future<void> configureCueOutput({
+    String? deviceId,
+    double volume = 1.0,
+    CueMode mode = CueMode.deckA,
+  }) =>
+      _engine.configureCueOutputInternal(
+        deviceId: deviceId,
+        volume: volume,
+        mode: mode,
+      );
+
+  /// Sets the DJ cue headphone pre-listening volume level (0.0 to 2.0).
+  Future<void> setCueVolume(double volume) =>
+      _engine.setCueVolumeInternal(volume);
+
+  /// Sets the DJ cue pre-listening source routing mode ([CueMode.deckA], [CueMode.deckB], [CueMode.master]).
+  Future<void> setCueMode(CueMode mode) => _engine.setCueModeInternal(mode);
+
+  /// Disables the secondary DJ cue output and tears down its device.
+  Future<void> disableCueOutput() => _engine.disableCueOutputInternal();
+
+  /// Configures master playback, cue pre-listening, and optional live recording in a single unified call.
+  Future<void> configureOutputs({
+    AudioDevice? masterDevice,
+    AudioDevice? cueDevice,
+    String? recordPath,
+    WavFormat format = WavFormat.pcm16,
+  }) =>
+      _engine.configureOutputsInternal(
+        masterDevice: masterDevice,
+        cueDevice: cueDevice,
+        recordPath: recordPath,
+        format: format,
+      );
 }

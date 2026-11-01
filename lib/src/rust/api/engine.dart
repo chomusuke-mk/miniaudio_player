@@ -15,6 +15,19 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void clearQueue({required bool keepCurrent});
 
+  void configureCueOutput(
+      {String? cueDeviceId, required double volume, required int mode});
+
+  void disableCueOutput();
+
+  void disableMicrophone();
+
+  void enableMicrophone(
+      {String? captureDeviceId,
+      required bool autoDucking,
+      required double duckingDb,
+      required double thresholdDb});
+
   BigInt? getCurrentIndex();
 
   PlatformInt64? getCurrentTrackId();
@@ -43,6 +56,8 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   bool isPlaying();
 
+  bool isRecording();
+
   factory RustEngine(
           {required int sampleRate,
           required int channels,
@@ -55,6 +70,11 @@ abstract class RustEngine implements RustOpaqueInterface {
           playbackDeviceId: playbackDeviceId);
 
   void next({BigInt? crossfadeDurationMs, int? curve});
+
+  Future<BigInt> offlineBounce(
+      {required String path,
+      required RustWavFormat format,
+      required PlatformInt64 durationMs});
 
   void pause();
 
@@ -74,6 +94,10 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void setCrossfeed({required int mode});
 
+  void setCueMode({required int mode});
+
+  void setCueVolume({required double volume});
+
   void setDevice({required String deviceId});
 
   void setEqualizer({required RustEqualizerParams params});
@@ -85,6 +109,8 @@ abstract class RustEngine implements RustOpaqueInterface {
   void setLimiter({required bool enabled});
 
   void setLoopMode({required int mode});
+
+  void setMicVolume({required double volume});
 
   void setMono({required bool enabled});
 
@@ -124,7 +150,11 @@ abstract class RustEngine implements RustOpaqueInterface {
   void skipToIndex(
       {required BigInt index, BigInt? crossfadeDurationMs, int? curve});
 
+  void startRecording({required String path, required RustWavFormat format});
+
   void stop();
+
+  BigInt stopRecording();
 
   Stream<RustEngineEvent> subscribeEvents();
 }

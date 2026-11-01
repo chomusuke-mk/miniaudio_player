@@ -2,16 +2,19 @@
 //! unified telemetry, and composite visualizer processing.
 
 use std::os::raw::{c_char, c_void};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 
 use crate::bridge::ffi::{
     map_device_create, map_device_destroy, map_device_set_device,
     map_device_start, map_device_stop, MapDeviceContext, MAP_SUCCESS,
 };
+use crate::core::capture::DeviceCaptureNode;
 use crate::core::player::PlayerCoordinator;
+use crate::core::recording::{offline_bounce_to_wav, LiveRecorder, WavFormat};
 use crate::core::renderer::{AudioRenderer, PcmRendererHeader};
+use crate::dsp::ducking::AutoDucker;
 use crate::dsp::visualizer::{Visualizer, VisualizerData};
 use crate::sync::seqlock::CachePaddedSeqlock;
 
@@ -64,6 +67,22 @@ pub struct EngineRenderer {
     pub sample_rate: u32,
     pub scratch_a: Vec<f32>,
     pub scratch_b: Vec<f32>,
+
+    // Recording sink
+    pub record_producer: Option<rtrb::Producer<f32>>,
+    pub is_recording: Arc<AtomicBool>,
+
+    // Auto-ducking & Microphone capture
+    pub ducker: AutoDucker,
+    pub mic_consumer: Arc<Mutex<Option<rtrb::Consumer<f32>>>>,
+    pub mic_enabled: Arc<AtomicBool>,
+    pub mic_volume: Arc<AtomicU32>,
+    pub scratch_mic: Vec<f32>,
+
+    // Cue output
+    pub cue_producer: Option<rtrb::Producer<f32>>,
+    pub cue_enabled: Arc<AtomicBool>,
+    pub cue_mode: Arc<AtomicI32>, // 0: Deck A, 1: Deck B, 2: Master
 }
 
 unsafe impl Send for EngineRenderer {}
@@ -82,6 +101,78 @@ pub unsafe extern "C" fn engine_renderer_notif_trampoline(
     _notif: i32,
 ) {
     // Hardware notification callback
+}
+
+#[repr(C)]
+pub struct CueRenderer {
+    pub header: PcmRendererHeader,
+    pub consumer: rtrb::Consumer<f32>,
+    pub volume: Arc<AtomicU32>,
+    pub channels: usize,
+    pub is_enabled: Arc<AtomicBool>,
+}
+
+unsafe impl Send for CueRenderer {}
+
+pub unsafe extern "C" fn cue_renderer_render_trampoline(
+    ptr: *mut c_void,
+    output: *mut f32,
+    count: usize,
+) {
+    let r = &mut *(ptr as *mut CueRenderer);
+    r.render_pcm(output, count);
+}
+
+pub unsafe extern "C" fn cue_renderer_notif_trampoline(
+    _ptr: *mut c_void,
+    _notif: i32,
+) {}
+
+impl CueRenderer {
+    #[inline]
+    pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
+        if output_frames.is_null() || frame_count == 0 {
+            return;
+        }
+
+        let total_samples = frame_count * self.channels;
+        let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
+
+        if !self.is_enabled.load(Ordering::Relaxed) {
+            out_slice.fill(0.0);
+            return;
+        }
+
+        let slots = self.consumer.slots();
+        let to_read = slots.min(total_samples);
+        let read = if to_read > 0 {
+            if let Ok(chunk) = self.consumer.read_chunk(to_read) {
+                let (s1, s2) = chunk.as_slices();
+                let n1 = s1.len();
+                out_slice[..n1].copy_from_slice(s1);
+                if !s2.is_empty() {
+                    out_slice[n1..to_read].copy_from_slice(s2);
+                }
+                chunk.commit_all();
+                to_read
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        if read < total_samples {
+            out_slice[read..].fill(0.0);
+        }
+
+        let vol = f32::from_bits(self.volume.load(Ordering::Relaxed));
+        if (vol - 1.0).abs() > 0.001 {
+            for sample in out_slice.iter_mut() {
+                *sample *= vol;
+            }
+        }
+    }
 }
 
 impl EngineRenderer {
@@ -173,9 +264,88 @@ impl EngineRenderer {
             }
         }
 
-        // Compute composite FFT visualizer data directly on the mixed output buffer
+        let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
+
+        // 1. Microphone & Auto-Ducking
+        if self.mic_enabled.load(Ordering::Relaxed) {
+            if let Ok(mut mic_guard) = self.mic_consumer.try_lock() {
+                if let Some(ref mut mic_c) = *mic_guard {
+                    let slots = mic_c.slots();
+                    let to_read = slots.min(total_samples);
+                    if to_read > 0 {
+                        if self.scratch_mic.len() < to_read {
+                            self.scratch_mic.resize(to_read, 0.0);
+                        }
+                        if let Ok(chunk) = mic_c.read_chunk(to_read) {
+                            let (s1, s2) = chunk.as_slices();
+                            let n1 = s1.len();
+                            self.scratch_mic[..n1].copy_from_slice(s1);
+                            if !s2.is_empty() {
+                                self.scratch_mic[n1..to_read].copy_from_slice(s2);
+                            }
+                            chunk.commit_all();
+
+                            // Process sidechain auto-ducking on music
+                            self.ducker.process_sidechain(&self.scratch_mic[..to_read], out_slice, self.channels);
+
+                            // Mix microphone into master output
+                            let mic_gain = f32::from_bits(self.mic_volume.load(Ordering::Relaxed));
+                            let min_len = to_read.min(total_samples);
+                            for i in 0..min_len {
+                                out_slice[i] += mic_gain * self.scratch_mic[i];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Cue Output Push
+        if self.cue_enabled.load(Ordering::Relaxed) {
+            if let Some(ref mut cue_p) = self.cue_producer {
+                let slots = cue_p.slots();
+                let to_write = slots.min(total_samples);
+                if to_write > 0 {
+                    let mode = self.cue_mode.load(Ordering::Relaxed);
+                    let src = match mode {
+                        0 => if self.scratch_a.len() >= to_write { &self.scratch_a[..to_write] } else { &out_slice[..to_write] },
+                        1 => if self.scratch_b.len() >= to_write { &self.scratch_b[..to_write] } else { &out_slice[..to_write] },
+                        _ => &out_slice[..to_write],
+                    };
+                    if let Ok(mut chunk) = cue_p.write_chunk(to_write) {
+                        let (s1, s2) = chunk.as_mut_slices();
+                        let n1 = s1.len();
+                        s1.copy_from_slice(&src[..n1]);
+                        if !s2.is_empty() {
+                            s2.copy_from_slice(&src[n1..to_write]);
+                        }
+                        chunk.commit_all();
+                    }
+                }
+            }
+        }
+
+        // 3. Live Recording Sink Push
+        if self.is_recording.load(Ordering::Relaxed) {
+            if let Some(ref mut rec_p) = self.record_producer {
+                let slots = rec_p.slots();
+                let to_write = slots.min(total_samples);
+                if to_write > 0 {
+                    if let Ok(mut chunk) = rec_p.write_chunk(to_write) {
+                        let (s1, s2) = chunk.as_mut_slices();
+                        let n1 = s1.len();
+                        s1.copy_from_slice(&out_slice[..n1]);
+                        if !s2.is_empty() {
+                            s2.copy_from_slice(&out_slice[n1..to_write]);
+                        }
+                        chunk.commit_all();
+                    }
+                }
+            }
+        }
+
+        // 4. Compute composite FFT visualizer data directly on the mixed output buffer
         if self.visualizer_enabled.load(Ordering::Relaxed) {
-            let out_slice = unsafe { std::slice::from_raw_parts(output_frames, total_samples) };
             self.visualizer.process_frames(out_slice);
             let vis = self.visualizer.data();
             self.visualizer_seqlock.write(|v| *v = vis);
@@ -217,6 +387,24 @@ pub struct EngineCoordinator {
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     pub visualizer_enabled: Arc<AtomicBool>,
 
+    // Recording sink
+    pub live_recorder: Arc<RwLock<LiveRecorder>>,
+    pub is_recording: Arc<AtomicBool>,
+    pub record_consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
+
+    // Cue output
+    pub cue_device_ctx: *mut MapDeviceContext,
+    pub cue_renderer_ptr: *mut CueRenderer,
+    pub cue_enabled: Arc<AtomicBool>,
+    pub cue_volume: Arc<AtomicU32>,
+    pub cue_mode: Arc<AtomicI32>,
+
+    // Microphone & Auto-Ducking
+    pub capture_node: Arc<RwLock<Option<Box<DeviceCaptureNode>>>>,
+    pub mic_consumer: Arc<Mutex<Option<rtrb::Consumer<f32>>>>,
+    pub mic_enabled: Arc<AtomicBool>,
+    pub mic_volume: Arc<AtomicU32>,
+
     pub thread_running: Arc<AtomicBool>,
     pub monitor_thread: Option<JoinHandle<()>>,
 }
@@ -231,6 +419,30 @@ impl Drop for EngineCoordinator {
             let _ = handle.join();
         }
 
+        // Clean up Cue device
+        if !self.cue_device_ctx.is_null() {
+            unsafe {
+                map_device_stop(self.cue_device_ctx);
+                map_device_destroy(self.cue_device_ctx);
+            }
+            self.cue_device_ctx = std::ptr::null_mut();
+        }
+
+        if !self.cue_renderer_ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.cue_renderer_ptr));
+            }
+            self.cue_renderer_ptr = std::ptr::null_mut();
+        }
+
+        // Clean up Microphone node
+        if let Ok(mut cap_lock) = self.capture_node.write() {
+            if let Some(node) = cap_lock.take() {
+                node.stop();
+            }
+        }
+
+        // Clean up Master playback device
         if !self.device_ctx.is_null() {
             unsafe {
                 map_device_destroy(self.device_ctx);
@@ -269,6 +481,30 @@ impl EngineCoordinator {
         let visualizer_seqlock = Arc::new(CachePaddedSeqlock::new(VisualizerData::default()));
         let visualizer_enabled = Arc::new(AtomicBool::new(false));
 
+        let (record_producer, record_consumer) = rtrb::RingBuffer::new(131072);
+        let is_recording = Arc::new(AtomicBool::new(false));
+
+        let (cue_producer, cue_consumer) = rtrb::RingBuffer::new(32768);
+        let cue_enabled = Arc::new(AtomicBool::new(false));
+        let cue_volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let cue_mode = Arc::new(AtomicI32::new(0)); // 0: Deck A
+
+        let cue_renderer = CueRenderer {
+            header: PcmRendererHeader {
+                render_fn: cue_renderer_render_trampoline,
+                notif_fn: cue_renderer_notif_trampoline,
+            },
+            consumer: cue_consumer,
+            volume: cue_volume.clone(),
+            channels: ch as usize,
+            is_enabled: cue_enabled.clone(),
+        };
+        let cue_renderer_ptr = Box::into_raw(Box::new(cue_renderer));
+
+        let mic_consumer = Arc::new(Mutex::new(None));
+        let mic_enabled = Arc::new(AtomicBool::new(false));
+        let mic_volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+
         let renderer = EngineRenderer {
             header: PcmRendererHeader {
                 render_fn: engine_renderer_render_trampoline,
@@ -286,6 +522,19 @@ impl EngineCoordinator {
             sample_rate: sr,
             scratch_a: vec![0.0f32; period as usize * ch as usize * 4],
             scratch_b: vec![0.0f32; period as usize * ch as usize * 4],
+
+            record_producer: Some(record_producer),
+            is_recording: is_recording.clone(),
+
+            ducker: AutoDucker::new(sr),
+            mic_consumer: mic_consumer.clone(),
+            mic_enabled: mic_enabled.clone(),
+            mic_volume: mic_volume.clone(),
+            scratch_mic: vec![0.0f32; period as usize * ch as usize * 4],
+
+            cue_producer: Some(cue_producer),
+            cue_enabled: cue_enabled.clone(),
+            cue_mode: cue_mode.clone(),
         };
         let renderer_ptr = Box::into_raw(Box::new(renderer));
 
@@ -302,7 +551,10 @@ impl EngineCoordinator {
         };
 
         if device_ctx.is_null() || dev_res != 0 {
-            unsafe { drop(Box::from_raw(renderer_ptr)); }
+            unsafe {
+                drop(Box::from_raw(cue_renderer_ptr));
+                drop(Box::from_raw(renderer_ptr));
+            }
             return Err(dev_res);
         }
 
@@ -337,6 +589,22 @@ impl EngineCoordinator {
             crossfade_curve,
             visualizer_seqlock,
             visualizer_enabled,
+
+            live_recorder: Arc::new(RwLock::new(LiveRecorder::new(sr, ch as usize, WavFormat::Pcm16))),
+            is_recording,
+            record_consumer: Arc::new(Mutex::new(record_consumer)),
+
+            cue_device_ctx: std::ptr::null_mut(),
+            cue_renderer_ptr,
+            cue_enabled,
+            cue_volume,
+            cue_mode,
+
+            capture_node: Arc::new(RwLock::new(None)),
+            mic_consumer,
+            mic_enabled,
+            mic_volume,
+
             thread_running,
             monitor_thread: None,
         }))
@@ -493,5 +761,151 @@ impl EngineCoordinator {
     pub fn set_spatial_speed_of_sound(&mut self, speed: f32) {
         self.deck_a.set_spatial_speed_of_sound(speed);
         self.deck_b.set_spatial_speed_of_sound(speed);
+    }
+
+    pub fn start_recording(&self, path: &str, format: WavFormat) -> Result<(), String> {
+        let mut rec = self.live_recorder.write().unwrap();
+        rec.set_format(format);
+        rec.start_shared(path, self.record_consumer.clone())?;
+        self.is_recording.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    pub fn stop_recording(&self) -> Result<u64, String> {
+        self.is_recording.store(false, Ordering::Release);
+        let mut rec = self.live_recorder.write().unwrap();
+        rec.stop()
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.is_recording.load(Ordering::Acquire)
+    }
+
+    pub fn offline_bounce(
+        &self,
+        path: &str,
+        format: WavFormat,
+        duration_ms: i64,
+    ) -> Result<u64, String> {
+        let sr = unsafe { (*self.renderer_ptr).sample_rate };
+        let ch = unsafe { (*self.renderer_ptr).channels };
+        let total_frames = ((duration_ms as f64 * 0.001) * sr as f64).round() as usize;
+        let total_samples = total_frames * ch;
+        let mut samples = vec![0.0f32; total_samples];
+
+        unsafe {
+            (*self.renderer_ptr).render_pcm(samples.as_mut_ptr(), total_frames);
+        }
+
+        offline_bounce_to_wav(path, &samples, sr, ch, format)
+    }
+
+    pub fn enable_microphone(
+        &self,
+        capture_device_id: Option<String>,
+        auto_ducking: bool,
+        ducking_db: f32,
+        threshold_db: f32,
+    ) -> Result<(), String> {
+        let dev_id_c = capture_device_id.map(|s| std::ffi::CString::new(s).unwrap_or_default());
+        let dev_id_ptr = dev_id_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+
+        let sr = unsafe { (*self.renderer_ptr).sample_rate };
+        let (node, consumer) = DeviceCaptureNode::new(sr, 1, 512, dev_id_ptr)
+            .map_err(|e| format!("Failed to create capture device: error {}", e))?;
+
+        let _ = node.start();
+
+        if let Ok(mut guard) = self.mic_consumer.lock() {
+            *guard = Some(consumer);
+        }
+
+        unsafe {
+            (*self.renderer_ptr).ducker.set_params(
+                auto_ducking,
+                ducking_db,
+                threshold_db,
+                30.0,
+                250.0,
+                400.0,
+            );
+        }
+
+        self.mic_enabled.store(true, Ordering::Release);
+        let mut cap_lock = self.capture_node.write().unwrap();
+        *cap_lock = Some(node);
+        Ok(())
+    }
+
+    pub fn disable_microphone(&self) {
+        self.mic_enabled.store(false, Ordering::Release);
+        if let Ok(mut guard) = self.mic_consumer.lock() {
+            *guard = None;
+        }
+        let mut cap_lock = self.capture_node.write().unwrap();
+        if let Some(node) = cap_lock.take() {
+            node.stop();
+        }
+    }
+
+    pub fn set_mic_volume(&self, volume: f32) {
+        self.mic_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn configure_cue_output(
+        &mut self,
+        cue_device_id: Option<String>,
+        volume: f32,
+        mode: i32,
+    ) -> Result<(), String> {
+        let dev_id_c = cue_device_id.map(|s| std::ffi::CString::new(s).unwrap_or_default());
+        let dev_id_ptr = dev_id_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+
+        let sr = unsafe { (*self.renderer_ptr).sample_rate };
+        let ch = unsafe { (*self.renderer_ptr).channels } as u32;
+
+        if self.cue_device_ctx.is_null() {
+            let mut dev_res = 0;
+            let ctx = unsafe {
+                map_device_create(
+                    sr,
+                    ch,
+                    1024,
+                    dev_id_ptr,
+                    self.cue_renderer_ptr as *mut c_void,
+                    &mut dev_res,
+                )
+            };
+            if ctx.is_null() || dev_res != 0 {
+                return Err(format!("Failed to create cue audio device: error {}", dev_res));
+            }
+            let start_res = unsafe { map_device_start(ctx) };
+            if start_res != 0 {
+                unsafe { map_device_destroy(ctx); }
+                return Err(format!("Failed to start cue device: error {}", start_res));
+            }
+            self.cue_device_ctx = ctx;
+        } else if let Some(ref id_c) = dev_id_c {
+            unsafe {
+                map_device_set_device(self.cue_device_ctx, id_c.as_ptr());
+            }
+        }
+
+        self.cue_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.cue_mode.store(mode.clamp(0, 2), Ordering::Relaxed);
+        self.cue_enabled.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    pub fn set_cue_volume(&self, volume: f32) {
+        self.cue_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn set_cue_mode(&self, mode: i32) {
+        self.cue_mode.store(mode.clamp(0, 2), Ordering::Relaxed);
+    }
+
+    pub fn disable_cue_output(&self) {
+        self.cue_enabled.store(false, Ordering::Release);
     }
 }
