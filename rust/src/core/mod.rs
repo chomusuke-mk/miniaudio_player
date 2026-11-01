@@ -4,6 +4,7 @@ pub mod player;
 pub mod renderer;
 pub mod types;
 pub mod typestate;
+pub mod voice_pool_coordinator;
 
 pub use config::PlayerConfig;
 pub use player::{

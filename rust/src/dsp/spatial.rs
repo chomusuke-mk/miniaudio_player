@@ -169,6 +169,7 @@ pub struct SpatialEvaluation {
 }
 
 /// Real-time 3D spatial processor providing mathematical calculations and slew-rate smoothing.
+#[derive(Debug, Clone)]
 pub struct SpatialProcessor {
     pub speed_of_sound: f32,
     current_doppler_ratio: f32,

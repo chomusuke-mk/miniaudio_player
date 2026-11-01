@@ -12,6 +12,7 @@ pub mod sonic;
 pub mod spatial;
 pub mod timestretch;
 pub mod visualizer;
+pub mod voice_pool;
 
 pub use analysis::{
     analyze_file, analyze_media_source, analyze_memory, free_analysis_result, AudioAnalysisConfig,

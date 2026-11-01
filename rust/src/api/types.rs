@@ -320,3 +320,43 @@ impl From<RustSpatialEmitter> for crate::dsp::spatial::SpatialEmitter {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustVoiceStealingPolicy {
+    #[default]
+    LowestPriority,
+    Oldest,
+    Quietest,
+    Farthest,
+}
+
+impl From<RustVoiceStealingPolicy> for crate::dsp::voice_pool::VoiceStealingPolicy {
+    fn from(p: RustVoiceStealingPolicy) -> Self {
+        match p {
+            RustVoiceStealingPolicy::LowestPriority => Self::LowestPriority,
+            RustVoiceStealingPolicy::Oldest => Self::Oldest,
+            RustVoiceStealingPolicy::Quietest => Self::Quietest,
+            RustVoiceStealingPolicy::Farthest => Self::Farthest,
+        }
+    }
+}
+
+impl From<crate::dsp::voice_pool::VoiceStealingPolicy> for RustVoiceStealingPolicy {
+    fn from(p: crate::dsp::voice_pool::VoiceStealingPolicy) -> Self {
+        match p {
+            crate::dsp::voice_pool::VoiceStealingPolicy::LowestPriority => Self::LowestPriority,
+            crate::dsp::voice_pool::VoiceStealingPolicy::Oldest => Self::Oldest,
+            crate::dsp::voice_pool::VoiceStealingPolicy::Quietest => Self::Quietest,
+            crate::dsp::voice_pool::VoiceStealingPolicy::Farthest => Self::Farthest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RustSoundBufferInfo {
+    pub id: u64,
+    pub sample_rate: u32,
+    pub channels: u32,
+    pub duration_ms: i64,
+    pub frame_count: usize,
+}

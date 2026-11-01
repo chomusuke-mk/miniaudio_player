@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
@@ -692,6 +692,44 @@ class RustSilenceConfig {
           enabled == other.enabled;
 }
 
+class RustSoundBufferInfo {
+  final BigInt id;
+  final int sampleRate;
+  final int channels;
+  final PlatformInt64 durationMs;
+  final BigInt frameCount;
+
+  const RustSoundBufferInfo({
+    required this.id,
+    required this.sampleRate,
+    required this.channels,
+    required this.durationMs,
+    required this.frameCount,
+  });
+
+  static Future<RustSoundBufferInfo> default_() =>
+      RustLib.instance.api.crateApiTypesRustSoundBufferInfoDefault();
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      sampleRate.hashCode ^
+      channels.hashCode ^
+      durationMs.hashCode ^
+      frameCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustSoundBufferInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sampleRate == other.sampleRate &&
+          channels == other.channels &&
+          durationMs == other.durationMs &&
+          frameCount == other.frameCount;
+}
+
 class RustSpatialEmitter {
   final RustVector3 position;
   final RustVector3 velocity;
@@ -898,4 +936,15 @@ class RustVisualizerData {
           peak == other.peak &&
           left == other.left &&
           right == other.right;
+}
+
+enum RustVoiceStealingPolicy {
+  lowestPriority,
+  oldest,
+  quietest,
+  farthest,
+  ;
+
+  static Future<RustVoiceStealingPolicy> default_() =>
+      RustLib.instance.api.crateApiTypesRustVoiceStealingPolicyDefault();
 }
