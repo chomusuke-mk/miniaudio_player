@@ -23,5 +23,6 @@ export 'src/api/engine_item.dart';
 export 'src/api/engine_state.dart';
 export 'src/api/engine_stream.dart';
 export 'src/api/engine_action.dart';
+export 'src/api/need_more_tracks_event.dart';
 export 'src/api/miniaudio_engine.dart';
 export 'src/loader/custom_byte_provider.dart';

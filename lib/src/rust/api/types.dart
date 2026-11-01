@@ -242,6 +242,10 @@ sealed class RustEngineEvent with _$RustEngineEvent {
   const factory RustEngineEvent.queueChanged(
     List<RustEngineItem> field0,
   ) = RustEngineEvent_QueueChanged;
+  const factory RustEngineEvent.needMoreTracks({
+    required PlatformInt64 currentTrackId,
+    required BigInt remainingTracks,
+  }) = RustEngineEvent_NeedMoreTracks;
   const factory RustEngineEvent.volume(
     double field0,
   ) = RustEngineEvent_Volume;

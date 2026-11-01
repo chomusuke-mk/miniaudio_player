@@ -43,6 +43,14 @@ class EngineAction<T> {
         shuffle: shuffle,
       );
 
+  /// Alias for [open]. Replaces the queue with [items] and prepares the entry at [startIndex].
+  Future<void> openQueue(
+    List<EngineItem<T>> items, {
+    int? startIndex,
+    bool shuffle = false,
+  }) =>
+      open(items, startIndex: startIndex, shuffle: shuffle);
+
   // --------------------------------------------------------------------------
   // Transport Controls
   // --------------------------------------------------------------------------

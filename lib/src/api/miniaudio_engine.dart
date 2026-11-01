@@ -17,6 +17,7 @@ import 'engine_state.dart';
 import 'engine_stream.dart';
 import 'loop_mode.dart';
 import 'miniaudio_player.dart';
+import 'need_more_tracks_event.dart';
 import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
 import 'track_metadata.dart';
@@ -33,6 +34,8 @@ class MiniaudioEngine<T> {
   bool get isDisposed => _isDisposed;
 
   final List<EngineItem<T>> _queue = [];
+  final Map<int, EngineItem<T>> _shadowItems = {};
+  int _nextAutoId = 0;
   int _currentIndex = -1;
   LoopMode _loopMode = LoopMode.off;
   bool _shuffle = false;
@@ -126,6 +129,7 @@ class MiniaudioEngine<T> {
   final _isCrossfadingController = StreamController<bool>.broadcast();
   final _volumeNormalizationController = StreamController<bool>.broadcast();
   final _infiniteMixController = StreamController<bool>.broadcast();
+  final _needMoreTracksController = StreamController<NeedMoreTracksEvent>.broadcast();
 
   /// Action interface executing asynchronous playback, queue, and DSP controls.
   late final EngineAction<T> action;
@@ -208,6 +212,7 @@ class MiniaudioEngine<T> {
       isCrossfadingController: _isCrossfadingController,
       volumeNormalizationController: _volumeNormalizationController,
       infiniteMixController: _infiniteMixController,
+      needMoreTracksController: _needMoreTracksController,
     );
 
     state = EngineState<T>(
@@ -464,6 +469,39 @@ class MiniaudioEngine<T> {
         _hasPreviousController.add(idx > 0 || _loopMode == LoopMode.all);
         _updateReplayGainForCurrentItem();
 
+      case rust_types.RustEngineEvent_QueueChanged(field0: final rItems):
+        _queue.clear();
+        for (final r in rItems) {
+          final id = r.id.toInt();
+          final original = _shadowItems[id];
+          if (original != null) {
+            _queue.add(original);
+          } else {
+            _queue.add(EngineItem<T>(
+              source: AudioSource(r.source),
+              id: id,
+              replayGainDb: r.replayGainDb,
+              replayPeak: r.replayPeak,
+            ));
+          }
+        }
+        _queueController.add(List.unmodifiable(_queue));
+        if (_currentIndex >= 0 && _currentIndex < _queue.length) {
+          _currentItemController.add(_queue[_currentIndex]);
+          _currentDataController.add(_queue[_currentIndex].data);
+        }
+        _hasNextController.add(_currentIndex + 1 < _queue.length || _loopMode == LoopMode.all);
+        _hasPreviousController.add(_currentIndex > 0 || _loopMode == LoopMode.all);
+
+      case rust_types.RustEngineEvent_NeedMoreTracks(
+          currentTrackId: final tid,
+          remainingTracks: final rem,
+        ):
+        _needMoreTracksController.add(NeedMoreTracksEvent(
+          currentTrackId: tid.toInt(),
+          remainingTracks: rem.toInt(),
+        ));
+
       case rust_types.RustEngineEvent_Volume(field0: final v):
         _volume = v;
         _volumeController.add(v);
@@ -515,16 +553,20 @@ class MiniaudioEngine<T> {
     int? startIndex,
     bool shuffle = false,
   }) async {
+    _shadowItems.clear();
+    _nextAutoId = 0;
     _queue.clear();
-    _queue.addAll(items);
-    _queueController.add(List.unmodifiable(_queue));
 
     final effectiveStart = startIndex ?? 0;
     _currentIndex = effectiveStart;
 
     final engine = await _getEngine();
     final rustItems = <rust_types.RustEngineItem>[];
-    for (final item in items) {
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      final effectiveId = item.id ?? ++_nextAutoId;
+      _shadowItems[effectiveId] = item;
+
       if (item.source is UriAudioSource) {
         final s = item.source as UriAudioSource;
         final str = s.sourceString;
@@ -537,7 +579,7 @@ class MiniaudioEngine<T> {
             try {
               final bytes = await loader(key);
               rustItems.add(rust_types.RustEngineItem(
-                id: item.id ?? item.position,
+                id: effectiveId,
                 source: str,
                 dataBytes: bytes,
                 replayGainDb: item.replayGainDb,
@@ -548,8 +590,11 @@ class MiniaudioEngine<T> {
           }
         }
       }
-      rustItems.add(item.toRustItem());
+      rustItems.add(item.toRustItem(effectiveId));
     }
+    _queue.addAll(items);
+    _queueController.add(List.unmodifiable(_queue));
+
     engine?.setQueue(
       items: rustItems,
       startIndex: items.isNotEmpty ? BigInt.from(effectiveStart) : null,
@@ -613,51 +658,38 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> insertNextInternal(EngineItem<T> item) async {
-    final insertIdx = (_currentIndex + 1).clamp(0, _queue.length);
-    _queue.insert(insertIdx, item);
-    _queueController.add(List.unmodifiable(_queue));
-    final rustItems = _queue.map((e) => e.toRustItem()).toList();
-    _rustEngine?.setQueue(items: rustItems, startIndex: BigInt.from(_currentIndex));
+    final effectiveId = item.id ?? ++_nextAutoId;
+    _shadowItems[effectiveId] = item;
+    final engine = await _getEngine();
+    engine?.insertNext(item: item.toRustItem(effectiveId));
   }
 
   Future<void> appendInternal(List<EngineItem<T>> items) async {
-    _queue.addAll(items);
-    _queueController.add(List.unmodifiable(_queue));
-    final rustItems = _queue.map((e) => e.toRustItem()).toList();
-    _rustEngine?.setQueue(items: rustItems, startIndex: BigInt.from(_currentIndex));
+    final rustItems = <rust_types.RustEngineItem>[];
+    for (final item in items) {
+      final effectiveId = item.id ?? ++_nextAutoId;
+      _shadowItems[effectiveId] = item;
+      rustItems.add(item.toRustItem(effectiveId));
+    }
+    final engine = await _getEngine();
+    engine?.append(items: rustItems);
   }
 
   Future<void> removeAtInternal(int index) async {
-    if (index < 0 || index >= _queue.length) return;
-    _queue.removeAt(index);
-    _queueController.add(List.unmodifiable(_queue));
-    final rustItems = _queue.map((e) => e.toRustItem()).toList();
-    _rustEngine?.setQueue(items: rustItems, startIndex: BigInt.from(_currentIndex));
+    final engine = await _getEngine();
+    engine?.removeAt(index: BigInt.from(index));
   }
 
   Future<void> reorderInternal(int from, int to) async {
-    if (from < 0 || from >= _queue.length || to < 0 || to >= _queue.length) return;
-    final item = _queue.removeAt(from);
-    _queue.insert(to, item);
-    _queueController.add(List.unmodifiable(_queue));
-    final rustItems = _queue.map((e) => e.toRustItem()).toList();
-    _rustEngine?.setQueue(items: rustItems, startIndex: BigInt.from(_currentIndex));
+    final engine = await _getEngine();
+    engine?.reorder(from: BigInt.from(from), to: BigInt.from(to));
   }
 
   Future<void> clearQueueInternal({bool keepCurrent = true}) async {
-    if (keepCurrent && _currentIndex >= 0 && _currentIndex < _queue.length) {
-      final cur = _queue[_currentIndex];
-      _queue.clear();
-      _queue.add(cur);
-      _currentIndex = 0;
-      _queueController.add(List.unmodifiable(_queue));
-      final rustItems = _queue.map((e) => e.toRustItem()).toList();
-      _rustEngine?.setQueue(items: rustItems, startIndex: BigInt.zero);
-    } else {
-      _queue.clear();
-      _currentIndex = -1;
-      _queueController.add(List.unmodifiable(_queue));
-      _rustEngine?.stop();
+    final engine = await _getEngine();
+    engine?.clearQueue(keepCurrent: keepCurrent);
+    if (!keepCurrent) {
+      _shadowItems.clear();
     }
   }
 
@@ -716,6 +748,8 @@ class MiniaudioEngine<T> {
   Future<void> setInfiniteMixInternal(bool enabled) async {
     _infiniteMix = enabled;
     _infiniteMixController.add(enabled);
+    final engine = await _getEngine();
+    engine?.setInfiniteMix(enabled: enabled);
   }
 
   Future<void> setVolumeInternal(double volume) async {
@@ -923,5 +957,6 @@ class MiniaudioEngine<T> {
     await _isCrossfadingController.close();
     await _volumeNormalizationController.close();
     await _infiniteMixController.close();
+    await _needMoreTracksController.close();
   }
 }

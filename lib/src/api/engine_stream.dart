@@ -10,6 +10,7 @@ import 'dsp_config.dart';
 import 'engine_item.dart';
 import 'engine_state.dart' show EnginePhase;
 import 'loop_mode.dart';
+import 'need_more_tracks_event.dart';
 import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
 import 'track_metadata.dart';
@@ -67,6 +68,7 @@ class EngineStream<T> {
   final StreamController<bool> _isCrossfadingController;
   final StreamController<bool> _volumeNormalizationController;
   final StreamController<bool> _infiniteMixController;
+  final StreamController<NeedMoreTracksEvent>? _needMoreTracksController;
   final StreamController<double>? _defaultReplayGainController;
   final StreamController<double?>? _forcedReplayGainController;
   final StreamController<ReplayGainMode>? _replayGainModeController;
@@ -120,6 +122,7 @@ class EngineStream<T> {
     required StreamController<bool> isCrossfadingController,
     required StreamController<bool> volumeNormalizationController,
     required StreamController<bool> infiniteMixController,
+    StreamController<NeedMoreTracksEvent>? needMoreTracksController,
     StreamController<double>? defaultReplayGainController,
     StreamController<double?>? forcedReplayGainController,
     StreamController<ReplayGainMode>? replayGainModeController,
@@ -170,6 +173,7 @@ class EngineStream<T> {
         _isCrossfadingController = isCrossfadingController,
         _volumeNormalizationController = volumeNormalizationController,
         _infiniteMixController = infiniteMixController,
+        _needMoreTracksController = needMoreTracksController,
         _defaultReplayGainController = defaultReplayGainController,
         _forcedReplayGainController = forcedReplayGainController,
         _replayGainModeController = replayGainModeController,
@@ -344,4 +348,8 @@ class EngineStream<T> {
 
   /// Broadcast stream emitting whether Infinite Mix proactive prefetching is enabled.
   Stream<bool> get infiniteMixEnabled => _infiniteMixController.stream;
+
+  /// Broadcast stream emitting when the queue has fewer than 2 items remaining under Infinite Mix.
+  Stream<NeedMoreTracksEvent> get needMoreTracks =>
+      _needMoreTracksController?.stream ?? const Stream.empty();
 }

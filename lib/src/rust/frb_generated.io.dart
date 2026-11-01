@@ -80,6 +80,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_box_autoadd_i_32(dynamic raw);
 
   @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
   RustAudioDevice dco_decode_box_autoadd_rust_audio_device(dynamic raw);
 
   @protected
@@ -91,6 +94,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustDartReadRequest dco_decode_box_autoadd_rust_dart_read_request(
       dynamic raw);
+
+  @protected
+  RustEngineItem dco_decode_box_autoadd_rust_engine_item(dynamic raw);
 
   @protected
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(dynamic raw);
@@ -149,6 +155,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? dco_decode_opt_box_autoadd_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
@@ -279,6 +288,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_box_autoadd_i_32(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
   RustAudioDevice sse_decode_box_autoadd_rust_audio_device(
       SseDeserializer deserializer);
 
@@ -292,6 +304,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustDartReadRequest sse_decode_box_autoadd_rust_dart_read_request(
+      SseDeserializer deserializer);
+
+  @protected
+  RustEngineItem sse_decode_box_autoadd_rust_engine_item(
       SseDeserializer deserializer);
 
   @protected
@@ -358,6 +374,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
@@ -498,6 +517,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_i_64(
+      PlatformInt64 self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer);
 
@@ -512,6 +535,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_rust_dart_read_request(
       RustDartReadRequest self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_engine_item(
+      RustEngineItem self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_equalizer_params(
@@ -579,6 +606,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_64(
+      PlatformInt64? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);

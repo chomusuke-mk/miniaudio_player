@@ -189,6 +189,7 @@ pub enum RustEngineEvent {
     IsCompleted(bool),
     CurrentIndex(i32),
     QueueChanged(Vec<RustEngineItem>),
+    NeedMoreTracks { current_track_id: i64, remaining_tracks: usize },
     Volume(f32),
     Rate(f32),
     Pitch(f32),

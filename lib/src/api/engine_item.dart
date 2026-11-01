@@ -64,10 +64,11 @@ class EngineItem<T> {
   }
 
   /// Converts this item to Rust's internal queue representation.
-  rust_types.RustEngineItem toRustItem() {
+  rust_types.RustEngineItem toRustItem([int? autoId]) {
+    final effectiveId = id ?? autoId ?? position;
     return switch (source) {
       UriAudioSource s => rust_types.RustEngineItem(
-          id: id ?? position,
+          id: effectiveId,
           source: s.sourceString,
           headers: s.headers?.entries
               .map((e) => rust_types.RustHttpHeader(key: e.key, value: e.value))
@@ -76,14 +77,14 @@ class EngineItem<T> {
           replayPeak: replayPeak,
         ),
       MemoryAudioSource s => rust_types.RustEngineItem(
-          id: id ?? position,
+          id: effectiveId,
           source: '',
           dataBytes: s.bytes,
           replayGainDb: replayGainDb,
           replayPeak: replayPeak,
         ),
       CustomAudioSource s => rust_types.RustEngineItem(
-          id: id ?? position,
+          id: effectiveId,
           source: 'custom://${s.provider.streamId}',
           replayGainDb: replayGainDb,
           replayPeak: replayPeak,

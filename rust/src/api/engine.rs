@@ -33,6 +33,17 @@ fn emit_event(sink_lock: &Arc<Mutex<Option<StreamSink<RustEngineEvent>>>>, event
     }
 }
 
+fn queue_to_rust_items(q: &[EngineItemCore]) -> Vec<RustEngineItem> {
+    q.iter().map(|it| RustEngineItem {
+        id: it.id,
+        source: it.source.clone(),
+        headers: it.headers.clone(),
+        data_bytes: it.data_bytes.clone(),
+        replay_gain_db: it.replay_gain_db,
+        replay_peak: it.replay_peak,
+    }).collect()
+}
+
 impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn new(
@@ -66,6 +77,7 @@ impl RustEngine {
                 let mut last_playing = false;
                 let mut last_phase: i32 = -1;
                 let mut last_index: i64 = -2;
+                let mut last_notified_track_id: i64 = -1;
 
                 loop {
                     thread::sleep(Duration::from_millis(30));
@@ -220,6 +232,24 @@ impl RustEngine {
                         emit_event(&sink_clone, RustEngineEvent::CurrentIndex(current_idx as i32));
                     }
 
+                    // 3. Infinite mix lookahead check
+                    let is_infinite_mix = coord.infinite_mix_enabled.load(Ordering::Relaxed);
+                    if is_infinite_mix && playing {
+                        let q = coord.queue.read().unwrap();
+                        let q_len = q.len();
+                        if current_idx >= 0 && (current_idx as usize) < q_len {
+                            let cur_id = q[current_idx as usize].id;
+                            let remaining = q_len.saturating_sub((current_idx as usize) + 1);
+                            if remaining < 2 && last_notified_track_id != cur_id {
+                                last_notified_track_id = cur_id;
+                                emit_event(&sink_clone, RustEngineEvent::NeedMoreTracks {
+                                    current_track_id: cur_id,
+                                    remaining_tracks: remaining,
+                                });
+                            }
+                        }
+                    }
+
                     if coord.visualizer_enabled.load(Ordering::Relaxed) {
                         let vis = coord.visualizer_seqlock.read();
                         emit_event(&sink_clone, RustEngineEvent::Visualizer(RustVisualizerData {
@@ -348,6 +378,122 @@ impl RustEngine {
                 emit_event(&self.event_sink, RustEngineEvent::State(STATE_PAUSED));
                 emit_event(&self.event_sink, RustEngineEvent::IsPlaying(false));
             }
+        }
+
+        let q_items = queue_to_rust_items(&core_items);
+        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn append(&self, items: Vec<RustEngineItem>) {
+        let mut coord = self.coordinator.lock().unwrap();
+        let core_items: Vec<EngineItemCore> = items.into_iter().map(|it| EngineItemCore {
+            id: it.id,
+            source: it.source,
+            headers: it.headers,
+            data_bytes: it.data_bytes,
+            replay_gain_db: it.replay_gain_db,
+            replay_peak: it.replay_peak,
+        }).collect();
+        coord.append_items(core_items);
+        let q_items = {
+            let q = coord.queue.read().unwrap();
+            queue_to_rust_items(&q)
+        };
+        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn insert_next(&self, item: RustEngineItem) {
+        let mut coord = self.coordinator.lock().unwrap();
+        let core_item = EngineItemCore {
+            id: item.id,
+            source: item.source,
+            headers: item.headers,
+            data_bytes: item.data_bytes,
+            replay_gain_db: item.replay_gain_db,
+            replay_peak: item.replay_peak,
+        };
+        coord.insert_next_item(core_item);
+        let q_items = {
+            let q = coord.queue.read().unwrap();
+            queue_to_rust_items(&q)
+        };
+        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn remove_at(&self, index: usize) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.remove_item_at(index);
+        let q_items = {
+            let q = coord.queue.read().unwrap();
+            queue_to_rust_items(&q)
+        };
+        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
+        let cur = coord.current_index.load(Ordering::Relaxed);
+        emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(cur as i32));
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn reorder(&self, from: usize, to: usize) {
+        let mut coord = self.coordinator.lock().unwrap();
+        if coord.reorder_item(from, to) {
+            let q_items = {
+                let q = coord.queue.read().unwrap();
+                queue_to_rust_items(&q)
+            };
+            emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
+            let cur = coord.current_index.load(Ordering::Relaxed);
+            emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(cur as i32));
+        }
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn clear_queue(&self, keep_current: bool) {
+        let mut coord = self.coordinator.lock().unwrap();
+        coord.clear_items(keep_current);
+        let q_items = {
+            let q = coord.queue.read().unwrap();
+            queue_to_rust_items(&q)
+        };
+        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
+        let cur = coord.current_index.load(Ordering::Relaxed);
+        emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(cur as i32));
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_infinite_mix(&self, enabled: bool) {
+        let coord = self.coordinator.lock().unwrap();
+        coord.infinite_mix_enabled.store(enabled, Ordering::Release);
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_infinite_mix(&self) -> bool {
+        self.coordinator.lock().unwrap().infinite_mix_enabled.load(Ordering::Relaxed)
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_queue(&self) -> Vec<RustEngineItem> {
+        let coord = self.coordinator.lock().unwrap();
+        let q = coord.queue.read().unwrap();
+        queue_to_rust_items(&q)
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_queue_len(&self) -> usize {
+        self.coordinator.lock().unwrap().queue.read().unwrap().len()
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_current_track_id(&self) -> Option<i64> {
+        let coord = self.coordinator.lock().unwrap();
+        let cur = coord.current_index.load(Ordering::Relaxed);
+        if cur >= 0 {
+            let q = coord.queue.read().unwrap();
+            q.get(cur as usize).map(|it| it.id)
+        } else {
+            None
         }
     }
 

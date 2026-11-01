@@ -7,21 +7,35 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit_event`, `perform_skip`
+// These functions are ignored because they are not marked as `pub`: `emit_event`, `perform_skip`, `queue_to_rust_items`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustEngine>>
 abstract class RustEngine implements RustOpaqueInterface {
+  void append({required List<RustEngineItem> items});
+
+  void clearQueue({required bool keepCurrent});
+
   BigInt? getCurrentIndex();
 
+  PlatformInt64? getCurrentTrackId();
+
   PlatformInt64 getDurationMs();
+
+  bool getInfiniteMix();
 
   int getPhase();
 
   PlatformInt64 getPositionMs();
 
+  List<RustEngineItem> getQueue();
+
+  BigInt getQueueLen();
+
   RustVisualizerData getVisualizerData();
 
   double getVolume();
+
+  void insertNext({required RustEngineItem item});
 
   bool isBuffering();
 
@@ -48,6 +62,10 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void previous({BigInt? crossfadeDurationMs, int? curve});
 
+  void removeAt({required BigInt index});
+
+  void reorder({required BigInt from, required BigInt to});
+
   void seek({required PlatformInt64 positionMs});
 
   void setBalance({required double balance});
@@ -61,6 +79,8 @@ abstract class RustEngine implements RustOpaqueInterface {
   void setEqualizer({required RustEqualizerParams params});
 
   void setEqualizerBand({required int band, required double gainDb});
+
+  void setInfiniteMix({required bool enabled});
 
   void setLimiter({required bool enabled});
 

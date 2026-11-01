@@ -208,6 +208,7 @@ pub struct EngineCoordinator {
     pub current_index: Arc<AtomicI64>,
     pub loop_mode: Arc<AtomicI32>, // 0: off, 1: one, 2: all
     pub shuffle_enabled: Arc<AtomicBool>,
+    pub infinite_mix_enabled: Arc<AtomicBool>,
 
     pub auto_crossfade_duration_ms: Arc<AtomicU64>,
     pub manual_crossfade_duration_ms: Arc<AtomicU64>,
@@ -309,6 +310,7 @@ impl EngineCoordinator {
         let current_index = Arc::new(AtomicI64::new(0));
         let loop_mode = Arc::new(AtomicI32::new(0));
         let shuffle_enabled = Arc::new(AtomicBool::new(false));
+        let infinite_mix_enabled = Arc::new(AtomicBool::new(false));
 
         let auto_crossfade_duration_ms = Arc::new(AtomicU64::new(5000));
         let manual_crossfade_duration_ms = Arc::new(AtomicU64::new(100));
@@ -329,6 +331,7 @@ impl EngineCoordinator {
             current_index,
             loop_mode,
             shuffle_enabled,
+            infinite_mix_enabled,
             auto_crossfade_duration_ms,
             manual_crossfade_duration_ms,
             crossfade_curve,
@@ -392,6 +395,78 @@ impl EngineCoordinator {
             &self.deck_b
         } else {
             &self.deck_a
+        }
+    }
+
+    pub fn append_items(&mut self, items: Vec<EngineItemCore>) {
+        let mut q = self.queue.write().unwrap();
+        q.extend(items);
+    }
+
+    pub fn insert_next_item(&mut self, item: EngineItemCore) {
+        let mut q = self.queue.write().unwrap();
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let insert_idx = ((cur + 1).max(0) as usize).min(q.len());
+        q.insert(insert_idx, item);
+    }
+
+    pub fn remove_item_at(&mut self, index: usize) -> Option<EngineItemCore> {
+        let mut q = self.queue.write().unwrap();
+        if index >= q.len() {
+            return None;
+        }
+        let removed = q.remove(index);
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if (index as i64) < cur {
+            self.current_index.store(cur - 1, Ordering::Release);
+        } else if (index as i64) == cur {
+            if q.is_empty() {
+                self.current_index.store(-1, Ordering::Release);
+                self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+                self.deck_a.stop();
+                self.deck_b.stop();
+            } else if cur >= q.len() as i64 {
+                self.current_index.store((q.len() - 1) as i64, Ordering::Release);
+            }
+        }
+        Some(removed)
+    }
+
+    pub fn reorder_item(&mut self, from: usize, to: usize) -> bool {
+        let mut q = self.queue.write().unwrap();
+        if from >= q.len() || to >= q.len() || from == to {
+            return false;
+        }
+        let item = q.remove(from);
+        q.insert(to, item);
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let cur_u = cur as usize;
+        if cur >= 0 {
+            if cur_u == from {
+                self.current_index.store(to as i64, Ordering::Release);
+            } else if from < cur_u && to >= cur_u {
+                self.current_index.store(cur - 1, Ordering::Release);
+            } else if from > cur_u && to <= cur_u {
+                self.current_index.store(cur + 1, Ordering::Release);
+            }
+        }
+        true
+    }
+
+    pub fn clear_items(&mut self, keep_current: bool) {
+        let mut q = self.queue.write().unwrap();
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if keep_current && cur >= 0 && (cur as usize) < q.len() {
+            let current_item = q[cur as usize].clone();
+            q.clear();
+            q.push(current_item);
+            self.current_index.store(0, Ordering::Release);
+        } else {
+            q.clear();
+            self.current_index.store(-1, Ordering::Release);
+            self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+            self.deck_a.stop();
+            self.deck_b.stop();
         }
     }
 }

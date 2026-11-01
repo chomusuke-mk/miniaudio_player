@@ -61,6 +61,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult Function(RustEngineEvent_IsCompleted value)? isCompleted,
     TResult Function(RustEngineEvent_CurrentIndex value)? currentIndex,
     TResult Function(RustEngineEvent_QueueChanged value)? queueChanged,
+    TResult Function(RustEngineEvent_NeedMoreTracks value)? needMoreTracks,
     TResult Function(RustEngineEvent_Volume value)? volume,
     TResult Function(RustEngineEvent_Rate value)? rate,
     TResult Function(RustEngineEvent_Pitch value)? pitch,
@@ -106,6 +107,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return currentIndex(_that);
       case RustEngineEvent_QueueChanged() when queueChanged != null:
         return queueChanged(_that);
+      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that);
       case RustEngineEvent_Volume() when volume != null:
         return volume(_that);
       case RustEngineEvent_Rate() when rate != null:
@@ -179,6 +182,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
     required TResult Function(RustEngineEvent_IsCompleted value) isCompleted,
     required TResult Function(RustEngineEvent_CurrentIndex value) currentIndex,
     required TResult Function(RustEngineEvent_QueueChanged value) queueChanged,
+    required TResult Function(RustEngineEvent_NeedMoreTracks value)
+        needMoreTracks,
     required TResult Function(RustEngineEvent_Volume value) volume,
     required TResult Function(RustEngineEvent_Rate value) rate,
     required TResult Function(RustEngineEvent_Pitch value) pitch,
@@ -225,6 +230,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return currentIndex(_that);
       case RustEngineEvent_QueueChanged():
         return queueChanged(_that);
+      case RustEngineEvent_NeedMoreTracks():
+        return needMoreTracks(_that);
       case RustEngineEvent_Volume():
         return volume(_that);
       case RustEngineEvent_Rate():
@@ -295,6 +302,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult? Function(RustEngineEvent_IsCompleted value)? isCompleted,
     TResult? Function(RustEngineEvent_CurrentIndex value)? currentIndex,
     TResult? Function(RustEngineEvent_QueueChanged value)? queueChanged,
+    TResult? Function(RustEngineEvent_NeedMoreTracks value)? needMoreTracks,
     TResult? Function(RustEngineEvent_Volume value)? volume,
     TResult? Function(RustEngineEvent_Rate value)? rate,
     TResult? Function(RustEngineEvent_Pitch value)? pitch,
@@ -339,6 +347,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return currentIndex(_that);
       case RustEngineEvent_QueueChanged() when queueChanged != null:
         return queueChanged(_that);
+      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that);
       case RustEngineEvent_Volume() when volume != null:
         return volume(_that);
       case RustEngineEvent_Rate() when rate != null:
@@ -411,6 +421,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult Function(bool field0)? isCompleted,
     TResult Function(int field0)? currentIndex,
     TResult Function(List<RustEngineItem> field0)? queueChanged,
+    TResult Function(PlatformInt64 currentTrackId, BigInt remainingTracks)?
+        needMoreTracks,
     TResult Function(double field0)? volume,
     TResult Function(double field0)? rate,
     TResult Function(double field0)? pitch,
@@ -455,6 +467,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return currentIndex(_that.field0);
       case RustEngineEvent_QueueChanged() when queueChanged != null:
         return queueChanged(_that.field0);
+      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustEngineEvent_Volume() when volume != null:
         return volume(_that.field0);
       case RustEngineEvent_Rate() when rate != null:
@@ -528,6 +542,9 @@ extension RustEngineEventPatterns on RustEngineEvent {
     required TResult Function(bool field0) isCompleted,
     required TResult Function(int field0) currentIndex,
     required TResult Function(List<RustEngineItem> field0) queueChanged,
+    required TResult Function(
+            PlatformInt64 currentTrackId, BigInt remainingTracks)
+        needMoreTracks,
     required TResult Function(double field0) volume,
     required TResult Function(double field0) rate,
     required TResult Function(double field0) pitch,
@@ -571,6 +588,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return currentIndex(_that.field0);
       case RustEngineEvent_QueueChanged():
         return queueChanged(_that.field0);
+      case RustEngineEvent_NeedMoreTracks():
+        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustEngineEvent_Volume():
         return volume(_that.field0);
       case RustEngineEvent_Rate():
@@ -641,6 +660,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult? Function(bool field0)? isCompleted,
     TResult? Function(int field0)? currentIndex,
     TResult? Function(List<RustEngineItem> field0)? queueChanged,
+    TResult? Function(PlatformInt64 currentTrackId, BigInt remainingTracks)?
+        needMoreTracks,
     TResult? Function(double field0)? volume,
     TResult? Function(double field0)? rate,
     TResult? Function(double field0)? pitch,
@@ -684,6 +705,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return currentIndex(_that.field0);
       case RustEngineEvent_QueueChanged() when queueChanged != null:
         return queueChanged(_that.field0);
+      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustEngineEvent_Volume() when volume != null:
         return volume(_that.field0);
       case RustEngineEvent_Rate() when rate != null:
@@ -1345,6 +1368,85 @@ class _$RustEngineEvent_QueueChangedCopyWithImpl<$Res>
           ? _self._field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as List<RustEngineItem>,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustEngineEvent_NeedMoreTracks extends RustEngineEvent {
+  const RustEngineEvent_NeedMoreTracks(
+      {required this.currentTrackId, required this.remainingTracks})
+      : super._();
+
+  final PlatformInt64 currentTrackId;
+  final BigInt remainingTracks;
+
+  /// Create a copy of RustEngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustEngineEvent_NeedMoreTracksCopyWith<RustEngineEvent_NeedMoreTracks>
+      get copyWith => _$RustEngineEvent_NeedMoreTracksCopyWithImpl<
+          RustEngineEvent_NeedMoreTracks>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustEngineEvent_NeedMoreTracks &&
+            (identical(other.currentTrackId, currentTrackId) ||
+                other.currentTrackId == currentTrackId) &&
+            (identical(other.remainingTracks, remainingTracks) ||
+                other.remainingTracks == remainingTracks));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, currentTrackId, remainingTracks);
+  }
+
+  @override
+  String toString() {
+    return 'RustEngineEvent.needMoreTracks(currentTrackId: $currentTrackId, remainingTracks: $remainingTracks)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustEngineEvent_NeedMoreTracksCopyWith<$Res>
+    implements $RustEngineEventCopyWith<$Res> {
+  factory $RustEngineEvent_NeedMoreTracksCopyWith(
+          RustEngineEvent_NeedMoreTracks value,
+          $Res Function(RustEngineEvent_NeedMoreTracks) _then) =
+      _$RustEngineEvent_NeedMoreTracksCopyWithImpl;
+  @useResult
+  $Res call({PlatformInt64 currentTrackId, BigInt remainingTracks});
+}
+
+/// @nodoc
+class _$RustEngineEvent_NeedMoreTracksCopyWithImpl<$Res>
+    implements $RustEngineEvent_NeedMoreTracksCopyWith<$Res> {
+  _$RustEngineEvent_NeedMoreTracksCopyWithImpl(this._self, this._then);
+
+  final RustEngineEvent_NeedMoreTracks _self;
+  final $Res Function(RustEngineEvent_NeedMoreTracks) _then;
+
+  /// Create a copy of RustEngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? currentTrackId = null,
+    Object? remainingTracks = null,
+  }) {
+    return _then(RustEngineEvent_NeedMoreTracks(
+      currentTrackId: null == currentTrackId
+          ? _self.currentTrackId
+          : currentTrackId // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64,
+      remainingTracks: null == remainingTracks
+          ? _self.remainingTracks
+          : remainingTracks // ignore: cast_nullable_to_non_nullable
+              as BigInt,
     ));
   }
 }
