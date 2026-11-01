@@ -383,6 +383,7 @@ pub struct EngineCoordinator {
     pub auto_crossfade_duration_ms: Arc<AtomicU64>,
     pub manual_crossfade_duration_ms: Arc<AtomicU64>,
     pub crossfade_curve: Arc<AtomicI32>,
+    pub auto_crossfade_target_index: Arc<AtomicI64>,
 
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     pub visualizer_enabled: Arc<AtomicBool>,
@@ -567,6 +568,7 @@ impl EngineCoordinator {
         let auto_crossfade_duration_ms = Arc::new(AtomicU64::new(5000));
         let manual_crossfade_duration_ms = Arc::new(AtomicU64::new(100));
         let crossfade_curve = Arc::new(AtomicI32::new(0));
+        let auto_crossfade_target_index = Arc::new(AtomicI64::new(-1));
 
         let thread_running = Arc::new(AtomicBool::new(true));
 
@@ -587,6 +589,7 @@ impl EngineCoordinator {
             auto_crossfade_duration_ms,
             manual_crossfade_duration_ms,
             crossfade_curve,
+            auto_crossfade_target_index,
             visualizer_seqlock,
             visualizer_enabled,
 

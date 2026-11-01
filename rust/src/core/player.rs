@@ -144,6 +144,7 @@ pub struct PlayerCoordinator {
     pub seek_request_ms: Arc<AtomicI64>,
     pub decoder_eof: Arc<AtomicBool>,
     pub stream_reinit_needed: Arc<AtomicBool>,
+    pub network_streamer_abort: Arc<AtomicBool>,
 
     pub decoder_running: Arc<AtomicBool>,
     pub decoder_wake: Arc<(Mutex<bool>, Condvar)>,
@@ -285,6 +286,7 @@ impl PlayerCoordinator {
         let seek_request_ms = Arc::new(AtomicI64::new(-1));
         let decoder_eof = Arc::new(AtomicBool::new(false));
         let stream_reinit_needed = Arc::new(AtomicBool::new(false));
+        let network_streamer_abort = Arc::new(AtomicBool::new(false));
 
         let decoder_running = Arc::new(AtomicBool::new(true));
         let decoder_wake = Arc::new((Mutex::new(false), Condvar::new()));
@@ -424,6 +426,7 @@ impl PlayerCoordinator {
             seek_request_ms,
             decoder_eof,
             stream_reinit_needed,
+            network_streamer_abort,
             decoder_running,
             decoder_wake,
             decoder_thread: None,
@@ -1028,6 +1031,15 @@ impl PlayerCoordinator {
 
     pub fn begin_open(&mut self) -> i32 {
         let _ = self.stop();
+        self.network_streamer_abort.store(true, Ordering::Release);
+        self.is_stream.store(false, Ordering::Release);
+        if let Ok(mut guard) = self.trip_buffer.write() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.boundary_info.write() {
+            *guard = None;
+        }
+        self.stream_reinit_needed.store(false, Ordering::Release);
         *self.custom_source_handle.write().unwrap() = None;
         *self.engine.lock().unwrap() = None;
         self.decoder_eof.store(false, Ordering::Relaxed);
@@ -1172,6 +1184,12 @@ impl PlayerCoordinator {
             return res_code;
         }
 
+        crate::map_log!(3, "Network stream opened: {} (content_length={}, is_live={})", url, content_length, is_live);
+
+        self.network_streamer_abort.store(true, Ordering::Release);
+        let new_abort = Arc::new(AtomicBool::new(false));
+        self.network_streamer_abort = new_abort.clone();
+
         let trip_opt = self.trip_buffer.read().unwrap().clone();
         if let Some(trip) = trip_opt {
             let abort_flag = self.decoder_running.clone();
@@ -1179,7 +1197,7 @@ impl PlayerCoordinator {
                 .name("miniaudio-net-streamer".to_string())
                 .spawn(move || {
                     let mut chunk = vec![0u8; 32768];
-                    while abort_flag.load(Ordering::Relaxed) {
+                    while !new_abort.load(Ordering::Relaxed) && abort_flag.load(Ordering::Relaxed) {
                         match reader.read(&mut chunk) {
                             Ok(0) => {
                                 trip.mark_eof();
@@ -1187,7 +1205,7 @@ impl PlayerCoordinator {
                             }
                             Ok(n) => {
                                 let mut offset = 0;
-                                while offset < n && abort_flag.load(Ordering::Relaxed) {
+                                while offset < n && !new_abort.load(Ordering::Relaxed) && abort_flag.load(Ordering::Relaxed) {
                                     match trip.feed_chunk(&chunk[offset..n]) {
                                         Ok(written) => {
                                             offset += written;
@@ -2292,6 +2310,7 @@ impl PlayerCoordinator {
 
     pub fn destroy(&mut self) {
         let _ = self.stop();
+        self.network_streamer_abort.store(true, Ordering::Release);
         self.telemetry.stop();
         if let Ok(mut cb) = self.completion_cb.write() {
             *cb = None;

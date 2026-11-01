@@ -94,11 +94,9 @@ impl RustEngine {
                     // 1. Check crossfade completion or tick progress
                     let mut xfade_done = coord.crossfade_completed_flag.swap(false, Ordering::AcqRel);
                     if !xfade_done && coord.crossfade.is_active.load(Ordering::Relaxed) {
-                        let sr = coord.deck_a.sample_rate.load(Ordering::Relaxed).max(44100);
-                        let frames_per_tick = (30 * sr as u64) / 1000;
-                        let cur_f = coord.crossfade.current_frame.fetch_add(frames_per_tick, Ordering::Relaxed);
+                        let cur_f = coord.crossfade.current_frame.load(Ordering::Relaxed);
                         let tot_f = coord.crossfade.total_frames.load(Ordering::Relaxed);
-                        if cur_f + frames_per_tick >= tot_f {
+                        if cur_f >= tot_f {
                             coord.crossfade.is_active.store(false, Ordering::Release);
                             let to_deck = coord.crossfade.to_deck.load(Ordering::Relaxed);
                             coord.active_deck.store(to_deck, Ordering::Release);
@@ -113,6 +111,14 @@ impl RustEngine {
                             coord.deck_b.stop();
                         } else {
                             coord.deck_a.stop();
+                        }
+
+                        // Advance current_index if an automatic crossfade completed
+                        let auto_target = coord.auto_crossfade_target_index.swap(-1, Ordering::AcqRel);
+                        if auto_target >= 0 {
+                            coord.current_index.store(auto_target, Ordering::Release);
+                            emit_event(&sink_clone, RustEngineEvent::CurrentIndex(auto_target as i32));
+                            crate::map_log!(3, "Auto-crossfade completed -> advanced to index {}", auto_target);
                         }
 
                         coord.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
@@ -145,7 +151,7 @@ impl RustEngine {
                     // Auto-crossfade or completion trigger
                     let auto_ms = coord.auto_crossfade_duration_ms.load(Ordering::Relaxed);
                     let should_auto_xfade = auto_ms > 0
-                        && dur > (auto_ms as i64 * 2)
+                        && dur > (auto_ms as i64)
                         && pos + (auto_ms as i64) >= dur
                         && playing
                         && !is_xfading
@@ -186,7 +192,14 @@ impl RustEngine {
                                     standby.play();
 
                                     let sr = coord.deck_a.sample_rate.load(Ordering::Relaxed).max(1);
-                                    let xfade_frames = (auto_ms * sr as u64) / 1000;
+                                    let effective_ms = if should_auto_xfade && dur > pos {
+                                        ((dur - pos) as u64).clamp(50, auto_ms)
+                                    } else if is_eof {
+                                        coord.manual_crossfade_duration_ms.load(Ordering::Relaxed).min(200).max(50)
+                                    } else {
+                                        auto_ms
+                                    };
+                                    let xfade_frames = (effective_ms * sr as u64) / 1000;
 
                                     coord.crossfade.from_deck.store(active_deck, Ordering::Relaxed);
                                     coord.crossfade.to_deck.store(if standby_is_b { 1 } else { 0 }, Ordering::Relaxed);
@@ -195,8 +208,11 @@ impl RustEngine {
                                     coord.crossfade.curve.store(coord.crossfade_curve.load(Ordering::Relaxed), Ordering::Relaxed);
                                     coord.crossfade.is_active.store(true, Ordering::Release);
 
+                                    coord.auto_crossfade_target_index.store(next_idx as i64, Ordering::Release);
+
                                     coord.phase.store(ENGINE_PHASE_AUTO_CROSSFADING, Ordering::Release);
                                     emit_event(&sink_clone, RustEngineEvent::Phase(ENGINE_PHASE_AUTO_CROSSFADING));
+                                    crate::map_log!(3, "Auto-crossfade initiated from deck {} to deck {} (duration={}ms, target_index={})", active_deck, if standby_is_b { 1 } else { 0 }, effective_ms, next_idx);
                                 }
                             }
                         } else if is_eof {
@@ -206,6 +222,7 @@ impl RustEngine {
                             emit_event(&sink_clone, RustEngineEvent::IsCompleted(true));
                             emit_event(&sink_clone, RustEngineEvent::IsPlaying(false));
                             emit_event(&sink_clone, RustEngineEvent::Phase(ENGINE_PHASE_COMPLETED));
+                            crate::map_log!(3, "End of queue reached -> ENGINE_PHASE_COMPLETED");
                         }
                     }
 
@@ -319,6 +336,7 @@ impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn seek(&self, position_ms: i64) {
         let mut coord = self.coordinator.lock().unwrap();
+        coord.auto_crossfade_target_index.store(-1, Ordering::Release);
         if coord.phase.load(Ordering::Relaxed) == ENGINE_PHASE_AUTO_CROSSFADING {
             coord.crossfade.is_active.store(false, Ordering::Release);
             let active_id = coord.active_deck.load(Ordering::Relaxed);
@@ -342,9 +360,9 @@ impl RustEngine {
             emit_event(&self.event_sink, RustEngineEvent::Phase(ENGINE_PHASE_PLAYING));
         }
         coord.active_deck_mut().seek(position_ms);
+        crate::map_log!(4, "seek -> position_ms={}", position_ms);
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_queue(&self, items: Vec<RustEngineItem>, start_index: Option<usize>) {
         let mut coord = self.coordinator.lock().unwrap();
         let core_items: Vec<EngineItemCore> = items.into_iter().map(|it| EngineItemCore {
@@ -384,7 +402,6 @@ impl RustEngine {
         emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn append(&self, items: Vec<RustEngineItem>) {
         let mut coord = self.coordinator.lock().unwrap();
         let core_items: Vec<EngineItemCore> = items.into_iter().map(|it| EngineItemCore {
@@ -403,7 +420,6 @@ impl RustEngine {
         emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn insert_next(&self, item: RustEngineItem) {
         let mut coord = self.coordinator.lock().unwrap();
         let core_item = EngineItemCore {
@@ -422,7 +438,6 @@ impl RustEngine {
         emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn remove_at(&self, index: usize) {
         let mut coord = self.coordinator.lock().unwrap();
         coord.remove_item_at(index);
@@ -435,7 +450,6 @@ impl RustEngine {
         emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(cur as i32));
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn reorder(&self, from: usize, to: usize) {
         let mut coord = self.coordinator.lock().unwrap();
         if coord.reorder_item(from, to) {
@@ -449,7 +463,6 @@ impl RustEngine {
         }
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn clear_queue(&self, keep_current: bool) {
         let mut coord = self.coordinator.lock().unwrap();
         coord.clear_items(keep_current);
@@ -497,7 +510,6 @@ impl RustEngine {
         }
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn next(&self, crossfade_duration_ms: Option<u64>, curve: Option<i32>) {
         let mut coord = self.coordinator.lock().unwrap();
         let q_len = coord.queue.read().unwrap().len();
@@ -526,7 +538,6 @@ impl RustEngine {
         self.perform_skip(&mut coord, next_idx, crossfade_duration_ms, curve);
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn previous(&self, crossfade_duration_ms: Option<u64>, curve: Option<i32>) {
         let mut coord = self.coordinator.lock().unwrap();
         let q_len = coord.queue.read().unwrap().len();
@@ -562,7 +573,6 @@ impl RustEngine {
         self.perform_skip(&mut coord, prev_idx, crossfade_duration_ms, curve);
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn skip_to_index(&self, index: usize, crossfade_duration_ms: Option<u64>, curve: Option<i32>) {
         let mut coord = self.coordinator.lock().unwrap();
         let q_len = coord.queue.read().unwrap().len();
@@ -582,6 +592,8 @@ impl RustEngine {
             Some(it) => it,
             None => return,
         };
+
+        coord.auto_crossfade_target_index.store(-1, Ordering::Release);
 
         let active_id = coord.active_deck.load(Ordering::Relaxed);
         let cur_phase = coord.phase.load(Ordering::Relaxed);
@@ -629,6 +641,7 @@ impl RustEngine {
 
         emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(target_idx as i32));
         emit_event(&self.event_sink, RustEngineEvent::Phase(ENGINE_PHASE_MANUAL_CROSSFADING));
+        crate::map_log!(3, "perform_skip -> target_idx={}, duration={}ms", target_idx, dur_ms);
     }
 
     #[flutter_rust_bridge::frb(sync)]

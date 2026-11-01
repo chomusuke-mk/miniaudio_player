@@ -8,6 +8,7 @@ import '../../api/audio_analysis_result.dart';
 import '../../api/audio_device.dart';
 import '../../api/buffered_range.dart';
 import '../../api/dsp_config.dart';
+import '../../api/miniaudio_player.dart';
 import '../../api/player_exception.dart';
 import '../../api/player_state.dart';
 import '../../api/silence_skip_config.dart';
@@ -84,6 +85,9 @@ class NativePlayerBackend implements PlayerBackend, Finalizable {
           await RustLib.init(externalLibrary: _findRustLibrary());
         } catch (_) {}
       }
+      try {
+        rust.setLogLevel(level: MiniaudioPlayer.globalConfig.logLevel.value);
+      } catch (_) {}
     }();
   }
 
@@ -1037,9 +1041,17 @@ class NativePlatformService implements PlatformService {
 
   @override
   void setLogLevel(int level) {
-    try {
-      rust.setLogLevel(level: level);
-    } catch (_) {}
+    if (RustLib.instance.initialized) {
+      try {
+        rust.setLogLevel(level: level);
+      } catch (_) {}
+    } else {
+      NativePlayerBackend.ensureRustInitialized().then((_) {
+        try {
+          rust.setLogLevel(level: level);
+        } catch (_) {}
+      });
+    }
   }
 }
 

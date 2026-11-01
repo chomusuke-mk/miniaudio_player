@@ -130,7 +130,7 @@ class AudioEngineController extends ChangeNotifier {
   bool get reverbEnabled => engine.state.reverb.enabled;
 
   CrossfeedMode get crossfeedMode => engine.state.crossfeed;
-  double get spatializerWidth => 1.3;
+  double get spatializerWidth => engine.state.spatializerWidth;
   double get stereoBalance => engine.state.balance;
   bool get monoDownmix => engine.state.mono;
   bool get limiterEnabled => engine.state.limiterEnabled;
@@ -202,9 +202,16 @@ class AudioEngineController extends ChangeNotifier {
       }
       notifyListeners();
     }));
+    _subscriptions.add(engine.stream.currentIndex.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.queue.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.crossfadeConfig.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.playbackState.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.spatializerWidth.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.spatializerEnabled.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.visualizerEnabled.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.volume.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.rate.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.pitch.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.equalizer.listen((eq) {
       _selectedPreset = _detectPreset(eq) ?? 'custom';
       notifyListeners();

@@ -85,10 +85,10 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  void crateApiEngineRustEngineAppend(
+  Future<void> crateApiEngineRustEngineAppend(
       {required RustEngine that, required List<RustEngineItem> items});
 
-  void crateApiEngineRustEngineClearQueue(
+  Future<void> crateApiEngineRustEngineClearQueue(
       {required RustEngine that, required bool keepCurrent});
 
   void crateApiEngineRustEngineConfigureCueOutput(
@@ -133,7 +133,7 @@ abstract class RustLibApi extends BaseApi {
 
   double crateApiEngineRustEngineGetVolume({required RustEngine that});
 
-  void crateApiEngineRustEngineInsertNext(
+  Future<void> crateApiEngineRustEngineInsertNext(
       {required RustEngine that, required RustEngineItem item});
 
   bool crateApiEngineRustEngineIsBuffering({required RustEngine that});
@@ -150,7 +150,7 @@ abstract class RustLibApi extends BaseApi {
       required int periodSize,
       String? playbackDeviceId});
 
-  void crateApiEngineRustEngineNext(
+  Future<void> crateApiEngineRustEngineNext(
       {required RustEngine that, BigInt? crossfadeDurationMs, int? curve});
 
   Future<BigInt> crateApiEngineRustEngineOfflineBounce(
@@ -163,13 +163,13 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiEngineRustEnginePlay({required RustEngine that});
 
-  void crateApiEngineRustEnginePrevious(
+  Future<void> crateApiEngineRustEnginePrevious(
       {required RustEngine that, BigInt? crossfadeDurationMs, int? curve});
 
-  void crateApiEngineRustEngineRemoveAt(
+  Future<void> crateApiEngineRustEngineRemoveAt(
       {required RustEngine that, required BigInt index});
 
-  void crateApiEngineRustEngineReorder(
+  Future<void> crateApiEngineRustEngineReorder(
       {required RustEngine that, required BigInt from, required BigInt to});
 
   void crateApiEngineRustEngineSeek(
@@ -220,7 +220,7 @@ abstract class RustLibApi extends BaseApi {
   void crateApiEngineRustEngineSetPreamp(
       {required RustEngine that, required double preampDb});
 
-  void crateApiEngineRustEngineSetQueue(
+  Future<void> crateApiEngineRustEngineSetQueue(
       {required RustEngine that,
       required List<RustEngineItem> items,
       BigInt? startIndex});
@@ -264,7 +264,7 @@ abstract class RustLibApi extends BaseApi {
   void crateApiEngineRustEngineSetVolume(
       {required RustEngine that, required double volume});
 
-  void crateApiEngineRustEngineSkipToIndex(
+  Future<void> crateApiEngineRustEngineSkipToIndex(
       {required RustEngine that,
       required BigInt index,
       BigInt? crossfadeDurationMs,
@@ -697,15 +697,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  void crateApiEngineRustEngineAppend(
+  Future<void> crateApiEngineRustEngineAppend(
       {required RustEngine that, required List<RustEngineItem> items}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_list_rust_engine_item(items, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 1, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -724,15 +725,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineClearQueue(
+  Future<void> crateApiEngineRustEngineClearQueue(
       {required RustEngine that, required bool keepCurrent}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_bool(keepCurrent, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 2, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1128,15 +1130,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineInsertNext(
+  Future<void> crateApiEngineRustEngineInsertNext(
       {required RustEngine that, required RustEngineItem item}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_box_autoadd_rust_engine_item(item, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 17, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1287,16 +1290,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineNext(
+  Future<void> crateApiEngineRustEngineNext(
       {required RustEngine that, BigInt? crossfadeDurationMs, int? curve}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
         sse_encode_opt_box_autoadd_i_32(curve, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 23, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1398,16 +1402,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEnginePrevious(
+  Future<void> crateApiEngineRustEnginePrevious(
       {required RustEngine that, BigInt? crossfadeDurationMs, int? curve}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
         sse_encode_opt_box_autoadd_i_32(curve, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 27, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1426,15 +1431,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineRemoveAt(
+  Future<void> crateApiEngineRustEngineRemoveAt(
       {required RustEngine that, required BigInt index}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_usize(index, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 28, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1453,16 +1459,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineReorder(
+  Future<void> crateApiEngineRustEngineReorder(
       {required RustEngine that, required BigInt from, required BigInt to}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_usize(from, serializer);
         sse_encode_usize(to, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 29, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1914,18 +1921,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineSetQueue(
+  Future<void> crateApiEngineRustEngineSetQueue(
       {required RustEngine that,
       required List<RustEngineItem> items,
       BigInt? startIndex}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_list_rust_engine_item(items, serializer);
         sse_encode_opt_box_autoadd_usize(startIndex, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 46)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 46, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2276,20 +2284,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiEngineRustEngineSkipToIndex(
+  Future<void> crateApiEngineRustEngineSkipToIndex(
       {required RustEngine that,
       required BigInt index,
       BigInt? crossfadeDurationMs,
       int? curve}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
             that, serializer);
         sse_encode_usize(index, serializer);
         sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
         sse_encode_opt_box_autoadd_i_32(curve, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 59)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 59, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -8781,10 +8790,11 @@ class RustEngineImpl extends RustOpaque implements RustEngine {
         RustLib.instance.api.rust_arc_decrement_strong_count_RustEnginePtr,
   );
 
-  void append({required List<RustEngineItem> items}) => RustLib.instance.api
-      .crateApiEngineRustEngineAppend(that: this, items: items);
+  Future<void> append({required List<RustEngineItem> items}) =>
+      RustLib.instance.api
+          .crateApiEngineRustEngineAppend(that: this, items: items);
 
-  void clearQueue({required bool keepCurrent}) => RustLib.instance.api
+  Future<void> clearQueue({required bool keepCurrent}) => RustLib.instance.api
       .crateApiEngineRustEngineClearQueue(that: this, keepCurrent: keepCurrent);
 
   void configureCueOutput(
@@ -8862,8 +8872,9 @@ class RustEngineImpl extends RustOpaque implements RustEngine {
         that: this,
       );
 
-  void insertNext({required RustEngineItem item}) => RustLib.instance.api
-      .crateApiEngineRustEngineInsertNext(that: this, item: item);
+  Future<void> insertNext({required RustEngineItem item}) =>
+      RustLib.instance.api
+          .crateApiEngineRustEngineInsertNext(that: this, item: item);
 
   bool isBuffering() =>
       RustLib.instance.api.crateApiEngineRustEngineIsBuffering(
@@ -8884,7 +8895,7 @@ class RustEngineImpl extends RustOpaque implements RustEngine {
         that: this,
       );
 
-  void next({BigInt? crossfadeDurationMs, int? curve}) =>
+  Future<void> next({BigInt? crossfadeDurationMs, int? curve}) =>
       RustLib.instance.api.crateApiEngineRustEngineNext(
           that: this, crossfadeDurationMs: crossfadeDurationMs, curve: curve);
 
@@ -8903,14 +8914,14 @@ class RustEngineImpl extends RustOpaque implements RustEngine {
         that: this,
       );
 
-  void previous({BigInt? crossfadeDurationMs, int? curve}) =>
+  Future<void> previous({BigInt? crossfadeDurationMs, int? curve}) =>
       RustLib.instance.api.crateApiEngineRustEnginePrevious(
           that: this, crossfadeDurationMs: crossfadeDurationMs, curve: curve);
 
-  void removeAt({required BigInt index}) => RustLib.instance.api
+  Future<void> removeAt({required BigInt index}) => RustLib.instance.api
       .crateApiEngineRustEngineRemoveAt(that: this, index: index);
 
-  void reorder({required BigInt from, required BigInt to}) =>
+  Future<void> reorder({required BigInt from, required BigInt to}) =>
       RustLib.instance.api
           .crateApiEngineRustEngineReorder(that: this, from: from, to: to);
 
@@ -8965,7 +8976,8 @@ class RustEngineImpl extends RustOpaque implements RustEngine {
   void setPreamp({required double preampDb}) => RustLib.instance.api
       .crateApiEngineRustEngineSetPreamp(that: this, preampDb: preampDb);
 
-  void setQueue({required List<RustEngineItem> items, BigInt? startIndex}) =>
+  Future<void> setQueue(
+          {required List<RustEngineItem> items, BigInt? startIndex}) =>
       RustLib.instance.api.crateApiEngineRustEngineSetQueue(
           that: this, items: items, startIndex: startIndex);
 
@@ -9017,7 +9029,7 @@ class RustEngineImpl extends RustOpaque implements RustEngine {
   void setVolume({required double volume}) => RustLib.instance.api
       .crateApiEngineRustEngineSetVolume(that: this, volume: volume);
 
-  void skipToIndex(
+  Future<void> skipToIndex(
           {required BigInt index, BigInt? crossfadeDurationMs, int? curve}) =>
       RustLib.instance.api.crateApiEngineRustEngineSkipToIndex(
           that: this,

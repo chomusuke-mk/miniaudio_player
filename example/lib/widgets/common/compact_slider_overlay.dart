@@ -38,6 +38,22 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
   final LayerLink _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
   bool _isOpen = false;
+  late double _currentVal;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentVal = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(covariant CompactSliderControl oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != oldWidget.value) {
+      _currentVal = widget.value;
+      _overlayEntry?.markNeedsBuild();
+    }
+  }
 
   void _toggleOverlay() {
     if (_isOpen) {
@@ -49,6 +65,7 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
 
   void _showOverlay() {
     final overlay = Overlay.of(context);
+    _currentVal = widget.value;
 
     _overlayEntry = OverlayEntry(
       builder: (context) {
@@ -93,8 +110,8 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                             minWidth: 28,
                             minHeight: 28,
                           ),
-                          tooltip: 'Reset to default (${widget.defaultValue})',
                           onPressed: () {
+                            _currentVal = widget.defaultValue;
                             widget.onChanged(widget.defaultValue);
                             _overlayEntry?.markNeedsBuild();
                           },
@@ -115,10 +132,11 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                               ),
                             ),
                             child: Slider(
-                              value: widget.value.clamp(widget.min, widget.max),
+                              value: _currentVal.clamp(widget.min, widget.max),
                               min: widget.min,
                               max: widget.max,
                               onChanged: (val) {
+                                _currentVal = val;
                                 widget.onChanged(val);
                                 _overlayEntry?.markNeedsBuild();
                               },

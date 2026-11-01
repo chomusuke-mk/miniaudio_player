@@ -107,8 +107,13 @@ class AudioAnalyzerController extends ChangeNotifier {
         );
       } else if (!kIsWeb && track.source is UriAudioSource) {
         final s = (track.source as UriAudioSource).sourceString;
-        if (s.startsWith('assets/')) {
-          final byteData = await rootBundle.load(s);
+        if (s.startsWith('asset://') || s.startsWith('asset:') || s.startsWith('assets/')) {
+          final assetPath = s.startsWith('asset://')
+              ? s.substring('asset://'.length)
+              : s.startsWith('asset:')
+                  ? s.substring('asset:'.length)
+                  : s;
+          final byteData = await rootBundle.load(assetPath);
           final bytes = byteData.buffer.asUint8List(
             byteData.offsetInBytes,
             byteData.lengthInBytes,
@@ -119,13 +124,16 @@ class AudioAnalyzerController extends ChangeNotifier {
             replayGain: true,
             waveformPoints: 72,
           );
-        } else if (File(s).existsSync()) {
-          res = await MiniaudioPlayer.analyzeAudio(
-            s,
-            waveform: true,
-            replayGain: true,
-            waveformPoints: 72,
-          );
+        } else {
+          final filePath = s.startsWith('file://') ? Uri.parse(s).toFilePath() : s;
+          if (File(filePath).existsSync()) {
+            res = await MiniaudioPlayer.analyzeAudio(
+              filePath,
+              waveform: true,
+              replayGain: true,
+              waveformPoints: 72,
+            );
+          }
         }
       }
 

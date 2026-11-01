@@ -374,7 +374,11 @@ class MiniaudioEngine<T> {
     final effective = _manualVisualizerOverride ?? _hasVisualizerListeners;
     _visualizerEnabled = effective;
     _visualizerEnabledController.add(effective);
-    _rustEngine?.setVisualizerEnabled(enabled: effective);
+    if (_rustEngine != null) {
+      _rustEngine?.setVisualizerEnabled(enabled: effective);
+    } else {
+      _getEngine().then((eng) => eng?.setVisualizerEnabled(enabled: effective));
+    }
   }
 
   ReplayGainMode get _replayGainMode {
@@ -454,6 +458,10 @@ class MiniaudioEngine<T> {
         engine.setSpatialEmitter(emitter: spatial.emitter.toRust());
         engine.setSpatialDopplerFactor(factor: spatial.dopplerFactor);
         engine.setSpatialSpeedOfSound(speed: spatial.speedOfSound);
+      }
+
+      if (_visualizerEnabled) {
+        engine.setVisualizerEnabled(enabled: true);
       }
 
       // Single unified event stream from Rust
@@ -651,7 +659,7 @@ class MiniaudioEngine<T> {
     _queue.addAll(items);
     _queueController.add(List.unmodifiable(_queue));
 
-    engine?.setQueue(
+    await engine?.setQueue(
       items: rustItems,
       startIndex: items.isNotEmpty ? BigInt.from(effectiveStart) : null,
     );
@@ -697,19 +705,19 @@ class MiniaudioEngine<T> {
 
   Future<void> nextInternal() async {
     final engine = await _getEngine();
-    engine?.next();
+    await engine?.next();
     _updateReplayGainForCurrentItem();
   }
 
   Future<void> previousInternal() async {
     final engine = await _getEngine();
-    engine?.previous();
+    await engine?.previous();
     _updateReplayGainForCurrentItem();
   }
 
   Future<void> skipToIndexInternal(int index) async {
     final engine = await _getEngine();
-    engine?.skipToIndex(index: BigInt.from(index));
+    await engine?.skipToIndex(index: BigInt.from(index));
     _updateReplayGainForCurrentItem();
   }
 
@@ -717,7 +725,7 @@ class MiniaudioEngine<T> {
     final effectiveId = item.id ?? ++_nextAutoId;
     _shadowItems[effectiveId] = item;
     final engine = await _getEngine();
-    engine?.insertNext(item: item.toRustItem(effectiveId));
+    await engine?.insertNext(item: item.toRustItem(effectiveId));
   }
 
   Future<void> appendInternal(List<EngineItem<T>> items) async {
@@ -728,22 +736,22 @@ class MiniaudioEngine<T> {
       rustItems.add(item.toRustItem(effectiveId));
     }
     final engine = await _getEngine();
-    engine?.append(items: rustItems);
+    await engine?.append(items: rustItems);
   }
 
   Future<void> removeAtInternal(int index) async {
     final engine = await _getEngine();
-    engine?.removeAt(index: BigInt.from(index));
+    await engine?.removeAt(index: BigInt.from(index));
   }
 
   Future<void> reorderInternal(int from, int to) async {
     final engine = await _getEngine();
-    engine?.reorder(from: BigInt.from(from), to: BigInt.from(to));
+    await engine?.reorder(from: BigInt.from(from), to: BigInt.from(to));
   }
 
   Future<void> clearQueueInternal({bool keepCurrent = true}) async {
     final engine = await _getEngine();
-    engine?.clearQueue(keepCurrent: keepCurrent);
+    await engine?.clearQueue(keepCurrent: keepCurrent);
     if (!keepCurrent) {
       _shadowItems.clear();
     }

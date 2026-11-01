@@ -11,9 +11,9 @@ import 'types.dart';
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustEngine>>
 abstract class RustEngine implements RustOpaqueInterface {
-  void append({required List<RustEngineItem> items});
+  Future<void> append({required List<RustEngineItem> items});
 
-  void clearQueue({required bool keepCurrent});
+  Future<void> clearQueue({required bool keepCurrent});
 
   void configureCueOutput(
       {String? cueDeviceId, required double volume, required int mode});
@@ -48,7 +48,7 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   double getVolume();
 
-  void insertNext({required RustEngineItem item});
+  Future<void> insertNext({required RustEngineItem item});
 
   bool isBuffering();
 
@@ -69,7 +69,7 @@ abstract class RustEngine implements RustOpaqueInterface {
           periodSize: periodSize,
           playbackDeviceId: playbackDeviceId);
 
-  void next({BigInt? crossfadeDurationMs, int? curve});
+  Future<void> next({BigInt? crossfadeDurationMs, int? curve});
 
   Future<BigInt> offlineBounce(
       {required String path,
@@ -80,11 +80,11 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void play();
 
-  void previous({BigInt? crossfadeDurationMs, int? curve});
+  Future<void> previous({BigInt? crossfadeDurationMs, int? curve});
 
-  void removeAt({required BigInt index});
+  Future<void> removeAt({required BigInt index});
 
-  void reorder({required BigInt from, required BigInt to});
+  Future<void> reorder({required BigInt from, required BigInt to});
 
   void seek({required PlatformInt64 positionMs});
 
@@ -118,7 +118,8 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void setPreamp({required double preampDb});
 
-  void setQueue({required List<RustEngineItem> items, BigInt? startIndex});
+  Future<void> setQueue(
+      {required List<RustEngineItem> items, BigInt? startIndex});
 
   void setRate({required double rate});
 
@@ -147,7 +148,7 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   void setVolume({required double volume});
 
-  void skipToIndex(
+  Future<void> skipToIndex(
       {required BigInt index, BigInt? crossfadeDurationMs, int? curve});
 
   void startRecording({required String path, required RustWavFormat format});
