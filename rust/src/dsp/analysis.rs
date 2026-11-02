@@ -292,12 +292,26 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
     config: &AudioAnalysisConfig,
     byte_size: u64,
 ) -> Result<AudioAnalysisResult, i32> {
-    let mut engine = SymphoniaEngine::new(source, hint_ext).map_err(|_| -6)?;
+    let mut engine = match SymphoniaEngine::new(source, hint_ext) {
+        Ok(e) => e,
+        Err(_) => {
+            crate::map_log!(1, "analyze_media_source failed: SymphoniaEngine::new failed");
+            return Err(-6);
+        }
+    };
 
     let sample_rate = engine.sample_rate();
     let channels = engine.channels().max(1);
     let ch_usize = channels as usize;
     let duration_ms = engine.duration_ms().unwrap_or(0) as i64;
+    crate::map_log!(
+        3,
+        "analyze_media_source started: sr={}, ch={}, dur={}ms, hint={:?}",
+        sample_rate,
+        channels,
+        duration_ms,
+        hint_ext
+    );
 
     let calc_rg = (config.flags & MAP_ANALYSIS_FLAG_REPLAY_GAIN) != 0;
     let calc_wf = (config.flags & MAP_ANALYSIS_FLAG_WAVEFORM) != 0;
@@ -346,6 +360,15 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
         (0, WaveformData::default())
     };
 
+    crate::map_log!(
+        3,
+        "analyze_media_source completed: peak={:.4}, lufs={:.2}, rg_gain={:.2}dB, wf_points={}",
+        peak,
+        replay_gain.lufs,
+        replay_gain.gain_db,
+        waveform.point_count
+    );
+
     Ok(AudioAnalysisResult {
         status: 0,
         duration_ms,
@@ -361,9 +384,17 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
 }
 
 pub fn analyze_file(path: &str, config: &AudioAnalysisConfig) -> Result<AudioAnalysisResult, i32> {
-    let file = File::open(path).map_err(|_| -5)?;
+    crate::map_log!(3, "analyze_file: path={}", path);
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            crate::map_log!(1, "analyze_file failed: could not open file {}", path);
+            return Err(-5);
+        }
+    };
     let byte_size = file.metadata().map(|m| m.len()).unwrap_or(0);
     if byte_size == 0 {
+        crate::map_log!(1, "analyze_file failed: file is empty: {}", path);
         return Err(-6);
     }
     let ext = FormatSniffer::extract_extension_hint(path);

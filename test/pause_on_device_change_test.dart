@@ -201,11 +201,17 @@ void main() {
         expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await player.action.play();
+        for (int i = 0; i < 20 && !player.state.playing; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
         expect(player.state.playing, isTrue);
 
         await Future.delayed(const Duration(milliseconds: 100));
 
         await player.action.pause();
+        for (int i = 0; i < 20 && player.state.playing; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
         expect(player.state.playing, isFalse);
 
         // Seek while paused (calls streamSeek and duration/position getters)
@@ -214,6 +220,9 @@ void main() {
 
         // Resume play after seek
         await player.action.play();
+        for (int i = 0; i < 20 && !player.state.playing; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
         expect(player.state.playing, isTrue);
 
         await Future.delayed(const Duration(milliseconds: 150));

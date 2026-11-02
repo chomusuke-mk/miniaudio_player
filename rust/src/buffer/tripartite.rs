@@ -249,6 +249,7 @@ impl TripartiteBuffer {
     }
 
     pub fn set_head(&self, head: &[u8]) {
+        crate::map_log!(4, "TripartiteBuffer set_head: bytes={}", head.len());
         let mut b = self.inner.lock().unwrap();
         b.head.set_bytes(head);
         b.meta_version = b.meta_version.wrapping_add(1);
@@ -263,6 +264,12 @@ impl TripartiteBuffer {
                     .map(|tot| tot.saturating_sub(tail.len() as u64))
             })
             .unwrap_or(0);
+        crate::map_log!(
+            4,
+            "TripartiteBuffer set_tail: bytes={}, offset={}",
+            tail.len(),
+            resolved_offset
+        );
         b.tail.set_bytes(tail, resolved_offset);
         if b.tail.audio_end.is_none() && resolved_offset > 0 {
             b.tail.audio_end = Some(resolved_offset);
@@ -318,7 +325,21 @@ impl TripartiteBuffer {
 
         let audio_start = b.head.audio_start;
         let read_cursor = b.read_cursor;
-        let written = b.ring.append(audio_start, read_cursor, chunk)?;
+        let written = match b.ring.append(audio_start, read_cursor, chunk) {
+            Ok(w) => w,
+            Err(BufferError::Busy) => {
+                crate::map_log!(2, "TripartiteBuffer feed_chunk: ring buffer is Busy");
+                return Err(BufferError::Busy);
+            }
+            Err(e) => return Err(e),
+        };
+        crate::map_log!(
+            5,
+            "TripartiteBuffer feed_chunk: len={}, range=[{}..{}]",
+            chunk.len(),
+            b.ring.range_start,
+            b.ring.range_end
+        );
 
         if b.state == BufferState::ProbingHead || b.state == BufferState::Buffering {
             b.state = BufferState::Ready;
@@ -524,6 +545,7 @@ impl TripartiteBuffer {
     }
 
     pub fn flush(&self, new_stream_offset: u64) {
+        crate::map_log!(4, "TripartiteBuffer flush at offset={}", new_stream_offset);
         let mut b = self.inner.lock().unwrap();
         b.ring.reset(new_stream_offset);
         b.read_cursor = new_stream_offset;
@@ -602,6 +624,7 @@ impl TripartiteBuffer {
     }
 
     pub fn abort(&self) {
+        crate::map_log!(4, "TripartiteBuffer abort called");
         let mut b = self.inner.lock().unwrap();
         b.should_abort = true;
         b.state = BufferState::Aborted;

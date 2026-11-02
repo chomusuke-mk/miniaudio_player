@@ -11,6 +11,7 @@ import 'audio_device.dart';
 import 'audio_source.dart';
 import 'buffered_range.dart';
 import 'dsp_config.dart';
+import 'logger.dart';
 import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
@@ -93,6 +94,9 @@ typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
 
 /// Global configuration parameters for all [MiniaudioPlayer] instances.
 class MiniaudioPlayerGlobalConfig {
+  /// Optional callback to receive structured diagnostic log messages.
+  static MiniaudioLogCallback? onLog;
+
   /// Optional custom loader callback for resolving Flutter assets (e.g. `rootBundle.load`).
   static AssetBytesLoader? assetLoader;
 
@@ -193,102 +197,183 @@ final class _PlayerTelemetryListener implements PlayerBackendListener {
   const _PlayerTelemetryListener(this._player);
 
   @override
-  void onState(PlaybackState newState) => _player._onState(newState);
+  void onState(PlaybackState newState) {
+    MapLogger.info('Telemetry state -> $newState');
+    _player._onState(newState);
+  }
 
   @override
-  void onPosition(Duration position) => _player._onPosition(position);
+  void onPosition(Duration position) {
+    MapLogger.verbose('Telemetry position -> ${position.inMilliseconds}ms');
+    _player._onPosition(position);
+  }
 
   @override
-  void onDuration(Duration duration) => _player._onDuration(duration);
+  void onDuration(Duration duration) {
+    MapLogger.info('Telemetry duration -> ${duration.inMilliseconds}ms');
+    _player._onDuration(duration);
+  }
 
   @override
-  void onPlaying(bool isPlaying) => _player._onPlaying(isPlaying);
+  void onPlaying(bool isPlaying) {
+    MapLogger.info('Telemetry isPlaying -> $isPlaying');
+    _player._onPlaying(isPlaying);
+  }
 
   @override
-  void onBuffering(bool isBuffering) => _player._onBuffering(isBuffering);
+  void onBuffering(bool isBuffering) {
+    MapLogger.debug('Telemetry isBuffering -> $isBuffering');
+    _player._onBuffering(isBuffering);
+  }
 
   @override
-  void onCompleted(bool isCompleted) => _player._onCompleted(isCompleted);
+  void onCompleted(bool isCompleted) {
+    MapLogger.info('Telemetry isCompleted -> $isCompleted');
+    _player._onCompleted(isCompleted);
+  }
 
   @override
-  void onVolume(double volume) => _player._volume.emitIfChanged(volume);
+  void onVolume(double volume) {
+    MapLogger.debug('Telemetry volume -> $volume');
+    _player._volume.emitIfChanged(volume);
+  }
 
   @override
-  void onRate(double rate) => _player._rate.emitIfChanged(rate);
+  void onRate(double rate) {
+    MapLogger.debug('Telemetry rate -> $rate');
+    _player._rate.emitIfChanged(rate);
+  }
 
   @override
-  void onPitch(double pitch) => _player._pitch.emitIfChanged(pitch);
+  void onPitch(double pitch) {
+    MapLogger.debug('Telemetry pitch -> $pitch');
+    _player._pitch.emitIfChanged(pitch);
+  }
 
   @override
-  void onBitrate(int bitrate) => _player._audioBitrate.emitIfChanged(bitrate);
+  void onBitrate(int bitrate) {
+    MapLogger.debug('Telemetry bitrate -> $bitrate bps');
+    _player._audioBitrate.emitIfChanged(bitrate);
+  }
 
   @override
-  void onBufferSize(int bufferSize) =>
-      _player._bufferSize.emitIfChanged(bufferSize);
+  void onBufferSize(int bufferSize) {
+    MapLogger.debug('Telemetry bufferSize -> $bufferSize frames');
+    _player._bufferSize.emitIfChanged(bufferSize);
+  }
 
   @override
-  void onSilenceSaved(Duration duration) =>
-      _player._silenceSavedDuration.emitIfChanged(duration);
+  void onSilenceSaved(Duration duration) {
+    MapLogger.debug('Telemetry silenceSaved -> ${duration.inMilliseconds}ms');
+    _player._silenceSavedDuration.emitIfChanged(duration);
+  }
 
   @override
-  void onSilenceConfig(SilenceSkipConfig config) =>
-      _player._onSilenceConfig(config);
+  void onSilenceConfig(SilenceSkipConfig config) {
+    MapLogger.debug('Telemetry silenceConfig -> mode: ${config.mode}, threshold: ${config.thresholdDb}dB');
+    _player._onSilenceConfig(config);
+  }
 
   @override
-  void onBufferedRange(BufferedRange range) => _player._onBufferedRange(range);
+  void onBufferedRange(BufferedRange range) {
+    MapLogger.verbose(
+      'Telemetry bufferedRange -> fill: ${(range.fillPercentage * 100).toStringAsFixed(1)}%, '
+      'stream: ${(range.percentage * 100).toStringAsFixed(1)}%, '
+      'range: [${range.start.inMilliseconds}ms..${range.end.inMilliseconds}ms]',
+    );
+    _player._onBufferedRange(range);
+  }
 
   @override
-  void onVisualizer(VisualizerData data) => _player._onVisualizer(data);
+  void onVisualizer(VisualizerData data) {
+    MapLogger.verbose(
+      'Telemetry visualizer -> rms: ${data.rms.toStringAsFixed(4)}, peak: ${data.peak.toStringAsFixed(4)}',
+    );
+    _player._onVisualizer(data);
+  }
 
   @override
-  void onVisualizerEnabled(bool enabled) =>
-      _player._visualizerEnabled.emitIfChanged(enabled);
+  void onVisualizerEnabled(bool enabled) {
+    MapLogger.debug('Telemetry visualizerEnabled -> $enabled');
+    _player._visualizerEnabled.emitIfChanged(enabled);
+  }
 
   @override
-  void onDevice(AudioDevice device) =>
-      _player._audioDevice.emitIfChanged(device);
+  void onDevice(AudioDevice device) {
+    MapLogger.info('Telemetry device -> id: ${device.id}, name: ${device.name}');
+    _player._audioDevice.emitIfChanged(device);
+  }
 
   @override
-  void onTrackMetadata(AudioTrackMetadata? metadata) =>
-      _player._trackMetadata.emitIfChanged(metadata);
+  void onTrackMetadata(AudioTrackMetadata? metadata) {
+    MapLogger.info(
+      'Telemetry metadata -> format: ${metadata?.formatName}, codec: ${metadata?.codec.name}, duration: ${metadata?.duration.inMilliseconds}ms',
+    );
+    _player._trackMetadata.emitIfChanged(metadata);
+  }
 
   @override
-  void onEqualizer(Equalizer equalizer) =>
-      _player._equalizer.emitIfChanged(equalizer);
+  void onEqualizer(Equalizer equalizer) {
+    MapLogger.debug('Telemetry equalizer -> updated');
+    _player._equalizer.emitIfChanged(equalizer);
+  }
 
   @override
-  void onPreamp(double preampDb) => _player._preamp.emitIfChanged(preampDb);
+  void onPreamp(double preampDb) {
+    MapLogger.debug('Telemetry preamp -> ${preampDb.toStringAsFixed(2)}dB');
+    _player._preamp.emitIfChanged(preampDb);
+  }
 
   @override
-  void onReplayGain(ReplayGainConfig config) =>
-      _player._replayGain.emitIfChanged(config);
+  void onReplayGain(ReplayGainConfig config) {
+    MapLogger.debug(
+      'Telemetry replayGain -> enabled: ${config.enabled}, gain: ${config.gainDb}dB',
+    );
+    _player._replayGain.emitIfChanged(config);
+  }
 
   @override
-  void onBalance(double balance) => _player._balance.emitIfChanged(balance);
+  void onBalance(double balance) {
+    MapLogger.debug('Telemetry balance -> $balance');
+    _player._balance.emitIfChanged(balance);
+  }
 
   @override
-  void onMono(bool enabled) => _player._mono.emitIfChanged(enabled);
+  void onMono(bool enabled) {
+    MapLogger.debug('Telemetry mono -> $enabled');
+    _player._mono.emitIfChanged(enabled);
+  }
 
   @override
-  void onCrossfeed(CrossfeedMode mode) =>
-      _player._crossfeed.emitIfChanged(mode);
+  void onCrossfeed(CrossfeedMode mode) {
+    MapLogger.debug('Telemetry crossfeed -> $mode');
+    _player._crossfeed.emitIfChanged(mode);
+  }
 
   @override
   void onSpatializer({required bool enabled, required double width}) {
+    MapLogger.debug('Telemetry spatializer -> enabled: $enabled, width: $width');
     _player._spatializerEnabled.emitIfChanged(enabled);
     _player._spatializerWidth.emitIfChanged(width);
   }
 
   @override
-  void onReverb(Reverb reverb) => _player._reverb.emitIfChanged(reverb);
+  void onReverb(Reverb reverb) {
+    MapLogger.debug('Telemetry reverb -> enabled: ${reverb.enabled}, roomSize: ${reverb.roomSize}');
+    _player._reverb.emitIfChanged(reverb);
+  }
 
   @override
-  void onLimiter(bool enabled) =>
-      _player._limiterEnabled.emitIfChanged(enabled);
+  void onLimiter(bool enabled) {
+    MapLogger.debug('Telemetry limiter -> $enabled');
+    _player._limiterEnabled.emitIfChanged(enabled);
+  }
 
   @override
-  void onError(String message, int errorCode) =>
-      _player._playbackState.emitIfChanged(PlaybackState.error);
+  void onError(String message, int errorCode) {
+    MapLogger.error('Telemetry native error: [$errorCode] $message');
+    _player._playbackState.emitIfChanged(PlaybackState.error);
+  }
 }
 
 /// Ultra-low-resource cross-platform audio player using Rust Symphonia and miniaudio.
@@ -406,6 +491,7 @@ class MiniaudioPlayer {
   static void resetGlobalConfig() {
     _globalConfig = MiniaudioPlayerGlobalConfig();
     MiniaudioPlayerGlobalConfig.assetLoader = null;
+    MiniaudioPlayerGlobalConfig.onLog = null;
   }
 
   /// Registers a custom asset loader function (e.g. `(key) async => (await rootBundle.load(key)).buffer.asUint8List()`).
@@ -605,11 +691,14 @@ class MiniaudioPlayer {
       _metaBytes,
     ];
 
-    if (_globalConfig.logLevel.value > 0) {
-      try {
-        getPlatformService().setLogLevel(_globalConfig.logLevel.value);
-      } catch (_) {}
-    }
+    try {
+      getPlatformService().setLogLevel(_globalConfig.logLevel.value);
+    } catch (_) {}
+
+    MapLogger.info(
+      'Initializing MiniaudioPlayer (bufferSize: ${_bufferSize.value}, '
+      'device: ${_audioDevice.value.id}, source: $source)',
+    );
 
     _backend = createPlayerBackend();
     _backend.setListener(_PlayerTelemetryListener(this));
@@ -981,6 +1070,7 @@ class MiniaudioPlayer {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    MapLogger.info('Disposing MiniaudioPlayer instance');
 
     _resetMetadata();
     action._dispose();

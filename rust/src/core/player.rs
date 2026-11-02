@@ -307,6 +307,7 @@ impl Read for IcyDemuxReader {
                     return Ok(0);
                 }
                 if let Some(synthesized) = synthesize_icy_id3_container(&meta_buf) {
+                    crate::map_log!(3, "ICY Metadata parsed (length={} bytes)", synthesized.len());
                     if let Ok(mut latest) = self.latest_icy.lock() {
                         *latest = Some(synthesized.clone());
                     }
@@ -465,6 +466,7 @@ fn spawn_network_streamer_thread(
     abort_stream: Arc<AtomicBool>,
     decoder_running: Arc<AtomicBool>,
 ) {
+    crate::map_log!(3, "Network streamer thread started");
     let _ = std::thread::Builder::new()
         .name("miniaudio-net-streamer".to_string())
         .spawn(move || {
@@ -472,10 +474,12 @@ fn spawn_network_streamer_thread(
             while !abort_stream.load(Ordering::Relaxed) && decoder_running.load(Ordering::Relaxed) {
                 match reader.read(&mut chunk) {
                     Ok(0) => {
+                        crate::map_log!(3, "Network streamer reached EOF");
                         trip.mark_eof();
                         break;
                     }
                     Ok(n) => {
+                        crate::map_log!(5, "Network streamer read {} bytes", n);
                         let mut offset = 0;
                         while offset < n
                             && !abort_stream.load(Ordering::Relaxed)
@@ -484,6 +488,7 @@ fn spawn_network_streamer_thread(
                             match trip.feed_chunk(&chunk[offset..n]) {
                                 Ok(written) => offset += written,
                                 Err(crate::buffer::BufferError::Busy) => {
+                                    crate::map_log!(2, "Network streamer buffer busy, throttling 20ms");
                                     std::thread::sleep(Duration::from_millis(20));
                                 }
                                 Err(_) => return,
@@ -491,7 +496,10 @@ fn spawn_network_streamer_thread(
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(_) => break,
+                    Err(e) => {
+                        crate::map_log!(1, "Network streamer read error: {:?}", e);
+                        break;
+                    }
                 }
             }
         });
@@ -766,6 +774,7 @@ impl DecoderWorker {
         if target_seek < 0 {
             return false;
         }
+        crate::map_log!(4, "DecoderWorker executing seek to {}ms", target_seek);
 
         let cur_dev_sr = self.dev_sr_arc.load(Ordering::Relaxed).max(8000) as i64;
         let dur = self.dur_ms.load(Ordering::Relaxed);
@@ -928,6 +937,7 @@ impl DecoderWorker {
     }
 
     fn transition_to_playing_from_buffering(&self) {
+        crate::map_log!(4, "DecoderWorker recovered from buffering -> PLAYING");
         self.state.store(STATE_PLAYING, Ordering::Relaxed);
         self.tele
             .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
@@ -940,6 +950,7 @@ impl DecoderWorker {
     }
 
     fn transition_to_buffering(&self) {
+        crate::map_log!(4, "DecoderWorker transitioned to BUFFERING");
         self.state.store(STATE_BUFFERING, Ordering::Relaxed);
         self.tele
             .post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
@@ -952,6 +963,7 @@ impl DecoderWorker {
     }
 
     fn handle_eof(&mut self) {
+        crate::map_log!(3, "DecoderWorker reached EOF");
         if self.is_stream_arc.load(Ordering::Relaxed) {
             let is_buf_eof = self
                 .trip_buf_arc
@@ -1015,7 +1027,7 @@ impl DecoderWorker {
                             thread::sleep(Duration::from_millis(10));
                             return;
                         } else {
-                            log::error!("Decoder error: {}", err);
+                            crate::map_log!(1, "DecoderWorker decode error: {}", err);
                             eof_reached = true;
                         }
                     }
@@ -1641,6 +1653,7 @@ impl PlayerCoordinator {
         headers: Option<&[crate::api::types::RustHttpHeader]>,
     ) -> i32 {
         let trimmed = source.trim();
+        crate::map_log!(3, "open_source: source={}", trimmed);
         if trimmed.starts_with("http://")
             || trimmed.starts_with("https://")
             || trimmed.starts_with("icy://")
@@ -1675,20 +1688,27 @@ impl PlayerCoordinator {
         mut m3u8_bytes: Vec<u8>,
         reader: &mut impl Read,
     ) -> i32 {
+        crate::map_log!(3, "open_hls_network: url={}", url);
         let _ = reader.read_to_end(&mut m3u8_bytes);
         let parsed = match crate::hls::M3u8Parser::parse(&m3u8_bytes) {
             Ok(p) => p,
-            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+            Err(_) => {
+                crate::map_log!(1, "open_hls_network failed: invalid m3u8 playlist");
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
         };
 
         let (base_media_url, media_playlist) = match parsed {
             crate::hls::ParsedHlsPlaylist::Master { variants } => {
+                crate::map_log!(4, "open_hls_network: Master playlist with {} variants", variants.len());
                 let Some(first_var) = variants.first() else {
+                    crate::map_log!(1, "open_hls_network failed: no variants in master playlist");
                     return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
                 };
                 let media_url = resolve_hls_uri(url, &first_var.uri);
                 let req = apply_http_headers(agent.get(&media_url), headers);
                 let Ok(res) = req.call() else {
+                    crate::map_log!(1, "open_hls_network failed to fetch media playlist from {}", media_url);
                     return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
                 };
                 let mut media_bytes = Vec::new();
@@ -1697,7 +1717,10 @@ impl PlayerCoordinator {
                 }
                 match crate::hls::M3u8Parser::parse(&media_bytes) {
                     Ok(p) => (media_url, p),
-                    Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+                    Err(_) => {
+                        crate::map_log!(1, "open_hls_network failed: invalid variant media playlist");
+                        return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                    }
                 }
             }
             media => (url.to_string(), media),
@@ -1712,6 +1735,14 @@ impl PlayerCoordinator {
         else {
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         };
+
+        crate::map_log!(
+            3,
+            "open_hls_network: Media playlist parsed (segments={}, is_live={}, duration={:.2}s)",
+            segments.len(),
+            is_live,
+            total_duration_seconds
+        );
 
         if segments.is_empty() {
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
@@ -1793,6 +1824,7 @@ impl PlayerCoordinator {
         headers: Option<&[crate::api::types::RustHttpHeader]>,
     ) -> i32 {
         let _ = self.begin_open();
+        crate::map_log!(3, "open_network: connecting to url={}", url);
 
         let agent = build_network_agent();
         let req = apply_http_headers(agent.get(url), headers).set("Icy-MetaData", "1");
@@ -1800,6 +1832,7 @@ impl PlayerCoordinator {
         let res = match req.call() {
             Ok(r) => r,
             Err(ureq::Error::Status(code, _)) => {
+                crate::map_log!(1, "open_network failed: HTTP status {} for {}", code, url);
                 let err = if code == 404 {
                     MAP_ERROR_FILE_NOT_FOUND
                 } else if code == 401 || code == 403 {
@@ -1809,7 +1842,10 @@ impl PlayerCoordinator {
                 };
                 return self.mark_open_error(err);
             }
-            Err(_) => return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND),
+            Err(err) => {
+                crate::map_log!(1, "open_network failed: connection error for {}: {}", url, err);
+                return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+            }
         };
 
         let content_length: i64 = res
@@ -1822,6 +1858,13 @@ impl PlayerCoordinator {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         let encoding_format = infer_network_encoding_format(url, content_type.as_deref());
+        crate::map_log!(
+            4,
+            "open_network response: content_length={}, content_type={:?}, icy_metaint={}",
+            content_length,
+            content_type,
+            icy_metaint
+        );
 
         let trip_slot: Arc<Mutex<Option<TripartiteBuffer>>> = Arc::new(Mutex::new(None));
         let latest_icy: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
@@ -1839,6 +1882,7 @@ impl PlayerCoordinator {
 
         let initial_data = prefetch_initial_stream_bytes(&mut reader, content_length);
         if initial_data.is_empty() {
+            crate::map_log!(1, "open_network failed: empty initial stream bytes from {}", url);
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         }
 
@@ -1941,10 +1985,14 @@ impl PlayerCoordinator {
 
     pub fn open_file(&mut self, path: &str) -> i32 {
         let _ = self.begin_open();
+        crate::map_log!(3, "open_file: path={}", path);
 
         let source = match crate::buffer::FileByteSource::open(std::path::Path::new(path)) {
             Ok(s) => s,
-            Err(_) => return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND),
+            Err(_) => {
+                crate::map_log!(1, "open_file failed: file not found: {}", path);
+                return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+            }
         };
 
         let file_size = source.size();
@@ -1963,13 +2011,24 @@ impl PlayerCoordinator {
         let (_status, boundary) =
             FormatSniffer::detect_head_boundary(&header[..header_len], file_size as i64);
         let effective_hint = boundary.container.hint_extension().or(ext);
+        crate::map_log!(
+            4,
+            "open_file sniffed: container={:?}, effective_hint={:?}, size={}",
+            boundary.container,
+            effective_hint,
+            file_size
+        );
 
         let eng = match SymphoniaEngine::new(source, effective_hint) {
             Ok(e) => e,
-            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+            Err(e) => {
+                crate::map_log!(1, "open_file failed: decode error for {}: {:?}", path, e);
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
         };
 
         self.init_engine(eng, false, file_size, &header[..header_len]);
+        crate::map_log!(3, "open_file successfully opened: {}", path);
         MAP_SUCCESS
     }
 
@@ -1979,17 +2038,28 @@ impl PlayerCoordinator {
 
     pub fn open_memory_with_hint(&mut self, data: &[u8], hint_ext: Option<&str>) -> i32 {
         let _ = self.begin_open();
+        crate::map_log!(3, "open_memory: size={}, hint={:?}", data.len(), hint_ext);
 
         let (_status, boundary) = FormatSniffer::detect_head_boundary(data, data.len() as i64);
         let effective_hint = boundary.container.hint_extension().or(hint_ext);
+        crate::map_log!(
+            4,
+            "open_memory sniffed: container={:?}, effective_hint={:?}",
+            boundary.container,
+            effective_hint
+        );
 
         let cursor = Cursor::new(data.to_vec());
         let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
-            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+            Err(e) => {
+                crate::map_log!(1, "open_memory failed: decode error: {:?}", e);
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
         };
 
         self.init_engine(eng, false, data.len() as u64, data);
+        crate::map_log!(3, "open_memory successfully opened: size={}", data.len());
         MAP_SUCCESS
     }
 
@@ -2009,6 +2079,14 @@ impl PlayerCoordinator {
         } else {
             TripartiteBuffer::DEFAULT_RING_CAPACITY
         };
+        crate::map_log!(
+            3,
+            "open_stream_ex: initial_bytes={}, total_size={}, is_live={}, ring_cap={}",
+            initial_data.len(),
+            total_size,
+            is_live,
+            cap
+        );
 
         let tot = if total_size > 0 {
             Some(total_size as u64)
@@ -2053,13 +2131,17 @@ impl PlayerCoordinator {
         let reader = trip.create_reader();
         let eng = match SymphoniaEngine::new(reader, hint) {
             Ok(e) => e,
-            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+            Err(e) => {
+                crate::map_log!(1, "open_stream_ex failed: SymphoniaEngine::new failed for hint={:?}: {:?}", hint, e);
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
         };
         trip.set_decoding_audio(true);
 
         let tot = trip.total_size().unwrap_or(0);
         *self.trip_buffer.write().unwrap() = Some(trip);
         self.init_engine(eng, true, tot, initial_data);
+        crate::map_log!(3, "open_stream_ex successfully opened (hint={:?})", hint);
         MAP_SUCCESS
     }
 
@@ -2072,6 +2154,13 @@ impl PlayerCoordinator {
         initial_bytes: &[u8],
     ) -> i32 {
         let _ = self.begin_open();
+        crate::map_log!(
+            3,
+            "open_custom_source: total_size={:?}, is_seekable={}, initial_bytes={}",
+            total_size,
+            is_seekable,
+            initial_bytes.len()
+        );
 
         let hint = if !initial_bytes.is_empty() {
             let (_status, boundary) = FormatSniffer::detect_head_boundary(
@@ -2087,13 +2176,15 @@ impl PlayerCoordinator {
 
         let eng = match SymphoniaEngine::new(source, hint) {
             Ok(e) => e,
-            Err(_) => {
+            Err(e) => {
+                crate::map_log!(1, "open_custom_source failed: SymphoniaEngine::new failed: {:?}", e);
                 *self.custom_source_handle.write().unwrap() = None;
                 return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
             }
         };
 
         self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), initial_bytes);
+        crate::map_log!(3, "open_custom_source successfully opened");
         MAP_SUCCESS
     }
 
@@ -2574,6 +2665,7 @@ impl PlayerCoordinator {
 
     pub fn play(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
+        crate::map_log!(3, "play() called (current_state={})", cur);
         if cur == STATE_OPENING || cur == STATE_ERROR {
             return MAP_ERROR_INVALID_STATE;
         }
@@ -2611,6 +2703,7 @@ impl PlayerCoordinator {
 
     pub fn pause(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
+        crate::map_log!(3, "pause() called (current_state={})", cur);
         if cur == STATE_OPENING || cur == STATE_ERROR {
             return MAP_ERROR_INVALID_STATE;
         }
@@ -2636,6 +2729,7 @@ impl PlayerCoordinator {
     }
 
     pub fn stop(&mut self) -> i32 {
+        crate::map_log!(3, "stop() called");
         #[cfg(target_arch = "wasm32")]
         if !self.device_ctx.is_null() {
             unsafe {
@@ -2700,6 +2794,7 @@ impl PlayerCoordinator {
     }
 
     pub fn seek(&mut self, position_ms: i64) -> i32 {
+        crate::map_log!(4, "seek(position_ms={})", position_ms);
         let cur = self.state.load(Ordering::Relaxed);
         if cur == STATE_OPENING || cur == STATE_ERROR {
             return MAP_ERROR_INVALID_STATE;
@@ -2714,6 +2809,7 @@ impl PlayerCoordinator {
 
     pub fn set_volume(&mut self, volume: f32) -> i32 {
         let vol = volume.max(0.0);
+        crate::map_log!(4, "set_volume(volume={})", vol);
         self.volume.store(vol.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetVolume(vol));
         self.telemetry
@@ -2723,6 +2819,7 @@ impl PlayerCoordinator {
 
     pub fn set_rate(&mut self, rate: f32) -> i32 {
         let r = rate.clamp(0.25, 4.0);
+        crate::map_log!(4, "set_rate(rate={})", r);
         self.rate.store(r.to_bits(), Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::Rate, MapEventData { rate: r });
@@ -2731,6 +2828,7 @@ impl PlayerCoordinator {
 
     pub fn set_pitch(&mut self, pitch: f32) -> i32 {
         let p = pitch.clamp(0.5, 2.0);
+        crate::map_log!(4, "set_pitch(pitch={})", p);
         self.pitch.store(p.to_bits(), Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::Pitch, MapEventData { pitch: p });
@@ -2738,6 +2836,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_buffer_size(&mut self, frames: u32) -> i32 {
+        crate::map_log!(4, "set_buffer_size(frames={})", frames);
         self.period_size_in_frames.store(frames, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::BufferSize,
@@ -2754,6 +2853,7 @@ impl PlayerCoordinator {
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_device(&mut self, device_id: *const c_char) -> i32 {
+        crate::map_log!(3, "set_device requested");
         if self.device_ctx.is_null() {
             return MAP_ERROR_INVALID_STATE;
         }
@@ -2772,6 +2872,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_pause_on_device_change(&mut self, enabled: i32) -> i32 {
+        crate::map_log!(4, "set_pause_on_device_change(enabled={})", enabled != 0);
         self.pause_on_device_change
             .store(enabled != 0, Ordering::Relaxed);
         MAP_SUCCESS
@@ -2782,6 +2883,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_equalizer(&mut self, params: &EqualizerParams) -> i32 {
+        crate::map_log!(4, "set_equalizer updated");
         *self.eq_params.write().unwrap() = *params;
         self.send_dsp_command(DspCommand::SetEqualizerParams(*params));
         self.telemetry
@@ -2790,6 +2892,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_equalizer_band(&mut self, band: u32, gain_db: f32) -> i32 {
+        crate::map_log!(4, "set_equalizer_band(band={}, gain_db={})", band, gain_db);
         self.eq_params
             .write()
             .unwrap()
@@ -2807,6 +2910,13 @@ impl PlayerCoordinator {
     }
 
     pub fn set_replay_gain(&mut self, gain_db: f32, peak: f32, prevent_clipping: i32) -> i32 {
+        crate::map_log!(
+            4,
+            "set_replay_gain(gain_db={}, peak={}, prevent_clipping={})",
+            gain_db,
+            peak,
+            prevent_clipping != 0
+        );
         let rg = ReplayGainConfig {
             gain_db,
             peak,
@@ -2821,6 +2931,7 @@ impl PlayerCoordinator {
     }
 
     pub fn clear_replay_gain(&mut self) -> i32 {
+        crate::map_log!(4, "clear_replay_gain()");
         let rg = ReplayGainConfig::default();
         *self.replay_gain.write().unwrap() = rg;
         self.send_dsp_command(DspCommand::SetReplayGain(rg));
@@ -2830,6 +2941,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_preamp(&mut self, preamp_db: f32) -> i32 {
+        crate::map_log!(4, "set_preamp(preamp_db={})", preamp_db);
         self.preamp_db.store(preamp_db.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetPreamp(preamp_db));
         self.telemetry
@@ -2838,6 +2950,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_balance(&mut self, pan: f32) -> i32 {
+        crate::map_log!(4, "set_balance(pan={})", pan);
         self.balance.store(pan.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetBalance(pan));
         self.telemetry
@@ -2846,6 +2959,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_mono(&mut self, enabled: i32) -> i32 {
+        crate::map_log!(4, "set_mono(enabled={})", enabled != 0);
         let mono = enabled != 0;
         self.mono_enabled.store(mono, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetMono(mono));
@@ -2859,6 +2973,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_crossfeed(&mut self, mode: i32) -> i32 {
+        crate::map_log!(4, "set_crossfeed(mode={})", mode);
         let cf_mode = match mode {
             1 => CrossfeedMode::MoffatBauer,
             2 => CrossfeedMode::ChuMoy,
@@ -2876,6 +2991,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_spatializer(&mut self, enabled: i32, width: f32) -> i32 {
+        crate::map_log!(4, "set_spatializer(enabled={}, width={})", enabled != 0, width);
         let en = enabled != 0;
         self.spatializer_enabled.store(en, Ordering::Relaxed);
         self.spatializer_width
@@ -2899,6 +3015,16 @@ impl PlayerCoordinator {
         wet: f32,
         dry: f32,
     ) -> i32 {
+        crate::map_log!(
+            4,
+            "set_reverb(enabled={}, room_size={}, damping={}, width={}, wet={}, dry={})",
+            enabled != 0,
+            room_size,
+            damping,
+            width,
+            wet,
+            dry
+        );
         let rev = ReverbConfig {
             enabled,
             room_size,
@@ -2915,6 +3041,7 @@ impl PlayerCoordinator {
     }
 
     pub fn set_limiter(&mut self, enabled: i32) -> i32 {
+        crate::map_log!(4, "set_limiter(enabled={})", enabled != 0);
         let en = enabled != 0;
         self.limiter_enabled.store(en, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetLimiter(en));
@@ -2928,6 +3055,12 @@ impl PlayerCoordinator {
     }
 
     pub fn set_silence_config(&mut self, config: &SilenceConfig) -> i32 {
+        crate::map_log!(
+            4,
+            "set_silence_config(mode={:?}, threshold_db={})",
+            config.mode,
+            config.threshold_db
+        );
         *self.silence_config.write().unwrap() = *config;
         self.telemetry.post_event(
             EventType::SilenceConfig,
@@ -2949,6 +3082,7 @@ impl PlayerCoordinator {
 
     pub fn set_visualizer_enabled(&mut self, enabled: i32) -> i32 {
         let en = enabled != 0;
+        crate::map_log!(4, "set_visualizer_enabled(enabled={})", en);
         self.visualizer_enabled.store(en, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetVisualizerEnabled(en));
         if !en {

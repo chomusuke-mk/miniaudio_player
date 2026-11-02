@@ -101,6 +101,7 @@ class PlayerAction {
     } catch (error, stackTrace) {
       if (_openGeneration != gen) return;
 
+      MapLogger.error('open() failed for source $_currentSource: $error');
       _disposeCustomBridge();
       _player._notifyOpenFailed();
 
@@ -115,6 +116,7 @@ class PlayerAction {
   /// Prepares an audio source for playback.
   Future<void> open(AudioSource source) async {
     _player._ensureNotDisposed();
+    MapLogger.info('open() requested for source: $source');
     _currentSource = source;
     _streamNeedsReopenOnPlay = false;
     _disposeCustomBridge();
@@ -138,8 +140,10 @@ class PlayerAction {
         'Cannot open empty source path or URL',
       );
     }
+    MapLogger.debug('_openUriSource -> uri: $str');
     final assetBytes = await _tryLoadFlutterAsset(str);
     if (assetBytes != null) {
+      MapLogger.debug('_openUriSource resolved Flutter asset -> ${assetBytes.length} bytes');
       await _player._backend.openMemory(assetBytes);
       return;
     }
@@ -167,10 +171,12 @@ class PlayerAction {
     if (source.bytes.isEmpty) {
       throw const MiniaudioPlayerException('Cannot open empty byte buffer');
     }
+    MapLogger.debug('_openMemorySource -> ${source.bytes.length} bytes');
     await _player._backend.openMemory(source.bytes);
   }
 
   Future<void> _openCustomSource(CustomAudioSource source) async {
+    MapLogger.debug('_openCustomSource -> streamId: ${source.provider.streamId}');
     final bridge = DartByteProviderBridge(_player._backend, source.provider);
     _customBridge = bridge;
     await bridge.start();
@@ -179,6 +185,7 @@ class PlayerAction {
   /// Starts or resumes audio playback.
   Future<void> play() async {
     _player._ensureNotDisposed();
+    MapLogger.info('play() requested (state: ${_player.state.playbackState})');
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _playRequested = true;
       final gen = _openGeneration;
@@ -220,6 +227,7 @@ class PlayerAction {
   /// Pauses audio playback at the current position.
   Future<void> pause() async {
     _player._ensureNotDisposed();
+    MapLogger.info('pause() requested (state: ${_player.state.playbackState})');
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _playRequested = false;
       return;
@@ -230,6 +238,7 @@ class PlayerAction {
   /// Stops audio playback and resets the position to the beginning.
   Future<void> stop() async {
     _player._ensureNotDisposed();
+    MapLogger.info('stop() requested (state: ${_player.state.playbackState})');
     if (_player.state.trackMetadata?.isLiveStream == true) {
       _streamNeedsReopenOnPlay = true;
     }
@@ -254,6 +263,7 @@ class PlayerAction {
   Future<void> seek(Duration position) {
     _player._ensureNotDisposed();
     final targetPosition = position < Duration.zero ? Duration.zero : position;
+    MapLogger.debug('seek() requested -> ${targetPosition.inMilliseconds}ms');
     final thisSeekGen = ++_seekGeneration;
 
     Future<void> doSeek() async {
@@ -284,6 +294,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFiniteNonNegative(volume, 'volume', 'Volume');
     final clamped = volume.clamp(0.0, 2.0);
+    MapLogger.debug('setVolume() -> $clamped');
     _player._volume.emitIfChanged(clamped);
     _player._backend.setVolume(clamped);
   }
@@ -293,6 +304,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinitePositive(rate, 'rate', 'Rate');
     final clamped = rate.clamp(0.1, 4.0);
+    MapLogger.debug('setRate() -> $clamped');
     _player._rate.emitIfChanged(clamped);
     _player._backend.setRate(clamped);
   }
@@ -302,6 +314,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinitePositive(pitch, 'pitch', 'Pitch');
     final clamped = pitch.clamp(0.5, 2.0);
+    MapLogger.debug('setPitch() -> $clamped');
     _player._pitch.emitIfChanged(clamped);
     _player._backend.setPitch(clamped);
   }
@@ -316,6 +329,7 @@ class PlayerAction {
         'Buffer size must be non-negative',
       );
     }
+    MapLogger.debug('setBufferSize() -> $bufferSize frames');
     _player._bufferSize.emitIfChanged(bufferSize);
     _player._backend.setBufferSize(bufferSize);
   }
@@ -323,6 +337,7 @@ class PlayerAction {
   /// Updates all 10 equalizer bands atomically from an [Equalizer] instance.
   Future<void> setEqualizer(Equalizer equalizer) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setEqualizer() -> bands: ${equalizer.toList()}');
     _player._equalizer.emitIfChanged(equalizer);
     _player._backend.setEqualizer(equalizer);
   }
@@ -331,6 +346,7 @@ class PlayerAction {
   Future<void> setEqualizerBand(int bandIndex, double gainDb) async {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(gainDb, 'gainDb', 'Gain');
+    MapLogger.debug('setEqualizerBand() -> band: $bandIndex, gain: ${gainDb}dB');
     final updated = _player.state.equalizer.withBand(bandIndex, gainDb);
     _player._equalizer.emitIfChanged(updated);
     _player._backend.setEqualizerBand(bandIndex, gainDb);
@@ -339,6 +355,7 @@ class PlayerAction {
   /// Switches audio output routing to the specified [AudioDevice].
   Future<void> setDevice(AudioDevice device) async {
     _player._ensureNotDisposed();
+    MapLogger.info('setDevice() -> id: ${device.id}, name: ${device.name}');
     final deviceId = (device.isAuto || device.id == 'auto') ? '' : device.id;
     await _player._backend.setDevice(deviceId);
   }
@@ -375,6 +392,7 @@ class PlayerAction {
   Future<void> setSilenceConfig(SilenceSkipConfig config) async {
     _player._ensureNotDisposed();
     final valid = config.validated();
+    MapLogger.debug('setSilenceConfig() -> mode: ${valid.mode}, threshold: ${valid.thresholdDb}dB');
     _player._onSilenceConfig(valid);
     _player._backend.setSilenceSkip(valid);
   }
@@ -382,12 +400,14 @@ class PlayerAction {
   /// Enables or disables real-time audio visualizer DSP analysis.
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setVisualizerEnabled() -> $enabled');
     _player._setManualVisualizerOverride(enabled);
   }
 
   /// Clears any manual visualizer override, reverting to reactive on-demand control.
   Future<void> clearVisualizerOverride() async {
     _player._ensureNotDisposed();
+    MapLogger.debug('clearVisualizerOverride()');
     _player._setManualVisualizerOverride(null);
   }
 
@@ -404,6 +424,7 @@ class PlayerAction {
       peak: (peak != null && peak > 0.0) ? peak : 0.0,
       preventClipping: preventClipping,
     );
+    MapLogger.debug('setReplayGain() -> gain: ${gainDb}dB, peak: $peak, preventClipping: $preventClipping');
     _player._replayGain.emitIfChanged(cfg);
     _player._backend.setReplayGain(cfg);
   }
@@ -411,6 +432,7 @@ class PlayerAction {
   /// Clears replay gain normalization back to unity gain (`0.0 dB`).
   Future<void> clearReplayGain() async {
     _player._ensureNotDisposed();
+    MapLogger.debug('clearReplayGain()');
     const cfg = ReplayGainConfig(enabled: false);
     _player._replayGain.emitIfChanged(cfg);
     _player._backend.setReplayGain(cfg);
@@ -421,6 +443,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(preampDb, 'preampDb', 'Preamp');
     final clamped = preampDb.clamp(-24.0, 24.0);
+    MapLogger.debug('setPreamp() -> ${clamped}dB');
     _player._preamp.emitIfChanged(clamped);
     _player._backend.setPreamp(clamped);
   }
@@ -430,6 +453,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(pan, 'pan', 'Balance');
     final clamped = pan.clamp(-1.0, 1.0);
+    MapLogger.debug('setBalance() -> $clamped');
     _player._balance.emitIfChanged(clamped);
     _player._backend.setBalance(clamped);
   }
@@ -437,6 +461,7 @@ class PlayerAction {
   /// Sets whether mono downmix is enabled for accessibility or single speakers.
   Future<void> setMono(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setMono() -> $enabled');
     _player._mono.emitIfChanged(enabled);
     _player._backend.setMono(enabled);
   }
@@ -444,6 +469,7 @@ class PlayerAction {
   /// Configures headphone binaural crossfeed (Bauer bs2b).
   Future<void> setCrossfeed(CrossfeedMode mode) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setCrossfeed() -> $mode');
     _player._crossfeed.emitIfChanged(mode);
     _player._backend.setCrossfeed(mode);
   }
@@ -456,6 +482,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(width, 'width', 'Spatializer width');
     final clampedWidth = width.clamp(1.0, 2.0);
+    MapLogger.debug('setSpatializer() -> enabled: $enabled, width: $clampedWidth');
     _player._spatializerEnabled.emitIfChanged(enabled);
     _player._spatializerWidth.emitIfChanged(clampedWidth);
     _player._backend.setSpatializer(enabled: enabled, width: clampedWidth);
@@ -464,6 +491,7 @@ class PlayerAction {
   /// Enables or disables 3D spatial audio and Doppler shift processing.
   Future<void> setSpatialEnabled(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setSpatialEnabled() -> $enabled');
     _player.spatial.setEnabled(enabled);
   }
 
@@ -528,6 +556,7 @@ class PlayerAction {
   /// Enables or disables the True-Peak soft-knee output limiter protector.
   Future<void> setLimiter(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setLimiter() -> $enabled');
     _player._limiterEnabled.emitIfChanged(enabled);
     _player._backend.setLimiterEnabled(enabled);
   }
@@ -536,6 +565,7 @@ class PlayerAction {
   Future<void> setReverb(Reverb config) async {
     _player._ensureNotDisposed();
     final valid = config.validated();
+    MapLogger.debug('setReverb() -> enabled: ${valid.enabled}, roomSize: ${valid.roomSize}');
     _player._reverb.emitIfChanged(valid);
     _player._backend.setReverb(
       enabled: valid.enabled,

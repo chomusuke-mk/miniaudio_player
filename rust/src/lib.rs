@@ -16,7 +16,7 @@ pub use dsp::analysis::*;
 use std::sync::atomic::AtomicI32;
 
 /// Global log level filter (0: none, 1: error, 2: warn, 3: info, 4: debug, 5: verbose)
-pub static LOG_LEVEL: AtomicI32 = AtomicI32::new(3);
+pub static LOG_LEVEL: AtomicI32 = AtomicI32::new(0);
 
 #[macro_export]
 macro_rules! map_log {

@@ -203,8 +203,13 @@ impl EngineMonitorWorker {
             if let Some(item) = item_opt {
                 let to_deck = if snap.active_deck == 0 { 1 } else { 0 };
                 let open_res = open_item_on_deck(coord.standby_deck_mut(), &item);
-
-                if open_res == 0 {
+                if open_res != 0 {
+                    crate::map_log!(
+                        1,
+                        "evaluate_auto_transition: failed to open standby deck item (code: {})",
+                        open_res
+                    );
+                } else {
                     coord.standby_deck_mut().play();
 
                     if !should_auto_xfade {

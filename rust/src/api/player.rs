@@ -95,6 +95,14 @@ impl RustPlayer {
         period_size: u32,
         playback_device_id: Option<String>,
     ) -> Result<RustPlayer, String> {
+        crate::map_log!(
+            3,
+            "RustPlayer::new (sample_rate={}, channels={}, period_size={}, device={:?})",
+            sample_rate,
+            channels,
+            period_size,
+            playback_device_id
+        );
         let dev_id_c = playback_device_id.map(|s| CString::new(s).unwrap_or_default());
         let dev_id_ptr = dev_id_c
             .as_ref()
@@ -208,6 +216,7 @@ impl RustPlayer {
         source: String,
         headers: Option<Vec<RustHttpHeader>>,
     ) -> Result<(), String> {
+        crate::map_log!(3, "RustPlayer::open_source: {}", source);
         let res = self
             .inner
             .lock()
@@ -217,6 +226,7 @@ impl RustPlayer {
     }
 
     pub fn open_memory(&self, data: Vec<u8>) -> Result<(), String> {
+        crate::map_log!(3, "RustPlayer::open_memory: {} bytes", data.len());
         let res = self.inner.lock().unwrap().open_memory(&data, false);
         check_map_result(res, "open_memory")
     }
@@ -599,6 +609,7 @@ impl RustPlayer {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn dispose(&self) {
+        crate::map_log!(3, "RustPlayer::dispose called");
         self.telemetry.set_rust_callback(None);
         self.telemetry.set_typed_callback(None);
         if let Ok(mut sink) = self.event_sink.lock() {

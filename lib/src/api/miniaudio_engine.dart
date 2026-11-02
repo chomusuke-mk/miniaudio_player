@@ -14,6 +14,7 @@ import 'dsp_config.dart';
 import 'engine_item.dart';
 import 'engine_state.dart';
 import 'engine_stream.dart';
+import 'logger.dart';
 import 'loop_mode.dart';
 import 'miniaudio_player.dart';
 import 'need_more_tracks_event.dart';
@@ -400,6 +401,10 @@ class MiniaudioEngine<T> {
       getDuckingConfig: () => _duckingConfig.value,
     );
 
+    MapLogger.info(
+      'Initializing MiniaudioEngine (bufferSize: ${_bufferSize.value}, device: ${_audioDevice.value.id})',
+    );
+
     _initFuture = _initRustEngine();
   }
 
@@ -578,10 +583,7 @@ class MiniaudioEngine<T> {
       _eventSub = engine.subscribeEvents().listen(_handleRustEvent);
       _rustEngine = engine;
     } catch (e) {
-      // ignore: avoid_print
-      print(
-        '[miniaudio_player][ERROR][engine] Failed to initialize RustEngine: $e',
-      );
+      MapLogger.error('Failed to initialize RustEngine: $e');
     }
   }
 
@@ -593,6 +595,7 @@ class MiniaudioEngine<T> {
         final nextPhase = p >= 0 && p < EnginePhase.values.length
             ? EnginePhase.values[p]
             : EnginePhase.idle;
+        MapLogger.info('Engine telemetry phase -> $nextPhase');
         _phase.emit(nextPhase);
         _isCrossfading.emit(
           nextPhase == EnginePhase.autoCrossfading ||
@@ -609,31 +612,39 @@ class MiniaudioEngine<T> {
           6 => PlaybackState.opening,
           _ => PlaybackState.stopped,
         };
+        MapLogger.info('Engine telemetry state -> $nextState');
         _playbackState.emit(nextState);
 
       case rust_types.RustEngineEvent_Position(field0: final p):
+        MapLogger.verbose('Engine telemetry position -> ${p.toInt()}ms');
         _position.emit(Duration(milliseconds: p.toInt()));
 
       case rust_types.RustEngineEvent_Duration(field0: final d):
+        MapLogger.info('Engine telemetry duration -> ${d.toInt()}ms');
         _duration.emit(Duration(milliseconds: d.toInt()));
 
       case rust_types.RustEngineEvent_IsPlaying(field0: final p):
+        MapLogger.info('Engine telemetry isPlaying -> $p');
         _playing.emit(p);
         if (!p) {
           _visualizer.emit(VisualizerData.empty());
         }
 
       case rust_types.RustEngineEvent_IsBuffering(field0: final b):
+        MapLogger.debug('Engine telemetry isBuffering -> $b');
         _buffering.emit(b);
 
       case rust_types.RustEngineEvent_IsCompleted(field0: final c):
+        MapLogger.info('Engine telemetry isCompleted -> $c');
         _completed.emit(c);
 
       case rust_types.RustEngineEvent_CurrentIndex(field0: final idx):
         if (idx < 0 && _queue.isNotEmpty) break;
+        MapLogger.info('Engine telemetry currentIndex -> $idx');
         _syncQueueNavigationTelemetry(idx);
 
       case rust_types.RustEngineEvent_QueueChanged(field0: final rItems):
+        MapLogger.debug('Engine telemetry queueChanged -> ${rItems.length} items');
         _queue.clear();
         for (final r in rItems) {
           final id = r.id.toInt();
@@ -662,6 +673,7 @@ class MiniaudioEngine<T> {
           currentTrackId: final tid,
           remainingTracks: final rem,
         ):
+        MapLogger.info('Engine telemetry needMoreTracks -> track: $tid, remaining: $rem');
         if (!_needMoreTracksController.isClosed) {
           _needMoreTracksController.add(
             NeedMoreTracksEvent(
@@ -672,9 +684,13 @@ class MiniaudioEngine<T> {
         }
 
       case rust_types.RustEngineEvent_Volume(field0: final v):
+        MapLogger.debug('Engine telemetry volume -> $v');
         _volume.emit(v);
 
       case rust_types.RustEngineEvent_Visualizer(field0: final vz):
+        MapLogger.verbose(
+          'Engine telemetry visualizer -> rms: ${vz.rms.toStringAsFixed(4)}, peak: ${vz.peak.toStringAsFixed(4)}',
+        );
         _visualizer.emit(
           VisualizerData(
             bands: vz.bands,
@@ -686,6 +702,7 @@ class MiniaudioEngine<T> {
         );
 
       case rust_types.RustEngineEvent_VisualizerEnabled(field0: final en):
+        MapLogger.debug('Engine telemetry visualizerEnabled -> $en');
         _visualizerEnabled.emit(en);
 
       case rust_types.RustEngineEvent_BufferedRange(field0: final br):
@@ -698,6 +715,9 @@ class MiniaudioEngine<T> {
           isBuffering: br.isBuffering,
           isEof: br.isEof,
         );
+        MapLogger.verbose(
+          'Engine telemetry bufferedRange -> fill: ${(r.fillPercentage * 100).toStringAsFixed(1)}%, range: [${r.start.inMilliseconds}ms..${r.end.inMilliseconds}ms]',
+        );
         _bufferedRange.emit(r);
         _bufferedPosition.emit(r.end);
         _bufferedPercentage.emit(r.percentage);
@@ -706,8 +726,7 @@ class MiniaudioEngine<T> {
           message: final msg,
           code: final cd,
         ):
-        // ignore: avoid_print
-        print('[miniaudio_player][ERROR][engine] $msg ($cd)');
+        MapLogger.error('Engine telemetry error: [$cd] $msg');
 
       default:
         break;
@@ -750,6 +769,9 @@ class MiniaudioEngine<T> {
     int? startIndex,
     bool shuffle = false,
   }) async {
+    MapLogger.info(
+      'Engine openQueue -> ${items.length} items, startIndex: $startIndex, shuffle: $shuffle',
+    );
     _shadowItems.clear();
     _nextAutoId = 0;
     _queue.clear();
@@ -783,11 +805,13 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> _play() async {
+    MapLogger.info('Engine play() requested');
     final engine = await _getEngine();
     engine?.play();
   }
 
   Future<void> _pause() async {
+    MapLogger.info('Engine pause() requested');
     final engine = await _getEngine();
     engine?.pause();
   }
@@ -801,16 +825,19 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> _stop() async {
+    MapLogger.info('Engine stop() requested');
     final engine = await _getEngine();
     engine?.stop();
   }
 
   Future<void> _seek(Duration position) async {
+    MapLogger.debug('Engine seek() requested -> ${position.inMilliseconds}ms');
     final engine = await _getEngine();
     engine?.seek(positionMs: position.inMilliseconds);
   }
 
   Future<void> _next() async {
+    MapLogger.info('Engine next() requested');
     if (_queue.isNotEmpty) {
       final cur = _resolveActiveQueueIndex();
       if (cur + 1 < _queue.length) {
@@ -831,12 +858,14 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> _previous() async {
+    MapLogger.info('Engine previous() requested');
     final engine = await _getEngine();
     await engine?.previous();
     _syncQueueNavigationTelemetry(_resolveActiveQueueIndex());
   }
 
   Future<void> _skipToIndex(int index) async {
+    MapLogger.info('Engine skipToIndex() requested -> index: $index');
     if (index >= 0 && index < _queue.length) {
       _optimisticIndex = index;
       _syncQueueNavigationTelemetry(index);
@@ -1254,6 +1283,7 @@ class MiniaudioEngine<T> {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    MapLogger.info('Disposing MiniaudioEngine instance');
     final engine = _rustEngine;
     _rustEngine = null;
     if (engine != null) {

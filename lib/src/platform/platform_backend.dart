@@ -5,6 +5,7 @@ import '../api/audio_analysis_result.dart';
 import '../api/audio_device.dart';
 import '../api/buffered_range.dart';
 import '../api/dsp_config.dart';
+import '../api/logger.dart';
 import '../api/player_exception.dart';
 import '../api/player_state.dart';
 import '../api/silence_skip_config.dart';
@@ -1070,6 +1071,7 @@ abstract class RustBridgePlatformService implements PlatformService {
     int waveformPoints = 100,
     double targetLufs = -18.0,
   }) async {
+    MapLogger.info('analyzeAudio() -> $filePath');
     await ensureRuntimeInitialized();
     try {
       final res = await rust.analyzeAudioFile(
@@ -1079,8 +1081,14 @@ abstract class RustBridgePlatformService implements PlatformService {
         waveformPoints: waveformPoints,
         targetLufs: targetLufs,
       );
-      return _RustModelMapper.toAnalysisResult(res);
+      final result = _RustModelMapper.toAnalysisResult(res);
+      MapLogger.info(
+        'analyzeAudio() completed -> duration: ${result.duration.inMilliseconds}ms, '
+        'peak: ${result.peak.toStringAsFixed(4)}, lufs: ${result.replayGain?.lufs.toStringAsFixed(2)}',
+      );
+      return result;
     } catch (e) {
+      MapLogger.error('analyzeAudio() failed for $filePath: $e');
       throw MiniaudioPlayerException.fromRustError(
         e,
         prefix: 'Analysis failed',
@@ -1096,6 +1104,7 @@ abstract class RustBridgePlatformService implements PlatformService {
     int waveformPoints = 100,
     double targetLufs = -18.0,
   }) {
+    MapLogger.info('analyzeAudioSync() -> $filePath');
     try {
       final res = rust.analyzeAudioFileSync(
         path: normalizeLocalPath(filePath),
@@ -1104,8 +1113,14 @@ abstract class RustBridgePlatformService implements PlatformService {
         waveformPoints: waveformPoints,
         targetLufs: targetLufs,
       );
-      return _RustModelMapper.toAnalysisResult(res);
+      final result = _RustModelMapper.toAnalysisResult(res);
+      MapLogger.info(
+        'analyzeAudioSync() completed -> duration: ${result.duration.inMilliseconds}ms, '
+        'peak: ${result.peak.toStringAsFixed(4)}, lufs: ${result.replayGain?.lufs.toStringAsFixed(2)}',
+      );
+      return result;
     } catch (e) {
+      MapLogger.error('analyzeAudioSync() failed for $filePath: $e');
       throw MiniaudioPlayerException.fromRustError(
         e,
         prefix: 'Analysis failed',
@@ -1121,6 +1136,7 @@ abstract class RustBridgePlatformService implements PlatformService {
     int waveformPoints = 100,
     double targetLufs = -18.0,
   }) async {
+    MapLogger.info('analyzeAudioMemory() -> ${bytes.length} bytes');
     await ensureRuntimeInitialized();
     try {
       final res = await rust.analyzeAudioMemory(
@@ -1130,8 +1146,14 @@ abstract class RustBridgePlatformService implements PlatformService {
         waveformPoints: waveformPoints,
         targetLufs: targetLufs,
       );
-      return _RustModelMapper.toAnalysisResult(res);
+      final result = _RustModelMapper.toAnalysisResult(res);
+      MapLogger.info(
+        'analyzeAudioMemory() completed -> duration: ${result.duration.inMilliseconds}ms, '
+        'peak: ${result.peak.toStringAsFixed(4)}, lufs: ${result.replayGain?.lufs.toStringAsFixed(2)}',
+      );
+      return result;
     } catch (e) {
+      MapLogger.error('analyzeAudioMemory() failed: $e');
       throw MiniaudioPlayerException.fromRustError(
         e,
         prefix: 'Analysis failed',
@@ -1141,6 +1163,7 @@ abstract class RustBridgePlatformService implements PlatformService {
 
   @override
   void setLogLevel(int level) {
+    MapLogger.debug('PlatformService setLogLevel -> $level');
     if (RustLib.instance.initialized) {
       try {
         rust.setLogLevel(level: level);

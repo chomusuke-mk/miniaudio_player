@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../api/logger.dart';
 import '../platform/platform_backend.dart';
 import '../rust/api/types.dart';
 
@@ -35,6 +36,10 @@ class DartByteProviderBridge {
 
   /// Starts the custom byte bridge by reading initial bytes and opening the stream in Rust.
   Future<void> start() async {
+    MapLogger.info(
+      'DartByteProviderBridge starting (streamId: ${_provider.streamId}, '
+      'totalBytes: ${_provider.totalBytes}, seekable: ${_provider.isSeekable})',
+    );
     _subscription = _backend.onDartReadRequest.listen(_handleReadRequest);
 
     final initial = await _provider.readInitialBytes();
@@ -48,6 +53,10 @@ class DartByteProviderBridge {
 
   Future<void> _handleReadRequest(RustDartReadRequest req) async {
     if (req.streamId != _provider.streamId) return;
+    MapLogger.verbose(
+      'CustomByteProvider read request -> offset: ${req.offset}, '
+      'length: ${req.length}, requestId: ${req.requestId}',
+    );
     try {
       final chunk = await _provider.readBytes(
         req.offset.toInt(),
@@ -61,6 +70,9 @@ class DartByteProviderBridge {
         isEof: isEof,
       );
     } catch (e) {
+      MapLogger.error(
+        'CustomByteProvider read error (requestId: ${req.requestId}): $e',
+      );
       _backend.notifyCustomError(
         streamId: _provider.streamId,
         requestId: req.requestId.toInt(),
@@ -71,6 +83,9 @@ class DartByteProviderBridge {
 
   /// Cancels active subscriptions and closes the underlying provider.
   void dispose() {
+    MapLogger.debug(
+      'DartByteProviderBridge disposed for streamId: ${_provider.streamId}',
+    );
     _subscription?.cancel();
     _subscription = null;
     _provider.close();
