@@ -27,6 +27,26 @@ impl Default for VisualizerData {
     }
 }
 
+impl VisualizerData {
+    pub fn is_different_from(&self, other: &Self) -> bool {
+        if (self.rms - other.rms).abs() > 1e-4 {
+            return true;
+        }
+        if (self.peak - other.peak).abs() > 1e-4 {
+            return true;
+        }
+        if (self.left - other.left).abs() > 1e-4 || (self.right - other.right).abs() > 1e-4 {
+            return true;
+        }
+        for i in 0..10 {
+            if (self.bands[i] - other.bands[i]).abs() > 1e-4 {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 pub struct Visualizer {
     enabled: bool,
     sample_rate: u32,

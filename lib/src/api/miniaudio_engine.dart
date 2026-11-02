@@ -659,13 +659,9 @@ class MiniaudioEngine<T> {
         }
         _queueProp.emit(List.unmodifiable(_queue));
         _syncQueueNavigationTelemetry(_currentIndex.value);
-        final activeIdx = _resolveActiveQueueIndex();
-        if (activeIdx >= 0 && activeIdx < rItems.length) {
-          final activeMeta = rItems[activeIdx].dataBytes;
-          if (activeMeta != null && activeMeta.isNotEmpty) {
-            _metaBytes.emit(activeMeta);
-          }
-        }
+
+      case rust_types.RustEngineEvent_MetaBytes(field0: final bytes):
+        _metaBytes.emit(bytes);
 
       case rust_types.RustEngineEvent_NeedMoreTracks(
           currentTrackId: final tid,

@@ -180,5 +180,59 @@ void main() {
         equals(['Track 1', 'Track 2', 'Track 3', 'Track 4']),
       );
     });
+
+    test('Fine-grained streams: engine.stream.queue does not emit on index navigation', () async {
+      final queueEvents = <List<AudioSource<String>>>[];
+      final indexEvents = <int>[];
+
+      final queueSub = engine.stream.queue.listen(queueEvents.add);
+      final indexSub = engine.stream.currentIndex.listen(indexEvents.add);
+
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Track 1'),
+        AudioSource(trackB.path, data: 'Track 2'),
+        AudioSource(trackC.path, data: 'Track 3'),
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final initialQueueEmissions = queueEvents.length;
+      expect(initialQueueEmissions, greaterThanOrEqualTo(1));
+
+      // Navigate via next() -> must emit currentIndex, NOT queue
+      await engine.action.next();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(queueEvents.length, equals(initialQueueEmissions),
+          reason: 'engine.stream.queue must not emit when moving to next track');
+      expect(indexEvents.last, equals(1));
+
+      // Navigate via previous() -> must emit currentIndex, NOT queue
+      await engine.action.previous();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(queueEvents.length, equals(initialQueueEmissions),
+          reason: 'engine.stream.queue must not emit when moving to previous track');
+      expect(indexEvents.last, equals(0));
+
+      // Navigate via skipToIndex() -> must emit currentIndex, NOT queue
+      await engine.action.skipToIndex(2);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(queueEvents.length, equals(initialQueueEmissions),
+          reason: 'engine.stream.queue must not emit when skipping to index');
+      expect(indexEvents.last, equals(2));
+
+      // Append -> queue mutated, so engine.stream.queue MUST emit
+      await engine.action.append([
+        AudioSource(trackD.path, data: 'Track 4'),
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(queueEvents.length, greaterThan(initialQueueEmissions),
+          reason: 'engine.stream.queue must emit when queue is appended');
+
+      await queueSub.cancel();
+      await indexSub.cancel();
+    });
   });
 }

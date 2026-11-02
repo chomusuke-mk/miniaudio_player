@@ -84,6 +84,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult Function(RustEngineEvent_CrossfadeConfig value)? crossfadeConfig,
     TResult Function(RustEngineEvent_LoopMode value)? loopMode,
     TResult Function(RustEngineEvent_Shuffle value)? shuffle,
+    TResult Function(RustEngineEvent_MetaBytes value)? metaBytes,
     TResult Function(RustEngineEvent_Error value)? error,
     required TResult orElse(),
   }) {
@@ -151,6 +152,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return loopMode(_that);
       case RustEngineEvent_Shuffle() when shuffle != null:
         return shuffle(_that);
+      case RustEngineEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that);
       case RustEngineEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -208,6 +211,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
         crossfadeConfig,
     required TResult Function(RustEngineEvent_LoopMode value) loopMode,
     required TResult Function(RustEngineEvent_Shuffle value) shuffle,
+    required TResult Function(RustEngineEvent_MetaBytes value) metaBytes,
     required TResult Function(RustEngineEvent_Error value) error,
   }) {
     final _that = this;
@@ -274,6 +278,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return loopMode(_that);
       case RustEngineEvent_Shuffle():
         return shuffle(_that);
+      case RustEngineEvent_MetaBytes():
+        return metaBytes(_that);
       case RustEngineEvent_Error():
         return error(_that);
     }
@@ -325,6 +331,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult? Function(RustEngineEvent_CrossfadeConfig value)? crossfadeConfig,
     TResult? Function(RustEngineEvent_LoopMode value)? loopMode,
     TResult? Function(RustEngineEvent_Shuffle value)? shuffle,
+    TResult? Function(RustEngineEvent_MetaBytes value)? metaBytes,
     TResult? Function(RustEngineEvent_Error value)? error,
   }) {
     final _that = this;
@@ -391,6 +398,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return loopMode(_that);
       case RustEngineEvent_Shuffle() when shuffle != null:
         return shuffle(_that);
+      case RustEngineEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that);
       case RustEngineEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -444,6 +453,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult Function(RustCrossfadeConfig field0)? crossfadeConfig,
     TResult Function(int field0)? loopMode,
     TResult Function(bool field0)? shuffle,
+    TResult Function(Uint8List field0)? metaBytes,
     TResult Function(String message, int code)? error,
     required TResult orElse(),
   }) {
@@ -511,6 +521,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return loopMode(_that.field0);
       case RustEngineEvent_Shuffle() when shuffle != null:
         return shuffle(_that.field0);
+      case RustEngineEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that.field0);
       case RustEngineEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -566,6 +578,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     required TResult Function(RustCrossfadeConfig field0) crossfadeConfig,
     required TResult Function(int field0) loopMode,
     required TResult Function(bool field0) shuffle,
+    required TResult Function(Uint8List field0) metaBytes,
     required TResult Function(String message, int code) error,
   }) {
     final _that = this;
@@ -632,6 +645,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return loopMode(_that.field0);
       case RustEngineEvent_Shuffle():
         return shuffle(_that.field0);
+      case RustEngineEvent_MetaBytes():
+        return metaBytes(_that.field0);
       case RustEngineEvent_Error():
         return error(_that.message, _that.code);
     }
@@ -683,6 +698,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult? Function(RustCrossfadeConfig field0)? crossfadeConfig,
     TResult? Function(int field0)? loopMode,
     TResult? Function(bool field0)? shuffle,
+    TResult? Function(Uint8List field0)? metaBytes,
     TResult? Function(String message, int code)? error,
   }) {
     final _that = this;
@@ -749,6 +765,8 @@ extension RustEngineEventPatterns on RustEngineEvent {
         return loopMode(_that.field0);
       case RustEngineEvent_Shuffle() when shuffle != null:
         return shuffle(_that.field0);
+      case RustEngineEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that.field0);
       case RustEngineEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -2870,6 +2888,74 @@ class _$RustEngineEvent_ShuffleCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustEngineEvent_MetaBytes extends RustEngineEvent {
+  const RustEngineEvent_MetaBytes(this.field0) : super._();
+
+  final Uint8List field0;
+
+  /// Create a copy of RustEngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustEngineEvent_MetaBytesCopyWith<RustEngineEvent_MetaBytes> get copyWith =>
+      _$RustEngineEvent_MetaBytesCopyWithImpl<RustEngineEvent_MetaBytes>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustEngineEvent_MetaBytes &&
+            const DeepCollectionEquality().equals(other.field0, field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(field0));
+  }
+
+  @override
+  String toString() {
+    return 'RustEngineEvent.metaBytes(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustEngineEvent_MetaBytesCopyWith<$Res>
+    implements $RustEngineEventCopyWith<$Res> {
+  factory $RustEngineEvent_MetaBytesCopyWith(RustEngineEvent_MetaBytes value,
+          $Res Function(RustEngineEvent_MetaBytes) _then) =
+      _$RustEngineEvent_MetaBytesCopyWithImpl;
+  @useResult
+  $Res call({Uint8List field0});
+}
+
+/// @nodoc
+class _$RustEngineEvent_MetaBytesCopyWithImpl<$Res>
+    implements $RustEngineEvent_MetaBytesCopyWith<$Res> {
+  _$RustEngineEvent_MetaBytesCopyWithImpl(this._self, this._then);
+
+  final RustEngineEvent_MetaBytes _self;
+  final $Res Function(RustEngineEvent_MetaBytes) _then;
+
+  /// Create a copy of RustEngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustEngineEvent_MetaBytes(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as Uint8List,
     ));
   }
 }

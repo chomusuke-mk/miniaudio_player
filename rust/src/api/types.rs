@@ -440,6 +440,7 @@ pub enum RustEngineEvent {
     CrossfadeConfig(RustCrossfadeConfig),
     LoopMode(i32),
     Shuffle(bool),
+    MetaBytes(Vec<u8>),
     Error {
         message: String,
         code: i32,

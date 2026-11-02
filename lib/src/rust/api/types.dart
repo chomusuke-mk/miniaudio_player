@@ -436,6 +436,9 @@ sealed class RustEngineEvent with _$RustEngineEvent {
   const factory RustEngineEvent.shuffle(
     bool field0,
   ) = RustEngineEvent_Shuffle;
+  const factory RustEngineEvent.metaBytes(
+    Uint8List field0,
+  ) = RustEngineEvent_MetaBytes;
   const factory RustEngineEvent.error({
     required String message,
     required int code,

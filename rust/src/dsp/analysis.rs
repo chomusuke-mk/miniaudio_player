@@ -303,7 +303,7 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
     let sample_rate = engine.sample_rate();
     let channels = engine.channels().max(1);
     let ch_usize = channels as usize;
-    let duration_ms = engine.duration_ms().unwrap_or(0) as i64;
+    let mut duration_ms = engine.duration_ms().unwrap_or(0) as i64;
     crate::map_log!(
         3,
         "analyze_media_source started: sr={}, ch={}, dur={}ms, hint={:?}",
@@ -320,8 +320,10 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
     let mut wf_accumulator = WaveformAccumulator::default();
     let mut peak = 0.0f32;
     let mut frame_buf = Vec::new();
+    let mut total_decoded_frames = 0u64;
 
     while let Ok(true) = engine.decode_next_frame(&mut frame_buf) {
+        total_decoded_frames += (frame_buf.len() / ch_usize) as u64;
         for frame in frame_buf.chunks_exact(ch_usize) {
             let s_l = frame[0].clamp(-1.0, 1.0);
             let s_r = if ch_usize > 1 {
@@ -340,6 +342,13 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
             if let Some(ref mut rg) = rg_analyzer {
                 rg.push_stereo_frame(s_l, s_r);
             }
+        }
+    }
+
+    if sample_rate > 0 && total_decoded_frames > 0 {
+        let decoded_dur_ms = (total_decoded_frames as f64 * 1000.0 / sample_rate as f64).round() as i64;
+        if duration_ms <= 0 || (decoded_dur_ms - duration_ms).abs() > 100 {
+            duration_ms = decoded_dur_ms;
         }
     }
 

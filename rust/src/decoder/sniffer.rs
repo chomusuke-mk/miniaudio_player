@@ -1,5 +1,7 @@
 //! Deterministic Audio Stream Format Detection, Header Sniffing, and Boundary Calculation.
 
+use std::io::{Read, Seek, SeekFrom};
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerFormat {
@@ -688,20 +690,134 @@ impl FormatSniffer {
             if is_adts_sync(h) {
                 let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
                 if let Some(&sr) = SAMPLE_RATES.get(sr_idx) {
-                    let frame_len = (((h[3] as u32 & 0x03) << 11)
-                        | ((h[4] as u32) << 3)
-                        | ((h[5] as u32) >> 5)) as u64;
-                    if frame_len >= 7 {
-                        let bitrate = ((frame_len * 8 * sr as u64) / 1024) as u32;
-                        if bitrate > 0 {
-                            let dur_ms = (total_size * 8000) / bitrate as i64;
-                            return Some((bitrate, dur_ms));
+                    let mut pos = i;
+                    let mut total_samples = 0u64;
+                    let mut total_frame_bytes = 0u64;
+                    let mut frame_count = 0u64;
+
+                    while pos + 7 <= data.len() {
+                        let fh = &data[pos..];
+                        if !is_adts_sync(fh) {
+                            break;
                         }
+                        let flen = ((fh[3] as usize & 0x03) << 11)
+                            | ((fh[4] as usize) << 3)
+                            | ((fh[5] as usize) >> 5);
+                        if flen < 7 || pos + flen > data.len() {
+                            break;
+                        }
+                        let blocks = (fh[6] as u64 & 0x03) + 1;
+                        total_samples += blocks * 1024;
+                        total_frame_bytes += flen as u64;
+                        frame_count += 1;
+                        pos += flen;
+                    }
+
+                    if frame_count > 0 {
+                        let dur_ms = if data.len() as i64 >= total_size && total_samples > 0 {
+                            (total_samples * 1000) / sr as u64
+                        } else {
+                            let avg_flen = total_frame_bytes as f64 / frame_count as f64;
+                            let est_frames = total_size as f64 / avg_flen;
+                            (est_frames * 1024.0 * 1000.0 / sr as f64).round() as u64
+                        } as i64;
+
+                        let bitrate = if dur_ms > 0 {
+                            ((total_size * 8000) / dur_ms) as u32
+                        } else {
+                            0
+                        };
+                        return Some((bitrate, dur_ms));
                     }
                 }
             }
         }
         None
+    }
+
+    /// Fast, seek-based exact ADTS frame scanner for seekable sources (files, memory cursors).
+    /// Scans frame headers by jumping payload lengths without decoding, computing exact sample count and duration.
+    pub fn scan_adts_stream<R: Read + Seek>(reader: &mut R) -> Option<(u32, u32, u64)> {
+        const SAMPLE_RATES: [u32; 13] = [
+            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+        ];
+        let start_pos = reader.stream_position().ok()?;
+
+        let mut header = [0u8; 10];
+        if reader.read_exact(&mut header).is_err() {
+            let _ = reader.seek(SeekFrom::Start(start_pos));
+            return None;
+        }
+
+        let mut first_frame_pos = start_pos;
+        if &header[0..3] == b"ID3" {
+            let tag_len = (((header[6] as u64 & 0x7F) << 21)
+                | ((header[7] as u64 & 0x7F) << 14)
+                | ((header[8] as u64 & 0x7F) << 7)
+                | (header[9] as u64 & 0x7F))
+                + 10;
+            let footer_len = if (header[5] & 0x10) != 0 { 10 } else { 0 };
+            first_frame_pos = start_pos + tag_len + footer_len;
+            if reader.seek(SeekFrom::Start(first_frame_pos)).is_err() {
+                let _ = reader.seek(SeekFrom::Start(start_pos));
+                return None;
+            }
+            if reader.read_exact(&mut header[0..7]).is_err() {
+                let _ = reader.seek(SeekFrom::Start(start_pos));
+                return None;
+            }
+        }
+
+        let h = &header[0..7];
+        if !is_adts_sync(h) {
+            let _ = reader.seek(SeekFrom::Start(start_pos));
+            return None;
+        }
+
+        let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
+        let sample_rate = *SAMPLE_RATES.get(sr_idx)?;
+        let ch_cfg = (((h[2] & 0x01) << 2) | ((h[3] >> 6) & 0x03)) as u32;
+        let channels = match ch_cfg {
+            1..=6 => ch_cfg,
+            7 => 8,
+            _ => 2,
+        };
+
+        if reader.seek(SeekFrom::Start(first_frame_pos)).is_err() {
+            let _ = reader.seek(SeekFrom::Start(start_pos));
+            return None;
+        }
+
+        let mut total_samples = 0u64;
+        let mut frame_buf = [0u8; 7];
+
+        while reader.read_exact(&mut frame_buf).is_ok() {
+            if !is_adts_sync(&frame_buf) {
+                break;
+            }
+            let flen = ((frame_buf[3] as u64 & 0x03) << 11)
+                | ((frame_buf[4] as u64) << 3)
+                | ((frame_buf[5] as u64) >> 5);
+            if flen < 7 {
+                break;
+            }
+            let blocks = (frame_buf[6] & 0x03) as u64 + 1;
+            total_samples += blocks * 1024;
+
+            let payload = flen - 7;
+            if reader.seek(SeekFrom::Current(payload as i64)).is_err() {
+                break;
+            }
+        }
+
+        let _ = reader.seek(SeekFrom::Start(start_pos));
+
+        if sample_rate > 0 && total_samples > 0 {
+            let duration_ms = (total_samples * 1000) / sample_rate as u64;
+            Some((sample_rate, channels, duration_ms))
+        } else {
+            None
+        }
     }
 
     pub fn sniff_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {

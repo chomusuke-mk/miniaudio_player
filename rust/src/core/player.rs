@@ -688,6 +688,7 @@ struct DecoderWorker {
     frame_buf: Vec<f32>,
     last_tele_pos: i64,
     last_vis_instant: MonotonicInstant,
+    last_vis: VisualizerData,
 }
 
 impl DecoderWorker {
@@ -925,8 +926,11 @@ impl DecoderWorker {
         {
             self.last_vis_instant = MonotonicInstant::now();
             let vis = self.visualizer_seqlock.read();
-            self.tele
-                .post_event(EventType::Visualizer, MapEventData { visualizer: vis });
+            if vis.is_different_from(&self.last_vis) {
+                self.last_vis = vis;
+                self.tele
+                    .post_event(EventType::Visualizer, MapEventData { visualizer: vis });
+            }
         }
     }
 
@@ -1554,6 +1558,10 @@ impl PlayerCoordinator {
             frame_buf: Vec::new(),
             last_tele_pos: -1,
             last_vis_instant: MonotonicInstant::now(),
+            last_vis: VisualizerData {
+                rms: -1.0,
+                ..Default::default()
+            },
         };
 
         #[cfg(not(target_arch = "wasm32"))]

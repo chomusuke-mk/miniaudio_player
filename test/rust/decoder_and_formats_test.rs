@@ -6,7 +6,7 @@
 mod common;
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek};
 
 use common::{FixtureResolver, SignalGenerator};
 use miniaudio_player::buffer::{BufferStreamReader, TripartiteBuffer};
@@ -172,6 +172,15 @@ fn test_all_manifest_audio_formats_decode_and_seek() {
         let mut engine = SymphoniaEngine::new(file, ext)
             .unwrap_or_else(|e| panic!("SymphoniaEngine failed to open {}: {}", filename, e));
 
+        if *filename == "salida.aac" {
+            let dur = engine.duration_ms().expect("salida.aac must have duration");
+            assert!(
+                (dur as i64 - 68736).abs() <= 50,
+                "salida.aac duration {}ms must be close to exact 68736ms (~1:08.7), not 69440ms (~1:09.4)",
+                dur
+            );
+        }
+
         assert!(engine.sample_rate() > 0, "{}: invalid sample rate", filename);
         assert!(engine.channels() > 0, "{}: invalid channel count", filename);
 
@@ -313,4 +322,59 @@ fn test_stream_chunk_probing_mp3_and_aiff() {
         assert!(engine.sample_rate() > 0);
         assert!(engine.channels() > 0);
     }
+}
+
+#[test]
+fn test_adts_aac_exact_duration_calculation() {
+    let path = FixtureResolver::resolve("salida.aac");
+    let mut file = File::open(&path).expect("Failed to open salida.aac");
+    let total_len = file.metadata().expect("Failed metadata").len();
+
+    // 1. Test FormatSniffer::scan_adts_stream
+    let adts_info = FormatSniffer::scan_adts_stream(&mut file)
+        .expect("FormatSniffer::scan_adts_stream must detect ADTS");
+    assert_eq!(adts_info.0, 48000, "Sample rate must be 48000");
+    assert_eq!(adts_info.1, 2, "Channel count must be 2");
+    assert_eq!(
+        adts_info.2, 68736,
+        "Exact duration must be 68736 ms (~1:08.7), was {}",
+        adts_info.2
+    );
+
+    // 2. Test FormatSniffer::sniff_adts_stream_info
+    let mut data = Vec::new();
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    file.read_to_end(&mut data).unwrap();
+    let (bitrate, dur_ms) = FormatSniffer::sniff_adts_stream_info(&data, total_len as i64)
+        .expect("sniff_adts_stream_info must succeed");
+    assert_eq!(
+        dur_ms, 68736,
+        "sniff_adts_stream_info duration must be 68736 ms (~1:08.7), was {}",
+        dur_ms
+    );
+    assert!(bitrate > 190000 && bitrate < 220000, "Bitrate ~206kbps, was {}", bitrate);
+
+    // 3. Test SymphoniaEngine::new
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    let engine = SymphoniaEngine::new(file, Some("aac")).expect("SymphoniaEngine must open");
+    let eng_dur = engine.duration_ms().expect("duration_ms must be present");
+    assert_eq!(
+        eng_dur, 68736,
+        "SymphoniaEngine duration must be 68736 ms (~1:08.7), was {}",
+        eng_dur
+    );
+
+    // 4. Test analyze_file
+    let config = miniaudio_player::dsp::AudioAnalysisConfig {
+        flags: 0,
+        waveform_points: 0,
+        target_lufs: -14.0,
+    };
+    let analysis = miniaudio_player::dsp::analyze_file(path.to_str().unwrap(), &config)
+        .expect("analyze_file must succeed");
+    assert_eq!(
+        analysis.duration_ms, 68736,
+        "Analysis duration must be 68736 ms (~1:08.7), was {}",
+        analysis.duration_ms
+    );
 }

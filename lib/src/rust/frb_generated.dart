@@ -5882,6 +5882,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dco_decode_bool(raw[1]),
         );
       case 31:
+        return RustEngineEvent_MetaBytes(
+          dco_decode_list_prim_u_8_strict(raw[1]),
+        );
+      case 32:
         return RustEngineEvent_Error(
           message: dco_decode_String(raw[1]),
           code: dco_decode_i_32(raw[2]),
@@ -6936,6 +6940,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_field0 = sse_decode_bool(deserializer);
         return RustEngineEvent_Shuffle(var_field0);
       case 31:
+        var var_field0 = sse_decode_list_prim_u_8_strict(deserializer);
+        return RustEngineEvent_MetaBytes(var_field0);
+      case 32:
         var var_message = sse_decode_String(deserializer);
         var var_code = sse_decode_i_32(deserializer);
         return RustEngineEvent_Error(message: var_message, code: var_code);
@@ -7940,8 +7947,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case RustEngineEvent_Shuffle(field0: final field0):
         sse_encode_i_32(30, serializer);
         sse_encode_bool(field0, serializer);
-      case RustEngineEvent_Error(message: final message, code: final code):
+      case RustEngineEvent_MetaBytes(field0: final field0):
         sse_encode_i_32(31, serializer);
+        sse_encode_list_prim_u_8_strict(field0, serializer);
+      case RustEngineEvent_Error(message: final message, code: final code):
+        sse_encode_i_32(32, serializer);
         sse_encode_String(message, serializer);
         sse_encode_i_32(code, serializer);
     }

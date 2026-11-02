@@ -8567,6 +8567,10 @@ impl SseDecode for crate::api::types::RustEngineEvent {
                 return crate::api::types::RustEngineEvent::Shuffle(var_field0);
             }
             31 => {
+                let mut var_field0 = <Vec<u8>>::sse_decode(deserializer);
+                return crate::api::types::RustEngineEvent::MetaBytes(var_field0);
+            }
+            32 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 let mut var_code = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustEngineEvent::Error {
@@ -9887,8 +9891,11 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustEngineEvent {
             crate::api::types::RustEngineEvent::Shuffle(field0) => {
                 [30.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::types::RustEngineEvent::MetaBytes(field0) => {
+                [31.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
             crate::api::types::RustEngineEvent::Error { message, code } => [
-                31.into_dart(),
+                32.into_dart(),
                 message.into_into_dart().into_dart(),
                 code.into_into_dart().into_dart(),
             ]
@@ -10862,8 +10869,12 @@ impl SseEncode for crate::api::types::RustEngineEvent {
                 <i32>::sse_encode(30, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustEngineEvent::Error { message, code } => {
+            crate::api::types::RustEngineEvent::MetaBytes(field0) => {
                 <i32>::sse_encode(31, serializer);
+                <Vec<u8>>::sse_encode(field0, serializer);
+            }
+            crate::api::types::RustEngineEvent::Error { message, code } => {
+                <i32>::sse_encode(32, serializer);
                 <String>::sse_encode(message, serializer);
                 <i32>::sse_encode(code, serializer);
             }

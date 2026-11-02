@@ -318,7 +318,7 @@ impl SymphoniaEngine {
             ApeProbe::NotMatched(src) => src,
         };
 
-        let boxed_source = match WavpackReader::try_new(boxed_source)? {
+        let mut boxed_source = match WavpackReader::try_new(boxed_source)? {
             WavpackProbe::Matched(wv) => {
                 return Ok(Self {
                     sample_rate: wv.sample_rate(),
@@ -330,7 +330,17 @@ impl SymphoniaEngine {
             WavpackProbe::NotMatched(src) => src,
         };
 
-        let session = SymphoniaTrackSession::open(boxed_source, hint_extension)?;
+        let adts_info = if boxed_source.is_seekable() {
+            crate::decoder::sniffer::FormatSniffer::scan_adts_stream(&mut boxed_source)
+        } else {
+            None
+        };
+
+        let mut session = SymphoniaTrackSession::open(boxed_source, hint_extension)?;
+        if let Some((_sr, _ch, exact_dur)) = adts_info {
+            session.duration_ms = Some(exact_dur);
+        }
+
         Ok(Self {
             sample_rate: session.sample_rate,
             channels: session.channels,

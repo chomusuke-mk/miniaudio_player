@@ -13,7 +13,7 @@ use crate::core::engine::{
     ENGINE_PHASE_IDLE, ENGINE_PHASE_MANUAL_CROSSFADING, ENGINE_PHASE_PAUSED, ENGINE_PHASE_PLAYING,
 };
 use crate::core::player::{
-    PlayerCoordinator, STATE_BUFFERING, STATE_COMPLETED, STATE_PAUSED, STATE_PLAYING,
+    PlayerCoordinator, STATE_BUFFERING, STATE_COMPLETED, STATE_PAUSED, STATE_PLAYING, STATE_STOPPED,
 };
 use crate::decoder::FormatSniffer;
 use crate::dsp::equalizer::EqualizerParams;
@@ -64,11 +64,13 @@ struct EngineMonitorWorker {
     last_pos: i64,
     last_dur: i64,
     last_playing: bool,
+    last_completed: bool,
     last_phase: i32,
     last_index: i64,
     last_notified_track_id: i64,
     last_meta_version: u32,
     last_meta_deck: i32,
+    last_vis: crate::dsp::visualizer::VisualizerData,
 }
 
 impl EngineMonitorWorker {
@@ -82,11 +84,16 @@ impl EngineMonitorWorker {
             last_pos: -1,
             last_dur: -1,
             last_playing: false,
+            last_completed: false,
             last_phase: -1,
             last_index: -2,
             last_notified_track_id: -1,
             last_meta_version: 0,
             last_meta_deck: -1,
+            last_vis: crate::dsp::visualizer::VisualizerData {
+                rms: -1.0,
+                ..Default::default()
+            },
         }
     }
 
@@ -284,6 +291,17 @@ impl EngineMonitorWorker {
     }
 
     fn dispatch_telemetry_diff(&mut self, snap: &ActiveDeckSnapshot) {
+        if snap.completed != self.last_completed {
+            self.last_completed = snap.completed;
+            emit_event(&self.event_sink, RustEngineEvent::IsCompleted(snap.completed));
+            if snap.completed {
+                emit_event(&self.event_sink, RustEngineEvent::IsPlaying(false));
+                emit_event(
+                    &self.event_sink,
+                    RustEngineEvent::State(STATE_COMPLETED),
+                );
+            }
+        }
         if snap.pos != self.last_pos {
             self.last_pos = snap.pos;
             emit_event(&self.event_sink, RustEngineEvent::Position(snap.pos));
@@ -343,13 +361,16 @@ impl EngineMonitorWorker {
         }
     }
 
-    fn dispatch_visualizer(&self, coord: &EngineCoordinator) {
+    fn dispatch_visualizer(&mut self, coord: &EngineCoordinator) {
         if coord.visualizer_enabled.load(Ordering::Relaxed) {
             let vis = coord.visualizer_seqlock.read();
-            emit_event(
-                &self.event_sink,
-                RustEngineEvent::Visualizer(RustVisualizerData::from(vis)),
-            );
+            if vis.is_different_from(&self.last_vis) {
+                self.last_vis = vis;
+                emit_event(
+                    &self.event_sink,
+                    RustEngineEvent::Visualizer(RustVisualizerData::from(vis)),
+                );
+            }
         }
     }
 
@@ -365,12 +386,7 @@ impl EngineMonitorWorker {
                 let copied = deck.copy_meta_bytes(&mut buf);
                 buf.truncate(copied);
                 if !buf.is_empty() {
-                    let q = coord.queue.read().unwrap();
-                    let mut q_items = queue_to_rust_sources(&q);
-                    if let Some(item) = q_items.get_mut(snap.current_idx as usize) {
-                        item.data_bytes = Some(buf);
-                        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
-                    }
+                    emit_event(&self.event_sink, RustEngineEvent::MetaBytes(buf));
                 }
             }
         }
@@ -547,22 +563,26 @@ impl RustEngine {
             } else {
                 ENGINE_PHASE_MANUAL_CROSSFADING
             };
-            coord.phase.store(resumed_phase, Ordering::Release);
+            let prev_phase = coord.phase.swap(resumed_phase, Ordering::AcqRel);
             emit_event(&self.event_sink, RustEngineEvent::IsPlaying(true));
             emit_event(&self.event_sink, RustEngineEvent::IsCompleted(false));
             emit_event(&self.event_sink, RustEngineEvent::State(STATE_PLAYING));
-            emit_event(&self.event_sink, RustEngineEvent::Phase(resumed_phase));
+            if prev_phase != resumed_phase {
+                emit_event(&self.event_sink, RustEngineEvent::Phase(resumed_phase));
+            }
             return;
         }
         coord.active_deck_mut().play();
-        coord.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+        let prev_phase = coord.phase.swap(ENGINE_PHASE_PLAYING, Ordering::AcqRel);
         emit_event(&self.event_sink, RustEngineEvent::IsPlaying(true));
         emit_event(&self.event_sink, RustEngineEvent::IsCompleted(false));
         emit_event(&self.event_sink, RustEngineEvent::State(STATE_PLAYING));
-        emit_event(
-            &self.event_sink,
-            RustEngineEvent::Phase(ENGINE_PHASE_PLAYING),
-        );
+        if prev_phase != ENGINE_PHASE_PLAYING {
+            emit_event(
+                &self.event_sink,
+                RustEngineEvent::Phase(ENGINE_PHASE_PLAYING),
+            );
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -572,13 +592,15 @@ impl RustEngine {
         if coord.crossfade.is_active.load(Ordering::Relaxed) {
             coord.standby_deck_mut().pause();
         }
-        coord.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+        let prev_phase = coord.phase.swap(ENGINE_PHASE_PAUSED, Ordering::AcqRel);
         emit_event(&self.event_sink, RustEngineEvent::IsPlaying(false));
         emit_event(&self.event_sink, RustEngineEvent::State(STATE_PAUSED));
-        emit_event(
-            &self.event_sink,
-            RustEngineEvent::Phase(ENGINE_PHASE_PAUSED),
-        );
+        if prev_phase != ENGINE_PHASE_PAUSED {
+            emit_event(
+                &self.event_sink,
+                RustEngineEvent::Phase(ENGINE_PHASE_PAUSED),
+            );
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -588,9 +610,12 @@ impl RustEngine {
         coord.deck_b.stop();
         coord.crossfade.abort();
         coord.stop_device();
-        coord.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+        let prev_phase = coord.phase.swap(ENGINE_PHASE_IDLE, Ordering::AcqRel);
         emit_event(&self.event_sink, RustEngineEvent::IsPlaying(false));
-        emit_event(&self.event_sink, RustEngineEvent::Phase(ENGINE_PHASE_IDLE));
+        emit_event(&self.event_sink, RustEngineEvent::State(STATE_STOPPED));
+        if prev_phase != ENGINE_PHASE_IDLE {
+            emit_event(&self.event_sink, RustEngineEvent::Phase(ENGINE_PHASE_IDLE));
+        }
         emit_event(&self.event_sink, RustEngineEvent::Position(0));
     }
 
@@ -983,6 +1008,10 @@ impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_volume(&self, volume: f32) {
         let mut coord = self.coordinator.lock().unwrap();
+        let old_vol = f32::from_bits(coord.deck_a.volume.load(Ordering::Relaxed));
+        if (old_vol - volume).abs() < 1e-4 {
+            return;
+        }
         coord.deck_a.set_volume(volume);
         coord.deck_b.set_volume(volume);
         emit_event(&self.event_sink, RustEngineEvent::Volume(volume));
@@ -991,15 +1020,25 @@ impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_rate(&self, rate: f32) {
         let mut coord = self.coordinator.lock().unwrap();
+        let old_rate = f32::from_bits(coord.deck_a.rate.load(Ordering::Relaxed));
+        if (old_rate - rate).abs() < 1e-4 {
+            return;
+        }
         coord.deck_a.set_rate(rate);
         coord.deck_b.set_rate(rate);
+        emit_event(&self.event_sink, RustEngineEvent::Rate(rate));
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_pitch(&self, pitch: f32) {
         let mut coord = self.coordinator.lock().unwrap();
+        let old_pitch = f32::from_bits(coord.deck_a.pitch.load(Ordering::Relaxed));
+        if (old_pitch - pitch).abs() < 1e-4 {
+            return;
+        }
         coord.deck_a.set_pitch(pitch);
         coord.deck_b.set_pitch(pitch);
+        emit_event(&self.event_sink, RustEngineEvent::Pitch(pitch));
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -1124,31 +1163,35 @@ impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_visualizer_enabled(&self, enabled: bool) {
         let coord = self.coordinator.lock().unwrap();
-        coord.visualizer_enabled.store(enabled, Ordering::Relaxed);
-        emit_event(
-            &self.event_sink,
-            RustEngineEvent::VisualizerEnabled(enabled),
-        );
+        let prev = coord.visualizer_enabled.swap(enabled, Ordering::AcqRel);
+        if prev != enabled {
+            emit_event(
+                &self.event_sink,
+                RustEngineEvent::VisualizerEnabled(enabled),
+            );
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_loop_mode(&self, mode: i32) {
-        crate::map_log!(3, "set_loop_mode(mode={})", mode);
         let coord = self.coordinator.lock().unwrap();
-        coord.loop_mode.store(mode, Ordering::Release);
-        emit_event(&self.event_sink, RustEngineEvent::LoopMode(mode));
+        let prev = coord.loop_mode.swap(mode, Ordering::AcqRel);
+        if prev != mode {
+            crate::map_log!(3, "set_loop_mode(mode={})", mode);
+            emit_event(&self.event_sink, RustEngineEvent::LoopMode(mode));
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_shuffle(&self, enabled: bool) {
-        crate::map_log!(3, "set_shuffle(enabled={})", enabled);
         let coord = self.coordinator.lock().unwrap();
         let was_enabled = coord.shuffle_enabled.swap(enabled, Ordering::AcqRel);
-        emit_event(&self.event_sink, RustEngineEvent::Shuffle(enabled));
-
         if was_enabled == enabled {
             return;
         }
+
+        crate::map_log!(3, "set_shuffle(enabled={})", enabled);
+        emit_event(&self.event_sink, RustEngineEvent::Shuffle(enabled));
 
         use rand::seq::SliceRandom;
 
@@ -1187,8 +1230,10 @@ impl RustEngine {
 
         if let Some(id) = cur_id {
             if let Some(new_pos) = active_items.iter().position(|it| it.id == id) {
-                coord.current_index.store(new_pos as i64, Ordering::Release);
-                emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(new_pos as i32));
+                let prev_idx = coord.current_index.swap(new_pos as i64, Ordering::AcqRel);
+                if prev_idx != new_pos as i64 {
+                    emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(new_pos as i32));
+                }
             }
         }
 
@@ -1199,14 +1244,16 @@ impl RustEngine {
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_crossfade_config(&self, config: RustCrossfadeConfig) {
         let coord = self.coordinator.lock().unwrap();
-        coord
+        let old_auto = coord
             .auto_crossfade_duration_ms
-            .store(config.duration_ms, Ordering::Release);
-        coord
+            .swap(config.duration_ms, Ordering::AcqRel);
+        let old_manual = coord
             .manual_crossfade_duration_ms
-            .store(config.manual_duration_ms, Ordering::Release);
-        coord.crossfade_curve.store(config.curve, Ordering::Release);
-        emit_event(&self.event_sink, RustEngineEvent::CrossfadeConfig(config));
+            .swap(config.manual_duration_ms, Ordering::AcqRel);
+        let old_curve = coord.crossfade_curve.swap(config.curve, Ordering::AcqRel);
+        if old_auto != config.duration_ms || old_manual != config.manual_duration_ms || old_curve != config.curve {
+            emit_event(&self.event_sink, RustEngineEvent::CrossfadeConfig(config));
+        }
     }
 
     #[flutter_rust_bridge::frb(sync)]
