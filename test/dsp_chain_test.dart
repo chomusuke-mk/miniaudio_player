@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import 'helpers/synthetic_audio.dart';
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -76,22 +74,12 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() async {
-      testWavFile = await SyntheticAudioGenerator.createTempWavFile(
-        frequencyHz: 440.0,
-        durationSeconds: 0.6,
-        sampleRate: 44100,
-        numChannels: 2,
-      );
+      testWavFile = File('test/fixtures/salida.wav');
       player = MiniaudioPlayer(AudioSource(testWavFile.path));
     });
 
     tearDown(() async {
       await player.dispose();
-      try {
-        if (testWavFile.existsSync()) {
-          await testWavFile.parent.delete(recursive: true);
-        }
-      } catch (_) {}
     });
 
     test('ReplayGain controls update state and native engine', () async {

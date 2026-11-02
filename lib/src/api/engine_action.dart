@@ -140,8 +140,7 @@ class EngineAction<T> {
       _engine._setForcedReplayGain(gainDb);
 
   /// Enables or disables proactive Infinite Mix lookahead prefetching.
-  Future<void> setInfiniteMix(bool enabled) =>
-      _engine._setInfiniteMix(enabled);
+  Future<void> setInfiniteMix(bool enabled) => _engine._setInfiniteMix(enabled);
 
   // --------------------------------------------------------------------------
   // Volume, Speed, Pitch, Device & Studio DSP Suite

@@ -159,8 +159,8 @@ impl RubatoResampler {
             out_frames
         };
 
-        let valid_out = ((remaining as f64 / self.chunk_size_in as f64) * out_frames as f64)
-            .round() as usize;
+        let valid_out =
+            ((remaining as f64 / self.chunk_size_in as f64) * out_frames as f64).round() as usize;
         let valid_out = valid_out.min(out_frames);
 
         self.interleave_out_buffers(valid_out, output);

@@ -27,12 +27,12 @@ pub use crossfeed::{Bs2bCrossfeed, CrossfeedMode};
 pub use ducking::AutoDucker;
 pub use equalizer::{Equalizer, EqualizerParams, ReplayGainConfig};
 pub use limiter::SoftLimiter;
-pub use resampler::{RubatoResampler, resample_slice};
+pub use resampler::{resample_slice, RubatoResampler};
 pub use reverb::{Freeverb, ReverbConfig};
 pub use silence::{SilenceConfig, SilenceDetector, SilenceMode, SilenceState};
 pub use sonic::SonicStream;
 pub use spatial::{
     DistanceModel, SpatialEmitter, SpatialEvaluation, SpatialListener, SpatialProcessor, Vector3,
 };
-pub use timestretch::{TimeStretchProcessor, timestretch_audio};
+pub use timestretch::{timestretch_audio, TimeStretchProcessor};
 pub use visualizer::{Visualizer, VisualizerData};

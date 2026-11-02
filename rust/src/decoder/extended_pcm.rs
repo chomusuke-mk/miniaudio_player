@@ -95,8 +95,16 @@ struct WaveFmtSpec {
 
 impl WaveFmtSpec {
     fn parse(fmt_buf: &[u8; 16], is_big_endian: bool) -> Self {
-        let u16_fn = if is_big_endian { u16::from_be_bytes } else { u16::from_le_bytes };
-        let u32_fn = if is_big_endian { u32::from_be_bytes } else { u32::from_le_bytes };
+        let u16_fn = if is_big_endian {
+            u16::from_be_bytes
+        } else {
+            u16::from_le_bytes
+        };
+        let u32_fn = if is_big_endian {
+            u32::from_be_bytes
+        } else {
+            u32::from_le_bytes
+        };
 
         let audio_format = u16_fn([fmt_buf[0], fmt_buf[1]]);
         let channels = u16_fn([fmt_buf[2], fmt_buf[3]]);
@@ -232,7 +240,11 @@ impl ExtendedPcmReader {
                 p += 8 + chunk_size;
             } else if chunk_id == b"data" {
                 data_start = p + 8;
-                data_size = if ds64_data_size > 0 { ds64_data_size } else { chunk_size };
+                data_size = if ds64_data_size > 0 {
+                    ds64_data_size
+                } else {
+                    chunk_size
+                };
                 break;
             } else {
                 p += 8 + ((chunk_size + 1) & !1);

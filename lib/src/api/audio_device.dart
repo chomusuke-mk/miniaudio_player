@@ -68,7 +68,8 @@ class AudioDevice {
   /// Checks whether this device and [other] route to the same physical hardware endpoint.
   bool isSameEndpoint(AudioDevice other) {
     final myEff = effectiveId.isNotEmpty ? effectiveId : id;
-    final otherEff = other.effectiveId.isNotEmpty ? other.effectiveId : other.id;
+    final otherEff =
+        other.effectiveId.isNotEmpty ? other.effectiveId : other.id;
     if (myEff.isNotEmpty && otherEff.isNotEmpty) {
       return myEff == otherEff;
     }

@@ -171,7 +171,8 @@ impl Freeverb {
         let mut combs_r = Vec::with_capacity(NUM_COMBS);
         for &tuning in &COMB_TUNINGS_L {
             let len_l = ((tuning as f64 * rate_scale + 0.5) as usize).clamp(1, 8192);
-            let len_r = (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 8192);
+            let len_r =
+                (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 8192);
             combs_l.push(CombFilter::new(len_l));
             combs_r.push(CombFilter::new(len_r));
         }
@@ -180,7 +181,8 @@ impl Freeverb {
         let mut allpass_r = Vec::with_capacity(NUM_ALLPASS);
         for &tuning in &ALLPASS_TUNINGS_L {
             let len_l = ((tuning as f64 * rate_scale + 0.5) as usize).clamp(1, 4096);
-            let len_r = (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 4096);
+            let len_r =
+                (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 4096);
             allpass_l.push(AllpassFilter::new(len_l));
             allpass_r.push(AllpassFilter::new(len_r));
         }
@@ -216,14 +218,16 @@ impl Freeverb {
 
         for (i, &tuning) in COMB_TUNINGS_L.iter().enumerate() {
             let len_l = ((tuning as f64 * rate_scale + 0.5) as usize).clamp(1, 8192);
-            let len_r = (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 8192);
+            let len_r =
+                (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 8192);
             self.combs_l[i].resize(len_l);
             self.combs_r[i].resize(len_r);
         }
 
         for (i, &tuning) in ALLPASS_TUNINGS_L.iter().enumerate() {
             let len_l = ((tuning as f64 * rate_scale + 0.5) as usize).clamp(1, 4096);
-            let len_r = (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 4096);
+            let len_r =
+                (((tuning + STEREO_SPREAD) as f64 * rate_scale + 0.5) as usize).clamp(1, 4096);
             self.allpass_l[i].resize(len_l);
             self.allpass_r[i].resize(len_r);
         }
@@ -239,10 +243,18 @@ impl Freeverb {
     }
 
     pub fn clear(&mut self) {
-        for c in &mut self.combs_l { c.clear(); }
-        for c in &mut self.combs_r { c.clear(); }
-        for a in &mut self.allpass_l { a.clear(); }
-        for a in &mut self.allpass_r { a.clear(); }
+        for c in &mut self.combs_l {
+            c.clear();
+        }
+        for c in &mut self.combs_r {
+            c.clear();
+        }
+        for a in &mut self.allpass_l {
+            a.clear();
+        }
+        for a in &mut self.allpass_r {
+            a.clear();
+        }
     }
 
     pub fn process_frames(&mut self, samples: &mut [f32], channels: usize) {
@@ -295,8 +307,12 @@ impl Freeverb {
                 self.current_wet1 += wet1_step;
                 self.current_wet2 += wet2_step;
 
-                samples[idx] = in_l * self.current_dry + out_comb_l * self.current_wet1 + out_comb_r * self.current_wet2;
-                samples[idx + 1] = in_r * self.current_dry + out_comb_r * self.current_wet1 + out_comb_l * self.current_wet2;
+                samples[idx] = in_l * self.current_dry
+                    + out_comb_l * self.current_wet1
+                    + out_comb_r * self.current_wet2;
+                samples[idx + 1] = in_r * self.current_dry
+                    + out_comb_r * self.current_wet1
+                    + out_comb_l * self.current_wet2;
             }
         } else {
             // Mono

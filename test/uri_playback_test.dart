@@ -45,7 +45,7 @@ void main() {
 
     test('AudioSource parses Uri schemes polymorphically', () {
       expect(
-        AudioSource(Uri.parse('file:///home/user/song.mp3')),
+        AudioSource(Uri.parse('file:///path/to/song.mp3')),
         isA<UriAudioSource>(),
       );
       expect(
@@ -71,7 +71,7 @@ void main() {
     });
 
     test('decodes and plays MP3 directly from memory buffer with accurate duration', () async {
-      final mp3File = resolveAsset('example/assets/music/salida.mp3');
+      final mp3File = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3File.existsSync(), isTrue, reason: 'salida.mp3 must exist');
       final bytes = await mp3File.readAsBytes();
 
@@ -95,7 +95,7 @@ void main() {
     });
 
     test('decodes and plays FLAC directly from memory buffer', () async {
-      final flacFile = resolveAsset('example/assets/music/salida.flac');
+      final flacFile = resolveAsset('test/fixtures/salida.flac');
       expect(flacFile.existsSync(), isTrue);
       final bytes = await flacFile.readAsBytes();
 
@@ -110,7 +110,7 @@ void main() {
     });
 
     test('decodes and plays WAV directly from memory buffer', () async {
-      final wavFile = resolveAsset('example/assets/music/salida.wav');
+      final wavFile = resolveAsset('test/fixtures/salida.wav');
       expect(wavFile.existsSync(), isTrue);
       final bytes = await wavFile.readAsBytes();
 
@@ -125,7 +125,7 @@ void main() {
     });
 
     test('decodes and plays OGG directly from memory buffer', () async {
-      final oggFile = resolveAsset('example/assets/music/salida.ogg');
+      final oggFile = resolveAsset('test/fixtures/salida.ogg');
       expect(oggFile.existsSync(), isTrue);
       final bytes = await oggFile.readAsBytes();
 
@@ -140,7 +140,7 @@ void main() {
     });
 
     test('decodes and plays OPUS directly from memory buffer', () async {
-      final opusFile = resolveAsset('example/assets/music/salida.opus');
+      final opusFile = resolveAsset('test/fixtures/salida.opus');
       expect(opusFile.existsSync(), isTrue);
       final bytes = await opusFile.readAsBytes();
 
@@ -172,7 +172,7 @@ void main() {
     });
 
     test('stress: rapid repeated openMemory cycles without memory leaks', () async {
-      final mp3File = resolveAsset('example/assets/music/salida.mp3');
+      final mp3File = resolveAsset('test/fixtures/salida.mp3');
       final bytes = await mp3File.readAsBytes();
 
       for (var i = 0; i < 20; i++) {
@@ -198,7 +198,7 @@ void main() {
     });
 
     test('resolves asset via bytes', () async {
-      final mp3File = resolveAsset('example/assets/music/salida.mp3');
+      final mp3File = resolveAsset('test/fixtures/salida.mp3');
       final bytes = await mp3File.readAsBytes();
 
       await player.action.open(AudioSource(bytes));
@@ -212,7 +212,7 @@ void main() {
     });
 
     test('resolves local file candidate', () async {
-      await player.action.open(AudioSource('example/assets/music/salida.mp3'));
+      await player.action.open(AudioSource('test/fixtures/salida.mp3'));
       expect(player.state.duration.inSeconds, greaterThan(0));
 
       await player.action.play();
@@ -250,7 +250,7 @@ void main() {
           '--port',
           '0',
           '--dir',
-          'example/assets/music',
+          'test/fixtures',
         ],
         environment: {'MAP_TEST_DEBUG': '1'},
       );
@@ -498,7 +498,7 @@ void main() {
     });
 
     test('rapid polymorphic open switching between memory, network, and asset sources', () async {
-      final mp3File = resolveAsset('example/assets/music/salida.mp3');
+      final mp3File = resolveAsset('test/fixtures/salida.mp3');
       final bytes = await mp3File.readAsBytes();
       final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
 
@@ -514,7 +514,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         // 3. Asset
-        await player.action.open(AudioSource('example/assets/music/salida.mp3'));
+        await player.action.open(AudioSource('test/fixtures/salida.mp3'));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 30));
 

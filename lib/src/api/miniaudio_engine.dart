@@ -385,7 +385,7 @@ class MiniaudioEngine<T> {
       getIsCrossfading: () =>
           _phase.value == EnginePhase.autoCrossfading ||
           _phase.value == EnginePhase.manualCrossfading,
-      getCrossfadeProgress: () => 0.0,
+      getCrossfadeProgress: _resolveCrossfadeProgress,
       getVolumeNormalization: () => _volumeNormalization.value,
       getInfiniteMixEnabled: () => _infiniteMix.value,
       getIsLiveStream: _resolveIsLiveStream,
@@ -403,8 +403,26 @@ class MiniaudioEngine<T> {
     _initFuture = _initRustEngine();
   }
 
+  int? _optimisticIndex;
+
   int _resolveActiveQueueIndex() =>
-      _rustEngine?.getCurrentIndex()?.toInt() ?? _currentIndex.value;
+      _optimisticIndex ??
+      _rustEngine?.getCurrentIndex()?.toInt() ??
+      _currentIndex.value;
+
+  double _resolveCrossfadeProgress() {
+    final phase = _resolveCurrentPhase();
+    if (phase == EnginePhase.autoCrossfading) {
+      final durMs = _resolveCurrentDuration().inMilliseconds;
+      final posMs = _resolveCurrentPosition().inMilliseconds;
+      final xfadeMs = _crossfadeConfig.value.duration.inMilliseconds;
+      if (xfadeMs > 0 && durMs > xfadeMs) {
+        final startMs = durMs - xfadeMs;
+        return ((posMs - startMs) / xfadeMs).clamp(0.0, 1.0);
+      }
+    }
+    return 0.0;
+  }
 
   EnginePhase _resolveCurrentPhase() {
     if (_rustEngine != null) {
@@ -518,10 +536,10 @@ class MiniaudioEngine<T> {
     await ensureRustInitialized();
     if (_rustEngine != null || _isDisposed) return;
     try {
-      final devId = (_audioDevice.value.id.isNotEmpty &&
-              _audioDevice.value.id != 'auto')
-          ? _audioDevice.value.id
-          : null;
+      final devId =
+          (_audioDevice.value.id.isNotEmpty && _audioDevice.value.id != 'auto')
+              ? _audioDevice.value.id
+              : null;
 
       final engine = rust_engine.RustEngine(
         sampleRate: 0,
@@ -551,6 +569,12 @@ class MiniaudioEngine<T> {
         engine.setVisualizerEnabled(enabled: true);
       }
 
+      if (_isDisposed) {
+        try {
+          engine.dispose();
+        } catch (_) {}
+        return;
+      }
       _eventSub = engine.subscribeEvents().listen(_handleRustEvent);
       _rustEngine = engine;
     } catch (e) {
@@ -626,6 +650,13 @@ class MiniaudioEngine<T> {
         }
         _queueProp.emit(List.unmodifiable(_queue));
         _syncQueueNavigationTelemetry(_currentIndex.value);
+        final activeIdx = _resolveActiveQueueIndex();
+        if (activeIdx >= 0 && activeIdx < rItems.length) {
+          final activeMeta = rItems[activeIdx].dataBytes;
+          if (activeMeta != null && activeMeta.isNotEmpty) {
+            _metaBytes.emit(activeMeta);
+          }
+        }
 
       case rust_types.RustEngineEvent_NeedMoreTracks(
           currentTrackId: final tid,
@@ -780,21 +811,43 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> _next() async {
+    if (_queue.isNotEmpty) {
+      final cur = _resolveActiveQueueIndex();
+      if (cur + 1 < _queue.length) {
+        _optimisticIndex = cur + 1;
+        _syncQueueNavigationTelemetry(cur + 1);
+      } else if (_loopMode.value == LoopMode.all) {
+        _optimisticIndex = 0;
+        _syncQueueNavigationTelemetry(0);
+      }
+    }
     final engine = await _getEngine();
-    await engine?.next();
-    _updateReplayGainForCurrentItem();
+    try {
+      await engine?.next();
+    } finally {
+      _optimisticIndex = null;
+    }
+    _syncQueueNavigationTelemetry(_resolveActiveQueueIndex());
   }
 
   Future<void> _previous() async {
     final engine = await _getEngine();
     await engine?.previous();
-    _updateReplayGainForCurrentItem();
+    _syncQueueNavigationTelemetry(_resolveActiveQueueIndex());
   }
 
   Future<void> _skipToIndex(int index) async {
+    if (index >= 0 && index < _queue.length) {
+      _optimisticIndex = index;
+      _syncQueueNavigationTelemetry(index);
+    }
     final engine = await _getEngine();
-    await engine?.skipToIndex(index: BigInt.from(index));
-    _updateReplayGainForCurrentItem();
+    try {
+      await engine?.skipToIndex(index: BigInt.from(index));
+    } finally {
+      _optimisticIndex = null;
+    }
+    _syncQueueNavigationTelemetry(_resolveActiveQueueIndex());
   }
 
   Future<void> _insertNext(EngineItem<T> item) async {
@@ -1059,8 +1112,7 @@ class MiniaudioEngine<T> {
     return bytes.toInt();
   }
 
-  bool _checkIsRecording() =>
-      _rustEngine?.isRecording() ?? _isRecording.value;
+  bool _checkIsRecording() => _rustEngine?.isRecording() ?? _isRecording.value;
 
   Future<int> _offlineBounce(
     String path, {
@@ -1189,8 +1241,9 @@ class MiniaudioEngine<T> {
     }
     if (cueDevice != null) {
       await _configureCueOutput(
-        deviceId:
-            cueDevice.id == 'auto' || cueDevice.id.isEmpty ? null : cueDevice.id,
+        deviceId: cueDevice.id == 'auto' || cueDevice.id.isEmpty
+            ? null
+            : cueDevice.id,
       );
     }
     if (recordPath != null) {
@@ -1201,10 +1254,19 @@ class MiniaudioEngine<T> {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
-    await _eventSub?.cancel();
-    _eventSub = null;
-    _rustEngine?.stop();
+    final engine = _rustEngine;
     _rustEngine = null;
+    if (engine != null) {
+      try {
+        engine.stop();
+        engine.dispose();
+      } catch (_) {}
+    }
+    final sub = _eventSub;
+    _eventSub = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
 
     await _needMoreTracksController.close();
     for (final prop in _allProperties) {

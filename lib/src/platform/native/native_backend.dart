@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show ExternalLibrary;
@@ -86,6 +87,29 @@ class NativePlayerBackend extends RustBridgePlayerBackend {
   @override
   Future<void> ensureRuntimeInitialized() =>
       _NativeLibraryLoader.ensureInitialized();
+
+  @override
+  Uint8List? readLocalHeaderBytes(String source) {
+    final normalized = _NativeLibraryLoader.normalizePath(source);
+    if (normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        normalized.startsWith('icy://') ||
+        normalized.startsWith('asset:')) {
+      return null;
+    }
+    try {
+      final file = File(normalized);
+      if (!file.existsSync()) return null;
+      final raf = file.openSync();
+      try {
+        return raf.readSync(4096);
+      } finally {
+        raf.closeSync();
+      }
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// Native FFI implementation of [PlatformService] backed by `flutter_rust_bridge`.

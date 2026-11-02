@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import 'helpers/synthetic_audio.dart';
-
 void main() {
   group('AudioDevice effectiveId and endpoint resolution', () {
     test('AudioDevice.auto has canonical auto id and empty effectiveId by default', () {
@@ -193,17 +191,7 @@ void main() {
     late File testWavFile;
 
     setUpAll(() async {
-      testWavFile = await SyntheticAudioGenerator.createTempWavFile(
-        fileName: 'pause_on_device_change_test.wav',
-        frequencyHz: 440.0,
-        durationSeconds: 5.0,
-        sampleRate: 44100,
-        numChannels: 2,
-      );
-    });
-
-    tearDownAll(() async {
-      await SyntheticAudioGenerator.cleanUp(testWavFile);
+      testWavFile = File('test/fixtures/salida.wav');
     });
 
     test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {

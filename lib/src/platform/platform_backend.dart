@@ -328,8 +328,7 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
     _initSampleRate = sampleRate > 0 ? sampleRate : 48000;
     _initChannels = channels > 0 ? channels : 2;
     _initPeriodSize = periodSize > 0 ? periodSize : 2048;
-    _initDeviceId =
-        (playbackDeviceId != null &&
+    _initDeviceId = (playbackDeviceId != null &&
             playbackDeviceId.isNotEmpty &&
             playbackDeviceId != 'auto')
         ? playbackDeviceId
@@ -348,6 +347,12 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
       periodSize: _initPeriodSize,
       playbackDeviceId: _initDeviceId,
     );
+    if (_isDisposed) {
+      try {
+        player.dispose();
+      } catch (_) {}
+      return;
+    }
     _rustPlayer = player;
     _eventSub = player.subscribeEvents().listen(_dispatchRustEvent);
     _applyPendingConfiguration(player);
@@ -441,15 +446,24 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
     }
   }
 
+  /// Optional hook for native backends to read the leading magic bytes of a local file.
+  Uint8List? readLocalHeaderBytes(String source) => null;
+
   void _dispatchRustEvent(rust_types.RustPlayerEvent event) {
     if (_isDisposed) return;
+    if (event is rust_types.RustPlayerEvent_DartReadRequest) {
+      if (!_dartReadRequestController.isClosed) {
+        _dartReadRequestController.add(event.field0);
+      }
+      return;
+    }
+
     final l = _listener;
     if (l == null) return;
 
     event.when(
       state: (s) => l.onState(_RustModelMapper.toPlaybackState(s)),
-      position: (posMs) =>
-          l.onPosition(Duration(milliseconds: posMs.toInt())),
+      position: (posMs) => l.onPosition(Duration(milliseconds: posMs.toInt())),
       duration: (durMs) {
         final ms = durMs.toInt();
         _lastDurationMs = ms;
@@ -458,14 +472,14 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
       isPlaying: l.onPlaying,
       isBuffering: l.onBuffering,
       isCompleted: l.onCompleted,
-      volume: l.onVolume,
-      rate: l.onRate,
-      pitch: l.onPitch,
+      volume: (_) {},
+      rate: (_) {},
+      pitch: (_) {},
       bitrate: (b) {
         _lastBitrate = b;
         l.onBitrate(b);
       },
-      bufferSize: l.onBufferSize,
+      bufferSize: (_) {},
       device: (dev) => l.onDevice(_RustModelMapper.toAudioDevice(dev)),
       visualizer: (vis) => l.onVisualizer(
         VisualizerData(
@@ -476,51 +490,21 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
           right: vis.right,
         ),
       ),
-      visualizerEnabled: l.onVisualizerEnabled,
+      visualizerEnabled: (_) {},
       bufferedRange: (br) =>
           l.onBufferedRange(_RustModelMapper.toBufferedRange(br)),
-      silenceConfig: (sc) => l.onSilenceConfig(
-        SilenceSkipConfig(
-          mode: SilenceSkipMode.fromValue(sc.mode),
-          thresholdDb: sc.thresholdDb,
-          minSilenceDuration: Duration(milliseconds: sc.minSilenceDurationMs),
-          padding: Duration(milliseconds: sc.paddingMs),
-        ),
-      ),
+      silenceConfig: (_) {},
       silenceSaved: (savedMs) =>
           l.onSilenceSaved(Duration(milliseconds: savedMs.toInt())),
-      equalizer: (eq) => l.onEqualizer(Equalizer.fromList(eq.gains.toList())),
-      preamp: l.onPreamp,
-      replayGain: (rg) => l.onReplayGain(
-        ReplayGainConfig(
-          enabled: rg.enabled,
-          gainDb: rg.gainDb,
-          peak: rg.peak,
-          preventClipping: rg.preventClipping,
-        ),
-      ),
-      balance: l.onBalance,
-      mono: l.onMono,
-      crossfeed: (mode) => l.onCrossfeed(
-        switch (mode) {
-          1 => CrossfeedMode.moffatBauer,
-          2 => CrossfeedMode.chuMoy,
-          _ => CrossfeedMode.off,
-        },
-      ),
-      spatializer: (enabled, width) =>
-          l.onSpatializer(enabled: enabled, width: width),
-      reverb: (rv) => l.onReverb(
-        Reverb(
-          enabled: rv.enabled,
-          roomSize: rv.roomSize,
-          damping: rv.damping,
-          width: rv.width,
-          wet: rv.wet,
-          dry: rv.dry,
-        ),
-      ),
-      limiter: l.onLimiter,
+      equalizer: (_) {},
+      preamp: (_) {},
+      replayGain: (_) {},
+      balance: (_) {},
+      mono: (_) {},
+      crossfeed: (_) {},
+      spatializer: (_, __) {},
+      reverb: (_) {},
+      limiter: (_) {},
       dartReadRequest: (req) {
         if (!_dartReadRequestController.isClosed) {
           _dartReadRequestController.add(req);
@@ -600,7 +584,10 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
       );
     }
 
-    _syncInitialSourceTelemetry(source);
+    _syncInitialSourceTelemetry(
+      source,
+      headerBytes: readLocalHeaderBytes(source),
+    );
   }
 
   @override
@@ -691,18 +678,35 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
   Future<void> play() async {
     final player = await _requireInitializedPlayer();
     await player.play();
+    if (_isDisposed) return;
+    final playing = player.isPlaying();
+    _listener?.onPlaying(playing);
+    if (playing) {
+      _listener?.onState(PlaybackState.playing);
+    }
   }
 
   @override
   Future<void> pause() async {
     final player = await _requireInitializedPlayer();
     await player.pause();
+    if (_isDisposed) return;
+    final playing = player.isPlaying();
+    _listener?.onPlaying(playing);
+    if (!playing && !player.isCompleted()) {
+      _listener?.onState(PlaybackState.paused);
+    }
   }
 
   @override
   Future<void> stop() async {
     final player = await _requireInitializedPlayer();
     await player.stop();
+    if (_isDisposed) return;
+    _listener?.onPlaying(false);
+    _listener?.onCompleted(false);
+    _listener?.onState(PlaybackState.stopped);
+    _listener?.onPosition(Duration.zero);
   }
 
   @override
@@ -710,6 +714,10 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
     final player = await _requireInitializedPlayer();
     final targetMs = position.inMilliseconds < 0 ? 0 : position.inMilliseconds;
     await player.seek(positionMs: targetMs);
+    if (_isDisposed) return;
+    final durMs = player.getDurationMs().toInt();
+    final clampedMs = durMs > 0 ? targetMs.clamp(0, durMs) : targetMs;
+    _listener?.onPosition(Duration(milliseconds: clampedMs));
   }
 
   @override
@@ -926,6 +934,9 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
         (deviceId.isEmpty || deviceId == 'auto') ? '' : deviceId;
     try {
       await player.setDevice(deviceId: normalizedId);
+      if (!_isDisposed) {
+        _listener?.onDevice(getCurrentDevice());
+      }
     } catch (e) {
       throw MiniaudioPlayerException.fromRustError(
         e,
@@ -963,9 +974,6 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
-    await _eventSub?.cancel();
-    _eventSub = null;
-    await _dartReadRequestController.close();
     final player = _rustPlayer;
     _rustPlayer = null;
     if (player != null) {
@@ -973,6 +981,12 @@ abstract class RustBridgePlayerBackend implements PlayerBackend {
         player.dispose();
       } catch (_) {}
     }
+    final sub = _eventSub;
+    _eventSub = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
+    unawaited(_dartReadRequestController.close());
   }
 }
 
@@ -1003,7 +1017,12 @@ abstract class RustBridgePlatformService implements PlatformService {
   }
 
   @override
-  Stream<List<AudioDevice>> getAudioDevicesStream() async* {
+  Stream<List<AudioDevice>> getAudioDevicesStream() =>
+      _pollAudioDevices().asBroadcastStream(
+        onCancel: (subscription) => subscription.cancel(),
+      );
+
+  Stream<List<AudioDevice>> _pollAudioDevices() async* {
     List<AudioDevice>? previous;
     while (true) {
       final current = await getAudioDevices();
@@ -1029,17 +1048,17 @@ abstract class RustBridgePlatformService implements PlatformService {
   Future<List<AudioDevice>> getCaptureDevices() async {
     await ensureRuntimeInitialized();
     final list = await rust.getCaptureDevices();
-    return list.map(_RustModelMapper.toAudioDevice).toList();
+    return _RustModelMapper.toAudioDeviceList(list);
   }
 
   @override
   List<AudioDevice> getCaptureDevicesSync() {
-    if (!RustLib.instance.initialized) return const [];
+    if (!RustLib.instance.initialized) return [AudioDevice.auto];
     try {
       final list = rust.getCaptureDevicesSync();
-      return list.map(_RustModelMapper.toAudioDevice).toList();
+      return _RustModelMapper.toAudioDeviceList(list);
     } catch (_) {
-      return const [];
+      return [AudioDevice.auto];
     }
   }
 

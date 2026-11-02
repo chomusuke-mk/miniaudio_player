@@ -33,9 +33,12 @@ class Reverb {
     this.width = 1.0,
     this.wet = 0.33,
     this.dry = 1.0,
-  })  : assert(roomSize >= 0.0 && roomSize <= 1.0, 'roomSize must be between 0.0 and 1.0'),
-        assert(damping >= 0.0 && damping <= 1.0, 'damping must be between 0.0 and 1.0'),
-        assert(width >= 0.0 && width <= 1.0, 'width must be between 0.0 and 1.0'),
+  })  : assert(roomSize >= 0.0 && roomSize <= 1.0,
+            'roomSize must be between 0.0 and 1.0'),
+        assert(damping >= 0.0 && damping <= 1.0,
+            'damping must be between 0.0 and 1.0'),
+        assert(
+            width >= 0.0 && width <= 1.0, 'width must be between 0.0 and 1.0'),
         assert(wet >= 0.0 && wet <= 2.0, 'wet must be between 0.0 and 2.0'),
         assert(dry >= 0.0 && dry <= 2.0, 'dry must be between 0.0 and 2.0');
 

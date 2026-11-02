@@ -45,9 +45,7 @@ fn map_telemetry_event(event: &TelemetryEvent) -> Option<RustPlayerEvent> {
         TelemetryEvent::Pitch(p) => Some(RustPlayerEvent::Pitch(*p)),
         TelemetryEvent::Bitrate(b) => Some(RustPlayerEvent::Bitrate(*b)),
         TelemetryEvent::BufferSize(b) => Some(RustPlayerEvent::BufferSize(*b)),
-        TelemetryEvent::Device(dev) => {
-            Some(RustPlayerEvent::Device(RustAudioDevice::from(&**dev)))
-        }
+        TelemetryEvent::Device(dev) => Some(RustPlayerEvent::Device(RustAudioDevice::from(&**dev))),
         TelemetryEvent::Visualizer(vis) => {
             Some(RustPlayerEvent::Visualizer(RustVisualizerData::from(*vis)))
         }
@@ -137,7 +135,11 @@ impl RustPlayer {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_sample_rate(&self) -> u32 {
-        self.inner.lock().unwrap().sample_rate.load(Ordering::Relaxed)
+        self.inner
+            .lock()
+            .unwrap()
+            .sample_rate
+            .load(Ordering::Relaxed)
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -147,7 +149,11 @@ impl RustPlayer {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_duration_ms(&self) -> i64 {
-        self.inner.lock().unwrap().duration_ms.load(Ordering::Relaxed)
+        self.inner
+            .lock()
+            .unwrap()
+            .duration_ms
+            .load(Ordering::Relaxed)
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -225,9 +231,9 @@ impl RustPlayer {
         let sink_clone = self.event_sink.clone();
         let request_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
             if let Some(ref sink) = *sink_clone.lock().unwrap() {
-                let _ = sink.add(RustPlayerEvent::DartReadRequest(
-                    RustDartReadRequest::from(req),
-                ));
+                let _ = sink.add(RustPlayerEvent::DartReadRequest(RustDartReadRequest::from(
+                    req,
+                )));
             }
         });
 
@@ -375,11 +381,7 @@ impl RustPlayer {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_equalizer_band(&self, band: u32, gain_db: f32) -> Result<(), String> {
-        let res = self
-            .inner
-            .lock()
-            .unwrap()
-            .set_equalizer_band(band, gain_db);
+        let res = self.inner.lock().unwrap().set_equalizer_band(band, gain_db);
         check_map_result(res, "set_equalizer_band")
     }
 
@@ -486,10 +488,7 @@ impl RustPlayer {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_spatial_speed_of_sound(&self, speed: f32) -> Result<(), String> {
-        self.inner
-            .lock()
-            .unwrap()
-            .set_spatial_speed_of_sound(speed);
+        self.inner.lock().unwrap().set_spatial_speed_of_sound(speed);
         Ok(())
     }
 
@@ -601,7 +600,22 @@ impl RustPlayer {
     #[flutter_rust_bridge::frb(sync)]
     pub fn dispose(&self) {
         self.telemetry.set_rust_callback(None);
-        self.inner.lock().unwrap().destroy();
+        self.telemetry.set_typed_callback(None);
+        if let Ok(mut sink) = self.event_sink.lock() {
+            *sink = None;
+        }
+        if let Ok(mut handle) = self.custom_handle.lock() {
+            *handle = None;
+        }
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.destroy();
+        }
+    }
+}
+
+impl Drop for RustPlayer {
+    fn drop(&mut self) {
+        self.dispose();
     }
 }
 

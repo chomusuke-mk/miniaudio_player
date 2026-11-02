@@ -151,7 +151,8 @@ class PlayerStream {
   Stream<BufferedRange> get bufferedRange => _bufferedRangeController.stream;
 
   /// Broadcast stream of current track metadata.
-  Stream<AudioTrackMetadata?> get trackMetadata => _trackMetadataController.stream;
+  Stream<AudioTrackMetadata?> get trackMetadata =>
+      _trackMetadataController.stream;
 
   /// Broadcast stream of volume level changes.
   Stream<double> get volume => _volumeController.stream;
@@ -181,7 +182,8 @@ class PlayerStream {
   Stream<bool> get skipSilence => _skipSilenceController.stream;
 
   /// Broadcast stream of silence configuration changes.
-  Stream<SilenceSkipConfig> get silenceConfig => _silenceConfigController.stream;
+  Stream<SilenceSkipConfig> get silenceConfig =>
+      _silenceConfigController.stream;
 
   /// Broadcast stream of cumulative duration of skipped silence.
   Stream<Duration> get silenceSavedDuration =>

@@ -34,38 +34,62 @@ enum AudioCodec {
     if (bytes.length < 4) return AudioCodec.unknown;
 
     // 1. FLAC: 'fLaC'
-    if (bytes[0] == 0x66 && bytes[1] == 0x4C && bytes[2] == 0x61 && bytes[3] == 0x43) {
+    if (bytes[0] == 0x66 &&
+        bytes[1] == 0x4C &&
+        bytes[2] == 0x61 &&
+        bytes[3] == 0x43) {
       return AudioCodec.flac;
     }
 
     // 2. WavPack: 'wvpk'
-    if (bytes[0] == 0x77 && bytes[1] == 0x76 && bytes[2] == 0x70 && bytes[3] == 0x6B) {
+    if (bytes[0] == 0x77 &&
+        bytes[1] == 0x76 &&
+        bytes[2] == 0x70 &&
+        bytes[3] == 0x6B) {
       return AudioCodec.wavpack;
     }
 
     // 3. DSD: 'DSD '
-    if (bytes[0] == 0x44 && bytes[1] == 0x53 && bytes[2] == 0x44 && bytes[3] == 0x20) {
+    if (bytes[0] == 0x44 &&
+        bytes[1] == 0x53 &&
+        bytes[2] == 0x44 &&
+        bytes[3] == 0x20) {
       return AudioCodec.dsd;
     }
 
     // 4. Matroska / WebM EBML: 0x1A, 0x45, 0xDF, 0xA3
-    if (bytes[0] == 0x1A && bytes[1] == 0x45 && bytes[2] == 0xDF && bytes[3] == 0xA3) {
+    if (bytes[0] == 0x1A &&
+        bytes[1] == 0x45 &&
+        bytes[2] == 0xDF &&
+        bytes[3] == 0xA3) {
       return _probeEbmlCodec(bytes);
     }
 
     // 5. Ogg Container: 'OggS'
-    if (bytes[0] == 0x4F && bytes[1] == 0x67 && bytes[2] == 0x67 && bytes[3] == 0x53) {
+    if (bytes[0] == 0x4F &&
+        bytes[1] == 0x67 &&
+        bytes[2] == 0x67 &&
+        bytes[3] == 0x53) {
       return _probeOggCodec(bytes, mime: mime);
     }
 
     // 6. RIFF WAV / RF64 / BWF: 'RIFF' or 'RF64'
-    if ((bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46) ||
-        (bytes[0] == 0x52 && bytes[1] == 0x46 && bytes[2] == 0x36 && bytes[3] == 0x34)) {
+    if ((bytes[0] == 0x52 &&
+            bytes[1] == 0x49 &&
+            bytes[2] == 0x46 &&
+            bytes[3] == 0x46) ||
+        (bytes[0] == 0x52 &&
+            bytes[1] == 0x46 &&
+            bytes[2] == 0x36 &&
+            bytes[3] == 0x34)) {
       return AudioCodec.pcm;
     }
 
     // 7. AIFF: 'FORM'
-    if (bytes[0] == 0x46 && bytes[1] == 0x4F && bytes[2] == 0x52 && bytes[3] == 0x4D) {
+    if (bytes[0] == 0x46 &&
+        bytes[1] == 0x4F &&
+        bytes[2] == 0x52 &&
+        bytes[3] == 0x4D) {
       return AudioCodec.pcm;
     }
 
@@ -96,10 +120,14 @@ enum AudioCodec {
   static AudioCodec _probeEbmlCodec(List<int> bytes) {
     final probeLimit = min(4096, bytes.length);
     final probeStr = String.fromCharCodes(bytes.sublist(0, probeLimit));
-    if (probeStr.contains('Opus') || probeStr.contains('opus')) return AudioCodec.opus;
+    if (probeStr.contains('Opus') || probeStr.contains('opus')) {
+      return AudioCodec.opus;
+    }
     if (probeStr.contains('vorbis')) return AudioCodec.vorbis;
     if (probeStr.contains('FLAC')) return AudioCodec.flac;
-    if (probeStr.contains('aac') || probeStr.contains('A_AAC')) return AudioCodec.aac;
+    if (probeStr.contains('aac') || probeStr.contains('A_AAC')) {
+      return AudioCodec.aac;
+    }
     return AudioCodec.opus;
   }
 
@@ -109,19 +137,33 @@ enum AudioCodec {
     if (probeStr.contains('OpusHead')) return AudioCodec.opus;
     if (probeStr.contains('vorbis')) return AudioCodec.vorbis;
     if (probeStr.contains('FLAC')) return AudioCodec.flac;
-    if (mime != null && mime.toLowerCase().contains('opus')) return AudioCodec.opus;
+    if (mime != null && mime.toLowerCase().contains('opus')) {
+      return AudioCodec.opus;
+    }
     return AudioCodec.vorbis;
   }
 
   static AudioCodec _detectFromMime(String mime) {
     final lower = mime.toLowerCase();
-    if (lower.contains('audio/mpeg') || lower.contains('audio/mp3')) return AudioCodec.mp3;
-    if (lower.contains('audio/aac') || lower.contains('audio/x-aac')) return AudioCodec.aac;
-    if (lower.contains('audio/mp4') || lower.contains('audio/m4a')) return AudioCodec.aac;
-    if (lower.contains('audio/flac') || lower.contains('audio/x-flac')) return AudioCodec.flac;
+    if (lower.contains('audio/mpeg') || lower.contains('audio/mp3')) {
+      return AudioCodec.mp3;
+    }
+    if (lower.contains('audio/aac') || lower.contains('audio/x-aac')) {
+      return AudioCodec.aac;
+    }
+    if (lower.contains('audio/mp4') || lower.contains('audio/m4a')) {
+      return AudioCodec.aac;
+    }
+    if (lower.contains('audio/flac') || lower.contains('audio/x-flac')) {
+      return AudioCodec.flac;
+    }
     if (lower.contains('audio/opus')) return AudioCodec.opus;
-    if (lower.contains('audio/ogg') || lower.contains('audio/vorbis')) return AudioCodec.vorbis;
-    if (lower.contains('audio/wav') || lower.contains('audio/x-wav') || lower.contains('audio/pcm')) {
+    if (lower.contains('audio/ogg') || lower.contains('audio/vorbis')) {
+      return AudioCodec.vorbis;
+    }
+    if (lower.contains('audio/wav') ||
+        lower.contains('audio/x-wav') ||
+        lower.contains('audio/pcm')) {
       return AudioCodec.pcm;
     }
     return AudioCodec.unknown;
@@ -141,9 +183,16 @@ enum AudioCodec {
       AudioFormat.rifx =>
         AudioCodec.pcm,
       AudioFormat.flac => AudioCodec.flac,
-      AudioFormat.opus || AudioFormat.webm || AudioFormat.mka => AudioCodec.opus,
+      AudioFormat.opus ||
+      AudioFormat.webm ||
+      AudioFormat.mka =>
+        AudioCodec.opus,
       AudioFormat.ogg || AudioFormat.oga => AudioCodec.vorbis,
-      AudioFormat.aac || AudioFormat.m4a || AudioFormat.hls || AudioFormat.m3u8 => AudioCodec.aac,
+      AudioFormat.aac ||
+      AudioFormat.m4a ||
+      AudioFormat.hls ||
+      AudioFormat.m3u8 =>
+        AudioCodec.aac,
       AudioFormat.alac => AudioCodec.alac,
       AudioFormat.wv => AudioCodec.wavpack,
       AudioFormat.dsf || AudioFormat.dff => AudioCodec.dsd,
@@ -209,16 +258,30 @@ enum AudioFormat {
 
   static AudioFormat fromMime(String mime) {
     final lower = mime.toLowerCase();
-    if (lower.contains('audio/mpeg') || lower.contains('audio/mp3')) return AudioFormat.mp3;
-    if (lower.contains('audio/wav') || lower.contains('audio/x-wav')) return AudioFormat.wav;
-    if (lower.contains('audio/flac') || lower.contains('audio/x-flac')) return AudioFormat.flac;
-    if (lower.contains('audio/ogg') || lower.contains('application/ogg')) return AudioFormat.ogg;
+    if (lower.contains('audio/mpeg') || lower.contains('audio/mp3')) {
+      return AudioFormat.mp3;
+    }
+    if (lower.contains('audio/wav') || lower.contains('audio/x-wav')) {
+      return AudioFormat.wav;
+    }
+    if (lower.contains('audio/flac') || lower.contains('audio/x-flac')) {
+      return AudioFormat.flac;
+    }
+    if (lower.contains('audio/ogg') || lower.contains('application/ogg')) {
+      return AudioFormat.ogg;
+    }
     if (lower.contains('audio/opus')) return AudioFormat.opus;
-    if (lower.contains('audio/aac') || lower.contains('audio/x-aac')) return AudioFormat.aac;
-    if (lower.contains('audio/mp4') || lower.contains('audio/m4a') || lower.contains('audio/x-m4a')) {
+    if (lower.contains('audio/aac') || lower.contains('audio/x-aac')) {
+      return AudioFormat.aac;
+    }
+    if (lower.contains('audio/mp4') ||
+        lower.contains('audio/m4a') ||
+        lower.contains('audio/x-m4a')) {
       return AudioFormat.m4a;
     }
-    if (lower.contains('audio/aiff') || lower.contains('audio/x-aiff')) return AudioFormat.aiff;
+    if (lower.contains('audio/aiff') || lower.contains('audio/x-aiff')) {
+      return AudioFormat.aiff;
+    }
     return AudioFormat.unknown;
   }
 }
@@ -290,7 +353,8 @@ class AudioTrackMetadata {
   }) {
     final trimmed = sourceHint.trim();
     final lower = trimmed.toLowerCase();
-    final isNetwork = lower.startsWith('http://') || lower.startsWith('https://');
+    final isNetwork =
+        lower.startsWith('http://') || lower.startsWith('https://');
     final isHls = lower.contains('.m3u8');
     final isLive = isHls || (isNetwork && durationMs <= 0);
 
@@ -302,7 +366,8 @@ class AudioTrackMetadata {
     if (format == AudioFormat.unknown) {
       final dotIdx = lower.lastIndexOf('.');
       if (dotIdx != -1 && dotIdx + 1 < lower.length) {
-        final rawExt = lower.substring(dotIdx + 1).split('?').first.split('#').first;
+        final rawExt =
+            lower.substring(dotIdx + 1).split('?').first.split('#').first;
         format = AudioFormat.fromExtension(rawExt);
       }
       if (codec == AudioCodec.unknown) {
@@ -314,7 +379,8 @@ class AudioTrackMetadata {
       codec: codec,
       format: format,
       formatName: format.extension,
-      duration: durationMs > 0 ? Duration(milliseconds: durationMs) : Duration.zero,
+      duration:
+          durationMs > 0 ? Duration(milliseconds: durationMs) : Duration.zero,
       totalBytes: knownTotalBytes ?? (isLive ? -1 : 0),
       bitrate: bitrate,
       sampleRate: sampleRate,

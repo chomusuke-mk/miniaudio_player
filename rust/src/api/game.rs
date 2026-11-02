@@ -25,15 +25,14 @@ impl RustVoicePool {
         max_voices: usize,
     ) -> Result<RustVoicePool, String> {
         let dev_id_c = playback_device_id.map(|s| CString::new(s).unwrap_or_default());
-        let dev_id_ptr = dev_id_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+        let dev_id_ptr = dev_id_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null());
 
-        let coord = VoicePoolCoordinator::new(
-            sample_rate,
-            channels,
-            period_size,
-            dev_id_ptr,
-            max_voices,
-        ).map_err(|e| format!("Failed to create voice pool coordinator: error {}", e))?;
+        let coord =
+            VoicePoolCoordinator::new(sample_rate, channels, period_size, dev_id_ptr, max_voices)
+                .map_err(|e| format!("Failed to create voice pool coordinator: error {}", e))?;
 
         Ok(RustVoicePool {
             coordinator: Arc::new(*coord),
@@ -136,7 +135,8 @@ impl RustVoicePool {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_voice_emitter(&self, voice_id: u32, emitter: Option<RustSpatialEmitter>) {
-        self.coordinator.set_voice_emitter(voice_id, emitter.map(Into::into));
+        self.coordinator
+            .set_voice_emitter(voice_id, emitter.map(Into::into));
     }
 
     #[flutter_rust_bridge::frb(sync)]

@@ -79,7 +79,7 @@ void main() {
     });
 
     test('Plays audio file and emits reactive visualizer data with active frequency bands', () async {
-      final mp3 = resolveAsset('example/assets/music/salida.mp3');
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue, reason: 'salida.mp3 test asset must exist');
 
       final player = MiniaudioPlayer(AudioSource(mp3.path));
@@ -171,7 +171,7 @@ void main() {
     });
 
     test('Playback visualizer stream receives empty data when force-disabled mid-playback', () async {
-      final mp3 = resolveAsset('example/assets/music/salida.mp3');
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final player = MiniaudioPlayer(AudioSource(mp3.path));

@@ -47,11 +47,7 @@ impl WavpackStreamParser {
             16 => 32768.0f32,
             24 => 8388608.0f32,
             32 => 2147483648.0f32,
-            _ => {
-                return Err(SymphoniaError::Unsupported(
-                    "unsupported WavPack bit depth",
-                ))
-            }
+            _ => return Err(SymphoniaError::Unsupported("unsupported WavPack bit depth")),
         };
 
         for &s in samples {

@@ -12,7 +12,7 @@ void main() {
       final items = List.generate(
         400,
         (i) => EngineItem.from(
-          'example/assets/music/salida.wav',
+          'test/fixtures/salida.wav',
           id: i,
           data: 'Track $i',
         ),
@@ -39,7 +39,7 @@ void main() {
     });
 
     test('Rapid consecutive seeks preempt previous in-flight seeks without delay', () async {
-      final player = MiniaudioPlayer(AudioSource('example/assets/music/salida.wav'));
+      final player = MiniaudioPlayer(AudioSource('test/fixtures/salida.wav'));
       await player.action.play();
 
       final stopwatch = Stopwatch()..start();

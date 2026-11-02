@@ -128,13 +128,13 @@ void main() {
 
     test('Real asset files codec detection matches expected codecs', () {
       final assets = {
-        'example/assets/music/salida.flac': AudioCodec.flac,
-        'example/assets/music/salida.mp3': AudioCodec.mp3,
-        'example/assets/music/cbr_noxing.mp3': AudioCodec.mp3,
-        'example/assets/music/salida.wav': AudioCodec.pcm,
-        'example/assets/music/salida.ogg': AudioCodec.vorbis,
-        'example/assets/music/salida_aac.m4a': AudioCodec.aac,
-        'example/assets/music/salida_alac.m4a': AudioCodec.alac,
+        'test/fixtures/salida.flac': AudioCodec.flac,
+        'test/fixtures/salida.mp3': AudioCodec.mp3,
+        'test/fixtures/cbr_noxing.mp3': AudioCodec.mp3,
+        'test/fixtures/salida.wav': AudioCodec.pcm,
+        'test/fixtures/salida.ogg': AudioCodec.vorbis,
+        'test/fixtures/salida_aac.m4a': AudioCodec.aac,
+        'test/fixtures/salida_alac.m4a': AudioCodec.alac,
       };
 
       for (final entry in assets.entries) {
@@ -171,7 +171,7 @@ void main() {
     });
 
     test('Plays MP3 correctly when file is renamed with wrong extension (.wav)', () async {
-      final srcFile = File('example/assets/music/salida.mp3');
+      final srcFile = File('test/fixtures/salida.mp3');
       if (!srcFile.existsSync()) return;
 
       final misnamed = File('${tempDir.path}/track_actually_mp3.wav');
@@ -189,7 +189,7 @@ void main() {
     });
 
     test('Plays FLAC correctly when file has NO extension at all', () async {
-      final srcFile = File('example/assets/music/salida.flac');
+      final srcFile = File('test/fixtures/salida.flac');
       if (!srcFile.existsSync()) return;
 
       final extensionless = File('${tempDir.path}/audio_stream_payload');
@@ -207,7 +207,7 @@ void main() {
     });
 
     test('Plays AAC M4A correctly when file has .bin extension', () async {
-      final srcFile = File('example/assets/music/salida_aac.m4a');
+      final srcFile = File('test/fixtures/salida_aac.m4a');
       if (!srcFile.existsSync()) return;
 
       final misnamed = File('${tempDir.path}/opaque_blob.bin');
@@ -283,7 +283,7 @@ void main() {
     });
 
     test('Playback populates sampleRate, channels, and buffered telemetry', () async {
-      final file = File('example/assets/music/salida.mp3');
+      final file = File('test/fixtures/salida.mp3');
       if (!file.existsSync()) return;
 
       await player.action.open(AudioSource(file.path));

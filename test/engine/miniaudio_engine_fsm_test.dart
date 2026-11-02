@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import '../helpers/synthetic_audio.dart';
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -16,48 +14,13 @@ void main() {
   late File track6File;
 
   setUpAll(() async {
-    // Generate synthetic audio files for reproducible FSM testing
-    track1File = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'fsm_track1.wav',
-      frequencyHz: 440.0,
-      durationSeconds: 6.0,
-    );
-    track2File = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'fsm_track2.wav',
-      frequencyHz: 554.37,
-      durationSeconds: 6.0,
-    );
-    track3File = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'fsm_track3.wav',
-      frequencyHz: 659.25,
-      durationSeconds: 6.0,
-    );
-    track4File = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'fsm_track4.wav',
-      frequencyHz: 880.0,
-      durationSeconds: 6.0,
-    );
-    track5File = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'fsm_track5.wav',
-      frequencyHz: 987.77,
-      durationSeconds: 6.0,
-    );
-    track6File = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'fsm_track6.wav',
-      frequencyHz: 1174.66,
-      durationSeconds: 6.0,
-    );
-  });
-
-  tearDownAll(() async {
-    await Future.wait([
-      SyntheticAudioGenerator.cleanUp(track1File),
-      SyntheticAudioGenerator.cleanUp(track2File),
-      SyntheticAudioGenerator.cleanUp(track3File),
-      SyntheticAudioGenerator.cleanUp(track4File),
-      SyntheticAudioGenerator.cleanUp(track5File),
-      SyntheticAudioGenerator.cleanUp(track6File),
-    ]);
+    // Use 10.0-second fixture files for reproducible FSM testing
+    track1File = File('test/fixtures/test_24bit_stereo.wav');
+    track2File = File('test/fixtures/cbr_noxing.mp3');
+    track3File = File('test/fixtures/test_24bit_stereo.wav');
+    track4File = File('test/fixtures/cbr_noxing.mp3');
+    track5File = File('test/fixtures/test_24bit_stereo.wav');
+    track6File = File('test/fixtures/cbr_noxing.mp3');
   });
 
   group('FSM Scenario 1: Rapid next() -> previous() during Manual Crossfade', () {
@@ -152,8 +115,8 @@ void main() {
 
         await engine.action.play();
 
-        // Seek Track 1 near the end to enter the auto-crossfade window (duration is 6.0s, crossfade is 2.0s -> seek to 4.5s)
-        await engine.action.seek(const Duration(milliseconds: 4500));
+        // Seek Track 1 near the end to enter the auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
+        await engine.action.seek(const Duration(milliseconds: 8500));
         await Future<void>.delayed(const Duration(milliseconds: 250));
 
         // Engine should have entered autoCrossfading
@@ -163,7 +126,7 @@ void main() {
         // User presses previous()
         await engine.action.previous();
 
-        // Should revert tentative transition and restart Track 1 from 0:00 because pos was 4.5s > 3s
+        // Should revert tentative transition and restart Track 1 from 0:00 because pos was 8.5s > 3s
         expect(engine.state.currentIndex, equals(0));
         expect(engine.state.currentItem?.data, equals('Track 1'));
         expect(engine.state.phase, equals(EnginePhase.playing));
@@ -182,7 +145,7 @@ void main() {
 
         await engine.action.play();
         // Seek into auto-crossfade window
-        await engine.action.seek(const Duration(milliseconds: 4500));
+        await engine.action.seek(const Duration(milliseconds: 8500));
         await Future<void>.delayed(const Duration(milliseconds: 250));
 
         expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
@@ -289,7 +252,7 @@ void main() {
 
       await engine.action.play();
       // Enter auto crossfade window
-      await engine.action.seek(const Duration(milliseconds: 4500));
+      await engine.action.seek(const Duration(milliseconds: 8500));
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
       expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
@@ -355,7 +318,7 @@ void main() {
       expect(engine.state.playing, isTrue);
 
       // Seek near EOF to trigger natural track completion
-      await engine.action.seek(const Duration(milliseconds: 5900));
+      await engine.action.seek(const Duration(milliseconds: 9900));
 
       // Wait for playback to hit EOF
       for (int i = 0; i < 10; i++) {
@@ -437,8 +400,8 @@ void main() {
 
       await engine.action.play();
 
-      // Seek into auto-crossfade zone (track is ~6s long)
-      await engine.action.seek(const Duration(milliseconds: 4500));
+      // Seek into auto-crossfade zone (track is ~10s long)
+      await engine.action.seek(const Duration(milliseconds: 8500));
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
       expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
@@ -453,7 +416,7 @@ void main() {
       expect(engine.state.volume, closeTo(1.0, 1e-4));
 
       // Seek back into crossfade zone: it triggers again smoothly
-      await engine.action.seek(const Duration(milliseconds: 4600));
+      await engine.action.seek(const Duration(milliseconds: 8600));
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
       expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
@@ -475,19 +438,19 @@ void main() {
 
       await engine.action.play();
 
-      // Seek into crossfade zone (4.2s out of ~6.0s)
-      await engine.action.seek(const Duration(milliseconds: 4200));
+      // Seek into crossfade zone (8.2s out of ~10.0s)
+      await engine.action.seek(const Duration(milliseconds: 8200));
       await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
 
-      // Seek slightly further inside crossfade zone (5.0s)
-      await engine.action.seek(const Duration(milliseconds: 5000));
+      // Seek slightly further inside crossfade zone (9.0s)
+      await engine.action.seek(const Duration(milliseconds: 9000));
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       // Phase remains autoCrossfading on outgoing track without error or premature skip
       expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.position.inMilliseconds, closeTo(5000, 350));
+      expect(engine.state.position.inMilliseconds, closeTo(9000, 350));
     });
   });
 }

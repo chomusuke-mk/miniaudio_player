@@ -92,7 +92,8 @@ class DuckingConfig {
         releaseMs: releaseMs,
       );
 
-  static DuckingConfig fromRust(rust_types.RustDuckingConfig rust) => DuckingConfig(
+  static DuckingConfig fromRust(rust_types.RustDuckingConfig rust) =>
+      DuckingConfig(
         enabled: rust.enabled,
         duckingDb: rust.duckingDb,
         thresholdDb: rust.thresholdDb,

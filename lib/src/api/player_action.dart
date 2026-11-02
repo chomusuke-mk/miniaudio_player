@@ -8,7 +8,8 @@ abstract final class _AudioParamValidator {
     }
   }
 
-  static void requireFiniteNonNegative(double value, String name, String label) {
+  static void requireFiniteNonNegative(
+      double value, String name, String label) {
     if (value.isNaN || value.isInfinite || value < 0.0) {
       throw ArgumentError.value(
         value,
@@ -40,6 +41,7 @@ class PlayerAction {
   Future<void>? _pendingSeekFuture;
   DartByteProviderBridge? _customBridge;
   AudioSource? _currentSource;
+  bool _streamNeedsReopenOnPlay = false;
 
   PlayerAction._(this._player);
 
@@ -114,6 +116,7 @@ class PlayerAction {
   Future<void> open(AudioSource source) async {
     _player._ensureNotDisposed();
     _currentSource = source;
+    _streamNeedsReopenOnPlay = false;
     _disposeCustomBridge();
 
     return _openGuarded((_) async {
@@ -195,9 +198,10 @@ class PlayerAction {
   }
 
   Future<void> _executePlay() async {
-    if (_player.state.trackMetadata?.isLiveStream == true &&
-        _player.state.playbackState == PlaybackState.stopped &&
+    if (_streamNeedsReopenOnPlay &&
+        _player.state.trackMetadata?.isLiveStream == true &&
         _currentSource != null) {
+      _streamNeedsReopenOnPlay = false;
       await open(_currentSource!);
     }
     if (_player.state.completed ||
@@ -226,6 +230,9 @@ class PlayerAction {
   /// Stops audio playback and resets the position to the beginning.
   Future<void> stop() async {
     _player._ensureNotDisposed();
+    if (_player.state.trackMetadata?.isLiveStream == true) {
+      _streamNeedsReopenOnPlay = true;
+    }
     _pendingSeekFuture = null;
     if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
       _openGeneration++;
@@ -277,7 +284,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFiniteNonNegative(volume, 'volume', 'Volume');
     final clamped = volume.clamp(0.0, 2.0);
-    _player._volume.setSnapshot(clamped);
+    _player._volume.emitIfChanged(clamped);
     _player._backend.setVolume(clamped);
   }
 
@@ -286,7 +293,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinitePositive(rate, 'rate', 'Rate');
     final clamped = rate.clamp(0.1, 4.0);
-    _player._rate.setSnapshot(clamped);
+    _player._rate.emitIfChanged(clamped);
     _player._backend.setRate(clamped);
   }
 
@@ -295,7 +302,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinitePositive(pitch, 'pitch', 'Pitch');
     final clamped = pitch.clamp(0.5, 2.0);
-    _player._pitch.setSnapshot(clamped);
+    _player._pitch.emitIfChanged(clamped);
     _player._backend.setPitch(clamped);
   }
 
@@ -309,14 +316,14 @@ class PlayerAction {
         'Buffer size must be non-negative',
       );
     }
-    _player._bufferSize.setSnapshot(bufferSize);
+    _player._bufferSize.emitIfChanged(bufferSize);
     _player._backend.setBufferSize(bufferSize);
   }
 
   /// Updates all 10 equalizer bands atomically from an [Equalizer] instance.
   Future<void> setEqualizer(Equalizer equalizer) async {
     _player._ensureNotDisposed();
-    _player._equalizer.setSnapshot(equalizer);
+    _player._equalizer.emitIfChanged(equalizer);
     _player._backend.setEqualizer(equalizer);
   }
 
@@ -325,7 +332,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(gainDb, 'gainDb', 'Gain');
     final updated = _player.state.equalizer.withBand(bandIndex, gainDb);
-    _player._equalizer.setSnapshot(updated);
+    _player._equalizer.emitIfChanged(updated);
     _player._backend.setEqualizerBand(bandIndex, gainDb);
   }
 
@@ -368,7 +375,7 @@ class PlayerAction {
   Future<void> setSilenceConfig(SilenceSkipConfig config) async {
     _player._ensureNotDisposed();
     final valid = config.validated();
-    _player._silenceConfig.setSnapshot(valid);
+    _player._onSilenceConfig(valid);
     _player._backend.setSilenceSkip(valid);
   }
 
@@ -397,7 +404,7 @@ class PlayerAction {
       peak: (peak != null && peak > 0.0) ? peak : 0.0,
       preventClipping: preventClipping,
     );
-    _player._replayGain.setSnapshot(cfg);
+    _player._replayGain.emitIfChanged(cfg);
     _player._backend.setReplayGain(cfg);
   }
 
@@ -405,7 +412,7 @@ class PlayerAction {
   Future<void> clearReplayGain() async {
     _player._ensureNotDisposed();
     const cfg = ReplayGainConfig(enabled: false);
-    _player._replayGain.setSnapshot(cfg);
+    _player._replayGain.emitIfChanged(cfg);
     _player._backend.setReplayGain(cfg);
   }
 
@@ -414,7 +421,7 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(preampDb, 'preampDb', 'Preamp');
     final clamped = preampDb.clamp(-24.0, 24.0);
-    _player._preamp.setSnapshot(clamped);
+    _player._preamp.emitIfChanged(clamped);
     _player._backend.setPreamp(clamped);
   }
 
@@ -423,21 +430,21 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(pan, 'pan', 'Balance');
     final clamped = pan.clamp(-1.0, 1.0);
-    _player._balance.setSnapshot(clamped);
+    _player._balance.emitIfChanged(clamped);
     _player._backend.setBalance(clamped);
   }
 
   /// Sets whether mono downmix is enabled for accessibility or single speakers.
   Future<void> setMono(bool enabled) async {
     _player._ensureNotDisposed();
-    _player._mono.setSnapshot(enabled);
+    _player._mono.emitIfChanged(enabled);
     _player._backend.setMono(enabled);
   }
 
   /// Configures headphone binaural crossfeed (Bauer bs2b).
   Future<void> setCrossfeed(CrossfeedMode mode) async {
     _player._ensureNotDisposed();
-    _player._crossfeed.setSnapshot(mode);
+    _player._crossfeed.emitIfChanged(mode);
     _player._backend.setCrossfeed(mode);
   }
 
@@ -449,8 +456,8 @@ class PlayerAction {
     _player._ensureNotDisposed();
     _AudioParamValidator.requireFinite(width, 'width', 'Spatializer width');
     final clampedWidth = width.clamp(1.0, 2.0);
-    _player._spatializerEnabled.setSnapshot(enabled);
-    _player._spatializerWidth.setSnapshot(clampedWidth);
+    _player._spatializerEnabled.emitIfChanged(enabled);
+    _player._spatializerWidth.emitIfChanged(clampedWidth);
     _player._backend.setSpatializer(enabled: enabled, width: clampedWidth);
   }
 
@@ -521,7 +528,7 @@ class PlayerAction {
   /// Enables or disables the True-Peak soft-knee output limiter protector.
   Future<void> setLimiter(bool enabled) async {
     _player._ensureNotDisposed();
-    _player._limiterEnabled.setSnapshot(enabled);
+    _player._limiterEnabled.emitIfChanged(enabled);
     _player._backend.setLimiterEnabled(enabled);
   }
 
@@ -529,7 +536,7 @@ class PlayerAction {
   Future<void> setReverb(Reverb config) async {
     _player._ensureNotDisposed();
     final valid = config.validated();
-    _player._reverb.setSnapshot(valid);
+    _player._reverb.emitIfChanged(valid);
     _player._backend.setReverb(
       enabled: valid.enabled,
       roomSize: valid.roomSize,

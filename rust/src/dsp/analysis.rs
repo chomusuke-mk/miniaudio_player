@@ -161,8 +161,16 @@ impl Bs1770LoudnessAnalyzer {
         }
 
         let lufs = Self::compute_gated_lufs(&self.interval_energies);
-        let eff_target = if target_lufs == 0.0 { -18.0 } else { target_lufs };
-        let gain_db = if lufs <= -70.0 { 0.0 } else { eff_target - lufs };
+        let eff_target = if target_lufs == 0.0 {
+            -18.0
+        } else {
+            target_lufs
+        };
+        let gain_db = if lufs <= -70.0 {
+            0.0
+        } else {
+            eff_target - lufs
+        };
 
         ReplayGainData {
             gain_db,

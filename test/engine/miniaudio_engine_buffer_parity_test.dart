@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
@@ -48,12 +46,6 @@ void main() {
 
       await engine.action.setBufferSize(1024);
       expect(engine.state.bufferSize, 1024);
-    });
-
-    test('setIcyMeta and probeTail execute safely on engine.action without throwing', () {
-      final testData = Uint8List.fromList([1, 2, 3, 4, 5]);
-      expect(() => engine.action.setIcyMeta(testData), returnsNormally);
-      expect(() => engine.action.probeTail(testData, 128), returnsNormally);
     });
 
     test('Buffer size stream emits when buffer size is changed', () async {

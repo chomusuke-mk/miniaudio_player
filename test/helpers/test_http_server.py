@@ -40,6 +40,8 @@ MIME_TYPES = {
     '.aifc': 'audio/aiff',
     '.m4a': 'audio/mp4',
     '.webm': 'audio/webm',
+    '.m3u8': 'application/vnd.apple.mpegurl',
+    '.ts': 'video/mp2t',
 }
 
 class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
@@ -70,7 +72,7 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
         alt1 = os.path.join("test/fixtures/tripartite", clean_name)
         if os.path.isfile(alt1):
             return alt1
-        alt2 = os.path.join("example/assets/music", clean_name)
+        alt2 = os.path.join("test/fixtures", clean_name)
         if os.path.isfile(alt2):
             return alt2
         return None
@@ -196,6 +198,41 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
+        # 1e. Arbitrary channel HLS test endpoint (no .m3u8 extension, text/plain)
+        if path == "/arbitrary-channel":
+            actual_port = self.server.server_address[1]
+            body = (
+                "#EXTM3U\n"
+                "#EXT-X-VERSION:3\n"
+                "#EXT-X-TARGETDURATION:2\n"
+                '#EXTINF:2.0,title="Arbitrary Stream Title"\n'
+                f"http://127.0.0.1:{actual_port}/music/eof_chirp.mp3\n"
+                "#EXT-X-ENDLIST\n"
+            ).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 1f. HLS root endpoints (/salida.m3u8 and /salida_*.ts)
+        if path == "/salida.m3u8" or (path.startswith("/salida_") and path.endswith(".ts")):
+            clean_name = os.path.basename(path)
+            fpath = self._resolve_music_path(clean_name)
+            if fpath and os.path.isfile(fpath):
+                mime = self._get_mime(fpath)
+                fsize = os.path.getsize(fpath)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(fsize))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                with open(fpath, "rb") as f:
+                    self.wfile.write(f.read())
+                return
 
         # 2. Corrupt headers endpoint
         if path == "/corrupt/headers":
@@ -923,7 +960,7 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="Adversarial Audio HTTP Test Server")
     parser.add_argument("--port", type=int, default=0, help="Port to listen on (0 for dynamic)")
-    parser.add_argument("--dir", type=str, default="example/assets/music", help="Directory with music files")
+    parser.add_argument("--dir", type=str, default="test/fixtures", help="Directory with music files")
     args = parser.parse_args()
 
     music_dir = os.path.abspath(args.dir)

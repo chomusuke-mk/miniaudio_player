@@ -389,7 +389,9 @@ impl CustomDartByteSource {
         request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
     ) -> (Self, CustomByteSourceHandle) {
         let initial_len = initial_data.len();
-        let initial_eof = total_size.map(|tot| initial_len as u64 >= tot).unwrap_or(false);
+        let initial_eof = total_size
+            .map(|tot| initial_len as u64 >= tot)
+            .unwrap_or(false);
 
         let shared = Arc::new((
             Mutex::new(CustomSharedState {
@@ -497,7 +499,10 @@ impl CustomDartByteSource {
             SeekFrom::Current(off) => {
                 let target = (self.cursor as i64) + off;
                 if target < 0 {
-                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
+                    return Err(IoError::new(
+                        ErrorKind::InvalidInput,
+                        "negative seek cursor",
+                    ));
                 }
                 Ok(target as u64)
             }
@@ -510,7 +515,10 @@ impl CustomDartByteSource {
                 };
                 let target = (tot as i64) + off;
                 if target < 0 {
-                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
+                    return Err(IoError::new(
+                        ErrorKind::InvalidInput,
+                        "negative seek cursor",
+                    ));
                 }
                 Ok(target as u64)
             }

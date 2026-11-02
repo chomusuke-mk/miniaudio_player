@@ -31,10 +31,7 @@ pub unsafe extern "C" fn capture_receiver_capture_trampoline(
     r.on_captured_pcm(input, count);
 }
 
-pub unsafe extern "C" fn capture_receiver_notif_trampoline(
-    _ptr: *mut c_void,
-    _notif: i32,
-) {}
+pub unsafe extern "C" fn capture_receiver_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
 
 impl CaptureReceiver {
     #[inline]
@@ -195,4 +192,3 @@ impl DeviceCaptureNode {
         }
     }
 }
-

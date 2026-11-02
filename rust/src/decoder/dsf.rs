@@ -132,9 +132,7 @@ impl DsdFirDecimator {
                 (2.0 * PI * fc * n).sin() / (PI * n)
             };
             let phase = 2.0 * PI * i as f32 / (num_taps - 1) as f32;
-            let window = 0.35875
-                - 0.48829 * phase.cos()
-                + 0.14128 * (2.0 * phase).cos()
+            let window = 0.35875 - 0.48829 * phase.cos() + 0.14128 * (2.0 * phase).cos()
                 - 0.01168 * (3.0 * phase).cos();
 
             let val = sinc * window;

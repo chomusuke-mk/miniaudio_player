@@ -59,7 +59,7 @@ m3u8-rs = "6.0"
 aes = "0.8"
 cbc = "0.1"
 
-# Formatos Adicionales Audiófilos (MIT / Apache-2.0)
+# Formatos Adicionales (MIT / Apache-2.0)
 ape-decoder = "0.3"
 wavicle = "0.1"
 

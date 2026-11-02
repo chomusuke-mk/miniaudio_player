@@ -28,7 +28,7 @@ class LocalChaosTrace {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  final dir = Directory('example/assets/music');
+  final dir = Directory('test/fixtures');
   final allFiles = dir.listSync().whereType<File>().toList();
   allFiles.sort((a, b) => a.path.compareTo(b.path));
 
@@ -58,7 +58,9 @@ void main() {
 
         // 2. play
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 250));
+        for (var i = 0; i < 16 && !player.state.playing; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        }
         expect(player.state.playing, isTrue,
             reason: '$fileName should be playing');
         expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(0),
@@ -152,7 +154,7 @@ void main() {
       final fileName = match.uri.pathSegments.last;
 
       test('3.openAsset: $fileName ($fmt)', () async {
-        final assetKey = 'example/assets/music/$fileName';
+        final assetKey = 'test/fixtures/$fileName';
         await player.action.open(AudioSource(assetKey));
         expect(player.state.duration.inMilliseconds, greaterThan(0));
 
@@ -176,7 +178,7 @@ void main() {
     tearDown(() async => await player.dispose());
 
     test('4.1: AudioSource.file opens and plays local file', () async {
-      final file = File('example/assets/music/salida.mp3');
+      final file = File('test/fixtures/salida.mp3');
       await player.action.open(AudioSource(file.path));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
@@ -186,7 +188,7 @@ void main() {
     });
 
     test('4.2: AudioSource.uri with file:// URI opens and plays local file', () async {
-      final file = File('example/assets/music/salida.wav');
+      final file = File('test/fixtures/salida.wav');
       await player.action.open(AudioSource(file.absolute.uri));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
@@ -196,7 +198,7 @@ void main() {
     });
 
     test('4.3: Direct File instance passed to player.action.open()', () async {
-      final file = File('example/assets/music/salida.flac');
+      final file = File('test/fixtures/salida.flac');
       await player.action.open(AudioSource(file.path));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
@@ -206,7 +208,7 @@ void main() {
     });
 
     test('4.4: Raw path String passed to player.action.open()', () async {
-      await player.action.open(AudioSource('example/assets/music/salida_aac.m4a'));
+      await player.action.open(AudioSource('test/fixtures/salida_aac.m4a'));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -224,7 +226,7 @@ void main() {
 
     setUp(() async {
       player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
-      corruptFile = File('test/helpers/temp_corrupt_test_file.mp3');
+      corruptFile = File('${Directory.systemTemp.path}/temp_corrupt_test_file.mp3');
       // Create artificial garbage file
       await corruptFile.writeAsBytes(List<int>.generate(2048, (i) => (i * 7 + 13) % 256));
     });
@@ -249,7 +251,7 @@ void main() {
       expect(player.state.playing, isFalse);
 
       // 3. Immediately recover by opening valid local file
-      await player.action.open(AudioSource('example/assets/music/salida.mp3'));
+      await player.action.open(AudioSource('test/fixtures/salida.mp3'));
       expect(player.state.duration.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -259,7 +261,7 @@ void main() {
   });
 
   // =========================================================================
-  // Group 6: Unsupported Local Formats Handling (e.g. salida.webm)
+  // Group 6: Unsupported Local Formats Handling
   // =========================================================================
   group('Unsupported Local Format Clean Failure', () {
     late MiniaudioPlayer player;
@@ -268,7 +270,7 @@ void main() {
     tearDown(() async => await player.dispose());
 
     test('6.1: Opening unsupported format throws MiniaudioPlayerException gracefully', () async {
-      final dummyFile = File('example/assets/music/unsupported.xyz');
+      final dummyFile = File('${Directory.systemTemp.path}/unsupported.xyz');
       await dummyFile.writeAsString('not a real audio stream');
       try {
         await expectLater(
@@ -277,7 +279,7 @@ void main() {
         );
 
         // Player must be immediately reusable
-        await player.action.open(AudioSource('example/assets/music/salida_alac.m4a'));
+        await player.action.open(AudioSource('test/fixtures/salida_alac.m4a'));
         expect(player.state.duration.inMilliseconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -304,9 +306,9 @@ void main() {
       final trace = LocalChaosTrace();
 
       try {
-        const trackA = 'example/assets/music/salida.mp3';
-        const trackB = 'example/assets/music/salida_aac.m4a';
-        const trackC = 'example/assets/music/salida_alac.m4a';
+        const trackA = 'test/fixtures/salida.mp3';
+        const trackB = 'test/fixtures/salida_aac.m4a';
+        const trackC = 'test/fixtures/salida_alac.m4a';
 
         // Step 1: Open track A and play
         trace.log('Step 1: openFile(trackA)');

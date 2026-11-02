@@ -8,6 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
 // These functions are ignored because they are not marked as `pub`: `build_analysis_config`, `check_map_result`, `enumerate_ffi_devices`, `map_telemetry_event`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `drop`
 
 Future<List<RustAudioDevice>> getAudioDevices() =>
     RustLib.instance.api.crateApiPlayerGetAudioDevices();

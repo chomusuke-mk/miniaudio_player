@@ -11,12 +11,12 @@ flutter_rust_bridge::for_generated::lazy_static! {
 
 #[cfg(target_family = "wasm")]
 mod wasm_worker_handler {
-    use std::future::Future;
     use flutter_rust_bridge::for_generated::wasm_bindgen::JsValue;
     use flutter_rust_bridge::for_generated::{
-        BaseCodec, BaseThreadPool, Executor, NoOpErrorListener, SimpleAsyncRuntime,
-        SimpleExecutor, SimpleHandler, TaskContext, TaskInfo, TaskRetFutTrait, TransferClosure,
+        BaseCodec, BaseThreadPool, Executor, NoOpErrorListener, SimpleAsyncRuntime, SimpleExecutor,
+        SimpleHandler, TaskContext, TaskInfo, TaskRetFutTrait, TransferClosure,
     };
+    use std::future::Future;
 
     /// Direct execution pool for a WASM module running inside a Dedicated Web Worker.
     #[derive(Default, Clone, Copy)]
@@ -34,11 +34,7 @@ mod wasm_worker_handler {
     impl WasmWorkerExecutor {
         pub fn new() -> Self {
             Self {
-                inner: SimpleExecutor::new(
-                    NoOpErrorListener,
-                    DirectWorkerPool,
-                    SimpleAsyncRuntime,
-                ),
+                inner: SimpleExecutor::new(NoOpErrorListener, DirectWorkerPool, SimpleAsyncRuntime),
             }
         }
     }
@@ -66,7 +62,8 @@ mod wasm_worker_handler {
             SyncTaskFn: FnOnce() -> Result<Rust2DartCodec::Message, Rust2DartCodec::Message>,
             Rust2DartCodec: BaseCodec,
         {
-            self.inner.execute_sync::<Rust2DartCodec, _>(task_info, sync_task)
+            self.inner
+                .execute_sync::<Rust2DartCodec, _>(task_info, sync_task)
         }
 
         fn execute_async<Rust2DartCodec, TaskFn, TaskRetFut>(
@@ -79,7 +76,8 @@ mod wasm_worker_handler {
                 + TaskRetFutTrait,
             Rust2DartCodec: BaseCodec,
         {
-            self.inner.execute_async::<Rust2DartCodec, _, _>(task_info, task);
+            self.inner
+                .execute_async::<Rust2DartCodec, _, _>(task_info, task);
         }
     }
 

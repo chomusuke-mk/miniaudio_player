@@ -6,8 +6,6 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import '../helpers/synthetic_audio.dart';
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
@@ -19,25 +17,11 @@ void main() {
   int? serverPort;
 
   setUpAll(() async {
-    // 1. Create synthetic local test WAV files
-    localWavFile1 = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'dsp_test_track1.wav',
-      frequencyHz: 440.0,
-      durationSeconds: 5.0,
-    );
-    localWavFile2 = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'dsp_test_track2.wav',
-      frequencyHz: 880.0,
-      durationSeconds: 5.0,
-    );
+    localWavFile1 = File('test/fixtures/test_24bit_stereo.wav');
+    localWavFile2 = File('test/fixtures/cbr_noxing.mp3');
+    memoryWavBytes = await File('test/fixtures/test_24bit.wav').readAsBytes();
 
-    // 2. Create in-memory synthetic WAV bytes
-    memoryWavBytes = SyntheticAudioGenerator.generateWavBytes(
-      frequencyHz: 554.37,
-      durationSeconds: 4.0,
-    );
-
-    // 3. Start local Python test HTTP server for network and live chunked streaming
+    // Start local Python test HTTP server for network and live chunked streaming
     final completer = Completer<int>();
     serverProcess = await Process.start(
       'python3',
@@ -46,7 +30,7 @@ void main() {
         '--port',
         '0',
         '--dir',
-        'example/assets/music',
+        'test/fixtures',
       ],
       environment: {'MAP_TEST_DEBUG': '1'},
     );
@@ -79,11 +63,6 @@ void main() {
     }
     serverProcess?.kill();
     await serverProcess?.exitCode;
-
-    await Future.wait([
-      SyntheticAudioGenerator.cleanUp(localWavFile1),
-      SyntheticAudioGenerator.cleanUp(localWavFile2),
-    ]);
   });
 
   group('2.3 Network & Web Audio: Strict Separation of open / openQueue and play()', () {

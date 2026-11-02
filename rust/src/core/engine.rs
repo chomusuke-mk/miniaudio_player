@@ -249,6 +249,17 @@ impl EngineRenderer {
         frame_count: usize,
         total_samples: usize,
     ) {
+        let a_playing = !self.renderer_a.is_null()
+            && unsafe { (*self.renderer_a).state.load(Ordering::Relaxed) == 1 };
+        let b_playing = !self.renderer_b.is_null()
+            && unsafe { (*self.renderer_b).state.load(Ordering::Relaxed) == 1 };
+        if !a_playing && !b_playing {
+            unsafe {
+                std::ptr::write_bytes(output_frames, 0, total_samples);
+            }
+            return;
+        }
+
         if self.scratch_a.len() < total_samples {
             self.scratch_a.resize(total_samples, 0.0);
         }
@@ -950,7 +961,10 @@ impl EngineCoordinator {
                 )
             };
             if ctx.is_null() || dev_res != 0 {
-                return Err(format!("Failed to create cue audio device: error {}", dev_res));
+                return Err(format!(
+                    "Failed to create cue audio device: error {}",
+                    dev_res
+                ));
             }
             let start_res = unsafe { map_device_start(ctx) };
             if start_res != 0 {

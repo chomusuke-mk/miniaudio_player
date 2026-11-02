@@ -47,8 +47,7 @@ void main() {
 
     final backend = NativePlayerBackend();
     backend.init(sampleRate: 44100, channels: 2, periodSize: 1024);
-    await NativePlayerBackend.ensureRustInitialized();
-    await Future.delayed(const Duration(milliseconds: 50));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
 
     final provider = MockCustomByteProvider(bytes, streamId: 202);
     final bridge = DartByteProviderBridge(backend, provider);
@@ -57,7 +56,7 @@ void main() {
 
     // Verify initial probe opened successfully
     await backend.play();
-    await Future.delayed(const Duration(milliseconds: 100));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
 
     // Verify playback happened and custom requests were dispatched
     await backend.stop();

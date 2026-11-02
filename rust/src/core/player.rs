@@ -177,6 +177,240 @@ fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn build_network_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(3))
+        .timeout_read(Duration::from_secs(5))
+        .build()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_http_headers(
+    mut req: ureq::Request,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+) -> ureq::Request {
+    if let Some(hdrs) = headers {
+        for h in hdrs {
+            req = req.set(&h.key, &h.value);
+        }
+    }
+    req
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn synthesize_icy_id3_container(raw_icy: &[u8]) -> Option<Vec<u8>> {
+    let text = String::from_utf8_lossy(raw_icy);
+    let trimmed = text.trim_end_matches('\0').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let title = if let Some(idx) = trimmed.find("StreamTitle='") {
+        let rest = &trimmed[idx + "StreamTitle='".len()..];
+        let end = rest
+            .find("';")
+            .or_else(|| rest.find('\''))
+            .unwrap_or(rest.len());
+        rest[..end].trim()
+    } else {
+        trimmed
+    };
+    if title.is_empty() {
+        return None;
+    }
+
+    let title_bytes = title.as_bytes();
+    let frame_payload_len = 1 + title_bytes.len();
+    let mut id3 = Vec::with_capacity(10 + 10 + frame_payload_len + 128);
+
+    // ID3v2.3 header (10 bytes)
+    let tag_size = (10 + frame_payload_len) as u32;
+    let synchsafe = [
+        ((tag_size >> 21) & 0x7F) as u8,
+        ((tag_size >> 14) & 0x7F) as u8,
+        ((tag_size >> 7) & 0x7F) as u8,
+        (tag_size & 0x7F) as u8,
+    ];
+    id3.extend_from_slice(b"ID3\x03\x00\x00");
+    id3.extend_from_slice(&synchsafe);
+
+    // TIT2 frame (10-byte header + encoding byte + UTF-8/Latin1 text)
+    id3.extend_from_slice(b"TIT2");
+    id3.extend_from_slice(&(frame_payload_len as u32).to_be_bytes());
+    id3.extend_from_slice(&[0x00, 0x00, 0x03]);
+    id3.extend_from_slice(title_bytes);
+
+    // 128-byte ID3v1 trailer starting with "TAG"
+    let mut trailer = [0u8; 128];
+    trailer[0..3].copy_from_slice(b"TAG");
+    let copy_len = title_bytes.len().min(30);
+    trailer[3..3 + copy_len].copy_from_slice(&title_bytes[..copy_len]);
+    id3.extend_from_slice(&trailer);
+
+    Some(id3)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct IcyDemuxReader {
+    inner: Box<dyn Read + Send>,
+    metaint: usize,
+    bytes_until_meta: usize,
+    trip_slot: Arc<Mutex<Option<TripartiteBuffer>>>,
+    latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl IcyDemuxReader {
+    fn new(
+        inner: Box<dyn Read + Send>,
+        metaint: usize,
+        trip_slot: Arc<Mutex<Option<TripartiteBuffer>>>,
+        latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
+    ) -> Self {
+        Self {
+            inner,
+            metaint,
+            bytes_until_meta: metaint,
+            trip_slot,
+            latest_icy,
+        }
+    }
+
+    fn read_exact_bytes(&mut self, mut buf: &mut [u8]) -> std::io::Result<bool> {
+        while !buf.is_empty() {
+            match self.inner.read(buf) {
+                Ok(0) => return Ok(false),
+                Ok(n) => buf = &mut buf[n..],
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Read for IcyDemuxReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if self.metaint == 0 {
+            return self.inner.read(out);
+        }
+        if self.bytes_until_meta == 0 {
+            let mut len_byte = [0u8; 1];
+            if !self.read_exact_bytes(&mut len_byte)? {
+                return Ok(0);
+            }
+            let meta_len = (len_byte[0] as usize) * 16;
+            if meta_len > 0 {
+                let mut meta_buf = vec![0u8; meta_len];
+                if !self.read_exact_bytes(&mut meta_buf)? {
+                    return Ok(0);
+                }
+                if let Some(synthesized) = synthesize_icy_id3_container(&meta_buf) {
+                    if let Ok(mut latest) = self.latest_icy.lock() {
+                        *latest = Some(synthesized.clone());
+                    }
+                    if let Ok(guard) = self.trip_slot.lock() {
+                        if let Some(ref trip) = *guard {
+                            trip.set_icy_meta(&synthesized);
+                        }
+                    }
+                }
+            }
+            self.bytes_until_meta = self.metaint;
+        }
+
+        let max_audio = out.len().min(self.bytes_until_meta);
+        let n = self.inner.read(&mut out[..max_audio])?;
+        self.bytes_until_meta -= n;
+        Ok(n)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_hls_uri(base_url: &str, seg_uri: &str) -> String {
+    let trimmed = seg_uri.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return trimmed.to_string();
+    }
+    let base_no_query = base_url.split('?').next().unwrap_or(base_url);
+    if trimmed.starts_with('/') {
+        if let Some(scheme_idx) = base_no_query.find("://") {
+            let after_scheme = &base_no_query[scheme_idx + 3..];
+            if let Some(slash_idx) = after_scheme.find('/') {
+                let origin = &base_no_query[..scheme_idx + 3 + slash_idx];
+                return format!("{}{}", origin, trimmed);
+            }
+        }
+        return trimmed.to_string();
+    }
+    if let Some(last_slash) = base_no_query.rfind('/') {
+        format!("{}/{}", &base_no_query[..last_slash], trimmed)
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_hls_segment_audio(
+    agent: &ureq::Agent,
+    seg_url: &str,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+) -> Option<(Vec<u8>, i32)> {
+    let req = apply_http_headers(agent.get(seg_url), headers);
+    let res = req.call().ok()?;
+    let content_type = res.header("content-type").map(|s| s.to_string());
+    let mut raw_bytes = Vec::new();
+    res.into_reader().read_to_end(&mut raw_bytes).ok()?;
+    if raw_bytes.is_empty() {
+        return None;
+    }
+    if crate::hls::MpegTsDemuxer::is_mpeg_ts(&raw_bytes) {
+        let demuxed = crate::hls::MpegTsDemuxer::demux_segment(&raw_bytes);
+        let fmt = match demuxed.codec {
+            crate::hls::TsAudioCodec::AacAdts => 5,
+            crate::hls::TsAudioCodec::Mp3 => 3,
+            _ => 0,
+        };
+        if !demuxed.audio_bytes.is_empty() {
+            return Some((demuxed.audio_bytes, fmt));
+        }
+    }
+    let fmt = infer_network_encoding_format(seg_url, content_type.as_deref());
+    Some((raw_bytes, fmt))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_range_bytes(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+    start: i64,
+    end_inclusive: i64,
+) -> Option<Vec<u8>> {
+    if start < 0 || end_inclusive < start {
+        return None;
+    }
+    let range_hdr = format!("bytes={}-{}", start, end_inclusive);
+    let req = apply_http_headers(agent.get(url), headers).set("Range", &range_hdr);
+    let res = req.call().ok()?;
+    if res.status() != 206 {
+        return None;
+    }
+    let expected = (end_inclusive - start + 1) as usize;
+    let mut buf = Vec::with_capacity(expected.min(4 * 1024 * 1024));
+    res.into_reader()
+        .take(expected as u64)
+        .read_to_end(&mut buf)
+        .ok()?;
+    if buf.len() == expected {
+        Some(buf)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) -> Vec<u8> {
     let mut initial_data = Vec::with_capacity(131072);
     let mut read_buf = [0u8; 32768];
@@ -186,12 +420,25 @@ fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) ->
             Ok(0) => break,
             Ok(n) => {
                 initial_data.extend_from_slice(&read_buf[..n]);
+                if crate::hls::M3u8Parser::is_m3u8(&initial_data) {
+                    break;
+                }
                 if initial_data.len() >= 65536 {
-                    let (status, _) =
+                    let (status, boundary) =
                         FormatSniffer::detect_head_boundary(&initial_data, content_length);
-                    if status != crate::decoder::sniffer::BoundaryStatus::NeedMore
-                        || initial_data.len() >= 512 * 1024
-                    {
+                    if status != crate::decoder::sniffer::BoundaryStatus::NeedMore {
+                        let min_required = (boundary.audio_start.max(0) as usize)
+                            .saturating_add(32768)
+                            .min(if content_length > 0 {
+                                content_length as usize
+                            } else {
+                                usize::MAX
+                            });
+                        if initial_data.len() >= min_required {
+                            break;
+                        }
+                    }
+                    if initial_data.len() >= 16 * 1024 * 1024 {
                         break;
                     }
                 }
@@ -199,6 +446,13 @@ fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) ->
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
+    }
+
+    if !crate::hls::M3u8Parser::is_m3u8(&initial_data)
+        && content_length > 0
+        && initial_data.len() < (content_length as usize).min(65536)
+    {
+        return Vec::new();
     }
 
     initial_data
@@ -281,8 +535,7 @@ impl PcmAdaptationPipeline {
     fn sync_silence_format(&mut self, sr: u32, ch: usize) {
         if sr > 0
             && ch > 0
-            && (sr != self.silence_detector.sample_rate()
-                || ch != self.silence_detector.channels())
+            && (sr != self.silence_detector.sample_rate() || ch != self.silence_detector.channels())
         {
             self.silence_detector.set_sample_rate(sr);
             self.silence_detector.set_channels(ch);
@@ -562,11 +815,13 @@ impl DecoderWorker {
                         if !hit || !contig {
                             trip.flush(0);
                         }
+                        trip.set_decoding_audio(false);
                         let reader = trip.create_reader();
                         if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
                             *eng_lock = Some(new_eng);
                             reinit = true;
                         }
+                        trip.set_decoding_audio(true);
                     }
                 }
             }
@@ -1036,9 +1291,7 @@ impl PlayerCoordinator {
         let custom_source_handle = Arc::new(RwLock::new(None));
 
         let telemetry = Arc::new(TelemetryDispatcher::new(None, std::ptr::null_mut()));
-        let completion_cb = Arc::new(RwLock::new(
-            on_completed.map(|cb| (cb, user_data as usize)),
-        ));
+        let completion_cb = Arc::new(RwLock::new(on_completed.map(|cb| (cb, user_data as usize))));
 
         let silence_config = Arc::new(RwLock::new(SilenceConfig::default()));
 
@@ -1349,6 +1602,9 @@ impl PlayerCoordinator {
         self.network_streamer_abort.store(true, Ordering::Release);
         self.is_stream.store(false, Ordering::Release);
         if let Ok(mut guard) = self.trip_buffer.write() {
+            if let Some(ref trip) = *guard {
+                trip.abort();
+            }
             *guard = None;
         }
         if let Ok(mut guard) = self.boundary_info.write() {
@@ -1411,6 +1667,126 @@ impl PlayerCoordinator {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn open_hls_network(
+        &mut self,
+        agent: ureq::Agent,
+        url: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+        mut m3u8_bytes: Vec<u8>,
+        reader: &mut impl Read,
+    ) -> i32 {
+        let _ = reader.read_to_end(&mut m3u8_bytes);
+        let parsed = match crate::hls::M3u8Parser::parse(&m3u8_bytes) {
+            Ok(p) => p,
+            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+        };
+
+        let (base_media_url, media_playlist) = match parsed {
+            crate::hls::ParsedHlsPlaylist::Master { variants } => {
+                let Some(first_var) = variants.first() else {
+                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                };
+                let media_url = resolve_hls_uri(url, &first_var.uri);
+                let req = apply_http_headers(agent.get(&media_url), headers);
+                let Ok(res) = req.call() else {
+                    return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+                };
+                let mut media_bytes = Vec::new();
+                if res.into_reader().read_to_end(&mut media_bytes).is_err() {
+                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                }
+                match crate::hls::M3u8Parser::parse(&media_bytes) {
+                    Ok(p) => (media_url, p),
+                    Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+                }
+            }
+            media => (url.to_string(), media),
+        };
+
+        let crate::hls::ParsedHlsPlaylist::Media {
+            is_live,
+            segments,
+            total_duration_seconds,
+            ..
+        } = media_playlist
+        else {
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        };
+
+        if segments.is_empty() {
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        }
+
+        let first_seg_url = resolve_hls_uri(&base_media_url, &segments[0].uri);
+        let Some((first_audio, seg_fmt)) = fetch_hls_segment_audio(&agent, &first_seg_url, headers)
+        else {
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        };
+
+        let res_code = self.open_stream_ex(&first_audio, None, -1, true, 4 * 1024 * 1024, seg_fmt);
+        if res_code != MAP_SUCCESS {
+            return res_code;
+        }
+
+        if !is_live && total_duration_seconds > 0.0 {
+            let dur_ms = (total_duration_seconds * 1000.0) as i64;
+            self.duration_ms.store(dur_ms, Ordering::SeqCst);
+            self.telemetry.post_event(
+                EventType::Duration,
+                MapEventData {
+                    duration_ms: dur_ms,
+                },
+            );
+        }
+
+        self.network_streamer_abort.store(true, Ordering::Release);
+        let new_abort = Arc::new(AtomicBool::new(false));
+        self.network_streamer_abort = new_abort.clone();
+
+        if let Some(trip) = self.trip_buffer.read().unwrap().clone() {
+            let remaining_urls: Vec<String> = segments
+                .iter()
+                .skip(1)
+                .map(|s| resolve_hls_uri(&base_media_url, &s.uri))
+                .collect();
+            let owned_headers: Option<Vec<crate::api::types::RustHttpHeader>> =
+                headers.map(|h| h.to_vec());
+            let dec_running = self.decoder_running.clone();
+
+            let _ = std::thread::Builder::new()
+                .name("miniaudio-hls-streamer".to_string())
+                .spawn(move || {
+                    for seg_url in remaining_urls {
+                        if new_abort.load(Ordering::Relaxed) || !dec_running.load(Ordering::Relaxed)
+                        {
+                            return;
+                        }
+                        if let Some((audio_bytes, _)) =
+                            fetch_hls_segment_audio(&agent, &seg_url, owned_headers.as_deref())
+                        {
+                            let mut offset = 0;
+                            while offset < audio_bytes.len()
+                                && !new_abort.load(Ordering::Relaxed)
+                                && dec_running.load(Ordering::Relaxed)
+                            {
+                                match trip.feed_chunk(&audio_bytes[offset..]) {
+                                    Ok(written) => offset += written,
+                                    Err(crate::buffer::BufferError::Busy) => {
+                                        std::thread::sleep(Duration::from_millis(20));
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                        }
+                    }
+                    trip.mark_eof();
+                });
+        }
+
+        MAP_SUCCESS
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_network(
         &mut self,
         url: &str,
@@ -1418,18 +1794,16 @@ impl PlayerCoordinator {
     ) -> i32 {
         let _ = self.begin_open();
 
-        let mut req = ureq::get(url);
-        if let Some(hdrs) = headers {
-            for h in hdrs {
-                req = req.set(&h.key, &h.value);
-            }
-        }
+        let agent = build_network_agent();
+        let req = apply_http_headers(agent.get(url), headers).set("Icy-MetaData", "1");
 
         let res = match req.call() {
             Ok(r) => r,
             Err(ureq::Error::Status(code, _)) => {
                 let err = if code == 404 {
                     MAP_ERROR_FILE_NOT_FOUND
+                } else if code == 401 || code == 403 {
+                    MAP_ERROR_ACCESS_DENIED
                 } else {
                     MAP_ERROR_DECODE_FAILED
                 };
@@ -1443,18 +1817,80 @@ impl PlayerCoordinator {
             .and_then(|s| s.parse().ok())
             .unwrap_or(-1);
         let content_type = res.header("content-type").map(|s| s.to_string());
+        let icy_metaint: usize = res
+            .header("icy-metaint")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let encoding_format = infer_network_encoding_format(url, content_type.as_deref());
 
-        let mut reader = res.into_reader();
+        let trip_slot: Arc<Mutex<Option<TripartiteBuffer>>> = Arc::new(Mutex::new(None));
+        let latest_icy: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+
+        let mut reader: Box<dyn Read + Send> = if icy_metaint > 0 {
+            Box::new(IcyDemuxReader::new(
+                Box::new(res.into_reader()),
+                icy_metaint,
+                trip_slot.clone(),
+                latest_icy.clone(),
+            ))
+        } else {
+            Box::new(res.into_reader())
+        };
+
         let initial_data = prefetch_initial_stream_bytes(&mut reader, content_length);
         if initial_data.is_empty() {
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         }
 
+        if crate::hls::M3u8Parser::is_m3u8(&initial_data) {
+            return self.open_hls_network(agent, url, headers, initial_data, &mut reader);
+        }
+
+        let mut tail_data: Option<Vec<u8>> = None;
+        let mut forced_audio_end: Option<u64> = None;
+
+        if content_length > 0 && (initial_data.len() as i64) < content_length {
+            let (_status, boundary) =
+                FormatSniffer::detect_head_boundary(&initial_data, content_length);
+            if boundary.audio_end > 0
+                && boundary.audio_end < content_length
+                && (content_length - boundary.audio_end) <= 4 * 1024 * 1024
+            {
+                if let Some(tail) =
+                    fetch_range_bytes(&agent, url, headers, boundary.audio_end, content_length - 1)
+                {
+                    tail_data = Some(tail);
+                    forced_audio_end = Some(boundary.audio_end as u64);
+                }
+            } else if FormatSniffer::container_needs_tail_scan(boundary.container) {
+                let floor = boundary.audio_start.max(0);
+                let probe_len = 65536i64.min(content_length - floor);
+                if probe_len > 0 {
+                    let tail_offset = content_length - probe_len;
+                    if let Some(probed) =
+                        fetch_range_bytes(&agent, url, headers, tail_offset, content_length - 1)
+                    {
+                        let (_t_status, audio_end) = FormatSniffer::detect_tail_boundary(
+                            boundary.container,
+                            &probed,
+                            tail_offset,
+                            content_length,
+                            boundary.audio_start,
+                        );
+                        if audio_end > 0 && audio_end < content_length && audio_end >= tail_offset {
+                            let rel_start = (audio_end - tail_offset) as usize;
+                            tail_data = Some(probed[rel_start..].to_vec());
+                            forced_audio_end = Some(audio_end as u64);
+                        }
+                    }
+                }
+            }
+        }
+
         let is_live = content_length <= 0;
         let res_code = self.open_stream_ex(
             &initial_data,
-            None,
+            tail_data.as_deref(),
             content_length,
             is_live,
             4 * 1024 * 1024,
@@ -1464,6 +1900,34 @@ impl PlayerCoordinator {
             return res_code;
         }
 
+        if let Some(trip) = self.trip_buffer.read().unwrap().clone() {
+            if let Some(ae) = forced_audio_end {
+                trip.set_audio_end(ae);
+                if let Some(ref td) = tail_data {
+                    trip.set_tail(td, Some(ae));
+                }
+                if let Ok(mut b_guard) = self.boundary_info.write() {
+                    if let Some(ref mut b) = *b_guard {
+                        b.audio_end = ae as i64;
+                    }
+                }
+            }
+            if let Ok(guard) = latest_icy.lock() {
+                if let Some(ref icy_bytes) = *guard {
+                    trip.set_icy_meta(icy_bytes);
+                }
+            }
+            if let Ok(mut slot) = trip_slot.lock() {
+                *slot = Some(trip.clone());
+            }
+
+            self.network_streamer_abort.store(true, Ordering::Release);
+            let new_abort = Arc::new(AtomicBool::new(false));
+            self.network_streamer_abort = new_abort.clone();
+
+            spawn_network_streamer_thread(reader, trip, new_abort, self.decoder_running.clone());
+        }
+
         crate::map_log!(
             3,
             "Network stream opened: {} (content_length={}, is_live={})",
@@ -1471,19 +1935,6 @@ impl PlayerCoordinator {
             content_length,
             is_live
         );
-
-        self.network_streamer_abort.store(true, Ordering::Release);
-        let new_abort = Arc::new(AtomicBool::new(false));
-        self.network_streamer_abort = new_abort.clone();
-
-        if let Some(trip) = self.trip_buffer.read().unwrap().clone() {
-            spawn_network_streamer_thread(
-                Box::new(reader),
-                trip,
-                new_abort,
-                self.decoder_running.clone(),
-            );
-        }
 
         MAP_SUCCESS
     }
@@ -1501,11 +1952,6 @@ impl PlayerCoordinator {
             .extension()
             .and_then(|e| e.to_str());
 
-        let eng = match SymphoniaEngine::new(source, ext) {
-            Ok(e) => e,
-            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
-        };
-
         let mut header = [0u8; 8192];
         let mut header_len = 0;
         if let Ok(mut f) = File::open(path) {
@@ -1513,6 +1959,15 @@ impl PlayerCoordinator {
                 header_len = n;
             }
         }
+
+        let (_status, boundary) =
+            FormatSniffer::detect_head_boundary(&header[..header_len], file_size as i64);
+        let effective_hint = boundary.container.hint_extension().or(ext);
+
+        let eng = match SymphoniaEngine::new(source, effective_hint) {
+            Ok(e) => e,
+            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+        };
 
         self.init_engine(eng, false, file_size, &header[..header_len]);
         MAP_SUCCESS
@@ -1600,6 +2055,7 @@ impl PlayerCoordinator {
             Ok(e) => e,
             Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
         };
+        trip.set_decoding_audio(true);
 
         let tot = trip.total_size().unwrap_or(0);
         *self.trip_buffer.write().unwrap() = Some(trip);
@@ -1637,12 +2093,7 @@ impl PlayerCoordinator {
             }
         };
 
-        self.init_engine(
-            eng,
-            !is_seekable,
-            total_size.unwrap_or(0),
-            initial_bytes,
-        );
+        self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), initial_bytes);
         MAP_SUCCESS
     }
 
@@ -1815,12 +2266,12 @@ impl PlayerCoordinator {
             trip.flush(new_stream_offset as u64);
             self.decoder_eof.store(false, Ordering::Relaxed);
             self.flush_generation.fetch_add(1, Ordering::Release);
-        #[cfg(target_arch = "wasm32")]
-        if !self.renderer_ptr.is_null() {
-            unsafe {
-                (*self.renderer_ptr).acknowledge_flush_if_needed();
+            #[cfg(target_arch = "wasm32")]
+            if !self.renderer_ptr.is_null() {
+                unsafe {
+                    (*self.renderer_ptr).acknowledge_flush_if_needed();
+                }
             }
-        }
             if trip.is_live() {
                 self.stream_reinit_needed.store(true, Ordering::Release);
             }
@@ -1988,8 +2439,7 @@ impl PlayerCoordinator {
             } else {
                 out_range.end_ms = 0;
             }
-            out_range.is_buffering =
-                (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
+            out_range.is_buffering = (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
             out_range.is_eof = r.is_eof;
             MAP_SUCCESS
         } else {
@@ -2128,6 +2578,11 @@ impl PlayerCoordinator {
             return MAP_ERROR_INVALID_STATE;
         }
 
+        if let Ok(guard) = self.trip_buffer.read() {
+            if let Some(ref trip) = *guard {
+                trip.clear_abort();
+            }
+        }
         self.decoder_eof.store(false, Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
@@ -2181,6 +2636,7 @@ impl PlayerCoordinator {
     }
 
     pub fn stop(&mut self) -> i32 {
+        #[cfg(target_arch = "wasm32")]
         if !self.device_ctx.is_null() {
             unsafe {
                 map_device_stop(self.device_ctx);
@@ -2220,6 +2676,9 @@ impl PlayerCoordinator {
         self.position_ms.store(0, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
+        if !self.is_live_stream() && self.engine.lock().unwrap().is_some() {
+            self.seek_request_ms.store(0, Ordering::SeqCst);
+        }
         self.telemetry.post_event(
             EventType::SilenceSaved,
             MapEventData {
@@ -2244,6 +2703,9 @@ impl PlayerCoordinator {
         let cur = self.state.load(Ordering::Relaxed);
         if cur == STATE_OPENING || cur == STATE_ERROR {
             return MAP_ERROR_INVALID_STATE;
+        }
+        if self.is_live_stream() {
+            return MAP_SUCCESS;
         }
 
         self.dispatch_seek_to_decoder(position_ms);
@@ -2404,8 +2866,12 @@ impl PlayerCoordinator {
         };
         self.crossfeed_mode.store(mode, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetCrossfeed(cf_mode));
-        self.telemetry
-            .post_event(EventType::Crossfeed, MapEventData { crossfeed_mode: mode });
+        self.telemetry.post_event(
+            EventType::Crossfeed,
+            MapEventData {
+                crossfeed_mode: mode,
+            },
+        );
         MAP_SUCCESS
     }
 
@@ -2488,8 +2954,12 @@ impl PlayerCoordinator {
         if !en {
             let zero_vis = VisualizerData::default();
             self.visualizer_seqlock.write(|v| *v = zero_vis);
-            self.telemetry
-                .post_event(EventType::Visualizer, MapEventData { visualizer: zero_vis });
+            self.telemetry.post_event(
+                EventType::Visualizer,
+                MapEventData {
+                    visualizer: zero_vis,
+                },
+            );
         }
         self.telemetry.post_event(
             EventType::VisualizerEnabled,

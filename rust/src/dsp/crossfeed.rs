@@ -3,7 +3,7 @@
 use std::f64::consts::PI;
 
 pub const BS2B_DEFAULT_CLEVEL: u32 = 700 | (45 << 16); // Moffat-Bauer: 700 Hz, 4.5 dB
-pub const BS2B_CMOY_CLEVEL: u32 = 700 | (60 << 16);    // Chu Moy: 700 Hz, 6.0 dB
+pub const BS2B_CMOY_CLEVEL: u32 = 700 | (60 << 16); // Chu Moy: 700 Hz, 6.0 dB
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,10 +121,18 @@ impl Bs2bCrossfeed {
             let out_r = (hi1 + lo0) * gain;
 
             // Anti-denormal flush
-            if lo0.abs() < 1e-20 { lo0 = 0.0; }
-            if lo1.abs() < 1e-20 { lo1 = 0.0; }
-            if hi0.abs() < 1e-20 { hi0 = 0.0; }
-            if hi1.abs() < 1e-20 { hi1 = 0.0; }
+            if lo0.abs() < 1e-20 {
+                lo0 = 0.0;
+            }
+            if lo1.abs() < 1e-20 {
+                lo1 = 0.0;
+            }
+            if hi0.abs() < 1e-20 {
+                hi0 = 0.0;
+            }
+            if hi1.abs() < 1e-20 {
+                hi1 = 0.0;
+            }
 
             samples[idx] = out_l;
             samples[idx + 1] = out_r;

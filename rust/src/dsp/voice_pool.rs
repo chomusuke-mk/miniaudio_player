@@ -39,9 +39,9 @@ impl SoundBuffer {
     }
 
     pub fn decode_from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        use std::io::Cursor;
         use crate::decoder::sniffer::FormatSniffer;
         use crate::decoder::symphonia_engine::SymphoniaEngine;
+        use std::io::Cursor;
 
         if bytes.is_empty() {
             return Err("Cannot decode sound buffer from empty byte slice".to_string());
@@ -115,10 +115,7 @@ pub enum VoiceStealingPolicy {
 enum VoiceState {
     Stopped,
     Playing,
-    FadingOut {
-        current_gain: f32,
-        gain_step: f32,
-    },
+    FadingOut { current_gain: f32, gain_step: f32 },
 }
 
 /// A single polyphonic audio voice with encapsulated state and rendering logic.
@@ -233,7 +230,8 @@ impl Voice {
         listener: &SpatialListener,
     ) -> (f32, f32, f32, f32) {
         if let Some(ref em) = self.spatial_emitter {
-            let eval = SpatialProcessor::evaluate(listener, em, self.spatial_processor.speed_of_sound);
+            let eval =
+                SpatialProcessor::evaluate(listener, em, self.spatial_processor.speed_of_sound);
             let (pan_l, pan_r) = if out_channels >= 2 {
                 let p = eval.pan.clamp(-1.0, 1.0);
                 (((1.0 - p) * 0.5).sqrt(), ((1.0 + p) * 0.5).sqrt())
@@ -376,25 +374,39 @@ impl VoicePool {
     }
 
     pub fn set_voice_volume(&mut self, voice_id: u32, volume: f32) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.id == voice_id && v.is_active()) {
+        if let Some(v) = self
+            .voices
+            .iter_mut()
+            .find(|v| v.id == voice_id && v.is_active())
+        {
             v.volume = volume.clamp(0.0, 2.0);
         }
     }
 
     pub fn set_voice_pitch(&mut self, voice_id: u32, pitch: f32) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.id == voice_id && v.is_active()) {
+        if let Some(v) = self
+            .voices
+            .iter_mut()
+            .find(|v| v.id == voice_id && v.is_active())
+        {
             v.pitch = pitch.clamp(0.1, 4.0);
         }
     }
 
     pub fn set_voice_emitter(&mut self, voice_id: u32, emitter: Option<SpatialEmitter>) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.id == voice_id && v.is_active()) {
+        if let Some(v) = self
+            .voices
+            .iter_mut()
+            .find(|v| v.id == voice_id && v.is_active())
+        {
             v.spatial_emitter = emitter;
         }
     }
 
     pub fn is_voice_playing(&self, voice_id: u32) -> bool {
-        self.voices.iter().any(|v| v.id == voice_id && v.is_active())
+        self.voices
+            .iter()
+            .any(|v| v.id == voice_id && v.is_active())
     }
 
     pub fn play_sound_with_id(
@@ -414,9 +426,8 @@ impl VoicePool {
 
         if let Some(victim_idx) = self.find_victim_voice(priority) {
             self.voices[victim_idx].stop();
-            self.voices[victim_idx].activate(
-                voice_id, buffer, volume, pitch, priority, looping, emitter,
-            );
+            self.voices[victim_idx]
+                .activate(voice_id, buffer, volume, pitch, priority, looping, emitter);
             return true;
         }
 
@@ -600,4 +611,3 @@ pub fn pseudo_random_jitter(seed: u32, salt: u32) -> f32 {
     let val = (state >> 9) as f32 / 8388607.0;
     val * 2.0 - 1.0
 }
-

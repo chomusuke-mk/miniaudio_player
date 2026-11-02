@@ -239,7 +239,11 @@ impl TsDemuxSession {
     }
 
     fn parse_pat(payload: &[u8], pusi: bool) -> Option<u16> {
-        let mut idx = if pusi { 1 + (*payload.first()? as usize) } else { 0 };
+        let mut idx = if pusi {
+            1 + (*payload.first()? as usize)
+        } else {
+            0
+        };
         if idx + 8 > payload.len() || payload[idx] != 0x00 {
             return None;
         }
@@ -260,7 +264,11 @@ impl TsDemuxSession {
     }
 
     fn parse_pmt(payload: &[u8], pusi: bool) -> Option<(u16, u8, Option<u16>)> {
-        let mut idx = if pusi { 1 + (*payload.first()? as usize) } else { 0 };
+        let mut idx = if pusi {
+            1 + (*payload.first()? as usize)
+        } else {
+            0
+        };
         if idx + 12 > payload.len() || payload[idx] != 0x02 {
             return None;
         }
@@ -281,12 +289,8 @@ impl TsDemuxSession {
                 (((payload[idx + 3] & 0x0F) as usize) << 8) | (payload[idx + 4] as usize);
 
             match stream_type {
-                STREAM_TYPE_AAC_ADTS
-                | STREAM_TYPE_AAC_LATM
-                | STREAM_TYPE_MP3_1
-                | STREAM_TYPE_MP3_2
-                | STREAM_TYPE_AC3
-                | STREAM_TYPE_EAC3 => {
+                STREAM_TYPE_AAC_ADTS | STREAM_TYPE_AAC_LATM | STREAM_TYPE_MP3_1
+                | STREAM_TYPE_MP3_2 | STREAM_TYPE_AC3 | STREAM_TYPE_EAC3 => {
                     if audio_result.is_none() {
                         audio_result = Some((elem_pid, stream_type));
                     }

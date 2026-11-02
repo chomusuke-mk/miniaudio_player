@@ -394,7 +394,7 @@ impl From<&crate::core::engine::EngineItemCore> for RustEngineItem {
             id: it.id,
             source: it.source.clone(),
             headers: it.headers.clone(),
-            data_bytes: it.data_bytes.clone(),
+            data_bytes: None,
             replay_gain_db: it.replay_gain_db,
             replay_peak: it.replay_peak,
         }
@@ -431,13 +431,19 @@ pub enum RustEngineEvent {
     Balance(f32),
     Mono(bool),
     Crossfeed(i32),
-    Spatializer { enabled: bool, width: f32 },
+    Spatializer {
+        enabled: bool,
+        width: f32,
+    },
     Reverb(RustReverbParams),
     Limiter(bool),
     CrossfadeConfig(RustCrossfadeConfig),
     LoopMode(i32),
     Shuffle(bool),
-    Error { message: String, code: i32 },
+    Error {
+        message: String,
+        code: i32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

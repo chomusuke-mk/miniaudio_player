@@ -312,8 +312,7 @@ impl AudioRenderer {
             return;
         }
 
-        let (spatial_doppler, spatial_gain, spatial_pan) =
-            self.evaluate_spatial_frame(frame_count);
+        let (spatial_doppler, spatial_gain, spatial_pan) = self.evaluate_spatial_frame(frame_count);
         let (read_samples, un_stretched_frames_consumed) =
             self.pull_audio_frames(out_slice, frame_count, ch, spatial_doppler);
 

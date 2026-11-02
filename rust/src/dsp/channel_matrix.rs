@@ -72,10 +72,10 @@ impl ChannelMatrix {
                 let m = input[f];
                 let out_idx = f * ch_out;
                 // Center channel and Front L/R get mono signal
-                output[out_idx] = m * 0.7071;     // L
+                output[out_idx] = m * 0.7071; // L
                 output[out_idx + 1] = m * 0.7071; // R
-                output[out_idx + 2] = m;          // C
-                // Remaining channels (LFE, surrounds) remain 0.0
+                output[out_idx + 2] = m; // C
+                                         // Remaining channels (LFE, surrounds) remain 0.0
             }
             return;
         }
@@ -94,9 +94,9 @@ impl ChannelMatrix {
             for f in 0..frame_count {
                 let in_idx = f * 2;
                 let out_idx = f * ch_out;
-                output[out_idx] = input[in_idx];         // L
+                output[out_idx] = input[in_idx]; // L
                 output[out_idx + 1] = input[in_idx + 1]; // R
-                // Other channels (Center, LFE, surrounds) remain 0.0
+                                                         // Other channels (Center, LFE, surrounds) remain 0.0
             }
             return;
         }
@@ -146,11 +146,11 @@ impl ChannelMatrix {
             for f in 0..frame_count {
                 let in_idx = f * 6;
                 let out_idx = f * 8;
-                output[out_idx] = input[in_idx];         // L
+                output[out_idx] = input[in_idx]; // L
                 output[out_idx + 1] = input[in_idx + 1]; // R
                 output[out_idx + 2] = input[in_idx + 2]; // C
                 output[out_idx + 3] = input[in_idx + 3]; // LFE
-                // Map Ls/Rs to side surrounds and rear surrounds
+                                                         // Map Ls/Rs to side surrounds and rear surrounds
                 output[out_idx + 4] = input[in_idx + 4] * 0.7071; // Lss
                 output[out_idx + 5] = input[in_idx + 5] * 0.7071; // Rss
                 output[out_idx + 6] = input[in_idx + 4] * 0.7071; // Lsr
@@ -177,4 +177,3 @@ impl ChannelMatrix {
         }
     }
 }
-

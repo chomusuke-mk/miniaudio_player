@@ -1,8 +1,7 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-
-import 'helpers/synthetic_audio.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -11,13 +10,8 @@ void main() {
     late MiniaudioVoicePool pool;
     late Uint8List wavBytes;
 
-    setUpAll(() {
-      wavBytes = SyntheticAudioGenerator.generateWavBytes(
-        frequencyHz: 440.0,
-        durationSeconds: 0.25,
-        sampleRate: 44100,
-        numChannels: 2,
-      );
+    setUpAll(() async {
+      wavBytes = await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
     });
 
     setUp(() async {

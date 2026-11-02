@@ -3,6 +3,7 @@ ignorePaths:
 words:
   - aaudio
   - absval
+  - addrof
   - advapi
   - ALLOCA
   - allpass
@@ -14,20 +15,27 @@ words:
   - AMDF
   - androidx
   - Antho
+  - APETAGEX
   - APIC
   - ARCHMASK
   - armeabi
   - arraybuffer
+  - ascii
   - asintóticamente
+  - asis
   - asound
   - aspt
   - asssume
+  - ASYNCIFY
   - audinowho
   - audioBitrate
+  - autoadd
+  - AUTOCONVERTPCM
   - autocorr
   - autogenerado
   - Autogenerado
   - autoplay
+  - autotests
   - autovectoriza
   - Ayllón
   - backpressure
@@ -36,6 +44,7 @@ words:
   - bandpass
   - Bennefall
   - BFIN
+  - bindgen
   - biquad
   - Biquad
   - biquads
@@ -44,36 +53,54 @@ words:
   - bitstream
   - Blackman
   - bloqueante
+  - bluetooth
   - Borgerding
   - bosflag
   - bresenham
   - brickwall
+  - bridgefor
   - Bristow
+  - brownian
+  - bspc
   - buildlog
   - buildscript
+  - Butterworth
   - bwexpander
   - cachés
+  - callbac
   - calloc
   - Cands
   - casteo
   - cbuilder
   - cdim
   - cdylib
+  - cfgs
   - chomusuke
+  - ciphertext
   - classpath
+  - CLEVEL
+  - clippy
   - cliptest
   - Clownacy
+  - CMOY
   - Coalson
   - codebooks
   - códecs
   - codegen
   - coef
   - COEF
+  - coeff
+  - coeffs
+  - COINIT
   - COMBFILTER
   - COMMDEVICE
+  - Condvar
+  - congruential
+  - contig
   - controlfp
   - conversores
   - coomputation
+  - coreaudio
   - cosf
   - cosinusoidal
   - crctable
@@ -84,9 +111,11 @@ words:
   - Crossfeed
   - cserialnos
   - CSIRO
+  - ctypes
   - cupertino
   - Cupertino
   - customscheme
+  - cvar
   - CVBR
   - Dartminiaudio
   - DDART
@@ -95,14 +124,19 @@ words:
   - decoderctls
   - deconstitution
   - decorrelation
+  - decryptor
+  - Decryptor
   - decstate
   - Deduplicator
   - deinterleave
+  - deinterleaved
   - demixing
   - DEMIXING
+  - demux
   - Demux
   - demuxed
   - demuxer
+  - Demuxes
   - demuxing
   - denormal
   - Denormal
@@ -118,6 +152,7 @@ words:
   - desnormalizado
   - desnormalizados
   - desync
+  - desynchronization
   - desynchronized
   - devs
   - DFLOAT
@@ -133,7 +168,10 @@ words:
   - downmix
   - downmixes
   - downmixing
+  - downsampler
   - Dreampoint
+  - dsound
+  - DSOUND
   - DTFT
   - Durbin
   - DVAR
@@ -142,6 +180,8 @@ words:
   - EBADLINK
   - EBADPACKET
   - EBADTIMESTAMP
+  - Ebml
+  - EBML
   - ecualizador
   - Ediff
   - EDSP
@@ -152,6 +192,7 @@ words:
   - emcc
   - EMCC
   - EMFILE
+  - emrun
   - emscripten
   - emsdk
   - encoderctls
@@ -173,7 +214,10 @@ words:
   - fabsf
   - faststart
   - FCOEF
+  - fdata
   - ffigen
+  - ffunction
+  - fifo
   - filelengthi
   - finalise
   - Finalizable
@@ -182,6 +226,7 @@ words:
   - fishead
   - fivesize
   - flasheo
+  - flen
   - floorlist
   - flto
   - fmaxf
@@ -191,6 +236,7 @@ words:
   - Foxo
   - FPCR
   - FPSCR
+  - frbgen
   - fread
   - freeverb
   - Freeverb
@@ -199,6 +245,8 @@ words:
   - ftelli
   - ftol
   - ftyp
+  - funcs
+  - fvisibility
   - Gagiev
   - gapless
   - Gargaj
@@ -216,13 +264,16 @@ words:
   - Hadamard
   - Hammerton
   - hann
+  - hdrs
   - headret
   - HEAPF
   - HEAPU
+  - Highboost
   - hishelf
   - histeresis
   - histéresis
   - hotplug
+  - HRTF
   - Hsieh's
   - huffman
   - icdf
@@ -234,6 +285,7 @@ words:
   - Idempotencia
   - Idempotente
   - ifndef
+  - ilst
   - imdct
   - imid
   - indetermina
@@ -242,7 +294,9 @@ words:
   - Ingo
   - initialiser
   - INLINES
+  - Instace
   - interbloqueos
+  - Intercepción
   - iovecin
   - ipart
   - ISHLD
@@ -253,12 +307,17 @@ words:
   - Jezar
   - kbps
   - Keepalive
+  - keyformat
+  - Keylock
   - Koen
   - kotlin
+  - LATM
+  - latomic
   - LBCF
   - lbrr
   - LBRR
   - Leitgeb
+  - lerp
   - Levinson
   - lgain
   - libart
@@ -274,13 +333,18 @@ words:
   - libvorbis
   - libvorbisfile
   - lieff
+  - Lifetimeable
   - livestream
   - livestreams
+  - LKFS
   - llret
   - logcat
   - loshelf
   - lowpass
   - lpcs
+  - LPDIRECTSOUNDBUFFER
+  - LPDIRECTSOUNDCAPTURE
+  - LPDIRECTSOUNDCAPTUREBUFFER
   - LRINT
   - LRINTF
   - LTWH
@@ -292,9 +356,12 @@ words:
   - mathbf
   - mathcal
   - Mathisen
+  - Matroska
+  - mavx
   - maxabs
   - MAXG
   - Mbps
+  - mdat
   - mdct
   - MDCT
   - mdcts
@@ -318,13 +385,17 @@ words:
   - miscapture
   - MMAP
   - MMCSS
+  - mmdevapi
   - moffat
   - monofónica
+  - moof
   - moov
   - morlat
+  - mpegts
   - mpegurl
   - mrelaxed
   - msimd
+  - msse
   - MSVC
   - MSVCRT
   - Muchachita
@@ -341,31 +412,45 @@ words:
   - MXCSR
   - nanosegundo
   - nbuffered
+  - Newtypes
   - nlacing
+  - nocapture
   - nontrapping
   - normalisation
   - normalise
   - Normalise
   - normalised
+  - notif
   - nsamples
+  - nseg
   - nserialnos
+  - nullable
   - numver
+  - NXDK
   - nyquist
   - oga
   - oggpack
+  - onaudioprocess
+  - opensl
   - oporus
   - optimizador
   - opusdec
   - opusfile
   - Opusness
+  - ORBIS
   - ordery
+  - organise
   - OSCE
   - outofmem
   - overspans
   - ovflw
+  - panner
   - PERC
   - phdr
+  - Pkcs
   - PLTE
+  - postf
+  - postv
   - Pranckevicius
   - pread
   - preajustes
@@ -379,11 +464,16 @@ words:
   - preemph
   - premultiplies
   - println
+  - prio
   - PSHR
   - pthread
   - PTHREADS
   - publically
   - pubspec
+  - pulseaudio
+  - PULSEAUDIO
+  - pulsewave
+  - pusi
   - qalloc
   - QCONST
   - qext
@@ -400,6 +490,7 @@ words:
   - recepient
   - reconexión
   - reconfiguraciones
+  - recv
   - Redimensionamiento
   - redimensionar
   - redirections
@@ -407,12 +498,14 @@ words:
   - reinicialización
   - Reinicialización
   - reinicios
+  - reinit
   - Reintenta
   - remuestreador
   - remuestreo
   - Remuestreo
   - renderizado
   - Renderizado
+  - renderizar
   - renormalise
   - Renormalising
   - reordenamiento
@@ -423,16 +516,23 @@ words:
   - requried
   - rereleased
   - resampler
+  - resamplers
   - resynch
   - resynching
   - resynth
+  - rfind
   - rgain
   - rifx
   - rlib
+  - rmax
+  - rmin
   - robustify
   - Rohit
+  - rolloff
+  - rsplit
   - rtrb
   - rustfft
+  - rustflags
   - safelisted
   - Sandboxed
   - SCHED
@@ -444,12 +544,14 @@ words:
   - seekbar
   - seekbars
   - seeked
+  - seektable
   - selcost
   - seqlock
   - Seqlock
   - serialnos
   - shoutcast
   - Shoutcast
+  - sidechain
   - SIGSEGV
   - sinc
   - síncronas
@@ -462,14 +564,20 @@ words:
   - sobredimensionada
   - Sobredimensionamiento
   - softfp
+  - sonification
+  - Soundcloud
   - spanp
+  - spatialization
   - SPATIALIZATION
+  - spatialize
+  - spatialized
   - spatializer
   - spectrotram
   - Speex
   - spetral
   - spinlocks
   - SPSC
+  - srate
   - SROUND
   - staticlib
   - stbv
@@ -478,6 +586,8 @@ words:
   - STREAMINFO
   - Subárbol
   - subarray
+  - Subchunk
+  - subframes
   - subgraves
   - sublist
   - submix
@@ -494,7 +604,9 @@ words:
   - SUPERWIDEBAND
   - Suttle
   - Symbian
+  - synchsafe
   - syscall
+  - syscalls
   - SYSCALLS
   - tagncompare
   - tapset
@@ -509,6 +621,7 @@ words:
   - thresholding
   - throughs
   - timestamping
+  - timestretch
   - toneishness
   - TPDF
   - trylock
@@ -516,19 +629,33 @@ words:
   - tvbr
   - TWID
   - typedef
+  - typestate
   - ubsan
   - udata
+  - udta
+  - ultradelgado
   - unawaited
   - unclipped
   - undecoded
+  - uninitialization
   - Uninitializes
+  - uninitializing
+  - Uninitializing
+  - uninlined
   - unobservably
+  - unpadded
+  - unpadding
   - unquant
   - unquantized
   - unseekable
+  - upcasted
+  - upmixing
+  - ureq
+  - usize
   - uuid
   - Vacia
   - varispeed
+  - vbri
   - Vectorización
   - Vectorizar
   - ventanado
@@ -549,6 +676,10 @@ words:
   - wakeups
   - wasapi
   - WASAPI
+  - WAVEHDR
+  - wavicle
+  - wavpack
+  - webaudio
   - webp
   - Werror
   - Wextra
@@ -559,18 +690,24 @@ words:
   - Wodo
   - worklet
   - Worklet
+  - Worklets
   - Wparentheses
   - wpath
+  - Wpedantic
   - writetrunc
   - Wsign
   - WSOLA
   - Wunused
+  - wvpk
+  - xcent
   - xfade
   - xfading
+  - xing
   - Xing
   - Xiph
   - xiphmont
   - Xlist
+  - XSTRINGIFY
   - yourapp
   - YTYPE
   - zlog

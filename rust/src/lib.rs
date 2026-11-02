@@ -1,10 +1,10 @@
-mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 pub mod api;
 pub mod bridge;
 pub mod buffer;
 pub mod core;
 pub mod decoder;
 pub mod dsp;
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 pub mod hls;
 pub mod sync;
 

@@ -280,7 +280,9 @@ impl SilenceDetector {
         out_pos: &mut usize,
         output_frames_cap: usize,
     ) -> bool {
-        if self.state == SilenceState::Holding || self.hold_frames_read_pos >= self.hold_frames_count {
+        if self.state == SilenceState::Holding
+            || self.hold_frames_read_pos >= self.hold_frames_count
+        {
             return false;
         }
 
@@ -344,16 +346,17 @@ impl SilenceDetector {
         self.threshold_amp_exit = 10.0f32.powf((self.config.threshold_db + 2.0) / 20.0);
 
         if self.sample_rate > 0 {
-            self.min_silence_frames =
-                ((self.config.min_silence_duration_ms as u64 * self.sample_rate as u64) / 1000)
-                    as usize;
+            self.min_silence_frames = ((self.config.min_silence_duration_ms as u64
+                * self.sample_rate as u64)
+                / 1000) as usize;
             self.padding_frames =
                 ((self.config.padding_ms as u64 * self.sample_rate as u64) / 1000) as usize;
             let cf = ((5 * self.sample_rate as u64) / 1000) as usize;
             self.crossfade_length = cf.max(1);
 
             let required_frames = self.min_silence_frames + self.padding_frames + 2048;
-            self.hold_buffer.resize(required_frames * self.channels, 0.0);
+            self.hold_buffer
+                .resize(required_frames * self.channels, 0.0);
         }
     }
 }

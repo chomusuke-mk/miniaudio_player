@@ -16,7 +16,6 @@ enum CrossfadeCurve {
 /// Immutable configuration governing automatic and manual crossfade transitions
 /// in [MiniaudioEngine].
 class CrossfadeConfig {
-
   /// Default automatic crossfade duration at the end of a track.
   static const Duration defaultDuration = Duration(seconds: 5);
 

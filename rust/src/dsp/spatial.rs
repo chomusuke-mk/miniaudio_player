@@ -22,7 +22,11 @@ impl Vector3 {
 
     #[inline]
     pub const fn zero() -> Self {
-        Self { x: 0.0, y: 0.0, z: 0.0 }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
     }
 
     #[inline]
@@ -187,7 +191,11 @@ impl Default for SpatialProcessor {
 impl SpatialProcessor {
     pub fn new(speed_of_sound: f32) -> Self {
         Self {
-            speed_of_sound: if speed_of_sound > 1.0 { speed_of_sound } else { 343.3 },
+            speed_of_sound: if speed_of_sound > 1.0 {
+                speed_of_sound
+            } else {
+                343.3
+            },
             current_doppler_ratio: 1.0,
             current_gain: 1.0,
             current_pan: 0.0,
@@ -249,9 +257,7 @@ impl SpatialProcessor {
         let rolloff = emitter.rolloff_factor.max(0.0);
 
         let distance_gain = match emitter.distance_model {
-            DistanceModel::Inverse => {
-                min_d / (min_d + rolloff * (clamped_d - min_d))
-            }
+            DistanceModel::Inverse => min_d / (min_d + rolloff * (clamped_d - min_d)),
             DistanceModel::Linear => {
                 (1.0 - rolloff * (clamped_d - min_d) / (max_d - min_d)).clamp(0.0, 1.0)
             }
@@ -341,4 +347,3 @@ impl SpatialProcessor {
         self.current_pan
     }
 }
-

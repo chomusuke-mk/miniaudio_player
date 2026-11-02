@@ -47,13 +47,12 @@ class Vector3 {
 
   double distanceTo(Vector3 other) => (this - other).length;
 
-  Vector3 lerp(Vector3 other, double t) =>
-      Vector3(x + (other.x - x) * t, y + (other.y - y) * t, z + (other.z - z) * t);
+  Vector3 lerp(Vector3 other, double t) => Vector3(
+      x + (other.x - x) * t, y + (other.y - y) * t, z + (other.z - z) * t);
 
   RustVector3 toRust() => RustVector3(x: x, y: y, z: z);
 
-  factory Vector3.fromRust(RustVector3 rust) =>
-      Vector3(rust.x, rust.y, rust.z);
+  factory Vector3.fromRust(RustVector3 rust) => Vector3(rust.x, rust.y, rust.z);
 
   @override
   bool operator ==(Object other) =>
@@ -272,7 +271,8 @@ class SpatialEmitter {
   factory SpatialEmitter.fromRust(RustSpatialEmitter rust) => SpatialEmitter(
         position: Vector3.fromRust(rust.position),
         velocity: Vector3.fromRust(rust.velocity),
-        direction: rust.direction != null ? Vector3.fromRust(rust.direction!) : null,
+        direction:
+            rust.direction != null ? Vector3.fromRust(rust.direction!) : null,
         minDistance: rust.minDistance,
         maxDistance: rust.maxDistance,
         rolloffFactor: rust.rolloffFactor,

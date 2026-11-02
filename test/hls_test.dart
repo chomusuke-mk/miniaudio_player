@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,40 +7,58 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  HttpOverrides.global = null;
 
   group('Real-World Live HLS Playback', () {
-    test('auto-detects and plays HLS stream from arbitrary URL lacking any extension', () async {
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final port = server.port;
+    Process? serverProcess;
+    int? serverPort;
 
-      final fixtureBytes =
-          await File('test/fixtures/tripartite/eof_chirp.mp3').readAsBytes();
+    setUpAll(() async {
+      final completer = Completer<int>();
+      serverProcess = await Process.start(
+        'python3',
+        [
+          'test/helpers/test_http_server.py',
+          '--port',
+          '0',
+          '--dir',
+          'test/fixtures',
+        ],
+        environment: {'MAP_TEST_DEBUG': '1'},
+      );
 
-      server.listen((HttpRequest req) {
-        if (req.uri.path == '/arbitrary-channel') {
-          req.response
-            ..statusCode = 200
-            ..headers.contentType = ContentType('text', 'plain') // Note: Not even an mpegurl MIME!
-            ..write('''
-#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:2
-#EXTINF:2.0,title="Arbitrary Stream Title"
-http://127.0.0.1:$port/audio_chunk
-#EXT-X-ENDLIST
-''')
-            ..close();
-        } else if (req.uri.path == '/audio_chunk') {
-          req.response
-            ..statusCode = 200
-            ..headers.contentType = ContentType('application', 'octet-stream')
-            ..add(fixtureBytes)
-            ..close();
+      serverProcess!.stderr.drain<void>();
+
+      serverProcess!.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+        final match = RegExp(r'SERVER_STARTED_PORT:(\d+)').firstMatch(line);
+        if (match != null && !completer.isCompleted) {
+          completer.complete(int.parse(match.group(1)!));
         }
       });
 
-      final streamUrl = 'http://127.0.0.1:$port/arbitrary-channel?token=secret123';
+      serverPort = await completer.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException('Failed to start python test HTTP server'),
+      );
+    });
+
+    tearDownAll(() async {
+      if (serverPort != null) {
+        try {
+          final client = HttpClient();
+          final req = await client.getUrl(Uri.parse('http://127.0.0.1:$serverPort/shutdown'));
+          final res = await req.close();
+          await res.drain<void>();
+        } catch (_) {}
+      }
+      serverProcess?.kill(ProcessSignal.sigkill);
+      await serverProcess?.exitCode;
+    });
+
+    test('auto-detects and plays HLS stream from arbitrary URL lacking any extension', () async {
+      final streamUrl = 'http://127.0.0.1:$serverPort/arbitrary-channel?token=secret123';
       final player = MiniaudioPlayer(AudioSource(streamUrl));
       try {
         await player.waitUntilOpen;
@@ -51,33 +71,23 @@ http://127.0.0.1:$port/audio_chunk
         await player.action.stop();
       } finally {
         await player.dispose();
-        await server.close(force: true);
       }
     });
 
-    test('plays live HLS stream from mdstrm.com seamlessly', () async {
-      const streamUrl =
-          'https://mdstrm.com/audio/5fab0687bcd6c2389ee9480c/live.m3u8';
+    test('plays multi-segment HLS playlist served locally from test/fixtures', () async {
+      final streamUrl = 'http://127.0.0.1:$serverPort/salida.m3u8';
       final player = MiniaudioPlayer(AudioSource(streamUrl));
       try {
         await player.waitUntilOpen;
-
-        expect(player.state.trackMetadata?.codec, anyOf(equals(AudioCodec.aac), equals(AudioCodec.unknown)));
-
-        // 2. Start playback
         await player.action.play();
-
-        // Let audio stream and buffer for 3 seconds
-        await Future<void>.delayed(const Duration(seconds: 3));
-
+        await Future<void>.delayed(const Duration(milliseconds: 600));
         expect(player.state.playing, isTrue);
 
-        // 3. Stop playback
         await player.action.stop();
         expect(player.state.playing, isFalse);
       } finally {
         await player.dispose();
       }
-    }, timeout: const Timeout(Duration(seconds: 40)));
+    });
   });
 }

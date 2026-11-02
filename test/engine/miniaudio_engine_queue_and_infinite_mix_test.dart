@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import '../helpers/synthetic_audio.dart';
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -14,35 +12,10 @@ void main() {
   late File trackD;
 
   setUpAll(() async {
-    trackA = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'queue_track_a.wav',
-      frequencyHz: 440.0,
-      durationSeconds: 3.0,
-    );
-    trackB = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'queue_track_b.wav',
-      frequencyHz: 554.37,
-      durationSeconds: 3.0,
-    );
-    trackC = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'queue_track_c.wav',
-      frequencyHz: 659.25,
-      durationSeconds: 3.0,
-    );
-    trackD = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'queue_track_d.wav',
-      frequencyHz: 880.0,
-      durationSeconds: 3.0,
-    );
-  });
-
-  tearDownAll(() async {
-    await Future.wait([
-      SyntheticAudioGenerator.cleanUp(trackA),
-      SyntheticAudioGenerator.cleanUp(trackB),
-      SyntheticAudioGenerator.cleanUp(trackC),
-      SyntheticAudioGenerator.cleanUp(trackD),
-    ]);
+    trackA = File('test/fixtures/test_24bit.wav');
+    trackB = File('test/fixtures/test_24bit_stereo.wav');
+    trackC = File('test/fixtures/cbr_noxing.mp3');
+    trackD = File('test/fixtures/salida.wav');
   });
 
   group('Rust-Authoritative Queue & Infinite Mix Parity', () {

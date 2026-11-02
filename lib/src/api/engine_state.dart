@@ -243,7 +243,8 @@ class EngineState<T> {
         _getReplayGainMode = getReplayGainMode ??
             (() => !getVolumeNormalization()
                 ? ReplayGainMode.disabled
-                : ((getForcedReplayGain != null && getForcedReplayGain() != null)
+                : ((getForcedReplayGain != null &&
+                        getForcedReplayGain() != null)
                     ? ReplayGainMode.forced
                     : ReplayGainMode.track)),
         _getMetaBytes = getMetaBytes,
@@ -479,5 +480,6 @@ class EngineState<T> {
   CueConfig get cueConfig => _getCueConfig?.call() ?? const CueConfig();
 
   /// Microphone auto-ducking / sidechain compression configuration.
-  DuckingConfig get duckingConfig => _getDuckingConfig?.call() ?? const DuckingConfig();
+  DuckingConfig get duckingConfig =>
+      _getDuckingConfig?.call() ?? const DuckingConfig();
 }

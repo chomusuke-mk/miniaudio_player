@@ -1,7 +1,7 @@
 //! Monkey's Audio (`.ape`) decoder wrapper using pure-Rust `ape-decoder` and `PcmSampleNormalizer`.
 
-use std::io::{Read, Seek, SeekFrom};
 use ape_decoder::decoder::ApeDecoder;
+use std::io::{Read, Seek, SeekFrom};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::io::MediaSource;
 
@@ -103,13 +103,7 @@ impl ApeReader {
 
         let bytes_per_sample = (self.bits_per_sample as usize / 8).max(1);
         out_pcm.reserve(pcm_bytes.len() / bytes_per_sample);
-        PcmSampleNormalizer::decode_bytes(
-            &pcm_bytes,
-            self.bits_per_sample,
-            false,
-            false,
-            out_pcm,
-        )?;
+        PcmSampleNormalizer::decode_bytes(&pcm_bytes, self.bits_per_sample, false, false, out_pcm)?;
         Ok(true)
     }
 }

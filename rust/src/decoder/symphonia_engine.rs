@@ -102,13 +102,17 @@ impl SymphoniaTrackSession {
                     .map(|a| a.codec != CODEC_ID_NULL_AUDIO)
                     .unwrap_or(false)
             })
-            .ok_or(SymphoniaError::Unsupported("no supported audio track found"))?;
+            .ok_or(SymphoniaError::Unsupported(
+                "no supported audio track found",
+            ))?;
 
         let params = track
             .codec_params
             .as_ref()
             .and_then(|p| p.audio())
-            .ok_or(SymphoniaError::Unsupported("audio track parameters missing"))?
+            .ok_or(SymphoniaError::Unsupported(
+                "audio track parameters missing",
+            ))?
             .clone();
 
         Ok((

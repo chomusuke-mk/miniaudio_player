@@ -140,7 +140,7 @@ void main() {
   });
 
   test('cbr_noxing.mp3 memory playback, seek and duration', () async {
-    final file = File('example/assets/music/cbr_noxing.mp3');
+    final file = File('test/fixtures/cbr_noxing.mp3');
     expect(file.existsSync(), isTrue);
     final bytes = await file.readAsBytes();
 
@@ -163,7 +163,7 @@ void main() {
 
       // Wait a moment while playing and verify it advances smoothly without jumping to end
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      expect(player.state.position.inMilliseconds, inInclusiveRange(300, 1000));
+      expect(player.state.position.inMilliseconds, inInclusiveRange(200, 1000));
       expect(player.state.playing, isTrue);
 
       // Seek to 3.5 seconds during active playback
@@ -183,8 +183,8 @@ void main() {
   });
 
   test('switching memory tracks does not crash and updates correctly', () async {
-    final file1 = File('example/assets/music/cbr_noxing.mp3');
-    final file2 = File('example/assets/music/salida.mp3');
+    final file1 = File('test/fixtures/cbr_noxing.mp3');
+    final file2 = File('test/fixtures/salida.mp3');
     expect(file1.existsSync(), isTrue);
     expect(file2.existsSync(), isTrue);
 

@@ -3,7 +3,8 @@ import 'audio_source.dart';
 
 /// Callback signature for supplying additional items when Infinite Mix reaches
 /// the end of the active queue in LoopMode.off.
-typedef InfiniteMixProvider<T> = Future<List<EngineItem<T>>> Function(int count);
+typedef InfiniteMixProvider<T> = Future<List<EngineItem<T>>> Function(
+    int count);
 
 /// Domain-agnostic queue item descriptor for `MiniaudioEngine`.
 ///
@@ -50,9 +51,8 @@ class EngineItem<T> {
     int? id,
     int position = 0,
   }) {
-    final audioSource = source is AudioSource
-        ? source
-        : AudioSource(source, headers: headers);
+    final audioSource =
+        source is AudioSource ? source : AudioSource(source, headers: headers);
     return EngineItem<T>(
       source: audioSource,
       data: data,

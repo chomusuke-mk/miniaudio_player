@@ -45,7 +45,11 @@ impl SoftLimiter {
         if abs_x > self.threshold {
             let excess = (abs_x - self.threshold) * self.inv_range;
             let sat = self.threshold + self.range * (excess / (1.0 + excess));
-            if x >= 0.0 { sat } else { -sat }
+            if x >= 0.0 {
+                sat
+            } else {
+                -sat
+            }
         } else {
             x
         }

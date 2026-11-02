@@ -5,9 +5,9 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
-use std::time::Duration;
 
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
@@ -199,9 +199,15 @@ impl TelemetryEvent {
             Self::State(s) => MapEventData { state: *s },
             Self::Position(p) => MapEventData { position_ms: *p },
             Self::Duration(d) => MapEventData { duration_ms: *d },
-            Self::IsPlaying(p) => MapEventData { is_playing: i32::from(*p) },
-            Self::IsBuffering(b) => MapEventData { is_buffering: i32::from(*b) },
-            Self::IsCompleted(c) => MapEventData { is_completed: i32::from(*c) },
+            Self::IsPlaying(p) => MapEventData {
+                is_playing: i32::from(*p),
+            },
+            Self::IsBuffering(b) => MapEventData {
+                is_buffering: i32::from(*b),
+            },
+            Self::IsCompleted(c) => MapEventData {
+                is_completed: i32::from(*c),
+            },
             Self::Volume(v) => MapEventData { volume: *v },
             Self::Rate(r) => MapEventData { rate: *r },
             Self::Pitch(p) => MapEventData { pitch: *p },
@@ -209,19 +215,31 @@ impl TelemetryEvent {
             Self::BufferSize(b) => MapEventData { buffer_size: *b },
             Self::Device(d) => MapEventData { device: **d },
             Self::Visualizer(v) => MapEventData { visualizer: *v },
-            Self::VisualizerEnabled(e) => MapEventData { visualizer_enabled: i32::from(*e) },
-            Self::BufferedRange(br) => MapEventData { buffered_range: *br },
-            Self::SilenceConfig(sc) => MapEventData { silence_config: *sc },
-            Self::SilenceSaved(s) => MapEventData { silence_saved_ms: *s },
+            Self::VisualizerEnabled(e) => MapEventData {
+                visualizer_enabled: i32::from(*e),
+            },
+            Self::BufferedRange(br) => MapEventData {
+                buffered_range: *br,
+            },
+            Self::SilenceConfig(sc) => MapEventData {
+                silence_config: *sc,
+            },
+            Self::SilenceSaved(s) => MapEventData {
+                silence_saved_ms: *s,
+            },
             Self::Equalizer(eq) => MapEventData { equalizer: *eq },
             Self::Preamp(p) => MapEventData { preamp_db: *p },
             Self::ReplayGain(rg) => MapEventData { replay_gain: *rg },
             Self::Balance(b) => MapEventData { balance: *b },
-            Self::Mono(m) => MapEventData { mono_enabled: i32::from(*m) },
+            Self::Mono(m) => MapEventData {
+                mono_enabled: i32::from(*m),
+            },
             Self::Crossfeed(c) => MapEventData { crossfeed_mode: *c },
             Self::Spatializer(sp) => MapEventData { spatializer: *sp },
             Self::Reverb(rv) => MapEventData { reverb: *rv },
-            Self::Limiter(l) => MapEventData { limiter_enabled: i32::from(*l) },
+            Self::Limiter(l) => MapEventData {
+                limiter_enabled: i32::from(*l),
+            },
             Self::Error(e) => MapEventData { error_code: *e },
         }
     }
@@ -253,7 +271,9 @@ impl TelemetryEvent {
                 EventType::BufferSize => Self::BufferSize(data.buffer_size),
                 EventType::Device => Self::Device(Box::new(data.device)),
                 EventType::Visualizer => Self::Visualizer(data.visualizer),
-                EventType::VisualizerEnabled => Self::VisualizerEnabled(data.visualizer_enabled != 0),
+                EventType::VisualizerEnabled => {
+                    Self::VisualizerEnabled(data.visualizer_enabled != 0)
+                }
                 EventType::BufferedRange => Self::BufferedRange(data.buffered_range),
                 EventType::SilenceConfig => Self::SilenceConfig(data.silence_config),
                 EventType::SilenceSaved => Self::SilenceSaved(data.silence_saved_ms),
@@ -433,7 +453,12 @@ impl CallbackRegistry {
         }
     }
 
-    fn notify_immediate(&self, event_type: EventType, data: &MapEventData, event_ptr: *const MapEvent) {
+    fn notify_immediate(
+        &self,
+        event_type: EventType,
+        data: &MapEventData,
+        event_ptr: *const MapEvent,
+    ) {
         if let Ok(guard) = self.rust_callback.read() {
             if let Some(cb) = guard.as_ref() {
                 cb(event_type, data);
@@ -551,7 +576,8 @@ impl TelemetryDispatcher {
         let event_type = event.event_type();
         let event_ptr = self.arena.write_slot(map_event);
 
-        self.callbacks.notify_immediate(event_type, &map_event.data, event_ptr);
+        self.callbacks
+            .notify_immediate(event_type, &map_event.data, event_ptr);
         #[cfg(target_arch = "wasm32")]
         {
             let mut last_pos = -1;
@@ -578,13 +604,17 @@ impl TelemetryDispatcher {
         let event_ptr = self.arena.write_slot(event);
 
         let mut last_pos = -1;
-        self.callbacks.notify_typed_batch(std::slice::from_ref(&typed), &mut last_pos);
-        self.callbacks.notify_immediate(event_type, &event.data, event_ptr);
+        self.callbacks
+            .notify_typed_batch(std::slice::from_ref(&typed), &mut last_pos);
+        self.callbacks
+            .notify_immediate(event_type, &event.data, event_ptr);
     }
 
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
         self.callbacks.set_c(None, std::ptr::null_mut());
+        self.callbacks.set_rust(None);
+        self.callbacks.set_typed(None);
         if let Ok(mut handle_guard) = self.worker_handle.lock() {
             if let Some(handle) = handle_guard.take() {
                 let _ = handle.join();

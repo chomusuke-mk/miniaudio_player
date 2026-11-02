@@ -101,7 +101,10 @@ impl BiquadDf2t {
         let s = w.sin();
         let c = w.cos();
         let a_val = 10.0f64.powf(gain_db / 40.0);
-        let a = s / 2.0 * ((a_val + 1.0 / a_val) * (1.0 / shelf_slope - 1.0) + 2.0).max(0.0).sqrt();
+        let a = s / 2.0
+            * ((a_val + 1.0 / a_val) * (1.0 / shelf_slope - 1.0) + 2.0)
+                .max(0.0)
+                .sqrt();
         let sqrt_a = 2.0 * a_val.sqrt() * a;
 
         let b0 = a_val * ((a_val + 1.0) - (a_val - 1.0) * c + sqrt_a);
@@ -144,7 +147,10 @@ impl BiquadDf2t {
         let s = w.sin();
         let c = w.cos();
         let a_val = 10.0f64.powf(gain_db / 40.0);
-        let a = s / 2.0 * ((a_val + 1.0 / a_val) * (1.0 / shelf_slope - 1.0) + 2.0).max(0.0).sqrt();
+        let a = s / 2.0
+            * ((a_val + 1.0 / a_val) * (1.0 / shelf_slope - 1.0) + 2.0)
+                .max(0.0)
+                .sqrt();
         let sqrt_a = 2.0 * a_val.sqrt() * a;
 
         let b0 = a_val * ((a_val + 1.0) + (a_val - 1.0) * c + sqrt_a);

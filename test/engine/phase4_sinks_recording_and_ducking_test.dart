@@ -4,8 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import '../helpers/synthetic_audio.dart';
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -13,23 +11,8 @@ void main() {
   late File trackB;
 
   setUpAll(() async {
-    trackA = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'phase4_track_a.wav',
-      frequencyHz: 440.0,
-      durationSeconds: 2.0,
-    );
-    trackB = await SyntheticAudioGenerator.createTempWavFile(
-      fileName: 'phase4_track_b.wav',
-      frequencyHz: 880.0,
-      durationSeconds: 2.0,
-    );
-  });
-
-  tearDownAll(() async {
-    await Future.wait([
-      SyntheticAudioGenerator.cleanUp(trackA),
-      SyntheticAudioGenerator.cleanUp(trackB),
-    ]);
+    trackA = File('test/fixtures/test_24bit.wav');
+    trackB = File('test/fixtures/tripartite/trailing_chunks.wav');
   });
 
   group('Phase 4: Sinks Desacoplados, Grabación & Pre-escucha Cue', () {

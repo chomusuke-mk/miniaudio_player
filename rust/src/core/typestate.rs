@@ -5,9 +5,9 @@
 //! Uninitialized -> Open<S> -> Active<S> <-> Paused<S>
 //!                         \-> Stopped<S> -> Uninitialized
 
-use crate::buffer::ByteSource;
 use super::config::PlayerConfig;
 use super::types::{PlayerError, Volume};
+use crate::buffer::ByteSource;
 
 /// Initial uninitialized state: no media source is loaded.
 pub struct Uninitialized;

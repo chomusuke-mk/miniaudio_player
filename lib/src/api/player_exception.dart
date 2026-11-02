@@ -17,9 +17,7 @@ class MiniaudioPlayerException implements Exception {
     if (error is MiniaudioPlayerException) return error;
     final raw = error.toString();
     final match = _rustErrorCodeRegex.firstMatch(raw);
-    final code = match != null
-        ? int.parse(match.group(1)!)
-        : defaultErrorCode;
+    final code = match != null ? int.parse(match.group(1)!) : defaultErrorCode;
     return MiniaudioPlayerException(
       '$prefix (code $code): $raw',
       errorCode: code,

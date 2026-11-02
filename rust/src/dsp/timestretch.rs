@@ -3,9 +3,7 @@
 //! Employs a hybrid Varispeed + Two-Band SOLA Keylock Stage to preserve transients,
 //! low-frequency bass punch, and dynamic range > 140 dB.
 
-use timestretch::{
-    Backend, Parameters, PitchRatio, RatePolicy, SessionConfig, TempoRate, render,
-};
+use timestretch::{render, Backend, Parameters, PitchRatio, RatePolicy, SessionConfig, TempoRate};
 
 /// High-fidelity time-stretching processor based on the `timestretch` crate.
 pub struct TimeStretchProcessor {
@@ -109,8 +107,8 @@ pub fn timestretch_audio(
         ..Default::default()
     };
 
-    let rendered = render(input, config)
-        .map_err(|e| format!("timestretch render failed: {:?}", e))?;
+    let rendered =
+        render(input, config).map_err(|e| format!("timestretch render failed: {:?}", e))?;
 
     Ok(rendered.samples)
 }

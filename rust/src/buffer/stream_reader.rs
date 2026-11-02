@@ -34,7 +34,10 @@ impl BufferStreamReader {
             SeekFrom::Current(offset) => {
                 let target = (self.cursor as i64) + offset;
                 if target < 0 {
-                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
+                    return Err(IoError::new(
+                        ErrorKind::InvalidInput,
+                        "negative seek cursor",
+                    ));
                 }
                 Ok(target as u64)
             }
@@ -47,7 +50,10 @@ impl BufferStreamReader {
                 };
                 let target = (tot as i64) + offset;
                 if target < 0 {
-                    return Err(IoError::new(ErrorKind::InvalidInput, "negative seek cursor"));
+                    return Err(IoError::new(
+                        ErrorKind::InvalidInput,
+                        "negative seek cursor",
+                    ));
                 }
                 Ok(target as u64)
             }
@@ -57,15 +63,22 @@ impl BufferStreamReader {
 
 impl Read for BufferStreamReader {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        match self.buffer.read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT)) {
+        match self
+            .buffer
+            .read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT))
+        {
             Ok(bytes_read) => {
                 self.cursor += bytes_read as u64;
                 self.buffer.advance_read_cursor(self.cursor);
                 Ok(bytes_read)
             }
             Err(BufferError::Eof) => Ok(0),
-            Err(BufferError::Aborted) => Err(IoError::new(ErrorKind::Interrupted, "stream aborted")),
-            Err(BufferError::WouldBlock) => Err(IoError::new(ErrorKind::WouldBlock, "buffer starving")),
+            Err(BufferError::Aborted) => {
+                Err(IoError::new(ErrorKind::Interrupted, "stream aborted"))
+            }
+            Err(BufferError::WouldBlock) => {
+                Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
+            }
             Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
         }
     }

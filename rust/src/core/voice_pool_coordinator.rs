@@ -11,9 +11,7 @@ use crate::bridge::ffi::{
 };
 use crate::core::renderer::PcmRendererHeader;
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener};
-use crate::dsp::voice_pool::{
-    pseudo_random_jitter, SoundBuffer, VoicePool, VoiceStealingPolicy,
-};
+use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoicePool, VoiceStealingPolicy};
 
 #[derive(Clone, Debug)]
 pub enum VoicePoolCommand {
@@ -68,11 +66,7 @@ pub unsafe extern "C" fn voice_pool_renderer_render_trampoline(
     r.render_pcm(output, count);
 }
 
-pub unsafe extern "C" fn voice_pool_renderer_notif_trampoline(
-    _ptr: *mut c_void,
-    _notif: i32,
-) {
-}
+pub unsafe extern "C" fn voice_pool_renderer_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
 
 impl VoicePoolRenderer {
     #[inline]
@@ -147,8 +141,10 @@ impl VoicePoolRenderer {
         out_slice.fill(0.0);
         self.voice_pool
             .render_pcm(out_slice, self.channels, self.sample_rate, &self.listener);
-        self.active_voices
-            .store(self.voice_pool.active_voice_count() as u32, Ordering::Relaxed);
+        self.active_voices.store(
+            self.voice_pool.active_voice_count() as u32,
+            Ordering::Relaxed,
+        );
     }
 }
 

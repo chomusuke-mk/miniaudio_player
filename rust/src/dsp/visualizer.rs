@@ -3,9 +3,7 @@
 use super::biquad::BiquadDf2t;
 use super::equalizer::{EQ_BAND_COUNT, EQ_FREQUENCIES};
 
-pub const BAND_WEIGHTS: [f32; EQ_BAND_COUNT] = [
-    1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.8, 3.2, 3.6, 4.0,
-];
+pub const BAND_WEIGHTS: [f32; EQ_BAND_COUNT] = [1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.8, 3.2, 3.6, 4.0];
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,8 +96,12 @@ impl Visualizer {
 
             let abs_l = l.abs();
             let abs_r = r.abs();
-            if abs_l > peak_l { peak_l = abs_l; }
-            if abs_r > peak_r { peak_r = abs_r; }
+            if abs_l > peak_l {
+                peak_l = abs_l;
+            }
+            if abs_r > peak_r {
+                peak_r = abs_r;
+            }
 
             sum_sq_l += l * l;
             sum_sq_r += r * r;

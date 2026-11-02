@@ -155,10 +155,7 @@ impl FormatSniffer {
         if data.starts_with(b"RIFX") && &data[8..12] == b"WAVE" {
             return (Self::detect_rifx(data, total_size, &mut info), info);
         }
-        if data.starts_with(&W64_RIFF_MAGIC)
-            && avail >= 40
-            && data[24..40] == W64_WAVE_MAGIC
-        {
+        if data.starts_with(&W64_RIFF_MAGIC) && avail >= 40 && data[24..40] == W64_WAVE_MAGIC {
             return (Self::detect_w64(data, total_size, &mut info), info);
         }
         if data.starts_with(b"fLaC") {
@@ -190,18 +187,27 @@ impl FormatSniffer {
         };
 
         if p + 4 > avail {
-            return (Self::need_more(&mut info, (p + 4) as i64, total_size, avail), info);
+            return (
+                Self::need_more(&mut info, (p + 4) as i64, total_size, avail),
+                info,
+            );
         }
 
         if data[p..].starts_with(b"fLaC") {
-            return (Self::detect_flac(data, total_size, p as i64, &mut info), info);
+            return (
+                Self::detect_flac(data, total_size, p as i64, &mut info),
+                info,
+            );
         }
         if let Some(container) = Self::match_lossless_magic(&data[p..]) {
             info.set_direct_container(container, p as i64, total_size);
             return (BoundaryStatus::Found, info);
         }
 
-        (Self::detect_mpeg(data, total_size, p as i64, &mut info), info)
+        (
+            Self::detect_mpeg(data, total_size, p as i64, &mut info),
+            info,
+        )
     }
 
     fn match_lossless_magic(slice: &[u8]) -> Option<ContainerFormat> {
@@ -429,7 +435,10 @@ impl FormatSniffer {
         if tail.len() < 27 {
             return None;
         }
-        if !matches!(container, ContainerFormat::OggVorbis | ContainerFormat::OggOpus) {
+        if !matches!(
+            container,
+            ContainerFormat::OggVorbis | ContainerFormat::OggOpus
+        ) {
             return None;
         }
         let srate = if container == ContainerFormat::OggOpus {
@@ -671,8 +680,7 @@ impl FormatSniffer {
             return None;
         }
         const SAMPLE_RATES: [u32; 13] = [
-            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
-            7350,
+            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
         ];
         let scan_limit = data.len().saturating_sub(6).min(4096);
         for i in 0..scan_limit {
@@ -975,7 +983,11 @@ impl FormatSniffer {
                 atom_size = be64(&d[p + 8..p + 16]);
                 hdr = 16;
             } else if size32 == 0 {
-                atom_size = if total > 0 { (total - p as i64) as u64 } else { 0 };
+                atom_size = if total > 0 {
+                    (total - p as i64) as u64
+                } else {
+                    0
+                };
             }
 
             if atom_type == b"mdat" {
@@ -1105,11 +1117,21 @@ struct MpegHeader {
 }
 
 fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
-    const MPEG1_L3: [u32; 16] = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
-    const MPEG1_L2: [u32; 16] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0];
-    const MPEG1_L1: [u32; 16] = [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0];
-    const MPEG2_L1: [u32; 16] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0];
-    const MPEG2_L23: [u32; 16] = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0];
+    const MPEG1_L3: [u32; 16] = [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
+    ];
+    const MPEG1_L2: [u32; 16] = [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0,
+    ];
+    const MPEG1_L1: [u32; 16] = [
+        0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0,
+    ];
+    const MPEG2_L1: [u32; 16] = [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0,
+    ];
+    const MPEG2_L23: [u32; 16] = [
+        0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
+    ];
     const RATES: [[u32; 3]; 4] = [
         [11025, 12000, 8000],
         [0, 0, 0],
@@ -1170,7 +1192,11 @@ fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
     out.has_crc = (h[1] & 0x01) == 0;
     out.side_info = if layer == 1 {
         if ver == 3 {
-            if channel_mode == 3 { 17 } else { 32 }
+            if channel_mode == 3 {
+                17
+            } else {
+                32
+            }
         } else if channel_mode == 3 {
             9
         } else {
@@ -1325,13 +1351,8 @@ pub unsafe extern "C" fn map_sniffer_detect_tail_boundary(
         unsafe { std::slice::from_raw_parts(tail, tail_len) }
     };
 
-    let (status, end) = FormatSniffer::detect_tail_boundary(
-        container,
-        slice,
-        tail_offset,
-        total_size,
-        audio_start,
-    );
+    let (status, end) =
+        FormatSniffer::detect_tail_boundary(container, slice, tail_offset, total_size, audio_start);
     unsafe {
         *out_audio_end = end;
     }

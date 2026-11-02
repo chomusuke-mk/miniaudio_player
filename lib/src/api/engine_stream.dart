@@ -347,8 +347,7 @@ class EngineStream<T> {
   Stream<bool> get isCrossfading => _isCrossfadingController.stream;
 
   /// Broadcast stream emitting whether per-item ReplayGain normalization is enabled.
-  Stream<bool> get volumeNormalization =>
-      _volumeNormalizationController.stream;
+  Stream<bool> get volumeNormalization => _volumeNormalizationController.stream;
 
   /// Broadcast stream emitting the default fallback ReplayGain in decibels.
   Stream<double> get defaultReplayGain =>

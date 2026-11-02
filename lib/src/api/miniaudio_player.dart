@@ -235,8 +235,7 @@ final class _PlayerTelemetryListener implements PlayerBackendListener {
       _player._onSilenceConfig(config);
 
   @override
-  void onBufferedRange(BufferedRange range) =>
-      _player._onBufferedRange(range);
+  void onBufferedRange(BufferedRange range) => _player._onBufferedRange(range);
 
   @override
   void onVisualizer(VisualizerData data) => _player._onVisualizer(data);
@@ -489,10 +488,12 @@ class MiniaudioPlayer {
   final _buffering = _ReactiveProperty<bool>(false);
   final _completed = _ReactiveProperty<bool>(false);
   final _opening = _ReactiveProperty<bool>(false);
-  final _playbackState = _ReactiveProperty<PlaybackState>(PlaybackState.stopped);
+  final _playbackState =
+      _ReactiveProperty<PlaybackState>(PlaybackState.stopped);
   final _bufferedPosition = _ReactiveProperty<Duration>(Duration.zero);
   final _bufferedPercentage = _ReactiveProperty<double>(0.0);
-  final _bufferedRange = _ReactiveProperty<BufferedRange>(const BufferedRange());
+  final _bufferedRange =
+      _ReactiveProperty<BufferedRange>(const BufferedRange());
   final _trackMetadata = _ReactiveProperty<AudioTrackMetadata?>(null);
   final _volume = _ReactiveProperty<double>(1.0);
   final _rate = _ReactiveProperty<double>(1.0);
@@ -791,6 +792,7 @@ class MiniaudioPlayer {
   void _updateNativeVisualizerState() {
     if (_isDisposed) return;
     final shouldEnable = _isVisualizerActive;
+    _visualizerEnabled.emitIfChanged(shouldEnable);
     _backend.setVisualizerEnabled(shouldEnable);
     if (!shouldEnable) {
       _visualizer.setSnapshot(VisualizerData.empty());
@@ -896,8 +898,27 @@ class MiniaudioPlayer {
     _playbackState.emitIfChanged(newState);
   }
 
+  static bool _bytesEqual(Uint8List? a, Uint8List? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null || a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   void _onPosition(Duration pos) {
-    if (!_isDisposed) _position.emitIfChanged(pos);
+    if (_isDisposed) return;
+    _position.emitIfChanged(pos);
+    if (_trackMetadata.value?.isLiveStream == true ||
+        _duration.value == Duration.zero) {
+      final nextMeta = _backend.getMetaBytes();
+      if (nextMeta != null &&
+          nextMeta.isNotEmpty &&
+          !_bytesEqual(_metaBytes.value, nextMeta)) {
+        _metaBytes.forceEmit(nextMeta);
+      }
+    }
   }
 
   void _onDuration(Duration dur) {

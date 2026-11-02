@@ -172,7 +172,9 @@ impl RingSegment {
         if offset < self.range_start || offset >= self.range_end {
             return 0;
         }
-        let effective_end = max_end.map(|e| self.range_end.min(e)).unwrap_or(self.range_end);
+        let effective_end = max_end
+            .map(|e| self.range_end.min(e))
+            .unwrap_or(self.range_end);
         if offset >= effective_end {
             return 0;
         }
@@ -256,9 +258,15 @@ impl TripartiteBuffer {
     pub fn set_tail(&self, tail: &[u8], tail_offset: Option<u64>) {
         let mut b = self.inner.lock().unwrap();
         let resolved_offset = tail_offset
-            .or_else(|| b.total_size.map(|tot| tot.saturating_sub(tail.len() as u64)))
+            .or_else(|| {
+                b.total_size
+                    .map(|tot| tot.saturating_sub(tail.len() as u64))
+            })
             .unwrap_or(0);
         b.tail.set_bytes(tail, resolved_offset);
+        if b.tail.audio_end.is_none() && resolved_offset > 0 {
+            b.tail.audio_end = Some(resolved_offset);
+        }
         b.meta_version = b.meta_version.wrapping_add(1);
         self.data_ready_cond.notify_all();
     }
@@ -409,16 +417,43 @@ impl TripartiteBuffer {
 
         // Tier 3: Sliding Circular Ring Segment
         if offset >= b.ring.range_start && offset < b.ring.range_end {
-            let max_end = if b.tail.locked { b.tail.audio_end } else { None };
+            let max_end = if b.tail.locked {
+                b.tail.audio_end
+            } else {
+                None
+            };
             let copied = b.ring.read_at(b.head.audio_start, offset, max_end, out);
             if copied > 0 {
                 return Ok(copied);
             }
-            return if b.is_eof { Ok(0) } else { Err(BufferError::WouldBlock) };
+            return if b.is_eof {
+                Ok(0)
+            } else {
+                Err(BufferError::WouldBlock)
+            };
         }
 
         if offset >= b.ring.range_end {
-            let reached_total = b.total_size.map(|tot| b.ring.range_end >= tot).unwrap_or(false);
+            if !b.is_decoding_audio
+                && b.tail.locked
+                && !b.tail.data.is_empty()
+                && offset < b.tail.start
+            {
+                let gap = (b.tail.start - offset) as usize;
+                let zero_len = out.len().min(gap);
+                out[..zero_len].fill(0);
+                let mut total = zero_len;
+                if out.len() > zero_len {
+                    if let Some(tail_copied) = b.tail.read_at(b.tail.start, &mut out[zero_len..]) {
+                        total += tail_copied;
+                    }
+                }
+                return Ok(total);
+            }
+            let reached_total = b
+                .total_size
+                .map(|tot| b.ring.range_end >= tot)
+                .unwrap_or(false);
             return if b.is_eof || reached_total {
                 Ok(0)
             } else {
@@ -633,12 +668,34 @@ impl TripartiteBuffer {
 
     pub fn get_meta_bytes(&self) -> Vec<u8> {
         let b = self.inner.lock().unwrap();
-        let mut out = Vec::with_capacity(
-            b.head.data.len() + b.tail.data.len() + b.icy_meta_data.len(),
-        );
+        if !b.icy_meta_data.is_empty() {
+            return b.icy_meta_data.clone();
+        }
+        let head_len = b.head.data.len();
+        let tail_len = b.tail.data.len();
+        if head_len == 0 && tail_len == 0 {
+            let mut probe = [0u8; 64];
+            let n = b
+                .ring
+                .read_at(b.head.audio_start, b.ring.range_start, None, &mut probe);
+            return probe[..n].to_vec();
+        }
+        let mut out = Vec::with_capacity(head_len + tail_len);
         out.extend_from_slice(&b.head.data);
+        if head_len >= 12
+            && (out.starts_with(b"RIFF") || out.starts_with(b"RF64"))
+            && &out[8..12] == b"WAVE"
+            && &out[head_len - 8..head_len - 4] == b"data"
+        {
+            out[head_len - 4..head_len].copy_from_slice(&0u32.to_le_bytes());
+        } else if head_len >= 16 && &out[4..8] == b"ftyp" {
+            if &out[head_len - 4..head_len] == b"mdat" {
+                out[head_len - 8..head_len - 4].copy_from_slice(&8u32.to_be_bytes());
+            } else if &out[head_len - 12..head_len - 8] == b"mdat" {
+                out[head_len - 8..head_len].copy_from_slice(&16u64.to_be_bytes());
+            }
+        }
         out.extend_from_slice(&b.tail.data);
-        out.extend_from_slice(&b.icy_meta_data);
         out
     }
 
@@ -683,12 +740,17 @@ impl TripartiteBuffer {
 
     pub fn is_fully_buffered(&self) -> bool {
         let b = self.inner.lock().unwrap();
-        b.total_size.map(|tot| b.ring.range_end >= tot || b.is_eof).unwrap_or(false)
+        b.total_size
+            .map(|tot| b.ring.range_end >= tot || b.is_eof)
+            .unwrap_or(false)
     }
 
     pub fn is_eof(&self) -> bool {
         let b = self.inner.lock().unwrap();
-        b.is_eof || b.total_size.map(|tot| b.ring.range_end >= tot).unwrap_or(false)
+        b.is_eof
+            || b.total_size
+                .map(|tot| b.ring.range_end >= tot)
+                .unwrap_or(false)
     }
 
     pub fn head_size(&self) -> usize {

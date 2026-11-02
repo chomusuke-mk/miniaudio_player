@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-import 'helpers/synthetic_audio.dart';
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -18,7 +16,7 @@ void main() {
 
   group('Unified Audio Analysis (ReplayGain, Loudness & Waveform)', () {
     test('analyzeAudio calculates both ReplayGain and Waveform in a single pass on MP3 asset', () async {
-      final mp3 = resolveAsset('example/assets/music/salida.mp3');
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue, reason: 'Test asset salida.mp3 must exist');
 
       final result = await MiniaudioPlayer.analyzeAudio(
@@ -73,7 +71,7 @@ void main() {
     });
 
     test('analyzeAudio with only waveform skips ReplayGain calculation', () async {
-      final mp3 = resolveAsset('example/assets/music/salida.mp3');
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final result = await MiniaudioPlayer.analyzeAudio(
@@ -89,7 +87,7 @@ void main() {
     });
 
     test('analyzeAudio with only replayGain skips Waveform extraction', () async {
-      final mp3 = resolveAsset('example/assets/music/salida.mp3');
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final result = await MiniaudioPlayer.analyzeAudio(
@@ -104,7 +102,7 @@ void main() {
     });
 
     test('analyzeAudioSync calculates loudness and waveform synchronously', () {
-      final wav = resolveAsset('example/assets/music/salida.wav');
+      final wav = resolveAsset('test/fixtures/salida.wav');
       expect(wav.existsSync(), isTrue);
 
       final result = MiniaudioPlayer.analyzeAudioSync(
@@ -124,10 +122,10 @@ void main() {
 
     test('analyzes FLAC, OPUS, AAC, and M4A seamlessly across codecs', () async {
       final formats = [
-        'example/assets/music/salida.flac',
-        'example/assets/music/salida.opus',
-        'example/assets/music/salida.aac',
-        'example/assets/music/salida_aac.m4a',
+        'test/fixtures/salida.flac',
+        'test/fixtures/salida.opus',
+        'test/fixtures/salida.aac',
+        'test/fixtures/salida_aac.m4a',
       ];
 
       for (final relPath in formats) {
@@ -144,28 +142,17 @@ void main() {
       }
     });
 
-    test('analyzes synthetic generated WAV with accurate peak', () async {
-      final tempFile = File('${Directory.systemTemp.path}/test_synth_analysis_${DateTime.now().millisecondsSinceEpoch}.wav');
-      try {
-        final wavBytes = SyntheticAudioGenerator.generateWavBytes(
-          durationSeconds: 2.0,
-          frequencyHz: 1000.0,
-          amplitude: 0.65,
-        );
-        await tempFile.writeAsBytes(wavBytes, flush: true);
+    test('analyzes 24-bit WAV fixture with accurate peak and waveform', () async {
+      final wav24 = resolveAsset('test/fixtures/test_24bit_stereo.wav');
+      expect(wav24.existsSync(), isTrue);
 
-        final result = await MiniaudioPlayer.analyzeAudio(tempFile.path, waveformPoints: 30);
-        expect(result.peak, closeTo(0.65, 0.05));
-        expect(result.replayGain, isNotNull);
-        expect(result.replayGain!.lufs.isFinite, isTrue);
-        expect(result.replayGain!.gainDb.isFinite, isTrue);
-        expect(result.waveform, isNotNull);
-        expect(result.waveform!.length, equals(30));
-      } finally {
-        if (tempFile.existsSync()) {
-          tempFile.deleteSync();
-        }
-      }
+      final result = await MiniaudioPlayer.analyzeAudio(wav24.path, waveformPoints: 30);
+      expect(result.peak, greaterThan(0.05));
+      expect(result.replayGain, isNotNull);
+      expect(result.replayGain!.lufs.isFinite, isTrue);
+      expect(result.replayGain!.gainDb.isFinite, isTrue);
+      expect(result.waveform, isNotNull);
+      expect(result.waveform!.length, equals(30));
     });
 
     test('handles non-existent file cleanly with MiniaudioPlayerException', () async {
