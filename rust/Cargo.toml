@@ -43,6 +43,7 @@ symphonia = { version = "0.6", default-features = false, features = ["all-codecs
 
 # Concurrencia Lock-Free y Tiempo Real
 log = "0.4"
+rand = "0.8"
 rtrb = "0.3"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"

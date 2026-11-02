@@ -420,7 +420,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult Function(bool field0)? isBuffering,
     TResult Function(bool field0)? isCompleted,
     TResult Function(int field0)? currentIndex,
-    TResult Function(List<RustEngineItem> field0)? queueChanged,
+    TResult Function(List<RustAudioSource> field0)? queueChanged,
     TResult Function(PlatformInt64 currentTrackId, BigInt remainingTracks)?
         needMoreTracks,
     TResult Function(double field0)? volume,
@@ -541,7 +541,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     required TResult Function(bool field0) isBuffering,
     required TResult Function(bool field0) isCompleted,
     required TResult Function(int field0) currentIndex,
-    required TResult Function(List<RustEngineItem> field0) queueChanged,
+    required TResult Function(List<RustAudioSource> field0) queueChanged,
     required TResult Function(
             PlatformInt64 currentTrackId, BigInt remainingTracks)
         needMoreTracks,
@@ -659,7 +659,7 @@ extension RustEngineEventPatterns on RustEngineEvent {
     TResult? Function(bool field0)? isBuffering,
     TResult? Function(bool field0)? isCompleted,
     TResult? Function(int field0)? currentIndex,
-    TResult? Function(List<RustEngineItem> field0)? queueChanged,
+    TResult? Function(List<RustAudioSource> field0)? queueChanged,
     TResult? Function(PlatformInt64 currentTrackId, BigInt remainingTracks)?
         needMoreTracks,
     TResult? Function(double field0)? volume,
@@ -1299,12 +1299,12 @@ class _$RustEngineEvent_CurrentIndexCopyWithImpl<$Res>
 /// @nodoc
 
 class RustEngineEvent_QueueChanged extends RustEngineEvent {
-  const RustEngineEvent_QueueChanged(List<RustEngineItem> field0)
+  const RustEngineEvent_QueueChanged(List<RustAudioSource> field0)
       : _field0 = field0,
         super._();
 
-  final List<RustEngineItem> _field0;
-  List<RustEngineItem> get field0 {
+  final List<RustAudioSource> _field0;
+  List<RustAudioSource> get field0 {
     if (_field0 is EqualUnmodifiableListView) return _field0;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_field0);
@@ -1346,7 +1346,7 @@ abstract mixin class $RustEngineEvent_QueueChangedCopyWith<$Res>
           $Res Function(RustEngineEvent_QueueChanged) _then) =
       _$RustEngineEvent_QueueChangedCopyWithImpl;
   @useResult
-  $Res call({List<RustEngineItem> field0});
+  $Res call({List<RustAudioSource> field0});
 }
 
 /// @nodoc
@@ -1367,7 +1367,7 @@ class _$RustEngineEvent_QueueChangedCopyWithImpl<$Res>
       null == field0
           ? _self._field0
           : field0 // ignore: cast_nullable_to_non_nullable
-              as List<RustEngineItem>,
+              as List<RustAudioSource>,
     ));
   }
 }

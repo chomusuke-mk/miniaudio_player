@@ -15,7 +15,7 @@ enum ReplayGainMode {
   /// Volume normalization is disabled (unity gain 0.0 dB).
   disabled,
 
-  /// Automatically applies per-track ReplayGain metadata from EngineItem,
+  /// Automatically applies per-track ReplayGain metadata from AudioSource,
   /// falling back to defaultReplayGain if not specified on the item.
   track,
 

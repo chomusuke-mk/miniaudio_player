@@ -7,13 +7,13 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `abort_active_crossfade`, `capture_active_deck_snapshot`, `check_crossfade_completion`, `check_infinite_mix_lookahead`, `dispatch_meta_bytes`, `dispatch_telemetry_diff`, `dispatch_visualizer`, `emit_event`, `emit_queue_and_index`, `evaluate_auto_transition`, `new`, `open_item_on_deck`, `perform_skip`, `queue_to_rust_items`, `resolve_next_queue_index`, `run`, `tick`
+// These functions are ignored because they are not marked as `pub`: `abort_active_crossfade`, `capture_active_deck_snapshot`, `check_crossfade_completion`, `check_infinite_mix_lookahead`, `dispatch_meta_bytes`, `dispatch_telemetry_diff`, `dispatch_visualizer`, `emit_event`, `emit_queue_and_index`, `evaluate_auto_transition`, `new`, `open_source_on_deck`, `perform_skip`, `queue_to_rust_sources`, `resolve_next_queue_index`, `run`, `tick`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ActiveDeckSnapshot`, `EngineMonitorWorker`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustEngine>>
 abstract class RustEngine implements RustOpaqueInterface {
-  Future<void> append({required List<RustEngineItem> items});
+  Future<void> append({required List<RustAudioSource> items});
 
   Future<void> clearQueue({required bool keepCurrent});
 
@@ -42,7 +42,7 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   PlatformInt64 getPositionMs();
 
-  List<RustEngineItem> getQueue();
+  List<RustAudioSource> getQueue();
 
   BigInt getQueueLen();
 
@@ -50,7 +50,7 @@ abstract class RustEngine implements RustOpaqueInterface {
 
   double getVolume();
 
-  Future<void> insertNext({required RustEngineItem item});
+  Future<void> insertNext({required RustAudioSource item});
 
   bool isBuffering();
 
@@ -121,7 +121,7 @@ abstract class RustEngine implements RustOpaqueInterface {
   void setPreamp({required double preampDb});
 
   Future<void> setQueue(
-      {required List<RustEngineItem> items, BigInt? startIndex});
+      {required List<RustAudioSource> items, BigInt? startIndex});
 
   void setRate({required double rate});
 

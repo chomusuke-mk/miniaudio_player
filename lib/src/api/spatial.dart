@@ -192,9 +192,6 @@ class SpatialEmitter {
   /// Rolloff factor scaling the distance attenuation slope (default 1.0).
   final double rolloffFactor;
 
-  /// Alias for [rolloffFactor].
-  double get rolloff => rolloffFactor;
-
   /// Emitter-specific Doppler factor scale (default 1.0).
   final double dopplerFactor;
 
@@ -216,14 +213,13 @@ class SpatialEmitter {
     this.direction,
     this.minDistance = 1.0,
     this.maxDistance = 1000.0,
-    double rolloff = 1.0,
-    double? rolloffFactor,
+    this.rolloffFactor = 1.0,
     this.dopplerFactor = 1.0,
     this.innerAngleRad = 6.283185307179586,
     this.outerAngleRad = 6.283185307179586,
     this.outerGain = 0.0,
     this.distanceModel = DistanceModel.inverse,
-  }) : rolloffFactor = rolloffFactor ?? rolloff;
+  });
 
   SpatialEmitter copyWith({
     Vector3? position,
@@ -231,7 +227,6 @@ class SpatialEmitter {
     Vector3? direction,
     double? minDistance,
     double? maxDistance,
-    double? rolloff,
     double? rolloffFactor,
     double? dopplerFactor,
     double? innerAngleRad,
@@ -245,7 +240,7 @@ class SpatialEmitter {
       direction: direction ?? this.direction,
       minDistance: minDistance ?? this.minDistance,
       maxDistance: maxDistance ?? this.maxDistance,
-      rolloffFactor: rolloffFactor ?? rolloff ?? this.rolloffFactor,
+      rolloffFactor: rolloffFactor ?? this.rolloffFactor,
       dopplerFactor: dopplerFactor ?? this.dopplerFactor,
       innerAngleRad: innerAngleRad ?? this.innerAngleRad,
       outerAngleRad: outerAngleRad ?? this.outerAngleRad,
@@ -293,7 +288,7 @@ class SpatialEmitter {
           direction == other.direction &&
           minDistance == other.minDistance &&
           maxDistance == other.maxDistance &&
-          rolloff == other.rolloff &&
+          rolloffFactor == other.rolloffFactor &&
           dopplerFactor == other.dopplerFactor &&
           innerAngleRad == other.innerAngleRad &&
           outerAngleRad == other.outerAngleRad &&
@@ -307,7 +302,7 @@ class SpatialEmitter {
       direction.hashCode ^
       minDistance.hashCode ^
       maxDistance.hashCode ^
-      rolloff.hashCode ^
+      rolloffFactor.hashCode ^
       dopplerFactor.hashCode ^
       innerAngleRad.hashCode ^
       outerAngleRad.hashCode ^
@@ -395,7 +390,7 @@ class SpatialController {
     Vector3? direction,
     double? minDistance,
     double? maxDistance,
-    double? rolloff,
+    double? rolloffFactor,
     double? dopplerFactor,
     double? innerAngleRad,
     double? outerAngleRad,
@@ -408,7 +403,7 @@ class SpatialController {
       direction: direction,
       minDistance: minDistance,
       maxDistance: maxDistance,
-      rolloff: rolloff,
+      rolloffFactor: rolloffFactor,
       dopplerFactor: dopplerFactor,
       innerAngleRad: innerAngleRad,
       outerAngleRad: outerAngleRad,

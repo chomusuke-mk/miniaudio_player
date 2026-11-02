@@ -103,14 +103,13 @@ void main() {
         velocity: Vector3(30, 0, 0),
         minDistance: 2.0,
         maxDistance: 500.0,
-        rolloff: 1.5,
+        rolloffFactor: 1.5,
         dopplerFactor: 1.2,
         distanceModel: DistanceModel.linear,
       );
 
       expect(emitter.position, const Vector3(5, 0, 0));
       expect(emitter.velocity, const Vector3(30, 0, 0));
-      expect(emitter.rolloff, 1.5);
       expect(emitter.rolloffFactor, 1.5);
       expect(emitter.distanceModel, DistanceModel.linear);
 

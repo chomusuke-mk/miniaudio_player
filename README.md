@@ -36,7 +36,7 @@ _The newly overhauled **Studio Master Console** demonstration app included in `e
 
 ## ✨ Features at a Glance
 
-- 🎛️ **High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)**: Automated dual-deck orchestrator wrapping two dedicated players (_Deck A_ and _Deck B_) that alternate between Active and Standby roles. Features an explicit 8-state Finite State Machine (`EnginePhase`), serialized FIFO command dispatch, continuous Equal-Power ($\cos / \sin$) and Linear crossfades (`CrossfadeConfig`), non-destructive Fisher-Yates shuffle with exact un-shuffle restoration, loop modes (`LoopMode.off`, `.one`, `.all`), generic domain item encapsulation (`EngineItem<T>`), per-track ReplayGain calibration, and proactive Infinite Mix prefetching (`InfiniteMixProvider<T>`).
+- 🎛️ **High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)**: Automated dual-deck orchestrator wrapping two dedicated players (_Deck A_ and _Deck B_) that alternate between Active and Standby roles. Features an explicit 8-state Finite State Machine (`EnginePhase`), serialized FIFO command dispatch, continuous Equal-Power ($\cos / \sin$) and Linear crossfades (`CrossfadeConfig`), non-destructive Fisher-Yates shuffle with exact un-shuffle restoration, loop modes (`LoopMode.off`, `.one`, `.all`), generic domain item encapsulation directly via `AudioSource<T>`, per-track ReplayGain calibration, and proactive Infinite Mix prefetching (`InfiniteMixProvider<T>`).
 - 🌐 **Full Web Platform Support (WebAssembly & AudioWorklet)**: First-class execution in Flutter Web ([Live Demo](https://miniaudio_player.chomusuke.dev/)). Miniaudio's C core is cross-compiled to WebAssembly (`miniaudio_player.wasm`) running in background Web Workers, streaming decoded PCM frames directly to native `AudioWorkletNode` pipelines with zero UI thread contention.
 - 🔐 **Custom Audio Sources, DRM & On-The-Fly Decryption (`AudioByteProvider`)**: Plug-and-play stream abstraction enabling developers to play encrypted, DRM-protected, or proprietary media formats (AES-128, ChaCha20, custom cloud storage, peer-to-peer streams) with **zero temporary files and zero disk writes**. Decrypted audio streams exist exclusively in memory RAM and are piped directly to native C buffers with automatic reactive backpressure and random-access seek support.
 - 🌊 **Native Tripartite Memory Buffer (`map_buffer_t`) & 5-Level Capability Promotion**: Decouples audio ingestion from consumer codecs. Divides stream memory into a Pinned Head (immutable headers), Pure Audio Ring ($\mathcal{O}(1)$ lock-free circular buffer), and Tail Buffer (seek tables and trailing metadata). Automatically resolves and promotes any source through a 5-level hierarchy (`File`, `Memory`, `Asset`, `Network VOD`, `LiveStream`, and `FdByteProvider`).
@@ -320,7 +320,7 @@ await player.action.stop();
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/playlist_queue.png" alt="Dynamic Playlist Queue & Crossfade Engine" width="600" />
 </p>
 
-[`MiniaudioEngine<T>`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/lib/src/api/miniaudio_engine.dart) is a first-class orchestrator that coordinates dual playback decks for gapless and crossfading transitions. It preserves your strongly typed user payload model `T` within `EngineItem<T>`:
+[`MiniaudioEngine<T>`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/lib/src/api/miniaudio_engine.dart) is a first-class orchestrator that coordinates dual playback decks for gapless and crossfading transitions. It preserves your strongly typed user payload model `T` directly within `AudioSource<T>`:
 
 ```dart
 class SongMetadata {
@@ -340,18 +340,18 @@ await engine.init();
 
 // Prepare queue items with domain metadata and optional ReplayGain
 final playlist = [
-  EngineItem<SongMetadata>(
-    source: AudioSource.file('/music/track1.mp3'),
+  AudioSource.file(
+    '/music/track1.mp3',
     data: SongMetadata('Track One', 'Artist A'),
     replayGainDb: -1.2,
   ),
-  EngineItem<SongMetadata>(
-    source: AudioSource.network(Uri.parse('https://example.com/track2.flac')),
+  AudioSource.network(
+    Uri.parse('https://example.com/track2.flac'),
     data: SongMetadata('Track Two', 'Artist B'),
     replayGainDb: 0.5,
   ),
-  EngineItem<SongMetadata>(
-    source: AudioSource.asset('assets/music/track3.ogg'),
+  AudioSource.asset(
+    'assets/music/track3.ogg',
     data: SongMetadata('Track Three', 'Artist C'),
   ),
 ];
@@ -371,9 +371,9 @@ await engine.action.setLoopMode(LoopMode.all);
 
 // Proactive Infinite Mix lookahead
 engine.action.setInfiniteMix(true);
-engine.setInfiniteMixProvider((engine) async {
-  final newTracks = await fetchRecommendationsFromBackend();
-  return newTracks.map((t) => EngineItem(source: AudioSource.uri(t.url), data: t)).toList();
+engine.setInfiniteMixProvider((count) async {
+  final newTracks = await fetchRecommendationsFromBackend(count);
+  return newTracks.map((t) => AudioSource.uri(t.url, data: t)).toList();
 });
 ```
 

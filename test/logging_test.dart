@@ -18,7 +18,7 @@ void main() {
       );
       expect(MapLogger.isEnabled(MiniaudioLogLevel.none), isFalse);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.error), isFalse);
-      expect(MapLogger.isEnabled(MiniaudioLogLevel.warn), isFalse);
+      expect(MapLogger.isEnabled(MiniaudioLogLevel.warning), isFalse);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.info), isFalse);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.debug), isFalse);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.verbose), isFalse);
@@ -31,7 +31,7 @@ void main() {
         equals(MiniaudioLogLevel.info),
       );
       expect(MapLogger.isEnabled(MiniaudioLogLevel.error), isTrue);
-      expect(MapLogger.isEnabled(MiniaudioLogLevel.warn), isTrue);
+      expect(MapLogger.isEnabled(MiniaudioLogLevel.warning), isTrue);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.info), isTrue);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.debug), isFalse);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.verbose), isFalse);
@@ -40,7 +40,7 @@ void main() {
     test('Verbose level enables all diagnostic levels', () {
       MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.verbose);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.error), isTrue);
-      expect(MapLogger.isEnabled(MiniaudioLogLevel.warn), isTrue);
+      expect(MapLogger.isEnabled(MiniaudioLogLevel.warning), isTrue);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.info), isTrue);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.debug), isTrue);
       expect(MapLogger.isEnabled(MiniaudioLogLevel.verbose), isTrue);
@@ -73,7 +73,7 @@ void main() {
     });
 
     test('onLog filters out messages above current log level', () {
-      MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.warn);
+      MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.warning);
       final captured = <(MiniaudioLogLevel, String)>[];
       MiniaudioPlayerGlobalConfig.onLog = (level, message) {
         captured.add((level, message));
@@ -155,13 +155,13 @@ void main() {
       );
 
       await engine.action.open([
-        EngineItem<int>(
-          source: AudioSource('test/fixtures/salida.wav'),
+        AudioSource<int>(
+          'test/fixtures/salida.wav',
           data: 1,
         ),
       ]);
       expect(
-        messages.any((m) => m.contains('Engine openQueue -> 1 items')),
+        messages.any((m) => m.contains('Engine open -> 1 items')),
         isTrue,
       );
 

@@ -11,7 +11,6 @@ import 'audio_source.dart';
 import 'buffered_range.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
-import 'engine_item.dart';
 import 'engine_state.dart';
 import 'engine_stream.dart';
 import 'logger.dart';
@@ -62,8 +61,8 @@ class MiniaudioEngine<T> {
   /// Whether this engine instance has been disposed.
   bool get isDisposed => _isDisposed;
 
-  final List<EngineItem<T>> _queue = [];
-  final Map<int, EngineItem<T>> _shadowItems = {};
+  final List<AudioSource<T>> _queue = [];
+  final Map<int, AudioSource<T>> _shadowItems = {};
   int _nextAutoId = 0;
 
   bool? _manualVisualizerOverride;
@@ -106,9 +105,9 @@ class MiniaudioEngine<T> {
   final _spatializerWidth = _EngineProperty<double>(1.0);
   final _reverb = _EngineProperty<Reverb>(Reverb.off);
   final _limiterEnabled = _EngineProperty<bool>(true);
-  late final _EngineProperty<List<EngineItem<T>>> _queueProp;
+  late final _EngineProperty<List<AudioSource<T>>> _queueProp;
   final _currentIndex = _EngineProperty<int>(-1);
-  late final _EngineProperty<EngineItem<T>?> _currentItem;
+  late final _EngineProperty<AudioSource<T>?> _currentItem;
   late final _EngineProperty<T?> _currentData;
   final _hasNext = _EngineProperty<bool>(false);
   final _hasPrevious = _EngineProperty<bool>(false);
@@ -161,8 +160,8 @@ class MiniaudioEngine<T> {
     _pauseOnDeviceChange = _EngineProperty<bool>(pauseOnDeviceChange);
     _crossfadeConfig =
         _EngineProperty<CrossfadeConfig>(crossfadeConfig ?? CrossfadeConfig());
-    _queueProp = _EngineProperty<List<EngineItem<T>>>(const []);
-    _currentItem = _EngineProperty<EngineItem<T>?>(null);
+    _queueProp = _EngineProperty<List<AudioSource<T>>>(const []);
+    _currentItem = _EngineProperty<AudioSource<T>?>(null);
     _currentData = _EngineProperty<T?>(null);
 
     _visualizer = _EngineProperty<VisualizerData>(
@@ -458,8 +457,8 @@ class MiniaudioEngine<T> {
     if (_trackMetadata.value?.isLiveStream == true) return true;
     final idx = _resolveActiveQueueIndex();
     if (idx >= 0 && idx < _queue.length) {
-      final src = _queue[idx].source;
-      if (src is UriAudioSource) {
+      final src = _queue[idx];
+      if (src is UriAudioSource<T>) {
         final s = src.sourceString.toLowerCase();
         return s.contains('/live') || s.endsWith('.m3u8');
       }
@@ -651,12 +650,11 @@ class MiniaudioEngine<T> {
           final original = _shadowItems[id];
           _queue.add(
             original ??
-                EngineItem<T>(
-                  source: AudioSource(r.source),
-                  id: id,
+                (AudioSource<T>(
+                  r.source,
                   replayGainDb: r.replayGainDb,
                   replayPeak: r.replayPeak,
-                ),
+                )..attachEngineId(id)),
           );
         }
         _queueProp.emit(List.unmodifiable(_queue));
@@ -722,6 +720,25 @@ class MiniaudioEngine<T> {
         _bufferedPosition.emit(r.end);
         _bufferedPercentage.emit(r.percentage);
 
+      case rust_types.RustEngineEvent_LoopMode(field0: final lm):
+        final mode = LoopMode.values.elementAtOrNull(lm) ?? LoopMode.off;
+        MapLogger.info('Engine telemetry loopMode -> $mode');
+        _loopMode.emit(mode);
+
+      case rust_types.RustEngineEvent_Shuffle(field0: final sh):
+        MapLogger.info('Engine telemetry shuffle -> $sh');
+        _shuffle.emit(sh);
+
+      case rust_types.RustEngineEvent_CrossfadeConfig(field0: final cf):
+        final curve = CrossfadeCurve.values.elementAtOrNull(cf.curve) ?? CrossfadeCurve.equalPower;
+        final config = CrossfadeConfig(
+          duration: Duration(milliseconds: cf.durationMs.toInt()),
+          manualDuration: Duration(milliseconds: cf.manualDurationMs.toInt()),
+          curve: curve,
+        );
+        MapLogger.debug('Engine telemetry crossfadeConfig -> $config');
+        _crossfadeConfig.emit(config);
+
       case rust_types.RustEngineEvent_Error(
           message: final msg,
           code: final cd,
@@ -733,14 +750,15 @@ class MiniaudioEngine<T> {
     }
   }
 
-  Future<rust_types.RustEngineItem> _resolveRustEngineItem(
-    EngineItem<T> item,
+  Future<rust_types.RustAudioSource> _resolveRustAudioSource(
+    AudioSource<T> item,
   ) async {
     final effectiveId = item.id ?? ++_nextAutoId;
+    item.attachEngineId(effectiveId);
     _shadowItems[effectiveId] = item;
 
-    if (item.source is UriAudioSource) {
-      final s = item.source as UriAudioSource;
+    if (item is UriAudioSource) {
+      final s = item as UriAudioSource;
       final str = s.sourceString;
       if (str.startsWith('asset://') || str.startsWith('asset:')) {
         final key = str.startsWith('asset://')
@@ -750,7 +768,7 @@ class MiniaudioEngine<T> {
         if (loader != null) {
           try {
             final bytes = await loader(key);
-            return rust_types.RustEngineItem(
+            return rust_types.RustAudioSource(
               id: effectiveId,
               source: str,
               dataBytes: bytes,
@@ -761,16 +779,16 @@ class MiniaudioEngine<T> {
         }
       }
     }
-    return item.toRustItem(effectiveId);
+    return item.toRustSource(effectiveId);
   }
 
-  Future<void> _openQueue(
-    List<EngineItem<T>> items, {
+  Future<void> _open(
+    List<AudioSource<T>> items, {
     int? startIndex,
     bool shuffle = false,
   }) async {
     MapLogger.info(
-      'Engine openQueue -> ${items.length} items, startIndex: $startIndex, shuffle: $shuffle',
+      'Engine open -> ${items.length} items, startIndex: $startIndex, shuffle: $shuffle',
     );
     _shadowItems.clear();
     _nextAutoId = 0;
@@ -780,9 +798,9 @@ class MiniaudioEngine<T> {
     _currentIndex.value = effectiveStart;
 
     final engine = await _getEngine();
-    final rustItems = <rust_types.RustEngineItem>[];
+    final rustItems = <rust_types.RustAudioSource>[];
     for (final item in items) {
-      rustItems.add(await _resolveRustEngineItem(item));
+      rustItems.add(await _resolveRustAudioSource(item));
     }
     _queue.addAll(items);
     _queueProp.emit(List.unmodifiable(_queue));
@@ -814,14 +832,6 @@ class MiniaudioEngine<T> {
     MapLogger.info('Engine pause() requested');
     final engine = await _getEngine();
     engine?.pause();
-  }
-
-  Future<void> _togglePlayPause() async {
-    if (_playing.value) {
-      await _pause();
-    } else {
-      await _play();
-    }
   }
 
   Future<void> _stop() async {
@@ -879,16 +889,16 @@ class MiniaudioEngine<T> {
     _syncQueueNavigationTelemetry(_resolveActiveQueueIndex());
   }
 
-  Future<void> _insertNext(EngineItem<T> item) async {
-    final rustItem = await _resolveRustEngineItem(item);
+  Future<void> _insertNext(AudioSource<T> item) async {
+    final rustItem = await _resolveRustAudioSource(item);
     final engine = await _getEngine();
     await engine?.insertNext(item: rustItem);
   }
 
-  Future<void> _append(List<EngineItem<T>> items) async {
-    final rustItems = <rust_types.RustEngineItem>[];
+  Future<void> _append(List<AudioSource<T>> items) async {
+    final rustItems = <rust_types.RustAudioSource>[];
     for (final item in items) {
-      rustItems.add(await _resolveRustEngineItem(item));
+      rustItems.add(await _resolveRustAudioSource(item));
     }
     final engine = await _getEngine();
     await engine?.append(items: rustItems);
@@ -913,25 +923,15 @@ class MiniaudioEngine<T> {
   }
 
   Future<void> _setShuffle(bool enabled) async {
+    MapLogger.info('Engine setShuffle(enabled: $enabled)');
     _shuffle.emit(enabled);
     _rustEngine?.setShuffle(enabled: enabled);
   }
 
-  Future<bool> _toggleShuffle() async {
-    final next = !_shuffle.value;
-    await _setShuffle(next);
-    return next;
-  }
-
   Future<void> _setLoopMode(LoopMode mode) async {
+    MapLogger.info('Engine setLoopMode(mode: $mode)');
     _loopMode.emit(mode);
     _rustEngine?.setLoopMode(mode: mode.index);
-  }
-
-  Future<LoopMode> _cycleLoopMode() async {
-    final next = _loopMode.value.next();
-    await _setLoopMode(next);
-    return next;
   }
 
   Future<void> _setCrossfadeConfig(CrossfadeConfig config) async {

@@ -31,7 +31,7 @@ abstract final class MapLogger {
 
     final tag = switch (level) {
       MiniaudioLogLevel.error => 'ERROR',
-      MiniaudioLogLevel.warning || MiniaudioLogLevel.warn => 'WARN',
+      MiniaudioLogLevel.warning => 'WARN',
       MiniaudioLogLevel.info => 'INFO',
       MiniaudioLogLevel.debug => 'DEBUG',
       MiniaudioLogLevel.verbose => 'VERBOSE',

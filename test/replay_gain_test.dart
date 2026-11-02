@@ -177,4 +177,48 @@ void main() {
       }
     });
   });
+
+  group('MiniaudioPlayer ReplayGain integration from AudioSource', () {
+    test('player applies replay gain from AudioSource automatically on open', () async {
+      final wav = resolveAsset('test/fixtures/salida.wav');
+      expect(wav.existsSync(), isTrue);
+
+      final source = AudioSource(
+        wav.path,
+        replayGainDb: -6.5,
+        replayPeak: 0.95,
+      );
+
+      expect(source.replayGainDb, equals(-6.5));
+      expect(source.replayPeak, equals(0.95));
+
+      final player = MiniaudioPlayer(source);
+      try {
+        await player.action.waitUntilOpen();
+
+        expect(player.state.replayGain.enabled, isTrue);
+        expect(player.state.replayGain.gainDb, closeTo(-6.5, 1e-4));
+        expect(player.state.replayGain.peak, closeTo(0.95, 1e-4));
+
+        // Opening another source with new replay gain applies it
+        final source2 = AudioSource(
+          wav.path,
+          replayGainDb: -3.0,
+          replayPeak: 0.8,
+        );
+        await player.action.open(source2);
+        await player.action.waitUntilOpen();
+
+        expect(player.state.replayGain.enabled, isTrue);
+        expect(player.state.replayGain.gainDb, closeTo(-3.0, 1e-4));
+        expect(player.state.replayGain.peak, closeTo(0.8, 1e-4));
+
+        // Clearing replay gain returns to disabled
+        await player.action.clearReplayGain();
+        expect(player.state.replayGain.enabled, isFalse);
+      } finally {
+        await player.dispose();
+      }
+    });
+  });
 }

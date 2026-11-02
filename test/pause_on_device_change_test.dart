@@ -237,7 +237,7 @@ void main() {
     test('MiniaudioEngine with pauseOnDeviceChange handles seek and resume properly', () async {
       final engine = MiniaudioEngine(pauseOnDeviceChange: true);
       try {
-        await engine.action.open([EngineItem(source: AudioSource(testWavFile.path))]);
+        await engine.action.open([AudioSource(testWavFile.path)]);
         expect(engine.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await engine.action.play();

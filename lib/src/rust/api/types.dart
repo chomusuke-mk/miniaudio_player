@@ -107,6 +107,48 @@ class RustAudioDevice {
           isAuto == other.isAuto;
 }
 
+class RustAudioSource {
+  final PlatformInt64 id;
+  final String source;
+  final List<RustHttpHeader>? headers;
+  final Uint8List? dataBytes;
+  final double? replayGainDb;
+  final double? replayPeak;
+
+  const RustAudioSource({
+    required this.id,
+    required this.source,
+    this.headers,
+    this.dataBytes,
+    this.replayGainDb,
+    this.replayPeak,
+  });
+
+  static Future<RustAudioSource> default_() =>
+      RustLib.instance.api.crateApiTypesRustAudioSourceDefault();
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      source.hashCode ^
+      headers.hashCode ^
+      dataBytes.hashCode ^
+      replayGainDb.hashCode ^
+      replayPeak.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioSource &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          source == other.source &&
+          headers == other.headers &&
+          dataBytes == other.dataBytes &&
+          replayGainDb == other.replayGainDb &&
+          replayPeak == other.replayPeak;
+}
+
 class RustBufferedRange {
   final PlatformInt64 startMs;
   final PlatformInt64 endMs;
@@ -324,7 +366,7 @@ sealed class RustEngineEvent with _$RustEngineEvent {
     int field0,
   ) = RustEngineEvent_CurrentIndex;
   const factory RustEngineEvent.queueChanged(
-    List<RustEngineItem> field0,
+    List<RustAudioSource> field0,
   ) = RustEngineEvent_QueueChanged;
   const factory RustEngineEvent.needMoreTracks({
     required PlatformInt64 currentTrackId,
@@ -398,48 +440,6 @@ sealed class RustEngineEvent with _$RustEngineEvent {
     required String message,
     required int code,
   }) = RustEngineEvent_Error;
-}
-
-class RustEngineItem {
-  final PlatformInt64 id;
-  final String source;
-  final List<RustHttpHeader>? headers;
-  final Uint8List? dataBytes;
-  final double? replayGainDb;
-  final double? replayPeak;
-
-  const RustEngineItem({
-    required this.id,
-    required this.source,
-    this.headers,
-    this.dataBytes,
-    this.replayGainDb,
-    this.replayPeak,
-  });
-
-  static Future<RustEngineItem> default_() =>
-      RustLib.instance.api.crateApiTypesRustEngineItemDefault();
-
-  @override
-  int get hashCode =>
-      id.hashCode ^
-      source.hashCode ^
-      headers.hashCode ^
-      dataBytes.hashCode ^
-      replayGainDb.hashCode ^
-      replayPeak.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RustEngineItem &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          source == other.source &&
-          headers == other.headers &&
-          dataBytes == other.dataBytes &&
-          replayGainDb == other.replayGainDb &&
-          replayPeak == other.replayPeak;
 }
 
 class RustEqualizerParams {

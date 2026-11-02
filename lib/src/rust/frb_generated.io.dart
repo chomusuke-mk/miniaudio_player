@@ -106,6 +106,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioDevice dco_decode_box_autoadd_rust_audio_device(dynamic raw);
 
   @protected
+  RustAudioSource dco_decode_box_autoadd_rust_audio_source(dynamic raw);
+
+  @protected
   RustBufferedRange dco_decode_box_autoadd_rust_buffered_range(dynamic raw);
 
   @protected
@@ -114,9 +117,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustDartReadRequest dco_decode_box_autoadd_rust_dart_read_request(
       dynamic raw);
-
-  @protected
-  RustEngineItem dco_decode_box_autoadd_rust_engine_item(dynamic raw);
 
   @protected
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(dynamic raw);
@@ -180,7 +180,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustAudioDevice> dco_decode_list_rust_audio_device(dynamic raw);
 
   @protected
-  List<RustEngineItem> dco_decode_list_rust_engine_item(dynamic raw);
+  List<RustAudioSource> dco_decode_list_rust_audio_source(dynamic raw);
 
   @protected
   List<RustHttpHeader> dco_decode_list_rust_http_header(dynamic raw);
@@ -223,6 +223,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioDevice dco_decode_rust_audio_device(dynamic raw);
 
   @protected
+  RustAudioSource dco_decode_rust_audio_source(dynamic raw);
+
+  @protected
   RustBufferedRange dco_decode_rust_buffered_range(dynamic raw);
 
   @protected
@@ -242,9 +245,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustEngineEvent dco_decode_rust_engine_event(dynamic raw);
-
-  @protected
-  RustEngineItem dco_decode_rust_engine_item(dynamic raw);
 
   @protected
   RustEqualizerParams dco_decode_rust_equalizer_params(dynamic raw);
@@ -379,6 +379,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustAudioSource sse_decode_box_autoadd_rust_audio_source(
+      SseDeserializer deserializer);
+
+  @protected
   RustBufferedRange sse_decode_box_autoadd_rust_buffered_range(
       SseDeserializer deserializer);
 
@@ -388,10 +392,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustDartReadRequest sse_decode_box_autoadd_rust_dart_read_request(
-      SseDeserializer deserializer);
-
-  @protected
-  RustEngineItem sse_decode_box_autoadd_rust_engine_item(
       SseDeserializer deserializer);
 
   @protected
@@ -464,7 +464,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  List<RustEngineItem> sse_decode_list_rust_engine_item(
+  List<RustAudioSource> sse_decode_list_rust_audio_source(
       SseDeserializer deserializer);
 
   @protected
@@ -512,6 +512,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioDevice sse_decode_rust_audio_device(SseDeserializer deserializer);
 
   @protected
+  RustAudioSource sse_decode_rust_audio_source(SseDeserializer deserializer);
+
+  @protected
   RustBufferedRange sse_decode_rust_buffered_range(
       SseDeserializer deserializer);
 
@@ -536,9 +539,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustEngineEvent sse_decode_rust_engine_event(SseDeserializer deserializer);
-
-  @protected
-  RustEngineItem sse_decode_rust_engine_item(SseDeserializer deserializer);
 
   @protected
   RustEqualizerParams sse_decode_rust_equalizer_params(
@@ -683,6 +683,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioDevice self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_audio_source(
+      RustAudioSource self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_buffered_range(
       RustBufferedRange self, SseSerializer serializer);
 
@@ -693,10 +697,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_rust_dart_read_request(
       RustDartReadRequest self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_box_autoadd_rust_engine_item(
-      RustEngineItem self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_equalizer_params(
@@ -773,8 +773,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustAudioDevice> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_rust_engine_item(
-      List<RustEngineItem> self, SseSerializer serializer);
+  void sse_encode_list_rust_audio_source(
+      List<RustAudioSource> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_rust_http_header(
@@ -824,6 +824,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioDevice self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_audio_source(
+      RustAudioSource self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_buffered_range(
       RustBufferedRange self, SseSerializer serializer);
 
@@ -849,10 +853,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_engine_event(
       RustEngineEvent self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_rust_engine_item(
-      RustEngineItem self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_equalizer_params(

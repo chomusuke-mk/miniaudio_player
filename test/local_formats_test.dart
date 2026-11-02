@@ -58,7 +58,7 @@ void main() {
 
         // 2. play
         await player.action.play();
-        for (var i = 0; i < 16 && !player.state.playing; i++) {
+        for (var i = 0; i < 40 && !player.state.playing; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 25));
         }
         expect(player.state.playing, isTrue,

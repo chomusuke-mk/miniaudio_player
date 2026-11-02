@@ -7,7 +7,7 @@ import 'audio_device.dart';
 import 'buffered_range.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
-import 'engine_item.dart';
+import 'audio_source.dart';
 import 'engine_state.dart' show EnginePhase;
 import 'loop_mode.dart';
 import 'need_more_tracks_event.dart';
@@ -57,9 +57,9 @@ class EngineStream<T> {
   final StreamController<double> _spatializerWidthController;
   final StreamController<Reverb> _reverbController;
   final StreamController<bool> _limiterEnabledController;
-  final StreamController<List<EngineItem<T>>> _queueController;
+  final StreamController<List<AudioSource<T>>> _queueController;
   final StreamController<int> _currentIndexController;
-  final StreamController<EngineItem<T>?> _currentItemController;
+  final StreamController<AudioSource<T>?> _currentItemController;
   final StreamController<T?> _currentDataController;
   final StreamController<bool> _hasNextController;
   final StreamController<bool> _hasPreviousController;
@@ -116,9 +116,9 @@ class EngineStream<T> {
     required StreamController<double> spatializerWidthController,
     required StreamController<Reverb> reverbController,
     required StreamController<bool> limiterEnabledController,
-    required StreamController<List<EngineItem<T>>> queueController,
+    required StreamController<List<AudioSource<T>>> queueController,
     required StreamController<int> currentIndexController,
-    required StreamController<EngineItem<T>?> currentItemController,
+    required StreamController<AudioSource<T>?> currentItemController,
     required StreamController<T?> currentDataController,
     required StreamController<bool> hasNextController,
     required StreamController<bool> hasPreviousController,
@@ -315,13 +315,13 @@ class EngineStream<T> {
 
   /// Broadcast stream emitting the active queue whenever items are loaded,
   /// reordered, inserted, appended, removed, shuffled, or cleared.
-  Stream<List<EngineItem<T>>> get queue => _queueController.stream;
+  Stream<List<AudioSource<T>>> get queue => _queueController.stream;
 
   /// Broadcast stream emitting the active zero-based queue index (`-1` when empty).
   Stream<int> get currentIndex => _currentIndexController.stream;
 
-  /// Broadcast stream emitting the currently active [EngineItem] (or `null` when empty).
-  Stream<EngineItem<T>?> get currentItem => _currentItemController.stream;
+  /// Broadcast stream emitting the currently active [AudioSource] (or `null` when empty).
+  Stream<AudioSource<T>?> get currentItem => _currentItemController.stream;
 
   /// Broadcast stream emitting the caller-owned domain payload (`currentItem?.data`).
   Stream<T?> get currentData => _currentDataController.stream;

@@ -130,6 +130,13 @@ class PlayerAction {
         case CustomAudioSource s:
           await _openCustomSource(s);
       }
+      if (source.replayGainDb != null) {
+        await setReplayGain(
+          gainDb: source.replayGainDb!,
+          peak: source.replayPeak,
+          preventClipping: true,
+        );
+      }
     });
   }
 
@@ -518,7 +525,7 @@ class PlayerAction {
     Vector3? direction,
     double? minDistance,
     double? maxDistance,
-    double? rolloff,
+    double? rolloffFactor,
     double? dopplerFactor,
     double? innerAngleRad,
     double? outerAngleRad,
@@ -532,7 +539,7 @@ class PlayerAction {
       direction: direction,
       minDistance: minDistance,
       maxDistance: maxDistance,
-      rolloff: rolloff,
+      rolloffFactor: rolloffFactor,
       dopplerFactor: dopplerFactor,
       innerAngleRad: innerAngleRad,
       outerAngleRad: outerAngleRad,

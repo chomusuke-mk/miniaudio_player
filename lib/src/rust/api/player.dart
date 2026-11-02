@@ -129,6 +129,8 @@ abstract class RustPlayer implements RustOpaqueInterface {
       required BigInt requestId,
       required String errorMessage});
 
+  Future<void> openAudioSource({required RustAudioSource source});
+
   Future<void> openCustomStream(
       {required int streamId,
       BigInt? totalSize,

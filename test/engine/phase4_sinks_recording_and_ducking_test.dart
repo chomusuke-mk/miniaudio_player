@@ -48,8 +48,8 @@ void main() {
       final recordFile = File('${tempDir.path}/live_rec.wav');
 
       try {
-        await engine.action.openQueue([
-          EngineItem.from(trackA.path, data: 'Track A'),
+        await engine.action.open([
+          AudioSource(trackA.path, data: 'Track A'),
         ]);
 
         expect(engine.state.isRecording, isFalse);
@@ -101,9 +101,9 @@ void main() {
       final bounceFile = File('${tempDir.path}/offline_bounce.wav');
 
       try {
-        await engine.action.openQueue([
-          EngineItem.from(trackA.path, data: 'Track A'),
-          EngineItem.from(trackB.path, data: 'Track B'),
+        await engine.action.open([
+          AudioSource(trackA.path, data: 'Track A'),
+          AudioSource(trackB.path, data: 'Track B'),
         ]);
 
         final bytesWritten = await engine.action.offlineBounce(

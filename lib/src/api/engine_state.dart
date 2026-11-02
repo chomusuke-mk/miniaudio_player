@@ -6,7 +6,7 @@ import 'audio_device.dart';
 import 'buffered_range.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
-import 'engine_item.dart';
+import 'audio_source.dart';
 import 'loop_mode.dart';
 import 'player_state.dart' show PlaybackState;
 import 'silence_skip_config.dart';
@@ -23,7 +23,7 @@ enum EnginePhase {
   /// Queue is empty or engine has been stopped/reset. Both decks are stopped at `0.0` volume.
   idle,
 
-  /// Engine is preparing/opening a target [EngineItem] on a deck.
+  /// Engine is preparing/opening a target [AudioSource] on a deck.
   loading,
 
   /// Single active deck is playing at master volume; standby deck is stopped and silent.
@@ -98,11 +98,11 @@ class EngineState<T> {
   final double Function() _getSpatializerWidth;
   final Reverb Function() _getReverb;
   final bool Function() _getLimiterEnabled;
-  final List<EngineItem<T>> Function() _getQueue;
-  final List<EngineItem<T>> Function() _getOriginalQueue;
+  final List<AudioSource<T>> Function() _getQueue;
+  final List<AudioSource<T>> Function() _getOriginalQueue;
   final int Function() _getCurrentIndex;
-  final EngineItem<T>? Function() _getCurrentItem;
-  final EngineItem<T>? Function() _getNextItem;
+  final AudioSource<T>? Function() _getCurrentItem;
+  final AudioSource<T>? Function() _getNextItem;
   final bool Function() _getHasNext;
   final bool Function() _getHasPrevious;
   final bool Function() _getShuffle;
@@ -162,11 +162,11 @@ class EngineState<T> {
     required double Function() getSpatializerWidth,
     required Reverb Function() getReverb,
     required bool Function() getLimiterEnabled,
-    required List<EngineItem<T>> Function() getQueue,
-    required List<EngineItem<T>> Function() getOriginalQueue,
+    required List<AudioSource<T>> Function() getQueue,
+    required List<AudioSource<T>> Function() getOriginalQueue,
     required int Function() getCurrentIndex,
-    required EngineItem<T>? Function() getCurrentItem,
-    required EngineItem<T>? Function() getNextItem,
+    required AudioSource<T>? Function() getCurrentItem,
+    required AudioSource<T>? Function() getNextItem,
     required bool Function() getHasNext,
     required bool Function() getHasPrevious,
     required bool Function() getShuffle,
@@ -402,22 +402,22 @@ class EngineState<T> {
   // --------------------------------------------------------------------------
 
   /// Read-only O(1) snapshot of the active playback queue.
-  List<EngineItem<T>> get queue => _getQueue();
+  List<AudioSource<T>> get queue => _getQueue();
 
   /// Read-only O(1) snapshot of the original un-shuffled queue sequence.
-  List<EngineItem<T>> get originalQueue => _getOriginalQueue();
+  List<AudioSource<T>> get originalQueue => _getOriginalQueue();
 
   /// Current zero-based index into [queue], or `-1` if the queue is empty.
   int get currentIndex => _getCurrentIndex();
 
-  /// Currently active [EngineItem], or `null` if the queue is empty.
-  EngineItem<T>? get currentItem => _getCurrentItem();
+  /// Currently active [AudioSource], or `null` if the queue is empty.
+  AudioSource<T>? get currentItem => _getCurrentItem();
 
   /// Caller-supplied domain payload of [currentItem] (`currentItem?.data`).
   T? get currentData => _getCurrentItem()?.data;
 
-  /// Candidate next [EngineItem] according to [loopMode], or `null` if none.
-  EngineItem<T>? get nextItem => _getNextItem();
+  /// Candidate next [AudioSource] according to [loopMode], or `null` if none.
+  AudioSource<T>? get nextItem => _getNextItem();
 
   /// Whether there is a next item available in the queue (considering [loopMode] and [infiniteMixEnabled]).
   bool get hasNext => _getHasNext();

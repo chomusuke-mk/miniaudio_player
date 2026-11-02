@@ -50,7 +50,13 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
     super.didUpdateWidget(oldWidget);
     if (widget.value != oldWidget.value) {
       _currentVal = widget.value;
-      _overlayEntry?.markNeedsBuild();
+      if (_isOpen && _overlayEntry != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _isOpen) {
+            _overlayEntry?.markNeedsBuild();
+          }
+        });
+      }
     }
   }
 

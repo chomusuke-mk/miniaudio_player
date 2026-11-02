@@ -11,9 +11,8 @@ void main() {
       // Populate a 400 track queue
       final items = List.generate(
         400,
-        (i) => EngineItem.from(
+        (i) => AudioSource<String>(
           'test/fixtures/salida.wav',
-          id: i,
           data: 'Track $i',
         ),
       );

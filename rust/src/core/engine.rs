@@ -423,7 +423,7 @@ impl EngineRenderer {
 }
 
 #[derive(Clone, Debug)]
-pub struct EngineItemCore {
+pub struct AudioSourceCore {
     pub id: i64,
     pub source: String,
     pub headers: Option<Vec<crate::api::types::RustHttpHeader>>,
@@ -443,7 +443,9 @@ pub struct EngineCoordinator {
     pub crossfade_completed_flag: Arc<AtomicBool>,
     pub phase: Arc<AtomicI32>,
 
-    pub queue: Arc<RwLock<Vec<EngineItemCore>>>,
+    pub queue: Arc<RwLock<Vec<AudioSourceCore>>>,
+    pub canonical_queue: Arc<RwLock<Vec<AudioSourceCore>>>,
+    pub original_indices: Arc<RwLock<Vec<usize>>>,
     pub current_index: Arc<AtomicI64>,
     pub loop_mode: Arc<AtomicI32>, // 0: off, 1: one, 2: all
     pub shuffle_enabled: Arc<AtomicBool>,
@@ -629,6 +631,8 @@ impl EngineCoordinator {
         }
 
         let queue = Arc::new(RwLock::new(Vec::new()));
+        let canonical_queue = Arc::new(RwLock::new(Vec::new()));
+        let original_indices = Arc::new(RwLock::new(Vec::new()));
         let current_index = Arc::new(AtomicI64::new(0));
         let loop_mode = Arc::new(AtomicI32::new(0));
         let shuffle_enabled = Arc::new(AtomicBool::new(false));
@@ -651,6 +655,8 @@ impl EngineCoordinator {
             crossfade_completed_flag,
             phase,
             queue,
+            canonical_queue,
+            original_indices,
             current_index,
             loop_mode,
             shuffle_enabled,
@@ -742,24 +748,35 @@ impl EngineCoordinator {
         }
     }
 
-    pub fn append_items(&mut self, items: Vec<EngineItemCore>) {
+    pub fn append_items(&mut self, items: Vec<AudioSourceCore>) {
+        let mut can = self.canonical_queue.write().unwrap();
+        let start = can.len();
+        can.extend(items.clone());
+        let mut orig_idx = self.original_indices.write().unwrap();
+        orig_idx.extend(start..can.len());
         let mut q = self.queue.write().unwrap();
         q.extend(items);
     }
 
-    pub fn insert_next_item(&mut self, item: EngineItemCore) {
+    pub fn insert_next_item(&mut self, item: AudioSourceCore) {
         let mut q = self.queue.write().unwrap();
         let cur = self.current_index.load(Ordering::Relaxed);
         let insert_idx = ((cur + 1).max(0) as usize).min(q.len());
         q.insert(insert_idx, item);
     }
 
-    pub fn remove_item_at(&mut self, index: usize) -> Option<EngineItemCore> {
+    pub fn remove_item_at(&mut self, index: usize) -> Option<AudioSourceCore> {
         let mut q = self.queue.write().unwrap();
         if index >= q.len() {
             return None;
         }
         let removed = q.remove(index);
+        {
+            let mut can = self.canonical_queue.write().unwrap();
+            can.retain(|it| it.id != removed.id);
+            let n = can.len();
+            *self.original_indices.write().unwrap() = (0..n).collect();
+        }
         let cur = self.current_index.load(Ordering::Relaxed);
         if (index as i64) < cur {
             self.current_index.store(cur - 1, Ordering::Release);
@@ -799,12 +816,16 @@ impl EngineCoordinator {
     }
 
     pub fn clear_items(&mut self, keep_current: bool) {
+        self.canonical_queue.write().unwrap().clear();
+        self.original_indices.write().unwrap().clear();
         let mut q = self.queue.write().unwrap();
         let cur = self.current_index.load(Ordering::Relaxed);
         if keep_current && cur >= 0 && (cur as usize) < q.len() {
             let current_item = q[cur as usize].clone();
             q.clear();
-            q.push(current_item);
+            q.push(current_item.clone());
+            self.canonical_queue.write().unwrap().push(current_item);
+            self.original_indices.write().unwrap().push(0);
             self.current_index.store(0, Ordering::Release);
         } else {
             q.clear();

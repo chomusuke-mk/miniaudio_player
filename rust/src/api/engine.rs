@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::core::engine::{
-    EngineCoordinator, EngineItemCore, ENGINE_PHASE_AUTO_CROSSFADING, ENGINE_PHASE_COMPLETED,
+    AudioSourceCore, EngineCoordinator, ENGINE_PHASE_AUTO_CROSSFADING, ENGINE_PHASE_COMPLETED,
     ENGINE_PHASE_IDLE, ENGINE_PHASE_MANUAL_CROSSFADING, ENGINE_PHASE_PAUSED, ENGINE_PHASE_PLAYING,
 };
 use crate::core::player::{
@@ -30,11 +30,11 @@ fn emit_event(sink_lock: &Arc<Mutex<Option<StreamSink<RustEngineEvent>>>>, event
     }
 }
 
-fn queue_to_rust_items(q: &[EngineItemCore]) -> Vec<RustEngineItem> {
-    q.iter().map(RustEngineItem::from).collect()
+fn queue_to_rust_sources(q: &[AudioSourceCore]) -> Vec<RustAudioSource> {
+    q.iter().map(RustAudioSource::from).collect()
 }
 
-fn open_item_on_deck(deck: &mut PlayerCoordinator, item: &EngineItemCore) -> i32 {
+fn open_source_on_deck(deck: &mut PlayerCoordinator, item: &AudioSourceCore) -> i32 {
     if let Some(ref data) = item.data_bytes {
         let ext_hint = FormatSniffer::extract_extension_hint(&item.source);
         deck.open_memory_with_hint(data, ext_hint)
@@ -202,7 +202,7 @@ impl EngineMonitorWorker {
             let item_opt = coord.queue.read().unwrap().get(next_idx).cloned();
             if let Some(item) = item_opt {
                 let to_deck = if snap.active_deck == 0 { 1 } else { 0 };
-                let open_res = open_item_on_deck(coord.standby_deck_mut(), &item);
+                let open_res = open_source_on_deck(coord.standby_deck_mut(), &item);
                 if open_res != 0 {
                     crate::map_log!(
                         1,
@@ -366,7 +366,7 @@ impl EngineMonitorWorker {
                 buf.truncate(copied);
                 if !buf.is_empty() {
                     let q = coord.queue.read().unwrap();
-                    let mut q_items = queue_to_rust_items(&q);
+                    let mut q_items = queue_to_rust_sources(&q);
                     if let Some(item) = q_items.get_mut(snap.current_idx as usize) {
                         item.data_bytes = Some(buf);
                         emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
@@ -507,7 +507,7 @@ impl RustEngine {
     fn emit_queue_and_index(&self, coord: &EngineCoordinator, emit_index: bool) {
         let q_items = {
             let q = coord.queue.read().unwrap();
-            queue_to_rust_items(&q)
+            queue_to_rust_sources(&q)
         };
         emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
         if emit_index {
@@ -531,7 +531,7 @@ impl RustEngine {
             if prev_idx != 0 {
                 let item_opt = coord.queue.read().unwrap().first().cloned();
                 if let Some(item) = item_opt {
-                    open_item_on_deck(coord.active_deck_mut(), &item);
+                    open_source_on_deck(coord.active_deck_mut(), &item);
                 }
             } else {
                 coord.active_deck_mut().seek(0);
@@ -642,7 +642,7 @@ impl RustEngine {
         crate::map_log!(4, "seek -> position_ms={}", position_ms);
     }
 
-    pub fn set_queue(&self, items: Vec<RustEngineItem>, start_index: Option<usize>) {
+    pub fn set_queue(&self, items: Vec<RustAudioSource>, start_index: Option<usize>) {
         let mut coord = self.coordinator.lock().unwrap();
         coord.crossfade.abort();
         coord
@@ -654,16 +654,31 @@ impl RustEngine {
         coord.deck_a.stop();
         coord.deck_b.stop();
 
-        let core_items: Vec<EngineItemCore> = items.into_iter().map(EngineItemCore::from).collect();
+        let core_items: Vec<AudioSourceCore> = items.into_iter().map(AudioSourceCore::from).collect();
+        let n = core_items.len();
+        let orig_indices: Vec<usize> = (0..n).collect();
 
-        *coord.queue.write().unwrap() = core_items.clone();
-        let mut q_items = queue_to_rust_items(&core_items);
+        *coord.canonical_queue.write().unwrap() = core_items.clone();
+        *coord.original_indices.write().unwrap() = orig_indices.clone();
+
+        let active_items = if coord.shuffle_enabled.load(Ordering::Relaxed) && n > 1 {
+            use rand::seq::SliceRandom;
+            let mut copy_indices = orig_indices.clone();
+            let mut rng = rand::thread_rng();
+            copy_indices.shuffle(&mut rng);
+            copy_indices.iter().map(|&i| core_items[i].clone()).collect()
+        } else {
+            core_items
+        };
+
+        *coord.queue.write().unwrap() = active_items.clone();
+        let mut q_items = queue_to_rust_sources(&active_items);
 
         if let Some(idx) = start_index {
-            if idx < core_items.len() {
+            if idx < active_items.len() {
                 coord.current_index.store(idx as i64, Ordering::Release);
-                let item = &core_items[idx];
-                open_item_on_deck(coord.active_deck_mut(), item);
+                let item = &active_items[idx];
+                open_source_on_deck(coord.active_deck_mut(), item);
                 coord.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
                 let dur = coord.active_deck_ref().duration_ms.load(Ordering::Relaxed);
                 if dur > 0 {
@@ -694,16 +709,16 @@ impl RustEngine {
         emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
     }
 
-    pub fn append(&self, items: Vec<RustEngineItem>) {
+    pub fn append(&self, items: Vec<RustAudioSource>) {
         let mut coord = self.coordinator.lock().unwrap();
-        let core_items: Vec<EngineItemCore> = items.into_iter().map(EngineItemCore::from).collect();
+        let core_items: Vec<AudioSourceCore> = items.into_iter().map(AudioSourceCore::from).collect();
         coord.append_items(core_items);
         self.emit_queue_and_index(&coord, false);
     }
 
-    pub fn insert_next(&self, item: RustEngineItem) {
+    pub fn insert_next(&self, item: RustAudioSource) {
         let mut coord = self.coordinator.lock().unwrap();
-        coord.insert_next_item(EngineItemCore::from(item));
+        coord.insert_next_item(AudioSourceCore::from(item));
         self.emit_queue_and_index(&coord, false);
     }
 
@@ -742,10 +757,10 @@ impl RustEngine {
     }
 
     #[flutter_rust_bridge::frb(sync)]
-    pub fn get_queue(&self) -> Vec<RustEngineItem> {
+    pub fn get_queue(&self) -> Vec<RustAudioSource> {
         let coord = self.coordinator.lock().unwrap();
         let q = coord.queue.read().unwrap();
-        queue_to_rust_items(&q)
+        queue_to_rust_sources(&q)
     }
 
     #[flutter_rust_bridge::frb(sync)]
@@ -913,7 +928,7 @@ impl RustEngine {
             || cur_phase == ENGINE_PHASE_MANUAL_CROSSFADING;
 
         if !was_playing {
-            open_item_on_deck(coord.active_deck_mut(), &item);
+            open_source_on_deck(coord.active_deck_mut(), &item);
             coord.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
             emit_event(
                 &self.event_sink,
@@ -923,7 +938,7 @@ impl RustEngine {
         }
 
         let standby_id = if active_id == 0 { 1 } else { 0 };
-        open_item_on_deck(coord.standby_deck_mut(), &item);
+        open_source_on_deck(coord.standby_deck_mut(), &item);
         coord.standby_deck_mut().play();
 
         let dur_ms = crossfade_duration_ms
@@ -1118,6 +1133,7 @@ impl RustEngine {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_loop_mode(&self, mode: i32) {
+        crate::map_log!(3, "set_loop_mode(mode={})", mode);
         let coord = self.coordinator.lock().unwrap();
         coord.loop_mode.store(mode, Ordering::Release);
         emit_event(&self.event_sink, RustEngineEvent::LoopMode(mode));
@@ -1125,9 +1141,59 @@ impl RustEngine {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_shuffle(&self, enabled: bool) {
+        crate::map_log!(3, "set_shuffle(enabled={})", enabled);
         let coord = self.coordinator.lock().unwrap();
-        coord.shuffle_enabled.store(enabled, Ordering::Release);
+        let was_enabled = coord.shuffle_enabled.swap(enabled, Ordering::AcqRel);
         emit_event(&self.event_sink, RustEngineEvent::Shuffle(enabled));
+
+        if was_enabled == enabled {
+            return;
+        }
+
+        use rand::seq::SliceRandom;
+
+        let canonical = coord.canonical_queue.read().unwrap();
+        let n = canonical.len();
+        if n == 0 {
+            return;
+        }
+
+        let cur_idx = coord.current_index.load(Ordering::Relaxed);
+        let cur_id = {
+            let q = coord.queue.read().unwrap();
+            if cur_idx >= 0 && (cur_idx as usize) < q.len() {
+                Some(q[cur_idx as usize].id)
+            } else {
+                None
+            }
+        };
+
+        let active_items: Vec<AudioSourceCore> = if enabled {
+            // Orden original como lista de indices
+            let original_indices = coord.original_indices.read().unwrap();
+            // Luego una copia de indices
+            let mut copy_indices = original_indices.clone();
+            // Al activar el shuffle se haria lista.shuffle de la copia de indices
+            let mut rng = rand::thread_rng();
+            copy_indices.shuffle(&mut rng);
+            copy_indices.iter().map(|&i| canonical[i].clone()).collect()
+        } else {
+            // Al apagar el shuffle se restaura el orden original
+            let original_indices = coord.original_indices.read().unwrap();
+            original_indices.iter().map(|&i| canonical[i].clone()).collect()
+        };
+
+        *coord.queue.write().unwrap() = active_items.clone();
+
+        if let Some(id) = cur_id {
+            if let Some(new_pos) = active_items.iter().position(|it| it.id == id) {
+                coord.current_index.store(new_pos as i64, Ordering::Release);
+                emit_event(&self.event_sink, RustEngineEvent::CurrentIndex(new_pos as i32));
+            }
+        }
+
+        let q_items = queue_to_rust_sources(&active_items);
+        emit_event(&self.event_sink, RustEngineEvent::QueueChanged(q_items));
     }
 
     #[flutter_rust_bridge::frb(sync)]

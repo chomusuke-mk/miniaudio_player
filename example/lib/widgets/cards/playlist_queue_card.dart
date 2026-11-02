@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import '../../controllers/audio_engine_controller.dart';
+import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
 import '../common/add_source_dialog.dart';
 import '../common/compact_slider_overlay.dart';
@@ -18,7 +19,6 @@ class PlaylistQueueCard extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         final tracks = controller.availableTracks;
-        final selectedTrack = controller.selectedTrack;
         final xfade = controller.crossfadeConfig;
 
         return StudioCard(
@@ -143,120 +143,156 @@ class PlaylistQueueCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: StudioColors.cardBorder, width: 1.0),
                 ),
-                child: tracks.isEmpty
-                    ? const Center(
+                child: StreamBuilder<List<AudioSource<AudioTrack>>>(
+                  stream: controller.engine.stream.queue,
+                  initialData: controller.engine.state.queue,
+                  builder: (context, queueSnap) {
+                    final queue = queueSnap.data ?? [];
+                    final tracks = queue.isNotEmpty
+                        ? queue.where((e) => e.data != null).map((e) => e.data!).toList()
+                        : controller.availableTracks;
+
+                    if (tracks.isEmpty) {
+                      return const Center(
                         child: Text(
                           'Queue is empty. Add tracks with the + button',
                           style: TextStyle(color: StudioColors.textMuted, fontSize: 11),
                         ),
-                      )
-                    : Theme(
-                        data: Theme.of(context).copyWith(
-                          canvasColor: const Color(0xFF10162A),
-                        ),
-                        child: ReorderableListView.builder(
-                          buildDefaultDragHandles: false,
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          itemCount: tracks.length,
-                          onReorderItem: controller.reorderTrack,
-                          itemBuilder: (context, index) {
-                            final track = tracks[index];
-                            final isPlayingThis = track.id == selectedTrack?.id;
+                      );
+                    }
 
-                            return Padding(
-                              key: ValueKey(track.id),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              child: Material(
-                                color: isPlayingThis
-                                    ? const Color(0xFF152238)
-                                    : const Color(0xFF0C1222),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(6),
-                                  side: BorderSide(
-                                    color: isPlayingThis
-                                        ? StudioColors.accentCyan
-                                        : StudioColors.cardBorder,
-                                    width: isPlayingThis ? 1.2 : 0.8,
-                                  ),
+                    return StreamBuilder<int>(
+                      stream: controller.engine.stream.currentIndex,
+                      initialData: controller.engine.state.currentIndex,
+                      builder: (context, idxSnap) {
+                        final currentIdx = idxSnap.data ?? controller.engine.state.currentIndex;
+
+                        return Theme(
+                          data: Theme.of(context).copyWith(
+                            canvasColor: const Color(0xFF10162A),
+                          ),
+                          child: ReorderableListView.builder(
+                            buildDefaultDragHandles: false,
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            itemCount: tracks.length,
+                            onReorderItem: controller.reorderTrack,
+                            itemBuilder: (context, index) {
+                              final track = tracks[index];
+                              final isPlayingThis = index == currentIdx;
+                              final itemKey = queue.isNotEmpty && index < queue.length
+                                  ? 'q_${queue[index].id ?? index}_${track.id}'
+                                  : 'track_${track.id}_$index';
+
+                              return Padding(
+                                key: ValueKey(itemKey),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
                                 ),
-                                child: ListTile(
-                                  dense: true,
-                                  visualDensity: VisualDensity.compact,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 0,
+                                child: Material(
+                                  color: isPlayingThis
+                                      ? const Color(0xFF152238)
+                                      : const Color(0xFF0C1222),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                    side: BorderSide(
+                                      color: isPlayingThis
+                                          ? StudioColors.accentCyan
+                                          : StudioColors.cardBorder,
+                                      width: isPlayingThis ? 1.2 : 0.8,
+                                    ),
                                   ),
-                                  leading: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ReorderableDragStartListener(
-                                        index: index,
-                                        child: MouseRegion(
-                                          cursor: SystemMouseCursors.grab,
-                                          child: const Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              horizontal: 2,
-                                              vertical: 4,
-                                            ),
-                                            child: Icon(
-                                              Icons.drag_indicator,
-                                              size: 18,
-                                              color: StudioColors.textMuted,
+                                  child: ListTile(
+                                    dense: true,
+                                    visualDensity: VisualDensity.compact,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 0,
+                                    ),
+                                    leading: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ReorderableDragStartListener(
+                                          index: index,
+                                          child: MouseRegion(
+                                            cursor: SystemMouseCursors.grab,
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: 2,
+                                                vertical: 4,
+                                              ),
+                                              child: Icon(
+                                                Icons.drag_indicator,
+                                                size: 18,
+                                                color: StudioColors.textMuted,
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Icon(
-                                        isPlayingThis
-                                            ? Icons.equalizer
-                                            : track.icon,
-                                        size: 18,
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '${index + 1}'.padLeft(2, '0'),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: isPlayingThis
+                                                ? StudioColors.accentCyan
+                                                : StudioColors.textMuted,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Icon(
+                                          isPlayingThis
+                                              ? Icons.equalizer
+                                              : track.icon,
+                                          size: 18,
+                                          color: isPlayingThis
+                                              ? StudioColors.accentCyan
+                                              : track.iconColor,
+                                        ),
+                                      ],
+                                    ),
+                                    title: Text(
+                                      track.title,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: isPlayingThis
+                                            ? FontWeight.bold
+                                            : FontWeight.w500,
                                         color: isPlayingThis
                                             ? StudioColors.accentCyan
-                                            : track.iconColor,
+                                            : Colors.white,
                                       ),
-                                    ],
-                                  ),
-                                  title: Text(
-                                    track.title,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: isPlayingThis
-                                        ? FontWeight.bold
-                                        : FontWeight.w500,
-                                      color: isPlayingThis
-                                          ? StudioColors.accentCyan
-                                          : Colors.white,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Text(
-                                    track.artist ?? 'Audio Track',
-                                    style: const TextStyle(
-                                      fontSize: 9,
-                                      color: StudioColors.textSecondary,
+                                    subtitle: Text(
+                                      track.artist ?? 'Audio Track',
+                                      style: const TextStyle(
+                                        fontSize: 9,
+                                        color: StudioColors.textSecondary,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                    trailing: StudioBadge(
+                                      label: track.resourceBadge,
+                                      color: track.iconColor,
+                                    ),
+                                    onTap: () async {
+                                      await controller.engine.action.skipToIndex(index);
+                                      await controller.engine.action.play();
+                                    },
                                   ),
-                                  trailing: StudioBadge(
-                                    label: track.resourceBadge,
-                                    color: track.iconColor,
-                                  ),
-                                  onTap: () {
-                                    controller.selectTrack(track, autoPlay: true);
-                                  },
                                 ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
             ],
           ),

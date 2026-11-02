@@ -212,4 +212,33 @@ void main() {
       await player.dispose();
     }
   });
+
+  group('AudioSource generic specialization and type casting', () {
+    test('AudioSource factory re-specializes generic type without runtime cast exception', () {
+      // Create an untyped / dynamic AudioSource
+      final AudioSource rawSource = AudioSource('test/fixtures/salida.mp3');
+      expect(rawSource, isA<UriAudioSource>());
+
+      // Re-wrap with specific type parameter AudioSource<Map<String, String>>
+      final dataMap = {'artist': 'Test Artist', 'track': 'Salida'};
+      final specializedSource = AudioSource<Map<String, String>>(
+        rawSource,
+        data: dataMap,
+        replayGainDb: -3.5,
+        replayPeak: 0.98,
+      );
+
+      expect(specializedSource, isA<AudioSource<Map<String, String>>>());
+      expect(specializedSource.data, equals(dataMap));
+      expect(specializedSource.replayGainDb, equals(-3.5));
+      expect(specializedSource.replayPeak, equals(0.98));
+
+      // Test withData<R> helper
+      final reTyped = specializedSource.withData<int>(42);
+      expect(reTyped, isA<AudioSource<int>>());
+      expect(reTyped.data, equals(42));
+      expect(reTyped.replayGainDb, equals(-3.5));
+      expect(reTyped.replayPeak, equals(0.98));
+    });
+  });
 }

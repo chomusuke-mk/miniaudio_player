@@ -65,7 +65,7 @@ void main() {
     await serverProcess?.exitCode;
   });
 
-  group('2.3 Network & Web Audio: Strict Separation of open / openQueue and play()', () {
+  group('2.3 Network & Web Audio: Strict Separation of open and play()', () {
     late MiniaudioEngine<String> engine;
 
     setUp(() {
@@ -78,10 +78,10 @@ void main() {
       }
     });
 
-    test('openQueue only prepares queue and leaves engine paused (state.playing == false)', () async {
+    test('open only prepares queue and leaves engine paused (state.playing == false)', () async {
       await engine.action.open([
-        EngineItem.from(localWavFile1.path, data: 'Track 1'),
-        EngineItem.from(localWavFile2.path, data: 'Track 2'),
+        AudioSource(localWavFile1.path, data: 'Track 1'),
+        AudioSource(localWavFile2.path, data: 'Track 2'),
       ]);
 
       expect(engine.state.playing, isFalse);
@@ -96,27 +96,27 @@ void main() {
 
     test('openFile, openMemory, and openUrl leave engine paused without autoplay', () async {
       // 1. openFile
-      await engine.action.open([EngineItem.from(localWavFile1.path)]);
+      await engine.action.open([AudioSource(localWavFile1.path)]);
       expect(engine.state.playing, isFalse);
       expect(engine.state.phase, equals(EnginePhase.paused));
 
       // 2. openMemory
-      await engine.action.open([EngineItem.from(memoryWavBytes)]);
+      await engine.action.open([AudioSource(memoryWavBytes)]);
       expect(engine.state.playing, isFalse);
       expect(engine.state.phase, equals(EnginePhase.paused));
 
       // 3. openUrl
       final url = Uri.parse('http://127.0.0.1:$serverPort/music/salida.mp3');
-      await engine.action.open([EngineItem.from(url)]);
+      await engine.action.open([AudioSource(url)]);
       expect(engine.state.playing, isFalse);
       expect(engine.state.phase, equals(EnginePhase.paused));
     });
 
     test('skipToIndex preserves current playback state (paused stays paused, playing stays playing)', () async {
       await engine.action.open([
-        EngineItem.from(localWavFile1.path, data: 'Track 1'),
-        EngineItem.from(localWavFile2.path, data: 'Track 2'),
-        EngineItem.from(memoryWavBytes, data: 'Track 3'),
+        AudioSource(localWavFile1.path, data: 'Track 1'),
+        AudioSource(localWavFile2.path, data: 'Track 2'),
+        AudioSource(memoryWavBytes, data: 'Track 3'),
       ]);
 
       // While paused, skipToIndex stays paused
@@ -167,8 +167,8 @@ void main() {
     test('LiveStreamAudioSource reports isLiveStream == true and seek is a safe no-op', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.open([
-        EngineItem<String>(
-          source: AudioSource(liveUri),
+        AudioSource<String>(
+          liveUri,
           data: 'Live Radio',
         ),
       ]);
@@ -186,8 +186,8 @@ void main() {
     test('previous() on livestream bypasses 3-second restartThreshold and steps back', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.open([
-        EngineItem.from(localWavFile1.path, data: 'Local Track 1'),
-        EngineItem(source: AudioSource(liveUri), data: 'Live Radio 2'),
+        AudioSource(localWavFile1.path, data: 'Local Track 1'),
+        AudioSource(liveUri, data: 'Live Radio 2'),
       ], startIndex: 1);
 
       await engine.action.play();
@@ -205,8 +205,8 @@ void main() {
     test('manual crossfade between livestream and local file runs smoothly', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.open([
-        EngineItem(source: AudioSource(liveUri), data: 'Live Stream'),
-        EngineItem.from(localWavFile1.path, data: 'Local File'),
+        AudioSource(liveUri, data: 'Live Stream'),
+        AudioSource(localWavFile1.path, data: 'Local File'),
       ]);
 
       await engine.action.play();
@@ -242,13 +242,13 @@ void main() {
 
     test('ReplayGain metadata applied to deck on open without altering master volume', () async {
       await engine.action.open([
-        EngineItem.from(
+        AudioSource(
           localWavFile1.path,
           data: 'Track with RG',
           replayGainDb: -6.0,
           replayPeak: 0.95,
         ),
-        EngineItem.from(
+        AudioSource(
           localWavFile2.path,
           data: 'Track without RG',
         ),
@@ -271,7 +271,7 @@ void main() {
 
     test('setVolumeNormalization(false) clears ReplayGain, true restores it', () async {
       await engine.action.open([
-        EngineItem<String>.from(
+        AudioSource<String>(
           localWavFile1.path,
           replayGainDb: -4.5,
           replayPeak: 0.88,
@@ -297,11 +297,11 @@ void main() {
       expect(engine.state.defaultReplayGain, closeTo(-5.0, 1e-2));
 
       await engine.action.open([
-        EngineItem.from(
+        AudioSource(
           localWavFile1.path,
           data: 'Track without RG',
         ),
-        EngineItem.from(
+        AudioSource(
           localWavFile2.path,
           data: 'Track with RG',
           replayGainDb: -8.0,
@@ -318,12 +318,12 @@ void main() {
 
     test('forcedReplayGain forces uniform gain across all tracks, ignoring metadata', () async {
       await engine.action.open([
-        EngineItem.from(
+        AudioSource(
           localWavFile1.path,
           data: 'Track 1',
           replayGainDb: -3.0,
         ),
-        EngineItem.from(
+        AudioSource(
           localWavFile2.path,
           data: 'Track 2',
           replayGainDb: -10.0,
@@ -351,7 +351,7 @@ void main() {
 
     test('Preamp and ReplayGain are completely decoupled and do not clobber each other', () async {
       await engine.action.open([
-        EngineItem<String>.from(
+        AudioSource<String>(
           localWavFile1.path,
           replayGainDb: -6.0,
         ),
@@ -393,8 +393,8 @@ void main() {
 
     test('DSP settings (equalizer, reverb, preamp, balance, mono, crossfeed, limiter) persist across deck swaps', () async {
       await engine.action.open([
-        EngineItem.from(localWavFile1.path, data: 'Track 1'),
-        EngineItem.from(localWavFile2.path, data: 'Track 2'),
+        AudioSource(localWavFile1.path, data: 'Track 1'),
+        AudioSource(localWavFile2.path, data: 'Track 2'),
       ]);
 
       // Apply various DSP settings
@@ -436,8 +436,8 @@ void main() {
 
     test('Visualizer FFT computation enables only when listened and stays false on standby deck', () async {
       await engine.action.open([
-        EngineItem.from(localWavFile1.path, data: 'Track 1'),
-        EngineItem.from(localWavFile2.path, data: 'Track 2'),
+        AudioSource(localWavFile1.path, data: 'Track 1'),
+        AudioSource(localWavFile2.path, data: 'Track 2'),
       ]);
 
       // Initially no listeners -> visualizerEnabled is false

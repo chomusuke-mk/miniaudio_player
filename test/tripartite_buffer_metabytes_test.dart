@@ -338,7 +338,7 @@ void main() {
       });
 
       final url = 'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
-      await engine.action.open([EngineItem.from(Uri.parse(url))]);
+      await engine.action.open([AudioSource(Uri.parse(url))]);
       await engine.action.play();
 
       int waitMs = 0;

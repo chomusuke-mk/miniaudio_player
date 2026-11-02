@@ -366,7 +366,7 @@ impl Default for RustCrossfadeConfig {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RustEngineItem {
+pub struct RustAudioSource {
     pub id: i64,
     pub source: String,
     pub headers: Option<Vec<RustHttpHeader>>,
@@ -375,8 +375,8 @@ pub struct RustEngineItem {
     pub replay_peak: Option<f32>,
 }
 
-impl From<RustEngineItem> for crate::core::engine::EngineItemCore {
-    fn from(it: RustEngineItem) -> Self {
+impl From<RustAudioSource> for crate::core::engine::AudioSourceCore {
+    fn from(it: RustAudioSource) -> Self {
         Self {
             id: it.id,
             source: it.source,
@@ -388,8 +388,8 @@ impl From<RustEngineItem> for crate::core::engine::EngineItemCore {
     }
 }
 
-impl From<&crate::core::engine::EngineItemCore> for RustEngineItem {
-    fn from(it: &crate::core::engine::EngineItemCore) -> Self {
+impl From<&crate::core::engine::AudioSourceCore> for RustAudioSource {
+    fn from(it: &crate::core::engine::AudioSourceCore) -> Self {
         Self {
             id: it.id,
             source: it.source.clone(),
@@ -411,7 +411,7 @@ pub enum RustEngineEvent {
     IsBuffering(bool),
     IsCompleted(bool),
     CurrentIndex(i32),
-    QueueChanged(Vec<RustEngineItem>),
+    QueueChanged(Vec<RustAudioSource>),
     NeedMoreTracks {
         current_track_id: i64,
         remaining_tracks: usize,

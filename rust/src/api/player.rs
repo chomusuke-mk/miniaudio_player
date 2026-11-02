@@ -231,6 +231,27 @@ impl RustPlayer {
         check_map_result(res, "open_memory")
     }
 
+    pub fn open_audio_source(&self, source: RustAudioSource) -> Result<(), String> {
+        crate::map_log!(3, "RustPlayer::open_audio_source: {}", source.source);
+        let res = if let Some(ref data) = source.data_bytes {
+            let ext_hint = crate::decoder::FormatSniffer::extract_extension_hint(&source.source);
+            self.inner.lock().unwrap().open_memory_with_hint(data, ext_hint)
+        } else {
+            self.inner
+                .lock()
+                .unwrap()
+                .open_source(&source.source, source.headers.as_deref())
+        };
+        let ret = check_map_result(res, "open_audio_source");
+        if ret.is_ok() {
+            if let Some(gain_db) = source.replay_gain_db {
+                let peak = source.replay_peak.unwrap_or(1.0);
+                self.inner.lock().unwrap().set_replay_gain(gain_db, peak, 1);
+            }
+        }
+        ret
+    }
+
     pub fn open_custom_stream(
         &self,
         stream_id: u32,

@@ -52,17 +52,11 @@ enum MiniaudioLogLevel {
   /// Disables all native logging output (`0`).
   none(0),
 
-  /// Alias for [none] (`0`).
-  off(0),
-
   /// Logs only unrecoverable or critical native errors (`1`).
   error(1),
 
   /// Logs errors and non-fatal warnings (`2`).
   warning(2),
-
-  /// Alias for [warning] (`2`).
-  warn(2),
 
   /// Logs high-level lifecycle events (device init, open, seek, stop) (`3`).
   info(3),
@@ -458,34 +452,6 @@ class MiniaudioPlayer {
     }
     return _globalConfig;
   }
-
-  /// Alias for [config].
-  static MiniaudioPlayerGlobalConfig configure({
-    int? defaultBufferSize,
-    MiniaudioLogLevel? logLevel,
-    AudioDevice? defaultAudioDevice,
-    DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
-    Duration? bufferLocalDuration,
-    Duration? bufferNetworkDuration,
-    Duration? bufferLiveStreamDuration,
-    Duration? bufferBehindLocalDuration,
-    Duration? bufferBehindNetworkDuration,
-    Duration? bufferBehindLiveStreamDuration,
-    AssetBytesLoader? assetLoader,
-  }) =>
-      config(
-        defaultBufferSize: defaultBufferSize,
-        logLevel: logLevel,
-        defaultAudioDevice: defaultAudioDevice,
-        defaultDeviceDisplayNameResolver: defaultDeviceDisplayNameResolver,
-        bufferLocalDuration: bufferLocalDuration,
-        bufferNetworkDuration: bufferNetworkDuration,
-        bufferLiveStreamDuration: bufferLiveStreamDuration,
-        bufferBehindLocalDuration: bufferBehindLocalDuration,
-        bufferBehindNetworkDuration: bufferBehindNetworkDuration,
-        bufferBehindLiveStreamDuration: bufferBehindLiveStreamDuration,
-        assetLoader: assetLoader,
-      );
 
   /// Resets global configuration to factory defaults.
   static void resetGlobalConfig() {

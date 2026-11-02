@@ -18,23 +18,15 @@ class EngineAction<T> {
   /// Replaces the queue with [items] and prepares the initial entry at [startIndex]
   /// without starting playback. Call [play] to start playback.
   Future<void> open(
-    List<EngineItem<T>> items, {
+    List<AudioSource<T>> items, {
     int? startIndex,
     bool shuffle = false,
   }) =>
-      _engine._openQueue(
+      _engine._open(
         items,
         startIndex: startIndex,
         shuffle: shuffle,
       );
-
-  /// Alias for [open]. Replaces the queue with [items] and prepares the entry at [startIndex].
-  Future<void> openQueue(
-    List<EngineItem<T>> items, {
-    int? startIndex,
-    bool shuffle = false,
-  }) =>
-      open(items, startIndex: startIndex, shuffle: shuffle);
 
   // --------------------------------------------------------------------------
   // Transport Controls
@@ -45,9 +37,6 @@ class EngineAction<T> {
 
   /// Pauses playback of the active deck (and freezes any active crossfade ramp).
   Future<void> pause() => _engine._pause();
-
-  /// Toggles between [play] and [pause].
-  Future<void> togglePlayPause() => _engine._togglePlayPause();
 
   /// Stops playback on both decks and resets position to the beginning.
   Future<void> stop() => _engine._stop();
@@ -70,10 +59,10 @@ class EngineAction<T> {
   Future<void> skipToIndex(int index) => _engine._skipToIndex(index);
 
   /// Inserts [item] immediately after the currently playing item.
-  Future<void> insertNext(EngineItem<T> item) => _engine._insertNext(item);
+  Future<void> insertNext(AudioSource<T> item) => _engine._insertNext(item);
 
   /// Appends [items] to the end of the active queue.
-  Future<void> append(List<EngineItem<T>> items) => _engine._append(items);
+  Future<void> append(List<AudioSource<T>> items) => _engine._append(items);
 
   /// Removes the item at [index] from the queue.
   Future<void> removeAt(int index) => _engine._removeAt(index);
@@ -92,14 +81,8 @@ class EngineAction<T> {
   /// Explicitly enables or disables Fisher-Yates shuffle mode.
   Future<void> setShuffle(bool enabled) => _engine._setShuffle(enabled);
 
-  /// Toggles Fisher-Yates shuffle mode on or off.
-  Future<bool> toggleShuffle() => _engine._toggleShuffle();
-
   /// Sets the queue repeat policy ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
   Future<void> setLoopMode(LoopMode mode) => _engine._setLoopMode(mode);
-
-  /// Cycles the queue repeat policy in order: `off -> all -> one -> off`.
-  Future<LoopMode> cycleLoopMode() => _engine._cycleLoopMode();
 
   /// Updates the complete [CrossfadeConfig] (automatic duration, manual
   /// duration, and interpolation curve).
@@ -130,7 +113,7 @@ class EngineAction<T> {
       _engine._setVolumeNormalization(enabled);
 
   /// Sets the default fallback ReplayGain in decibels applied to queue items that
-  /// do not specify their own [EngineItem.replayGainDb].
+  /// do not specify their own [AudioSource.replayGainDb].
   Future<void> setDefaultReplayGain(double gainDb) =>
       _engine._setDefaultReplayGain(gainDb);
 
@@ -274,7 +257,7 @@ class EngineAction<T> {
     Vector3? direction,
     double? minDistance,
     double? maxDistance,
-    double? rolloff,
+    double? rolloffFactor,
     double? dopplerFactor,
     double? innerAngleRad,
     double? outerAngleRad,
@@ -287,7 +270,7 @@ class EngineAction<T> {
       direction: direction,
       minDistance: minDistance,
       maxDistance: maxDistance,
-      rolloff: rolloff,
+      rolloffFactor: rolloffFactor,
       dopplerFactor: dopplerFactor,
       innerAngleRad: innerAngleRad,
       outerAngleRad: outerAngleRad,

@@ -40,7 +40,7 @@ class PlaybackEngineCard extends StatelessWidget {
           icon: Icons.graphic_eq,
           title: 'HIGH-RES AUDIO PLAYBACK ENGINE',
           subtitle: 'Dual-Deck Hardware Threads • Sonic DSP Varispeed',
-          trailing: StreamBuilder<EngineItem<AudioTrack>?>(
+          trailing: StreamBuilder<AudioSource<AudioTrack>?>(
             stream: engine.stream.currentItem,
             initialData: engine.state.currentItem,
             builder: (context, currentSnap) {
@@ -64,7 +64,7 @@ class PlaybackEngineCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // 1. Current Track Display (No dropdown, clean active track banner)
-              StreamBuilder<EngineItem<AudioTrack>?>(
+              StreamBuilder<AudioSource<AudioTrack>?>(
                 stream: engine.stream.currentItem,
                 initialData: engine.state.currentItem,
                 builder: (context, currentSnap) {
@@ -247,84 +247,114 @@ class PlaybackEngineCard extends StatelessWidget {
               // 3. Playback Controls Row: Left (Transport) & Right (Vol, Speed, Pitch Overlays)
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final isNarrow = constraints.maxWidth < 460;
+                  final isNarrow = constraints.maxWidth < 560;
 
                   // Left Controls: prev, play/pause, next, stop, random, loop
-                  final leftControls = StreamBuilder<PlaybackState>(
-                    stream: engine.stream.playbackState,
-                    initialData: engine.state.playbackState,
-                    builder: (context, stateSnap) {
-                      final state = stateSnap.data ?? PlaybackState.stopped;
-                      final isPlaying = state == PlaybackState.playing;
+                  final leftControls = SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: StreamBuilder<PlaybackState>(
+                      stream: engine.stream.playbackState,
+                      initialData: engine.state.playbackState,
+                      builder: (context, stateSnap) {
+                        final state = stateSnap.data ?? PlaybackState.stopped;
+                        final isPlaying = state == PlaybackState.playing;
 
-                      return Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.skip_previous, size: 20),
-                            color: StudioColors.textPrimary,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Previous',
-                            onPressed: controller.previousTrack,
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              isPlaying
-                                  ? Icons.pause_circle_filled
-                                  : Icons.play_circle_filled,
-                              size: 32,
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.skip_previous, size: 20),
+                              color: StudioColors.textPrimary,
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              tooltip: 'Previous',
+                              onPressed: controller.previousTrack,
                             ),
-                            color: StudioColors.accentCyan,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: isPlaying ? 'Pause' : 'Play',
-                            onPressed: () {
-                              if (isPlaying) {
-                                engine.action.pause();
-                              } else {
-                                engine.action.play();
-                              }
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.skip_next, size: 20),
-                            color: StudioColors.textPrimary,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Next',
-                            onPressed: controller.nextTrack,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.stop, size: 20),
-                            color: StudioColors.accentRose,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Stop',
-                            onPressed: engine.action.stop,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.shuffle, size: 18),
-                            color: controller.isShuffle
-                                ? StudioColors.accentCyan
-                                : StudioColors.textMuted,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Shuffle',
-                            onPressed: controller.toggleShuffle,
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              controller.loopMode == LoopMode.one
-                                  ? Icons.repeat_one
-                                  : Icons.repeat,
-                              size: 18,
+                            IconButton(
+                              icon: Icon(
+                                isPlaying
+                                    ? Icons.pause_circle_filled
+                                    : Icons.play_circle_filled,
+                                size: 32,
+                              ),
+                              color: StudioColors.accentCyan,
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                              tooltip: isPlaying ? 'Pause' : 'Play',
+                              onPressed: () {
+                                if (isPlaying) {
+                                  engine.action.pause();
+                                } else {
+                                  engine.action.play();
+                                }
+                              },
                             ),
-                            color: controller.isLoop
-                                ? StudioColors.accentCyan
-                                : StudioColors.textMuted,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Repeat',
-                            onPressed: controller.toggleLoop,
-                          ),
-                        ],
-                      );
-                    },
+                            IconButton(
+                              icon: const Icon(Icons.skip_next, size: 20),
+                              color: StudioColors.textPrimary,
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              tooltip: 'Next',
+                              onPressed: controller.nextTrack,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.stop, size: 20),
+                              color: StudioColors.accentRose,
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              tooltip: 'Stop',
+                              onPressed: engine.action.stop,
+                            ),
+                            StreamBuilder<bool>(
+                              stream: engine.stream.shuffle,
+                              initialData: engine.state.shuffle,
+                              builder: (context, shuffleSnap) {
+                                final isShuffle = shuffleSnap.data ?? false;
+                                return IconButton(
+                                  icon: const Icon(Icons.shuffle, size: 18),
+                                  color: isShuffle
+                                      ? StudioColors.accentCyan
+                                      : StudioColors.textMuted,
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                  tooltip: isShuffle ? 'Shuffle (On)' : 'Shuffle (Off)',
+                                  onPressed: controller.toggleShuffle,
+                                );
+                              },
+                            ),
+                            StreamBuilder<LoopMode>(
+                              stream: engine.stream.loopMode,
+                              initialData: engine.state.loopMode,
+                              builder: (context, loopSnap) {
+                                final mode = loopSnap.data ?? LoopMode.off;
+                                final isLoop = mode != LoopMode.off;
+                                return IconButton(
+                                  icon: Icon(
+                                    mode == LoopMode.one
+                                        ? Icons.repeat_one
+                                        : Icons.repeat,
+                                    size: 18,
+                                  ),
+                                  color: isLoop
+                                      ? StudioColors.accentCyan
+                                      : StudioColors.textMuted,
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                  tooltip: 'Loop Mode: ${mode.name.toUpperCase()}',
+                                  onPressed: controller.toggleLoop,
+                                );
+                              },
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   );
 
                   // Right Controls: Elegant Compact Floating Slider Overlays (Vol, Speed, Pitch)

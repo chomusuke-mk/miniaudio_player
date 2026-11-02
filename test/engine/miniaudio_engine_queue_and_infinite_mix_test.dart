@@ -36,10 +36,10 @@ void main() {
       }
     });
 
-    test('openQueue() populates Rust queue and Dart shadow map', () async {
-      await engine.action.openQueue([
-        EngineItem.from(trackA.path, data: 'Alpha'),
-        EngineItem.from(trackB.path, data: 'Beta'),
+    test('open() populates Rust queue and Dart shadow map', () async {
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Alpha'),
+        AudioSource(trackB.path, data: 'Beta'),
       ]);
 
       expect(engine.state.queue.length, equals(2));
@@ -50,14 +50,14 @@ void main() {
     });
 
     test('append() and insertNext() mutate queue in Rust reactively', () async {
-      await engine.action.openQueue([
-        EngineItem.from(trackA.path, data: 'Alpha'),
-        EngineItem.from(trackB.path, data: 'Beta'),
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Alpha'),
+        AudioSource(trackB.path, data: 'Beta'),
       ]);
 
       // insertNext adds Gamma immediately after index 0 (at index 1)
       await engine.action.insertNext(
-        EngineItem.from(trackC.path, data: 'Gamma'),
+        AudioSource(trackC.path, data: 'Gamma'),
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
@@ -68,7 +68,7 @@ void main() {
 
       // append adds Delta at the end
       await engine.action.append([
-        EngineItem.from(trackD.path, data: 'Delta'),
+        AudioSource(trackD.path, data: 'Delta'),
       ]);
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
@@ -77,10 +77,10 @@ void main() {
     });
 
     test('removeAt() and reorder() maintain index and metadata consistency', () async {
-      await engine.action.openQueue([
-        EngineItem.from(trackA.path, data: 'Alpha'),
-        EngineItem.from(trackB.path, data: 'Beta'),
-        EngineItem.from(trackC.path, data: 'Gamma'),
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Alpha'),
+        AudioSource(trackB.path, data: 'Beta'),
+        AudioSource(trackC.path, data: 'Gamma'),
       ]);
 
       // Reorder index 0 (Alpha) to index 2
@@ -102,9 +102,9 @@ void main() {
     });
 
     test('clearQueue(keepCurrent: true) retains active item at index 0', () async {
-      await engine.action.openQueue([
-        EngineItem.from(trackA.path, data: 'Alpha'),
-        EngineItem.from(trackB.path, data: 'Beta'),
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Alpha'),
+        AudioSource(trackB.path, data: 'Beta'),
       ], startIndex: 1);
 
       expect(engine.state.currentIndex, equals(1));
@@ -126,8 +126,8 @@ void main() {
       expect(engine.state.infiniteMixEnabled, isTrue);
 
       // Open queue with only 1 track
-      await engine.action.openQueue([
-        EngineItem.from(trackA.path, data: 'Single Track'),
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Single Track'),
       ]);
 
       await engine.action.play();
@@ -140,7 +140,7 @@ void main() {
 
       // In response, dynamically append next track
       await engine.action.append([
-        EngineItem.from(trackB.path, data: 'Appended Track'),
+        AudioSource(trackB.path, data: 'Appended Track'),
       ]);
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
@@ -148,6 +148,37 @@ void main() {
       expect(engine.state.queue[1].data, equals('Appended Track'));
 
       await sub.cancel();
+    });
+
+    test('setShuffle(true) shuffles queue via SliceRandom and restores original order on setShuffle(false)', () async {
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Track 1'),
+        AudioSource(trackB.path, data: 'Track 2'),
+        AudioSource(trackC.path, data: 'Track 3'),
+        AudioSource(trackD.path, data: 'Track 4'),
+      ]);
+
+      expect(engine.state.queue.map((e) => e.data).toList(), equals(['Track 1', 'Track 2', 'Track 3', 'Track 4']));
+
+      // Activate shuffle
+      await engine.action.setShuffle(true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(engine.state.shuffle, isTrue);
+
+      final shuffledData = engine.state.queue.map((e) => e.data).toList();
+      // Contains all 4 items
+      expect(shuffledData, containsAll(['Track 1', 'Track 2', 'Track 3', 'Track 4']));
+      expect(shuffledData.length, equals(4));
+
+      // Deactivate shuffle -> restores original order
+      await engine.action.setShuffle(false);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(engine.state.shuffle, isFalse);
+
+      expect(
+        engine.state.queue.map((e) => e.data).toList(),
+        equals(['Track 1', 'Track 2', 'Track 3', 'Track 4']),
+      );
     });
   });
 }

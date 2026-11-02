@@ -180,8 +180,8 @@ class AudioEngineController extends ChangeNotifier {
 
     if (_cachedTracks.isNotEmpty) {
       final items = _cachedTracks
-          .map((t) => EngineItem<AudioTrack>(
-                source: t.source,
+          .map((t) => AudioSource<AudioTrack>(
+                t.source,
                 data: t,
                 replayGainDb: t.replayGainDb,
                 replayPeak: t.replayPeak,
@@ -215,6 +215,8 @@ class AudioEngineController extends ChangeNotifier {
     }));
     _subscriptions.add(engine.stream.currentIndex.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.queue.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.shuffle.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.loopMode.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.crossfadeConfig.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.playbackState.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.spatializerWidth.listen((_) {
@@ -362,7 +364,7 @@ class AudioEngineController extends ChangeNotifier {
       if (idx != -1) {
         await engine.action.skipToIndex(idx);
       } else {
-        final item = EngineItem<AudioTrack>(source: track.source, data: track);
+        final item = AudioSource<AudioTrack>(track.source, data: track);
         await engine.action.insertNext(item);
         await engine.action.next();
       }
@@ -379,7 +381,7 @@ class AudioEngineController extends ChangeNotifier {
 
   Future<void> addTrack(AudioTrack track) async {
     _cachedTracks = [..._cachedTracks, track];
-    final item = EngineItem<AudioTrack>(source: track.source, data: track);
+    final item = AudioSource<AudioTrack>(track.source, data: track);
     await engine.action.append([item]);
     await engine.action.skipToIndex(engine.state.queue.length - 1);
     await engine.action.play();
