@@ -967,7 +967,9 @@ impl DecoderWorker {
     }
 
     fn handle_eof(&mut self) {
-        crate::map_log!(3, "DecoderWorker reached EOF");
+        if !self.decoder_eof_arc.swap(true, Ordering::SeqCst) {
+            crate::map_log!(3, "DecoderWorker reached EOF");
+        }
         if self.is_stream_arc.load(Ordering::Relaxed) {
             let is_buf_eof = self
                 .trip_buf_arc
@@ -994,7 +996,6 @@ impl DecoderWorker {
             self.transition_to_playing_from_buffering();
         }
 
-        self.decoder_eof_arc.store(true, Ordering::Relaxed);
         #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_millis(20));
     }
@@ -1091,6 +1092,11 @@ impl DecoderWorker {
             let cur_state = self.state.load(Ordering::Relaxed);
             if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
                 self.wait_for_wake(30);
+                continue;
+            }
+
+            if self.decoder_eof_arc.load(Ordering::Relaxed) {
+                self.wait_for_wake(50);
                 continue;
             }
 

@@ -141,12 +141,14 @@ impl EngineMonitorWorker {
         let active_deck = coord.active_deck.load(Ordering::Relaxed);
         let deck = coord.active_deck_ref();
         let deck_state = deck.state.load(Ordering::Relaxed);
+        let completed =
+            deck.completed_flag.swap(false, Ordering::AcqRel) || deck_state == STATE_COMPLETED;
         ActiveDeckSnapshot {
             active_deck,
             pos: deck.position_ms.load(Ordering::Relaxed),
             dur: deck.duration_ms.load(Ordering::Relaxed),
             playing: deck_state == STATE_PLAYING,
-            completed: deck.completed_flag.swap(false, Ordering::AcqRel),
+            completed,
             deck_state,
             current_idx: coord.current_index.load(Ordering::Relaxed),
             phase: coord.phase.load(Ordering::Relaxed),
@@ -157,15 +159,22 @@ impl EngineMonitorWorker {
     fn resolve_next_queue_index(
         coord: &EngineCoordinator,
         current_idx: i64,
-        is_eof: bool,
-        should_auto_xfade: bool,
+        _is_eof: bool,
+        _should_auto_xfade: bool,
     ) -> Option<usize> {
         let q_len = coord.queue.read().unwrap().len();
+        if q_len == 0 {
+            return None;
+        }
         let loop_m = coord.loop_mode.load(Ordering::Relaxed);
 
-        if loop_m == 1 && is_eof && !should_auto_xfade {
-            Some(current_idx as usize)
-        } else if q_len > 0 {
+        if loop_m == 1 {
+            if current_idx >= 0 && (current_idx as usize) < q_len {
+                Some(current_idx as usize)
+            } else {
+                Some(0)
+            }
+        } else {
             let next = current_idx + 1;
             if (next as usize) < q_len {
                 Some(next as usize)
@@ -174,8 +183,6 @@ impl EngineMonitorWorker {
             } else {
                 None
             }
-        } else {
-            None
         }
     }
 
@@ -498,6 +505,12 @@ impl RustEngine {
     }
 
     fn abort_active_crossfade(&self, coord: &mut EngineCoordinator) {
+        coord
+            .auto_crossfade_target_index
+            .store(-1, Ordering::Release);
+        coord
+            .crossfade_completed_flag
+            .store(false, Ordering::Release);
         let phase = coord.phase.load(Ordering::Relaxed);
         if phase == ENGINE_PHASE_AUTO_CROSSFADING {
             coord.crossfade.abort();
@@ -517,6 +530,9 @@ impl RustEngine {
                 &self.event_sink,
                 RustEngineEvent::Phase(ENGINE_PHASE_PLAYING),
             );
+        } else if coord.crossfade.is_active.load(Ordering::Relaxed) {
+            coord.crossfade.abort();
+            coord.standby_deck_mut().stop();
         }
     }
 
@@ -749,12 +765,14 @@ impl RustEngine {
 
     pub fn remove_at(&self, index: usize) {
         let mut coord = self.coordinator.lock().unwrap();
+        self.abort_active_crossfade(&mut coord);
         coord.remove_item_at(index);
         self.emit_queue_and_index(&coord, true);
     }
 
     pub fn reorder(&self, from: usize, to: usize) {
         let mut coord = self.coordinator.lock().unwrap();
+        self.abort_active_crossfade(&mut coord);
         if coord.reorder_item(from, to) {
             self.emit_queue_and_index(&coord, true);
         }
@@ -762,6 +780,7 @@ impl RustEngine {
 
     pub fn clear_queue(&self, keep_current: bool) {
         let mut coord = self.coordinator.lock().unwrap();
+        self.abort_active_crossfade(&mut coord);
         coord.clear_items(keep_current);
         self.emit_queue_and_index(&coord, true);
     }
@@ -931,6 +950,8 @@ impl RustEngine {
         let Some(item) = coord.queue.read().unwrap().get(target_idx).cloned() else {
             return;
         };
+
+        self.abort_active_crossfade(coord);
 
         coord
             .auto_crossfade_target_index
@@ -1184,7 +1205,7 @@ impl RustEngine {
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_shuffle(&self, enabled: bool) {
-        let coord = self.coordinator.lock().unwrap();
+        let mut coord = self.coordinator.lock().unwrap();
         let was_enabled = coord.shuffle_enabled.swap(enabled, Ordering::AcqRel);
         if was_enabled == enabled {
             return;
@@ -1192,6 +1213,9 @@ impl RustEngine {
 
         crate::map_log!(3, "set_shuffle(enabled={})", enabled);
         emit_event(&self.event_sink, RustEngineEvent::Shuffle(enabled));
+
+        // Abort any active crossfade before reorganizing queue so pointers remain strictly consistent
+        self.abort_active_crossfade(&mut coord);
 
         use rand::seq::SliceRandom;
 

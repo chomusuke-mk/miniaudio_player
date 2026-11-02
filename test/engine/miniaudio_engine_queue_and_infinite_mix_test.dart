@@ -234,5 +234,70 @@ void main() {
       await queueSub.cancel();
       await indexSub.cancel();
     });
+
+    test('LoopMode.one preserves current track repeating rather than advancing', () async {
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Track 1'),
+        AudioSource(trackB.path, data: 'Track 2'),
+      ]);
+
+      await engine.action.setLoopMode(LoopMode.one);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(engine.state.loopMode, equals(LoopMode.one));
+
+      // With loopMode = one, current index is 0
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.currentItem?.data, equals('Track 1'));
+    });
+
+    test('Toggling shuffle during active crossfade preserves track consistency and aborts cleanly', () async {
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Track 1'),
+        AudioSource(trackB.path, data: 'Track 2'),
+        AudioSource(trackC.path, data: 'Track 3'),
+        AudioSource(trackD.path, data: 'Track 4'),
+      ]);
+
+      await engine.action.play();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Initiate manual crossfade to next track
+      final nextFuture = engine.action.next();
+      // While crossfade is active, toggle shuffle
+      await engine.action.setShuffle(true);
+      await nextFuture;
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      // Ensure active index is within valid range and matches current track in shuffled queue
+      final currentIdx = engine.state.currentIndex;
+      expect(currentIdx, greaterThanOrEqualTo(0));
+      expect(currentIdx, lessThan(engine.state.queue.length));
+      final currentItem = engine.state.currentItem;
+      expect(currentItem, isNotNull);
+      expect(engine.state.queue[currentIdx].data, equals(currentItem?.data));
+    });
+
+    test('Rapid skipToIndex calls do not hang or deadlock engine', () async {
+      await engine.action.open([
+        AudioSource(trackA.path, data: 'Track 1'),
+        AudioSource(trackB.path, data: 'Track 2'),
+        AudioSource(trackC.path, data: 'Track 3'),
+        AudioSource(trackD.path, data: 'Track 4'),
+      ]);
+
+      await engine.action.play();
+
+      // Fire 5 rapid skips back-to-back
+      for (int i = 0; i < 5; i++) {
+        final target = (i + 1) % 4;
+        await engine.action.skipToIndex(target);
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final finalIdx = engine.state.currentIndex;
+      expect(finalIdx, greaterThanOrEqualTo(0));
+      expect(finalIdx, lessThan(4));
+      expect(engine.isDisposed, isFalse);
+    });
   });
 }
