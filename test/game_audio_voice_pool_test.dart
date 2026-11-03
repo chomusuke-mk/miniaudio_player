@@ -6,113 +6,140 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Game Audio VoicePool Subsystem', () {
-    late MiniaudioVoicePool pool;
+  group('Game Audio VoicePool Subsystem in MiniaudioPlayer', () {
+    late MiniaudioPlayer player;
     late Uint8List wavBytes;
 
     setUpAll(() async {
+      await MiniaudioPlayer.ensureInitialized();
       wavBytes = await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
     });
 
     setUp(() async {
-      pool = await MiniaudioVoicePool.create(
-        sampleRate: 44100,
-        channels: 2,
-        periodSize: 512,
-        maxVoices: 8,
+      player = MiniaudioPlayer(
+        config: const PlayerConfig(
+          sampleRate: 44100,
+          channels: 2,
+          bufferSizeFrames: 512,
+          maxVoices: 8,
+        ),
       );
     });
 
-    tearDown(() {
-      pool.dispose();
+    tearDown(() async {
+      await player.dispose();
     });
 
-    test('Loads sound buffer and verifies accurate metadata', () async {
-      final buffer = await pool.loadSound(wavBytes);
-      expect(buffer.sampleRate, equals(44100));
-      expect(buffer.channels, equals(2));
-      expect(buffer.duration.inMilliseconds, greaterThan(200));
-      expect(buffer.frameCount, greaterThan(10000));
-      expect(buffer.id, greaterThan(BigInt.zero));
+    test('Loads sound effect into RAM and unloads successfully', () async {
+      await player.action.loadEffect(
+        AudioEffect(
+          id: 'test_sound',
+          source: AudioSource(wavBytes),
+          maxPolyphony: 8,
+        ),
+      );
 
-      final unloaded = pool.unloadSound(buffer);
-      expect(unloaded, isTrue);
+      expect(player.state.loadedEffectIds, contains('test_sound'));
+      expect(player.state.allocatedRamBytes, greaterThan(0));
+
+      await player.action.unloadEffect('test_sound');
+      expect(player.state.loadedEffectIds, isNot(contains('test_sound')));
     });
 
     test('Plays sounds concurrently within voice pool capacity', () async {
-      final buffer = await pool.loadSound(wavBytes);
+      await player.action.loadEffect(
+        AudioEffect(
+          id: 'laser',
+          source: AudioSource(wavBytes),
+          maxPolyphony: 8,
+        ),
+      );
 
-      final v1 = pool.playSound(buffer, volume: 0.8, pitch: 1.0, priority: 100);
-      final v2 = pool.playSound(buffer, volume: 0.5, pitch: 1.2, priority: 150);
-      final v3 = pool.playSound(buffer, volume: 1.0, pitch: 0.9, priority: 200);
+      final v1 = await player.action.playEffect(
+        'laser',
+        volume: 0.8,
+        pitch: 1.0,
+        config: const EffectConfig(priority: 100),
+      );
+      final v2 = await player.action.playEffect(
+        'laser',
+        volume: 0.5,
+        pitch: 1.2,
+        config: const EffectConfig(priority: 150),
+      );
+      final v3 = await player.action.playEffect(
+        'laser',
+        volume: 1.0,
+        pitch: 0.9,
+        config: const EffectConfig(priority: 200),
+      );
 
       expect(v1, greaterThan(0));
       expect(v2, greaterThan(0));
       expect(v3, greaterThan(0));
       expect(v1 != v2 && v2 != v3, isTrue);
 
-      pool.stopAll();
-      expect(pool.activeVoicesCount, equals(0));
+      await player.action.stopAllEffects();
+      expect(player.state.activeVoicesCount, equals(0));
     });
 
     test('Plays one-shot sound with pitch and volume jitter', () async {
-      final buffer = await pool.loadSound(wavBytes);
+      await player.action.loadEffect(
+        AudioEffect(
+          id: 'hit',
+          source: AudioSource(wavBytes),
+        ),
+      );
 
-      final v1 = pool.playOneShot(
-        buffer,
+      final v1 = await player.action.playEffect(
+        'hit',
         volume: 0.9,
         pitch: 1.0,
         pitchJitter: 0.05,
         volumeJitter: 0.05,
-        priority: 128,
+        config: const EffectConfig(priority: 128),
       );
       expect(v1, greaterThan(0));
 
-      final v2 = pool.playOneShot(
-        buffer,
+      final v2 = await player.action.playEffect(
+        'hit',
         volume: 0.9,
         pitch: 1.0,
         pitchJitter: 0.1,
         volumeJitter: 0.1,
-        priority: 128,
+        config: const EffectConfig(priority: 128),
       );
       expect(v2, greaterThan(0));
     });
 
-    test('Sets voice stealing policies cleanly', () async {
-      expect(() => pool.setPolicy(VoiceStealingPolicy.lowestPriority), returnsNormally);
-      expect(() => pool.setPolicy(VoiceStealingPolicy.oldest), returnsNormally);
-      expect(() => pool.setPolicy(VoiceStealingPolicy.quietest), returnsNormally);
-      expect(() => pool.setPolicy(VoiceStealingPolicy.farthest), returnsNormally);
-    });
-
-    test('Supports bullet-time / slow-motion TimeScale adjustments', () async {
-      expect(() => pool.setTimeScale(0.5), returnsNormally);
-      expect(() => pool.setTimeScale(2.0), returnsNormally);
-      expect(() => pool.setTimeScale(1.0), returnsNormally);
-    });
-
     test('Plays synchronized stem layers (vertical layering)', () async {
-      final bufA = await pool.loadSound(wavBytes);
-      final bufB = await pool.loadSound(wavBytes);
+      await player.action.loadEffect(
+        AudioEffect(id: 'stemA', source: AudioSource(wavBytes)),
+      );
+      await player.action.loadEffect(
+        AudioEffect(id: 'stemB', source: AudioSource(wavBytes)),
+      );
 
-      final stems = pool.playStems([bufA, bufB], volumes: [0.7, 0.4], looping: true);
-      expect(stems.length, equals(2));
-      expect(stems[0], greaterThan(0));
-      expect(stems[1], greaterThan(0));
+      final vA = await player.action.playEffect('stemA', volume: 0.7, looping: true);
+      final vB = await player.action.playEffect('stemB', volume: 0.4, looping: true);
+
+      expect(vA, greaterThan(0));
+      expect(vB, greaterThan(0));
 
       // Modulate individual stem volume dynamically
-      expect(() => pool.setVoiceVolume(stems[0], 0.2), returnsNormally);
-      expect(() => pool.setVoicePitch(stems[1], 1.05), returnsNormally);
+      expect(() => player.action.setEffectVolume(vA, 0.2), returnsNormally);
+      expect(() => player.action.setEffectPitch(vB, 1.05), returnsNormally);
 
-      pool.stopVoice(stems[0]);
-      pool.stopVoice(stems[1]);
+      await player.action.stopEffect(vA);
+      await player.action.stopEffect(vB);
     });
 
     test('Integrates 3D spatial listener and voice emitters with Doppler', () async {
-      final buffer = await pool.loadSound(wavBytes);
+      await player.action.loadEffect(
+        AudioEffect(id: 'spatial_hit', source: AudioSource(wavBytes)),
+      );
 
-      pool.setListener(const SpatialListener(
+      await player.action.setListener(const SpatialListener(
         position: Vector3(0.0, 1.7, 0.0),
         forward: Vector3(0.0, 0.0, -1.0),
         up: Vector3(0.0, 1.0, 0.0),
@@ -128,29 +155,30 @@ void main() {
         dopplerFactor: 1.0,
       );
 
-      final voiceId = pool.playSound(
-        buffer,
+      final voiceId = await player.action.playEffect(
+        'spatial_hit',
         volume: 1.0,
         pitch: 1.0,
-        emitter: emitter,
+        spatial: emitter,
       );
       expect(voiceId, greaterThan(0));
 
       // Update voice emitter dynamically in 3D space
-      pool.setVoiceEmitter(
+      await player.action.setEffectEmitter(
         voiceId,
         emitter.copyWith(position: const Vector3(0.0, 1.7, 5.0)),
       );
     });
 
     test('Disposes cleanly and rejects subsequent operations', () async {
-      final buffer = await pool.loadSound(wavBytes);
-      pool.dispose();
-      expect(pool.isDisposed, isTrue);
+      await player.dispose();
 
-      expect(() => pool.loadSound(wavBytes), throwsStateError);
-      expect(() => pool.playSound(buffer), throwsStateError);
-      expect(() => pool.stopAll(), throwsStateError);
+      expect(
+        () => player.action.loadEffect(AudioEffect(id: 'x', source: AudioSource(wavBytes))),
+        throwsStateError,
+      );
+      expect(() => player.action.playEffect('x'), throwsStateError);
+      expect(() => player.action.stopAllEffects(), throwsStateError);
     });
   });
 }

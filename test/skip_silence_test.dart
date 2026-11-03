@@ -4,6 +4,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   group('SilenceSkipConfig Data Model', () {
     test('default constructor initializes standard defaults', () {
       const config = SilenceSkipConfig();
@@ -65,7 +69,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {

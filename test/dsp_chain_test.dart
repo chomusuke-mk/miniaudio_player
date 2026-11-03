@@ -6,6 +6,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   group('DSP Data Models', () {
     test('ReplayGainConfig initializes defaults and computes effectiveGainDb', () {
       const defaultRg = ReplayGainConfig();
@@ -75,7 +79,8 @@ void main() {
 
     setUp(() async {
       testWavFile = File('test/fixtures/salida.wav');
-      player = MiniaudioPlayer(AudioSource(testWavFile.path));
+      player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)]);
+      await player.action.waitUntilOpen();
     });
 
     tearDown(() async {
@@ -249,14 +254,14 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(streamRg?.gainDb, equals(-6.0));
-      expect(streamRg?.peak, equals(0.9));
-      expect(streamPreamp, equals(2.5));
-      expect(streamBalance, equals(0.4));
+      expect(streamRg?.gainDb, closeTo(-6.0, 0.001));
+      expect(streamRg?.peak, closeTo(0.9, 0.001));
+      expect(streamPreamp, closeTo(2.5, 0.001));
+      expect(streamBalance, closeTo(0.4, 0.001));
       expect(streamMono, isTrue);
       expect(streamCrossfeed, equals(CrossfeedMode.chuMoy));
       expect(streamSpatializerEnabled, isTrue);
-      expect(streamSpatializerWidth, equals(1.5));
+      expect(streamSpatializerWidth, closeTo(1.5, 0.001));
       expect(streamLimiter, isFalse);
       expect(streamReverb, equals(Reverb.cathedral));
 

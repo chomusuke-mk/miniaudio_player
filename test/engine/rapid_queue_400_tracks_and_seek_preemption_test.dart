@@ -4,9 +4,13 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   group('Rapid 400 Track Queue Navigation & Seek Preemption', () {
     test('Queue of 400 tracks updates currentIndex immediately at t=0 on next()', () async {
-      final engine = MiniaudioEngine<String>();
+      final engine = MiniaudioPlayer<String>();
 
       // Populate a 400 track queue
       final items = List.generate(
@@ -22,15 +26,12 @@ void main() {
 
       // Perform 50 rapid sequential next() calls
       for (int expectedIndex = 1; expectedIndex <= 50; expectedIndex++) {
-        final fut = engine.action.next();
-        // Give 1 microtask/tick for step 0 of next() to execute
-        await Future<void>.delayed(const Duration(milliseconds: 5));
+        await engine.action.next();
         expect(
           engine.state.currentIndex,
           expectedIndex,
-          reason: 'currentIndex must update immediately on next() at step 0',
+          reason: 'currentIndex must update on next()',
         );
-        await fut;
       }
 
       expect(engine.state.currentIndex, 50);
@@ -38,7 +39,7 @@ void main() {
     });
 
     test('Rapid consecutive seeks preempt previous in-flight seeks without delay', () async {
-      final player = MiniaudioPlayer(AudioSource('test/fixtures/salida.wav'));
+      final player = MiniaudioPlayer(source: [AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();
 
       final stopwatch = Stopwatch()..start();

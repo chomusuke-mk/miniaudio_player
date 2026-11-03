@@ -2,6 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   setUp(() {
     MiniaudioPlayer.resetGlobalConfig();
   });
@@ -99,7 +103,7 @@ void main() {
       };
 
       final player = MiniaudioPlayer(
-        AudioSource('test/fixtures/salida.wav'),
+        source: [AudioSource('test/fixtures/salida.wav')],
       );
 
       expect(
@@ -140,7 +144,7 @@ void main() {
       );
     });
 
-    test('Engine lifecycle and actions generate structured logs when enabled',
+    test('Player lifecycle and actions generate structured logs when enabled (queue)',
         () async {
       MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.verbose);
       final messages = <String>[];
@@ -148,9 +152,9 @@ void main() {
         messages.add('[$level] $message');
       };
 
-      final engine = MiniaudioEngine<int>();
+      final engine = MiniaudioPlayer<int>();
       expect(
-        messages.any((m) => m.contains('Initializing MiniaudioEngine')),
+        messages.any((m) => m.contains('Initializing MiniaudioPlayer')),
         isTrue,
       );
 
@@ -161,13 +165,13 @@ void main() {
         ),
       ]);
       expect(
-        messages.any((m) => m.contains('Engine open -> 1 items')),
+        messages.any((m) => m.contains('open() requested for source:')),
         isTrue,
       );
 
       await engine.dispose();
       expect(
-        messages.any((m) => m.contains('Disposing MiniaudioEngine instance')),
+        messages.any((m) => m.contains('Disposing MiniaudioPlayer instance')),
         isTrue,
       );
     });

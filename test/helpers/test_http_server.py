@@ -240,6 +240,7 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
                 self.request.sendall(b"INVALID_PROTOCOL_GARBAGE_NO_HTTP_HEADERS\r\n\r\n")
             except Exception:
                 pass
+            self.close_connection = True
             return
 
         # 3. HTTP Error endpoints

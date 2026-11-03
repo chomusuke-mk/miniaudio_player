@@ -1,230 +1,285 @@
-// ignore_for_file: prefer_initializing_formals
-
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../equalizer.dart';
+import '../reverb.dart';
 import 'audio_device.dart';
+import 'audio_source.dart';
 import 'buffered_range.dart';
+import 'crossfade_config.dart';
 import 'dsp_config.dart';
+import 'loop_mode.dart';
+import 'need_more_tracks_event.dart';
+import 'player_exception.dart';
+import 'player_models.dart';
+import 'player_state.dart' show EnginePhase, PlaybackState;
 import 'silence_skip_config.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
-import '../equalizer.dart';
-import '../reverb.dart';
-import 'player_state.dart' show PlaybackState;
 
-/// Reactive broadcast streams for observing playback and DSP state changes.
-class PlayerStream {
-  final StreamController<Duration> _positionController;
-  final StreamController<Duration> _durationController;
-  final StreamController<bool> _playingController;
-  final StreamController<bool> _bufferingController;
-  final StreamController<bool> _completedController;
-  final StreamController<bool> _openingController;
-  final StreamController<PlaybackState> _playbackStateController;
-  final StreamController<Duration> _bufferedPositionController;
-  final StreamController<double> _bufferedPercentageController;
-  final StreamController<BufferedRange> _bufferedRangeController;
-  final StreamController<AudioTrackMetadata?> _trackMetadataController;
-  final StreamController<double> _volumeController;
-  final StreamController<double> _rateController;
-  final StreamController<double> _pitchController;
-  final StreamController<int> _bufferSizeController;
-  final StreamController<int> _audioBitrateController;
-  final StreamController<Equalizer> _equalizerController;
-  final StreamController<AudioDevice> _audioDeviceController;
-  final StreamController<bool> _pauseOnDeviceChangeController;
-  final StreamController<bool> _skipSilenceController;
-  final StreamController<SilenceSkipConfig> _silenceConfigController;
-  final StreamController<Duration> _silenceSavedDurationController;
-  final StreamController<VisualizerData> _visualizerController;
-  final StreamController<bool> _visualizerEnabledController;
-  final StreamController<double> _preampController;
-  final StreamController<ReplayGainConfig> _replayGainController;
-  final StreamController<double> _balanceController;
-  final StreamController<bool> _monoController;
-  final StreamController<CrossfeedMode> _crossfeedController;
-  final StreamController<bool> _spatializerEnabledController;
-  final StreamController<double> _spatializerWidthController;
-  final StreamController<Reverb> _reverbController;
-  final StreamController<bool> _limiterEnabledController;
-  final StreamController<Uint8List?>? _metaBytesController;
+/// Reactive broadcast streams for observing playback, queue, effects, and DSP state changes.
+///
+/// In strict accordance with the stream-driven architecture, events originate from the native
+/// Rust event pipeline and are dispatched to UI observers without artificial intermediate filtering.
+class PlayerStream<T> {
+  final StreamController<Duration> positionController =
+      StreamController<Duration>.broadcast();
+  final StreamController<Duration> durationController =
+      StreamController<Duration>.broadcast();
+  final StreamController<bool> playingController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> bufferingController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> completedController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> openingController =
+      StreamController<bool>.broadcast();
+  final StreamController<PlaybackState> playbackStateController =
+      StreamController<PlaybackState>.broadcast();
+  final StreamController<EnginePhase> phaseController =
+      StreamController<EnginePhase>.broadcast();
+  final StreamController<Duration> bufferedPositionController =
+      StreamController<Duration>.broadcast();
+  final StreamController<double> bufferedPercentageController =
+      StreamController<double>.broadcast();
+  final StreamController<BufferedRange> bufferedRangeController =
+      StreamController<BufferedRange>.broadcast();
+  final StreamController<AudioTrackMetadata?> trackMetadataController =
+      StreamController<AudioTrackMetadata?>.broadcast();
+  final StreamController<Uint8List?> metaBytesController =
+      StreamController<Uint8List?>.broadcast();
+  final StreamController<double> volumeController =
+      StreamController<double>.broadcast();
+  final StreamController<double> rateController =
+      StreamController<double>.broadcast();
+  final StreamController<double> pitchController =
+      StreamController<double>.broadcast();
+  final StreamController<double> balanceController =
+      StreamController<double>.broadcast();
+  final StreamController<bool> monoController =
+      StreamController<bool>.broadcast();
+  final StreamController<int> bufferSizeController =
+      StreamController<int>.broadcast();
+  final StreamController<int> audioBitrateController =
+      StreamController<int>.broadcast();
+  final StreamController<Equalizer> equalizerController =
+      StreamController<Equalizer>.broadcast();
+  final StreamController<AudioDevice> audioDeviceController =
+      StreamController<AudioDevice>.broadcast();
+  final StreamController<Set<AudioOutput>> outputsController =
+      StreamController<Set<AudioOutput>>.broadcast();
+  final StreamController<Set<AudioInput>> inputsController =
+      StreamController<Set<AudioInput>>.broadcast();
+  final StreamController<List<AudioDevice>> globalOutputDevicesController =
+      StreamController<List<AudioDevice>>.broadcast();
+  final StreamController<List<AudioDevice>> globalInputDevicesController =
+      StreamController<List<AudioDevice>>.broadcast();
+  final StreamController<bool> pauseOnDeviceChangeController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> skipSilenceController =
+      StreamController<bool>.broadcast();
+  final StreamController<SilenceSkipConfig> silenceConfigController =
+      StreamController<SilenceSkipConfig>.broadcast();
+  final StreamController<Duration> silenceSavedDurationController =
+      StreamController<Duration>.broadcast();
+  final StreamController<VisualizerData> visualizerController;
+  final StreamController<bool> visualizerEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<double> preampController =
+      StreamController<double>.broadcast();
+  final StreamController<ReplayGainConfig> replayGainController =
+      StreamController<ReplayGainConfig>.broadcast();
+  final StreamController<CrossfeedMode> crossfeedController =
+      StreamController<CrossfeedMode>.broadcast();
+  final StreamController<bool> spatializerEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<double> spatializerWidthController =
+      StreamController<double>.broadcast();
+  final StreamController<Reverb> reverbController =
+      StreamController<Reverb>.broadcast();
+  final StreamController<bool> limiterEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<List<AudioSource<T>>> queueController =
+      StreamController<List<AudioSource<T>>>.broadcast();
+  final StreamController<int> currentIndexController =
+      StreamController<int>.broadcast();
+  final StreamController<AudioSource<T>?> currentItemController =
+      StreamController<AudioSource<T>?>.broadcast();
+  final StreamController<LoopMode> loopModeController =
+      StreamController<LoopMode>.broadcast();
+  final StreamController<bool> isShuffledController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> isCrossfadingController =
+      StreamController<bool>.broadcast();
+  final StreamController<CrossfadeConfig> crossfadeConfigController =
+      StreamController<CrossfadeConfig>.broadcast();
+  final StreamController<bool> isRecordingController =
+      StreamController<bool>.broadcast();
+  final StreamController<Duration> recordedDurationController =
+      StreamController<Duration>.broadcast();
+  final StreamController<double> cueVolumeController =
+      StreamController<double>.broadcast();
+  final StreamController<CueSource> cueSourceController =
+      StreamController<CueSource>.broadcast();
+  final StreamController<bool> isMicrophoneEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<double> micVolumeController =
+      StreamController<double>.broadcast();
+  final StreamController<bool> isDuckingActiveController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> isDirectMonitoringEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<double> micRmsLevelController =
+      StreamController<double>.broadcast();
+  final StreamController<VoiceId> voiceCompletedController =
+      StreamController<VoiceId>.broadcast();
+  final StreamController<MiniaudioPlayerException> errorsController =
+      StreamController<MiniaudioPlayerException>.broadcast();
+  final StreamController<NeedMoreTracksEvent> needMoreTracksController =
+      StreamController<NeedMoreTracksEvent>.broadcast();
 
   PlayerStream({
-    required StreamController<Duration> positionController,
-    required StreamController<Duration> durationController,
-    required StreamController<bool> playingController,
-    required StreamController<bool> bufferingController,
-    required StreamController<bool> completedController,
-    required StreamController<bool> openingController,
-    required StreamController<PlaybackState> playbackStateController,
-    required StreamController<Duration> bufferedPositionController,
-    required StreamController<double> bufferedPercentageController,
-    required StreamController<BufferedRange> bufferedRangeController,
-    required StreamController<AudioTrackMetadata?> trackMetadataController,
-    required StreamController<double> volumeController,
-    required StreamController<double> rateController,
-    required StreamController<double> pitchController,
-    required StreamController<int> bufferSizeController,
-    required StreamController<int> audioBitrateController,
-    required StreamController<Equalizer> equalizerController,
-    required StreamController<AudioDevice> audioDeviceController,
-    required StreamController<bool> pauseOnDeviceChangeController,
-    required StreamController<bool> skipSilenceController,
-    required StreamController<SilenceSkipConfig> silenceConfigController,
-    required StreamController<Duration> silenceSavedDurationController,
-    required StreamController<VisualizerData> visualizerController,
-    required StreamController<bool> visualizerEnabledController,
-    required StreamController<double> preampController,
-    required StreamController<ReplayGainConfig> replayGainController,
-    required StreamController<double> balanceController,
-    required StreamController<bool> monoController,
-    required StreamController<CrossfeedMode> crossfeedController,
-    required StreamController<bool> spatializerEnabledController,
-    required StreamController<double> spatializerWidthController,
-    required StreamController<Reverb> reverbController,
-    required StreamController<bool> limiterEnabledController,
-    StreamController<Uint8List?>? metaBytesController,
-  })  : _positionController = positionController,
-        _durationController = durationController,
-        _playingController = playingController,
-        _bufferingController = bufferingController,
-        _completedController = completedController,
-        _openingController = openingController,
-        _playbackStateController = playbackStateController,
-        _bufferedPositionController = bufferedPositionController,
-        _bufferedPercentageController = bufferedPercentageController,
-        _bufferedRangeController = bufferedRangeController,
-        _trackMetadataController = trackMetadataController,
-        _volumeController = volumeController,
-        _rateController = rateController,
-        _pitchController = pitchController,
-        _bufferSizeController = bufferSizeController,
-        _audioBitrateController = audioBitrateController,
-        _equalizerController = equalizerController,
-        _audioDeviceController = audioDeviceController,
-        _pauseOnDeviceChangeController = pauseOnDeviceChangeController,
-        _skipSilenceController = skipSilenceController,
-        _silenceConfigController = silenceConfigController,
-        _silenceSavedDurationController = silenceSavedDurationController,
-        _visualizerController = visualizerController,
-        _visualizerEnabledController = visualizerEnabledController,
-        _preampController = preampController,
-        _replayGainController = replayGainController,
-        _balanceController = balanceController,
-        _monoController = monoController,
-        _crossfeedController = crossfeedController,
-        _spatializerEnabledController = spatializerEnabledController,
-        _spatializerWidthController = spatializerWidthController,
-        _reverbController = reverbController,
-        _limiterEnabledController = limiterEnabledController,
-        _metaBytesController = metaBytesController;
+    void Function()? onVisualizerListen,
+    void Function()? onVisualizerCancel,
+  }) : visualizerController = StreamController<VisualizerData>.broadcast(
+          onListen: onVisualizerListen,
+          onCancel: onVisualizerCancel,
+        );
 
-  /// Broadcast stream of the current playback position.
-  Stream<Duration> get position => _positionController.stream;
+  Stream<Duration> get position => positionController.stream;
+  Stream<Duration> get duration => durationController.stream;
+  Stream<bool> get playing => playingController.stream;
+  Stream<bool> get isPlaying => playingController.stream;
+  Stream<bool> get buffering => bufferingController.stream;
+  Stream<bool> get completed => completedController.stream;
+  Stream<bool> get opening => openingController.stream;
+  Stream<PlaybackState> get playbackState => playbackStateController.stream;
+  Stream<EnginePhase> get phase => phaseController.stream;
+  Stream<Duration> get bufferedPosition => bufferedPositionController.stream;
+  Stream<double> get bufferedPercentage => bufferedPercentageController.stream;
+  Stream<BufferedRange> get bufferedRange => bufferedRangeController.stream;
+  Stream<AudioTrackMetadata?> get trackMetadata => trackMetadataController.stream;
+  Stream<Uint8List?> get metaBytes => metaBytesController.stream;
+  Stream<double> get volume => volumeController.stream;
+  Stream<double> get rate => rateController.stream;
+  Stream<double> get pitch => pitchController.stream;
+  Stream<double> get balance => balanceController.stream;
+  Stream<bool> get mono => monoController.stream;
+  Stream<int> get bufferSize => bufferSizeController.stream;
+  Stream<int> get bitrate => audioBitrateController.stream;
+  Stream<int> get audioBitrate => audioBitrateController.stream;
+  Stream<Equalizer> get equalizer => equalizerController.stream;
+  Stream<AudioDevice> get audioDevice => audioDeviceController.stream;
 
-  /// Broadcast stream of total audio duration.
-  Stream<Duration> get duration => _durationController.stream;
+  /// Reactive broadcast stream emitting this player's active output destinations.
+  Stream<Set<AudioOutput>> get outputs => outputsController.stream;
 
-  /// Broadcast stream of playback state (`true` if playing, `false` otherwise).
-  Stream<bool> get playing => _playingController.stream;
+  /// Reactive broadcast stream emitting this player's active input sources.
+  Stream<Set<AudioInput>> get inputs => inputsController.stream;
 
-  /// Broadcast stream of buffering state.
-  Stream<bool> get buffering => _bufferingController.stream;
+  /// Reactive broadcast stream emitting updates to the global system output devices list.
+  Stream<List<AudioDevice>> get globalOutputDevices =>
+      globalOutputDevicesController.stream;
 
-  /// Broadcast stream of playback completion status.
-  Stream<bool> get completed => _completedController.stream;
-
-  /// Broadcast stream emitting whether the player is currently opening or preparing an audio source.
-  Stream<bool> get opening => _openingController.stream;
-
-  /// Broadcast stream emitting high-level playback lifecycle state changes.
-  Stream<PlaybackState> get playbackState => _playbackStateController.stream;
-
-  /// Broadcast stream of furthest continuous timestamp preloaded in RAM buffer.
-  Stream<Duration> get bufferedPosition => _bufferedPositionController.stream;
-
-  /// Broadcast stream of fraction (0.0 to 1.0) of track loaded (for preloaded bar).
-  Stream<double> get bufferedPercentage => _bufferedPercentageController.stream;
-
-  /// Broadcast stream of sliding-window circular buffer telemetry metrics.
-  Stream<BufferedRange> get bufferedRange => _bufferedRangeController.stream;
-
-  /// Broadcast stream of current track metadata.
-  Stream<AudioTrackMetadata?> get trackMetadata =>
-      _trackMetadataController.stream;
-
-  /// Broadcast stream of volume level changes.
-  Stream<double> get volume => _volumeController.stream;
-
-  /// Broadcast stream of playback speed multiplier changes.
-  Stream<double> get rate => _rateController.stream;
-
-  /// Broadcast stream of pitch multiplier changes.
-  Stream<double> get pitch => _pitchController.stream;
-
-  /// Broadcast stream of internal buffer size changes in frames.
-  Stream<int> get bufferSize => _bufferSizeController.stream;
-
-  /// Broadcast stream of audio bitrate changes in bits per second (bps).
-  Stream<int> get bitrate => _audioBitrateController.stream;
-
-  /// Broadcast stream of 10-band equalizer configuration changes.
-  Stream<Equalizer> get equalizer => _equalizerController.stream;
-
-  /// Broadcast stream of active audio output device changes.
-  Stream<AudioDevice> get audioDevice => _audioDeviceController.stream;
-
-  /// Broadcast stream of pause on device change setting changes.
-  Stream<bool> get pauseOnDeviceChange => _pauseOnDeviceChangeController.stream;
-
-  /// Broadcast stream of silence skipping enabled state (`true` / `false`).
-  Stream<bool> get skipSilence => _skipSilenceController.stream;
-
-  /// Broadcast stream of silence configuration changes.
-  Stream<SilenceSkipConfig> get silenceConfig =>
-      _silenceConfigController.stream;
-
-  /// Broadcast stream of cumulative duration of skipped silence.
+  /// Reactive broadcast stream emitting updates to the global system input devices list.
+  Stream<List<AudioDevice>> get globalInputDevices =>
+      globalInputDevicesController.stream;
+  Stream<bool> get pauseOnDeviceChange => pauseOnDeviceChangeController.stream;
+  Stream<bool> get skipSilence => skipSilenceController.stream;
+  Stream<SilenceSkipConfig> get silenceConfig => silenceConfigController.stream;
   Stream<Duration> get silenceSavedDuration =>
-      _silenceSavedDurationController.stream;
+      silenceSavedDurationController.stream;
+  Stream<VisualizerData> get visualizer => visualizerController.stream;
+  Stream<bool> get visualizerEnabled => visualizerEnabledController.stream;
+  Stream<double> get preamp => preampController.stream;
+  Stream<ReplayGainConfig> get replayGain => replayGainController.stream;
+  Stream<CrossfeedMode> get crossfeed => crossfeedController.stream;
+  Stream<bool> get spatializerEnabled => spatializerEnabledController.stream;
+  Stream<double> get spatializerWidth => spatializerWidthController.stream;
+  Stream<Reverb> get reverb => reverbController.stream;
+  Stream<bool> get limiterEnabled => limiterEnabledController.stream;
+  Stream<List<AudioSource<T>>> get queue => queueController.stream;
+  Stream<int> get currentIndex => currentIndexController.stream;
+  Stream<AudioSource<T>?> get currentItem => currentItemController.stream;
+  Stream<LoopMode> get loopMode => loopModeController.stream;
+  Stream<bool> get isShuffled => isShuffledController.stream;
+  Stream<bool> get isCrossfading => isCrossfadingController.stream;
+  Stream<CrossfadeConfig> get crossfadeConfig => crossfadeConfigController.stream;
+  Stream<bool> get isRecording => isRecordingController.stream;
+  Stream<Duration> get recordedDuration => recordedDurationController.stream;
+  Stream<double> get cueVolume => cueVolumeController.stream;
+  Stream<CueSource> get cueSource => cueSourceController.stream;
+  Stream<bool> get isMicrophoneEnabled => isMicrophoneEnabledController.stream;
+  Stream<double> get micVolume => micVolumeController.stream;
+  Stream<bool> get isDuckingActive => isDuckingActiveController.stream;
+  Stream<bool> get isDirectMonitoringEnabled =>
+      isDirectMonitoringEnabledController.stream;
+  Stream<double> get micRmsLevel => micRmsLevelController.stream;
+  Stream<VoiceId> get voiceCompleted => voiceCompletedController.stream;
+  Stream<MiniaudioPlayerException> get errors => errorsController.stream;
+  Stream<NeedMoreTracksEvent> get needMoreTracks =>
+      needMoreTracksController.stream;
 
-  /// Broadcast stream of real-time audio visualizer data (10 bands matching equalizer + volume metrics).
-  Stream<VisualizerData> get visualizer => _visualizerController.stream;
-
-  /// Broadcast stream of visualizer active / enabled state changes.
-  Stream<bool> get visualizerEnabled => _visualizerEnabledController.stream;
-
-  /// Broadcast stream of manual preamp gain changes.
-  Stream<double> get preamp => _preampController.stream;
-
-  /// Broadcast stream of ReplayGain configuration changes.
-  Stream<ReplayGainConfig> get replayGain => _replayGainController.stream;
-
-  /// Broadcast stream of stereo balance changes.
-  Stream<double> get balance => _balanceController.stream;
-
-  /// Broadcast stream of mono downmix status changes.
-  Stream<bool> get mono => _monoController.stream;
-
-  /// Broadcast stream of headphone crossfeed mode changes.
-  Stream<CrossfeedMode> get crossfeed => _crossfeedController.stream;
-
-  /// Broadcast stream of stereo widener enabled changes.
-  Stream<bool> get spatializerEnabled => _spatializerEnabledController.stream;
-
-  /// Broadcast stream of stereo widener width factor changes.
-  Stream<double> get spatializerWidth => _spatializerWidthController.stream;
-
-  /// Broadcast stream of reverb configuration changes.
-  Stream<Reverb> get reverb => _reverbController.stream;
-
-  /// Broadcast stream of limiter enabled changes.
-  Stream<bool> get limiterEnabled => _limiterEnabledController.stream;
-
-  /// Broadcast stream of clean synthesized container bytes containing all format headers,
-  /// initial and trailing metadata tags (ID3v2, ID3v1, APEv2, Vorbis Comments, FLAC PICTURE,
-  /// MP4 ilst/udta, ICY metadata, etc.) with 0 seconds of audio samples.
-  Stream<Uint8List?> get metaBytes =>
-      _metaBytesController?.stream ?? const Stream.empty();
+  Future<void> dispose() async {
+    await Future.wait([
+      positionController.close(),
+      durationController.close(),
+      playingController.close(),
+      bufferingController.close(),
+      completedController.close(),
+      openingController.close(),
+      playbackStateController.close(),
+      phaseController.close(),
+      bufferedPositionController.close(),
+      bufferedPercentageController.close(),
+      bufferedRangeController.close(),
+      trackMetadataController.close(),
+      metaBytesController.close(),
+      volumeController.close(),
+      rateController.close(),
+      pitchController.close(),
+      balanceController.close(),
+      monoController.close(),
+      bufferSizeController.close(),
+      audioBitrateController.close(),
+      equalizerController.close(),
+      audioDeviceController.close(),
+      outputsController.close(),
+      inputsController.close(),
+      globalOutputDevicesController.close(),
+      globalInputDevicesController.close(),
+      pauseOnDeviceChangeController.close(),
+      skipSilenceController.close(),
+      silenceConfigController.close(),
+      silenceSavedDurationController.close(),
+      visualizerController.close(),
+      visualizerEnabledController.close(),
+      preampController.close(),
+      replayGainController.close(),
+      crossfeedController.close(),
+      spatializerEnabledController.close(),
+      spatializerWidthController.close(),
+      reverbController.close(),
+      limiterEnabledController.close(),
+      queueController.close(),
+      currentIndexController.close(),
+      currentItemController.close(),
+      loopModeController.close(),
+      isShuffledController.close(),
+      isCrossfadingController.close(),
+      crossfadeConfigController.close(),
+      isRecordingController.close(),
+      recordedDurationController.close(),
+      cueVolumeController.close(),
+      cueSourceController.close(),
+      isMicrophoneEnabledController.close(),
+      micVolumeController.close(),
+      isDuckingActiveController.close(),
+      isDirectMonitoringEnabledController.close(),
+      micRmsLevelController.close(),
+      voiceCompletedController.close(),
+      errorsController.close(),
+      needMoreTracksController.close(),
+    ]);
+  }
 }

@@ -6,11 +6,14 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player/src/api/player_exception.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
+
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
 
   File resolveAsset(String path) {
     final file = File(path);
@@ -63,7 +66,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -189,7 +192,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -287,7 +290,7 @@ void main() {
     });
 
     setUp(() {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {

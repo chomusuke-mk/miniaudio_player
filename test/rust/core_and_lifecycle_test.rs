@@ -11,7 +11,7 @@ use std::time::Duration;
 use common::{FixtureResolver, SignalGenerator};
 use miniaudio_player::buffer::MemoryByteSource;
 use miniaudio_player::core::config::PlayerConfig;
-use miniaudio_player::core::player::{PlayerCoordinator, STATE_PLAYING};
+use miniaudio_player::core::dual_source::{StreamingDeck, STATE_PLAYING};
 use miniaudio_player::core::recording::{offline_bounce_to_wav, LiveRecorder, WavFormat};
 use miniaudio_player::core::renderer::{
     audio_renderer_notif_trampoline, audio_renderer_render_trampoline, AudioRenderer,
@@ -74,6 +74,7 @@ fn test_audio_renderer_instant_rate_and_pitch_response() {
     let position_ms = Arc::new(AtomicI64::new(0));
 
     let mut renderer = AudioRenderer {
+        deck_id: 1,
         header: PcmRendererHeader {
             render_fn: audio_renderer_render_trampoline,
             notif_fn: audio_renderer_notif_trampoline,
@@ -173,7 +174,7 @@ fn test_player_coordinator_lifecycle_on_manifest_fixtures() {
         "salida.ape",
     ];
 
-    let coordinator_res = PlayerCoordinator::new(
+    let coordinator_res = StreamingDeck::new(
         48000,
         2,
         1024,

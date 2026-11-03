@@ -33,6 +33,19 @@ enum AudioCodec {
   static AudioCodec _detectFromMagicBytes(List<int> bytes, {String? mime}) {
     if (bytes.length < 4) return AudioCodec.unknown;
 
+    // 0. HLS Playlist: '#EXT'
+    if (bytes[0] == 0x23 &&
+        bytes[1] == 0x45 &&
+        bytes[2] == 0x58 &&
+        bytes[3] == 0x54) {
+      final text = String.fromCharCodes(bytes);
+      if (text.contains('.mp3')) return AudioCodec.mp3;
+      if (text.contains('.aac') || text.contains('.ts')) return AudioCodec.aac;
+      if (text.contains('.flac')) return AudioCodec.flac;
+      if (text.contains('.opus')) return AudioCodec.opus;
+      return AudioCodec.aac;
+    }
+
     // 1. FLAC: 'fLaC'
     if (bytes[0] == 0x66 &&
         bytes[1] == 0x4C &&
@@ -339,6 +352,37 @@ class AudioTrackMetadata {
     this.audioDataOffset = 0,
   });
 
+  /// Returns a copy of this metadata with the given fields replaced.
+  AudioTrackMetadata copyWith({
+    AudioCodec? codec,
+    AudioFormat? format,
+    String? formatName,
+    Duration? duration,
+    int? totalBytes,
+    int? bitrate,
+    int? sampleRate,
+    int? channels,
+    bool? isNetwork,
+    bool? isLiveStream,
+    Uri? uri,
+    int? audioDataOffset,
+  }) {
+    return AudioTrackMetadata(
+      codec: codec ?? this.codec,
+      format: format ?? this.format,
+      formatName: formatName ?? this.formatName,
+      duration: duration ?? this.duration,
+      totalBytes: totalBytes ?? this.totalBytes,
+      bitrate: bitrate ?? this.bitrate,
+      sampleRate: sampleRate ?? this.sampleRate,
+      channels: channels ?? this.channels,
+      isNetwork: isNetwork ?? this.isNetwork,
+      isLiveStream: isLiveStream ?? this.isLiveStream,
+      uri: uri ?? this.uri,
+      audioDataOffset: audioDataOffset ?? this.audioDataOffset,
+    );
+  }
+
   /// Deterministically resolves an [AudioTrackMetadata] snapshot from a source descriptor
   /// and native decoder probe metrics.
   factory AudioTrackMetadata.resolve({
@@ -351,7 +395,10 @@ class AudioTrackMetadata {
     Uint8List? headerBytes,
     int? knownTotalBytes,
   }) {
-    final trimmed = sourceHint.trim();
+    var trimmed = sourceHint.trim();
+    if (trimmed.startsWith('uri:')) {
+      trimmed = trimmed.substring(4).trim();
+    }
     final lower = trimmed.toLowerCase();
     final isNetwork =
         lower.startsWith('http://') || lower.startsWith('https://');

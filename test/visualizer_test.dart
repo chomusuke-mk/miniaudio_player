@@ -6,6 +6,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   File resolveAsset(String path) {
     final file = File(path);
     if (file.existsSync()) return file;
@@ -49,7 +53,7 @@ void main() {
     final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
 
     test('Visualizer is inactive by default and can be manually enabled/disabled', () async {
-      final player = MiniaudioPlayer(dummySource);
+      final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
       expect(player.state.visualizerEnabled, isFalse);
@@ -63,7 +67,7 @@ void main() {
     });
 
     test('Listening to player.stream.visualizer automatically activates visualizer on-demand', () async {
-      final player = MiniaudioPlayer(dummySource);
+      final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
       expect(player.state.visualizerEnabled, isFalse);
@@ -82,7 +86,7 @@ void main() {
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue, reason: 'salida.mp3 test asset must exist');
 
-      final player = MiniaudioPlayer(AudioSource(mp3.path));
+      final player = MiniaudioPlayer(source: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
 
       final emittedData = <VisualizerData>[];
@@ -91,7 +95,7 @@ void main() {
       });
       addTearDown(() => sub.cancel());
 
-      await player.waitUntilOpen;
+      await player.action.waitUntilOpen();
       await player.action.play();
 
       // Allow audio to stream and compute multiple buffer frames
@@ -121,7 +125,7 @@ void main() {
     });
 
     test('setVisualizerEnabled(false) force-disables visualizer DSP even with active stream listeners', () async {
-      final player = MiniaudioPlayer(dummySource);
+      final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
       // 1. Subscribe to visualizer stream -> should auto-enable
@@ -148,7 +152,7 @@ void main() {
     });
 
     test('clearVisualizerOverride reverts to listener-based automatic activation', () async {
-      final player = MiniaudioPlayer(dummySource);
+      final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
       final sub = player.stream.visualizer.listen((_) {});
@@ -174,7 +178,7 @@ void main() {
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue);
 
-      final player = MiniaudioPlayer(AudioSource(mp3.path));
+      final player = MiniaudioPlayer(source: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
 
       final emitted = <VisualizerData>[];
@@ -183,7 +187,7 @@ void main() {
       });
       addTearDown(() => sub.cancel());
 
-      await player.waitUntilOpen;
+      await player.action.waitUntilOpen();
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -201,7 +205,7 @@ void main() {
     });
 
     test('visualizerEnabled broadcast stream emits correct transitions with manual override', () async {
-      final player = MiniaudioPlayer(dummySource);
+      final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
       final enabledStates = <bool>[];

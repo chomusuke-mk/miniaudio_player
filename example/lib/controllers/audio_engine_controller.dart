@@ -10,9 +10,9 @@ import '../models/mock_data.dart';
 /// Manages dual-deck audio threads, automated crossfades, reorderable playlist queue,
 /// DSP effects (Equalizer, Reverb, Limiter, Silence Skipping, Crossfeed), and hardware routing.
 class AudioEngineController extends ChangeNotifier {
-  final MiniaudioEngine<AudioTrack> engine = MiniaudioEngine<AudioTrack>(
+  final MiniaudioPlayer<AudioTrack> engine = MiniaudioPlayer<AudioTrack>(
     crossfadeConfig: CrossfadeConfig(
-      duration: const Duration(seconds: 5),
+      autoDuration: const Duration(seconds: 5),
       manualDuration: const Duration(milliseconds: 100),
       curve: CrossfadeCurve.equalPower,
     ),
@@ -174,7 +174,7 @@ class AudioEngineController extends ChangeNotifier {
     _cachedTracks = await MockData.loadTracks();
 
     try {
-      final devs = await MiniaudioPlayer.getAudioDevices();
+      final devs = engine.state.globalOutputDevices;
       if (devs.isNotEmpty) _audioDevices = devs;
     } catch (_) {}
 
@@ -192,9 +192,9 @@ class AudioEngineController extends ChangeNotifier {
 
     await engine.action.setLimiter(true);
     await engine.action.setReverb(Reverb.off);
-    await engine.action.setCrossfadeConfig(
+    await engine.action.setCrossfade(
       CrossfadeConfig(
-        duration: const Duration(seconds: 5),
+        autoDuration: const Duration(seconds: 5),
         manualDuration: const Duration(milliseconds: 100),
         curve: CrossfadeCurve.equalPower,
       ),
@@ -215,7 +215,7 @@ class AudioEngineController extends ChangeNotifier {
     }));
     _subscriptions.add(engine.stream.currentIndex.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.queue.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.shuffle.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.isShuffled.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.loopMode.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.crossfadeConfig.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.playbackState.listen((_) => notifyListeners()));
@@ -249,13 +249,10 @@ class AudioEngineController extends ChangeNotifier {
       _preampOverride = null;
       notifyListeners();
     }));
-    _subscriptions.add(engine.stream.volumeNormalization.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.replayGainMode.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.defaultReplayGain.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.forcedReplayGain.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.replayGain.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.audioDevice.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.pauseOnDeviceChange.listen((_) => notifyListeners()));
-    _subscriptions.add(MiniaudioPlayer.getAudioDevicesStream().listen((list) {
+    _subscriptions.add(engine.stream.globalOutputDevices.listen((list) {
       if (list.isNotEmpty) {
         _audioDevices = list;
         notifyListeners();
@@ -303,9 +300,13 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   Future<void> setEqualizerBand(int bandIndex, double gainDb) async {
-    await engine.action.setEqualizerBand(bandIndex, gainDb);
-    _selectedPreset = _detectPreset(engine.state.equalizer) ?? 'custom';
-    notifyListeners();
+    final list = engine.state.equalizer.toList();
+    if (bandIndex >= 0 && bandIndex < list.length) {
+      list[bandIndex] = gainDb;
+      await engine.action.setEqualizer(Equalizer.fromList(list));
+      _selectedPreset = _detectPreset(engine.state.equalizer) ?? 'custom';
+      notifyListeners();
+    }
   }
 
   // --- Reverb ---
@@ -424,17 +425,23 @@ class AudioEngineController extends ChangeNotifier {
 
   // --- Crossfade Configuration ---
   Future<void> setCrossfadeCurve(CrossfadeCurve curve) async {
-    await engine.action.setCrossfadeCurve(curve);
+    await engine.action.setCrossfade(
+      engine.state.crossfadeConfig.copyWith(curve: curve),
+    );
     notifyListeners();
   }
 
   Future<void> setCrossfadeDuration(Duration duration) async {
-    await engine.action.setCrossfadeDuration(duration);
+    await engine.action.setCrossfade(
+      engine.state.crossfadeConfig.copyWith(autoDuration: duration),
+    );
     notifyListeners();
   }
 
   Future<void> setManualCrossfadeDuration(Duration duration) async {
-    await engine.action.setManualCrossfadeDuration(duration);
+    await engine.action.setCrossfade(
+      engine.state.crossfadeConfig.copyWith(manualDuration: duration),
+    );
     notifyListeners();
   }
 
@@ -470,60 +477,40 @@ class AudioEngineController extends ChangeNotifier {
   Future<void> setSilenceSkipEnabled(bool enabled) async {
     final modeToApply = enabled ? _silenceMode : SilenceSkipMode.disabled;
     await engine.action.setSkipSilence(
-      enabled,
-      mode: modeToApply,
-      thresholdDb: engine.state.silenceConfig.thresholdDb,
-      minSilenceDuration: engine.state.silenceConfig.minSilenceDuration,
-      padding: engine.state.silenceConfig.padding,
+      engine.state.silenceConfig.copyWith(mode: modeToApply),
     );
     notifyListeners();
   }
 
   Future<void> setSilenceMode(SilenceSkipMode mode) async {
     _silenceMode = mode;
-    final enabled = engine.state.silenceConfig.mode != SilenceSkipMode.disabled;
     await engine.action.setSkipSilence(
-      enabled,
-      mode: mode,
-      thresholdDb: engine.state.silenceConfig.thresholdDb,
-      minSilenceDuration: engine.state.silenceConfig.minSilenceDuration,
-      padding: engine.state.silenceConfig.padding,
+      engine.state.silenceConfig.copyWith(mode: mode),
     );
     notifyListeners();
   }
 
   Future<void> setSilenceThresholdDb(double thresholdDb) async {
-    final enabled = engine.state.silenceConfig.mode != SilenceSkipMode.disabled;
     await engine.action.setSkipSilence(
-      enabled,
-      mode: engine.state.silenceConfig.mode,
-      thresholdDb: thresholdDb,
-      minSilenceDuration: engine.state.silenceConfig.minSilenceDuration,
-      padding: engine.state.silenceConfig.padding,
+      engine.state.silenceConfig.copyWith(thresholdDb: thresholdDb),
     );
     notifyListeners();
   }
 
   Future<void> setMinSilenceDurationMs(int durationMs) async {
-    final enabled = engine.state.silenceConfig.mode != SilenceSkipMode.disabled;
     await engine.action.setSkipSilence(
-      enabled,
-      mode: engine.state.silenceConfig.mode,
-      thresholdDb: engine.state.silenceConfig.thresholdDb,
-      minSilenceDuration: Duration(milliseconds: durationMs),
-      padding: engine.state.silenceConfig.padding,
+      engine.state.silenceConfig.copyWith(
+        minSilenceDuration: Duration(milliseconds: durationMs),
+      ),
     );
     notifyListeners();
   }
 
   Future<void> setSilencePaddingMs(int paddingMs) async {
-    final enabled = engine.state.silenceConfig.mode != SilenceSkipMode.disabled;
     await engine.action.setSkipSilence(
-      enabled,
-      mode: engine.state.silenceConfig.mode,
-      thresholdDb: engine.state.silenceConfig.thresholdDb,
-      minSilenceDuration: engine.state.silenceConfig.minSilenceDuration,
-      padding: Duration(milliseconds: paddingMs),
+      engine.state.silenceConfig.copyWith(
+        padding: Duration(milliseconds: paddingMs),
+      ),
     );
     notifyListeners();
   }

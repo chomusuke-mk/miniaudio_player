@@ -4,9 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
-  test('invoke native function via native assets', () {
-    final devices = MiniaudioPlayer.getAudioDevicesSync();
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
+  test('invoke native function via native assets', () async {
+    final player = MiniaudioPlayer();
+    final devices = player.state.globalOutputDevices;
     expect(devices, isNotEmpty);
+    await player.dispose();
   });
 
   test('AudioDevice correctly handles UTF-8 device names with accented characters', () {
@@ -112,31 +118,37 @@ void main() {
     expect(autoA, equals(AudioDevice.auto));
   });
 
-  test('MiniaudioPlayer.getAudioDevices and getAudioDevicesSync enumerate devices', () async {
-    final asyncDevices = await MiniaudioPlayer.getAudioDevices();
-    final syncDevices = MiniaudioPlayer.getAudioDevicesSync();
+  test('player.state.globalOutputDevices and globalInputDevices hold snapshot of devices', () async {
+    final player = MiniaudioPlayer();
+    final syncDevices = player.state.globalOutputDevices;
 
-    expect(asyncDevices, isNotEmpty);
     expect(syncDevices, isNotEmpty);
-    expect(asyncDevices.first, equals(AudioDevice.auto));
     expect(syncDevices.first, equals(AudioDevice.auto));
+
+    final inSync = player.state.globalInputDevices;
+    expect(inSync, isNotEmpty);
+
+    await player.dispose();
   });
 
-  test('MiniaudioPlayer.getAudioDevicesStream returns a broadcast stream', () {
-    final stream = MiniaudioPlayer.getAudioDevicesStream();
-    expect(stream.isBroadcast, isTrue);
+  test('stream.globalOutputDevices and stream.globalInputDevices return broadcast streams', () async {
+    final player = MiniaudioPlayer();
+    expect(player.stream.globalOutputDevices.isBroadcast, isTrue);
+    expect(player.stream.globalInputDevices.isBroadcast, isTrue);
+    await player.dispose();
   });
 
-  test('MiniaudioPlayer.getAudioDevicesStream handles listen and cancel lifecycle cleanly', () async {
-    final stream = MiniaudioPlayer.getAudioDevicesStream();
+  test('stream.globalOutputDevices handles listen and cancel lifecycle cleanly', () async {
+    final player = MiniaudioPlayer();
+    final stream = player.stream.globalOutputDevices;
     final sub1 = stream.listen((_) {});
     final sub2 = stream.listen((_) {});
     await sub1.cancel();
     await sub2.cancel();
 
-    // Re-listening should smoothly recreate the native callback
     final sub3 = stream.listen((_) {});
     await sub3.cancel();
+    await player.dispose();
   });
 
   test('cbr_noxing.mp3 memory playback, seek and duration', () async {
@@ -144,9 +156,9 @@ void main() {
     expect(file.existsSync(), isTrue);
     final bytes = await file.readAsBytes();
 
-    final player = MiniaudioPlayer(AudioSource(bytes));
+    final player = MiniaudioPlayer(source: [AudioSource(bytes)]);
     try {
-      await player.waitUntilOpen;
+      await player.action.waitUntilOpen();
       expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
 
       await player.action.play();
@@ -191,10 +203,10 @@ void main() {
     final bytes1 = await file1.readAsBytes();
     final bytes2 = await file2.readAsBytes();
 
-    final player = MiniaudioPlayer(AudioSource(bytes1));
+    final player = MiniaudioPlayer(source: [AudioSource(bytes1)]);
     try {
       // 1. Open track 1
-      await player.waitUntilOpen;
+      await player.action.waitUntilOpen();
       expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
       await player.action.play();
       expect(player.state.playing, isTrue);

@@ -3,8 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:miniaudio_player/src/loader/custom_byte_provider.dart';
-import 'package:miniaudio_player/src/platform/native/native_backend.dart';
+import 'package:miniaudio_player/miniaudio_player.dart';
 
 class MockCustomByteProvider implements CustomByteProvider {
   final Uint8List _fileBytes;
@@ -40,28 +39,27 @@ class MockCustomByteProvider implements CustomByteProvider {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   test('CustomDartByteSource asynchronous pull-with-prefetch bridge test', () async {
     final file = File('test/fixtures/tripartite/trailing_chunks.wav');
     expect(file.existsSync(), isTrue, reason: 'Test fixture wav file must exist');
     final bytes = await file.readAsBytes();
 
-    final backend = NativePlayerBackend();
-    backend.init(sampleRate: 44100, channels: 2, periodSize: 1024);
+    final player = MiniaudioPlayer();
+    final provider = MockCustomByteProvider(bytes, streamId: 202);
+    final source = AudioSource.custom(provider);
+
+    await player.action.open(source);
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    final provider = MockCustomByteProvider(bytes, streamId: 202);
-    final bridge = DartByteProviderBridge(backend, provider);
+    await player.action.play();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
 
-    await bridge.start();
-
-    // Verify initial probe opened successfully
-    await backend.play();
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-
-    // Verify playback happened and custom requests were dispatched
-    await backend.stop();
-    bridge.dispose();
-    await backend.dispose();
+    await player.action.stop();
+    await player.dispose();
 
     expect(provider.requestedOffsets.isNotEmpty, isTrue,
         reason: 'Rust engine should have requested audio chunks from Dart provider');

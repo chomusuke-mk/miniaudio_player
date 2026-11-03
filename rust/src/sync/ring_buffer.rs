@@ -9,7 +9,8 @@ pub struct AudioProducer {
 impl AudioProducer {
     #[inline(always)]
     pub fn write_chunk(&mut self, samples: &[f32]) -> usize {
-        let to_write = self.producer.slots().min(samples.len());
+        let slots = self.producer.slots();
+        let to_write = slots.min(samples.len());
         if to_write == 0 {
             return 0;
         }
@@ -50,7 +51,8 @@ pub struct AudioConsumer {
 impl AudioConsumer {
     #[inline(always)]
     pub fn read_chunk(&mut self, out_samples: &mut [f32]) -> usize {
-        let to_read = self.consumer.slots().min(out_samples.len());
+        let slots = self.consumer.slots();
+        let to_read = slots.min(out_samples.len());
         if to_read == 0 {
             return 0;
         }

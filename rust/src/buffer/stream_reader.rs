@@ -63,23 +63,27 @@ impl BufferStreamReader {
 
 impl Read for BufferStreamReader {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        match self
+        let res = self
             .buffer
-            .read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT))
-        {
+            .read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT));
+        match res {
             Ok(bytes_read) => {
                 self.cursor += bytes_read as u64;
                 self.buffer.advance_read_cursor(self.cursor);
                 Ok(bytes_read)
             }
-            Err(BufferError::Eof) => Ok(0),
+            Err(BufferError::Eof) => {
+                Ok(0)
+            }
             Err(BufferError::Aborted) => {
-                Err(IoError::new(ErrorKind::Interrupted, "stream aborted"))
+                Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
             }
             Err(BufferError::WouldBlock) => {
                 Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
             }
-            Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
+            Err(_e) => {
+                Err(IoError::new(ErrorKind::Other, "buffer read error"))
+            }
         }
     }
 }

@@ -74,7 +74,7 @@ def generate_fixtures(base_dir: Path = FIXTURES_DIR, output_dir: Path = TRIPARTI
         if is_last:
             break
 
-    flac_audio = full_flac[pos : pos + 200000]
+    flac_audio = full_flac[pos : pos + 2000000]
     giant_flac = b"fLaC" + streaminfo_block + pic_block + flac_audio
 
     with open(output_dir / "giant_cover.flac", "wb") as f:

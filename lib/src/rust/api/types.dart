@@ -9,16 +9,20 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `RustAudioEffect`, `RustAudioInput`, `RustEngineEvent`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 class RustAudioAnalysisResult {
   final PlatformInt64 durationMs;
   final int sampleRate;
   final int channels;
+  final int bitrate;
   final double peakAmplitude;
   final double rmsAmplitude;
+  final bool hasReplayGain;
   final double integratedLufs;
   final double replayGainDb;
+  final bool hasWaveform;
   final double spectralCentroid;
   final Float32List frequencyBands;
   final Float32List waveformPeaks;
@@ -27,10 +31,13 @@ class RustAudioAnalysisResult {
     required this.durationMs,
     required this.sampleRate,
     required this.channels,
+    required this.bitrate,
     required this.peakAmplitude,
     required this.rmsAmplitude,
+    required this.hasReplayGain,
     required this.integratedLufs,
     required this.replayGainDb,
+    required this.hasWaveform,
     required this.spectralCentroid,
     required this.frequencyBands,
     required this.waveformPeaks,
@@ -44,10 +51,13 @@ class RustAudioAnalysisResult {
       durationMs.hashCode ^
       sampleRate.hashCode ^
       channels.hashCode ^
+      bitrate.hashCode ^
       peakAmplitude.hashCode ^
       rmsAmplitude.hashCode ^
+      hasReplayGain.hashCode ^
       integratedLufs.hashCode ^
       replayGainDb.hashCode ^
+      hasWaveform.hashCode ^
       spectralCentroid.hashCode ^
       frequencyBands.hashCode ^
       waveformPeaks.hashCode;
@@ -60,10 +70,13 @@ class RustAudioAnalysisResult {
           durationMs == other.durationMs &&
           sampleRate == other.sampleRate &&
           channels == other.channels &&
+          bitrate == other.bitrate &&
           peakAmplitude == other.peakAmplitude &&
           rmsAmplitude == other.rmsAmplitude &&
+          hasReplayGain == other.hasReplayGain &&
           integratedLufs == other.integratedLufs &&
           replayGainDb == other.replayGainDb &&
+          hasWaveform == other.hasWaveform &&
           spectralCentroid == other.spectralCentroid &&
           frequencyBands == other.frequencyBands &&
           waveformPeaks == other.waveformPeaks;
@@ -105,6 +118,27 @@ class RustAudioDevice {
           name == other.name &&
           isDefault == other.isDefault &&
           isAuto == other.isAuto;
+}
+
+@freezed
+sealed class RustAudioOutput with _$RustAudioOutput {
+  const RustAudioOutput._();
+
+  const factory RustAudioOutput.speaker({
+    required bool exclusiveMode,
+  }) = RustAudioOutput_Speaker;
+  const factory RustAudioOutput.device({
+    required String deviceId,
+    required bool exclusiveMode,
+  }) = RustAudioOutput_Device;
+  const factory RustAudioOutput.cue({
+    required String deviceId,
+    required int source,
+  }) = RustAudioOutput_Cue;
+  const factory RustAudioOutput.file({
+    required String path,
+    required int format,
+  }) = RustAudioOutput_File;
 }
 
 class RustAudioSource {
@@ -152,34 +186,19 @@ class RustAudioSource {
 class RustBufferedRange {
   final PlatformInt64 startMs;
   final PlatformInt64 endMs;
-  final PlatformInt64 durationMs;
-  final double fillPercentage;
-  final double streamPercentage;
   final bool isBuffering;
-  final bool isEof;
 
   const RustBufferedRange({
     required this.startMs,
     required this.endMs,
-    required this.durationMs,
-    required this.fillPercentage,
-    required this.streamPercentage,
     required this.isBuffering,
-    required this.isEof,
   });
 
   static Future<RustBufferedRange> default_() =>
       RustLib.instance.api.crateApiTypesRustBufferedRangeDefault();
 
   @override
-  int get hashCode =>
-      startMs.hashCode ^
-      endMs.hashCode ^
-      durationMs.hashCode ^
-      fillPercentage.hashCode ^
-      streamPercentage.hashCode ^
-      isBuffering.hashCode ^
-      isEof.hashCode;
+  int get hashCode => startMs.hashCode ^ endMs.hashCode ^ isBuffering.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -188,20 +207,16 @@ class RustBufferedRange {
           runtimeType == other.runtimeType &&
           startMs == other.startMs &&
           endMs == other.endMs &&
-          durationMs == other.durationMs &&
-          fillPercentage == other.fillPercentage &&
-          streamPercentage == other.streamPercentage &&
-          isBuffering == other.isBuffering &&
-          isEof == other.isEof;
+          isBuffering == other.isBuffering;
 }
 
 class RustCrossfadeConfig {
-  final BigInt durationMs;
+  final BigInt autoDurationMs;
   final BigInt manualDurationMs;
   final int curve;
 
   const RustCrossfadeConfig({
-    required this.durationMs,
+    required this.autoDurationMs,
     required this.manualDurationMs,
     required this.curve,
   });
@@ -211,14 +226,14 @@ class RustCrossfadeConfig {
 
   @override
   int get hashCode =>
-      durationMs.hashCode ^ manualDurationMs.hashCode ^ curve.hashCode;
+      autoDurationMs.hashCode ^ manualDurationMs.hashCode ^ curve.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is RustCrossfadeConfig &&
           runtimeType == other.runtimeType &&
-          durationMs == other.durationMs &&
+          autoDurationMs == other.autoDurationMs &&
           manualDurationMs == other.manualDurationMs &&
           curve == other.curve;
 }
@@ -337,112 +352,58 @@ class RustDuckingConfig {
           releaseMs == other.releaseMs;
 }
 
-@freezed
-sealed class RustEngineEvent with _$RustEngineEvent {
-  const RustEngineEvent._();
+class RustEffectConfig {
+  final double volume;
+  final double balance;
+  final double pitch;
+  final double rate;
+  final bool looping;
+  final int priority;
+  final double pitchJitter;
+  final double volumeJitter;
+  final RustSpatialEmitter? spatial;
 
-  const factory RustEngineEvent.phase(
-    int field0,
-  ) = RustEngineEvent_Phase;
-  const factory RustEngineEvent.state(
-    int field0,
-  ) = RustEngineEvent_State;
-  const factory RustEngineEvent.position(
-    PlatformInt64 field0,
-  ) = RustEngineEvent_Position;
-  const factory RustEngineEvent.duration(
-    PlatformInt64 field0,
-  ) = RustEngineEvent_Duration;
-  const factory RustEngineEvent.isPlaying(
-    bool field0,
-  ) = RustEngineEvent_IsPlaying;
-  const factory RustEngineEvent.isBuffering(
-    bool field0,
-  ) = RustEngineEvent_IsBuffering;
-  const factory RustEngineEvent.isCompleted(
-    bool field0,
-  ) = RustEngineEvent_IsCompleted;
-  const factory RustEngineEvent.currentIndex(
-    int field0,
-  ) = RustEngineEvent_CurrentIndex;
-  const factory RustEngineEvent.queueChanged(
-    List<RustAudioSource> field0,
-  ) = RustEngineEvent_QueueChanged;
-  const factory RustEngineEvent.needMoreTracks({
-    required PlatformInt64 currentTrackId,
-    required BigInt remainingTracks,
-  }) = RustEngineEvent_NeedMoreTracks;
-  const factory RustEngineEvent.volume(
-    double field0,
-  ) = RustEngineEvent_Volume;
-  const factory RustEngineEvent.rate(
-    double field0,
-  ) = RustEngineEvent_Rate;
-  const factory RustEngineEvent.pitch(
-    double field0,
-  ) = RustEngineEvent_Pitch;
-  const factory RustEngineEvent.bitrate(
-    int field0,
-  ) = RustEngineEvent_Bitrate;
-  const factory RustEngineEvent.bufferSize(
-    int field0,
-  ) = RustEngineEvent_BufferSize;
-  const factory RustEngineEvent.device(
-    RustAudioDevice field0,
-  ) = RustEngineEvent_Device;
-  const factory RustEngineEvent.visualizer(
-    RustVisualizerData field0,
-  ) = RustEngineEvent_Visualizer;
-  const factory RustEngineEvent.visualizerEnabled(
-    bool field0,
-  ) = RustEngineEvent_VisualizerEnabled;
-  const factory RustEngineEvent.bufferedRange(
-    RustBufferedRange field0,
-  ) = RustEngineEvent_BufferedRange;
-  const factory RustEngineEvent.equalizer(
-    RustEqualizerParams field0,
-  ) = RustEngineEvent_Equalizer;
-  const factory RustEngineEvent.preamp(
-    double field0,
-  ) = RustEngineEvent_Preamp;
-  const factory RustEngineEvent.replayGain(
-    RustReplayGainConfig field0,
-  ) = RustEngineEvent_ReplayGain;
-  const factory RustEngineEvent.balance(
-    double field0,
-  ) = RustEngineEvent_Balance;
-  const factory RustEngineEvent.mono(
-    bool field0,
-  ) = RustEngineEvent_Mono;
-  const factory RustEngineEvent.crossfeed(
-    int field0,
-  ) = RustEngineEvent_Crossfeed;
-  const factory RustEngineEvent.spatializer({
-    required bool enabled,
-    required double width,
-  }) = RustEngineEvent_Spatializer;
-  const factory RustEngineEvent.reverb(
-    RustReverbParams field0,
-  ) = RustEngineEvent_Reverb;
-  const factory RustEngineEvent.limiter(
-    bool field0,
-  ) = RustEngineEvent_Limiter;
-  const factory RustEngineEvent.crossfadeConfig(
-    RustCrossfadeConfig field0,
-  ) = RustEngineEvent_CrossfadeConfig;
-  const factory RustEngineEvent.loopMode(
-    int field0,
-  ) = RustEngineEvent_LoopMode;
-  const factory RustEngineEvent.shuffle(
-    bool field0,
-  ) = RustEngineEvent_Shuffle;
-  const factory RustEngineEvent.metaBytes(
-    Uint8List field0,
-  ) = RustEngineEvent_MetaBytes;
-  const factory RustEngineEvent.error({
-    required String message,
-    required int code,
-  }) = RustEngineEvent_Error;
+  const RustEffectConfig({
+    required this.volume,
+    required this.balance,
+    required this.pitch,
+    required this.rate,
+    required this.looping,
+    required this.priority,
+    required this.pitchJitter,
+    required this.volumeJitter,
+    this.spatial,
+  });
+
+  static Future<RustEffectConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustEffectConfigDefault();
+
+  @override
+  int get hashCode =>
+      volume.hashCode ^
+      balance.hashCode ^
+      pitch.hashCode ^
+      rate.hashCode ^
+      looping.hashCode ^
+      priority.hashCode ^
+      pitchJitter.hashCode ^
+      volumeJitter.hashCode ^
+      spatial.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustEffectConfig &&
+          runtimeType == other.runtimeType &&
+          volume == other.volume &&
+          balance == other.balance &&
+          pitch == other.pitch &&
+          rate == other.rate &&
+          looping == other.looping &&
+          priority == other.priority &&
+          pitchJitter == other.pitchJitter &&
+          volumeJitter == other.volumeJitter &&
+          spatial == other.spatial;
 }
 
 class RustEqualizerParams {
@@ -493,10 +454,55 @@ class RustHttpHeader {
           value == other.value;
 }
 
+class RustPlayerConfig {
+  final int bufferSizeFrames;
+  final int maxVoices;
+  final BigInt maxRamBytes;
+  final bool pauseOnDeviceChange;
+  final BigInt bufferLocalDurationMs;
+  final BigInt bufferNetworkDurationMs;
+
+  const RustPlayerConfig({
+    required this.bufferSizeFrames,
+    required this.maxVoices,
+    required this.maxRamBytes,
+    required this.pauseOnDeviceChange,
+    required this.bufferLocalDurationMs,
+    required this.bufferNetworkDurationMs,
+  });
+
+  static Future<RustPlayerConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustPlayerConfigDefault();
+
+  @override
+  int get hashCode =>
+      bufferSizeFrames.hashCode ^
+      maxVoices.hashCode ^
+      maxRamBytes.hashCode ^
+      pauseOnDeviceChange.hashCode ^
+      bufferLocalDurationMs.hashCode ^
+      bufferNetworkDurationMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustPlayerConfig &&
+          runtimeType == other.runtimeType &&
+          bufferSizeFrames == other.bufferSizeFrames &&
+          maxVoices == other.maxVoices &&
+          maxRamBytes == other.maxRamBytes &&
+          pauseOnDeviceChange == other.pauseOnDeviceChange &&
+          bufferLocalDurationMs == other.bufferLocalDurationMs &&
+          bufferNetworkDurationMs == other.bufferNetworkDurationMs;
+}
+
 @freezed
 sealed class RustPlayerEvent with _$RustPlayerEvent {
   const RustPlayerEvent._();
 
+  const factory RustPlayerEvent.playbackState(
+    int field0,
+  ) = RustPlayerEvent_PlaybackState;
   const factory RustPlayerEvent.state(
     int field0,
   ) = RustPlayerEvent_State;
@@ -515,6 +521,27 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.isCompleted(
     bool field0,
   ) = RustPlayerEvent_IsCompleted;
+  const factory RustPlayerEvent.bufferedRange(
+    RustBufferedRange field0,
+  ) = RustPlayerEvent_BufferedRange;
+  const factory RustPlayerEvent.queue(
+    List<RustAudioSource> field0,
+  ) = RustPlayerEvent_Queue;
+  const factory RustPlayerEvent.currentIndex(
+    int field0,
+  ) = RustPlayerEvent_CurrentIndex;
+  const factory RustPlayerEvent.isCrossfading(
+    bool field0,
+  ) = RustPlayerEvent_IsCrossfading;
+  const factory RustPlayerEvent.crossfadeConfig(
+    RustCrossfadeConfig field0,
+  ) = RustPlayerEvent_CrossfadeConfig;
+  const factory RustPlayerEvent.visualizer(
+    RustVisualizerData field0,
+  ) = RustPlayerEvent_Visualizer;
+  const factory RustPlayerEvent.visualizerEnabled(
+    bool field0,
+  ) = RustPlayerEvent_VisualizerEnabled;
   const factory RustPlayerEvent.volume(
     double field0,
   ) = RustPlayerEvent_Volume;
@@ -524,24 +551,18 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.pitch(
     double field0,
   ) = RustPlayerEvent_Pitch;
+  const factory RustPlayerEvent.balance(
+    double field0,
+  ) = RustPlayerEvent_Balance;
+  const factory RustPlayerEvent.mono(
+    bool field0,
+  ) = RustPlayerEvent_Mono;
   const factory RustPlayerEvent.bitrate(
     int field0,
   ) = RustPlayerEvent_Bitrate;
   const factory RustPlayerEvent.bufferSize(
     int field0,
   ) = RustPlayerEvent_BufferSize;
-  const factory RustPlayerEvent.device(
-    RustAudioDevice field0,
-  ) = RustPlayerEvent_Device;
-  const factory RustPlayerEvent.visualizer(
-    RustVisualizerData field0,
-  ) = RustPlayerEvent_Visualizer;
-  const factory RustPlayerEvent.visualizerEnabled(
-    bool field0,
-  ) = RustPlayerEvent_VisualizerEnabled;
-  const factory RustPlayerEvent.bufferedRange(
-    RustBufferedRange field0,
-  ) = RustPlayerEvent_BufferedRange;
   const factory RustPlayerEvent.silenceConfig(
     RustSilenceConfig field0,
   ) = RustPlayerEvent_SilenceConfig;
@@ -557,12 +578,6 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.replayGain(
     RustReplayGainConfig field0,
   ) = RustPlayerEvent_ReplayGain;
-  const factory RustPlayerEvent.balance(
-    double field0,
-  ) = RustPlayerEvent_Balance;
-  const factory RustPlayerEvent.mono(
-    bool field0,
-  ) = RustPlayerEvent_Mono;
   const factory RustPlayerEvent.crossfeed(
     int field0,
   ) = RustPlayerEvent_Crossfeed;
@@ -576,9 +591,60 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.limiter(
     bool field0,
   ) = RustPlayerEvent_Limiter;
+  const factory RustPlayerEvent.isRecording(
+    bool field0,
+  ) = RustPlayerEvent_IsRecording;
+  const factory RustPlayerEvent.recordedDuration(
+    BigInt field0,
+  ) = RustPlayerEvent_RecordedDuration;
+  const factory RustPlayerEvent.isDuckingActive(
+    bool field0,
+  ) = RustPlayerEvent_IsDuckingActive;
+  const factory RustPlayerEvent.micRmsLevel(
+    double field0,
+  ) = RustPlayerEvent_MicRmsLevel;
+  const factory RustPlayerEvent.voiceCompleted(
+    int field0,
+  ) = RustPlayerEvent_VoiceCompleted;
+  const factory RustPlayerEvent.metaBytes(
+    Uint8List field0,
+  ) = RustPlayerEvent_MetaBytes;
+  const factory RustPlayerEvent.cueVolume(
+    double field0,
+  ) = RustPlayerEvent_CueVolume;
+  const factory RustPlayerEvent.cueSource(
+    int field0,
+  ) = RustPlayerEvent_CueSource;
+  const factory RustPlayerEvent.loopMode(
+    int field0,
+  ) = RustPlayerEvent_LoopMode;
+  const factory RustPlayerEvent.isShuffled(
+    bool field0,
+  ) = RustPlayerEvent_IsShuffled;
+  const factory RustPlayerEvent.pauseOnDeviceChange(
+    bool field0,
+  ) = RustPlayerEvent_PauseOnDeviceChange;
+  const factory RustPlayerEvent.microphoneEnabled(
+    bool field0,
+  ) = RustPlayerEvent_MicrophoneEnabled;
+  const factory RustPlayerEvent.micVolume(
+    double field0,
+  ) = RustPlayerEvent_MicVolume;
+  const factory RustPlayerEvent.directMonitoringEnabled(
+    bool field0,
+  ) = RustPlayerEvent_DirectMonitoringEnabled;
+  const factory RustPlayerEvent.outputDevices(
+    List<RustAudioDevice> field0,
+  ) = RustPlayerEvent_OutputDevices;
+  const factory RustPlayerEvent.inputDevices(
+    List<RustAudioDevice> field0,
+  ) = RustPlayerEvent_InputDevices;
   const factory RustPlayerEvent.dartReadRequest(
     RustDartReadRequest field0,
   ) = RustPlayerEvent_DartReadRequest;
+  const factory RustPlayerEvent.device(
+    RustAudioDevice field0,
+  ) = RustPlayerEvent_Device;
   const factory RustPlayerEvent.error({
     required String message,
     required int code,
@@ -649,6 +715,37 @@ class RustPlayerStatus {
           bitrate == other.bitrate &&
           sampleRate == other.sampleRate &&
           channels == other.channels;
+}
+
+class RustRecordingResult {
+  final String path;
+  final BigInt durationMs;
+  final BigInt bytesWritten;
+  final BigInt sampleCount;
+
+  const RustRecordingResult({
+    required this.path,
+    required this.durationMs,
+    required this.bytesWritten,
+    required this.sampleCount,
+  });
+
+  @override
+  int get hashCode =>
+      path.hashCode ^
+      durationMs.hashCode ^
+      bytesWritten.hashCode ^
+      sampleCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustRecordingResult &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          durationMs == other.durationMs &&
+          bytesWritten == other.bytesWritten &&
+          sampleCount == other.sampleCount;
 }
 
 class RustReplayGainConfig {

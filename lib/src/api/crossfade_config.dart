@@ -1,4 +1,4 @@
-/// Mathematical gain interpolation curves used during [MiniaudioEngine] crossfades.
+/// Mathematical gain interpolation curves used during crossfades.
 enum CrossfadeCurve {
   /// Constant-power sinusoidal/cosinusoidal curve (`cos(p * pi/2)` / `sin(p * pi/2)`).
   ///
@@ -14,60 +14,47 @@ enum CrossfadeCurve {
 }
 
 /// Immutable configuration governing automatic and manual crossfade transitions
-/// in [MiniaudioEngine].
+/// in [MiniaudioPlayer].
 class CrossfadeConfig {
-  /// Default automatic crossfade duration at the end of a track.
-  static const Duration defaultDuration = Duration(seconds: 5);
-
-  /// Default short crossfade duration used on manual transitions (`next`,
-  /// `previous`, `skipToIndex`) to eliminate digital clicks.
-  static const Duration defaultManualDuration = Duration(milliseconds: 100);
-
   /// Target overlap duration for automatic end-of-track transitions.
-  final Duration duration;
+  ///
+  /// Defaults to 5 seconds (`const Duration(seconds: 5)`).
+  final Duration autoDuration;
 
-  /// Target overlap duration for manual user-initiated transitions.
+  /// Target overlap duration for manual user-initiated transitions (`next`,
+  /// `previous`, `skipToIndex`) to eliminate digital clicks.
+  ///
+  /// Defaults to 500 milliseconds (`const Duration(milliseconds: 500)`).
   final Duration manualDuration;
 
   /// Gain interpolation curve applied to the outgoing and incoming decks.
   final CrossfadeCurve curve;
 
-  /// Creates a [CrossfadeConfig] with durations clamped to `[0s, 12s]`.
-  CrossfadeConfig({
-    Duration duration = defaultDuration,
-    Duration manualDuration = defaultManualDuration,
+  /// Creates a [CrossfadeConfig] governing track crossfading transitions.
+  ///
+  /// - [autoDuration]: overlap duration for automatic track changes (default: 5 seconds).
+  /// - [manualDuration]: overlap duration for manual track changes (default: 500 milliseconds).
+  /// - [curve]: gain curve interpolation (default: [CrossfadeCurve.equalPower]).
+  const CrossfadeConfig({
+    this.autoDuration = const Duration(seconds: 5),
+    this.manualDuration = const Duration(milliseconds: 500),
     this.curve = CrossfadeCurve.equalPower,
-  })  : duration = _clampDuration(duration),
-        manualDuration = _clampDuration(manualDuration);
+  });
 
-  /// Creates a constant disabled [CrossfadeConfig] (instant zero-overlap cuts).
+  /// Creates a disabled [CrossfadeConfig] (instant zero-overlap cuts).
   const CrossfadeConfig.off({
     this.curve = CrossfadeCurve.equalPower,
-  })  : duration = Duration.zero,
+  })  : autoDuration = Duration.zero,
         manualDuration = Duration.zero;
-
-  static Duration _clampDuration(Duration d) {
-    if (d <= Duration.zero) return Duration.zero;
-    return d;
-  }
-
-  /// Whether automatic end-of-track crossfading is active.
-  bool get isEnabled => duration > Duration.zero;
-
-  /// Whether manual skip micro-crossfading is active.
-  bool get isManualEnabled => manualDuration > Duration.zero;
-
-  /// Duration in whole seconds for UI sliders.
-  int get durationSeconds => duration.inSeconds;
 
   /// Returns a copy of this configuration with the given fields replaced.
   CrossfadeConfig copyWith({
-    Duration? duration,
+    Duration? autoDuration,
     Duration? manualDuration,
     CrossfadeCurve? curve,
   }) {
     return CrossfadeConfig(
-      duration: duration ?? this.duration,
+      autoDuration: autoDuration ?? this.autoDuration,
       manualDuration: manualDuration ?? this.manualDuration,
       curve: curve ?? this.curve,
     );
@@ -78,16 +65,16 @@ class CrossfadeConfig {
       identical(this, other) ||
       other is CrossfadeConfig &&
           runtimeType == other.runtimeType &&
-          duration == other.duration &&
+          autoDuration == other.autoDuration &&
           manualDuration == other.manualDuration &&
           curve == other.curve;
 
   @override
-  int get hashCode => Object.hash(duration, manualDuration, curve);
+  int get hashCode => Object.hash(autoDuration, manualDuration, curve);
 
   @override
   String toString() =>
-      'CrossfadeConfig(duration: ${duration.inMilliseconds}ms, '
+      'CrossfadeConfig(autoDuration: ${autoDuration.inMilliseconds}ms, '
       'manualDuration: ${manualDuration.inMilliseconds}ms, '
       'curve: ${curve.name})';
 }

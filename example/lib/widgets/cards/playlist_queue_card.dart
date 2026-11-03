@@ -108,8 +108,8 @@ class PlaylistQueueCard extends StatelessWidget {
                     // Elegant Compact Floating Slider Overlays for Crossfade Durations
                     CompactSliderControl(
                       icon: Icons.timelapse,
-                      label: 'Auto: ${xfade.duration.inSeconds}s',
-                      value: xfade.duration.inSeconds.toDouble(),
+                      label: 'Auto: ${xfade.autoDuration.inSeconds}s',
+                      value: xfade.autoDuration.inSeconds.toDouble(),
                       defaultValue: 5.0,
                       min: 0.0,
                       max: 12.0,

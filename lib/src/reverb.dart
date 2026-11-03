@@ -164,11 +164,11 @@ class Reverb {
       other is Reverb &&
           runtimeType == other.runtimeType &&
           enabled == other.enabled &&
-          roomSize == other.roomSize &&
-          damping == other.damping &&
-          width == other.width &&
-          wet == other.wet &&
-          dry == other.dry;
+          (roomSize - other.roomSize).abs() < 1e-4 &&
+          (damping - other.damping).abs() < 1e-4 &&
+          (width - other.width).abs() < 1e-4 &&
+          (wet - other.wet).abs() < 1e-4 &&
+          (dry - other.dry).abs() < 1e-4;
 
   @override
   int get hashCode => Object.hash(

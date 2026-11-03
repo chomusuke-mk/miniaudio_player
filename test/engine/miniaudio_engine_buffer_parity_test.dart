@@ -4,11 +4,15 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('MiniaudioEngine State, Action & Stream Telemetry', () {
-    late MiniaudioEngine<String> engine;
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
+  group('MiniaudioPlayer State, Action & Stream Telemetry', () {
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>();
+      engine = MiniaudioPlayer<String>();
     });
 
     tearDown(() async {

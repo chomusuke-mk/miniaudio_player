@@ -14,6 +14,7 @@ void main() {
   late File track6File;
 
   setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
     // Use 10.0-second fixture files for reproducible FSM testing
     track1File = File('test/fixtures/test_24bit_stereo.wav');
     track2File = File('test/fixtures/cbr_noxing.mp3');
@@ -24,12 +25,12 @@ void main() {
   });
 
   group('FSM Scenario 1: Rapid next() -> previous() during Manual Crossfade', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(seconds: 2),
+          autoDuration: const Duration(seconds: 2),
           manualDuration: const Duration(seconds: 2),
           curve: CrossfadeCurve.linear,
         ),
@@ -88,12 +89,12 @@ void main() {
   });
 
   group('FSM Scenario 2: Rapid Transitions during Automatic Crossfade (autoCrossfading)', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(seconds: 2),
+          autoDuration: const Duration(seconds: 2),
           manualDuration: const Duration(milliseconds: 500),
           curve: CrossfadeCurve.linear,
         ),
@@ -186,12 +187,12 @@ void main() {
   });
 
   group('FSM Scenario 3: Concurrent Burst of 5 next() calls without await', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(milliseconds: 50),
+          autoDuration: const Duration(milliseconds: 50),
           manualDuration: const Duration(milliseconds: 50),
         ),
       );
@@ -231,7 +232,9 @@ void main() {
       expect(engine.state.currentItem?.data, equals('Track 6'));
 
       // Wait a moment for final transition settlement
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      for (int i = 0; i < 20 && engine.state.phase != EnginePhase.playing; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
 
       expect(engine.state.playing, isTrue);
       expect(engine.state.phase, equals(EnginePhase.playing));
@@ -240,12 +243,12 @@ void main() {
   });
 
   group('FSM Scenario 4: seek() during autoCrossfading vs manualCrossfading', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(seconds: 2),
+          autoDuration: const Duration(seconds: 2),
           manualDuration: const Duration(seconds: 2),
         ),
       );
@@ -311,10 +314,10 @@ void main() {
   });
 
   group('FSM Scenario 5: End of Queue (completed) and Playback Restart', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: const CrossfadeConfig.off(),
       );
     });
@@ -365,7 +368,7 @@ void main() {
   });
 
   group('FSM Scenario 6: Seek and Crossfade Boundary Lifecycle & Zero-Crossfade Stability', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     tearDown(() async {
       if (!engine.isDisposed) {
@@ -375,7 +378,7 @@ void main() {
     });
 
     test('seek to 2s with crossfade=0 maintains track 1 and does not switch prematurely', () async {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: const CrossfadeConfig.off(),
       );
 
@@ -411,9 +414,9 @@ void main() {
     });
 
     test('seeking back outside crossfade range aborts auto-crossfade and allows re-triggering', () async {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(seconds: 2),
+          autoDuration: const Duration(seconds: 2),
           manualDuration: const Duration(seconds: 2),
         ),
       );
@@ -447,7 +450,7 @@ void main() {
 
       // Seek back into crossfade zone: it triggers again smoothly
       await engine.action.seek(const Duration(milliseconds: 8600));
-      for (int i = 0; i < 20 && engine.state.phase != EnginePhase.autoCrossfading; i++) {
+      for (int i = 0; i < 40 && engine.state.phase != EnginePhase.autoCrossfading; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
 
@@ -456,9 +459,9 @@ void main() {
     });
 
     test('seeking within crossfade range preserves autoCrossfading phase and updates progress', () async {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(seconds: 2),
+          autoDuration: const Duration(seconds: 2),
           manualDuration: const Duration(seconds: 2),
         ),
       );

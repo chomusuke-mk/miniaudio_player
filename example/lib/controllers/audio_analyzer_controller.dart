@@ -31,7 +31,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     return _resultsByTrack.containsKey(track.id);
   }
 
-  void setCurrentTrack(AudioTrack? track, MiniaudioEngine engine) {
+  void setCurrentTrack(AudioTrack? track, MiniaudioPlayer engine) {
     _currentTrackId = track?.id;
     _error = null;
 
@@ -52,7 +52,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setPreventClipping(bool val, MiniaudioEngine engine) {
+  void setPreventClipping(bool val, MiniaudioPlayer engine) {
     _preventClipping = val;
     final curRes = result;
     if (_replayGainActive && curRes?.replayGain != null) {
@@ -65,7 +65,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setReplayGainActive(bool val, MiniaudioEngine engine) {
+  void setReplayGainActive(bool val, MiniaudioPlayer engine) {
     _replayGainActive = val;
     final curRes = result;
     if (val && curRes?.replayGain != null) {

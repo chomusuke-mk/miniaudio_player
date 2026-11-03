@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import '../loader/custom_byte_provider.dart';
@@ -20,7 +21,7 @@ sealed class AudioSource<T> {
   int? _id;
 
   /// Internal monotonically increasing queue entry identifier assigned internally by
-  /// [MiniaudioEngine] to distinguish duplicate tracks within the same queue.
+  /// [MiniaudioPlayer] to distinguish duplicate tracks within the same queue.
   int? get id => _id;
 
   /// Optional caller-owned domain object (e.g. metadata or model reference).
@@ -57,19 +58,21 @@ sealed class AudioSource<T> {
     T? data,
     double? replayGainDb,
     double? replayPeak,
+    int? id,
   }) {
     if (source is AudioSource) {
       if (source is AudioSource<T> &&
           headers == null &&
           data == null &&
           replayGainDb == null &&
-          replayPeak == null) {
+          replayPeak == null &&
+          id == null) {
         return source;
       }
       final effectiveData = data ?? (source.data is T ? source.data as T : null);
       final effectiveReplayGainDb = replayGainDb ?? source.replayGainDb;
       final effectiveReplayPeak = replayPeak ?? source.replayPeak;
-      final effectiveId = source.id;
+      final effectiveId = id ?? source.id;
 
       if (source is UriAudioSource) {
         return UriAudioSource<T>(
@@ -107,6 +110,7 @@ sealed class AudioSource<T> {
           data: data,
           replayGainDb: replayGainDb,
           replayPeak: replayPeak,
+          internalId: id,
         );
       }
       return UriAudioSource<T>(
@@ -115,6 +119,7 @@ sealed class AudioSource<T> {
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
+        internalId: id,
       );
     }
     if (source is String) {
@@ -127,6 +132,7 @@ sealed class AudioSource<T> {
             data: data,
             replayGainDb: replayGainDb,
             replayPeak: replayPeak,
+            internalId: id,
           );
         } catch (_) {
           return UriAudioSource<T>(
@@ -135,6 +141,7 @@ sealed class AudioSource<T> {
             data: data,
             replayGainDb: replayGainDb,
             replayPeak: replayPeak,
+            internalId: id,
           );
         }
       }
@@ -144,6 +151,7 @@ sealed class AudioSource<T> {
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
+        internalId: id,
       );
     }
     if (source is Uint8List) {
@@ -152,6 +160,7 @@ sealed class AudioSource<T> {
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
+        internalId: id,
       );
     }
     if (source is List<int>) {
@@ -160,6 +169,7 @@ sealed class AudioSource<T> {
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
+        internalId: id,
       );
     }
     throw ArgumentError.value(
@@ -184,6 +194,30 @@ sealed class AudioSource<T> {
   /// Whether this item has non-empty source coordinates that can be opened.
   bool get hasValidSource;
 
+  /// Asynchronously resolves and reads all bytes from this audio source.
+  Future<Uint8List> readBytes() async {
+    switch (this) {
+      case MemoryAudioSource<T>(:final bytes):
+        return bytes;
+      case UriAudioSource<T>(:final sourceString):
+        final uri = Uri.tryParse(sourceString);
+        if (uri != null && uri.scheme == 'file') {
+          return File.fromUri(uri).readAsBytes();
+        }
+        return File(sourceString).readAsBytes();
+      case CustomAudioSource<T>(:final provider):
+        final initial = await provider.readInitialBytes();
+        final total = provider.totalBytes ?? initial.length;
+        if (total <= initial.length) return initial;
+        final rest =
+            await provider.readBytes(initial.length, total - initial.length);
+        final builder = BytesBuilder(copy: false)
+          ..add(initial)
+          ..add(rest);
+        return builder.takeBytes();
+    }
+  }
+
   /// Converts this source to Rust's internal queue representation.
   rust_types.RustAudioSource toRustSource([int? autoId]);
 
@@ -193,6 +227,7 @@ sealed class AudioSource<T> {
     T? data,
     double? replayGainDb,
     double? replayPeak,
+    int? id,
   });
 
   /// Returns a copy of this [AudioSource] associated with a new generic data payload [data]
@@ -265,6 +300,7 @@ final class UriAudioSource<T> extends AudioSource<T> {
     T? data,
     double? replayGainDb,
     double? replayPeak,
+    int? id,
     Map<String, String>? headers,
     String? sourceString,
   }) {
@@ -274,7 +310,7 @@ final class UriAudioSource<T> extends AudioSource<T> {
       data: data ?? this.data,
       replayGainDb: replayGainDb ?? this.replayGainDb,
       replayPeak: replayPeak ?? this.replayPeak,
-      internalId: _id,
+      internalId: id ?? _id,
     );
     return res;
   }
@@ -319,6 +355,7 @@ final class MemoryAudioSource<T> extends AudioSource<T> {
     T? data,
     double? replayGainDb,
     double? replayPeak,
+    int? id,
     Uint8List? bytes,
   }) {
     final res = MemoryAudioSource<T>(
@@ -326,7 +363,7 @@ final class MemoryAudioSource<T> extends AudioSource<T> {
       data: data ?? this.data,
       replayGainDb: replayGainDb ?? this.replayGainDb,
       replayPeak: replayPeak ?? this.replayPeak,
-      internalId: _id,
+      internalId: id ?? _id,
     );
     return res;
   }
@@ -357,9 +394,12 @@ final class CustomAudioSource<T> extends AudioSource<T> {
   @override
   rust_types.RustAudioSource toRustSource([int? autoId]) {
     final effectiveId = id ?? autoId ?? 0;
+    final url = provider.totalBytes != null
+        ? 'custom://${provider.streamId}?size=${provider.totalBytes}'
+        : 'custom://${provider.streamId}';
     return rust_types.RustAudioSource(
       id: effectiveId,
-      source: 'custom://${provider.streamId}',
+      source: url,
       replayGainDb: replayGainDb,
       replayPeak: replayPeak,
     );
@@ -370,6 +410,7 @@ final class CustomAudioSource<T> extends AudioSource<T> {
     T? data,
     double? replayGainDb,
     double? replayPeak,
+    int? id,
     CustomByteProvider? provider,
   }) {
     final res = CustomAudioSource<T>(
@@ -377,7 +418,7 @@ final class CustomAudioSource<T> extends AudioSource<T> {
       data: data ?? this.data,
       replayGainDb: replayGainDb ?? this.replayGainDb,
       replayPeak: replayPeak ?? this.replayPeak,
-      internalId: _id,
+      internalId: id ?? _id,
     );
     return res;
   }

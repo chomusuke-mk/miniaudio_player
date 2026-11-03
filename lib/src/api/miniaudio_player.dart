@@ -3,24 +3,34 @@ import 'dart:typed_data';
 
 import '../equalizer.dart';
 import '../loader/custom_byte_provider.dart';
-import '../platform/platform_backend.dart';
-import '../platform/platform_select.dart';
 import '../reverb.dart';
+import '../rust/api/player.dart' as rust;
+import '../rust/api/types.dart' as rust_types;
+import '../rust/frb_generated.dart';
 import 'audio_analysis_result.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
 import 'buffered_range.dart';
+import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'logger.dart';
+import 'loop_mode.dart';
+import 'need_more_tracks_event.dart';
+import 'player_action.dart';
 import 'player_exception.dart';
+import 'player_models.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
 import 'silence_skip_config.dart';
-import 'spatial.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
-part 'player_action.dart';
+/// Ensures native Rust library is initialized before calling static methods.
+Future<void> ensureRustInitialized() async {
+  if (!RustLib.instance.initialized) {
+    await RustLib.init();
+  }
+}
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
 const List<String> miniAudioPlayerSupportedExtensions = [
@@ -67,9 +77,7 @@ enum MiniaudioLogLevel {
   /// Logs maximum trace-level diagnostics (`5`).
   verbose(5);
 
-  /// Integer representation passed to native C/WASM engine.
   final int value;
-
   const MiniaudioLogLevel(this.value);
 
   static MiniaudioLogLevel fromValue(int value) {
@@ -86,45 +94,20 @@ typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
 /// Optional resolver for loading Flutter bundle assets.
 typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
 
-/// Global configuration parameters for all [MiniaudioPlayer] instances.
+/// Global configuration parameters for [MiniaudioPlayer] instances.
 class MiniaudioPlayerGlobalConfig {
-  /// Optional callback to receive structured diagnostic log messages.
   static MiniaudioLogCallback? onLog;
-
-  /// Optional custom loader callback for resolving Flutter assets (e.g. `rootBundle.load`).
   static AssetBytesLoader? assetLoader;
 
-  /// Default output period buffer size in frames (`0` = native default, `~2048` frames).
   int defaultBufferSize;
-
-  /// Verbosity level for native C/WASM diagnostic logs (default: [MiniaudioLogLevel.none]).
   MiniaudioLogLevel logLevel;
-
-  /// Default audio output device (`AudioDevice.auto` = system default).
   AudioDevice defaultAudioDevice;
-
-  /// Resolver function to format the user-friendly [AudioDevice.displayName]
-  /// when an audio device is set to automatic/system default routing.
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
-
-  /// Target duration of audio to buffer ahead for local files (default: `30s`).
   Duration bufferLocalDuration;
-
-  /// Target duration of audio to buffer ahead for HTTP/HTTPS progressive streams (default: `30s`).
   Duration bufferNetworkDuration;
-
-  /// Target duration of audio to buffer ahead for live streams (default: `15s`).
   Duration bufferLiveStreamDuration;
-
-  /// Duration of already-played audio retained in the circular buffer for instant
-  /// backward seeking on local files (default: `10s`).
   Duration bufferBehindLocalDuration;
-
-  /// Duration of already-played audio retained in the circular buffer for instant
-  /// backward seeking on network streams (default: `15s`).
   Duration bufferBehindNetworkDuration;
-
-  /// Duration of already-played audio retained in the circular buffer for live streams (default: `5s`).
   Duration bufferBehindLiveStreamDuration;
 
   MiniaudioPlayerGlobalConfig({
@@ -145,253 +128,35 @@ class MiniaudioPlayerGlobalConfig {
     final clean = resolvedName.trim();
     return clean.isEmpty ? 'System Default' : 'System Default ($clean)';
   }
-}
 
-/// Encapsulates a synchronous state value paired with a broadcast [StreamController].
-class _ReactiveProperty<T> {
-  T value;
-  final StreamController<T> controller;
-
-  _ReactiveProperty(
-    this.value, {
-    void Function()? onListen,
-    void Function()? onCancel,
-  }) : controller = StreamController<T>.broadcast(
-          onListen: onListen,
-          onCancel: onCancel,
-        );
-
-  void setSnapshot(T nextValue) {
-    value = nextValue;
-  }
-
-  void emitIfChanged(T nextValue) {
-    if (value != nextValue) {
-      value = nextValue;
-      if (!controller.isClosed) {
-        controller.add(nextValue);
-      }
-    }
-  }
-
-  void forceEmit(T nextValue) {
-    value = nextValue;
-    if (!controller.isClosed) {
-      controller.add(nextValue);
-    }
-  }
-
-  Future<void> close() => controller.close();
-}
-
-/// Private telemetry listener routing backend callbacks into [MiniaudioPlayer] state.
-final class _PlayerTelemetryListener implements PlayerBackendListener {
-  final MiniaudioPlayer _player;
-
-  const _PlayerTelemetryListener(this._player);
-
-  @override
-  void onState(PlaybackState newState) {
-    MapLogger.info('Telemetry state -> $newState');
-    _player._onState(newState);
-  }
-
-  @override
-  void onPosition(Duration position) {
-    MapLogger.verbose('Telemetry position -> ${position.inMilliseconds}ms');
-    _player._onPosition(position);
-  }
-
-  @override
-  void onDuration(Duration duration) {
-    MapLogger.info('Telemetry duration -> ${duration.inMilliseconds}ms');
-    _player._onDuration(duration);
-  }
-
-  @override
-  void onPlaying(bool isPlaying) {
-    MapLogger.info('Telemetry isPlaying -> $isPlaying');
-    _player._onPlaying(isPlaying);
-  }
-
-  @override
-  void onBuffering(bool isBuffering) {
-    MapLogger.debug('Telemetry isBuffering -> $isBuffering');
-    _player._onBuffering(isBuffering);
-  }
-
-  @override
-  void onCompleted(bool isCompleted) {
-    MapLogger.info('Telemetry isCompleted -> $isCompleted');
-    _player._onCompleted(isCompleted);
-  }
-
-  @override
-  void onVolume(double volume) {
-    MapLogger.debug('Telemetry volume -> $volume');
-    _player._volume.emitIfChanged(volume);
-  }
-
-  @override
-  void onRate(double rate) {
-    MapLogger.debug('Telemetry rate -> $rate');
-    _player._rate.emitIfChanged(rate);
-  }
-
-  @override
-  void onPitch(double pitch) {
-    MapLogger.debug('Telemetry pitch -> $pitch');
-    _player._pitch.emitIfChanged(pitch);
-  }
-
-  @override
-  void onBitrate(int bitrate) {
-    MapLogger.debug('Telemetry bitrate -> $bitrate bps');
-    _player._audioBitrate.emitIfChanged(bitrate);
-  }
-
-  @override
-  void onBufferSize(int bufferSize) {
-    MapLogger.debug('Telemetry bufferSize -> $bufferSize frames');
-    _player._bufferSize.emitIfChanged(bufferSize);
-  }
-
-  @override
-  void onSilenceSaved(Duration duration) {
-    MapLogger.debug('Telemetry silenceSaved -> ${duration.inMilliseconds}ms');
-    _player._silenceSavedDuration.emitIfChanged(duration);
-  }
-
-  @override
-  void onSilenceConfig(SilenceSkipConfig config) {
-    MapLogger.debug('Telemetry silenceConfig -> mode: ${config.mode}, threshold: ${config.thresholdDb}dB');
-    _player._onSilenceConfig(config);
-  }
-
-  @override
-  void onBufferedRange(BufferedRange range) {
-    MapLogger.verbose(
-      'Telemetry bufferedRange -> fill: ${(range.fillPercentage * 100).toStringAsFixed(1)}%, '
-      'stream: ${(range.percentage * 100).toStringAsFixed(1)}%, '
-      'range: [${range.start.inMilliseconds}ms..${range.end.inMilliseconds}ms]',
-    );
-    _player._onBufferedRange(range);
-  }
-
-  @override
-  void onVisualizer(VisualizerData data) {
-    MapLogger.verbose(
-      'Telemetry visualizer -> rms: ${data.rms.toStringAsFixed(4)}, peak: ${data.peak.toStringAsFixed(4)}',
-    );
-    _player._onVisualizer(data);
-  }
-
-  @override
-  void onVisualizerEnabled(bool enabled) {
-    MapLogger.debug('Telemetry visualizerEnabled -> $enabled');
-    _player._visualizerEnabled.emitIfChanged(enabled);
-  }
-
-  @override
-  void onDevice(AudioDevice device) {
-    MapLogger.info('Telemetry device -> id: ${device.id}, name: ${device.name}');
-    _player._audioDevice.emitIfChanged(device);
-  }
-
-  @override
-  void onTrackMetadata(AudioTrackMetadata? metadata) {
-    MapLogger.info(
-      'Telemetry metadata -> format: ${metadata?.formatName}, codec: ${metadata?.codec.name}, duration: ${metadata?.duration.inMilliseconds}ms',
-    );
-    _player._trackMetadata.emitIfChanged(metadata);
-  }
-
-  @override
-  void onEqualizer(Equalizer equalizer) {
-    MapLogger.debug('Telemetry equalizer -> updated');
-    _player._equalizer.emitIfChanged(equalizer);
-  }
-
-  @override
-  void onPreamp(double preampDb) {
-    MapLogger.debug('Telemetry preamp -> ${preampDb.toStringAsFixed(2)}dB');
-    _player._preamp.emitIfChanged(preampDb);
-  }
-
-  @override
-  void onReplayGain(ReplayGainConfig config) {
-    MapLogger.debug(
-      'Telemetry replayGain -> enabled: ${config.enabled}, gain: ${config.gainDb}dB',
-    );
-    _player._replayGain.emitIfChanged(config);
-  }
-
-  @override
-  void onBalance(double balance) {
-    MapLogger.debug('Telemetry balance -> $balance');
-    _player._balance.emitIfChanged(balance);
-  }
-
-  @override
-  void onMono(bool enabled) {
-    MapLogger.debug('Telemetry mono -> $enabled');
-    _player._mono.emitIfChanged(enabled);
-  }
-
-  @override
-  void onCrossfeed(CrossfeedMode mode) {
-    MapLogger.debug('Telemetry crossfeed -> $mode');
-    _player._crossfeed.emitIfChanged(mode);
-  }
-
-  @override
-  void onSpatializer({required bool enabled, required double width}) {
-    MapLogger.debug('Telemetry spatializer -> enabled: $enabled, width: $width');
-    _player._spatializerEnabled.emitIfChanged(enabled);
-    _player._spatializerWidth.emitIfChanged(width);
-  }
-
-  @override
-  void onReverb(Reverb reverb) {
-    MapLogger.debug('Telemetry reverb -> enabled: ${reverb.enabled}, roomSize: ${reverb.roomSize}');
-    _player._reverb.emitIfChanged(reverb);
-  }
-
-  @override
-  void onLimiter(bool enabled) {
-    MapLogger.debug('Telemetry limiter -> $enabled');
-    _player._limiterEnabled.emitIfChanged(enabled);
-  }
-
-  @override
-  void onError(String message, int errorCode) {
-    MapLogger.error('Telemetry native error: [$errorCode] $message');
-    _player._playbackState.emitIfChanged(PlaybackState.error);
+  void reset() {
+    onLog = null;
+    assetLoader = null;
+    defaultBufferSize = 0;
+    logLevel = MiniaudioLogLevel.none;
+    defaultAudioDevice = AudioDevice.auto;
+    defaultDeviceDisplayNameResolver = _defaultDeviceDisplayNameResolver;
+    bufferLocalDuration = const Duration(seconds: 30);
+    bufferNetworkDuration = const Duration(seconds: 30);
+    bufferLiveStreamDuration = const Duration(seconds: 15);
+    bufferBehindLocalDuration = const Duration(seconds: 10);
+    bufferBehindNetworkDuration = const Duration(seconds: 15);
+    bufferBehindLiveStreamDuration = const Duration(seconds: 5);
   }
 }
 
-/// Ultra-low-resource cross-platform audio player using Rust Symphonia and miniaudio.
+/// Master Miniaudio Player Coordinator orchestrating streaming music decks,
+/// polyphonic RAM sound effects, multi-destination output matrix, and microphone sidechain.
 ///
-/// Features an event-driven architecture organized into 3 clean namespaces:
-/// - `player.action` : Asynchronous methods to control playback, seeking, volume, rate, pitch, and DSP.
+/// Features 3 consolidated, orthogonal namespaces:
+/// - `player.action` : Asynchronous imperative commands.
+/// - `player.state`  : $O(1)$ lock-free synchronous state snapshot (stream-backed).
 /// - `player.stream` : Reactive broadcast streams for UI bindings.
-/// - `player.state`  : Synchronous getters for instant state inspection.
-class MiniaudioPlayer {
-  static MiniaudioPlayerGlobalConfig _globalConfig =
+class MiniaudioPlayer<T> {
+  static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
-  /// Current global configuration applied to newly created players.
   static MiniaudioPlayerGlobalConfig get globalConfig => _globalConfig;
-
-  /// Reactive broadcast stream of available audio output devices on the system.
-  static Stream<List<AudioDevice>> get audioDevicesStream =>
-      getPlatformService().getAudioDevicesStream();
-
-  /// Broadcast stream of system audio output device list changes.
-  static Stream<List<AudioDevice>> getAudioDevicesStream() =>
-      getPlatformService().getAudioDevicesStream();
-
-  /// Global configuration accessor and updater for [MiniaudioPlayer].
   static MiniaudioPlayerGlobalConfig config({
     int? defaultBufferSize,
     MiniaudioLogLevel? logLevel,
@@ -403,647 +168,671 @@ class MiniaudioPlayer {
     Duration? bufferBehindLocalDuration,
     Duration? bufferBehindNetworkDuration,
     Duration? bufferBehindLiveStreamDuration,
-    AssetBytesLoader? assetLoader,
   }) {
-    if (assetLoader != null) {
-      MiniaudioPlayerGlobalConfig.assetLoader = assetLoader;
-    }
-    if (defaultBufferSize != null) {
-      if (defaultBufferSize < 0) {
-        throw ArgumentError.value(
-          defaultBufferSize,
-          'defaultBufferSize',
-          'Buffer size must be non-negative',
-        );
-      }
-      _globalConfig.defaultBufferSize = defaultBufferSize;
-    }
-    if (logLevel != null) {
-      _globalConfig.logLevel = logLevel;
-      try {
-        getPlatformService().setLogLevel(logLevel.value);
-      } catch (_) {}
-    }
-    if (defaultAudioDevice != null) {
-      _globalConfig.defaultAudioDevice = defaultAudioDevice;
-    }
+    if (defaultBufferSize != null) _globalConfig.defaultBufferSize = defaultBufferSize;
+    if (logLevel != null) _globalConfig.logLevel = logLevel;
+    if (defaultAudioDevice != null) _globalConfig.defaultAudioDevice = defaultAudioDevice;
     if (defaultDeviceDisplayNameResolver != null) {
-      _globalConfig.defaultDeviceDisplayNameResolver =
-          defaultDeviceDisplayNameResolver;
+      _globalConfig.defaultDeviceDisplayNameResolver = defaultDeviceDisplayNameResolver;
     }
-    if (bufferLocalDuration != null) {
-      _globalConfig.bufferLocalDuration = bufferLocalDuration;
-    }
-    if (bufferNetworkDuration != null) {
-      _globalConfig.bufferNetworkDuration = bufferNetworkDuration;
-    }
-    if (bufferLiveStreamDuration != null) {
-      _globalConfig.bufferLiveStreamDuration = bufferLiveStreamDuration;
-    }
-    if (bufferBehindLocalDuration != null) {
-      _globalConfig.bufferBehindLocalDuration = bufferBehindLocalDuration;
-    }
-    if (bufferBehindNetworkDuration != null) {
-      _globalConfig.bufferBehindNetworkDuration = bufferBehindNetworkDuration;
-    }
-    if (bufferBehindLiveStreamDuration != null) {
-      _globalConfig.bufferBehindLiveStreamDuration =
-          bufferBehindLiveStreamDuration;
-    }
+    if (bufferLocalDuration != null) _globalConfig.bufferLocalDuration = bufferLocalDuration;
+    if (bufferNetworkDuration != null) _globalConfig.bufferNetworkDuration = bufferNetworkDuration;
+    if (bufferLiveStreamDuration != null) _globalConfig.bufferLiveStreamDuration = bufferLiveStreamDuration;
+    if (bufferBehindLocalDuration != null) _globalConfig.bufferBehindLocalDuration = bufferBehindLocalDuration;
+    if (bufferBehindNetworkDuration != null) _globalConfig.bufferBehindNetworkDuration = bufferBehindNetworkDuration;
+    if (bufferBehindLiveStreamDuration != null) _globalConfig.bufferBehindLiveStreamDuration = bufferBehindLiveStreamDuration;
     return _globalConfig;
   }
 
-  /// Resets global configuration to factory defaults.
-  static void resetGlobalConfig() {
-    _globalConfig = MiniaudioPlayerGlobalConfig();
-    MiniaudioPlayerGlobalConfig.assetLoader = null;
-    MiniaudioPlayerGlobalConfig.onLog = null;
-  }
+  /// Resets global audio engine configuration to clean defaults.
+  static void resetGlobalConfig() => _globalConfig.reset();
 
-  /// Registers a custom asset loader function (e.g. `(key) async => (await rootBundle.load(key)).buffer.asUint8List()`).
-  static void registerAssetLoader(
-    Future<Uint8List> Function(String assetKey) loader,
-  ) {
-    MiniaudioPlayerGlobalConfig.assetLoader = loader;
-  }
+  /// Ensures native Rust audio engine backend is initialized.
+  static Future<void> ensureInitialized() async => ensureRustInitialized();
 
-  /// Enumerates all available audio playback devices on the system.
-  static Future<List<AudioDevice>> getAudioDevices() =>
-      getPlatformService().getAudioDevices();
+  // =========================================================================
+  // Acoustic Analysis
+  // =========================================================================
 
-  /// Synchronously enumerates all available audio playback devices on the system.
-  static List<AudioDevice> getAudioDevicesSync() =>
-      getPlatformService().getAudioDevicesSync();
-
-  /// Enumerates all available audio capture (microphone / line-in) devices on the system.
-  static Future<List<AudioDevice>> getCaptureDevices() =>
-      getPlatformService().getCaptureDevices();
-
-  /// Synchronously enumerates all available audio capture devices on the system.
-  static List<AudioDevice> getCaptureDevicesSync() =>
-      getPlatformService().getCaptureDevicesSync();
-
-  /// Performs a fast, offline acoustic scan of an audio file on a background isolate.
+  /// Performs offline acoustic analysis of an audio file on a background worker thread.
   static Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {
     bool replayGain = true,
     bool waveform = true,
     int waveformPoints = 100,
     double targetLufs = -18.0,
-  }) =>
-      getPlatformService().analyzeAudio(
-        filePath,
+  }) async {
+    await ensureRustInitialized();
+    try {
+      final res = await rust.analyzeAudioFile(
+        path: filePath,
         replayGain: replayGain,
         waveform: waveform,
-        waveformPoints: waveformPoints,
+        waveformPoints: BigInt.from(waveformPoints),
         targetLufs: targetLufs,
       );
+      return _toAnalysisResult(res);
+    } catch (e) {
+      if (e is MiniaudioPlayerException) rethrow;
+      throw MiniaudioPlayerException(e.toString());
+    }
+  }
 
-  /// Performs a synchronous offline acoustic scan of an audio file on the calling thread.
   static AudioAnalysisResult analyzeAudioSync(
     String filePath, {
     bool replayGain = true,
     bool waveform = true,
     int waveformPoints = 100,
     double targetLufs = -18.0,
-  }) =>
-      getPlatformService().analyzeAudioSync(
-        filePath,
+  }) {
+    try {
+      final res = rust.analyzeAudioFileSync(
+        path: filePath,
         replayGain: replayGain,
         waveform: waveform,
-        waveformPoints: waveformPoints,
+        waveformPoints: BigInt.from(waveformPoints),
         targetLufs: targetLufs,
       );
+      return _toAnalysisResult(res);
+    } catch (e) {
+      if (e is MiniaudioPlayerException) rethrow;
+      throw MiniaudioPlayerException(e.toString());
+    }
+  }
 
-  /// Performs an offline acoustic scan of an audio buffer in memory.
   static Future<AudioAnalysisResult> analyzeAudioMemory(
     Uint8List bytes, {
     bool replayGain = true,
     bool waveform = true,
     int waveformPoints = 100,
     double targetLufs = -18.0,
-  }) =>
-      getPlatformService().analyzeAudioMemory(
-        bytes,
+  }) async {
+    await ensureRustInitialized();
+    try {
+      final res = await rust.analyzeAudioMemory(
+        data: bytes,
         replayGain: replayGain,
         waveform: waveform,
-        waveformPoints: waveformPoints,
+        waveformPoints: BigInt.from(waveformPoints),
         targetLufs: targetLufs,
       );
-
-  late final PlayerBackend _backend;
-
-  // Private reactive state properties
-  final _position = _ReactiveProperty<Duration>(Duration.zero);
-  final _duration = _ReactiveProperty<Duration>(Duration.zero);
-  final _playing = _ReactiveProperty<bool>(false);
-  final _buffering = _ReactiveProperty<bool>(false);
-  final _completed = _ReactiveProperty<bool>(false);
-  final _opening = _ReactiveProperty<bool>(false);
-  final _playbackState =
-      _ReactiveProperty<PlaybackState>(PlaybackState.stopped);
-  final _bufferedPosition = _ReactiveProperty<Duration>(Duration.zero);
-  final _bufferedPercentage = _ReactiveProperty<double>(0.0);
-  final _bufferedRange =
-      _ReactiveProperty<BufferedRange>(const BufferedRange());
-  final _trackMetadata = _ReactiveProperty<AudioTrackMetadata?>(null);
-  final _volume = _ReactiveProperty<double>(1.0);
-  final _rate = _ReactiveProperty<double>(1.0);
-  final _pitch = _ReactiveProperty<double>(1.0);
-  late final _ReactiveProperty<int> _bufferSize;
-  final _audioBitrate = _ReactiveProperty<int>(0);
-  final _equalizer = _ReactiveProperty<Equalizer>(Equalizer.flat);
-  late final _ReactiveProperty<AudioDevice> _audioDevice;
-  late final _ReactiveProperty<bool> _pauseOnDeviceChange;
-  final _skipSilence = _ReactiveProperty<bool>(false);
-  final _silenceConfig =
-      _ReactiveProperty<SilenceSkipConfig>(const SilenceSkipConfig());
-  final _silenceSavedDuration = _ReactiveProperty<Duration>(Duration.zero);
-  late final _ReactiveProperty<VisualizerData> _visualizer;
-  final _visualizerEnabled = _ReactiveProperty<bool>(false);
-  final _preamp = _ReactiveProperty<double>(0.0);
-  final _replayGain =
-      _ReactiveProperty<ReplayGainConfig>(const ReplayGainConfig());
-  final _balance = _ReactiveProperty<double>(0.0);
-  final _mono = _ReactiveProperty<bool>(false);
-  final _crossfeed = _ReactiveProperty<CrossfeedMode>(CrossfeedMode.off);
-  final _spatializerEnabled = _ReactiveProperty<bool>(false);
-  final _spatializerWidth = _ReactiveProperty<double>(1.0);
-  final _reverb = _ReactiveProperty<Reverb>(Reverb.off);
-  final _limiterEnabled = _ReactiveProperty<bool>(true);
-  final _metaBytes = _ReactiveProperty<Uint8List?>(null);
-
-  late final List<_ReactiveProperty<Object?>> _allProperties;
-
-  bool? _manualVisualizerOverride;
-  bool _hasVisualizerListeners = false;
-  bool _isDisposed = false;
-
-  bool get _isVisualizerActive =>
-      _manualVisualizerOverride ?? _hasVisualizerListeners;
-
-  /// Action interface for controlling playback, volume, rate, pitch, buffer size, and DSP.
-  late final PlayerAction action;
-
-  /// Reactive stream interface for observing state changes.
-  late final PlayerStream stream;
-
-  /// Synchronous state snapshot interface.
-  late final PlayerState state;
-
-  /// 3D Spatial Audio and Doppler effect controller.
-  late final SpatialController spatial;
-
-  /// Creates a [MiniaudioPlayer] instance bound to the provided [AudioSource].
-  MiniaudioPlayer(
-    AudioSource source, {
-    int? bufferSize,
-    AudioDevice? defaultAudioDevice,
-    bool pauseOnDeviceChange = false,
-  }) {
-    _bufferSize = _ReactiveProperty<int>(
-      bufferSize ?? _globalConfig.defaultBufferSize,
-    );
-    _audioDevice = _ReactiveProperty<AudioDevice>(
-      defaultAudioDevice ?? _globalConfig.defaultAudioDevice,
-    );
-    _pauseOnDeviceChange = _ReactiveProperty<bool>(pauseOnDeviceChange);
-    _visualizer = _ReactiveProperty<VisualizerData>(
-      VisualizerData.empty(),
-      onListen: () {
-        _hasVisualizerListeners = true;
-        _updateNativeVisualizerState();
-      },
-      onCancel: () {
-        _hasVisualizerListeners = false;
-        _updateNativeVisualizerState();
-      },
-    );
-
-    _allProperties = <_ReactiveProperty<Object?>>[
-      _position,
-      _duration,
-      _playing,
-      _buffering,
-      _completed,
-      _opening,
-      _playbackState,
-      _bufferedPosition,
-      _bufferedPercentage,
-      _bufferedRange,
-      _trackMetadata,
-      _volume,
-      _rate,
-      _pitch,
-      _bufferSize,
-      _audioBitrate,
-      _equalizer,
-      _audioDevice,
-      _pauseOnDeviceChange,
-      _skipSilence,
-      _silenceConfig,
-      _silenceSavedDuration,
-      _visualizer,
-      _visualizerEnabled,
-      _preamp,
-      _replayGain,
-      _balance,
-      _mono,
-      _crossfeed,
-      _spatializerEnabled,
-      _spatializerWidth,
-      _reverb,
-      _limiterEnabled,
-      _metaBytes,
-    ];
-
-    try {
-      getPlatformService().setLogLevel(_globalConfig.logLevel.value);
-    } catch (_) {}
-
-    MapLogger.info(
-      'Initializing MiniaudioPlayer (bufferSize: ${_bufferSize.value}, '
-      'device: ${_audioDevice.value.id}, source: $source)',
-    );
-
-    _backend = createPlayerBackend();
-    _backend.setListener(_PlayerTelemetryListener(this));
-
-    final devId =
-        (_audioDevice.value.id.isNotEmpty && _audioDevice.value.id != 'auto')
-            ? _audioDevice.value.id
-            : null;
-
-    _backend.init(
-      sampleRate: 0,
-      channels: 0,
-      periodSize: _bufferSize.value > 0 ? _bufferSize.value : 0,
-      playbackDeviceId: devId,
-    );
-
-    if (pauseOnDeviceChange) {
-      _backend.setPauseOnDeviceChange(true);
+      return _toAnalysisResult(res);
+    } catch (e) {
+      if (e is MiniaudioPlayerException) rethrow;
+      throw MiniaudioPlayerException(e.toString());
     }
-
-    _audioDevice.setSnapshot(_backend.getCurrentDevice());
-
-    action = PlayerAction._(this);
-
-    spatial = SpatialController(
-      setEnabled: (enabled) {
-        if (!_isDisposed) _backend.setSpatialEnabled(enabled);
-      },
-      setListener: (listener) {
-        if (!_isDisposed) _backend.setSpatialListener(listener);
-      },
-      setEmitter: (emitter) {
-        if (!_isDisposed) _backend.setSpatialEmitter(emitter);
-      },
-      setDopplerFactor: (factor) {
-        if (!_isDisposed) _backend.setSpatialDopplerFactor(factor);
-      },
-      setSpeedOfSound: (speed) {
-        if (!_isDisposed) _backend.setSpatialSpeedOfSound(speed);
-      },
-    );
-
-    stream = PlayerStream(
-      positionController: _position.controller,
-      durationController: _duration.controller,
-      playingController: _playing.controller,
-      bufferingController: _buffering.controller,
-      completedController: _completed.controller,
-      openingController: _opening.controller,
-      playbackStateController: _playbackState.controller,
-      bufferedPositionController: _bufferedPosition.controller,
-      bufferedPercentageController: _bufferedPercentage.controller,
-      bufferedRangeController: _bufferedRange.controller,
-      trackMetadataController: _trackMetadata.controller,
-      volumeController: _volume.controller,
-      rateController: _rate.controller,
-      pitchController: _pitch.controller,
-      bufferSizeController: _bufferSize.controller,
-      audioBitrateController: _audioBitrate.controller,
-      equalizerController: _equalizer.controller,
-      audioDeviceController: _audioDevice.controller,
-      pauseOnDeviceChangeController: _pauseOnDeviceChange.controller,
-      skipSilenceController: _skipSilence.controller,
-      silenceConfigController: _silenceConfig.controller,
-      silenceSavedDurationController: _silenceSavedDuration.controller,
-      visualizerController: _visualizer.controller,
-      visualizerEnabledController: _visualizerEnabled.controller,
-      preampController: _preamp.controller,
-      replayGainController: _replayGain.controller,
-      balanceController: _balance.controller,
-      monoController: _mono.controller,
-      crossfeedController: _crossfeed.controller,
-      spatializerEnabledController: _spatializerEnabled.controller,
-      spatializerWidthController: _spatializerWidth.controller,
-      reverbController: _reverb.controller,
-      limiterEnabledController: _limiterEnabled.controller,
-      metaBytesController: _metaBytes.controller,
-    );
-
-    state = PlayerState(
-      getPosition: () => _position.value,
-      getDuration: () => _duration.value,
-      getPlaying: () => _playing.value,
-      getBuffering: () => _buffering.value,
-      getCompleted: () => _completed.value,
-      getOpening: () => _opening.value,
-      getPlaybackState: () => _playbackState.value,
-      getBufferedPosition: () => _bufferedPosition.value,
-      getBufferedPercentage: () => _bufferedPercentage.value,
-      getBufferedRange: () => _bufferedRange.value,
-      getTrackMetadata: () => _trackMetadata.value,
-      getVolume: () => _volume.value,
-      getRate: () => _rate.value,
-      getPitch: () => _pitch.value,
-      getBufferSize: () => _bufferSize.value,
-      getAudioBitrate: () => _audioBitrate.value,
-      getEqualizer: () => _equalizer.value,
-      getAudioDevice: getAudioDevice,
-      getPauseOnDeviceChange: () => _pauseOnDeviceChange.value,
-      getSkipSilence: () =>
-          _silenceConfig.value.mode != SilenceSkipMode.disabled,
-      getSilenceSkipMode: () => _silenceConfig.value.mode,
-      getSilenceConfig: () => _silenceConfig.value,
-      getSilenceSavedDuration: () => _silenceSavedDuration.value,
-      getVisualizer: () => _visualizer.value,
-      getVisualizerEnabled: () => _isVisualizerActive,
-      getPreamp: () => _preamp.value,
-      getReplayGain: () => _replayGain.value,
-      getBalance: () => _balance.value,
-      getMono: () => _mono.value,
-      getCrossfeed: () => _crossfeed.value,
-      getSpatializerEnabled: () => _spatializerEnabled.value,
-      getSpatializerWidth: () => _spatializerWidth.value,
-      getReverb: () => _reverb.value,
-      getLimiterEnabled: () => _limiterEnabled.value,
-      getMetaBytes: _getMetaBytes,
-    );
-
-    action.open(source);
   }
 
-  /// Awaits completion of the initial audio source opening triggered by the constructor.
-  Future<void> get waitUntilOpen => action.waitUntilOpen();
+  /// Sets global native diagnostic log level.
+  static void setLogLevel(MiniaudioLogLevel level) {
+    try {
+      rust.setLogLevel(level: level.value);
+    } catch (_) {}
+  }
+
+  // =========================================================================
+  // Instance State & Core Fields
+  // =========================================================================
+
+  late final rust.RustMiniaudioPlayer _rustPlayer;
+  rust.RustMiniaudioPlayer get rustPlayer => _rustPlayer;
+
+  StreamSubscription<rust_types.RustPlayerEvent>? _eventSub;
+  bool _isDisposed = false;
 
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
 
-  /// Returns the currently active audio output device.
-  AudioDevice getAudioDevice() =>
-      _isDisposed ? _audioDevice.value : _backend.getCurrentDevice();
+  List<AudioSource<T>> shadowQueue = [];
+  final Map<int, CustomByteProvider> customProviders = {};
 
-  /// Audio sampling rate in Hz of the currently active source (or engine default).
-  int get sampleRate => _isDisposed ? 0 : _backend.sampleRate;
+  final Set<AudioOutput> _activeOutputs = {const AudioOutput.speaker()};
+  Set<AudioOutput> get activeOutputsSet => _activeOutputs;
 
-  /// Channel count of the currently active source (e.g. 1 for mono, 2 for stereo).
-  int get channels => _isDisposed ? 0 : _backend.channels;
+  bool infiniteMixEnabled = false;
+  InfiniteMixProvider<T>? infiniteMixProvider;
 
-  /// Default ahead buffer window for local files.
-  Duration get bufferLocalDuration => _globalConfig.bufferLocalDuration;
+  /// Action namespace executing asynchronous imperative playback and DSP controls.
+  late final PlayerAction<T> action;
 
-  /// Default ahead buffer window for progressive network audio.
-  Duration get bufferNetworkDuration => _globalConfig.bufferNetworkDuration;
+  /// Reactive stream namespace for observing state changes.
+  late final PlayerStream<T> stream;
 
-  /// Default ahead buffer window for continuous live streams.
-  Duration get bufferLiveStreamDuration =>
-      _globalConfig.bufferLiveStreamDuration;
+  /// Synchronous snapshot namespace for instant $O(1)$ state inspection.
+  late final PlayerState<T> state;
 
-  /// Default behind buffer window retained in circular RAM cache for local files.
-  Duration get bufferBehindLocalDuration =>
-      _globalConfig.bufferBehindLocalDuration;
+  // =========================================================================
+  // Constructors
+  // =========================================================================
 
-  /// Default behind buffer window retained in circular RAM cache for network streams.
-  Duration get bufferBehindNetworkDuration =>
-      _globalConfig.bufferBehindNetworkDuration;
+  /// Primary canonical constructor. Accepts optional initial [source] playlist,
+  /// RAM [effects], multi-matrix [outputs], capture [inputs], and [config].
+  MiniaudioPlayer({
+    List<AudioSource<T>> source = const [],
+    List<AudioEffect> effects = const [],
+    Set<AudioOutput>? outputs,
+    Set<AudioInput> inputs = const {},
+    PlayerConfig config = const PlayerConfig(),
+    int? bufferSize,
+    AudioDevice? defaultAudioDevice,
+    bool pauseOnDeviceChange = false,
+    CrossfadeConfig? crossfadeConfig,
+  }) {
+    MapLogger.info('Initializing MiniaudioPlayer');
+    action = PlayerAction<T>(this);
+    stream = PlayerStream<T>(
+      onVisualizerListen: _onVisualizerListen,
+      onVisualizerCancel: _onVisualizerCancel,
+    );
+    state = PlayerState<T>(this);
 
-  /// Default behind buffer window retained in circular RAM cache for live streams.
-  Duration get bufferBehindLiveStreamDuration =>
-      _globalConfig.bufferBehindLiveStreamDuration;
+    state.bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
+    state.audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
+    state.pauseOnDeviceChange = pauseOnDeviceChange;
 
-  /// Returns the current number of bytes retained in the pinned Head cache.
-  int get pinnedHeadSize => _isDisposed ? 0 : _backend.pinnedHeadSize;
+    _rustPlayer = rust.RustMiniaudioPlayer(
+      config: rust_types.RustPlayerConfig(
+        bufferSizeFrames: state.bufferSize > 0 ? state.bufferSize : 1024,
+        maxVoices: config.maxVoices,
+        maxRamBytes: BigInt.from(config.maxRamBytes),
+        pauseOnDeviceChange: pauseOnDeviceChange,
+        bufferLocalDurationMs:
+            BigInt.from(_globalConfig.bufferLocalDuration.inMilliseconds),
+        bufferNetworkDurationMs:
+            BigInt.from(_globalConfig.bufferNetworkDuration.inMilliseconds),
+      ),
+      sampleRate: 44100,
+      channels: 2,
+      periodSize: state.bufferSize > 0 ? state.bufferSize : 1024,
+      playbackDeviceId: state.audioDevice.isAuto ? null : state.audioDevice.id,
+    );
 
-  void _ensureNotDisposed() {
-    if (_isDisposed) {
-      throw const MiniaudioPlayerException(
-        'Player is already disposed',
-        errorCode: MapResult.errorInvalidState,
-      );
+    _eventSub = _rustPlayer.subscribeEvents().listen(_onRustEvent);
+
+    final resolvedOutputs = outputs ?? {const AudioOutput.speaker()};
+    _activeOutputs
+      ..clear()
+      ..addAll(resolvedOutputs);
+    state.outputs = Set.of(_activeOutputs);
+
+    if (effects.isNotEmpty) {
+      action.preloadEffects(effects);
+    }
+    if (outputs != null &&
+        !(outputs.length == 1 && outputs.first == const AudioOutput.speaker())) {
+      action.configureOutputs(outputs);
+    }
+    for (final input in inputs) {
+      action.addInput(input);
+    }
+    if (pauseOnDeviceChange) {
+      action.setPauseOnDeviceChange(true);
+    }
+    if (crossfadeConfig != null) {
+      action.setCrossfade(crossfadeConfig);
+    }
+    if (source.isNotEmpty) {
+      action.open(source, autoPlay: false);
     }
   }
 
-  void _setPauseOnDeviceChange(bool enabled) {
-    if (_pauseOnDeviceChange.value == enabled) return;
-    if (!_isDisposed) {
-      _backend.setPauseOnDeviceChange(enabled);
-    }
-    _pauseOnDeviceChange.emitIfChanged(enabled);
-  }
+  bool? _manualVisualizerOverride;
 
-  void _updateNativeVisualizerState() {
+  void _onVisualizerListen() {
     if (_isDisposed) return;
-    final shouldEnable = _isVisualizerActive;
-    _visualizerEnabled.emitIfChanged(shouldEnable);
-    _backend.setVisualizerEnabled(shouldEnable);
-    if (!shouldEnable) {
-      _visualizer.setSnapshot(VisualizerData.empty());
-      if (_hasVisualizerListeners) {
-        _visualizer.forceEmit(VisualizerData.empty());
-      }
-    }
+    final shouldEnable = _manualVisualizerOverride ?? true;
+    _rustPlayer.setVisualizerEnabled(enabled: shouldEnable);
   }
 
-  void _setManualVisualizerOverride(bool? override) {
+  void _onVisualizerCancel() {
+    if (_isDisposed) return;
+    final shouldEnable = _manualVisualizerOverride ?? false;
+    _rustPlayer.setVisualizerEnabled(enabled: shouldEnable);
+  }
+
+  void setManualVisualizerOverride(bool? override) {
+    if (_isDisposed) return;
     _manualVisualizerOverride = override;
-    _updateNativeVisualizerState();
+    final shouldEnable = override ?? (stream.visualizerController.hasListener);
+    _rustPlayer.setVisualizerEnabled(enabled: shouldEnable);
   }
 
-  void _notifyOpening() {
+  // =========================================================================
+  // Native Rust Event Dispatcher (Fine-Grained Active Stream Ingestion)
+  // =========================================================================
+
+  void _onRustEvent(rust_types.RustPlayerEvent event) {
     if (_isDisposed) return;
-    _opening.forceEmit(true);
-    _playbackState.forceEmit(PlaybackState.opening);
-    _playing.forceEmit(false);
-    _buffering.forceEmit(false);
-    _completed.forceEmit(false);
-    _position.forceEmit(Duration.zero);
-    _duration.forceEmit(Duration.zero);
-    _bufferedPosition.forceEmit(Duration.zero);
-    _bufferedPercentage.forceEmit(0.0);
-    _bufferedRange.forceEmit(const BufferedRange());
-    _resetMetadata();
-  }
-
-  void _notifyOpenCompleted() {
-    if (_isDisposed) return;
-    _opening.forceEmit(false);
-    if (_playbackState.value == PlaybackState.opening) {
-      _playbackState.forceEmit(PlaybackState.stopped);
+    switch (event) {
+      case rust_types.RustPlayerEvent_PlaybackState(:final field0):
+        final val = switch (field0) {
+          1 => PlaybackState.playing,
+          2 => PlaybackState.paused,
+          3 => PlaybackState.completed,
+          4 => PlaybackState.buffering,
+          5 => PlaybackState.error,
+          6 => PlaybackState.opening,
+          _ => PlaybackState.stopped,
+        };
+        state.playbackState = val;
+        state.isPaused = val == PlaybackState.paused;
+        state.isOpening = val == PlaybackState.opening;
+        stream.playbackStateController.add(val);
+      case rust_types.RustPlayerEvent_IsPlaying(:final field0):
+        state.isPlaying = field0;
+        stream.playingController.add(field0);
+        if (field0) {
+          checkInfiniteMix();
+        }
+      case rust_types.RustPlayerEvent_IsBuffering(:final field0):
+        state.isBuffering = field0;
+        stream.bufferingController.add(field0);
+      case rust_types.RustPlayerEvent_IsCompleted(:final field0):
+        state.isCompleted = field0;
+        stream.completedController.add(field0);
+      case rust_types.RustPlayerEvent_State(:final field0):
+        final p = (field0 >= 0 && field0 < EnginePhase.values.length)
+            ? EnginePhase.values[field0]
+            : EnginePhase.idle;
+        state.phase = p;
+        stream.phaseController.add(p);
+      case rust_types.RustPlayerEvent_Position(:final field0):
+        final pos = Duration(milliseconds: field0.toInt());
+        state.position = pos;
+        stream.positionController.add(pos);
+      case rust_types.RustPlayerEvent_Duration(:final field0):
+        final dur = Duration(milliseconds: field0.toInt());
+        state.duration = dur;
+        stream.durationController.add(dur);
+        if (state.trackMetadata != null) {
+          final updated = state.trackMetadata!.copyWith(duration: dur);
+          state.trackMetadata = updated;
+          stream.trackMetadataController.add(updated);
+        }
+      case rust_types.RustPlayerEvent_BufferedRange(:final field0):
+        final br = BufferedRange(
+          start: Duration(milliseconds: field0.startMs.toInt()),
+          end: Duration(milliseconds: field0.endMs.toInt()),
+          isBuffering: field0.isBuffering,
+        );
+        state.bufferedRange = br;
+        state.bufferedPosition = Duration(milliseconds: field0.endMs.toInt());
+        state.bufferedPercentage = state.duration.inMilliseconds > 0
+            ? (field0.endMs.toDouble() / state.duration.inMilliseconds)
+            : 0.0;
+        stream.bufferedRangeController.add(br);
+        stream.bufferedPositionController.add(state.bufferedPosition);
+        stream.bufferedPercentageController.add(state.bufferedPercentage);
+      case rust_types.RustPlayerEvent_Volume(:final field0):
+        state.volume = field0;
+        stream.volumeController.add(field0);
+      case rust_types.RustPlayerEvent_Rate(:final field0):
+        state.rate = field0;
+        stream.rateController.add(field0);
+      case rust_types.RustPlayerEvent_Pitch(:final field0):
+        state.pitch = field0;
+        stream.pitchController.add(field0);
+      case rust_types.RustPlayerEvent_Balance(:final field0):
+        state.balance = field0;
+        stream.balanceController.add(field0);
+      case rust_types.RustPlayerEvent_Mono(:final field0):
+        state.mono = field0;
+        stream.monoController.add(field0);
+      case rust_types.RustPlayerEvent_Equalizer(:final field0):
+        final eq = Equalizer.fromList(field0.gains.toList());
+        state.equalizer = eq;
+        stream.equalizerController.add(eq);
+      case rust_types.RustPlayerEvent_Reverb(:final field0):
+        final rev = Reverb(
+          roomSize: field0.roomSize,
+          damping: field0.damping,
+          wet: field0.wet,
+          dry: field0.dry,
+          width: field0.width,
+          enabled: field0.enabled,
+        );
+        state.reverb = rev;
+        stream.reverbController.add(rev);
+      case rust_types.RustPlayerEvent_Limiter(:final field0):
+        state.limiterEnabled = field0;
+        stream.limiterEnabledController.add(field0);
+      case rust_types.RustPlayerEvent_Preamp(:final field0):
+        state.preamp = field0;
+        stream.preampController.add(field0);
+      case rust_types.RustPlayerEvent_Crossfeed(:final field0):
+        final cm = (field0 >= 0 && field0 < CrossfeedMode.values.length)
+            ? CrossfeedMode.values[field0]
+            : CrossfeedMode.off;
+        state.crossfeed = cm;
+        stream.crossfeedController.add(cm);
+      case rust_types.RustPlayerEvent_Spatializer(:final enabled, :final width):
+        state.spatializerEnabled = enabled;
+        state.spatializerWidth = width;
+        stream.spatializerEnabledController.add(enabled);
+        stream.spatializerWidthController.add(width);
+      case rust_types.RustPlayerEvent_VisualizerEnabled(:final field0):
+        state.visualizerEnabled = field0;
+        if (!field0) {
+          state.visualizer = VisualizerData.empty();
+          stream.visualizerController.add(VisualizerData.empty());
+        }
+        stream.visualizerEnabledController.add(field0);
+      case rust_types.RustPlayerEvent_Visualizer(:final field0):
+        final vis = VisualizerData(
+          bands: field0.bands.toList(),
+          rms: field0.rms,
+          peak: field0.peak,
+          left: field0.left,
+          right: field0.right,
+        );
+        state.visualizer = vis;
+        stream.visualizerController.add(vis);
+      case rust_types.RustPlayerEvent_OutputDevices(:final field0):
+        final list = field0.map(_toAudioDevice).toList();
+        state.globalOutputDevices = list;
+        stream.globalOutputDevicesController.add(list);
+      case rust_types.RustPlayerEvent_InputDevices(:final field0):
+        final list = field0.map(_toAudioDevice).toList();
+        state.globalInputDevices = list;
+        stream.globalInputDevicesController.add(list);
+      case rust_types.RustPlayerEvent_PauseOnDeviceChange(:final field0):
+        state.pauseOnDeviceChange = field0;
+        stream.pauseOnDeviceChangeController.add(field0);
+      case rust_types.RustPlayerEvent_CueVolume(:final field0):
+        state.cueVolume = field0;
+        stream.cueVolumeController.add(field0);
+      case rust_types.RustPlayerEvent_CueSource(:final field0):
+        final cs = CueSource.fromValue(field0);
+        state.cueSource = cs;
+        stream.cueSourceController.add(cs);
+      case rust_types.RustPlayerEvent_LoopMode(:final field0):
+        final lm = (field0 >= 0 && field0 < LoopMode.values.length)
+            ? LoopMode.values[field0]
+            : LoopMode.off;
+        state.loopMode = lm;
+        stream.loopModeController.add(lm);
+      case rust_types.RustPlayerEvent_IsShuffled(:final field0):
+        state.isShuffled = field0;
+        stream.isShuffledController.add(field0);
+      case rust_types.RustPlayerEvent_MicrophoneEnabled(:final field0):
+        state.isMicrophoneEnabled = field0;
+        stream.isMicrophoneEnabledController.add(field0);
+      case rust_types.RustPlayerEvent_MicVolume(:final field0):
+        state.micVolume = field0;
+        stream.micVolumeController.add(field0);
+      case rust_types.RustPlayerEvent_DirectMonitoringEnabled(:final field0):
+        state.isDirectMonitoringEnabled = field0;
+        stream.isDirectMonitoringEnabledController.add(field0);
+      case rust_types.RustPlayerEvent_IsCrossfading(:final field0):
+        state.isCrossfading = field0;
+        stream.isCrossfadingController.add(field0);
+      case rust_types.RustPlayerEvent_CrossfadeConfig(:final field0):
+        final cfg = CrossfadeConfig(
+          autoDuration: Duration(milliseconds: field0.autoDurationMs.toInt()),
+          manualDuration: Duration(milliseconds: field0.manualDurationMs.toInt()),
+          curve: field0.curve == 1 ? CrossfadeCurve.linear : CrossfadeCurve.equalPower,
+        );
+        state.crossfadeConfig = cfg;
+        stream.crossfadeConfigController.add(cfg);
+      case rust_types.RustPlayerEvent_IsRecording(:final field0):
+        state.isRecording = field0;
+        stream.isRecordingController.add(field0);
+      case rust_types.RustPlayerEvent_RecordedDuration(:final field0):
+        final d = Duration(milliseconds: field0.toInt());
+        state.recordedDuration = d;
+        stream.recordedDurationController.add(d);
+      case rust_types.RustPlayerEvent_IsDuckingActive(:final field0):
+        state.isDuckingActive = field0;
+        stream.isDuckingActiveController.add(field0);
+      case rust_types.RustPlayerEvent_MicRmsLevel(:final field0):
+        state.micRmsLevel = field0;
+        stream.micRmsLevelController.add(field0);
+      case rust_types.RustPlayerEvent_VoiceCompleted(:final field0):
+        stream.voiceCompletedController.add(field0);
+      case rust_types.RustPlayerEvent_MetaBytes(:final field0):
+        final mb = Uint8List.fromList(field0);
+        state.metaBytes = mb;
+        stream.metaBytesController.add(mb);
+        final curSource = state.currentItem;
+        if (curSource != null) {
+          final meta = AudioTrackMetadata.resolve(
+            sourceHint: curSource.sourceKey,
+            durationMs: state.duration.inMilliseconds,
+            bitrate: state.bitrate,
+            sampleRate: state.sampleRate,
+            channels: state.channels,
+            audioDataOffset: 0,
+            headerBytes: mb,
+          );
+          state.trackMetadata = meta;
+          stream.trackMetadataController.add(meta);
+        }
+      case rust_types.RustPlayerEvent_SilenceConfig(:final field0):
+        final sc = SilenceSkipConfig(
+          thresholdDb: field0.thresholdDb,
+          minSilenceDuration: Duration(milliseconds: field0.minSilenceDurationMs),
+          padding: Duration(milliseconds: field0.paddingMs),
+          mode: SilenceSkipMode.fromValue(field0.mode),
+        );
+        state.silenceConfig = sc;
+        state.skipSilence = field0.enabled;
+        state.silenceSkipMode = sc.mode;
+        stream.silenceConfigController.add(sc);
+        stream.skipSilenceController.add(field0.enabled);
+      case rust_types.RustPlayerEvent_SilenceSaved(:final field0):
+        final d = Duration(milliseconds: field0.toInt());
+        state.silenceSavedDuration = d;
+        stream.silenceSavedDurationController.add(d);
+      case rust_types.RustPlayerEvent_ReplayGain(:final field0):
+        final rg = ReplayGainConfig(
+          gainDb: field0.gainDb,
+          peak: field0.peak,
+          preventClipping: field0.preventClipping,
+          enabled: field0.enabled,
+        );
+        state.replayGain = rg;
+        stream.replayGainController.add(rg);
+      case rust_types.RustPlayerEvent_BufferSize(:final field0):
+        state.bufferSize = field0;
+        stream.bufferSizeController.add(field0);
+      case rust_types.RustPlayerEvent_Bitrate(:final field0):
+        state.audioBitrate = field0;
+        stream.audioBitrateController.add(field0);
+      case rust_types.RustPlayerEvent_Device(:final field0):
+        final dev = _toAudioDevice(field0);
+        state.audioDevice = dev;
+        stream.audioDeviceController.add(dev);
+      case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
+        state.currentIndex = field0;
+        stream.currentIndexController.add(field0);
+        final curSource = state.currentItem;
+        stream.currentItemController.add(curSource);
+        if (curSource != null) {
+          final meta = AudioTrackMetadata.resolve(
+            sourceHint: curSource.sourceKey,
+            durationMs: state.duration.inMilliseconds,
+            bitrate: state.bitrate,
+            sampleRate: state.sampleRate,
+            channels: state.channels,
+            audioDataOffset: 0,
+            headerBytes: state.metaBytes,
+          );
+          state.trackMetadata = meta;
+          stream.trackMetadataController.add(meta);
+        } else {
+          state.trackMetadata = null;
+          stream.trackMetadataController.add(null);
+        }
+        checkInfiniteMix();
+      case rust_types.RustPlayerEvent_Queue(:final field0):
+        final reconciled = <AudioSource<T>>[];
+        for (var i = 0; i < field0.length; i++) {
+          final rs = field0[i];
+          final match = shadowQueue.cast<AudioSource<T>?>().firstWhere(
+                (s) => s != null && s.id != null && s.id == rs.id,
+                orElse: () => shadowQueue.cast<AudioSource<T>?>().firstWhere(
+                  (s) =>
+                      s != null &&
+                      ((s is UriAudioSource &&
+                              (s as UriAudioSource).sourceString ==
+                                  rs.source) ||
+                          s.sourceKey == rs.source),
+                  orElse: () => null,
+                ),
+              );
+          if (match != null) {
+            reconciled.add(match);
+          } else {
+            reconciled.add(AudioSource<T>(rs.source, id: rs.id));
+          }
+        }
+        state.queue = reconciled;
+        shadowQueue = List.of(reconciled);
+        stream.queueController.add(reconciled);
+        stream.currentItemController.add(state.currentItem);
+        checkInfiniteMix();
+      case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
+        _onDartReadRequest(field0);
+      case rust_types.RustPlayerEvent_Error(:final message, :final code):
+        stream.errorsController.add(MiniaudioPlayerException(message, errorCode: code));
     }
-    _getMetaBytes();
   }
 
-  void _notifyOpenFailed() {
-    if (_isDisposed) return;
-    _opening.forceEmit(false);
-    _playbackState.forceEmit(PlaybackState.error);
-  }
-
-  void _notifyStopped() {
-    if (_isDisposed) return;
-    final wasPlaying = _playing.value;
-    final wasCompleted = _completed.value;
-    final wasOpening = _opening.value;
-
-    _opening.setSnapshot(false);
-    _playbackState.setSnapshot(PlaybackState.stopped);
-    _playing.setSnapshot(false);
-    _completed.setSnapshot(false);
-    _position.setSnapshot(Duration.zero);
-    _visualizer.setSnapshot(VisualizerData.empty());
-
-    if (_isVisualizerActive) {
-      _visualizer.forceEmit(VisualizerData.empty());
-    }
-    if (wasOpening) _opening.forceEmit(false);
-    _playbackState.forceEmit(PlaybackState.stopped);
-    if (wasPlaying) _playing.forceEmit(false);
-    if (wasCompleted) _completed.forceEmit(false);
-    _position.forceEmit(Duration.zero);
-  }
-
-  void _resetMetadata() {
-    _trackMetadata.forceEmit(null);
-    _metaBytes.forceEmit(null);
-  }
-
-  Uint8List? _getMetaBytes() {
-    if (_isDisposed) return null;
-    final bytes = _backend.getMetaBytes();
-    if (bytes != null) {
-      _metaBytes.forceEmit(bytes);
-    }
-    return bytes;
-  }
-
-  void _onState(PlaybackState newState) {
-    if (_isDisposed) return;
-    if (_playbackState.value == PlaybackState.error &&
-        newState == PlaybackState.stopped) {
-      return;
-    }
-    _opening.emitIfChanged(newState == PlaybackState.opening);
-
-    if (newState == PlaybackState.stopped ||
-        newState == PlaybackState.playing ||
-        newState == PlaybackState.paused) {
-      if (_completed.value) {
-        _completed.emitIfChanged(false);
-      }
-    }
-    if (newState == PlaybackState.stopped) {
-      if (_playing.value) _playing.emitIfChanged(false);
-      if (_position.value != Duration.zero) {
-        _position.emitIfChanged(Duration.zero);
-      }
-    }
-    _playbackState.emitIfChanged(newState);
-  }
-
-  static bool _bytesEqual(Uint8List? a, Uint8List? b) {
-    if (identical(a, b)) return true;
-    if (a == null || b == null || a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  void _onPosition(Duration pos) {
-    if (_isDisposed) return;
-    _position.emitIfChanged(pos);
-    if (_trackMetadata.value?.isLiveStream == true ||
-        _duration.value == Duration.zero) {
-      final nextMeta = _backend.getMetaBytes();
-      if (nextMeta != null &&
-          nextMeta.isNotEmpty &&
-          !_bytesEqual(_metaBytes.value, nextMeta)) {
-        _metaBytes.forceEmit(nextMeta);
-      }
-    }
-  }
-
-  void _onDuration(Duration dur) {
-    if (!_isDisposed) _duration.emitIfChanged(dur);
-  }
-
-  void _onPlaying(bool isPlaying) {
-    if (_isDisposed) return;
-    if (_playing.value != isPlaying) {
-      _playing.emitIfChanged(isPlaying);
-      if (!isPlaying) {
-        _visualizer.setSnapshot(VisualizerData.empty());
-        if (_isVisualizerActive) {
-          _visualizer.forceEmit(VisualizerData.empty());
+  void _onDartReadRequest(rust_types.RustDartReadRequest req) async {
+    final provider = customProviders[req.streamId];
+    if (provider != null) {
+      try {
+        final bytes = await provider.readBytes(req.offset.toInt(), req.length);
+        final isEof = bytes.isEmpty ||
+            (provider.totalBytes != null &&
+                (req.offset.toInt() + bytes.length >= provider.totalBytes!));
+        if (!_isDisposed) {
+          _rustPlayer.respondDartReadRequest(
+            requestId: req.requestId,
+            bytes: bytes,
+            isEof: isEof,
+          );
+        }
+      } catch (e) {
+        if (!_isDisposed) {
+          _rustPlayer.respondDartReadRequest(
+            requestId: req.requestId,
+            bytes: Uint8List(0),
+            isEof: true,
+          );
         }
       }
     }
   }
 
-  void _onBuffering(bool isBuffering) {
-    if (!_isDisposed) _buffering.emitIfChanged(isBuffering);
-  }
-
-  void _onCompleted(bool isCompleted) {
-    if (_isDisposed || _completed.value == isCompleted) return;
-    _completed.emitIfChanged(isCompleted);
-    if (isCompleted) {
-      _playing.forceEmit(false);
-      _playbackState.forceEmit(PlaybackState.completed);
-      _position.forceEmit(_duration.value);
-      _visualizer.setSnapshot(VisualizerData.empty());
-      if (_isVisualizerActive) {
-        _visualizer.forceEmit(VisualizerData.empty());
+  void checkInfiniteMix() async {
+    if (!infiniteMixEnabled || !state.isPlaying) return;
+    final curIdx = state.currentIndex;
+    final remaining = shadowQueue.length - 1 - (curIdx >= 0 ? curIdx : 0);
+    if (remaining < 2 && !stream.needMoreTracksController.isClosed) {
+      stream.needMoreTracksController.add(
+        NeedMoreTracksEvent(
+          currentTrackId: curIdx >= 0 ? curIdx : 0,
+          remainingTracks: remaining < 0 ? 0 : remaining,
+        ),
+      );
+      if (infiniteMixProvider != null) {
+        try {
+          final more = await infiniteMixProvider!(
+            (2 - remaining).clamp(1, 10),
+          );
+          if (more.isNotEmpty && !_isDisposed) {
+            action.append(more);
+          }
+        } catch (_) {}
       }
-    } else if (_playbackState.value == PlaybackState.completed) {
-      _playbackState.forceEmit(PlaybackState.paused);
     }
   }
 
-  void _onSilenceConfig(SilenceSkipConfig config) {
-    if (_isDisposed) return;
-    _skipSilence.emitIfChanged(config.mode != SilenceSkipMode.disabled);
-    _silenceConfig.emitIfChanged(config);
+  void ensureNotDisposed() {
+    if (_isDisposed) {
+      throw StateError('MiniaudioPlayer instance has been disposed');
+    }
   }
 
-  void _onBufferedRange(BufferedRange br) {
-    if (_isDisposed || _bufferedRange.value == br) return;
-    _bufferedRange.forceEmit(br);
-    _bufferedPosition.forceEmit(br.end);
-    _bufferedPercentage.forceEmit(br.percentage);
-  }
+  // =========================================================================
+  // Lifecycle Disposal
+  // =========================================================================
 
-  void _onVisualizer(VisualizerData data) {
-    if (_isDisposed || !_isVisualizerActive) return;
-    final frame = _playing.value ? data : VisualizerData.empty();
-    _visualizer.forceEmit(frame);
-  }
-
-  /// Destroys the player instance and frees audio engine resources.
+  /// Closes the player, terminates background watcher loops, and disposes native resources.
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
     MapLogger.info('Disposing MiniaudioPlayer instance');
-
-    _resetMetadata();
-    action._dispose();
-    await _backend.dispose();
-
-    for (final prop in _allProperties) {
-      await prop.close();
+    state.metaBytes = null;
+    state.trackMetadata = null;
+    _eventSub?.cancel();
+    _eventSub = null;
+    try {
+      _rustPlayer.dispose();
+    } catch (_) {}
+    for (final p in customProviders.values) {
+      try {
+        await p.close();
+      } catch (_) {}
     }
+    customProviders.clear();
+    await stream.dispose();
+  }
+
+  // Model Mappers & Source Normalization
+  static List<AudioSource<T>> normalizeSource<T>(Object? source) {
+    if (source == null) return const [];
+    if (source is AudioSource<T>) return [source];
+    if (source is AudioSource) return [AudioSource<T>(source)];
+    if (source is List) {
+      return List.unmodifiable(
+        source.map((s) => s is AudioSource<T> ? s : AudioSource<T>(s)),
+      );
+    }
+    if (source is String) return [AudioSource<T>(source)];
+    if (source is Uint8List) return [AudioSource<T>(source)];
+    if (source is List<int>) {
+      return [AudioSource<T>(Uint8List.fromList(source))];
+    }
+    throw ArgumentError(
+      'The source parameter must be AudioSource<$T>, List<AudioSource<$T>>, String, Uint8List, or null. '
+      'Received type: ${source.runtimeType}',
+    );
+  }
+
+  static AudioDevice _toAudioDevice(rust_types.RustAudioDevice dev) {
+    return AudioDevice(
+      id: dev.id,
+      name: dev.name,
+      isAuto: dev.isDefault,
+      effectiveId: dev.effectiveId,
+    );
+  }
+
+  static AudioAnalysisResult _toAnalysisResult(
+    rust_types.RustAudioAnalysisResult res,
+  ) {
+    final rg = res.hasReplayGain
+        ? ReplayGainResult(
+            gainDb: res.replayGainDb,
+            peak: res.peakAmplitude,
+            lufs: res.integratedLufs,
+          )
+        : null;
+    final wf = res.hasWaveform && res.waveformPeaks.isNotEmpty
+        ? WaveformResult(
+            points: res.waveformPeaks.map((e) => e.toDouble()).toList(),
+          )
+        : null;
+    return AudioAnalysisResult(
+      duration: Duration(milliseconds: res.durationMs.toInt()),
+      sampleRate: res.sampleRate,
+      channels: res.channels,
+      bitrate: res.bitrate,
+      peak: res.peakAmplitude,
+      replayGain: rg,
+      waveform: wf,
+    );
   }
 }

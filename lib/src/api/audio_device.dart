@@ -1,6 +1,6 @@
 import 'miniaudio_player.dart';
 
-/// Represents an audio output device.
+/// Represents an audio device (playback or capture).
 class AudioDevice {
   /// Unique device identifier (hex-encoded string for hardware devices, or 'auto' for automatic default).
   final String id;
@@ -44,49 +44,42 @@ class AudioDevice {
     isAuto: true,
   );
 
-  /// Enumerates all capture (microphone / line-in) audio devices on the system.
-  static Future<List<AudioDevice>> getCaptureDevices() =>
-      MiniaudioPlayer.getCaptureDevices();
-
-  /// Synchronously enumerates all capture (microphone / line-in) audio devices on the system.
-  static List<AudioDevice> getCaptureDevicesSync() =>
-      MiniaudioPlayer.getCaptureDevicesSync();
-
   /// User-friendly display name.
   ///
   /// Uses [MiniaudioPlayerGlobalConfig.defaultDeviceDisplayNameResolver] if this
   /// device is [isAuto], otherwise returns [name] directly.
   String get displayName {
     if (isAuto) {
-      final resolver =
-          MiniaudioPlayer.config().defaultDeviceDisplayNameResolver;
-      return resolver(_resolvedName ?? '');
+      final cleanResolved = _resolvedName?.trim();
+      if (cleanResolved != null && cleanResolved.isNotEmpty) {
+        return MiniaudioPlayer.globalConfig
+            .defaultDeviceDisplayNameResolver(cleanResolved);
+      }
+      return 'System Default';
     }
     return name;
   }
 
-  /// Checks whether this device and [other] route to the same physical hardware endpoint.
+  /// Compares whether two devices route to the same underlying physical hardware endpoint.
   bool isSameEndpoint(AudioDevice other) {
-    final myEff = effectiveId.isNotEmpty ? effectiveId : id;
-    final otherEff =
-        other.effectiveId.isNotEmpty ? other.effectiveId : other.id;
-    if (myEff.isNotEmpty && otherEff.isNotEmpty) {
-      return myEff == otherEff;
+    if (effectiveId.isNotEmpty && other.effectiveId.isNotEmpty) {
+      return effectiveId == other.effectiveId;
     }
-    return this == other;
+    return id == other.id;
   }
 
   @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is AudioDevice &&
-          runtimeType == other.runtimeType &&
-          ((isAuto && other.isAuto) || id == other.id));
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! AudioDevice) return false;
+    if (isAuto && other.isAuto) return true;
+    return id == other.id;
+  }
 
   @override
   int get hashCode => isAuto ? 'auto'.hashCode : id.hashCode;
 
   @override
   String toString() =>
-      'AudioDevice(id: $id, effectiveId: $effectiveId, name: $name, auto: $_isAuto${_resolvedName != null ? ", resolved: $_resolvedName" : ""}${type != null ? ", type: $type" : ""})';
+      'AudioDevice(id: $id, name: $name, isAuto: $isAuto, effectiveId: $effectiveId${type != null ? ', type: $type' : ''})';
 }

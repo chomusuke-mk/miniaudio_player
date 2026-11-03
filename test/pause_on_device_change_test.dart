@@ -4,6 +4,10 @@ import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   group('AudioDevice effectiveId and endpoint resolution', () {
     test('AudioDevice.auto has canonical auto id and empty effectiveId by default', () {
       expect(AudioDevice.auto.id, equals('auto'));
@@ -64,17 +68,17 @@ void main() {
     final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
 
     test('pauseOnDeviceChange defaults to false', () {
-      player = MiniaudioPlayer(dummySource);
+      player = MiniaudioPlayer(source: [dummySource]);
       expect(player.state.pauseOnDeviceChange, isFalse);
     });
 
     test('pauseOnDeviceChange constructor option sets initial state', () {
-      player = MiniaudioPlayer(dummySource, pauseOnDeviceChange: true);
+      player = MiniaudioPlayer(source: [dummySource], pauseOnDeviceChange: true);
       expect(player.state.pauseOnDeviceChange, isTrue);
     });
 
     test('action.setPauseOnDeviceChange updates state and emits to stream', () async {
-      player = MiniaudioPlayer(dummySource, pauseOnDeviceChange: false);
+      player = MiniaudioPlayer(source: [dummySource], pauseOnDeviceChange: false);
       expect(player.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -99,25 +103,25 @@ void main() {
     });
   });
 
-  group('MiniaudioEngine pauseOnDeviceChange orchestration', () {
-    late MiniaudioEngine engine;
+  group('MiniaudioPlayer pauseOnDeviceChange orchestration', () {
+    late MiniaudioPlayer engine;
 
     tearDown(() async {
       await engine.dispose();
     });
 
     test('pauseOnDeviceChange defaults to false and propagates to decks', () {
-      engine = MiniaudioEngine();
+      engine = MiniaudioPlayer();
       expect(engine.state.pauseOnDeviceChange, isFalse);
     });
 
     test('pauseOnDeviceChange constructor option propagates to child decks', () {
-      engine = MiniaudioEngine(pauseOnDeviceChange: true);
+      engine = MiniaudioPlayer(pauseOnDeviceChange: true);
       expect(engine.state.pauseOnDeviceChange, isTrue);
     });
 
     test('action.setPauseOnDeviceChange updates engine state and emits to stream', () async {
-      engine = MiniaudioEngine(pauseOnDeviceChange: false);
+      engine = MiniaudioPlayer(pauseOnDeviceChange: false);
       expect(engine.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -195,9 +199,9 @@ void main() {
     });
 
     test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {
-      final player = MiniaudioPlayer(AudioSource(testWavFile.path), pauseOnDeviceChange: true);
+      final player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
       try {
-        await player.waitUntilOpen;
+        await player.action.waitUntilOpen();
         expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await player.action.play();
@@ -234,8 +238,8 @@ void main() {
       }
     });
 
-    test('MiniaudioEngine with pauseOnDeviceChange handles seek and resume properly', () async {
-      final engine = MiniaudioEngine(pauseOnDeviceChange: true);
+    test('MiniaudioPlayer with pauseOnDeviceChange handles seek and resume properly', () async {
+      final engine = MiniaudioPlayer(pauseOnDeviceChange: true);
       try {
         await engine.action.open([AudioSource(testWavFile.path)]);
         expect(engine.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));

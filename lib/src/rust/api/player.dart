@@ -7,26 +7,17 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_analysis_config`, `check_map_result`, `enumerate_ffi_devices`, `map_telemetry_event`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `drop`
+// These functions are ignored because they are not marked as `pub`: `emit_event`, `emit_queue`, `sync_deck_replay_gain`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
 
-Future<List<RustAudioDevice>> getAudioDevices() =>
-    RustLib.instance.api.crateApiPlayerGetAudioDevices();
-
-List<RustAudioDevice> getAudioDevicesSync() =>
-    RustLib.instance.api.crateApiPlayerGetAudioDevicesSync();
-
-Future<List<RustAudioDevice>> getCaptureDevices() =>
-    RustLib.instance.api.crateApiPlayerGetCaptureDevices();
-
-List<RustAudioDevice> getCaptureDevicesSync() =>
-    RustLib.instance.api.crateApiPlayerGetCaptureDevicesSync();
+void setLogLevel({required int level}) =>
+    RustLib.instance.api.crateApiPlayerSetLogLevel(level: level);
 
 Future<RustAudioAnalysisResult> analyzeAudioFile(
         {required String path,
         required bool replayGain,
         required bool waveform,
-        required int waveformPoints,
+        required BigInt waveformPoints,
         required double targetLufs}) =>
     RustLib.instance.api.crateApiPlayerAnalyzeAudioFile(
         path: path,
@@ -39,7 +30,7 @@ RustAudioAnalysisResult analyzeAudioFileSync(
         {required String path,
         required bool replayGain,
         required bool waveform,
-        required int waveformPoints,
+        required BigInt waveformPoints,
         required double targetLufs}) =>
     RustLib.instance.api.crateApiPlayerAnalyzeAudioFileSync(
         path: path,
@@ -48,15 +39,12 @@ RustAudioAnalysisResult analyzeAudioFileSync(
         waveformPoints: waveformPoints,
         targetLufs: targetLufs);
 
-void setLogLevel({required int level}) =>
-    RustLib.instance.api.crateApiPlayerSetLogLevel(level: level);
-
 Future<RustAudioAnalysisResult> analyzeAudioMemory(
         {required List<int> data,
         String? hintExtension,
         required bool replayGain,
         required bool waveform,
-        required int waveformPoints,
+        required BigInt waveformPoints,
         required double targetLufs}) =>
     RustLib.instance.api.crateApiPlayerAnalyzeAudioMemory(
         data: data,
@@ -66,101 +54,141 @@ Future<RustAudioAnalysisResult> analyzeAudioMemory(
         waveformPoints: waveformPoints,
         targetLufs: targetLufs);
 
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustPlayer>>
-abstract class RustPlayer implements RustOpaqueInterface {
-  void clearReplayGain();
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<EventReporter>>
+abstract class EventReporter implements RustOpaqueInterface {
+  Future<void> clearSink();
+
+  Future<void> emit({required RustPlayerEvent event});
+
+  // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
+  static Future<EventReporter> newInstance() =>
+      RustLib.instance.api.crateApiPlayerEventReporterNew();
+
+  Stream<RustPlayerEvent> setSink();
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>>
+abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
+  void addOutput({required RustAudioOutput output});
+
+  void append({required List<RustAudioSource> sources});
+
+  void clearQueue({required bool keepCurrent});
+
+  Future<void> configureOutputs({required List<RustAudioOutput> outputs});
+
+  void disableMicrophone();
 
   @override
   void dispose();
 
-  PlatformInt64 getAudioDataOffset();
+  Future<void> enableMicrophone(
+      {String? deviceId,
+      required double volume,
+      RustDuckingConfig? ducking,
+      required bool monitorDirect,
+      required double monitorVolume});
 
-  int getBitrate();
+  static Future<List<RustAudioDevice>> getInputDevices() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerGetInputDevices();
 
-  int getBufferSize();
+  static List<RustAudioDevice> getInputDevicesSync() => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerGetInputDevicesSync();
 
-  RustBufferedRange getBufferedRange();
+  static Future<List<RustAudioDevice>> getOutputDevices() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerGetOutputDevices();
 
-  int getChannels();
+  static List<RustAudioDevice> getOutputDevicesSync() => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync();
 
-  RustAudioDevice getCurrentDevice();
+  void insertNext({required RustAudioSource source});
 
-  PlatformInt64 getDurationMs();
+  Future<void> loadEffect(
+      {required String id,
+      required List<int> bytes,
+      required BigInt maxPolyphony,
+      required bool pinned});
 
-  RustEqualizerParams getEqualizer();
-
-  Uint8List? getMetaBytes();
-
-  bool getPauseOnDeviceChange();
-
-  PlatformInt64 getPinnedHeadSize();
-
-  RustPlayerStatus getPlayerStatus();
-
-  int getSampleRate();
-
-  RustSilenceConfig getSilenceConfig();
-
-  PlatformInt64 getSilenceSavedMs();
-
-  RustVisualizerData getVisualizerData();
-
-  bool isCompleted();
-
-  bool isLiveStream();
-
-  bool isPlaying();
-
-  bool isVisualizerEnabled();
-
-  factory RustPlayer(
-          {required int sampleRate,
+  factory RustMiniaudioPlayer(
+          {required RustPlayerConfig config,
+          required int sampleRate,
           required int channels,
           required int periodSize,
           String? playbackDeviceId}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerNew(
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerNew(
+          config: config,
           sampleRate: sampleRate,
           channels: channels,
           periodSize: periodSize,
           playbackDeviceId: playbackDeviceId);
 
-  void notifyCustomError(
-      {required int streamId,
-      required BigInt requestId,
-      required String errorMessage});
+  Future<void> next({BigInt? crossfadeDurationMs});
 
-  Future<void> openAudioSource({required RustAudioSource source});
+  Future<void> open(
+      {required List<RustAudioSource> queue,
+      required BigInt startIndex,
+      required bool autoPlay});
 
-  Future<void> openCustomStream(
-      {required int streamId,
-      BigInt? totalSize,
-      required bool isSeekable,
-      required List<int> initialBytes});
+  void pause();
 
-  Future<void> openMemory({required List<int> data});
+  void play();
 
-  Future<void> openSource(
-      {required String source, List<RustHttpHeader>? headers});
+  int playEffect(
+      {required String id,
+      required int dspRouting,
+      required RustEffectConfig config});
 
-  Future<void> pause();
+  Future<void> previous();
 
-  Future<void> play();
+  bool removeAt({required BigInt index});
 
-  Future<void> seek({required PlatformInt64 positionMs});
+  void removeOutput({required RustAudioOutput output});
 
-  void setBalance({required double pan});
+  bool reorder({required BigInt oldIndex, required BigInt newIndex});
 
-  void setBufferSize({required int frames});
+  void respondDartReadRequest(
+      {required BigInt requestId,
+      required List<int> bytes,
+      required bool isEof});
+
+  void seek({required PlatformInt64 positionMs});
+
+  void setBalance({required double balance});
+
+  void setBufferSize({required int bufferSizeFrames});
+
+  void setCrossfade({required RustCrossfadeConfig config});
 
   void setCrossfeed({required int mode});
 
-  Future<void> setDevice({required String deviceId});
+  void setCueSource({required int source});
+
+  void setCueVolume({required double volume});
+
+  void setDirectMonitoring({required bool enabled, required double volume});
+
+  void setDopplerParameters(
+      {required double factor, required double speedOfSound});
+
+  void setDucking({required RustDuckingConfig config});
+
+  void setEffectBalance({required int voiceId, required double balance});
+
+  void setEffectEmitter({required int voiceId, RustSpatialEmitter? emitter});
+
+  void setEffectPitch({required int voiceId, required double pitch});
+
+  void setEffectVolume({required int voiceId, required double volume});
 
   void setEqualizer({required RustEqualizerParams params});
 
-  void setEqualizerBand({required int band, required double gainDb});
-
   void setLimiter({required bool enabled});
+
+  void setListener({required RustSpatialListener listener});
+
+  void setLoopMode({required int mode});
+
+  void setMicrophoneVolume({required double volume});
 
   void setMono({required bool enabled});
 
@@ -172,24 +200,13 @@ abstract class RustPlayer implements RustOpaqueInterface {
 
   void setRate({required double rate});
 
-  void setReplayGain(
-      {required double gainDb,
-      required double peak,
-      required bool preventClipping});
+  void setReplayGain({required RustReplayGainConfig config});
 
   void setReverb({required RustReverbParams params});
 
-  void setSilenceConfig({required RustSilenceConfig config});
+  void setShuffle({required bool enabled});
 
-  void setSpatialDopplerFactor({required double factor});
-
-  void setSpatialEmitter({required RustSpatialEmitter emitter});
-
-  void setSpatialEnabled({required bool enabled});
-
-  void setSpatialListener({required RustSpatialListener listener});
-
-  void setSpatialSpeedOfSound({required double speed});
+  void setSkipSilence({required RustSilenceConfig config});
 
   void setSpatializer({required bool enabled, required double width});
 
@@ -197,13 +214,94 @@ abstract class RustPlayer implements RustOpaqueInterface {
 
   void setVolume({required double volume});
 
-  Future<void> stop();
+  Future<void> skipToIndex(
+      {required BigInt index, BigInt? crossfadeDurationMs});
+
+  Future<void> startRecording({required String path, required int format});
+
+  void stop();
+
+  void stopAllEffects({required BigInt fadeOutMs});
+
+  void stopEffect({required int voiceId, required BigInt fadeOutMs});
+
+  Future<RustRecordingResult> stopRecording();
 
   Stream<RustPlayerEvent> subscribeEvents();
 
-  void supplyCustomBytes(
-      {required int streamId,
-      required BigInt requestId,
-      required List<int> data,
-      required bool isEof});
+  bool unloadEffect({required String id});
+}
+
+class TelemetryFilter {
+  final int? state;
+  final int? phase;
+  final PlatformInt64 pos;
+  final PlatformInt64? dur;
+  final int? index;
+  final int? bitrate;
+  final PlatformInt64? bufferedEnd;
+  final bool? isBuffering;
+  final bool? isXfading;
+  final bool? isRecording;
+  final bool? isDucking;
+  final bool? isPlaying;
+  final bool? isCompleted;
+  final (int, int, bool)? replayGain;
+
+  const TelemetryFilter({
+    this.state,
+    this.phase,
+    required this.pos,
+    this.dur,
+    this.index,
+    this.bitrate,
+    this.bufferedEnd,
+    this.isBuffering,
+    this.isXfading,
+    this.isRecording,
+    this.isDucking,
+    this.isPlaying,
+    this.isCompleted,
+    this.replayGain,
+  });
+
+  static Future<TelemetryFilter> default_() =>
+      RustLib.instance.api.crateApiPlayerTelemetryFilterDefault();
+
+  @override
+  int get hashCode =>
+      state.hashCode ^
+      phase.hashCode ^
+      pos.hashCode ^
+      dur.hashCode ^
+      index.hashCode ^
+      bitrate.hashCode ^
+      bufferedEnd.hashCode ^
+      isBuffering.hashCode ^
+      isXfading.hashCode ^
+      isRecording.hashCode ^
+      isDucking.hashCode ^
+      isPlaying.hashCode ^
+      isCompleted.hashCode ^
+      replayGain.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TelemetryFilter &&
+          runtimeType == other.runtimeType &&
+          state == other.state &&
+          phase == other.phase &&
+          pos == other.pos &&
+          dur == other.dur &&
+          index == other.index &&
+          bitrate == other.bitrate &&
+          bufferedEnd == other.bufferedEnd &&
+          isBuffering == other.isBuffering &&
+          isXfading == other.isXfading &&
+          isRecording == other.isRecording &&
+          isDucking == other.isDucking &&
+          isPlaying == other.isPlaying &&
+          isCompleted == other.isCompleted &&
+          replayGain == other.replayGain;
 }

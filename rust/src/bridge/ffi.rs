@@ -45,11 +45,7 @@ impl Default for MapDeviceInfo {
 pub struct MiniaudioBufferedRange {
     pub start_ms: i64,
     pub end_ms: i64,
-    pub duration_ms: i64,
-    pub fill_percentage: f32,
-    pub stream_percentage: f32,
     pub is_buffering: i32,
-    pub is_eof: i32,
 }
 
 #[cfg(not(target_arch = "wasm32"))]

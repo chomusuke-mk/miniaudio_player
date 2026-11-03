@@ -1,586 +1,1152 @@
-part of 'miniaudio_player.dart';
+import 'dart:async';
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
-/// Deterministic numeric validator for audio and DSP parameters.
-abstract final class _AudioParamValidator {
-  static void requireFinite(double value, String name, String label) {
-    if (value.isNaN || value.isInfinite) {
-      throw ArgumentError.value(value, name, '$label must be finite');
-    }
+import '../equalizer.dart';
+import '../reverb.dart';
+import '../rust/api/player.dart' as rust;
+import '../rust/api/types.dart' as rust_types;
+import 'audio_device.dart';
+import 'audio_source.dart';
+import 'crossfade_config.dart';
+import 'dsp_config.dart';
+import 'logger.dart';
+import 'loop_mode.dart';
+import 'miniaudio_player.dart';
+import 'player_exception.dart';
+import 'player_models.dart';
+import 'player_state.dart';
+import 'recording.dart' show DuckingConfig;
+import 'silence_skip_config.dart';
+import 'spatial.dart';
+import 'track_metadata.dart';
+
+/// Action interface executing asynchronous playback, queue, effects, and DSP controls.
+///
+/// In strict accordance with the stream-driven architecture, actions dispatch commands
+/// to Rust via FFI and NEVER emit artificial state in Dart. The native Rust event pipeline
+/// is the authoritative source for all state transitions and telemetry.
+class PlayerAction<T> {
+  final MiniaudioPlayer<T> _player;
+
+  PlayerAction(this._player);
+
+  rust.RustMiniaudioPlayer get _rust => _player.rustPlayer;
+
+  Future<void> _commandTail = Future.value();
+
+  Future<R> _serialize<R>(Future<R> Function() action) {
+    final completer = Completer<R>();
+    _commandTail = _commandTail.then((_) async {
+      try {
+        final result = await action();
+        completer.complete(result);
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    return completer.future;
   }
 
-  static void requireFiniteNonNegative(
-      double value, String name, String label) {
-    if (value.isNaN || value.isInfinite || value < 0.0) {
-      throw ArgumentError.value(
-        value,
-        name,
-        '$label must be finite and non-negative',
+  bool _volumeNormalization = true;
+  double _defaultReplayGain = 0.0;
+  double? _forcedReplayGain;
+  ReplayGainMode _replayGainMode = ReplayGainMode.track;
+
+  double? _effectiveReplayGain(AudioSource<T> source) {
+    if (!_volumeNormalization) return null;
+    if (_replayGainMode == ReplayGainMode.forced && _forcedReplayGain != null) {
+      return _forcedReplayGain;
+    }
+    return source.replayGainDb ??
+        (_defaultReplayGain != 0.0 ? _defaultReplayGain : null);
+  }
+
+  rust_types.RustAudioSource _toRustSource(
+    AudioSource<T> s,
+    int id, [
+    Uint8List? initBytes,
+  ]) {
+    final gain = _effectiveReplayGain(s);
+    if (s is CustomAudioSource<T>) {
+      final url = s.provider.totalBytes != null
+          ? 'custom://${s.provider.streamId}?size=${s.provider.totalBytes}'
+          : 'custom://${s.provider.streamId}';
+      return rust_types.RustAudioSource(
+        id: id,
+        source: url,
+        dataBytes: initBytes,
+        replayGainDb: gain,
+        replayPeak: s.replayPeak,
       );
     }
+    final raw = s.toRustSource(id);
+    return rust_types.RustAudioSource(
+      id: raw.id,
+      source: raw.source,
+      headers: raw.headers,
+      dataBytes: raw.dataBytes,
+      replayGainDb: gain,
+      replayPeak: raw.replayPeak,
+    );
   }
 
-  static void requireFinitePositive(double value, String name, String label) {
-    if (value.isNaN || value.isInfinite || value <= 0.0) {
-      throw ArgumentError.value(
-        value,
-        name,
-        '$label must be finite and positive',
-      );
+  // =========================================================================
+  // Master Transport Controls
+  // =========================================================================
+
+  /// Starts or resumes audio playback.
+  Future<void> play() => _serialize(() async {
+    _player.ensureNotDisposed();
+    MapLogger.info('play() requested');
+    if (_player.state.phase == EnginePhase.completed ||
+        _player.state.isCompleted) {
+      _rust.skipToIndex(index: BigInt.zero);
     }
-  }
-}
+    _rust.play();
+    _player.checkInfiniteMix();
+    await Future<void>.delayed(Duration.zero);
+  });
 
-/// Action interface executing asynchronous playback, seeking, volume, and DSP controls.
-class PlayerAction {
-  final MiniaudioPlayer _player;
+  /// Pauses audio playback at current position.
+  Future<void> pause() => _serialize(() async {
+    _player.ensureNotDisposed();
+    MapLogger.info('pause() requested');
+    _rust.pause();
+    await Future<void>.delayed(Duration.zero);
+  });
 
-  int _openGeneration = 0;
-  int _seekGeneration = 0;
+  /// Stops playback and rewinds position to zero.
+  Future<void> stop() => _serialize(() async {
+    _player.ensureNotDisposed();
+    MapLogger.info('stop() requested');
+    _rust.stop();
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  /// Seeks to specified position in the currently playing track.
+  Future<void> seek(Duration position) => _serialize(() async {
+    _player.ensureNotDisposed();
+    final targetPosition = position < Duration.zero ? Duration.zero : position;
+    MapLogger.info('seek() requested -> ${targetPosition.inMilliseconds}ms');
+    _rust.seek(positionMs: targetPosition.inMilliseconds);
+    await Future<void>.delayed(Duration.zero);
+  });
+
   Completer<void>? _openingCompleter;
-  bool _playRequested = false;
-  Future<void>? _pendingSeekFuture;
-  DartByteProviderBridge? _customBridge;
-  AudioSource? _currentSource;
-  bool _streamNeedsReopenOnPlay = false;
 
-  PlayerAction._(this._player);
-
-  /// Awaits completion of the currently in-flight audio source opening operation.
+  /// Awaits completion of any pending opening operations.
   Future<void> waitUntilOpen() => _openingCompleter?.future ?? Future.value();
 
-  void _dispose() {
-    _openGeneration++;
-    _playRequested = false;
-    _pendingSeekFuture = null;
-    _disposeCustomBridge();
-    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
-      _openingCompleter!.complete();
-    }
-  }
+  // =========================================================================
+  // Playlist Queue Management
+  // =========================================================================
 
-  void _disposeCustomBridge() {
-    final bridge = _customBridge;
-    _customBridge = null;
-    bridge?.dispose();
-  }
-
-  /// Guard wrapper executing an open task within the Opening Gate.
-  Future<void> _openGuarded(
-    Future<void> Function(int generation) openTask,
-  ) async {
-    _player._ensureNotDisposed();
-
-    final gen = ++_openGeneration;
-    _playRequested = false;
-    _pendingSeekFuture = null;
-
-    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
-      _openingCompleter!.complete();
-    }
+  /// Opens an audio source or playlist, replacing the current queue.
+  Future<void> open(
+    Object? source, {
+    int startIndex = 0,
+    bool autoPlay = false,
+  }) {
     final completer = Completer<void>();
-    completer.future.ignore();
     _openingCompleter = completer;
 
-    final prevBridge = _customBridge;
-    _customBridge = null;
-
-    _player._resetMetadata();
-    _player._notifyOpening();
-
-    prevBridge?.dispose();
-    if (_openGeneration != gen || _player._isDisposed) return;
-
-    try {
-      await openTask(gen);
-      if (_openGeneration != gen) return;
-
-      _player._notifyOpenCompleted();
-      if (!completer.isCompleted) {
-        completer.complete();
+    return _serialize(() async {
+      _player.ensureNotDisposed();
+      _player.state.metaBytes = null;
+      if (!_player.stream.metaBytesController.isClosed) {
+        _player.stream.metaBytesController.add(null);
       }
-    } catch (error, stackTrace) {
-      if (_openGeneration != gen) return;
 
-      MapLogger.error('open() failed for source $_currentSource: $error');
-      _disposeCustomBridge();
-      _player._notifyOpenFailed();
+      try {
+        final sources = MiniaudioPlayer.normalizeSource<T>(source);
+        if (sources.length == 1) {
+          MapLogger.info('open() requested for source: ${sources.first}');
+        } else {
+          MapLogger.info(
+            'open() requested for source: ${sources.length} items (startIndex: $startIndex, autoPlay: $autoPlay)',
+          );
+        }
 
-      if (!completer.isCompleted) {
-        completer.future.ignore();
-        completer.completeError(error, stackTrace);
-      }
-      rethrow;
-    }
-  }
+        final normalized = <AudioSource<T>>[];
+        for (var i = 0; i < sources.length; i++) {
+          final s = sources[i];
+          final withId = s.id != null ? s : s.copyWith(id: i);
+          normalized.add(withId);
+        }
+        _player.shadowQueue = List.of(normalized);
+        final rustSources = <rust_types.RustAudioSource>[];
+        for (var i = 0; i < normalized.length; i++) {
+          final s = normalized[i];
+          if (s is CustomAudioSource<T>) {
+            _player.customProviders[s.provider.streamId] = s.provider;
+            final initBytes = await s.provider.readInitialBytes();
+            rustSources.add(_toRustSource(s, s.id ?? i, initBytes));
+          } else {
+            rustSources.add(_toRustSource(s, s.id ?? i));
+          }
+        }
 
-  /// Prepares an audio source for playback.
-  Future<void> open(AudioSource source) async {
-    _player._ensureNotDisposed();
-    MapLogger.info('open() requested for source: $source');
-    _currentSource = source;
-    _streamNeedsReopenOnPlay = false;
-    _disposeCustomBridge();
+        try {
+          await _rust.open(
+            queue: rustSources,
+            startIndex: BigInt.from(startIndex),
+            autoPlay: autoPlay,
+          );
+        } catch (e) {
+          if (e is MiniaudioPlayerException) rethrow;
+          throw MiniaudioPlayerException.fromRustError(e);
+        }
 
-    return _openGuarded((_) async {
-      switch (source) {
-        case UriAudioSource s:
-          await _openUriSource(s);
-        case MemoryAudioSource s:
-          await _openMemorySource(s);
-        case CustomAudioSource s:
-          await _openCustomSource(s);
-      }
-      if (source.replayGainDb != null) {
-        await setReplayGain(
-          gainDb: source.replayGainDb!,
-          peak: source.replayPeak,
-          preventClipping: true,
-        );
+        if (sources.isNotEmpty && startIndex >= 0 && startIndex < sources.length) {
+          final activeSource = sources[startIndex];
+          Uint8List? headerBytes;
+          if (activeSource is MemoryAudioSource<T>) {
+            headerBytes = activeSource.bytes;
+          } else if (activeSource is UriAudioSource<T>) {
+            final uri = Uri.tryParse(activeSource.sourceString);
+            final file = (uri != null && uri.scheme == 'file')
+                ? File.fromUri(uri)
+                : File(activeSource.sourceString);
+            if (file.existsSync()) {
+              try {
+                final raf = file.openSync();
+                headerBytes = raf.readSync(min(8192, file.lengthSync()));
+                raf.closeSync();
+              } catch (_) {}
+            }
+          }
+          if (headerBytes != null &&
+              !_player.isDisposed &&
+              !_player.stream.metaBytesController.isClosed) {
+            _player.state.metaBytes = headerBytes;
+            _player.stream.metaBytesController.add(headerBytes);
+          }
+
+          final meta = AudioTrackMetadata.resolve(
+            sourceHint: activeSource.sourceKey,
+            durationMs: _player.state.duration.inMilliseconds,
+            bitrate: _player.state.bitrate,
+            sampleRate: _player.state.sampleRate,
+            channels: _player.state.channels,
+            audioDataOffset: 0,
+            headerBytes: headerBytes,
+          );
+          _player.state.trackMetadata = meta;
+          if (!_player.isDisposed &&
+              !_player.stream.trackMetadataController.isClosed) {
+            _player.stream.trackMetadataController.add(meta);
+          }
+        }
+
+        await applyCurrentTrackReplayGain();
+
+        if (autoPlay) {
+          _player.checkInfiniteMix();
+        }
+      } finally {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
       }
     });
   }
 
-  Future<void> _openUriSource(UriAudioSource source) async {
-    final str = source.sourceString;
-    if (str.isEmpty) {
-      throw const MiniaudioPlayerException(
-        'Cannot open empty source path or URL',
-      );
-    }
-    MapLogger.debug('_openUriSource -> uri: $str');
-    final assetBytes = await _tryLoadFlutterAsset(str);
-    if (assetBytes != null) {
-      MapLogger.debug('_openUriSource resolved Flutter asset -> ${assetBytes.length} bytes');
-      await _player._backend.openMemory(assetBytes);
-      return;
-    }
-    await _player._backend.openSource(str, headers: source.headers);
-  }
+  /// Appends tracks to the end of the current playlist queue.
+  Future<void> append(List<AudioSource<T>> sources) async {
+    _player.ensureNotDisposed();
+    if (sources.isEmpty) return;
 
-  Future<Uint8List?> _tryLoadFlutterAsset(String uriString) async {
-    if (!uriString.startsWith('asset://') && !uriString.startsWith('asset:')) {
-      return null;
-    }
-    final loader = MiniaudioPlayerGlobalConfig.assetLoader;
-    if (loader == null) return null;
-
-    final key = uriString.startsWith('asset://')
-        ? uriString.substring('asset://'.length)
-        : uriString.substring('asset:'.length);
-    try {
-      return await loader(key);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> _openMemorySource(MemoryAudioSource source) async {
-    if (source.bytes.isEmpty) {
-      throw const MiniaudioPlayerException('Cannot open empty byte buffer');
-    }
-    MapLogger.debug('_openMemorySource -> ${source.bytes.length} bytes');
-    await _player._backend.openMemory(source.bytes);
-  }
-
-  Future<void> _openCustomSource(CustomAudioSource source) async {
-    MapLogger.debug('_openCustomSource -> streamId: ${source.provider.streamId}');
-    final bridge = DartByteProviderBridge(_player._backend, source.provider);
-    _customBridge = bridge;
-    await bridge.start();
-  }
-
-  /// Starts or resumes audio playback.
-  Future<void> play() async {
-    _player._ensureNotDisposed();
-    MapLogger.info('play() requested (state: ${_player.state.playbackState})');
-    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
-      _playRequested = true;
-      final gen = _openGeneration;
-      try {
-        await _openingCompleter!.future;
-      } catch (_) {
-        return;
-      }
-      if (_openGeneration != gen || !_playRequested) return;
-    }
-    if (_pendingSeekFuture != null) {
-      try {
-        await _pendingSeekFuture;
-      } catch (_) {}
-    }
-    return _executePlay();
-  }
-
-  Future<void> _executePlay() async {
-    if (_streamNeedsReopenOnPlay &&
-        _player.state.trackMetadata?.isLiveStream == true &&
-        _currentSource != null) {
-      _streamNeedsReopenOnPlay = false;
-      await open(_currentSource!);
-    }
-    if (_player.state.completed ||
-        (_player.state.duration > Duration.zero &&
-            _player.state.position >= _player.state.duration)) {
-      final seekFut = _executeSeek(Duration.zero);
-      _pendingSeekFuture = seekFut;
-      await seekFut;
-      if (_pendingSeekFuture == seekFut) {
-        _pendingSeekFuture = null;
-      }
-    }
-    await _player._backend.play();
-  }
-
-  /// Pauses audio playback at the current position.
-  Future<void> pause() async {
-    _player._ensureNotDisposed();
-    MapLogger.info('pause() requested (state: ${_player.state.playbackState})');
-    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
-      _playRequested = false;
-      return;
-    }
-    await _player._backend.pause();
-  }
-
-  /// Stops audio playback and resets the position to the beginning.
-  Future<void> stop() async {
-    _player._ensureNotDisposed();
-    MapLogger.info('stop() requested (state: ${_player.state.playbackState})');
-    if (_player.state.trackMetadata?.isLiveStream == true) {
-      _streamNeedsReopenOnPlay = true;
-    }
-    _pendingSeekFuture = null;
-    if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
-      _openGeneration++;
-      _playRequested = false;
-      _disposeCustomBridge();
-      try {
-        await _player._backend.stop();
-      } catch (_) {}
-      if (!_openingCompleter!.isCompleted) {
-        _openingCompleter!.complete();
-      }
-      _player._notifyStopped();
-      return;
-    }
-    await _player._backend.stop();
-  }
-
-  /// Seeks to the specified [position].
-  Future<void> seek(Duration position) {
-    _player._ensureNotDisposed();
-    final targetPosition = position < Duration.zero ? Duration.zero : position;
-    MapLogger.debug('seek() requested -> ${targetPosition.inMilliseconds}ms');
-    final thisSeekGen = ++_seekGeneration;
-
-    Future<void> doSeek() async {
-      if (_openingCompleter != null && !_openingCompleter!.isCompleted) {
-        final gen = _openGeneration;
-        try {
-          await _openingCompleter!.future;
-        } catch (_) {
-          return;
-        }
-        if (_openGeneration != gen || _seekGeneration != thisSeekGen) return;
-      }
-      if (_seekGeneration != thisSeekGen) return;
-      return _executeSeek(targetPosition);
-    }
-
-    final future = doSeek();
-    _pendingSeekFuture = future;
-    return future;
-  }
-
-  Future<void> _executeSeek(Duration position) async {
-    await _player._backend.seek(position);
-  }
-
-  /// Sets master volume as a linear amplitude scale (`0.0` to `2.0`).
-  Future<void> setVolume(double volume) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFiniteNonNegative(volume, 'volume', 'Volume');
-    final clamped = volume.clamp(0.0, 2.0);
-    MapLogger.debug('setVolume() -> $clamped');
-    _player._volume.emitIfChanged(clamped);
-    _player._backend.setVolume(clamped);
-  }
-
-  /// Sets playback speed/rate (`0.1` to `4.0`, where `1.0` is normal).
-  Future<void> setRate(double rate) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFinitePositive(rate, 'rate', 'Rate');
-    final clamped = rate.clamp(0.1, 4.0);
-    MapLogger.debug('setRate() -> $clamped');
-    _player._rate.emitIfChanged(clamped);
-    _player._backend.setRate(clamped);
-  }
-
-  /// Sets playback pitch scale (`0.5` to `2.0`, where `1.0` is original pitch).
-  Future<void> setPitch(double pitch) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFinitePositive(pitch, 'pitch', 'Pitch');
-    final clamped = pitch.clamp(0.5, 2.0);
-    MapLogger.debug('setPitch() -> $clamped');
-    _player._pitch.emitIfChanged(clamped);
-    _player._backend.setPitch(clamped);
-  }
-
-  /// Dynamically updates the audio output period buffer size in frames.
-  Future<void> setBufferSize(int bufferSize) async {
-    _player._ensureNotDisposed();
-    if (bufferSize < 0) {
-      throw ArgumentError.value(
-        bufferSize,
-        'bufferSize',
-        'Buffer size must be non-negative',
-      );
-    }
-    MapLogger.debug('setBufferSize() -> $bufferSize frames');
-    _player._bufferSize.emitIfChanged(bufferSize);
-    _player._backend.setBufferSize(bufferSize);
-  }
-
-  /// Updates all 10 equalizer bands atomically from an [Equalizer] instance.
-  Future<void> setEqualizer(Equalizer equalizer) async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('setEqualizer() -> bands: ${equalizer.toList()}');
-    _player._equalizer.emitIfChanged(equalizer);
-    _player._backend.setEqualizer(equalizer);
-  }
-
-  /// Sets the gain of an individual equalizer band by index (`0` to `9`).
-  Future<void> setEqualizerBand(int bandIndex, double gainDb) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFinite(gainDb, 'gainDb', 'Gain');
-    MapLogger.debug('setEqualizerBand() -> band: $bandIndex, gain: ${gainDb}dB');
-    final updated = _player.state.equalizer.withBand(bandIndex, gainDb);
-    _player._equalizer.emitIfChanged(updated);
-    _player._backend.setEqualizerBand(bandIndex, gainDb);
-  }
-
-  /// Switches audio output routing to the specified [AudioDevice].
-  Future<void> setDevice(AudioDevice device) async {
-    _player._ensureNotDisposed();
-    MapLogger.info('setDevice() -> id: ${device.id}, name: ${device.name}');
-    final deviceId = (device.isAuto || device.id == 'auto') ? '' : device.id;
-    await _player._backend.setDevice(deviceId);
-  }
-
-  /// Sets whether playback should automatically pause when the active audio output endpoint changes.
-  void setPauseOnDeviceChange(bool enabled) {
-    _player._ensureNotDisposed();
-    _player._setPauseOnDeviceChange(enabled);
-  }
-
-  /// Sets whether silence skipping is enabled, optionally configuring mode and thresholds.
-  Future<void> setSkipSilence(
-    bool enabled, {
-    SilenceSkipMode mode = SilenceSkipMode.continuous,
-    double thresholdDb = -45.0,
-    Duration? minSilenceDuration,
-    Duration? padding,
-  }) async {
-    final effectiveMode = enabled
-        ? (mode == SilenceSkipMode.disabled ? SilenceSkipMode.continuous : mode)
-        : SilenceSkipMode.disabled;
-
-    final current = _player.state.silenceConfig;
-    final newConfig = SilenceSkipConfig(
-      mode: effectiveMode,
-      thresholdDb: thresholdDb,
-      minSilenceDuration: minSilenceDuration ?? current.minSilenceDuration,
-      padding: padding ?? current.padding,
+    final currentMaxId = _player.shadowQueue.fold<int>(
+      -1,
+      (max, s) => s.id != null && s.id! > max ? s.id! : max,
     );
-    await setSilenceConfig(newConfig);
+    var nextId = currentMaxId + 1;
+    final normalized = <AudioSource<T>>[];
+    for (final s in sources) {
+      final withId = s.id != null ? s : s.copyWith(id: nextId++);
+      if (withId is CustomAudioSource<T>) {
+        _player.customProviders[withId.provider.streamId] = withId.provider;
+      }
+      normalized.add(withId);
+    }
+    _player.shadowQueue.addAll(normalized);
+    final rustSources = normalized.map((s) => _toRustSource(s, s.id ?? 0)).toList();
+    _rust.append(sources: rustSources);
   }
 
-  /// Configures dynamic silence detection and skipping.
-  Future<void> setSilenceConfig(SilenceSkipConfig config) async {
-    _player._ensureNotDisposed();
-    final valid = config.validated();
-    MapLogger.debug('setSilenceConfig() -> mode: ${valid.mode}, threshold: ${valid.thresholdDb}dB');
-    _player._onSilenceConfig(valid);
-    _player._backend.setSilenceSkip(valid);
+  /// Inserts a track immediately after the active playing track.
+  Future<void> insertNext(AudioSource<T> source) async {
+    _player.ensureNotDisposed();
+    final currentMaxId = _player.shadowQueue.fold<int>(
+      -1,
+      (max, s) => s.id != null && s.id! > max ? s.id! : max,
+    );
+    final withId = source.id != null ? source : source.copyWith(id: currentMaxId + 1);
+    if (withId is CustomAudioSource<T>) {
+      _player.customProviders[withId.provider.streamId] = withId.provider;
+    }
+    final curIdx = _player.state.currentIndex;
+    final insertIdx = (curIdx >= 0) ? curIdx + 1 : _player.shadowQueue.length;
+    _player.shadowQueue.insert(insertIdx, withId);
+    _rust.insertNext(source: _toRustSource(withId, withId.id ?? 0));
   }
 
-  /// Enables or disables real-time audio visualizer DSP analysis.
+  /// Removes a track at [index] from the playlist queue.
+  Future<void> removeAt(int index) async {
+    _player.ensureNotDisposed();
+    if (index >= 0 && index < _player.shadowQueue.length) {
+      _player.shadowQueue.removeAt(index);
+      _rust.removeAt(index: BigInt.from(index));
+    }
+  }
+
+  /// Reorders a track from [oldIndex] to [newIndex] within the queue.
+  Future<void> reorder(int oldIndex, int newIndex) async {
+    _player.ensureNotDisposed();
+    if (oldIndex >= 0 &&
+        oldIndex < _player.shadowQueue.length &&
+        newIndex >= 0 &&
+        newIndex < _player.shadowQueue.length) {
+      final item = _player.shadowQueue.removeAt(oldIndex);
+      _player.shadowQueue.insert(newIndex, item);
+      _rust.reorder(
+        oldIndex: BigInt.from(oldIndex),
+        newIndex: BigInt.from(newIndex),
+      );
+    }
+  }
+
+  /// Clears the playlist queue. If [keepCurrent] is true, retains the playing track.
+  Future<void> clearQueue({bool keepCurrent = false}) async {
+    _player.ensureNotDisposed();
+    if (keepCurrent &&
+        _player.shadowQueue.isNotEmpty &&
+        _player.state.currentIndex >= 0 &&
+        _player.state.currentIndex < _player.shadowQueue.length) {
+      final cur = _player.shadowQueue[_player.state.currentIndex];
+      _player.shadowQueue = [cur];
+    } else {
+      _player.shadowQueue.clear();
+    }
+    _rust.clearQueue(keepCurrent: keepCurrent);
+  }
+
+  /// Advances to the next track in the playlist queue.
+  Future<void> next({Duration? crossfadeDuration}) => _serialize(() async {
+    _player.ensureNotDisposed();
+    await _rust.next(
+      crossfadeDurationMs: crossfadeDuration != null
+          ? BigInt.from(crossfadeDuration.inMilliseconds)
+          : null,
+    );
+    await applyCurrentTrackReplayGain();
+    _player.checkInfiniteMix();
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  /// Skips back to the previous track, or start of current track if > 3s played.
+  Future<void> previous() => _serialize(() async {
+    _player.ensureNotDisposed();
+    await _rust.previous();
+    await applyCurrentTrackReplayGain();
+    _player.checkInfiniteMix();
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  /// Skips directly to track at [index] in the playlist queue.
+  Future<void> skipToIndex(int index, {Duration? crossfadeDuration}) =>
+      _serialize(() async {
+        _player.ensureNotDisposed();
+        await _rust.skipToIndex(
+          index: BigInt.from(index),
+          crossfadeDurationMs: crossfadeDuration != null
+              ? BigInt.from(crossfadeDuration.inMilliseconds)
+              : null,
+        );
+        await applyCurrentTrackReplayGain();
+        _player.checkInfiniteMix();
+        await Future<void>.delayed(Duration.zero);
+      });
+
+  /// Configures playlist repeat mode ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
+  Future<void> setLoopMode(LoopMode mode) async {
+    _player.ensureNotDisposed();
+    _rust.setLoopMode(mode: mode.index);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Enables or disables non-destructive shuffle on the playlist queue.
+  Future<void> setShuffle(bool enabled) async {
+    _player.ensureNotDisposed();
+    _rust.setShuffle(enabled: enabled);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Configures infinite queue replenishment when playback reaches the end of the queue.
+  Future<void> setInfiniteMix(
+    bool enabled, {
+    InfiniteMixProvider<T>? provider,
+  }) async {
+    _player.ensureNotDisposed();
+    _player.infiniteMixEnabled = enabled;
+    if (provider != null) {
+      _player.infiniteMixProvider = provider;
+    }
+    _player.checkInfiniteMix();
+  }
+
+  /// Configures crossfade duration and curve between queue tracks.
+  Future<void> setCrossfade(CrossfadeConfig config) async {
+    _player.ensureNotDisposed();
+    _rust.setCrossfade(
+      config: rust_types.RustCrossfadeConfig(
+        autoDurationMs: BigInt.from(
+          config.autoDuration.inMilliseconds < 0 ? 0 : config.autoDuration.inMilliseconds,
+        ),
+        manualDurationMs: BigInt.from(
+          config.manualDuration.inMilliseconds < 0 ? 0 : config.manualDuration.inMilliseconds,
+        ),
+        curve: config.curve == CrossfadeCurve.linear ? 1 : 0,
+      ),
+    );
+  }
+
+  // =========================================================================
+  // Audio Modulation & DSP Controls
+  // =========================================================================
+
+  /// Modulates master audio volume. Validations happen in Rust backend.
+  Future<void> setVolume(double volume) async {
+    _player.ensureNotDisposed();
+    MapLogger.info('setVolume() -> $volume');
+    _rust.setVolume(volume: volume.toDouble());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Modulates playback rate multiplier preserving pitch.
+  Future<void> setRate(double rate) async {
+    _player.ensureNotDisposed();
+    _rust.setRate(rate: rate.toDouble());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Modulates musical pitch multiplier.
+  Future<void> setPitch(double pitch) async {
+    _player.ensureNotDisposed();
+    _rust.setPitch(pitch: pitch.toDouble());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Sets stereo balance / pan (-1.0 left to +1.0 right).
+  Future<void> setBalance(double balance) async {
+    _player.ensureNotDisposed();
+    _rust.setBalance(balance: balance.toDouble());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Toggles monophonic downmixing of stereo channels.
+  Future<void> setMono(bool enabled) async {
+    _player.ensureNotDisposed();
+    _rust.setMono(enabled: enabled);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Applies 10-band ISO peaking equalizer configuration.
+  Future<void> setEqualizer(Equalizer equalizer) async {
+    _player.ensureNotDisposed();
+    _rust.setEqualizer(
+      params: rust_types.RustEqualizerParams(
+        gains: Float32List.fromList(equalizer.toList()),
+        enabled: true,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+
+  /// Configures algorithmic studio reverberation.
+  Future<void> setReverb(Reverb reverb) async {
+    _player.ensureNotDisposed();
+    _rust.setReverb(
+      params: rust_types.RustReverbParams(
+        roomSize: reverb.roomSize,
+        damping: reverb.damping,
+        wet: reverb.wet,
+        dry: reverb.dry,
+        width: reverb.width,
+        mode: 0.0,
+        enabled: reverb.enabled,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+
+  /// Toggles master True-Peak brickwall limiter protector.
+  Future<void> setLimiter(bool enabled) async {
+    _player.ensureNotDisposed();
+    _rust.setLimiter(enabled: enabled);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Toggles real-time 10-band FFT spectrum visualizer calculation.
   Future<void> setVisualizerEnabled(bool enabled) async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('setVisualizerEnabled() -> $enabled');
-    _player._setManualVisualizerOverride(enabled);
+    _player.ensureNotDisposed();
+    _player.setManualVisualizerOverride(enabled);
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Clears any manual visualizer override, reverting to reactive on-demand control.
+  /// Clears manual visualizer override.
   Future<void> clearVisualizerOverride() async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('clearVisualizerOverride()');
-    _player._setManualVisualizerOverride(null);
+    _player.ensureNotDisposed();
+    _player.setManualVisualizerOverride(null);
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Sets replay gain normalization for the track.
+  /// Configures intelligent silence detection and skipping.
+  Future<void> setSkipSilence(dynamic configOrEnabled) async {
+    _player.ensureNotDisposed();
+    final SilenceSkipConfig config;
+    if (configOrEnabled is bool) {
+      config = configOrEnabled
+          ? const SilenceSkipConfig.continuous()
+          : const SilenceSkipConfig(mode: SilenceSkipMode.disabled);
+    } else if (configOrEnabled is SilenceSkipConfig) {
+      config = configOrEnabled;
+    } else {
+      throw ArgumentError(
+          'Expected bool or SilenceSkipConfig, got $configOrEnabled');
+    }
+
+    _rust.setSkipSilence(
+      config: rust_types.RustSilenceConfig(
+        thresholdDb: config.thresholdDb,
+        minSilenceDurationMs: config.minSilenceDuration.inMilliseconds,
+        paddingMs: config.padding.inMilliseconds,
+        enabled: config.mode != SilenceSkipMode.disabled,
+        mode: config.mode.value,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+
+  /// Sets detailed silence skipping configuration.
+  Future<void> setSilenceConfig(SilenceSkipConfig config) =>
+      setSkipSilence(config);
+
+  /// Configures ReplayGain / EBU R128 track loudness normalization.
   Future<void> setReplayGain({
-    required double gainDb,
+    ReplayGainConfig? config,
+    double? gainDb,
     double? peak,
     bool preventClipping = true,
+    bool enabled = true,
+    bool force = false,
   }) async {
-    _player._ensureNotDisposed();
-    final cfg = ReplayGainConfig(
-      enabled: true,
-      gainDb: gainDb,
-      peak: (peak != null && peak > 0.0) ? peak : 0.0,
-      preventClipping: preventClipping,
+    _player.ensureNotDisposed();
+    final effEnabled = config?.enabled ?? enabled;
+    final effGain = config?.gainDb ?? gainDb ?? 0.0;
+    final effPeak = config?.peak ?? peak ?? 0.0;
+    final effPrevent = config?.preventClipping ?? preventClipping;
+    _rust.setReplayGain(
+      config: rust_types.RustReplayGainConfig(
+        gainDb: effGain,
+        peak: effPeak,
+        preventClipping: effPrevent,
+        enabled: effEnabled,
+      ),
     );
-    MapLogger.debug('setReplayGain() -> gain: ${gainDb}dB, peak: $peak, preventClipping: $preventClipping');
-    _player._replayGain.emitIfChanged(cfg);
-    _player._backend.setReplayGain(cfg);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Clears replay gain normalization back to unity gain (`0.0 dB`).
+  /// Clears active ReplayGain track normalization.
   Future<void> clearReplayGain() async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('clearReplayGain()');
-    const cfg = ReplayGainConfig(enabled: false);
-    _player._replayGain.emitIfChanged(cfg);
-    _player._backend.setReplayGain(cfg);
+    _player.ensureNotDisposed();
+    await setReplayGain(enabled: false);
   }
 
-  /// Sets standalone manual preamp gain in decibels applied prior to the equalizer.
+  /// Sets preamplifier gain in decibels.
   Future<void> setPreamp(double preampDb) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFinite(preampDb, 'preampDb', 'Preamp');
-    final clamped = preampDb.clamp(-24.0, 24.0);
-    MapLogger.debug('setPreamp() -> ${clamped}dB');
-    _player._preamp.emitIfChanged(clamped);
-    _player._backend.setPreamp(clamped);
+    _player.ensureNotDisposed();
+    _rust.setPreamp(preampDb: preampDb.toDouble());
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Sets stereo channel balance (`-1.0` full left, `0.0` center, `+1.0` full right).
-  Future<void> setBalance(double pan) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFinite(pan, 'pan', 'Balance');
-    final clamped = pan.clamp(-1.0, 1.0);
-    MapLogger.debug('setBalance() -> $clamped');
-    _player._balance.emitIfChanged(clamped);
-    _player._backend.setBalance(clamped);
-  }
-
-  /// Sets whether mono downmix is enabled for accessibility or single speakers.
-  Future<void> setMono(bool enabled) async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('setMono() -> $enabled');
-    _player._mono.emitIfChanged(enabled);
-    _player._backend.setMono(enabled);
-  }
-
-  /// Configures headphone binaural crossfeed (Bauer bs2b).
+  /// Sets binaural crossfeed mode.
   Future<void> setCrossfeed(CrossfeedMode mode) async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('setCrossfeed() -> $mode');
-    _player._crossfeed.emitIfChanged(mode);
-    _player._backend.setCrossfeed(mode);
+    _player.ensureNotDisposed();
+    _rust.setCrossfeed(mode: mode.index);
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Configures the stereo widener / spatializer.
+  /// Configures stereo widener spatializer.
   Future<void> setSpatializer({
     required bool enabled,
-    double width = 1.3,
+    double width = 1.0,
   }) async {
-    _player._ensureNotDisposed();
-    _AudioParamValidator.requireFinite(width, 'width', 'Spatializer width');
-    final clampedWidth = width.clamp(1.0, 2.0);
-    MapLogger.debug('setSpatializer() -> enabled: $enabled, width: $clampedWidth');
-    _player._spatializerEnabled.emitIfChanged(enabled);
-    _player._spatializerWidth.emitIfChanged(clampedWidth);
-    _player._backend.setSpatializer(enabled: enabled, width: clampedWidth);
+    _player.ensureNotDisposed();
+    _rust.setSpatializer(enabled: enabled, width: width.toDouble());
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Enables or disables 3D spatial audio and Doppler shift processing.
-  Future<void> setSpatialEnabled(bool enabled) async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('setSpatialEnabled() -> $enabled');
-    _player.spatial.setEnabled(enabled);
+  /// Sets default ReplayGain fallback.
+  Future<void> setDefaultReplayGain(double gainDb) async {
+    _player.ensureNotDisposed();
+    _defaultReplayGain = gainDb;
+    _player.state.defaultReplayGain = gainDb;
+    await applyCurrentTrackReplayGain();
   }
 
-  /// Sets the 3D spatial listener state.
-  Future<void> setSpatialListener({
-    Vector3? position,
-    Vector3? velocity,
-    Vector3? forward,
-    Vector3? up,
+  /// Sets forced ReplayGain override.
+  Future<void> setForcedReplayGain(double? gainDb) async {
+    _player.ensureNotDisposed();
+    _forcedReplayGain = gainDb;
+    _replayGainMode =
+        gainDb != null ? ReplayGainMode.forced : ReplayGainMode.track;
+    _player.state.forcedReplayGain = gainDb ?? 0.0;
+    _player.state.replayGainMode = _replayGainMode;
+    await applyCurrentTrackReplayGain();
+  }
+
+  /// Sets ReplayGain calculation mode.
+  Future<void> setReplayGainMode(ReplayGainMode mode) async {
+    _player.ensureNotDisposed();
+    _replayGainMode = mode;
+    _player.state.replayGainMode = mode;
+    await applyCurrentTrackReplayGain();
+  }
+
+  /// Toggles automatic ReplayGain loudness normalization.
+  Future<void> setVolumeNormalization(bool enabled) async {
+    _player.ensureNotDisposed();
+    _volumeNormalization = enabled;
+    _player.state.volumeNormalization = enabled;
+    await applyCurrentTrackReplayGain();
+  }
+
+  /// Applies ReplayGain settings for the currently active track.
+  Future<void> applyCurrentTrackReplayGain() async {
+    if (!_volumeNormalization) {
+      _rust.setReplayGain(
+        config: const rust_types.RustReplayGainConfig(
+          gainDb: 0.0,
+          peak: 1.0,
+          preventClipping: true,
+          enabled: false,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      return;
+    }
+    double effectiveGain = 0.0;
+    double effectivePeak = 1.0;
+    if (_replayGainMode == ReplayGainMode.forced && _forcedReplayGain != null) {
+      effectiveGain = _forcedReplayGain!;
+    } else {
+      final curItem = _player.state.currentItem;
+      if (curItem?.replayGainDb != null) {
+        effectiveGain = curItem!.replayGainDb!;
+        effectivePeak = curItem.replayPeak ?? 1.0;
+      } else {
+        effectiveGain = _defaultReplayGain;
+      }
+    }
+    _rust.setReplayGain(
+      config: rust_types.RustReplayGainConfig(
+        gainDb: effectiveGain,
+        peak: effectivePeak,
+        preventClipping: true,
+        enabled: effectiveGain != 0.0,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+
+  /// Configures resilience behavior when audio playback devices change.
+  Future<void> setPauseOnDeviceChange(bool enabled) async {
+    _player.ensureNotDisposed();
+    _rust.setPauseOnDeviceChange(enabled: enabled);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Switches primary audio playback to [device].
+  Future<void> setDevice(AudioDevice device) async {
+    _player.ensureNotDisposed();
+    if (device.isAuto) {
+      await configureOutputs([const AudioOutput.speaker()]);
+    } else {
+      await configureOutputs([AudioOutput.device(device.id)]);
+    }
+  }
+
+  /// Updates playback buffer period size.
+  Future<void> setBufferSize(int size) async {
+    _player.ensureNotDisposed();
+    if (size < 0) {
+      throw ArgumentError.value(
+          size, 'bufferSize', 'Buffer size must be non-negative');
+    }
+    _rust.setBufferSize(bufferSizeFrames: size);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  // =========================================================================
+  // RAM Sound Effects Management
+  // =========================================================================
+
+  /// Loads and decodes an [AudioEffect] into fast preallocated RAM.
+  Future<void> loadEffect(AudioEffect effect) async {
+    _player.ensureNotDisposed();
+    final bytes = await effect.source.readBytes();
+    await _rust.loadEffect(
+      id: effect.id,
+      bytes: bytes,
+      maxPolyphony: BigInt.from(effect.maxPolyphony),
+      pinned: effect.pinned,
+    );
+    if (!_player.state.loadedEffectIds.contains(effect.id)) {
+      _player.state.loadedEffectIds = [..._player.state.loadedEffectIds, effect.id];
+    }
+    _player.state.allocatedRamBytes += bytes.length;
+  }
+
+  /// Unloads a cached sound effect from RAM.
+  Future<void> unloadEffect(String id) async {
+    _player.ensureNotDisposed();
+    _rust.unloadEffect(id: id);
+    _player.state.loadedEffectIds =
+        _player.state.loadedEffectIds.where((e) => e != id).toList();
+  }
+
+  /// Preloads a batch of sound effects in parallel.
+  Future<void> preloadEffects(List<AudioEffect> effects) async {
+    _player.ensureNotDisposed();
+    await Future.wait(effects.map(loadEffect));
+  }
+
+  /// Triggers playback of a polyphonic RAM effect voice.
+  Future<VoiceId> playEffect(
+    String id, {
+    DspRouting dspRouting = DspRouting.inherit,
+    EffectConfig config = const EffectConfig(),
+    double? volume,
+    double? pitch,
+    double? pitchJitter,
+    double? volumeJitter,
+    SpatialEmitter? spatial,
+    bool? looping,
   }) async {
-    _player._ensureNotDisposed();
-    _player.spatial.setListener(
-      position: position,
-      velocity: velocity,
-      forward: forward,
-      up: up,
+    _player.ensureNotDisposed();
+    final effectiveConfig = config.copyWith(
+      volume: volume,
+      pitch: pitch,
+      pitchJitter: pitchJitter,
+      volumeJitter: volumeJitter,
+      spatial: spatial,
+      looping: looping,
+    );
+
+    final voiceId = _rust.playEffect(
+      id: id,
+      dspRouting: dspRouting.value,
+      config: rust_types.RustEffectConfig(
+        volume: effectiveConfig.volume,
+        balance: effectiveConfig.balance,
+        pitch: effectiveConfig.pitch,
+        rate: effectiveConfig.rate,
+        looping: effectiveConfig.looping,
+        priority: effectiveConfig.priority,
+        pitchJitter: effectiveConfig.pitchJitter,
+        volumeJitter: effectiveConfig.volumeJitter,
+        spatial: effectiveConfig.spatial != null
+            ? _toRustEmitter(effectiveConfig.spatial!)
+            : null,
+      ),
+    );
+    return voiceId;
+  }
+
+  /// Stops an active effect voice with a linear fade-out.
+  Future<void> stopEffect(
+    VoiceId voiceId, {
+    Duration fadeOut = const Duration(milliseconds: 5),
+  }) async {
+    _player.ensureNotDisposed();
+    _rust.stopEffect(
+      voiceId: voiceId,
+      fadeOutMs: BigInt.from(fadeOut.inMilliseconds),
     );
   }
 
-  /// Sets the 3D spatial emitter state.
-  Future<void> setSpatialEmitter({
-    Vector3? position,
-    Vector3? velocity,
-    Vector3? direction,
-    double? minDistance,
-    double? maxDistance,
-    double? rolloffFactor,
-    double? dopplerFactor,
-    double? innerAngleRad,
-    double? outerAngleRad,
-    double? outerGain,
-    DistanceModel? distanceModel,
+  /// Stops all currently rendering polyphonic effect voices.
+  Future<void> stopAllEffects({
+    Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
-    _player._ensureNotDisposed();
-    _player.spatial.setEmitter(
-      position: position,
-      velocity: velocity,
-      direction: direction,
-      minDistance: minDistance,
-      maxDistance: maxDistance,
-      rolloffFactor: rolloffFactor,
-      dopplerFactor: dopplerFactor,
-      innerAngleRad: innerAngleRad,
-      outerAngleRad: outerAngleRad,
-      outerGain: outerGain,
-      distanceModel: distanceModel,
+    _player.ensureNotDisposed();
+    _rust.stopAllEffects(fadeOutMs: BigInt.from(fadeOut.inMilliseconds));
+  }
+
+  /// Modulates the volume of an active polyphonic voice in real time.
+  Future<void> setEffectVolume(VoiceId voiceId, double volume) async {
+    _player.ensureNotDisposed();
+    _rust.setEffectVolume(voiceId: voiceId, volume: volume.toDouble());
+  }
+
+  /// Modulates the pitch of an active polyphonic voice in real time.
+  Future<void> setEffectPitch(VoiceId voiceId, double pitch) async {
+    _player.ensureNotDisposed();
+    _rust.setEffectPitch(voiceId: voiceId, pitch: pitch.toDouble());
+  }
+
+  /// Modulates the stereo balance of an active polyphonic voice.
+  Future<void> setEffectBalance(VoiceId voiceId, double balance) async {
+    _player.ensureNotDisposed();
+    _rust.setEffectBalance(voiceId: voiceId, balance: balance.toDouble());
+  }
+
+  /// Updates the 3D position and velocity of an active polyphonic voice.
+  Future<void> setEffectEmitter(
+    VoiceId voiceId,
+    SpatialEmitter emitter,
+  ) async {
+    _player.ensureNotDisposed();
+    _rust.setEffectEmitter(
+      voiceId: voiceId,
+      emitter: _toRustEmitter(emitter),
     );
   }
 
-  /// Sets the Doppler effect exaggeration/reduction factor (default 1.0, 0.0 disables Doppler).
-  Future<void> setSpatialDopplerFactor(double factor) async {
-    _player._ensureNotDisposed();
-    _player.spatial.setDopplerFactor(factor);
+  /// Updates the 3D spatial position, orientation, and velocity of the listener.
+  Future<void> setListener(SpatialListener listener) async {
+    _player.ensureNotDisposed();
+    _rust.setListener(listener: _toRustListener(listener));
   }
 
-  /// Sets the medium speed of sound in m/s (default 343.3 m/s).
-  Future<void> setSpatialSpeedOfSound(double speed) async {
-    _player._ensureNotDisposed();
-    _player.spatial.setSpeedOfSound(speed);
-  }
-
-  /// Enables or disables the True-Peak soft-knee output limiter protector.
-  Future<void> setLimiter(bool enabled) async {
-    _player._ensureNotDisposed();
-    MapLogger.debug('setLimiter() -> $enabled');
-    _player._limiterEnabled.emitIfChanged(enabled);
-    _player._backend.setLimiterEnabled(enabled);
-  }
-
-  /// Configures studio-grade algorithmic reverberation.
-  Future<void> setReverb(Reverb config) async {
-    _player._ensureNotDisposed();
-    final valid = config.validated();
-    MapLogger.debug('setReverb() -> enabled: ${valid.enabled}, roomSize: ${valid.roomSize}');
-    _player._reverb.emitIfChanged(valid);
-    _player._backend.setReverb(
-      enabled: valid.enabled,
-      roomSize: valid.roomSize,
-      damping: valid.damping,
-      width: valid.width,
-      wet: valid.wet,
-      dry: valid.dry,
+  /// Calibrates the physics of the 3D Doppler effect.
+  Future<void> setDopplerParameters({
+    double factor = 1.0,
+    double speedOfSound = 343.3,
+  }) async {
+    _player.ensureNotDisposed();
+    _rust.setDopplerParameters(
+      factor: factor,
+      speedOfSound: speedOfSound,
     );
   }
+
+  // =========================================================================
+  // Multi-Destination Output Matrix & Recording
+  // =========================================================================
+
+  /// Configures the active output destinations for this player instance.
+  Future<void> configureOutputs(Iterable<AudioOutput> outputs) async {
+    _player.ensureNotDisposed();
+    final rustOutputs = outputs.map((out) {
+      switch (out) {
+        case SpeakerAudioOutput(:final exclusiveMode):
+          return rust_types.RustAudioOutput.speaker(
+            exclusiveMode: exclusiveMode,
+          );
+        case DeviceAudioOutput(:final deviceId, :final exclusiveMode):
+          return rust_types.RustAudioOutput.device(
+            deviceId: deviceId,
+            exclusiveMode: exclusiveMode,
+          );
+        case CueAudioOutput(:final deviceId, :final source):
+          return rust_types.RustAudioOutput.cue(
+            deviceId: deviceId,
+            source: source.value,
+          );
+        case FileAudioOutput(:final path, :final format):
+          return rust_types.RustAudioOutput.file(
+            path: path,
+            format: format.index,
+          );
+      }
+    }).toList();
+    await _rust.configureOutputs(outputs: rustOutputs);
+    if (_player.isDisposed) return;
+    _player.activeOutputsSet
+      ..clear()
+      ..addAll(outputs);
+    _player.state.outputs = Set.of(outputs);
+    if (!_player.stream.outputsController.isClosed) {
+      _player.stream.outputsController.add(_player.state.outputs);
+    }
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Sets the active outputs for this player instance, replacing any existing ones.
+  Future<void> setOutputs(Set<AudioOutput> outputs) =>
+      configureOutputs(outputs);
+
+  /// Adds an output destination to this player's active outputs.
+  Future<void> addOutput(AudioOutput output) async {
+    _player.ensureNotDisposed();
+    switch (output) {
+      case SpeakerAudioOutput(:final exclusiveMode):
+        _rust.addOutput(
+          output: rust_types.RustAudioOutput.speaker(
+            exclusiveMode: exclusiveMode,
+          ),
+        );
+      case DeviceAudioOutput(:final deviceId, :final exclusiveMode):
+        _rust.addOutput(
+          output: rust_types.RustAudioOutput.device(
+            deviceId: deviceId,
+            exclusiveMode: exclusiveMode,
+          ),
+        );
+      case CueAudioOutput(:final deviceId, :final source):
+        _rust.addOutput(
+          output: rust_types.RustAudioOutput.cue(
+            deviceId: deviceId,
+            source: source.value,
+          ),
+        );
+      case FileAudioOutput(:final path, :final format):
+        await startRecording(path, format: format);
+    }
+    _player.activeOutputsSet.add(output);
+    _player.state.outputs = Set.of(_player.activeOutputsSet);
+    _player.stream.outputsController.add(_player.state.outputs);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Removes an output destination from this player's active outputs.
+  Future<void> removeOutput(AudioOutput output) async {
+    _player.ensureNotDisposed();
+    switch (output) {
+      case SpeakerAudioOutput(:final exclusiveMode):
+        _rust.removeOutput(
+          output: rust_types.RustAudioOutput.speaker(
+            exclusiveMode: exclusiveMode,
+          ),
+        );
+      case DeviceAudioOutput(:final deviceId, :final exclusiveMode):
+        _rust.removeOutput(
+          output: rust_types.RustAudioOutput.device(
+            deviceId: deviceId,
+            exclusiveMode: exclusiveMode,
+          ),
+        );
+      case CueAudioOutput(:final deviceId, :final source):
+        _rust.removeOutput(
+          output: rust_types.RustAudioOutput.cue(
+            deviceId: deviceId,
+            source: source.value,
+          ),
+        );
+      case FileAudioOutput():
+        await stopRecording();
+    }
+    _player.activeOutputsSet.remove(output);
+    _player.state.outputs = Set.of(_player.activeOutputsSet);
+    _player.stream.outputsController.add(_player.state.outputs);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Routes signal to headphone CUE pre-listening output.
+  Future<void> setCueSource(CueSource source) async {
+    _player.ensureNotDisposed();
+    _rust.setCueSource(source: source.value);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Sets headphone CUE pre-listening volume multiplier.
+  Future<void> setCueVolume(double volume) async {
+    _player.ensureNotDisposed();
+    _rust.setCueVolume(volume: volume.toDouble());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Starts live lock-free recording of the master bus to disk.
+  Future<void> startRecording(
+    String path, {
+    dynamic format = AudioFileFormat.wav,
+  }) async {
+    _player.ensureNotDisposed();
+    int formatIndex = 0;
+    if (format is AudioFileFormat) {
+      formatIndex = format.index;
+    }
+    await _rust.startRecording(path: path, format: formatIndex);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Stops live disk recording and returns an immutable [RecordingResult].
+  Future<RecordingResult> stopRecording() async {
+    _player.ensureNotDisposed();
+    final res = await _rust.stopRecording();
+    await Future<void>.delayed(Duration.zero);
+    return RecordingResult(
+      path: res.path,
+      duration: Duration(milliseconds: res.durationMs.toInt()),
+      bytesWritten: res.bytesWritten.toInt(),
+      sampleCount: res.sampleCount.toInt(),
+    );
+  }
+
+  // =========================================================================
+  // Input Routing Matrix & Microphone Capture
+  // =========================================================================
+
+  /// Adds an audio input source to this player instance.
+  Future<void> addInput(AudioInput input) async {
+    _player.ensureNotDisposed();
+    if (input is MicrophoneAudioInput) {
+      await enableMicrophone(
+        deviceId: input.deviceId,
+        volume: input.volume,
+        ducking: input.ducking,
+        monitorDirect: input.monitorDirect,
+        monitorVolume: input.monitorVolume,
+      );
+    }
+  }
+
+  /// Removes an audio input source from this player instance.
+  Future<void> removeInput(AudioInput input) async {
+    _player.ensureNotDisposed();
+    if (input is MicrophoneAudioInput) {
+      await disableMicrophone();
+    }
+  }
+
+  /// Sets the active inputs for this player instance, replacing any existing ones.
+  Future<void> setInputs(Set<AudioInput> inputs) async {
+    _player.ensureNotDisposed();
+    await clearInputs();
+    for (final inp in inputs) {
+      await addInput(inp);
+    }
+  }
+
+  /// Clears all active audio input sources from this player instance.
+  Future<void> clearInputs() async {
+    _player.ensureNotDisposed();
+    await disableMicrophone();
+  }
+
+  /// Enables hardware microphone capture with Auto-Ducking and direct monitoring.
+  Future<void> enableMicrophone({
+    String? deviceId,
+    double volume = 1.0,
+    DuckingConfig? ducking,
+    bool monitorDirect = false,
+    double monitorVolume = 1.0,
+  }) async {
+    _player.ensureNotDisposed();
+    final d = ducking ?? const DuckingConfig();
+    await _rust.enableMicrophone(
+      deviceId: deviceId,
+      volume: volume.toDouble(),
+      ducking: d.toRust(),
+      monitorDirect: monitorDirect,
+      monitorVolume: monitorVolume.toDouble(),
+    );
+    final input = AudioInput.microphone(
+      deviceId: deviceId,
+      volume: volume,
+      ducking: ducking,
+      monitorDirect: monitorDirect,
+      monitorVolume: monitorVolume,
+    );
+    final next = Set<AudioInput>.of(_player.state.inputs)..add(input);
+    _player.state.inputs = next;
+    _player.stream.inputsController.add(next);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Disables and frees hardware microphone capture.
+  Future<void> disableMicrophone() async {
+    _player.ensureNotDisposed();
+    _rust.disableMicrophone();
+    final next = Set<AudioInput>.of(_player.state.inputs)
+      ..removeWhere((i) => i is MicrophoneAudioInput);
+    _player.state.inputs = next;
+    _player.stream.inputsController.add(next);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Sets microphone input capture volume.
+  Future<void> setMicrophoneVolume(double volume) async {
+    _player.ensureNotDisposed();
+    _rust.setMicrophoneVolume(volume: volume.toDouble());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Configures microphone Auto-Ducking sidechain compressor.
+  Future<void> setDucking(DuckingConfig config) async {
+    _player.ensureNotDisposed();
+    _rust.setDucking(config: config.toRust());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Toggles low-latency direct monitoring of voice into headphones.
+  Future<void> setDirectMonitoring({
+    required bool enabled,
+    double volume = 1.0,
+  }) async {
+    _player.ensureNotDisposed();
+    _rust.setDirectMonitoring(
+      enabled: enabled,
+      volume: volume.toDouble(),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+
+  // =========================================================================
+  // Spatial Conversion Helpers
+  // =========================================================================
+
+  static rust_types.RustSpatialEmitter _toRustEmitter(SpatialEmitter e) =>
+      rust_types.RustSpatialEmitter(
+        position: rust_types.RustVector3(
+          x: e.position.x,
+          y: e.position.y,
+          z: e.position.z,
+        ),
+        velocity: rust_types.RustVector3(
+          x: e.velocity.x,
+          y: e.velocity.y,
+          z: e.velocity.z,
+        ),
+        direction: e.direction != null
+            ? rust_types.RustVector3(
+                x: e.direction!.x,
+                y: e.direction!.y,
+                z: e.direction!.z,
+              )
+            : null,
+        minDistance: e.minDistance,
+        maxDistance: e.maxDistance,
+        rolloffFactor: e.rolloffFactor,
+        dopplerFactor: e.dopplerFactor,
+        innerAngleRad: e.innerAngleRad,
+        outerAngleRad: e.outerAngleRad,
+        outerGain: e.outerGain,
+        distanceModel: rust_types.RustDistanceModel.inverse,
+      );
+
+  static rust_types.RustSpatialListener _toRustListener(SpatialListener l) =>
+      rust_types.RustSpatialListener(
+        position: rust_types.RustVector3(
+          x: l.position.x,
+          y: l.position.y,
+          z: l.position.z,
+        ),
+        velocity: rust_types.RustVector3(
+          x: l.velocity.x,
+          y: l.velocity.y,
+          z: l.velocity.z,
+        ),
+        forward: rust_types.RustVector3(
+          x: l.forward.x,
+          y: l.forward.y,
+          z: l.forward.z,
+        ),
+        up: rust_types.RustVector3(x: l.up.x, y: l.up.y, z: l.up.z),
+      );
 }

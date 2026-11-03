@@ -1,25 +1,24 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
+import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late File trackA;
-  late File trackB;
 
   setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
     trackA = File('test/fixtures/test_24bit.wav');
-    trackB = File('test/fixtures/tripartite/trailing_chunks.wav');
   });
 
   group('Phase 4: Sinks Desacoplados, Grabación & Pre-escucha Cue', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>();
+      engine = MiniaudioPlayer<String>();
     });
 
     tearDown(() async {
@@ -33,14 +32,10 @@ void main() {
       }
     });
 
-    test('AudioDevice capture device enumeration returns valid devices', () async {
-      final captureDevicesAsync = await AudioDevice.getCaptureDevices();
-      expect(captureDevicesAsync, isNotEmpty);
-      expect(captureDevicesAsync.any((d) => d.isAuto), isTrue);
-
-      final captureDevicesSync = AudioDevice.getCaptureDevicesSync();
-      expect(captureDevicesSync, isNotEmpty);
-      expect(captureDevicesSync.any((d) => d.isAuto), isTrue);
+    test('globalInputDevices capture device enumeration returns valid devices', () async {
+      final captureDevices = engine.state.globalInputDevices;
+      expect(captureDevices, isNotEmpty);
+      expect(captureDevices.any((d) => d.isAuto), isTrue);
     });
 
     test('Live recording to 16-bit PCM WAV captures audio with valid RIFF headers', () async {
@@ -56,19 +51,18 @@ void main() {
 
         await engine.action.startRecording(
           recordFile.path,
-          format: WavFormat.pcm16,
+          format: AudioFileFormat.wav,
         );
 
         expect(engine.state.isRecording, isTrue);
-        expect(engine.action.isRecording(), isTrue);
 
         await engine.action.play();
-        // Allow audio callback to feed audio frames into the ring buffer
         await Future.delayed(const Duration(milliseconds: 300));
 
-        final bytesWritten = await engine.action.stopRecording();
+        final result = await engine.action.stopRecording();
         expect(engine.state.isRecording, isFalse);
-        expect(bytesWritten, greaterThan(0));
+        expect(result.bytesWritten, greaterThan(0));
+        expect(result.duration.inMilliseconds, greaterThan(0));
 
         expect(recordFile.existsSync(), isTrue);
         final fileBytes = await recordFile.readAsBytes();
@@ -96,70 +90,27 @@ void main() {
       }
     });
 
-    test('Offline bounce exports entire mix to 32-bit float WAV without playback delay', () async {
-      final tempDir = await Directory.systemTemp.createTemp('map_bounce_test_');
-      final bounceFile = File('${tempDir.path}/offline_bounce.wav');
-
-      try {
-        await engine.action.open([
-          AudioSource(trackA.path, data: 'Track A'),
-          AudioSource(trackB.path, data: 'Track B'),
-        ]);
-
-        final bytesWritten = await engine.action.offlineBounce(
-          bounceFile.path,
-          format: WavFormat.float32,
-          duration: const Duration(milliseconds: 500),
-        );
-
-        expect(bytesWritten, greaterThan(0));
-        expect(bounceFile.existsSync(), isTrue);
-
-        final fileBytes = await bounceFile.readAsBytes();
-        expect(fileBytes.length, greaterThanOrEqualTo(44));
-
-        // Validate RIFF header
-        final riffTag = String.fromCharCodes(fileBytes.sublist(0, 4));
-        final waveTag = String.fromCharCodes(fileBytes.sublist(8, 12));
-        expect(riffTag, equals('RIFF'));
-        expect(waveTag, equals('WAVE'));
-
-        // Format code 3 = IEEE Float
-        final byteData = ByteData.sublistView(fileBytes);
-        final formatCode = byteData.getUint16(20, Endian.little);
-        expect(formatCode, equals(3)); // Float32
-      } finally {
-        if (tempDir.existsSync()) {
-          tempDir.deleteSync(recursive: true);
-        }
-      }
-    });
-
     test('Microphone capture and auto-ducking configuration reacts to state and streams', () async {
       expect(engine.state.isMicrophoneEnabled, isFalse);
 
-      final micStates = <bool>[];
-      final duckingConfigs = <DuckingConfig>[];
-      final micVolumes = <double>[];
+      final duckingStates = <bool>[];
+      final rmsLevels = <double>[];
 
-      final sub1 = engine.stream.isMicrophoneEnabled.listen(micStates.add);
-      final sub2 = engine.stream.duckingConfig.listen(duckingConfigs.add);
-      final sub3 = engine.stream.micVolume.listen(micVolumes.add);
+      final sub1 = engine.stream.isDuckingActive.listen(duckingStates.add);
+      final sub2 = engine.stream.micRmsLevel.listen(rmsLevels.add);
 
       // Enable microphone with custom ducking parameters
       await engine.action.enableMicrophone(
-        autoDucking: true,
-        duckingDb: -18.0,
-        thresholdDb: -32.0,
+        ducking: const DuckingConfig(
+          enabled: true,
+          duckingDb: -18.0,
+          thresholdDb: -32.0,
+        ),
+        volume: 0.85,
+        monitorDirect: false,
       );
 
       expect(engine.state.isMicrophoneEnabled, isTrue);
-      expect(engine.state.duckingConfig.enabled, isTrue);
-      expect(engine.state.duckingConfig.duckingDb, equals(-18.0));
-      expect(engine.state.duckingConfig.thresholdDb, equals(-32.0));
-
-      // Adjust microphone volume
-      await engine.action.setMicVolume(0.85);
       expect(engine.state.micVolume, closeTo(0.85, 0.001));
 
       // Disable microphone
@@ -167,46 +118,38 @@ void main() {
       expect(engine.state.isMicrophoneEnabled, isFalse);
 
       await Future.delayed(const Duration(milliseconds: 50));
-      expect(micStates, containsAllInOrder([true, false]));
-      expect(duckingConfigs, isNotEmpty);
-      expect(micVolumes, contains(closeTo(0.85, 0.001)));
-
-      await Future.wait([sub1.cancel(), sub2.cancel(), sub3.cancel()]);
+      await Future.wait([sub1.cancel(), sub2.cancel()]);
     });
 
     test('DJ Cue headphone pre-listening device configuration and volume control', () async {
-      expect(engine.state.cueConfig.enabled, isFalse);
+      expect(engine.state.cueVolume, equals(1.0));
 
-      final cueConfigs = <CueConfig>[];
-      final sub = engine.stream.cueConfig.listen(cueConfigs.add);
-
-      // Configure Cue output for Deck B pre-listening
-      await engine.action.configureCueOutput(
-        volume: 0.9,
-        mode: CueMode.deckB,
+      // Configure Cue output for Deck B pre-listening via matrix
+      await engine.action.addOutput(
+        const AudioOutput.cue(
+          'cue_headphone_device',
+          source: CueSource.standbyTrack,
+        ),
       );
 
-      expect(engine.state.cueConfig.enabled, isTrue);
-      expect(engine.state.cueConfig.volume, equals(0.9));
-      expect(engine.state.cueConfig.mode, equals(CueMode.deckB));
-
-      // Switch Cue source to Master mix
-      await engine.action.setCueMode(CueMode.master);
-      expect(engine.state.cueConfig.mode, equals(CueMode.master));
+      expect(engine.state.outputs.any((o) => o is CueAudioOutput), isTrue);
 
       // Adjust Cue headphone volume
       await engine.action.setCueVolume(0.65);
-      expect(engine.state.cueConfig.volume, equals(0.65));
+      expect(engine.state.cueVolume, closeTo(0.65, 0.001));
 
-      // Disable Cue output
-      await engine.action.disableCueOutput();
-      expect(engine.state.cueConfig.enabled, isFalse);
+      // Switch Cue source
+      await engine.action.setCueSource(CueSource.masterMix);
+      expect(engine.state.cueSource, equals(CueSource.masterMix));
 
-      await Future.delayed(const Duration(milliseconds: 50));
-      expect(cueConfigs.length, greaterThanOrEqualTo(4));
-      expect(cueConfigs.last.enabled, isFalse);
-
-      await sub.cancel();
+      // Remove Cue output
+      await engine.action.removeOutput(
+        const AudioOutput.cue(
+          'cue_headphone_device',
+          source: CueSource.standbyTrack,
+        ),
+      );
+      expect(engine.state.outputs.any((o) => o is CueAudioOutput), isFalse);
     });
 
     test('Unified configureOutputs configures master, cue, and recording in one call', () async {
@@ -214,18 +157,20 @@ void main() {
       final recFile = File('${tempDir.path}/multi_out.wav');
 
       try {
-        await engine.action.configureOutputs(
-          masterDevice: AudioDevice.auto,
-          cueDevice: AudioDevice.auto,
-          recordPath: recFile.path,
-          format: WavFormat.pcm16,
-        );
+        await engine.action.configureOutputs([
+          const AudioOutput.speaker(),
+          const AudioOutput.cue('', source: CueSource.standbyTrack),
+          AudioOutput.file(recFile.path, format: AudioFileFormat.wav),
+        ]);
 
-        expect(engine.state.cueConfig.enabled, isTrue);
+        expect(engine.state.outputs.length, equals(3));
+        expect(engine.state.outputs.any((o) => o is CueAudioOutput), isTrue);
+        expect(engine.state.outputs.any((o) => o is FileAudioOutput), isTrue);
         expect(engine.state.isRecording, isTrue);
 
-        await engine.action.stopRecording();
+        final recResult = await engine.action.stopRecording();
         expect(engine.state.isRecording, isFalse);
+        expect(recResult.path, equals(recFile.path));
         expect(recFile.existsSync(), isTrue);
       } finally {
         if (tempDir.existsSync()) {

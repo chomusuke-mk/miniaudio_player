@@ -3,8 +3,6 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
-import 'api/engine.dart';
-import 'api/game.dart';
 import 'api/player.dart';
 import 'api/types.dart';
 import 'dart:async';
@@ -61,9 +59,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
       RustLibWire.fromExternalLibrary;
 
   @override
-  Future<void> executeRustInitializers() async {
-    await api.crateApiPlayerInitPlayerSystem();
-  }
+  Future<void> executeRustInitializers() async {}
 
   @override
   ExternalLibraryLoaderConfig get defaultExternalLibraryLoaderConfig =>
@@ -73,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1008316561;
+  int get rustContentHash => 456520079;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -85,466 +81,264 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  Future<void> crateApiEngineRustEngineAppend(
-      {required RustEngine that, required List<RustAudioSource> items});
+  Future<void> crateApiPlayerEventReporterClearSink(
+      {required EventReporter that});
 
-  Future<void> crateApiEngineRustEngineClearQueue(
-      {required RustEngine that, required bool keepCurrent});
+  Future<void> crateApiPlayerEventReporterEmit(
+      {required EventReporter that, required RustPlayerEvent event});
 
-  void crateApiEngineRustEngineConfigureCueOutput(
-      {required RustEngine that,
-      String? cueDeviceId,
+  Future<EventReporter> crateApiPlayerEventReporterNew();
+
+  Stream<RustPlayerEvent> crateApiPlayerEventReporterSetSink(
+      {required EventReporter that});
+
+  void crateApiPlayerRustMiniaudioPlayerAddOutput(
+      {required RustMiniaudioPlayer that, required RustAudioOutput output});
+
+  void crateApiPlayerRustMiniaudioPlayerAppend(
+      {required RustMiniaudioPlayer that,
+      required List<RustAudioSource> sources});
+
+  void crateApiPlayerRustMiniaudioPlayerClearQueue(
+      {required RustMiniaudioPlayer that, required bool keepCurrent});
+
+  Future<void> crateApiPlayerRustMiniaudioPlayerConfigureOutputs(
+      {required RustMiniaudioPlayer that,
+      required List<RustAudioOutput> outputs});
+
+  void crateApiPlayerRustMiniaudioPlayerDisableMicrophone(
+      {required RustMiniaudioPlayer that});
+
+  void crateApiPlayerRustMiniaudioPlayerDispose(
+      {required RustMiniaudioPlayer that});
+
+  Future<void> crateApiPlayerRustMiniaudioPlayerEnableMicrophone(
+      {required RustMiniaudioPlayer that,
+      String? deviceId,
       required double volume,
-      required int mode});
+      RustDuckingConfig? ducking,
+      required bool monitorDirect,
+      required double monitorVolume});
 
-  void crateApiEngineRustEngineDisableCueOutput({required RustEngine that});
+  Future<List<RustAudioDevice>>
+      crateApiPlayerRustMiniaudioPlayerGetInputDevices();
 
-  void crateApiEngineRustEngineDisableMicrophone({required RustEngine that});
+  List<RustAudioDevice> crateApiPlayerRustMiniaudioPlayerGetInputDevicesSync();
 
-  void crateApiEngineRustEngineEnableMicrophone(
-      {required RustEngine that,
-      String? captureDeviceId,
-      required bool autoDucking,
-      required double duckingDb,
-      required double thresholdDb});
+  Future<List<RustAudioDevice>>
+      crateApiPlayerRustMiniaudioPlayerGetOutputDevices();
 
-  BigInt? crateApiEngineRustEngineGetCurrentIndex({required RustEngine that});
+  List<RustAudioDevice> crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync();
 
-  PlatformInt64? crateApiEngineRustEngineGetCurrentTrackId(
-      {required RustEngine that});
+  void crateApiPlayerRustMiniaudioPlayerInsertNext(
+      {required RustMiniaudioPlayer that, required RustAudioSource source});
 
-  PlatformInt64 crateApiEngineRustEngineGetDurationMs(
-      {required RustEngine that});
+  Future<void> crateApiPlayerRustMiniaudioPlayerLoadEffect(
+      {required RustMiniaudioPlayer that,
+      required String id,
+      required List<int> bytes,
+      required BigInt maxPolyphony,
+      required bool pinned});
 
-  bool crateApiEngineRustEngineGetInfiniteMix({required RustEngine that});
-
-  int crateApiEngineRustEngineGetPhase({required RustEngine that});
-
-  PlatformInt64 crateApiEngineRustEngineGetPositionMs(
-      {required RustEngine that});
-
-  List<RustAudioSource> crateApiEngineRustEngineGetQueue(
-      {required RustEngine that});
-
-  BigInt crateApiEngineRustEngineGetQueueLen({required RustEngine that});
-
-  RustVisualizerData crateApiEngineRustEngineGetVisualizerData(
-      {required RustEngine that});
-
-  double crateApiEngineRustEngineGetVolume({required RustEngine that});
-
-  Future<void> crateApiEngineRustEngineInsertNext(
-      {required RustEngine that, required RustAudioSource item});
-
-  bool crateApiEngineRustEngineIsBuffering({required RustEngine that});
-
-  bool crateApiEngineRustEngineIsCompleted({required RustEngine that});
-
-  bool crateApiEngineRustEngineIsPlaying({required RustEngine that});
-
-  bool crateApiEngineRustEngineIsRecording({required RustEngine that});
-
-  RustEngine crateApiEngineRustEngineNew(
-      {required int sampleRate,
+  RustMiniaudioPlayer crateApiPlayerRustMiniaudioPlayerNew(
+      {required RustPlayerConfig config,
+      required int sampleRate,
       required int channels,
       required int periodSize,
       String? playbackDeviceId});
 
-  Future<void> crateApiEngineRustEngineNext(
-      {required RustEngine that, BigInt? crossfadeDurationMs, int? curve});
-
-  Future<BigInt> crateApiEngineRustEngineOfflineBounce(
-      {required RustEngine that,
-      required String path,
-      required RustWavFormat format,
-      required PlatformInt64 durationMs});
-
-  void crateApiEngineRustEnginePause({required RustEngine that});
-
-  void crateApiEngineRustEnginePlay({required RustEngine that});
-
-  Future<void> crateApiEngineRustEnginePrevious(
-      {required RustEngine that, BigInt? crossfadeDurationMs, int? curve});
-
-  Future<void> crateApiEngineRustEngineRemoveAt(
-      {required RustEngine that, required BigInt index});
-
-  Future<void> crateApiEngineRustEngineReorder(
-      {required RustEngine that, required BigInt from, required BigInt to});
-
-  void crateApiEngineRustEngineSeek(
-      {required RustEngine that, required PlatformInt64 positionMs});
-
-  void crateApiEngineRustEngineSetBalance(
-      {required RustEngine that, required double balance});
-
-  void crateApiEngineRustEngineSetCrossfadeConfig(
-      {required RustEngine that, required RustCrossfadeConfig config});
-
-  void crateApiEngineRustEngineSetCrossfeed(
-      {required RustEngine that, required int mode});
-
-  void crateApiEngineRustEngineSetCueMode(
-      {required RustEngine that, required int mode});
-
-  void crateApiEngineRustEngineSetCueVolume(
-      {required RustEngine that, required double volume});
-
-  void crateApiEngineRustEngineSetDevice(
-      {required RustEngine that, required String deviceId});
-
-  void crateApiEngineRustEngineSetEqualizer(
-      {required RustEngine that, required RustEqualizerParams params});
-
-  void crateApiEngineRustEngineSetEqualizerBand(
-      {required RustEngine that, required int band, required double gainDb});
-
-  void crateApiEngineRustEngineSetInfiniteMix(
-      {required RustEngine that, required bool enabled});
-
-  void crateApiEngineRustEngineSetLimiter(
-      {required RustEngine that, required bool enabled});
-
-  void crateApiEngineRustEngineSetLoopMode(
-      {required RustEngine that, required int mode});
-
-  void crateApiEngineRustEngineSetMicVolume(
-      {required RustEngine that, required double volume});
-
-  void crateApiEngineRustEngineSetMono(
-      {required RustEngine that, required bool enabled});
-
-  void crateApiEngineRustEngineSetPitch(
-      {required RustEngine that, required double pitch});
-
-  void crateApiEngineRustEngineSetPreamp(
-      {required RustEngine that, required double preampDb});
-
-  Future<void> crateApiEngineRustEngineSetQueue(
-      {required RustEngine that,
-      required List<RustAudioSource> items,
-      BigInt? startIndex});
-
-  void crateApiEngineRustEngineSetRate(
-      {required RustEngine that, required double rate});
-
-  void crateApiEngineRustEngineSetReplayGain(
-      {required RustEngine that,
-      required double gainDb,
-      required double peak,
-      required bool preventClipping});
-
-  void crateApiEngineRustEngineSetReverb(
-      {required RustEngine that, required RustReverbParams params});
-
-  void crateApiEngineRustEngineSetShuffle(
-      {required RustEngine that, required bool enabled});
-
-  void crateApiEngineRustEngineSetSpatialDopplerFactor(
-      {required RustEngine that, required double factor});
-
-  void crateApiEngineRustEngineSetSpatialEmitter(
-      {required RustEngine that, required RustSpatialEmitter emitter});
-
-  void crateApiEngineRustEngineSetSpatialEnabled(
-      {required RustEngine that, required bool enabled});
-
-  void crateApiEngineRustEngineSetSpatialListener(
-      {required RustEngine that, required RustSpatialListener listener});
-
-  void crateApiEngineRustEngineSetSpatialSpeedOfSound(
-      {required RustEngine that, required double speed});
-
-  void crateApiEngineRustEngineSetSpatializer(
-      {required RustEngine that, required bool enabled, required double width});
-
-  void crateApiEngineRustEngineSetVisualizerEnabled(
-      {required RustEngine that, required bool enabled});
-
-  void crateApiEngineRustEngineSetVolume(
-      {required RustEngine that, required double volume});
-
-  Future<void> crateApiEngineRustEngineSkipToIndex(
-      {required RustEngine that,
-      required BigInt index,
-      BigInt? crossfadeDurationMs,
-      int? curve});
-
-  void crateApiEngineRustEngineStartRecording(
-      {required RustEngine that,
-      required String path,
-      required RustWavFormat format});
-
-  void crateApiEngineRustEngineStop({required RustEngine that});
-
-  BigInt crateApiEngineRustEngineStopRecording({required RustEngine that});
-
-  Stream<RustEngineEvent> crateApiEngineRustEngineSubscribeEvents(
-      {required RustEngine that});
-
-  void crateApiPlayerRustPlayerClearReplayGain({required RustPlayer that});
-
-  void crateApiPlayerRustPlayerDispose({required RustPlayer that});
-
-  PlatformInt64 crateApiPlayerRustPlayerGetAudioDataOffset(
-      {required RustPlayer that});
-
-  int crateApiPlayerRustPlayerGetBitrate({required RustPlayer that});
-
-  int crateApiPlayerRustPlayerGetBufferSize({required RustPlayer that});
-
-  RustBufferedRange crateApiPlayerRustPlayerGetBufferedRange(
-      {required RustPlayer that});
-
-  int crateApiPlayerRustPlayerGetChannels({required RustPlayer that});
-
-  RustAudioDevice crateApiPlayerRustPlayerGetCurrentDevice(
-      {required RustPlayer that});
-
-  PlatformInt64 crateApiPlayerRustPlayerGetDurationMs(
-      {required RustPlayer that});
-
-  RustEqualizerParams crateApiPlayerRustPlayerGetEqualizer(
-      {required RustPlayer that});
-
-  Uint8List? crateApiPlayerRustPlayerGetMetaBytes({required RustPlayer that});
-
-  bool crateApiPlayerRustPlayerGetPauseOnDeviceChange(
-      {required RustPlayer that});
-
-  PlatformInt64 crateApiPlayerRustPlayerGetPinnedHeadSize(
-      {required RustPlayer that});
-
-  RustPlayerStatus crateApiPlayerRustPlayerGetPlayerStatus(
-      {required RustPlayer that});
-
-  int crateApiPlayerRustPlayerGetSampleRate({required RustPlayer that});
-
-  RustSilenceConfig crateApiPlayerRustPlayerGetSilenceConfig(
-      {required RustPlayer that});
-
-  PlatformInt64 crateApiPlayerRustPlayerGetSilenceSavedMs(
-      {required RustPlayer that});
-
-  RustVisualizerData crateApiPlayerRustPlayerGetVisualizerData(
-      {required RustPlayer that});
-
-  bool crateApiPlayerRustPlayerIsCompleted({required RustPlayer that});
-
-  bool crateApiPlayerRustPlayerIsLiveStream({required RustPlayer that});
-
-  bool crateApiPlayerRustPlayerIsPlaying({required RustPlayer that});
-
-  bool crateApiPlayerRustPlayerIsVisualizerEnabled({required RustPlayer that});
-
-  RustPlayer crateApiPlayerRustPlayerNew(
-      {required int sampleRate,
-      required int channels,
-      required int periodSize,
-      String? playbackDeviceId});
-
-  void crateApiPlayerRustPlayerNotifyCustomError(
-      {required RustPlayer that,
-      required int streamId,
+  Future<void> crateApiPlayerRustMiniaudioPlayerNext(
+      {required RustMiniaudioPlayer that, BigInt? crossfadeDurationMs});
+
+  Future<void> crateApiPlayerRustMiniaudioPlayerOpen(
+      {required RustMiniaudioPlayer that,
+      required List<RustAudioSource> queue,
+      required BigInt startIndex,
+      required bool autoPlay});
+
+  void crateApiPlayerRustMiniaudioPlayerPause(
+      {required RustMiniaudioPlayer that});
+
+  void crateApiPlayerRustMiniaudioPlayerPlay(
+      {required RustMiniaudioPlayer that});
+
+  int crateApiPlayerRustMiniaudioPlayerPlayEffect(
+      {required RustMiniaudioPlayer that,
+      required String id,
+      required int dspRouting,
+      required RustEffectConfig config});
+
+  Future<void> crateApiPlayerRustMiniaudioPlayerPrevious(
+      {required RustMiniaudioPlayer that});
+
+  bool crateApiPlayerRustMiniaudioPlayerRemoveAt(
+      {required RustMiniaudioPlayer that, required BigInt index});
+
+  void crateApiPlayerRustMiniaudioPlayerRemoveOutput(
+      {required RustMiniaudioPlayer that, required RustAudioOutput output});
+
+  bool crateApiPlayerRustMiniaudioPlayerReorder(
+      {required RustMiniaudioPlayer that,
+      required BigInt oldIndex,
+      required BigInt newIndex});
+
+  void crateApiPlayerRustMiniaudioPlayerRespondDartReadRequest(
+      {required RustMiniaudioPlayer that,
       required BigInt requestId,
-      required String errorMessage});
-
-  Future<void> crateApiPlayerRustPlayerOpenAudioSource(
-      {required RustPlayer that, required RustAudioSource source});
-
-  Future<void> crateApiPlayerRustPlayerOpenCustomStream(
-      {required RustPlayer that,
-      required int streamId,
-      BigInt? totalSize,
-      required bool isSeekable,
-      required List<int> initialBytes});
-
-  Future<void> crateApiPlayerRustPlayerOpenMemory(
-      {required RustPlayer that, required List<int> data});
-
-  Future<void> crateApiPlayerRustPlayerOpenSource(
-      {required RustPlayer that,
-      required String source,
-      List<RustHttpHeader>? headers});
-
-  Future<void> crateApiPlayerRustPlayerPause({required RustPlayer that});
-
-  Future<void> crateApiPlayerRustPlayerPlay({required RustPlayer that});
-
-  Future<void> crateApiPlayerRustPlayerSeek(
-      {required RustPlayer that, required PlatformInt64 positionMs});
-
-  void crateApiPlayerRustPlayerSetBalance(
-      {required RustPlayer that, required double pan});
-
-  void crateApiPlayerRustPlayerSetBufferSize(
-      {required RustPlayer that, required int frames});
-
-  void crateApiPlayerRustPlayerSetCrossfeed(
-      {required RustPlayer that, required int mode});
-
-  Future<void> crateApiPlayerRustPlayerSetDevice(
-      {required RustPlayer that, required String deviceId});
-
-  void crateApiPlayerRustPlayerSetEqualizer(
-      {required RustPlayer that, required RustEqualizerParams params});
-
-  void crateApiPlayerRustPlayerSetEqualizerBand(
-      {required RustPlayer that, required int band, required double gainDb});
-
-  void crateApiPlayerRustPlayerSetLimiter(
-      {required RustPlayer that, required bool enabled});
-
-  void crateApiPlayerRustPlayerSetMono(
-      {required RustPlayer that, required bool enabled});
-
-  void crateApiPlayerRustPlayerSetPauseOnDeviceChange(
-      {required RustPlayer that, required bool enabled});
-
-  void crateApiPlayerRustPlayerSetPitch(
-      {required RustPlayer that, required double pitch});
-
-  void crateApiPlayerRustPlayerSetPreamp(
-      {required RustPlayer that, required double preampDb});
-
-  void crateApiPlayerRustPlayerSetRate(
-      {required RustPlayer that, required double rate});
-
-  void crateApiPlayerRustPlayerSetReplayGain(
-      {required RustPlayer that,
-      required double gainDb,
-      required double peak,
-      required bool preventClipping});
-
-  void crateApiPlayerRustPlayerSetReverb(
-      {required RustPlayer that, required RustReverbParams params});
-
-  void crateApiPlayerRustPlayerSetSilenceConfig(
-      {required RustPlayer that, required RustSilenceConfig config});
-
-  void crateApiPlayerRustPlayerSetSpatialDopplerFactor(
-      {required RustPlayer that, required double factor});
-
-  void crateApiPlayerRustPlayerSetSpatialEmitter(
-      {required RustPlayer that, required RustSpatialEmitter emitter});
-
-  void crateApiPlayerRustPlayerSetSpatialEnabled(
-      {required RustPlayer that, required bool enabled});
-
-  void crateApiPlayerRustPlayerSetSpatialListener(
-      {required RustPlayer that, required RustSpatialListener listener});
-
-  void crateApiPlayerRustPlayerSetSpatialSpeedOfSound(
-      {required RustPlayer that, required double speed});
-
-  void crateApiPlayerRustPlayerSetSpatializer(
-      {required RustPlayer that, required bool enabled, required double width});
-
-  void crateApiPlayerRustPlayerSetVisualizerEnabled(
-      {required RustPlayer that, required bool enabled});
-
-  void crateApiPlayerRustPlayerSetVolume(
-      {required RustPlayer that, required double volume});
-
-  Future<void> crateApiPlayerRustPlayerStop({required RustPlayer that});
-
-  Stream<RustPlayerEvent> crateApiPlayerRustPlayerSubscribeEvents(
-      {required RustPlayer that});
-
-  void crateApiPlayerRustPlayerSupplyCustomBytes(
-      {required RustPlayer that,
-      required int streamId,
-      required BigInt requestId,
-      required List<int> data,
+      required List<int> bytes,
       required bool isEof});
 
-  int crateApiGameRustVoicePoolActiveVoicesCount({required RustVoicePool that});
+  void crateApiPlayerRustMiniaudioPlayerSeek(
+      {required RustMiniaudioPlayer that, required PlatformInt64 positionMs});
 
-  Future<RustSoundBufferInfo> crateApiGameRustVoicePoolLoadSound(
-      {required RustVoicePool that, required List<int> bytes});
+  void crateApiPlayerRustMiniaudioPlayerSetBalance(
+      {required RustMiniaudioPlayer that, required double balance});
 
-  Future<RustSoundBufferInfo> crateApiGameRustVoicePoolLoadSoundFile(
-      {required RustVoicePool that, required String path});
+  void crateApiPlayerRustMiniaudioPlayerSetBufferSize(
+      {required RustMiniaudioPlayer that, required int bufferSizeFrames});
 
-  RustVoicePool crateApiGameRustVoicePoolNew(
-      {required int sampleRate,
-      required int channels,
-      required int periodSize,
-      String? playbackDeviceId,
-      required BigInt maxVoices});
+  void crateApiPlayerRustMiniaudioPlayerSetCrossfade(
+      {required RustMiniaudioPlayer that, required RustCrossfadeConfig config});
 
-  int crateApiGameRustVoicePoolPlayOneShot(
-      {required RustVoicePool that,
-      required BigInt bufferId,
-      required double volume,
-      required double pitch,
-      required double pitchJitter,
-      required double volumeJitter,
-      required int priority,
-      RustSpatialEmitter? emitter});
+  void crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
+      {required RustMiniaudioPlayer that, required int mode});
 
-  int crateApiGameRustVoicePoolPlaySound(
-      {required RustVoicePool that,
-      required BigInt bufferId,
-      required double volume,
-      required double pitch,
-      required int priority,
-      required bool looping,
-      RustSpatialEmitter? emitter});
+  void crateApiPlayerRustMiniaudioPlayerSetCueSource(
+      {required RustMiniaudioPlayer that, required int source});
 
-  Uint32List crateApiGameRustVoicePoolPlayStems(
-      {required RustVoicePool that,
-      required Uint64List bufferIds,
-      required List<double> volumes,
-      required bool looping});
+  void crateApiPlayerRustMiniaudioPlayerSetCueVolume(
+      {required RustMiniaudioPlayer that, required double volume});
 
-  void crateApiGameRustVoicePoolSetListener(
-      {required RustVoicePool that, required RustSpatialListener listener});
+  void crateApiPlayerRustMiniaudioPlayerSetDirectMonitoring(
+      {required RustMiniaudioPlayer that,
+      required bool enabled,
+      required double volume});
 
-  void crateApiGameRustVoicePoolSetMasterVolume(
-      {required RustVoicePool that, required double volume});
+  void crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
+      {required RustMiniaudioPlayer that,
+      required double factor,
+      required double speedOfSound});
 
-  void crateApiGameRustVoicePoolSetPolicy(
-      {required RustVoicePool that, required RustVoiceStealingPolicy policy});
+  void crateApiPlayerRustMiniaudioPlayerSetDucking(
+      {required RustMiniaudioPlayer that, required RustDuckingConfig config});
 
-  void crateApiGameRustVoicePoolSetTimeScale(
-      {required RustVoicePool that, required double scale});
+  void crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      required double balance});
 
-  void crateApiGameRustVoicePoolSetVoiceEmitter(
-      {required RustVoicePool that,
+  void crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
+      {required RustMiniaudioPlayer that,
       required int voiceId,
       RustSpatialEmitter? emitter});
 
-  void crateApiGameRustVoicePoolSetVoicePitch(
-      {required RustVoicePool that,
+  void crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
+      {required RustMiniaudioPlayer that,
       required int voiceId,
       required double pitch});
 
-  void crateApiGameRustVoicePoolSetVoiceVolume(
-      {required RustVoicePool that,
+  void crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
+      {required RustMiniaudioPlayer that,
       required int voiceId,
       required double volume});
 
-  void crateApiGameRustVoicePoolStopAll({required RustVoicePool that});
+  void crateApiPlayerRustMiniaudioPlayerSetEqualizer(
+      {required RustMiniaudioPlayer that, required RustEqualizerParams params});
 
-  void crateApiGameRustVoicePoolStopVoice(
-      {required RustVoicePool that, required int voiceId});
+  void crateApiPlayerRustMiniaudioPlayerSetLimiter(
+      {required RustMiniaudioPlayer that, required bool enabled});
 
-  bool crateApiGameRustVoicePoolUnloadSound(
-      {required RustVoicePool that, required BigInt bufferId});
+  void crateApiPlayerRustMiniaudioPlayerSetListener(
+      {required RustMiniaudioPlayer that,
+      required RustSpatialListener listener});
+
+  void crateApiPlayerRustMiniaudioPlayerSetLoopMode(
+      {required RustMiniaudioPlayer that, required int mode});
+
+  void crateApiPlayerRustMiniaudioPlayerSetMicrophoneVolume(
+      {required RustMiniaudioPlayer that, required double volume});
+
+  void crateApiPlayerRustMiniaudioPlayerSetMono(
+      {required RustMiniaudioPlayer that, required bool enabled});
+
+  void crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
+      {required RustMiniaudioPlayer that, required bool enabled});
+
+  void crateApiPlayerRustMiniaudioPlayerSetPitch(
+      {required RustMiniaudioPlayer that, required double pitch});
+
+  void crateApiPlayerRustMiniaudioPlayerSetPreamp(
+      {required RustMiniaudioPlayer that, required double preampDb});
+
+  void crateApiPlayerRustMiniaudioPlayerSetRate(
+      {required RustMiniaudioPlayer that, required double rate});
+
+  void crateApiPlayerRustMiniaudioPlayerSetReplayGain(
+      {required RustMiniaudioPlayer that,
+      required RustReplayGainConfig config});
+
+  void crateApiPlayerRustMiniaudioPlayerSetReverb(
+      {required RustMiniaudioPlayer that, required RustReverbParams params});
+
+  void crateApiPlayerRustMiniaudioPlayerSetShuffle(
+      {required RustMiniaudioPlayer that, required bool enabled});
+
+  void crateApiPlayerRustMiniaudioPlayerSetSkipSilence(
+      {required RustMiniaudioPlayer that, required RustSilenceConfig config});
+
+  void crateApiPlayerRustMiniaudioPlayerSetSpatializer(
+      {required RustMiniaudioPlayer that,
+      required bool enabled,
+      required double width});
+
+  void crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
+      {required RustMiniaudioPlayer that, required bool enabled});
+
+  void crateApiPlayerRustMiniaudioPlayerSetVolume(
+      {required RustMiniaudioPlayer that, required double volume});
+
+  Future<void> crateApiPlayerRustMiniaudioPlayerSkipToIndex(
+      {required RustMiniaudioPlayer that,
+      required BigInt index,
+      BigInt? crossfadeDurationMs});
+
+  Future<void> crateApiPlayerRustMiniaudioPlayerStartRecording(
+      {required RustMiniaudioPlayer that,
+      required String path,
+      required int format});
+
+  void crateApiPlayerRustMiniaudioPlayerStop(
+      {required RustMiniaudioPlayer that});
+
+  void crateApiPlayerRustMiniaudioPlayerStopAllEffects(
+      {required RustMiniaudioPlayer that, required BigInt fadeOutMs});
+
+  void crateApiPlayerRustMiniaudioPlayerStopEffect(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      required BigInt fadeOutMs});
+
+  Future<RustRecordingResult> crateApiPlayerRustMiniaudioPlayerStopRecording(
+      {required RustMiniaudioPlayer that});
+
+  Stream<RustPlayerEvent> crateApiPlayerRustMiniaudioPlayerSubscribeEvents(
+      {required RustMiniaudioPlayer that});
+
+  bool crateApiPlayerRustMiniaudioPlayerUnloadEffect(
+      {required RustMiniaudioPlayer that, required String id});
 
   Future<RustAudioAnalysisResult> crateApiPlayerAnalyzeAudioFile(
       {required String path,
       required bool replayGain,
       required bool waveform,
-      required int waveformPoints,
+      required BigInt waveformPoints,
       required double targetLufs});
 
   RustAudioAnalysisResult crateApiPlayerAnalyzeAudioFileSync(
       {required String path,
       required bool replayGain,
       required bool waveform,
-      required int waveformPoints,
+      required BigInt waveformPoints,
       required double targetLufs});
 
   Future<RustAudioAnalysisResult> crateApiPlayerAnalyzeAudioMemory(
@@ -552,18 +346,8 @@ abstract class RustLibApi extends BaseApi {
       String? hintExtension,
       required bool replayGain,
       required bool waveform,
-      required int waveformPoints,
+      required BigInt waveformPoints,
       required double targetLufs});
-
-  Future<List<RustAudioDevice>> crateApiPlayerGetAudioDevices();
-
-  List<RustAudioDevice> crateApiPlayerGetAudioDevicesSync();
-
-  Future<List<RustAudioDevice>> crateApiPlayerGetCaptureDevices();
-
-  List<RustAudioDevice> crateApiPlayerGetCaptureDevicesSync();
-
-  Future<void> crateApiPlayerInitPlayerSystem();
 
   Future<RustAudioAnalysisResult> crateApiTypesRustAudioAnalysisResultDefault();
 
@@ -581,9 +365,13 @@ abstract class RustLibApi extends BaseApi {
 
   Future<RustDuckingConfig> crateApiTypesRustDuckingConfigDefault();
 
+  Future<RustEffectConfig> crateApiTypesRustEffectConfigDefault();
+
   Future<RustEqualizerParams> crateApiTypesRustEqualizerParamsDefault();
 
   Future<RustHttpHeader> crateApiTypesRustHttpHeaderDefault();
+
+  Future<RustPlayerConfig> crateApiTypesRustPlayerConfigDefault();
 
   Future<RustPlayerStatus> crateApiTypesRustPlayerStatusDefault();
 
@@ -609,30 +397,25 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiPlayerSetLogLevel({required int level});
 
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_RustEngine;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_RustEngine;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RustEnginePtr;
+  Future<TelemetryFilter> crateApiPlayerTelemetryFilterDefault();
 
   RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_RustPlayer;
+      get rust_arc_increment_strong_count_EventReporter;
 
   RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_RustPlayer;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RustPlayerPtr;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_RustVoicePool;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_RustVoicePool;
+      get rust_arc_decrement_strong_count_EventReporter;
 
   CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_RustVoicePoolPtr;
+      get rust_arc_decrement_strong_count_EventReporterPtr;
+
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_RustMiniaudioPlayer;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_RustMiniaudioPlayer;
+
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_RustMiniaudioPlayerPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -644,14 +427,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  Future<void> crateApiEngineRustEngineAppend(
-      {required RustEngine that, required List<RustAudioSource> items}) {
+  Future<void> crateApiPlayerEventReporterClearSink(
+      {required EventReporter that}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
             that, serializer);
-        sse_encode_list_rust_audio_source(items, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 1, port: port_);
       },
@@ -659,27 +441,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineAppendConstMeta,
-      argValues: [that, items],
+      constMeta: kCrateApiPlayerEventReporterClearSinkConstMeta,
+      argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineAppendConstMeta =>
+  TaskConstMeta get kCrateApiPlayerEventReporterClearSinkConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_append",
-        argNames: ["that", "items"],
+        debugName: "EventReporter_clear_sink",
+        argNames: ["that"],
       );
 
   @override
-  Future<void> crateApiEngineRustEngineClearQueue(
-      {required RustEngine that, required bool keepCurrent}) {
+  Future<void> crateApiPlayerEventReporterEmit(
+      {required EventReporter that, required RustPlayerEvent event}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
             that, serializer);
-        sse_encode_bool(keepCurrent, serializer);
+        sse_encode_box_autoadd_rust_player_event(event, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 2, port: port_);
       },
@@ -687,814 +469,873 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineClearQueueConstMeta,
+      constMeta: kCrateApiPlayerEventReporterEmitConstMeta,
+      argValues: [that, event],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerEventReporterEmitConstMeta =>
+      const TaskConstMeta(
+        debugName: "EventReporter_emit",
+        argNames: ["that", "event"],
+      );
+
+  @override
+  Future<EventReporter> crateApiPlayerEventReporterNew() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 3, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerEventReporterNewConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerEventReporterNewConstMeta =>
+      const TaskConstMeta(
+        debugName: "EventReporter_new",
+        argNames: [],
+      );
+
+  @override
+  Stream<RustPlayerEvent> crateApiPlayerEventReporterSetSink(
+      {required EventReporter that}) {
+    final sink = RustStreamSink<RustPlayerEvent>();
+    unawaited(handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+            that, serializer);
+        sse_encode_StreamSink_rust_player_event_Sse(sink, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 4, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerEventReporterSetSinkConstMeta,
+      argValues: [that, sink],
+      apiImpl: this,
+    )));
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiPlayerEventReporterSetSinkConstMeta =>
+      const TaskConstMeta(
+        debugName: "EventReporter_set_sink",
+        argNames: ["that", "sink"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerAddOutput(
+      {required RustMiniaudioPlayer that, required RustAudioOutput output}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_box_autoadd_rust_audio_output(output, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerAddOutputConstMeta,
+      argValues: [that, output],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerAddOutputConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_add_output",
+        argNames: ["that", "output"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerAppend(
+      {required RustMiniaudioPlayer that,
+      required List<RustAudioSource> sources}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_list_rust_audio_source(sources, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerAppendConstMeta,
+      argValues: [that, sources],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerAppendConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_append",
+        argNames: ["that", "sources"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerClearQueue(
+      {required RustMiniaudioPlayer that, required bool keepCurrent}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_bool(keepCurrent, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerClearQueueConstMeta,
       argValues: [that, keepCurrent],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineClearQueueConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerClearQueueConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_clear_queue",
+        debugName: "RustMiniaudioPlayer_clear_queue",
         argNames: ["that", "keepCurrent"],
       );
 
   @override
-  void crateApiEngineRustEngineConfigureCueOutput(
-      {required RustEngine that,
-      String? cueDeviceId,
-      required double volume,
-      required int mode}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+  Future<void> crateApiPlayerRustMiniaudioPlayerConfigureOutputs(
+      {required RustMiniaudioPlayer that,
+      required List<RustAudioOutput> outputs}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_opt_String(cueDeviceId, serializer);
-        sse_encode_f_32(volume, serializer);
-        sse_encode_i_32(mode, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        sse_encode_list_rust_audio_output(outputs, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 8, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineConfigureCueOutputConstMeta,
-      argValues: [that, cueDeviceId, volume, mode],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerConfigureOutputsConstMeta,
+      argValues: [that, outputs],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineConfigureCueOutputConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_configure_cue_output",
-        argNames: ["that", "cueDeviceId", "volume", "mode"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerConfigureOutputsConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_configure_outputs",
+            argNames: ["that", "outputs"],
+          );
 
   @override
-  void crateApiEngineRustEngineDisableCueOutput({required RustEngine that}) {
+  void crateApiPlayerRustMiniaudioPlayerDisableMicrophone(
+      {required RustMiniaudioPlayer that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineDisableCueOutputConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineDisableCueOutputConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_disable_cue_output",
-        argNames: ["that"],
-      );
-
-  @override
-  void crateApiEngineRustEngineDisableMicrophone({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineDisableMicrophoneConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineDisableMicrophoneConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_disable_microphone",
-        argNames: ["that"],
-      );
-
-  @override
-  void crateApiEngineRustEngineEnableMicrophone(
-      {required RustEngine that,
-      String? captureDeviceId,
-      required bool autoDucking,
-      required double duckingDb,
-      required double thresholdDb}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        sse_encode_opt_String(captureDeviceId, serializer);
-        sse_encode_bool(autoDucking, serializer);
-        sse_encode_f_32(duckingDb, serializer);
-        sse_encode_f_32(thresholdDb, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiEngineRustEngineEnableMicrophoneConstMeta,
-      argValues: [that, captureDeviceId, autoDucking, duckingDb, thresholdDb],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineEnableMicrophoneConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_enable_microphone",
-        argNames: [
-          "that",
-          "captureDeviceId",
-          "autoDucking",
-          "duckingDb",
-          "thresholdDb"
-        ],
-      );
-
-  @override
-  BigInt? crateApiEngineRustEngineGetCurrentIndex({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_opt_box_autoadd_usize,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetCurrentIndexConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetCurrentIndexConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_current_index",
-        argNames: ["that"],
-      );
-
-  @override
-  PlatformInt64? crateApiEngineRustEngineGetCurrentTrackId(
-      {required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_opt_box_autoadd_i_64,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetCurrentTrackIdConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetCurrentTrackIdConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_current_track_id",
-        argNames: ["that"],
-      );
-
-  @override
-  PlatformInt64 crateApiEngineRustEngineGetDurationMs(
-      {required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_i_64,
+        decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineGetDurationMsConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerDisableMicrophoneConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineGetDurationMsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_duration_ms",
-        argNames: ["that"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerDisableMicrophoneConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_disable_microphone",
+            argNames: ["that"],
+          );
 
   @override
-  bool crateApiEngineRustEngineGetInfiniteMix({required RustEngine that}) {
+  void crateApiPlayerRustMiniaudioPlayerDispose(
+      {required RustMiniaudioPlayer that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
+        decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineGetInfiniteMixConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerDisposeConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineGetInfiniteMixConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerDisposeConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_get_infinite_mix",
+        debugName: "RustMiniaudioPlayer_dispose",
         argNames: ["that"],
       );
 
   @override
-  int crateApiEngineRustEngineGetPhase({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_i_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetPhaseConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetPhaseConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_phase",
-        argNames: ["that"],
-      );
-
-  @override
-  PlatformInt64 crateApiEngineRustEngineGetPositionMs(
-      {required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_i_64,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetPositionMsConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetPositionMsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_position_ms",
-        argNames: ["that"],
-      );
-
-  @override
-  List<RustAudioSource> crateApiEngineRustEngineGetQueue(
-      {required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_list_rust_audio_source,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetQueueConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetQueueConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_queue",
-        argNames: ["that"],
-      );
-
-  @override
-  BigInt crateApiEngineRustEngineGetQueueLen({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_usize,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetQueueLenConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetQueueLenConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_queue_len",
-        argNames: ["that"],
-      );
-
-  @override
-  RustVisualizerData crateApiEngineRustEngineGetVisualizerData(
-      {required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_visualizer_data,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetVisualizerDataConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetVisualizerDataConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_visualizer_data",
-        argNames: ["that"],
-      );
-
-  @override
-  double crateApiEngineRustEngineGetVolume({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_f_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineGetVolumeConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineGetVolumeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_get_volume",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiEngineRustEngineInsertNext(
-      {required RustEngine that, required RustAudioSource item}) {
+  Future<void> crateApiPlayerRustMiniaudioPlayerEnableMicrophone(
+      {required RustMiniaudioPlayer that,
+      String? deviceId,
+      required double volume,
+      RustDuckingConfig? ducking,
+      required bool monitorDirect,
+      required double monitorVolume}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_box_autoadd_rust_audio_source(item, serializer);
+        sse_encode_opt_String(deviceId, serializer);
+        sse_encode_f_32(volume, serializer);
+        sse_encode_opt_box_autoadd_rust_ducking_config(ducking, serializer);
+        sse_encode_bool(monitorDirect, serializer);
+        sse_encode_f_32(monitorVolume, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 11, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerEnableMicrophoneConstMeta,
+      argValues: [
+        that,
+        deviceId,
+        volume,
+        ducking,
+        monitorDirect,
+        monitorVolume
+      ],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerEnableMicrophoneConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_enable_microphone",
+            argNames: [
+              "that",
+              "deviceId",
+              "volume",
+              "ducking",
+              "monitorDirect",
+              "monitorVolume"
+            ],
+          );
+
+  @override
+  Future<List<RustAudioDevice>>
+      crateApiPlayerRustMiniaudioPlayerGetInputDevices() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 12, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_rust_audio_device,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerGetInputDevicesConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerGetInputDevicesConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_get_input_devices",
+            argNames: [],
+          );
+
+  @override
+  List<RustAudioDevice> crateApiPlayerRustMiniaudioPlayerGetInputDevicesSync() {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_rust_audio_device,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerGetInputDevicesSyncConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerGetInputDevicesSyncConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_get_input_devices_sync",
+            argNames: [],
+          );
+
+  @override
+  Future<List<RustAudioDevice>>
+      crateApiPlayerRustMiniaudioPlayerGetOutputDevices() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 14, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_rust_audio_device,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerGetOutputDevicesConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerGetOutputDevicesConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_get_output_devices",
+            argNames: [],
+          );
+
+  @override
+  List<RustAudioDevice>
+      crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync() {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_rust_audio_device,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta:
+          kCrateApiPlayerRustMiniaudioPlayerGetOutputDevicesSyncConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerGetOutputDevicesSyncConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_get_output_devices_sync",
+            argNames: [],
+          );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerInsertNext(
+      {required RustMiniaudioPlayer that, required RustAudioSource source}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_box_autoadd_rust_audio_source(source, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerInsertNextConstMeta,
+      argValues: [that, source],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerInsertNextConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_insert_next",
+        argNames: ["that", "source"],
+      );
+
+  @override
+  Future<void> crateApiPlayerRustMiniaudioPlayerLoadEffect(
+      {required RustMiniaudioPlayer that,
+      required String id,
+      required List<int> bytes,
+      required BigInt maxPolyphony,
+      required bool pinned}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_String(id, serializer);
+        sse_encode_list_prim_u_8_loose(bytes, serializer);
+        sse_encode_usize(maxPolyphony, serializer);
+        sse_encode_bool(pinned, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 17, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
+        decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineInsertNextConstMeta,
-      argValues: [that, item],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerLoadEffectConstMeta,
+      argValues: [that, id, bytes, maxPolyphony, pinned],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineInsertNextConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerLoadEffectConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_insert_next",
-        argNames: ["that", "item"],
+        debugName: "RustMiniaudioPlayer_load_effect",
+        argNames: ["that", "id", "bytes", "maxPolyphony", "pinned"],
       );
 
   @override
-  bool crateApiEngineRustEngineIsBuffering({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineIsBufferingConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineIsBufferingConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_is_buffering",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiEngineRustEngineIsCompleted({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineIsCompletedConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineIsCompletedConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_is_completed",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiEngineRustEngineIsPlaying({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineIsPlayingConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineIsPlayingConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_is_playing",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiEngineRustEngineIsRecording({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineIsRecordingConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineIsRecordingConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_is_recording",
-        argNames: ["that"],
-      );
-
-  @override
-  RustEngine crateApiEngineRustEngineNew(
-      {required int sampleRate,
+  RustMiniaudioPlayer crateApiPlayerRustMiniaudioPlayerNew(
+      {required RustPlayerConfig config,
+      required int sampleRate,
       required int channels,
       required int periodSize,
       String? playbackDeviceId}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_rust_player_config(config, serializer);
         sse_encode_u_32(sampleRate, serializer);
         sse_encode_u_32(channels, serializer);
         sse_encode_u_32(periodSize, serializer);
         sse_encode_opt_String(playbackDeviceId, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
       },
       codec: SseCodec(
         decodeSuccessData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine,
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer,
         decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineNewConstMeta,
-      argValues: [sampleRate, channels, periodSize, playbackDeviceId],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerNewConstMeta,
+      argValues: [config, sampleRate, channels, periodSize, playbackDeviceId],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineNewConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerNewConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_new",
-        argNames: ["sampleRate", "channels", "periodSize", "playbackDeviceId"],
+        debugName: "RustMiniaudioPlayer_new",
+        argNames: [
+          "config",
+          "sampleRate",
+          "channels",
+          "periodSize",
+          "playbackDeviceId"
+        ],
       );
 
   @override
-  Future<void> crateApiEngineRustEngineNext(
-      {required RustEngine that, BigInt? crossfadeDurationMs, int? curve}) {
+  Future<void> crateApiPlayerRustMiniaudioPlayerNext(
+      {required RustMiniaudioPlayer that, BigInt? crossfadeDurationMs}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
-        sse_encode_opt_box_autoadd_i_32(curve, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 23, port: port_);
+            funcId: 19, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
+        decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineNextConstMeta,
-      argValues: [that, crossfadeDurationMs, curve],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerNextConstMeta,
+      argValues: [that, crossfadeDurationMs],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineNextConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerNextConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_next",
-        argNames: ["that", "crossfadeDurationMs", "curve"],
+        debugName: "RustMiniaudioPlayer_next",
+        argNames: ["that", "crossfadeDurationMs"],
       );
 
   @override
-  Future<BigInt> crateApiEngineRustEngineOfflineBounce(
-      {required RustEngine that,
-      required String path,
-      required RustWavFormat format,
-      required PlatformInt64 durationMs}) {
+  Future<void> crateApiPlayerRustMiniaudioPlayerOpen(
+      {required RustMiniaudioPlayer that,
+      required List<RustAudioSource> queue,
+      required BigInt startIndex,
+      required bool autoPlay}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_String(path, serializer);
-        sse_encode_rust_wav_format(format, serializer);
-        sse_encode_i_64(durationMs, serializer);
+        sse_encode_list_rust_audio_source(queue, serializer);
+        sse_encode_usize(startIndex, serializer);
+        sse_encode_bool(autoPlay, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 24, port: port_);
+            funcId: 20, port: port_);
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_u_64,
+        decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineOfflineBounceConstMeta,
-      argValues: [that, path, format, durationMs],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerOpenConstMeta,
+      argValues: [that, queue, startIndex, autoPlay],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineOfflineBounceConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerOpenConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_offline_bounce",
-        argNames: ["that", "path", "format", "durationMs"],
+        debugName: "RustMiniaudioPlayer_open",
+        argNames: ["that", "queue", "startIndex", "autoPlay"],
       );
 
   @override
-  void crateApiEngineRustEnginePause({required RustEngine that}) {
+  void crateApiPlayerRustMiniaudioPlayerPause(
+      {required RustMiniaudioPlayer that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEnginePauseConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerPauseConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEnginePauseConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerPauseConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_pause",
+        debugName: "RustMiniaudioPlayer_pause",
         argNames: ["that"],
       );
 
   @override
-  void crateApiEngineRustEnginePlay({required RustEngine that}) {
+  void crateApiPlayerRustMiniaudioPlayerPlay(
+      {required RustMiniaudioPlayer that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerPlayConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerPlayConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_play",
+        argNames: ["that"],
+      );
+
+  @override
+  int crateApiPlayerRustMiniaudioPlayerPlayEffect(
+      {required RustMiniaudioPlayer that,
+      required String id,
+      required int dspRouting,
+      required RustEffectConfig config}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_String(id, serializer);
+        sse_encode_i_32(dspRouting, serializer);
+        sse_encode_box_autoadd_rust_effect_config(config, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_u_32,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerPlayEffectConstMeta,
+      argValues: [that, id, dspRouting, config],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerPlayEffectConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_play_effect",
+        argNames: ["that", "id", "dspRouting", "config"],
+      );
+
+  @override
+  Future<void> crateApiPlayerRustMiniaudioPlayerPrevious(
+      {required RustMiniaudioPlayer that}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 24, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerPreviousConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerPreviousConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_previous",
+        argNames: ["that"],
+      );
+
+  @override
+  bool crateApiPlayerRustMiniaudioPlayerRemoveAt(
+      {required RustMiniaudioPlayer that, required BigInt index}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_usize(index, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerRemoveAtConstMeta,
+      argValues: [that, index],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerRemoveAtConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_remove_at",
+        argNames: ["that", "index"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerRemoveOutput(
+      {required RustMiniaudioPlayer that, required RustAudioOutput output}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_box_autoadd_rust_audio_output(output, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEnginePlayConstMeta,
-      argValues: [that],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerRemoveOutputConstMeta,
+      argValues: [that, output],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEnginePlayConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerRemoveOutputConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_play",
-        argNames: ["that"],
+        debugName: "RustMiniaudioPlayer_remove_output",
+        argNames: ["that", "output"],
       );
 
   @override
-  Future<void> crateApiEngineRustEnginePrevious(
-      {required RustEngine that, BigInt? crossfadeDurationMs, int? curve}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
-        sse_encode_opt_box_autoadd_i_32(curve, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 27, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEnginePreviousConstMeta,
-      argValues: [that, crossfadeDurationMs, curve],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEnginePreviousConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_previous",
-        argNames: ["that", "crossfadeDurationMs", "curve"],
-      );
-
-  @override
-  Future<void> crateApiEngineRustEngineRemoveAt(
-      {required RustEngine that, required BigInt index}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        sse_encode_usize(index, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 28, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineRemoveAtConstMeta,
-      argValues: [that, index],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineRemoveAtConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_remove_at",
-        argNames: ["that", "index"],
-      );
-
-  @override
-  Future<void> crateApiEngineRustEngineReorder(
-      {required RustEngine that, required BigInt from, required BigInt to}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        sse_encode_usize(from, serializer);
-        sse_encode_usize(to, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 29, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineReorderConstMeta,
-      argValues: [that, from, to],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineReorderConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_reorder",
-        argNames: ["that", "from", "to"],
-      );
-
-  @override
-  void crateApiEngineRustEngineSeek(
-      {required RustEngine that, required PlatformInt64 positionMs}) {
+  bool crateApiPlayerRustMiniaudioPlayerReorder(
+      {required RustMiniaudioPlayer that,
+      required BigInt oldIndex,
+      required BigInt newIndex}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_usize(oldIndex, serializer);
+        sse_encode_usize(newIndex, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerReorderConstMeta,
+      argValues: [that, oldIndex, newIndex],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerReorderConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_reorder",
+        argNames: ["that", "oldIndex", "newIndex"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerRespondDartReadRequest(
+      {required RustMiniaudioPlayer that,
+      required BigInt requestId,
+      required List<int> bytes,
+      required bool isEof}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_u_64(requestId, serializer);
+        sse_encode_list_prim_u_8_loose(bytes, serializer);
+        sse_encode_bool(isEof, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta:
+          kCrateApiPlayerRustMiniaudioPlayerRespondDartReadRequestConstMeta,
+      argValues: [that, requestId, bytes, isEof],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerRespondDartReadRequestConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_respond_dart_read_request",
+            argNames: ["that", "requestId", "bytes", "isEof"],
+          );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerSeek(
+      {required RustMiniaudioPlayer that, required PlatformInt64 positionMs}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_i_64(positionMs, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSeekConstMeta,
+      argValues: [that, positionMs],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSeekConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_seek",
+        argNames: ["that", "positionMs"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerSetBalance(
+      {required RustMiniaudioPlayer that, required double balance}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_f_32(balance, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSeekConstMeta,
-      argValues: [that, positionMs],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetBalanceConstMeta,
+      argValues: [that, balance],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSeekConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetBalanceConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_seek",
-        argNames: ["that", "positionMs"],
+        debugName: "RustMiniaudioPlayer_set_balance",
+        argNames: ["that", "balance"],
       );
 
   @override
-  void crateApiEngineRustEngineSetBalance(
-      {required RustEngine that, required double balance}) {
+  void crateApiPlayerRustMiniaudioPlayerSetBufferSize(
+      {required RustMiniaudioPlayer that, required int bufferSizeFrames}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(balance, serializer);
+        sse_encode_u_32(bufferSizeFrames, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetBalanceConstMeta,
-      argValues: [that, balance],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetBufferSizeConstMeta,
+      argValues: [that, bufferSizeFrames],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetBalanceConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetBufferSizeConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_balance",
-        argNames: ["that", "balance"],
+        debugName: "RustMiniaudioPlayer_set_buffer_size",
+        argNames: ["that", "bufferSizeFrames"],
       );
 
   @override
-  void crateApiEngineRustEngineSetCrossfadeConfig(
-      {required RustEngine that, required RustCrossfadeConfig config}) {
+  void crateApiPlayerRustMiniaudioPlayerSetCrossfade(
+      {required RustMiniaudioPlayer that,
+      required RustCrossfadeConfig config}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_crossfade_config(config, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
@@ -1503,25 +1344,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetCrossfadeConfigConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetCrossfadeConstMeta,
       argValues: [that, config],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetCrossfadeConfigConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetCrossfadeConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_crossfade_config",
+        debugName: "RustMiniaudioPlayer_set_crossfade",
         argNames: ["that", "config"],
       );
 
   @override
-  void crateApiEngineRustEngineSetCrossfeed(
-      {required RustEngine that, required int mode}) {
+  void crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
+      {required RustMiniaudioPlayer that, required int mode}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_i_32(mode, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
@@ -1530,52 +1371,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetCrossfeedConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetCrossfeedConstMeta,
       argValues: [that, mode],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetCrossfeedConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetCrossfeedConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_crossfeed",
+        debugName: "RustMiniaudioPlayer_set_crossfeed",
         argNames: ["that", "mode"],
       );
 
   @override
-  void crateApiEngineRustEngineSetCueMode(
-      {required RustEngine that, required int mode}) {
+  void crateApiPlayerRustMiniaudioPlayerSetCueSource(
+      {required RustMiniaudioPlayer that, required int source}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_i_32(mode, serializer);
+        sse_encode_i_32(source, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetCueModeConstMeta,
-      argValues: [that, mode],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetCueSourceConstMeta,
+      argValues: [that, source],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetCueModeConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetCueSourceConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_cue_mode",
-        argNames: ["that", "mode"],
+        debugName: "RustMiniaudioPlayer_set_cue_source",
+        argNames: ["that", "source"],
       );
 
   @override
-  void crateApiEngineRustEngineSetCueVolume(
-      {required RustEngine that, required double volume}) {
+  void crateApiPlayerRustMiniaudioPlayerSetCueVolume(
+      {required RustMiniaudioPlayer that, required double volume}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(volume, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
@@ -1584,189 +1425,211 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetCueVolumeConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetCueVolumeConstMeta,
       argValues: [that, volume],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetCueVolumeConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetCueVolumeConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_cue_volume",
+        debugName: "RustMiniaudioPlayer_set_cue_volume",
         argNames: ["that", "volume"],
       );
 
   @override
-  void crateApiEngineRustEngineSetDevice(
-      {required RustEngine that, required String deviceId}) {
+  void crateApiPlayerRustMiniaudioPlayerSetDirectMonitoring(
+      {required RustMiniaudioPlayer that,
+      required bool enabled,
+      required double volume}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_String(deviceId, serializer);
+        sse_encode_bool(enabled, serializer);
+        sse_encode_f_32(volume, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetDeviceConstMeta,
-      argValues: [that, deviceId],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetDirectMonitoringConstMeta,
+      argValues: [that, enabled, volume],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetDeviceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_device",
-        argNames: ["that", "deviceId"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetDirectMonitoringConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_direct_monitoring",
+            argNames: ["that", "enabled", "volume"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetEqualizer(
-      {required RustEngine that, required RustEqualizerParams params}) {
+  void crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
+      {required RustMiniaudioPlayer that,
+      required double factor,
+      required double speedOfSound}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_box_autoadd_rust_equalizer_params(params, serializer);
+        sse_encode_f_32(factor, serializer);
+        sse_encode_f_32(speedOfSound, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetEqualizerConstMeta,
-      argValues: [that, params],
+      constMeta:
+          kCrateApiPlayerRustMiniaudioPlayerSetDopplerParametersConstMeta,
+      argValues: [that, factor, speedOfSound],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetEqualizerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_equalizer",
-        argNames: ["that", "params"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetDopplerParametersConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_doppler_parameters",
+            argNames: ["that", "factor", "speedOfSound"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetEqualizerBand(
-      {required RustEngine that, required int band, required double gainDb}) {
+  void crateApiPlayerRustMiniaudioPlayerSetDucking(
+      {required RustMiniaudioPlayer that, required RustDuckingConfig config}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_u_32(band, serializer);
-        sse_encode_f_32(gainDb, serializer);
+        sse_encode_box_autoadd_rust_ducking_config(config, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetEqualizerBandConstMeta,
-      argValues: [that, band, gainDb],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetDuckingConstMeta,
+      argValues: [that, config],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetEqualizerBandConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetDuckingConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_equalizer_band",
-        argNames: ["that", "band", "gainDb"],
+        debugName: "RustMiniaudioPlayer_set_ducking",
+        argNames: ["that", "config"],
       );
 
   @override
-  void crateApiEngineRustEngineSetInfiniteMix(
-      {required RustEngine that, required bool enabled}) {
+  void crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      required double balance}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_bool(enabled, serializer);
+        sse_encode_u_32(voiceId, serializer);
+        sse_encode_f_32(balance, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetInfiniteMixConstMeta,
-      argValues: [that, enabled],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetEffectBalanceConstMeta,
+      argValues: [that, voiceId, balance],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetInfiniteMixConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_infinite_mix",
-        argNames: ["that", "enabled"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetEffectBalanceConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_effect_balance",
+            argNames: ["that", "voiceId", "balance"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetLimiter(
-      {required RustEngine that, required bool enabled}) {
+  void crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      RustSpatialEmitter? emitter}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_bool(enabled, serializer);
+        sse_encode_u_32(voiceId, serializer);
+        sse_encode_opt_box_autoadd_rust_spatial_emitter(emitter, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetLimiterConstMeta,
-      argValues: [that, enabled],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetEffectEmitterConstMeta,
+      argValues: [that, voiceId, emitter],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetLimiterConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_limiter",
-        argNames: ["that", "enabled"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetEffectEmitterConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_effect_emitter",
+            argNames: ["that", "voiceId", "emitter"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetLoopMode(
-      {required RustEngine that, required int mode}) {
+  void crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      required double pitch}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_i_32(mode, serializer);
+        sse_encode_u_32(voiceId, serializer);
+        sse_encode_f_32(pitch, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetLoopModeConstMeta,
-      argValues: [that, mode],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetEffectPitchConstMeta,
+      argValues: [that, voiceId, pitch],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetLoopModeConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetEffectPitchConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_loop_mode",
-        argNames: ["that", "mode"],
+        debugName: "RustMiniaudioPlayer_set_effect_pitch",
+        argNames: ["that", "voiceId", "pitch"],
       );
 
   @override
-  void crateApiEngineRustEngineSetMicVolume(
-      {required RustEngine that, required double volume}) {
+  void crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      required double volume}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
+        sse_encode_u_32(voiceId, serializer);
         sse_encode_f_32(volume, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
       },
@@ -1774,2698 +1637,717 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetMicVolumeConstMeta,
-      argValues: [that, volume],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetEffectVolumeConstMeta,
+      argValues: [that, voiceId, volume],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetMicVolumeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_mic_volume",
-        argNames: ["that", "volume"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetEffectVolumeConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_effect_volume",
+            argNames: ["that", "voiceId", "volume"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetMono(
-      {required RustEngine that, required bool enabled}) {
+  void crateApiPlayerRustMiniaudioPlayerSetEqualizer(
+      {required RustMiniaudioPlayer that,
+      required RustEqualizerParams params}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_bool(enabled, serializer);
+        sse_encode_box_autoadd_rust_equalizer_params(params, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 43)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
+        decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineSetMonoConstMeta,
-      argValues: [that, enabled],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetEqualizerConstMeta,
+      argValues: [that, params],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetMonoConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetEqualizerConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_mono",
-        argNames: ["that", "enabled"],
+        debugName: "RustMiniaudioPlayer_set_equalizer",
+        argNames: ["that", "params"],
       );
 
   @override
-  void crateApiEngineRustEngineSetPitch(
-      {required RustEngine that, required double pitch}) {
+  void crateApiPlayerRustMiniaudioPlayerSetLimiter(
+      {required RustMiniaudioPlayer that, required bool enabled}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(pitch, serializer);
+        sse_encode_bool(enabled, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetPitchConstMeta,
-      argValues: [that, pitch],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetLimiterConstMeta,
+      argValues: [that, enabled],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetPitchConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetLimiterConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_pitch",
-        argNames: ["that", "pitch"],
+        debugName: "RustMiniaudioPlayer_set_limiter",
+        argNames: ["that", "enabled"],
       );
 
   @override
-  void crateApiEngineRustEngineSetPreamp(
-      {required RustEngine that, required double preampDb}) {
+  void crateApiPlayerRustMiniaudioPlayerSetListener(
+      {required RustMiniaudioPlayer that,
+      required RustSpatialListener listener}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(preampDb, serializer);
+        sse_encode_box_autoadd_rust_spatial_listener(listener, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 45)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetPreampConstMeta,
-      argValues: [that, preampDb],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetListenerConstMeta,
+      argValues: [that, listener],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetPreampConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetListenerConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_preamp",
-        argNames: ["that", "preampDb"],
+        debugName: "RustMiniaudioPlayer_set_listener",
+        argNames: ["that", "listener"],
       );
 
   @override
-  Future<void> crateApiEngineRustEngineSetQueue(
-      {required RustEngine that,
-      required List<RustAudioSource> items,
-      BigInt? startIndex}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
+  void crateApiPlayerRustMiniaudioPlayerSetLoopMode(
+      {required RustMiniaudioPlayer that, required int mode}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_list_rust_audio_source(items, serializer);
-        sse_encode_opt_box_autoadd_usize(startIndex, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 46, port: port_);
+        sse_encode_i_32(mode, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 46)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetQueueConstMeta,
-      argValues: [that, items, startIndex],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetLoopModeConstMeta,
+      argValues: [that, mode],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetQueueConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetLoopModeConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_queue",
-        argNames: ["that", "items", "startIndex"],
+        debugName: "RustMiniaudioPlayer_set_loop_mode",
+        argNames: ["that", "mode"],
       );
 
   @override
-  void crateApiEngineRustEngineSetRate(
-      {required RustEngine that, required double rate}) {
+  void crateApiPlayerRustMiniaudioPlayerSetMicrophoneVolume(
+      {required RustMiniaudioPlayer that, required double volume}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(rate, serializer);
+        sse_encode_f_32(volume, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 47)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetRateConstMeta,
-      argValues: [that, rate],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetMicrophoneVolumeConstMeta,
+      argValues: [that, volume],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetRateConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_rate",
-        argNames: ["that", "rate"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetMicrophoneVolumeConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_microphone_volume",
+            argNames: ["that", "volume"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetReplayGain(
-      {required RustEngine that,
-      required double gainDb,
-      required double peak,
-      required bool preventClipping}) {
+  void crateApiPlayerRustMiniaudioPlayerSetMono(
+      {required RustMiniaudioPlayer that, required bool enabled}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(gainDb, serializer);
-        sse_encode_f_32(peak, serializer);
-        sse_encode_bool(preventClipping, serializer);
+        sse_encode_bool(enabled, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetReplayGainConstMeta,
-      argValues: [that, gainDb, peak, preventClipping],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetMonoConstMeta,
+      argValues: [that, enabled],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetReplayGainConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetMonoConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_replay_gain",
-        argNames: ["that", "gainDb", "peak", "preventClipping"],
+        debugName: "RustMiniaudioPlayer_set_mono",
+        argNames: ["that", "enabled"],
       );
 
   @override
-  void crateApiEngineRustEngineSetReverb(
-      {required RustEngine that, required RustReverbParams params}) {
+  void crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
+      {required RustMiniaudioPlayer that, required bool enabled}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_box_autoadd_rust_reverb_params(params, serializer);
+        sse_encode_bool(enabled, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetReverbConstMeta,
-      argValues: [that, params],
+      constMeta:
+          kCrateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChangeConstMeta,
+      argValues: [that, enabled],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetReverbConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_reverb",
-        argNames: ["that", "params"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChangeConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_pause_on_device_change",
+            argNames: ["that", "enabled"],
+          );
 
   @override
-  void crateApiEngineRustEngineSetShuffle(
-      {required RustEngine that, required bool enabled}) {
+  void crateApiPlayerRustMiniaudioPlayerSetPitch(
+      {required RustMiniaudioPlayer that, required double pitch}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_bool(enabled, serializer);
+        sse_encode_f_32(pitch, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 50)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetShuffleConstMeta,
-      argValues: [that, enabled],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetPitchConstMeta,
+      argValues: [that, pitch],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetShuffleConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetPitchConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_shuffle",
-        argNames: ["that", "enabled"],
+        debugName: "RustMiniaudioPlayer_set_pitch",
+        argNames: ["that", "pitch"],
       );
 
   @override
-  void crateApiEngineRustEngineSetSpatialDopplerFactor(
-      {required RustEngine that, required double factor}) {
+  void crateApiPlayerRustMiniaudioPlayerSetPreamp(
+      {required RustMiniaudioPlayer that, required double preampDb}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(factor, serializer);
+        sse_encode_f_32(preampDb, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 51)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetSpatialDopplerFactorConstMeta,
-      argValues: [that, factor],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetPreampConstMeta,
+      argValues: [that, preampDb],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetSpatialDopplerFactorConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetPreampConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_spatial_doppler_factor",
-        argNames: ["that", "factor"],
+        debugName: "RustMiniaudioPlayer_set_preamp",
+        argNames: ["that", "preampDb"],
       );
 
   @override
-  void crateApiEngineRustEngineSetSpatialEmitter(
-      {required RustEngine that, required RustSpatialEmitter emitter}) {
+  void crateApiPlayerRustMiniaudioPlayerSetRate(
+      {required RustMiniaudioPlayer that, required double rate}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_box_autoadd_rust_spatial_emitter(emitter, serializer);
+        sse_encode_f_32(rate, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 52)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetSpatialEmitterConstMeta,
-      argValues: [that, emitter],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetRateConstMeta,
+      argValues: [that, rate],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetSpatialEmitterConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetRateConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_spatial_emitter",
-        argNames: ["that", "emitter"],
+        debugName: "RustMiniaudioPlayer_set_rate",
+        argNames: ["that", "rate"],
       );
 
   @override
-  void crateApiEngineRustEngineSetSpatialEnabled(
-      {required RustEngine that, required bool enabled}) {
+  void crateApiPlayerRustMiniaudioPlayerSetReplayGain(
+      {required RustMiniaudioPlayer that,
+      required RustReplayGainConfig config}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_bool(enabled, serializer);
+        sse_encode_box_autoadd_rust_replay_gain_config(config, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 53)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
+        decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineSetSpatialEnabledConstMeta,
-      argValues: [that, enabled],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetReplayGainConstMeta,
+      argValues: [that, config],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetSpatialEnabledConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetReplayGainConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_spatial_enabled",
-        argNames: ["that", "enabled"],
+        debugName: "RustMiniaudioPlayer_set_replay_gain",
+        argNames: ["that", "config"],
       );
 
   @override
-  void crateApiEngineRustEngineSetSpatialListener(
-      {required RustEngine that, required RustSpatialListener listener}) {
+  void crateApiPlayerRustMiniaudioPlayerSetReverb(
+      {required RustMiniaudioPlayer that, required RustReverbParams params}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_box_autoadd_rust_spatial_listener(listener, serializer);
+        sse_encode_box_autoadd_rust_reverb_params(params, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 54)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
+        decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineSetSpatialListenerConstMeta,
-      argValues: [that, listener],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetReverbConstMeta,
+      argValues: [that, params],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetSpatialListenerConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetReverbConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_spatial_listener",
-        argNames: ["that", "listener"],
+        debugName: "RustMiniaudioPlayer_set_reverb",
+        argNames: ["that", "params"],
       );
 
   @override
-  void crateApiEngineRustEngineSetSpatialSpeedOfSound(
-      {required RustEngine that, required double speed}) {
+  void crateApiPlayerRustMiniaudioPlayerSetShuffle(
+      {required RustMiniaudioPlayer that, required bool enabled}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(speed, serializer);
+        sse_encode_bool(enabled, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 55)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetSpatialSpeedOfSoundConstMeta,
-      argValues: [that, speed],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetShuffleConstMeta,
+      argValues: [that, enabled],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetSpatialSpeedOfSoundConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetShuffleConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_spatial_speed_of_sound",
-        argNames: ["that", "speed"],
+        debugName: "RustMiniaudioPlayer_set_shuffle",
+        argNames: ["that", "enabled"],
       );
 
   @override
-  void crateApiEngineRustEngineSetSpatializer(
-      {required RustEngine that,
+  void crateApiPlayerRustMiniaudioPlayerSetSkipSilence(
+      {required RustMiniaudioPlayer that, required RustSilenceConfig config}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_box_autoadd_rust_silence_config(config, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 56)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetSkipSilenceConstMeta,
+      argValues: [that, config],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetSkipSilenceConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_set_skip_silence",
+        argNames: ["that", "config"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerSetSpatializer(
+      {required RustMiniaudioPlayer that,
       required bool enabled,
       required double width}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
         sse_encode_f_32(width, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 56)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineSetSpatializerConstMeta,
-      argValues: [that, enabled, width],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineSetSpatializerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_spatializer",
-        argNames: ["that", "enabled", "width"],
-      );
-
-  @override
-  void crateApiEngineRustEngineSetVisualizerEnabled(
-      {required RustEngine that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetVisualizerEnabledConstMeta,
-      argValues: [that, enabled],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetSpatializerConstMeta,
+      argValues: [that, enabled, width],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetVisualizerEnabledConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetSpatializerConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_set_visualizer_enabled",
-        argNames: ["that", "enabled"],
+        debugName: "RustMiniaudioPlayer_set_spatializer",
+        argNames: ["that", "enabled", "width"],
       );
 
   @override
-  void crateApiEngineRustEngineSetVolume(
-      {required RustEngine that, required double volume}) {
+  void crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
+      {required RustMiniaudioPlayer that, required bool enabled}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_f_32(volume, serializer);
+        sse_encode_bool(enabled, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 58)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSetVolumeConstMeta,
-      argValues: [that, volume],
+      constMeta:
+          kCrateApiPlayerRustMiniaudioPlayerSetVisualizerEnabledConstMeta,
+      argValues: [that, enabled],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSetVolumeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_set_volume",
-        argNames: ["that", "volume"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSetVisualizerEnabledConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_set_visualizer_enabled",
+            argNames: ["that", "enabled"],
+          );
 
   @override
-  Future<void> crateApiEngineRustEngineSkipToIndex(
-      {required RustEngine that,
-      required BigInt index,
-      BigInt? crossfadeDurationMs,
-      int? curve}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
+  void crateApiPlayerRustMiniaudioPlayerSetVolume(
+      {required RustMiniaudioPlayer that, required double volume}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_usize(index, serializer);
-        sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
-        sse_encode_opt_box_autoadd_i_32(curve, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 59, port: port_);
+        sse_encode_f_32(volume, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 59)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineSkipToIndexConstMeta,
-      argValues: [that, index, crossfadeDurationMs, curve],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSetVolumeConstMeta,
+      argValues: [that, volume],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineSkipToIndexConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSetVolumeConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_skip_to_index",
-        argNames: ["that", "index", "crossfadeDurationMs", "curve"],
+        debugName: "RustMiniaudioPlayer_set_volume",
+        argNames: ["that", "volume"],
       );
 
   @override
-  void crateApiEngineRustEngineStartRecording(
-      {required RustEngine that,
-      required String path,
-      required RustWavFormat format}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+  Future<void> crateApiPlayerRustMiniaudioPlayerSkipToIndex(
+      {required RustMiniaudioPlayer that,
+      required BigInt index,
+      BigInt? crossfadeDurationMs}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_String(path, serializer);
-        sse_encode_rust_wav_format(format, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 60)!;
+        sse_encode_usize(index, serializer);
+        sse_encode_opt_box_autoadd_u_64(crossfadeDurationMs, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 60, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiEngineRustEngineStartRecordingConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSkipToIndexConstMeta,
+      argValues: [that, index, crossfadeDurationMs],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerSkipToIndexConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_skip_to_index",
+        argNames: ["that", "index", "crossfadeDurationMs"],
+      );
+
+  @override
+  Future<void> crateApiPlayerRustMiniaudioPlayerStartRecording(
+      {required RustMiniaudioPlayer that,
+      required String path,
+      required int format}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_String(path, serializer);
+        sse_encode_i_32(format, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 61, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerStartRecordingConstMeta,
       argValues: [that, path, format],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineStartRecordingConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerStartRecordingConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_start_recording",
+        debugName: "RustMiniaudioPlayer_start_recording",
         argNames: ["that", "path", "format"],
       );
 
   @override
-  void crateApiEngineRustEngineStop({required RustEngine that}) {
+  void crateApiPlayerRustMiniaudioPlayerStop(
+      {required RustMiniaudioPlayer that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 61)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiEngineRustEngineStopConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineStopConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_stop",
-        argNames: ["that"],
-      );
-
-  @override
-  BigInt crateApiEngineRustEngineStopRecording({required RustEngine that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 62)!;
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_u_64,
-        decodeErrorData: sse_decode_String,
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
       ),
-      constMeta: kCrateApiEngineRustEngineStopRecordingConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerStopConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiEngineRustEngineStopRecordingConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerStopConstMeta =>
       const TaskConstMeta(
-        debugName: "RustEngine_stop_recording",
+        debugName: "RustMiniaudioPlayer_stop",
         argNames: ["that"],
       );
 
   @override
-  Stream<RustEngineEvent> crateApiEngineRustEngineSubscribeEvents(
-      {required RustEngine that}) {
-    final sink = RustStreamSink<RustEngineEvent>();
-    unawaited(handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-            that, serializer);
-        sse_encode_StreamSink_rust_engine_event_Sse(sink, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 63, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiEngineRustEngineSubscribeEventsConstMeta,
-      argValues: [that, sink],
-      apiImpl: this,
-    )));
-    return sink.stream;
-  }
-
-  TaskConstMeta get kCrateApiEngineRustEngineSubscribeEventsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustEngine_subscribe_events",
-        argNames: ["that", "sink"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerClearReplayGain({required RustPlayer that}) {
+  void crateApiPlayerRustMiniaudioPlayerStopAllEffects(
+      {required RustMiniaudioPlayer that, required BigInt fadeOutMs}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
+        sse_encode_u_64(fadeOutMs, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 63)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerStopAllEffectsConstMeta,
+      argValues: [that, fadeOutMs],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerStopAllEffectsConstMeta =>
+      const TaskConstMeta(
+        debugName: "RustMiniaudioPlayer_stop_all_effects",
+        argNames: ["that", "fadeOutMs"],
+      );
+
+  @override
+  void crateApiPlayerRustMiniaudioPlayerStopEffect(
+      {required RustMiniaudioPlayer that,
+      required int voiceId,
+      required BigInt fadeOutMs}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+            that, serializer);
+        sse_encode_u_32(voiceId, serializer);
+        sse_encode_u_64(fadeOutMs, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 64)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerClearReplayGainConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerClearReplayGainConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_clear_replay_gain",
-        argNames: ["that"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerDispose({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 65)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiPlayerRustPlayerDisposeConstMeta,
-      argValues: [that],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerStopEffectConstMeta,
+      argValues: [that, voiceId, fadeOutMs],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiPlayerRustPlayerDisposeConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerStopEffectConstMeta =>
       const TaskConstMeta(
-        debugName: "RustPlayer_dispose",
-        argNames: ["that"],
+        debugName: "RustMiniaudioPlayer_stop_effect",
+        argNames: ["that", "voiceId", "fadeOutMs"],
       );
 
   @override
-  PlatformInt64 crateApiPlayerRustPlayerGetAudioDataOffset(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 66)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_i_64,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetAudioDataOffsetConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetAudioDataOffsetConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_audio_data_offset",
-        argNames: ["that"],
-      );
-
-  @override
-  int crateApiPlayerRustPlayerGetBitrate({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetBitrateConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetBitrateConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_bitrate",
-        argNames: ["that"],
-      );
-
-  @override
-  int crateApiPlayerRustPlayerGetBufferSize({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 68)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetBufferSizeConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetBufferSizeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_buffer_size",
-        argNames: ["that"],
-      );
-
-  @override
-  RustBufferedRange crateApiPlayerRustPlayerGetBufferedRange(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_buffered_range,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetBufferedRangeConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetBufferedRangeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_buffered_range",
-        argNames: ["that"],
-      );
-
-  @override
-  int crateApiPlayerRustPlayerGetChannels({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 70)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetChannelsConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetChannelsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_channels",
-        argNames: ["that"],
-      );
-
-  @override
-  RustAudioDevice crateApiPlayerRustPlayerGetCurrentDevice(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 71)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_audio_device,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetCurrentDeviceConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetCurrentDeviceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_current_device",
-        argNames: ["that"],
-      );
-
-  @override
-  PlatformInt64 crateApiPlayerRustPlayerGetDurationMs(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 72)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_i_64,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetDurationMsConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetDurationMsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_duration_ms",
-        argNames: ["that"],
-      );
-
-  @override
-  RustEqualizerParams crateApiPlayerRustPlayerGetEqualizer(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 73)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_equalizer_params,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetEqualizerConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetEqualizerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_equalizer",
-        argNames: ["that"],
-      );
-
-  @override
-  Uint8List? crateApiPlayerRustPlayerGetMetaBytes({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 74)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetMetaBytesConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetMetaBytesConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_meta_bytes",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiPlayerRustPlayerGetPauseOnDeviceChange(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 75)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetPauseOnDeviceChangeConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetPauseOnDeviceChangeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_pause_on_device_change",
-        argNames: ["that"],
-      );
-
-  @override
-  PlatformInt64 crateApiPlayerRustPlayerGetPinnedHeadSize(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 76)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_i_64,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetPinnedHeadSizeConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetPinnedHeadSizeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_pinned_head_size",
-        argNames: ["that"],
-      );
-
-  @override
-  RustPlayerStatus crateApiPlayerRustPlayerGetPlayerStatus(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 77)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_player_status,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetPlayerStatusConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetPlayerStatusConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_player_status",
-        argNames: ["that"],
-      );
-
-  @override
-  int crateApiPlayerRustPlayerGetSampleRate({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 78)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetSampleRateConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetSampleRateConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_sample_rate",
-        argNames: ["that"],
-      );
-
-  @override
-  RustSilenceConfig crateApiPlayerRustPlayerGetSilenceConfig(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 79)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_silence_config,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetSilenceConfigConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetSilenceConfigConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_silence_config",
-        argNames: ["that"],
-      );
-
-  @override
-  PlatformInt64 crateApiPlayerRustPlayerGetSilenceSavedMs(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 80)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_i_64,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetSilenceSavedMsConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetSilenceSavedMsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_silence_saved_ms",
-        argNames: ["that"],
-      );
-
-  @override
-  RustVisualizerData crateApiPlayerRustPlayerGetVisualizerData(
-      {required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 81)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_visualizer_data,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerGetVisualizerDataConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerGetVisualizerDataConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_get_visualizer_data",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiPlayerRustPlayerIsCompleted({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 82)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerIsCompletedConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerIsCompletedConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_is_completed",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiPlayerRustPlayerIsLiveStream({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 83)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerIsLiveStreamConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerIsLiveStreamConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_is_live_stream",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiPlayerRustPlayerIsPlaying({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 84)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerIsPlayingConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerIsPlayingConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_is_playing",
-        argNames: ["that"],
-      );
-
-  @override
-  bool crateApiPlayerRustPlayerIsVisualizerEnabled({required RustPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 85)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerIsVisualizerEnabledConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerIsVisualizerEnabledConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_is_visualizer_enabled",
-        argNames: ["that"],
-      );
-
-  @override
-  RustPlayer crateApiPlayerRustPlayerNew(
-      {required int sampleRate,
-      required int channels,
-      required int periodSize,
-      String? playbackDeviceId}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_u_32(sampleRate, serializer);
-        sse_encode_u_32(channels, serializer);
-        sse_encode_u_32(periodSize, serializer);
-        sse_encode_opt_String(playbackDeviceId, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 86)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerNewConstMeta,
-      argValues: [sampleRate, channels, periodSize, playbackDeviceId],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerNewConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_new",
-        argNames: ["sampleRate", "channels", "periodSize", "playbackDeviceId"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerNotifyCustomError(
-      {required RustPlayer that,
-      required int streamId,
-      required BigInt requestId,
-      required String errorMessage}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_u_32(streamId, serializer);
-        sse_encode_u_64(requestId, serializer);
-        sse_encode_String(errorMessage, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 87)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerNotifyCustomErrorConstMeta,
-      argValues: [that, streamId, requestId, errorMessage],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerNotifyCustomErrorConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_notify_custom_error",
-        argNames: ["that", "streamId", "requestId", "errorMessage"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerOpenAudioSource(
-      {required RustPlayer that, required RustAudioSource source}) {
+  Future<RustRecordingResult> crateApiPlayerRustMiniaudioPlayerStopRecording(
+      {required RustMiniaudioPlayer that}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_box_autoadd_rust_audio_source(source, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 88, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerOpenAudioSourceConstMeta,
-      argValues: [that, source],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerOpenAudioSourceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_open_audio_source",
-        argNames: ["that", "source"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerOpenCustomStream(
-      {required RustPlayer that,
-      required int streamId,
-      BigInt? totalSize,
-      required bool isSeekable,
-      required List<int> initialBytes}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_u_32(streamId, serializer);
-        sse_encode_opt_box_autoadd_u_64(totalSize, serializer);
-        sse_encode_bool(isSeekable, serializer);
-        sse_encode_list_prim_u_8_loose(initialBytes, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 89, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerOpenCustomStreamConstMeta,
-      argValues: [that, streamId, totalSize, isSeekable, initialBytes],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerOpenCustomStreamConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_open_custom_stream",
-        argNames: [
-          "that",
-          "streamId",
-          "totalSize",
-          "isSeekable",
-          "initialBytes"
-        ],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerOpenMemory(
-      {required RustPlayer that, required List<int> data}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_list_prim_u_8_loose(data, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 90, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerOpenMemoryConstMeta,
-      argValues: [that, data],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerOpenMemoryConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_open_memory",
-        argNames: ["that", "data"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerOpenSource(
-      {required RustPlayer that,
-      required String source,
-      List<RustHttpHeader>? headers}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_String(source, serializer);
-        sse_encode_opt_list_rust_http_header(headers, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 91, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerOpenSourceConstMeta,
-      argValues: [that, source, headers],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerOpenSourceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_open_source",
-        argNames: ["that", "source", "headers"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerPause({required RustPlayer that}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 92, port: port_);
+            funcId: 65, port: port_);
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
+        decodeSuccessData: sse_decode_rust_recording_result,
         decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiPlayerRustPlayerPauseConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerStopRecordingConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiPlayerRustPlayerPauseConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerStopRecordingConstMeta =>
       const TaskConstMeta(
-        debugName: "RustPlayer_pause",
+        debugName: "RustMiniaudioPlayer_stop_recording",
         argNames: ["that"],
       );
 
   @override
-  Future<void> crateApiPlayerRustPlayerPlay({required RustPlayer that}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 93, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerPlayConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerPlayConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_play",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerSeek(
-      {required RustPlayer that, required PlatformInt64 positionMs}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_i_64(positionMs, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 94, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSeekConstMeta,
-      argValues: [that, positionMs],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSeekConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_seek",
-        argNames: ["that", "positionMs"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetBalance(
-      {required RustPlayer that, required double pan}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(pan, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 95)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetBalanceConstMeta,
-      argValues: [that, pan],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetBalanceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_balance",
-        argNames: ["that", "pan"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetBufferSize(
-      {required RustPlayer that, required int frames}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_u_32(frames, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 96)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetBufferSizeConstMeta,
-      argValues: [that, frames],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetBufferSizeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_buffer_size",
-        argNames: ["that", "frames"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetCrossfeed(
-      {required RustPlayer that, required int mode}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_i_32(mode, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 97)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetCrossfeedConstMeta,
-      argValues: [that, mode],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetCrossfeedConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_crossfeed",
-        argNames: ["that", "mode"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerSetDevice(
-      {required RustPlayer that, required String deviceId}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_String(deviceId, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 98, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetDeviceConstMeta,
-      argValues: [that, deviceId],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetDeviceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_device",
-        argNames: ["that", "deviceId"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetEqualizer(
-      {required RustPlayer that, required RustEqualizerParams params}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_box_autoadd_rust_equalizer_params(params, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 99)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetEqualizerConstMeta,
-      argValues: [that, params],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetEqualizerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_equalizer",
-        argNames: ["that", "params"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetEqualizerBand(
-      {required RustPlayer that, required int band, required double gainDb}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_u_32(band, serializer);
-        sse_encode_f_32(gainDb, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 100)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetEqualizerBandConstMeta,
-      argValues: [that, band, gainDb],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetEqualizerBandConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_equalizer_band",
-        argNames: ["that", "band", "gainDb"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetLimiter(
-      {required RustPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 101)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetLimiterConstMeta,
-      argValues: [that, enabled],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetLimiterConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_limiter",
-        argNames: ["that", "enabled"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetMono(
-      {required RustPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 102)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetMonoConstMeta,
-      argValues: [that, enabled],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetMonoConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_mono",
-        argNames: ["that", "enabled"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetPauseOnDeviceChange(
-      {required RustPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 103)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetPauseOnDeviceChangeConstMeta,
-      argValues: [that, enabled],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetPauseOnDeviceChangeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_pause_on_device_change",
-        argNames: ["that", "enabled"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetPitch(
-      {required RustPlayer that, required double pitch}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(pitch, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 104)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetPitchConstMeta,
-      argValues: [that, pitch],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetPitchConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_pitch",
-        argNames: ["that", "pitch"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetPreamp(
-      {required RustPlayer that, required double preampDb}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(preampDb, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 105)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetPreampConstMeta,
-      argValues: [that, preampDb],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetPreampConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_preamp",
-        argNames: ["that", "preampDb"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetRate(
-      {required RustPlayer that, required double rate}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(rate, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 106)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetRateConstMeta,
-      argValues: [that, rate],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetRateConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_rate",
-        argNames: ["that", "rate"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetReplayGain(
-      {required RustPlayer that,
-      required double gainDb,
-      required double peak,
-      required bool preventClipping}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(gainDb, serializer);
-        sse_encode_f_32(peak, serializer);
-        sse_encode_bool(preventClipping, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 107)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetReplayGainConstMeta,
-      argValues: [that, gainDb, peak, preventClipping],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetReplayGainConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_replay_gain",
-        argNames: ["that", "gainDb", "peak", "preventClipping"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetReverb(
-      {required RustPlayer that, required RustReverbParams params}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_box_autoadd_rust_reverb_params(params, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 108)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetReverbConstMeta,
-      argValues: [that, params],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetReverbConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_reverb",
-        argNames: ["that", "params"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSilenceConfig(
-      {required RustPlayer that, required RustSilenceConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_box_autoadd_rust_silence_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 109)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSilenceConfigConstMeta,
-      argValues: [that, config],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSilenceConfigConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_silence_config",
-        argNames: ["that", "config"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSpatialDopplerFactor(
-      {required RustPlayer that, required double factor}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(factor, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 110)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSpatialDopplerFactorConstMeta,
-      argValues: [that, factor],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSpatialDopplerFactorConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_spatial_doppler_factor",
-        argNames: ["that", "factor"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSpatialEmitter(
-      {required RustPlayer that, required RustSpatialEmitter emitter}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_box_autoadd_rust_spatial_emitter(emitter, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 111)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSpatialEmitterConstMeta,
-      argValues: [that, emitter],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSpatialEmitterConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_spatial_emitter",
-        argNames: ["that", "emitter"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSpatialEnabled(
-      {required RustPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 112)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSpatialEnabledConstMeta,
-      argValues: [that, enabled],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSpatialEnabledConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_spatial_enabled",
-        argNames: ["that", "enabled"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSpatialListener(
-      {required RustPlayer that, required RustSpatialListener listener}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_box_autoadd_rust_spatial_listener(listener, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 113)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSpatialListenerConstMeta,
-      argValues: [that, listener],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSpatialListenerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_spatial_listener",
-        argNames: ["that", "listener"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSpatialSpeedOfSound(
-      {required RustPlayer that, required double speed}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(speed, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 114)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSpatialSpeedOfSoundConstMeta,
-      argValues: [that, speed],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSpatialSpeedOfSoundConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_spatial_speed_of_sound",
-        argNames: ["that", "speed"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetSpatializer(
-      {required RustPlayer that,
-      required bool enabled,
-      required double width}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
-        sse_encode_f_32(width, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 115)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetSpatializerConstMeta,
-      argValues: [that, enabled, width],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetSpatializerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_spatializer",
-        argNames: ["that", "enabled", "width"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetVisualizerEnabled(
-      {required RustPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 116)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetVisualizerEnabledConstMeta,
-      argValues: [that, enabled],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetVisualizerEnabledConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_visualizer_enabled",
-        argNames: ["that", "enabled"],
-      );
-
-  @override
-  void crateApiPlayerRustPlayerSetVolume(
-      {required RustPlayer that, required double volume}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        sse_encode_f_32(volume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 117)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSetVolumeConstMeta,
-      argValues: [that, volume],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSetVolumeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_set_volume",
-        argNames: ["that", "volume"],
-      );
-
-  @override
-  Future<void> crateApiPlayerRustPlayerStop({required RustPlayer that}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-            that, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 118, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerStopConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerStopConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_stop",
-        argNames: ["that"],
-      );
-
-  @override
-  Stream<RustPlayerEvent> crateApiPlayerRustPlayerSubscribeEvents(
-      {required RustPlayer that}) {
+  Stream<RustPlayerEvent> crateApiPlayerRustMiniaudioPlayerSubscribeEvents(
+      {required RustMiniaudioPlayer that}) {
     final sink = RustStreamSink<RustPlayerEvent>();
     unawaited(handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_StreamSink_rust_player_event_Sse(sink, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 119, port: port_);
+            funcId: 66, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_String,
       ),
-      constMeta: kCrateApiPlayerRustPlayerSubscribeEventsConstMeta,
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerSubscribeEventsConstMeta,
       argValues: [that, sink],
       apiImpl: this,
     )));
     return sink.stream;
   }
 
-  TaskConstMeta get kCrateApiPlayerRustPlayerSubscribeEventsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_subscribe_events",
-        argNames: ["that", "sink"],
-      );
+  TaskConstMeta
+      get kCrateApiPlayerRustMiniaudioPlayerSubscribeEventsConstMeta =>
+          const TaskConstMeta(
+            debugName: "RustMiniaudioPlayer_subscribe_events",
+            argNames: ["that", "sink"],
+          );
 
   @override
-  void crateApiPlayerRustPlayerSupplyCustomBytes(
-      {required RustPlayer that,
-      required int streamId,
-      required BigInt requestId,
-      required List<int> data,
-      required bool isEof}) {
+  bool crateApiPlayerRustMiniaudioPlayerUnloadEffect(
+      {required RustMiniaudioPlayer that, required String id}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_u_32(streamId, serializer);
-        sse_encode_u_64(requestId, serializer);
-        sse_encode_list_prim_u_8_loose(data, serializer);
-        sse_encode_bool(isEof, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 120)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiPlayerRustPlayerSupplyCustomBytesConstMeta,
-      argValues: [that, streamId, requestId, data, isEof],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerRustPlayerSupplyCustomBytesConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustPlayer_supply_custom_bytes",
-        argNames: ["that", "streamId", "requestId", "data", "isEof"],
-      );
-
-  @override
-  int crateApiGameRustVoicePoolActiveVoicesCount(
-      {required RustVoicePool that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 121)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolActiveVoicesCountConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolActiveVoicesCountConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_active_voices_count",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<RustSoundBufferInfo> crateApiGameRustVoicePoolLoadSound(
-      {required RustVoicePool that, required List<int> bytes}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_list_prim_u_8_loose(bytes, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 122, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_sound_buffer_info,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolLoadSoundConstMeta,
-      argValues: [that, bytes],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolLoadSoundConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_load_sound",
-        argNames: ["that", "bytes"],
-      );
-
-  @override
-  Future<RustSoundBufferInfo> crateApiGameRustVoicePoolLoadSoundFile(
-      {required RustVoicePool that, required String path}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_String(path, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 123, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_rust_sound_buffer_info,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolLoadSoundFileConstMeta,
-      argValues: [that, path],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolLoadSoundFileConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_load_sound_file",
-        argNames: ["that", "path"],
-      );
-
-  @override
-  RustVoicePool crateApiGameRustVoicePoolNew(
-      {required int sampleRate,
-      required int channels,
-      required int periodSize,
-      String? playbackDeviceId,
-      required BigInt maxVoices}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_u_32(sampleRate, serializer);
-        sse_encode_u_32(channels, serializer);
-        sse_encode_u_32(periodSize, serializer);
-        sse_encode_opt_String(playbackDeviceId, serializer);
-        sse_encode_usize(maxVoices, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 124)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolNewConstMeta,
-      argValues: [
-        sampleRate,
-        channels,
-        periodSize,
-        playbackDeviceId,
-        maxVoices
-      ],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolNewConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_new",
-        argNames: [
-          "sampleRate",
-          "channels",
-          "periodSize",
-          "playbackDeviceId",
-          "maxVoices"
-        ],
-      );
-
-  @override
-  int crateApiGameRustVoicePoolPlayOneShot(
-      {required RustVoicePool that,
-      required BigInt bufferId,
-      required double volume,
-      required double pitch,
-      required double pitchJitter,
-      required double volumeJitter,
-      required int priority,
-      RustSpatialEmitter? emitter}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_64(bufferId, serializer);
-        sse_encode_f_32(volume, serializer);
-        sse_encode_f_32(pitch, serializer);
-        sse_encode_f_32(pitchJitter, serializer);
-        sse_encode_f_32(volumeJitter, serializer);
-        sse_encode_u_8(priority, serializer);
-        sse_encode_opt_box_autoadd_rust_spatial_emitter(emitter, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 125)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolPlayOneShotConstMeta,
-      argValues: [
-        that,
-        bufferId,
-        volume,
-        pitch,
-        pitchJitter,
-        volumeJitter,
-        priority,
-        emitter
-      ],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolPlayOneShotConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_play_one_shot",
-        argNames: [
-          "that",
-          "bufferId",
-          "volume",
-          "pitch",
-          "pitchJitter",
-          "volumeJitter",
-          "priority",
-          "emitter"
-        ],
-      );
-
-  @override
-  int crateApiGameRustVoicePoolPlaySound(
-      {required RustVoicePool that,
-      required BigInt bufferId,
-      required double volume,
-      required double pitch,
-      required int priority,
-      required bool looping,
-      RustSpatialEmitter? emitter}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_64(bufferId, serializer);
-        sse_encode_f_32(volume, serializer);
-        sse_encode_f_32(pitch, serializer);
-        sse_encode_u_8(priority, serializer);
-        sse_encode_bool(looping, serializer);
-        sse_encode_opt_box_autoadd_rust_spatial_emitter(emitter, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 126)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_u_32,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolPlaySoundConstMeta,
-      argValues: [that, bufferId, volume, pitch, priority, looping, emitter],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolPlaySoundConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_play_sound",
-        argNames: [
-          "that",
-          "bufferId",
-          "volume",
-          "pitch",
-          "priority",
-          "looping",
-          "emitter"
-        ],
-      );
-
-  @override
-  Uint32List crateApiGameRustVoicePoolPlayStems(
-      {required RustVoicePool that,
-      required Uint64List bufferIds,
-      required List<double> volumes,
-      required bool looping}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_list_prim_u_64_strict(bufferIds, serializer);
-        sse_encode_list_prim_f_32_loose(volumes, serializer);
-        sse_encode_bool(looping, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 127)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_list_prim_u_32_strict,
-        decodeErrorData: sse_decode_String,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolPlayStemsConstMeta,
-      argValues: [that, bufferIds, volumes, looping],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolPlayStemsConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_play_stems",
-        argNames: ["that", "bufferIds", "volumes", "looping"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetListener(
-      {required RustVoicePool that, required RustSpatialListener listener}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_box_autoadd_rust_spatial_listener(listener, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 128)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetListenerConstMeta,
-      argValues: [that, listener],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetListenerConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_listener",
-        argNames: ["that", "listener"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetMasterVolume(
-      {required RustVoicePool that, required double volume}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_f_32(volume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 129)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetMasterVolumeConstMeta,
-      argValues: [that, volume],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetMasterVolumeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_master_volume",
-        argNames: ["that", "volume"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetPolicy(
-      {required RustVoicePool that, required RustVoiceStealingPolicy policy}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_rust_voice_stealing_policy(policy, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 130)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetPolicyConstMeta,
-      argValues: [that, policy],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetPolicyConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_policy",
-        argNames: ["that", "policy"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetTimeScale(
-      {required RustVoicePool that, required double scale}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_f_32(scale, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 131)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetTimeScaleConstMeta,
-      argValues: [that, scale],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetTimeScaleConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_time_scale",
-        argNames: ["that", "scale"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetVoiceEmitter(
-      {required RustVoicePool that,
-      required int voiceId,
-      RustSpatialEmitter? emitter}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_32(voiceId, serializer);
-        sse_encode_opt_box_autoadd_rust_spatial_emitter(emitter, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 132)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetVoiceEmitterConstMeta,
-      argValues: [that, voiceId, emitter],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetVoiceEmitterConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_voice_emitter",
-        argNames: ["that", "voiceId", "emitter"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetVoicePitch(
-      {required RustVoicePool that,
-      required int voiceId,
-      required double pitch}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_32(voiceId, serializer);
-        sse_encode_f_32(pitch, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 133)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetVoicePitchConstMeta,
-      argValues: [that, voiceId, pitch],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetVoicePitchConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_voice_pitch",
-        argNames: ["that", "voiceId", "pitch"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolSetVoiceVolume(
-      {required RustVoicePool that,
-      required int voiceId,
-      required double volume}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_32(voiceId, serializer);
-        sse_encode_f_32(volume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 134)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolSetVoiceVolumeConstMeta,
-      argValues: [that, voiceId, volume],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolSetVoiceVolumeConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_set_voice_volume",
-        argNames: ["that", "voiceId", "volume"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolStopAll({required RustVoicePool that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 135)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolStopAllConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolStopAllConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_stop_all",
-        argNames: ["that"],
-      );
-
-  @override
-  void crateApiGameRustVoicePoolStopVoice(
-      {required RustVoicePool that, required int voiceId}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_32(voiceId, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 136)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiGameRustVoicePoolStopVoiceConstMeta,
-      argValues: [that, voiceId],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiGameRustVoicePoolStopVoiceConstMeta =>
-      const TaskConstMeta(
-        debugName: "RustVoicePool_stop_voice",
-        argNames: ["that", "voiceId"],
-      );
-
-  @override
-  bool crateApiGameRustVoicePoolUnloadSound(
-      {required RustVoicePool that, required BigInt bufferId}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-            that, serializer);
-        sse_encode_u_64(bufferId, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 137)!;
+        sse_encode_String(id, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiGameRustVoicePoolUnloadSoundConstMeta,
-      argValues: [that, bufferId],
+      constMeta: kCrateApiPlayerRustMiniaudioPlayerUnloadEffectConstMeta,
+      argValues: [that, id],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiGameRustVoicePoolUnloadSoundConstMeta =>
+  TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerUnloadEffectConstMeta =>
       const TaskConstMeta(
-        debugName: "RustVoicePool_unload_sound",
-        argNames: ["that", "bufferId"],
+        debugName: "RustMiniaudioPlayer_unload_effect",
+        argNames: ["that", "id"],
       );
 
   @override
@@ -4473,7 +2355,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       {required String path,
       required bool replayGain,
       required bool waveform,
-      required int waveformPoints,
+      required BigInt waveformPoints,
       required double targetLufs}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -4481,10 +2363,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(path, serializer);
         sse_encode_bool(replayGain, serializer);
         sse_encode_bool(waveform, serializer);
-        sse_encode_u_32(waveformPoints, serializer);
-        sse_encode_f_32(targetLufs, serializer);
+        sse_encode_usize(waveformPoints, serializer);
+        sse_encode_f_64(targetLufs, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 138, port: port_);
+            funcId: 68, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_audio_analysis_result,
@@ -4513,7 +2395,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       {required String path,
       required bool replayGain,
       required bool waveform,
-      required int waveformPoints,
+      required BigInt waveformPoints,
       required double targetLufs}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
@@ -4521,9 +2403,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(path, serializer);
         sse_encode_bool(replayGain, serializer);
         sse_encode_bool(waveform, serializer);
-        sse_encode_u_32(waveformPoints, serializer);
-        sse_encode_f_32(targetLufs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 139)!;
+        sse_encode_usize(waveformPoints, serializer);
+        sse_encode_f_64(targetLufs, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_audio_analysis_result,
@@ -4553,7 +2435,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       String? hintExtension,
       required bool replayGain,
       required bool waveform,
-      required int waveformPoints,
+      required BigInt waveformPoints,
       required double targetLufs}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -4562,10 +2444,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_String(hintExtension, serializer);
         sse_encode_bool(replayGain, serializer);
         sse_encode_bool(waveform, serializer);
-        sse_encode_u_32(waveformPoints, serializer);
-        sse_encode_f_32(targetLufs, serializer);
+        sse_encode_usize(waveformPoints, serializer);
+        sse_encode_f_64(targetLufs, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 140, port: port_);
+            funcId: 70, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_audio_analysis_result,
@@ -4598,131 +2480,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<List<RustAudioDevice>> crateApiPlayerGetAudioDevices() {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 141, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_list_rust_audio_device,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerGetAudioDevicesConstMeta,
-      argValues: [],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerGetAudioDevicesConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_audio_devices",
-        argNames: [],
-      );
-
-  @override
-  List<RustAudioDevice> crateApiPlayerGetAudioDevicesSync() {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 142)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_list_rust_audio_device,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerGetAudioDevicesSyncConstMeta,
-      argValues: [],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerGetAudioDevicesSyncConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_audio_devices_sync",
-        argNames: [],
-      );
-
-  @override
-  Future<List<RustAudioDevice>> crateApiPlayerGetCaptureDevices() {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 143, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_list_rust_audio_device,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerGetCaptureDevicesConstMeta,
-      argValues: [],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerGetCaptureDevicesConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_capture_devices",
-        argNames: [],
-      );
-
-  @override
-  List<RustAudioDevice> crateApiPlayerGetCaptureDevicesSync() {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 144)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_list_rust_audio_device,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerGetCaptureDevicesSyncConstMeta,
-      argValues: [],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerGetCaptureDevicesSyncConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_capture_devices_sync",
-        argNames: [],
-      );
-
-  @override
-  Future<void> crateApiPlayerInitPlayerSystem() {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 145, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiPlayerInitPlayerSystemConstMeta,
-      argValues: [],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiPlayerInitPlayerSystemConstMeta =>
-      const TaskConstMeta(
-        debugName: "init_player_system",
-        argNames: [],
-      );
-
-  @override
   Future<RustAudioAnalysisResult>
       crateApiTypesRustAudioAnalysisResultDefault() {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 146, port: port_);
+            funcId: 71, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_audio_analysis_result,
@@ -4746,7 +2510,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 147, port: port_);
+            funcId: 72, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_audio_device,
@@ -4770,7 +2534,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 148, port: port_);
+            funcId: 73, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_audio_source,
@@ -4794,7 +2558,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 149, port: port_);
+            funcId: 74, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_buffered_range,
@@ -4818,7 +2582,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 150, port: port_);
+            funcId: 75, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_crossfade_config,
@@ -4842,7 +2606,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 151, port: port_);
+            funcId: 76, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_cue_config,
@@ -4866,7 +2630,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 152, port: port_);
+            funcId: 77, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_distance_model,
@@ -4890,7 +2654,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 153, port: port_);
+            funcId: 78, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_ducking_config,
@@ -4909,12 +2673,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<RustEffectConfig> crateApiTypesRustEffectConfigDefault() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 79, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_rust_effect_config,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiTypesRustEffectConfigDefaultConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiTypesRustEffectConfigDefaultConstMeta =>
+      const TaskConstMeta(
+        debugName: "rust_effect_config_default",
+        argNames: [],
+      );
+
+  @override
   Future<RustEqualizerParams> crateApiTypesRustEqualizerParamsDefault() {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 154, port: port_);
+            funcId: 80, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_equalizer_params,
@@ -4938,7 +2726,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 155, port: port_);
+            funcId: 81, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_http_header,
@@ -4957,12 +2745,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<RustPlayerConfig> crateApiTypesRustPlayerConfigDefault() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 82, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_rust_player_config,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiTypesRustPlayerConfigDefaultConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiTypesRustPlayerConfigDefaultConstMeta =>
+      const TaskConstMeta(
+        debugName: "rust_player_config_default",
+        argNames: [],
+      );
+
+  @override
   Future<RustPlayerStatus> crateApiTypesRustPlayerStatusDefault() {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 156, port: port_);
+            funcId: 83, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_player_status,
@@ -4986,7 +2798,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 157, port: port_);
+            funcId: 84, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_replay_gain_config,
@@ -5010,7 +2822,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 158, port: port_);
+            funcId: 85, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_reverb_params,
@@ -5034,7 +2846,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 159, port: port_);
+            funcId: 86, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_silence_config,
@@ -5058,7 +2870,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 160, port: port_);
+            funcId: 87, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_sound_buffer_info,
@@ -5082,7 +2894,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 161, port: port_);
+            funcId: 88, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_spatial_emitter,
@@ -5106,7 +2918,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 162, port: port_);
+            funcId: 89, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_spatial_listener,
@@ -5130,7 +2942,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 163, port: port_);
+            funcId: 90, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_vector_3,
@@ -5154,7 +2966,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 164, port: port_);
+            funcId: 91, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_visualizer_data,
@@ -5179,7 +2991,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 165, port: port_);
+            funcId: 92, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_voice_stealing_policy,
@@ -5203,7 +3015,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 166, port: port_);
+            funcId: 93, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_rust_wav_format,
@@ -5227,7 +3039,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_i_32(level, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 167)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 94)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -5244,29 +3056,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["level"],
       );
 
+  @override
+  Future<TelemetryFilter> crateApiPlayerTelemetryFilterDefault() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 95, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_telemetry_filter,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiPlayerTelemetryFilterDefaultConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerTelemetryFilterDefaultConstMeta =>
+      const TaskConstMeta(
+        debugName: "telemetry_filter_default",
+        argNames: [],
+      );
+
   RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_RustEngine => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine;
+      get rust_arc_increment_strong_count_EventReporter => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter;
 
   RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_RustEngine => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine;
+      get rust_arc_decrement_strong_count_EventReporter => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter;
 
   RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_RustPlayer => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer;
+      get rust_arc_increment_strong_count_RustMiniaudioPlayer => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer;
 
   RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_RustPlayer => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_RustVoicePool => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_RustVoicePool => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool;
+      get rust_arc_decrement_strong_count_RustMiniaudioPlayer => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer;
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
@@ -5275,82 +3103,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustEngine
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  EventReporter
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustEngineImpl.frbInternalDcoDecode(raw as List<dynamic>);
+    return EventReporterImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  RustPlayer
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  RustMiniaudioPlayer
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustPlayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+    return RustMiniaudioPlayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  RustVoicePool
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  EventReporter
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustVoicePoolImpl.frbInternalDcoDecode(raw as List<dynamic>);
+    return EventReporterImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  RustEngine
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  RustMiniaudioPlayer
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustEngineImpl.frbInternalDcoDecode(raw as List<dynamic>);
+    return RustMiniaudioPlayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  RustPlayer
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  EventReporter
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustPlayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+    return EventReporterImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
-  RustVoicePool
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  RustMiniaudioPlayer
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustVoicePoolImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  RustEngine
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustEngineImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  RustPlayer
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustPlayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  RustVoicePool
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return RustVoicePoolImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  RustStreamSink<RustEngineEvent> dco_decode_StreamSink_rust_engine_event_Sse(
-      dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    throw UnimplementedError();
+    return RustMiniaudioPlayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -5368,6 +3165,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
   }
@@ -5391,9 +3194,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (int, int, bool) dco_decode_box_autoadd_record_u_32_u_32_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_record_u_32_u_32_bool(raw);
+  }
+
+  @protected
   RustAudioDevice dco_decode_box_autoadd_rust_audio_device(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_rust_audio_device(raw);
+  }
+
+  @protected
+  RustAudioOutput dco_decode_box_autoadd_rust_audio_output(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_rust_audio_output(raw);
   }
 
   @protected
@@ -5423,10 +3238,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustDuckingConfig dco_decode_box_autoadd_rust_ducking_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_rust_ducking_config(raw);
+  }
+
+  @protected
+  RustEffectConfig dco_decode_box_autoadd_rust_effect_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_rust_effect_config(raw);
+  }
+
+  @protected
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(
       dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_rust_equalizer_params(raw);
+  }
+
+  @protected
+  RustPlayerConfig dco_decode_box_autoadd_rust_player_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_rust_player_config(raw);
+  }
+
+  @protected
+  RustPlayerEvent dco_decode_box_autoadd_rust_player_event(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_rust_player_event(raw);
   }
 
   @protected
@@ -5474,19 +3313,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_u_64(raw);
   }
 
   @protected
-  BigInt dco_decode_box_autoadd_usize(dynamic raw) {
+  double dco_decode_f_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_usize(raw);
+    return raw as double;
   }
 
   @protected
-  double dco_decode_f_32(dynamic raw) {
+  double dco_decode_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
   }
@@ -5504,27 +3349,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<double> dco_decode_list_prim_f_32_loose(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as List<double>;
-  }
-
-  @protected
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Float32List;
-  }
-
-  @protected
-  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as Uint32List;
-  }
-
-  @protected
-  Uint64List dco_decode_list_prim_u_64_strict(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dcoDecodeUint64List(raw);
   }
 
   @protected
@@ -5546,6 +3373,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<RustAudioOutput> dco_decode_list_rust_audio_output(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_rust_audio_output).toList();
+  }
+
+  @protected
   List<RustAudioSource> dco_decode_list_rust_audio_source(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_rust_audio_source).toList();
@@ -5561,6 +3394,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_bool(raw);
   }
 
   @protected
@@ -5582,6 +3421,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (int, int, bool)? dco_decode_opt_box_autoadd_record_u_32_u_32_bool(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_record_u_32_u_32_bool(raw);
+  }
+
+  @protected
+  RustDuckingConfig? dco_decode_opt_box_autoadd_rust_ducking_config(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_rust_ducking_config(raw);
+  }
+
+  @protected
   RustSpatialEmitter? dco_decode_opt_box_autoadd_rust_spatial_emitter(
       dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -5597,15 +3452,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
+    return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
   }
 
   @protected
-  BigInt? dco_decode_opt_box_autoadd_usize(dynamic raw) {
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_usize(raw);
+    return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
   }
 
   @protected
@@ -5621,22 +3476,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (int, int, bool) dco_decode_record_u_32_u_32_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3) {
+      throw Exception('Expected 3 elements, got ${arr.length}');
+    }
+    return (
+      dco_decode_u_32(arr[0]),
+      dco_decode_u_32(arr[1]),
+      dco_decode_bool(arr[2]),
+    );
+  }
+
+  @protected
   RustAudioAnalysisResult dco_decode_rust_audio_analysis_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return RustAudioAnalysisResult(
       durationMs: dco_decode_i_64(arr[0]),
       sampleRate: dco_decode_u_32(arr[1]),
       channels: dco_decode_u_32(arr[2]),
-      peakAmplitude: dco_decode_f_32(arr[3]),
-      rmsAmplitude: dco_decode_f_32(arr[4]),
-      integratedLufs: dco_decode_f_32(arr[5]),
-      replayGainDb: dco_decode_f_32(arr[6]),
-      spectralCentroid: dco_decode_f_32(arr[7]),
-      frequencyBands: dco_decode_list_prim_f_32_strict(arr[8]),
-      waveformPeaks: dco_decode_list_prim_f_32_strict(arr[9]),
+      bitrate: dco_decode_u_32(arr[3]),
+      peakAmplitude: dco_decode_f_32(arr[4]),
+      rmsAmplitude: dco_decode_f_32(arr[5]),
+      hasReplayGain: dco_decode_bool(arr[6]),
+      integratedLufs: dco_decode_f_32(arr[7]),
+      replayGainDb: dco_decode_f_32(arr[8]),
+      hasWaveform: dco_decode_bool(arr[9]),
+      spectralCentroid: dco_decode_f_32(arr[10]),
+      frequencyBands: dco_decode_list_prim_f_32_strict(arr[11]),
+      waveformPeaks: dco_decode_list_prim_f_32_strict(arr[12]),
     );
   }
 
@@ -5653,6 +3525,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       isDefault: dco_decode_bool(arr[3]),
       isAuto: dco_decode_bool(arr[4]),
     );
+  }
+
+  @protected
+  RustAudioOutput dco_decode_rust_audio_output(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return RustAudioOutput_Speaker(
+          exclusiveMode: dco_decode_bool(raw[1]),
+        );
+      case 1:
+        return RustAudioOutput_Device(
+          deviceId: dco_decode_String(raw[1]),
+          exclusiveMode: dco_decode_bool(raw[2]),
+        );
+      case 2:
+        return RustAudioOutput_Cue(
+          deviceId: dco_decode_String(raw[1]),
+          source: dco_decode_i_32(raw[2]),
+        );
+      case 3:
+        return RustAudioOutput_File(
+          path: dco_decode_String(raw[1]),
+          format: dco_decode_i_32(raw[2]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
@@ -5675,16 +3575,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustBufferedRange dco_decode_rust_buffered_range(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return RustBufferedRange(
       startMs: dco_decode_i_64(arr[0]),
       endMs: dco_decode_i_64(arr[1]),
-      durationMs: dco_decode_i_64(arr[2]),
-      fillPercentage: dco_decode_f_32(arr[3]),
-      streamPercentage: dco_decode_f_32(arr[4]),
-      isBuffering: dco_decode_bool(arr[5]),
-      isEof: dco_decode_bool(arr[6]),
+      isBuffering: dco_decode_bool(arr[2]),
     );
   }
 
@@ -5695,7 +3591,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 3)
       throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return RustCrossfadeConfig(
-      durationMs: dco_decode_u_64(arr[0]),
+      autoDurationMs: dco_decode_u_64(arr[0]),
       manualDurationMs: dco_decode_u_64(arr[1]),
       curve: dco_decode_i_32(arr[2]),
     );
@@ -5752,147 +3648,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustEngineEvent dco_decode_rust_engine_event(dynamic raw) {
+  RustEffectConfig dco_decode_rust_effect_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    switch (raw[0]) {
-      case 0:
-        return RustEngineEvent_Phase(
-          dco_decode_i_32(raw[1]),
-        );
-      case 1:
-        return RustEngineEvent_State(
-          dco_decode_i_32(raw[1]),
-        );
-      case 2:
-        return RustEngineEvent_Position(
-          dco_decode_i_64(raw[1]),
-        );
-      case 3:
-        return RustEngineEvent_Duration(
-          dco_decode_i_64(raw[1]),
-        );
-      case 4:
-        return RustEngineEvent_IsPlaying(
-          dco_decode_bool(raw[1]),
-        );
-      case 5:
-        return RustEngineEvent_IsBuffering(
-          dco_decode_bool(raw[1]),
-        );
-      case 6:
-        return RustEngineEvent_IsCompleted(
-          dco_decode_bool(raw[1]),
-        );
-      case 7:
-        return RustEngineEvent_CurrentIndex(
-          dco_decode_i_32(raw[1]),
-        );
-      case 8:
-        return RustEngineEvent_QueueChanged(
-          dco_decode_list_rust_audio_source(raw[1]),
-        );
-      case 9:
-        return RustEngineEvent_NeedMoreTracks(
-          currentTrackId: dco_decode_i_64(raw[1]),
-          remainingTracks: dco_decode_usize(raw[2]),
-        );
-      case 10:
-        return RustEngineEvent_Volume(
-          dco_decode_f_32(raw[1]),
-        );
-      case 11:
-        return RustEngineEvent_Rate(
-          dco_decode_f_32(raw[1]),
-        );
-      case 12:
-        return RustEngineEvent_Pitch(
-          dco_decode_f_32(raw[1]),
-        );
-      case 13:
-        return RustEngineEvent_Bitrate(
-          dco_decode_u_32(raw[1]),
-        );
-      case 14:
-        return RustEngineEvent_BufferSize(
-          dco_decode_u_32(raw[1]),
-        );
-      case 15:
-        return RustEngineEvent_Device(
-          dco_decode_box_autoadd_rust_audio_device(raw[1]),
-        );
-      case 16:
-        return RustEngineEvent_Visualizer(
-          dco_decode_box_autoadd_rust_visualizer_data(raw[1]),
-        );
-      case 17:
-        return RustEngineEvent_VisualizerEnabled(
-          dco_decode_bool(raw[1]),
-        );
-      case 18:
-        return RustEngineEvent_BufferedRange(
-          dco_decode_box_autoadd_rust_buffered_range(raw[1]),
-        );
-      case 19:
-        return RustEngineEvent_Equalizer(
-          dco_decode_box_autoadd_rust_equalizer_params(raw[1]),
-        );
-      case 20:
-        return RustEngineEvent_Preamp(
-          dco_decode_f_32(raw[1]),
-        );
-      case 21:
-        return RustEngineEvent_ReplayGain(
-          dco_decode_box_autoadd_rust_replay_gain_config(raw[1]),
-        );
-      case 22:
-        return RustEngineEvent_Balance(
-          dco_decode_f_32(raw[1]),
-        );
-      case 23:
-        return RustEngineEvent_Mono(
-          dco_decode_bool(raw[1]),
-        );
-      case 24:
-        return RustEngineEvent_Crossfeed(
-          dco_decode_i_32(raw[1]),
-        );
-      case 25:
-        return RustEngineEvent_Spatializer(
-          enabled: dco_decode_bool(raw[1]),
-          width: dco_decode_f_32(raw[2]),
-        );
-      case 26:
-        return RustEngineEvent_Reverb(
-          dco_decode_box_autoadd_rust_reverb_params(raw[1]),
-        );
-      case 27:
-        return RustEngineEvent_Limiter(
-          dco_decode_bool(raw[1]),
-        );
-      case 28:
-        return RustEngineEvent_CrossfadeConfig(
-          dco_decode_box_autoadd_rust_crossfade_config(raw[1]),
-        );
-      case 29:
-        return RustEngineEvent_LoopMode(
-          dco_decode_i_32(raw[1]),
-        );
-      case 30:
-        return RustEngineEvent_Shuffle(
-          dco_decode_bool(raw[1]),
-        );
-      case 31:
-        return RustEngineEvent_MetaBytes(
-          dco_decode_list_prim_u_8_strict(raw[1]),
-        );
-      case 32:
-        return RustEngineEvent_Error(
-          message: dco_decode_String(raw[1]),
-          code: dco_decode_i_32(raw[2]),
-        );
-      default:
-        throw Exception("unreachable");
-    }
+    final arr = raw as List<dynamic>;
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    return RustEffectConfig(
+      volume: dco_decode_f_32(arr[0]),
+      balance: dco_decode_f_32(arr[1]),
+      pitch: dco_decode_f_32(arr[2]),
+      rate: dco_decode_f_32(arr[3]),
+      looping: dco_decode_bool(arr[4]),
+      priority: dco_decode_u_8(arr[5]),
+      pitchJitter: dco_decode_f_32(arr[6]),
+      volumeJitter: dco_decode_f_32(arr[7]),
+      spatial: dco_decode_opt_box_autoadd_rust_spatial_emitter(arr[8]),
+    );
   }
 
   @protected
@@ -5920,56 +3691,72 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustPlayerConfig dco_decode_rust_player_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return RustPlayerConfig(
+      bufferSizeFrames: dco_decode_u_32(arr[0]),
+      maxVoices: dco_decode_u_32(arr[1]),
+      maxRamBytes: dco_decode_usize(arr[2]),
+      pauseOnDeviceChange: dco_decode_bool(arr[3]),
+      bufferLocalDurationMs: dco_decode_u_64(arr[4]),
+      bufferNetworkDurationMs: dco_decode_u_64(arr[5]),
+    );
+  }
+
+  @protected
   RustPlayerEvent dco_decode_rust_player_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-        return RustPlayerEvent_State(
+        return RustPlayerEvent_PlaybackState(
           dco_decode_i_32(raw[1]),
         );
       case 1:
+        return RustPlayerEvent_State(
+          dco_decode_i_32(raw[1]),
+        );
+      case 2:
         return RustPlayerEvent_Position(
           dco_decode_i_64(raw[1]),
         );
-      case 2:
+      case 3:
         return RustPlayerEvent_Duration(
           dco_decode_i_64(raw[1]),
         );
-      case 3:
+      case 4:
         return RustPlayerEvent_IsPlaying(
           dco_decode_bool(raw[1]),
         );
-      case 4:
+      case 5:
         return RustPlayerEvent_IsBuffering(
           dco_decode_bool(raw[1]),
         );
-      case 5:
+      case 6:
         return RustPlayerEvent_IsCompleted(
           dco_decode_bool(raw[1]),
         );
-      case 6:
-        return RustPlayerEvent_Volume(
-          dco_decode_f_32(raw[1]),
-        );
       case 7:
-        return RustPlayerEvent_Rate(
-          dco_decode_f_32(raw[1]),
+        return RustPlayerEvent_BufferedRange(
+          dco_decode_box_autoadd_rust_buffered_range(raw[1]),
         );
       case 8:
-        return RustPlayerEvent_Pitch(
-          dco_decode_f_32(raw[1]),
+        return RustPlayerEvent_Queue(
+          dco_decode_list_rust_audio_source(raw[1]),
         );
       case 9:
-        return RustPlayerEvent_Bitrate(
-          dco_decode_u_32(raw[1]),
+        return RustPlayerEvent_CurrentIndex(
+          dco_decode_i_32(raw[1]),
         );
       case 10:
-        return RustPlayerEvent_BufferSize(
-          dco_decode_u_32(raw[1]),
+        return RustPlayerEvent_IsCrossfading(
+          dco_decode_bool(raw[1]),
         );
       case 11:
-        return RustPlayerEvent_Device(
-          dco_decode_box_autoadd_rust_audio_device(raw[1]),
+        return RustPlayerEvent_CrossfadeConfig(
+          dco_decode_box_autoadd_rust_crossfade_config(raw[1]),
         );
       case 12:
         return RustPlayerEvent_Visualizer(
@@ -5980,59 +3767,143 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dco_decode_bool(raw[1]),
         );
       case 14:
-        return RustPlayerEvent_BufferedRange(
-          dco_decode_box_autoadd_rust_buffered_range(raw[1]),
-        );
-      case 15:
-        return RustPlayerEvent_SilenceConfig(
-          dco_decode_box_autoadd_rust_silence_config(raw[1]),
-        );
-      case 16:
-        return RustPlayerEvent_SilenceSaved(
-          dco_decode_i_64(raw[1]),
-        );
-      case 17:
-        return RustPlayerEvent_Equalizer(
-          dco_decode_box_autoadd_rust_equalizer_params(raw[1]),
-        );
-      case 18:
-        return RustPlayerEvent_Preamp(
+        return RustPlayerEvent_Volume(
           dco_decode_f_32(raw[1]),
         );
-      case 19:
-        return RustPlayerEvent_ReplayGain(
-          dco_decode_box_autoadd_rust_replay_gain_config(raw[1]),
+      case 15:
+        return RustPlayerEvent_Rate(
+          dco_decode_f_32(raw[1]),
         );
-      case 20:
+      case 16:
+        return RustPlayerEvent_Pitch(
+          dco_decode_f_32(raw[1]),
+        );
+      case 17:
         return RustPlayerEvent_Balance(
           dco_decode_f_32(raw[1]),
         );
-      case 21:
+      case 18:
         return RustPlayerEvent_Mono(
           dco_decode_bool(raw[1]),
         );
+      case 19:
+        return RustPlayerEvent_Bitrate(
+          dco_decode_u_32(raw[1]),
+        );
+      case 20:
+        return RustPlayerEvent_BufferSize(
+          dco_decode_u_32(raw[1]),
+        );
+      case 21:
+        return RustPlayerEvent_SilenceConfig(
+          dco_decode_box_autoadd_rust_silence_config(raw[1]),
+        );
       case 22:
+        return RustPlayerEvent_SilenceSaved(
+          dco_decode_i_64(raw[1]),
+        );
+      case 23:
+        return RustPlayerEvent_Equalizer(
+          dco_decode_box_autoadd_rust_equalizer_params(raw[1]),
+        );
+      case 24:
+        return RustPlayerEvent_Preamp(
+          dco_decode_f_32(raw[1]),
+        );
+      case 25:
+        return RustPlayerEvent_ReplayGain(
+          dco_decode_box_autoadd_rust_replay_gain_config(raw[1]),
+        );
+      case 26:
         return RustPlayerEvent_Crossfeed(
           dco_decode_i_32(raw[1]),
         );
-      case 23:
+      case 27:
         return RustPlayerEvent_Spatializer(
           enabled: dco_decode_bool(raw[1]),
           width: dco_decode_f_32(raw[2]),
         );
-      case 24:
+      case 28:
         return RustPlayerEvent_Reverb(
           dco_decode_box_autoadd_rust_reverb_params(raw[1]),
         );
-      case 25:
+      case 29:
         return RustPlayerEvent_Limiter(
           dco_decode_bool(raw[1]),
         );
-      case 26:
+      case 30:
+        return RustPlayerEvent_IsRecording(
+          dco_decode_bool(raw[1]),
+        );
+      case 31:
+        return RustPlayerEvent_RecordedDuration(
+          dco_decode_u_64(raw[1]),
+        );
+      case 32:
+        return RustPlayerEvent_IsDuckingActive(
+          dco_decode_bool(raw[1]),
+        );
+      case 33:
+        return RustPlayerEvent_MicRmsLevel(
+          dco_decode_f_32(raw[1]),
+        );
+      case 34:
+        return RustPlayerEvent_VoiceCompleted(
+          dco_decode_u_32(raw[1]),
+        );
+      case 35:
+        return RustPlayerEvent_MetaBytes(
+          dco_decode_list_prim_u_8_strict(raw[1]),
+        );
+      case 36:
+        return RustPlayerEvent_CueVolume(
+          dco_decode_f_32(raw[1]),
+        );
+      case 37:
+        return RustPlayerEvent_CueSource(
+          dco_decode_i_32(raw[1]),
+        );
+      case 38:
+        return RustPlayerEvent_LoopMode(
+          dco_decode_i_32(raw[1]),
+        );
+      case 39:
+        return RustPlayerEvent_IsShuffled(
+          dco_decode_bool(raw[1]),
+        );
+      case 40:
+        return RustPlayerEvent_PauseOnDeviceChange(
+          dco_decode_bool(raw[1]),
+        );
+      case 41:
+        return RustPlayerEvent_MicrophoneEnabled(
+          dco_decode_bool(raw[1]),
+        );
+      case 42:
+        return RustPlayerEvent_MicVolume(
+          dco_decode_f_32(raw[1]),
+        );
+      case 43:
+        return RustPlayerEvent_DirectMonitoringEnabled(
+          dco_decode_bool(raw[1]),
+        );
+      case 44:
+        return RustPlayerEvent_OutputDevices(
+          dco_decode_list_rust_audio_device(raw[1]),
+        );
+      case 45:
+        return RustPlayerEvent_InputDevices(
+          dco_decode_list_rust_audio_device(raw[1]),
+        );
+      case 46:
         return RustPlayerEvent_DartReadRequest(
           dco_decode_box_autoadd_rust_dart_read_request(raw[1]),
         );
-      case 27:
+      case 47:
+        return RustPlayerEvent_Device(
+          dco_decode_box_autoadd_rust_audio_device(raw[1]),
+        );
+      case 48:
         return RustPlayerEvent_Error(
           message: dco_decode_String(raw[1]),
           code: dco_decode_i_32(raw[2]),
@@ -6061,6 +3932,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       bitrate: dco_decode_u_32(arr[9]),
       sampleRate: dco_decode_u_32(arr[10]),
       channels: dco_decode_u_32(arr[11]),
+    );
+  }
+
+  @protected
+  RustRecordingResult dco_decode_rust_recording_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return RustRecordingResult(
+      path: dco_decode_String(arr[0]),
+      durationMs: dco_decode_u_64(arr[1]),
+      bytesWritten: dco_decode_usize(arr[2]),
+      sampleCount: dco_decode_u_64(arr[3]),
     );
   }
 
@@ -6201,6 +4086,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TelemetryFilter dco_decode_telemetry_filter(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    return TelemetryFilter(
+      state: dco_decode_opt_box_autoadd_i_32(arr[0]),
+      phase: dco_decode_opt_box_autoadd_i_32(arr[1]),
+      pos: dco_decode_i_64(arr[2]),
+      dur: dco_decode_opt_box_autoadd_i_64(arr[3]),
+      index: dco_decode_opt_box_autoadd_i_32(arr[4]),
+      bitrate: dco_decode_opt_box_autoadd_u_32(arr[5]),
+      bufferedEnd: dco_decode_opt_box_autoadd_i_64(arr[6]),
+      isBuffering: dco_decode_opt_box_autoadd_bool(arr[7]),
+      isXfading: dco_decode_opt_box_autoadd_bool(arr[8]),
+      isRecording: dco_decode_opt_box_autoadd_bool(arr[9]),
+      isDucking: dco_decode_opt_box_autoadd_bool(arr[10]),
+      isPlaying: dco_decode_opt_box_autoadd_bool(arr[11]),
+      isCompleted: dco_decode_opt_box_autoadd_bool(arr[12]),
+      replayGain: dco_decode_opt_box_autoadd_record_u_32_u_32_bool(arr[13]),
+    );
+  }
+
+  @protected
   int dco_decode_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -6238,91 +4147,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustEngine
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  EventReporter
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustEngineImpl.frbInternalSseDecode(
+    return EventReporterImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  RustPlayer
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  RustMiniaudioPlayer
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustPlayerImpl.frbInternalSseDecode(
+    return RustMiniaudioPlayerImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  RustVoicePool
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  EventReporter
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustVoicePoolImpl.frbInternalSseDecode(
+    return EventReporterImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  RustEngine
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  RustMiniaudioPlayer
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustEngineImpl.frbInternalSseDecode(
+    return RustMiniaudioPlayerImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  RustPlayer
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  EventReporter
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustPlayerImpl.frbInternalSseDecode(
+    return EventReporterImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
   @protected
-  RustVoicePool
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  RustMiniaudioPlayer
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustVoicePoolImpl.frbInternalSseDecode(
+    return RustMiniaudioPlayerImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  RustEngine
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustEngineImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  RustPlayer
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustPlayerImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  RustVoicePool
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return RustVoicePoolImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  RustStreamSink<RustEngineEvent> sse_decode_StreamSink_rust_engine_event_Sse(
-      SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    throw UnimplementedError('Unreachable ()');
   }
 
   @protected
@@ -6346,6 +4221,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bool(deserializer));
+  }
+
+  @protected
   double sse_decode_box_autoadd_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_f_32(deserializer));
@@ -6364,10 +4245,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (int, int, bool) sse_decode_box_autoadd_record_u_32_u_32_bool(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_record_u_32_u_32_bool(deserializer));
+  }
+
+  @protected
   RustAudioDevice sse_decode_box_autoadd_rust_audio_device(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_rust_audio_device(deserializer));
+  }
+
+  @protected
+  RustAudioOutput sse_decode_box_autoadd_rust_audio_output(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_rust_audio_output(deserializer));
   }
 
   @protected
@@ -6399,10 +4294,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustDuckingConfig sse_decode_box_autoadd_rust_ducking_config(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_rust_ducking_config(deserializer));
+  }
+
+  @protected
+  RustEffectConfig sse_decode_box_autoadd_rust_effect_config(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_rust_effect_config(deserializer));
+  }
+
+  @protected
   RustEqualizerParams sse_decode_box_autoadd_rust_equalizer_params(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_rust_equalizer_params(deserializer));
+  }
+
+  @protected
+  RustPlayerConfig sse_decode_box_autoadd_rust_player_config(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_rust_player_config(deserializer));
+  }
+
+  @protected
+  RustPlayerEvent sse_decode_box_autoadd_rust_player_event(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_rust_player_event(deserializer));
   }
 
   @protected
@@ -6455,21 +4378,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_32(deserializer));
+  }
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_64(deserializer));
   }
 
   @protected
-  BigInt sse_decode_box_autoadd_usize(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_usize(deserializer));
-  }
-
-  @protected
   double sse_decode_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat32();
+  }
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat64();
   }
 
   @protected
@@ -6485,31 +4414,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  List<double> sse_decode_list_prim_f_32_loose(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var len_ = sse_decode_i_32(deserializer);
-    return deserializer.buffer.getFloat32List(len_);
-  }
-
-  @protected
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getFloat32List(len_);
-  }
-
-  @protected
-  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var len_ = sse_decode_i_32(deserializer);
-    return deserializer.buffer.getUint32List(len_);
-  }
-
-  @protected
-  Uint64List sse_decode_list_prim_u_64_strict(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var len_ = sse_decode_i_32(deserializer);
-    return deserializer.buffer.getUint64List(len_);
   }
 
   @protected
@@ -6535,6 +4443,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <RustAudioDevice>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_rust_audio_device(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<RustAudioOutput> sse_decode_list_rust_audio_output(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <RustAudioOutput>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_rust_audio_output(deserializer));
     }
     return ans_;
   }
@@ -6577,6 +4498,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_bool(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -6610,6 +4542,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (int, int, bool)? sse_decode_opt_box_autoadd_record_u_32_u_32_bool(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_record_u_32_u_32_bool(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  RustDuckingConfig? sse_decode_opt_box_autoadd_rust_ducking_config(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_rust_ducking_config(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   RustSpatialEmitter? sse_decode_opt_box_autoadd_rust_spatial_emitter(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -6634,22 +4590,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer) {
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_u_64(deserializer));
+      return (sse_decode_box_autoadd_u_32(deserializer));
     } else {
       return null;
     }
   }
 
   @protected
-  BigInt? sse_decode_opt_box_autoadd_usize(SseDeserializer deserializer) {
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_usize(deserializer));
+      return (sse_decode_box_autoadd_u_64(deserializer));
     } else {
       return null;
     }
@@ -6679,16 +4635,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (int, int, bool) sse_decode_record_u_32_u_32_bool(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_u_32(deserializer);
+    var var_field1 = sse_decode_u_32(deserializer);
+    var var_field2 = sse_decode_bool(deserializer);
+    return (var_field0, var_field1, var_field2);
+  }
+
+  @protected
   RustAudioAnalysisResult sse_decode_rust_audio_analysis_result(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_durationMs = sse_decode_i_64(deserializer);
     var var_sampleRate = sse_decode_u_32(deserializer);
     var var_channels = sse_decode_u_32(deserializer);
+    var var_bitrate = sse_decode_u_32(deserializer);
     var var_peakAmplitude = sse_decode_f_32(deserializer);
     var var_rmsAmplitude = sse_decode_f_32(deserializer);
+    var var_hasReplayGain = sse_decode_bool(deserializer);
     var var_integratedLufs = sse_decode_f_32(deserializer);
     var var_replayGainDb = sse_decode_f_32(deserializer);
+    var var_hasWaveform = sse_decode_bool(deserializer);
     var var_spectralCentroid = sse_decode_f_32(deserializer);
     var var_frequencyBands = sse_decode_list_prim_f_32_strict(deserializer);
     var var_waveformPeaks = sse_decode_list_prim_f_32_strict(deserializer);
@@ -6696,10 +4665,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         durationMs: var_durationMs,
         sampleRate: var_sampleRate,
         channels: var_channels,
+        bitrate: var_bitrate,
         peakAmplitude: var_peakAmplitude,
         rmsAmplitude: var_rmsAmplitude,
+        hasReplayGain: var_hasReplayGain,
         integratedLufs: var_integratedLufs,
         replayGainDb: var_replayGainDb,
+        hasWaveform: var_hasWaveform,
         spectralCentroid: var_spectralCentroid,
         frequencyBands: var_frequencyBands,
         waveformPeaks: var_waveformPeaks);
@@ -6719,6 +4691,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         name: var_name,
         isDefault: var_isDefault,
         isAuto: var_isAuto);
+  }
+
+  @protected
+  RustAudioOutput sse_decode_rust_audio_output(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_exclusiveMode = sse_decode_bool(deserializer);
+        return RustAudioOutput_Speaker(exclusiveMode: var_exclusiveMode);
+      case 1:
+        var var_deviceId = sse_decode_String(deserializer);
+        var var_exclusiveMode = sse_decode_bool(deserializer);
+        return RustAudioOutput_Device(
+            deviceId: var_deviceId, exclusiveMode: var_exclusiveMode);
+      case 2:
+        var var_deviceId = sse_decode_String(deserializer);
+        var var_source = sse_decode_i_32(deserializer);
+        return RustAudioOutput_Cue(deviceId: var_deviceId, source: var_source);
+      case 3:
+        var var_path = sse_decode_String(deserializer);
+        var var_format = sse_decode_i_32(deserializer);
+        return RustAudioOutput_File(path: var_path, format: var_format);
+      default:
+        throw UnimplementedError('');
+    }
   }
 
   @protected
@@ -6745,30 +4744,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_startMs = sse_decode_i_64(deserializer);
     var var_endMs = sse_decode_i_64(deserializer);
-    var var_durationMs = sse_decode_i_64(deserializer);
-    var var_fillPercentage = sse_decode_f_32(deserializer);
-    var var_streamPercentage = sse_decode_f_32(deserializer);
     var var_isBuffering = sse_decode_bool(deserializer);
-    var var_isEof = sse_decode_bool(deserializer);
     return RustBufferedRange(
-        startMs: var_startMs,
-        endMs: var_endMs,
-        durationMs: var_durationMs,
-        fillPercentage: var_fillPercentage,
-        streamPercentage: var_streamPercentage,
-        isBuffering: var_isBuffering,
-        isEof: var_isEof);
+        startMs: var_startMs, endMs: var_endMs, isBuffering: var_isBuffering);
   }
 
   @protected
   RustCrossfadeConfig sse_decode_rust_crossfade_config(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_durationMs = sse_decode_u_64(deserializer);
+    var var_autoDurationMs = sse_decode_u_64(deserializer);
     var var_manualDurationMs = sse_decode_u_64(deserializer);
     var var_curve = sse_decode_i_32(deserializer);
     return RustCrossfadeConfig(
-        durationMs: var_durationMs,
+        autoDurationMs: var_autoDurationMs,
         manualDurationMs: var_manualDurationMs,
         curve: var_curve);
   }
@@ -6830,125 +4819,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustEngineEvent sse_decode_rust_engine_event(SseDeserializer deserializer) {
+  RustEffectConfig sse_decode_rust_effect_config(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var tag_ = sse_decode_i_32(deserializer);
-    switch (tag_) {
-      case 0:
-        var var_field0 = sse_decode_i_32(deserializer);
-        return RustEngineEvent_Phase(var_field0);
-      case 1:
-        var var_field0 = sse_decode_i_32(deserializer);
-        return RustEngineEvent_State(var_field0);
-      case 2:
-        var var_field0 = sse_decode_i_64(deserializer);
-        return RustEngineEvent_Position(var_field0);
-      case 3:
-        var var_field0 = sse_decode_i_64(deserializer);
-        return RustEngineEvent_Duration(var_field0);
-      case 4:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_IsPlaying(var_field0);
-      case 5:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_IsBuffering(var_field0);
-      case 6:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_IsCompleted(var_field0);
-      case 7:
-        var var_field0 = sse_decode_i_32(deserializer);
-        return RustEngineEvent_CurrentIndex(var_field0);
-      case 8:
-        var var_field0 = sse_decode_list_rust_audio_source(deserializer);
-        return RustEngineEvent_QueueChanged(var_field0);
-      case 9:
-        var var_currentTrackId = sse_decode_i_64(deserializer);
-        var var_remainingTracks = sse_decode_usize(deserializer);
-        return RustEngineEvent_NeedMoreTracks(
-            currentTrackId: var_currentTrackId,
-            remainingTracks: var_remainingTracks);
-      case 10:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustEngineEvent_Volume(var_field0);
-      case 11:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustEngineEvent_Rate(var_field0);
-      case 12:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustEngineEvent_Pitch(var_field0);
-      case 13:
-        var var_field0 = sse_decode_u_32(deserializer);
-        return RustEngineEvent_Bitrate(var_field0);
-      case 14:
-        var var_field0 = sse_decode_u_32(deserializer);
-        return RustEngineEvent_BufferSize(var_field0);
-      case 15:
-        var var_field0 = sse_decode_box_autoadd_rust_audio_device(deserializer);
-        return RustEngineEvent_Device(var_field0);
-      case 16:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_visualizer_data(deserializer);
-        return RustEngineEvent_Visualizer(var_field0);
-      case 17:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_VisualizerEnabled(var_field0);
-      case 18:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_buffered_range(deserializer);
-        return RustEngineEvent_BufferedRange(var_field0);
-      case 19:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_equalizer_params(deserializer);
-        return RustEngineEvent_Equalizer(var_field0);
-      case 20:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustEngineEvent_Preamp(var_field0);
-      case 21:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_replay_gain_config(deserializer);
-        return RustEngineEvent_ReplayGain(var_field0);
-      case 22:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustEngineEvent_Balance(var_field0);
-      case 23:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_Mono(var_field0);
-      case 24:
-        var var_field0 = sse_decode_i_32(deserializer);
-        return RustEngineEvent_Crossfeed(var_field0);
-      case 25:
-        var var_enabled = sse_decode_bool(deserializer);
-        var var_width = sse_decode_f_32(deserializer);
-        return RustEngineEvent_Spatializer(
-            enabled: var_enabled, width: var_width);
-      case 26:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_reverb_params(deserializer);
-        return RustEngineEvent_Reverb(var_field0);
-      case 27:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_Limiter(var_field0);
-      case 28:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_crossfade_config(deserializer);
-        return RustEngineEvent_CrossfadeConfig(var_field0);
-      case 29:
-        var var_field0 = sse_decode_i_32(deserializer);
-        return RustEngineEvent_LoopMode(var_field0);
-      case 30:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustEngineEvent_Shuffle(var_field0);
-      case 31:
-        var var_field0 = sse_decode_list_prim_u_8_strict(deserializer);
-        return RustEngineEvent_MetaBytes(var_field0);
-      case 32:
-        var var_message = sse_decode_String(deserializer);
-        var var_code = sse_decode_i_32(deserializer);
-        return RustEngineEvent_Error(message: var_message, code: var_code);
-      default:
-        throw UnimplementedError('');
-    }
+    var var_volume = sse_decode_f_32(deserializer);
+    var var_balance = sse_decode_f_32(deserializer);
+    var var_pitch = sse_decode_f_32(deserializer);
+    var var_rate = sse_decode_f_32(deserializer);
+    var var_looping = sse_decode_bool(deserializer);
+    var var_priority = sse_decode_u_8(deserializer);
+    var var_pitchJitter = sse_decode_f_32(deserializer);
+    var var_volumeJitter = sse_decode_f_32(deserializer);
+    var var_spatial =
+        sse_decode_opt_box_autoadd_rust_spatial_emitter(deserializer);
+    return RustEffectConfig(
+        volume: var_volume,
+        balance: var_balance,
+        pitch: var_pitch,
+        rate: var_rate,
+        looping: var_looping,
+        priority: var_priority,
+        pitchJitter: var_pitchJitter,
+        volumeJitter: var_volumeJitter,
+        spatial: var_spatial);
   }
 
   @protected
@@ -6969,6 +4861,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustPlayerConfig sse_decode_rust_player_config(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_bufferSizeFrames = sse_decode_u_32(deserializer);
+    var var_maxVoices = sse_decode_u_32(deserializer);
+    var var_maxRamBytes = sse_decode_usize(deserializer);
+    var var_pauseOnDeviceChange = sse_decode_bool(deserializer);
+    var var_bufferLocalDurationMs = sse_decode_u_64(deserializer);
+    var var_bufferNetworkDurationMs = sse_decode_u_64(deserializer);
+    return RustPlayerConfig(
+        bufferSizeFrames: var_bufferSizeFrames,
+        maxVoices: var_maxVoices,
+        maxRamBytes: var_maxRamBytes,
+        pauseOnDeviceChange: var_pauseOnDeviceChange,
+        bufferLocalDurationMs: var_bufferLocalDurationMs,
+        bufferNetworkDurationMs: var_bufferNetworkDurationMs);
+  }
+
+  @protected
   RustPlayerEvent sse_decode_rust_player_event(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -6976,40 +4886,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     switch (tag_) {
       case 0:
         var var_field0 = sse_decode_i_32(deserializer);
-        return RustPlayerEvent_State(var_field0);
+        return RustPlayerEvent_PlaybackState(var_field0);
       case 1:
-        var var_field0 = sse_decode_i_64(deserializer);
-        return RustPlayerEvent_Position(var_field0);
+        var var_field0 = sse_decode_i_32(deserializer);
+        return RustPlayerEvent_State(var_field0);
       case 2:
         var var_field0 = sse_decode_i_64(deserializer);
-        return RustPlayerEvent_Duration(var_field0);
+        return RustPlayerEvent_Position(var_field0);
       case 3:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustPlayerEvent_IsPlaying(var_field0);
+        var var_field0 = sse_decode_i_64(deserializer);
+        return RustPlayerEvent_Duration(var_field0);
       case 4:
         var var_field0 = sse_decode_bool(deserializer);
-        return RustPlayerEvent_IsBuffering(var_field0);
+        return RustPlayerEvent_IsPlaying(var_field0);
       case 5:
         var var_field0 = sse_decode_bool(deserializer);
-        return RustPlayerEvent_IsCompleted(var_field0);
+        return RustPlayerEvent_IsBuffering(var_field0);
       case 6:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustPlayerEvent_Volume(var_field0);
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_IsCompleted(var_field0);
       case 7:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustPlayerEvent_Rate(var_field0);
+        var var_field0 =
+            sse_decode_box_autoadd_rust_buffered_range(deserializer);
+        return RustPlayerEvent_BufferedRange(var_field0);
       case 8:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustPlayerEvent_Pitch(var_field0);
+        var var_field0 = sse_decode_list_rust_audio_source(deserializer);
+        return RustPlayerEvent_Queue(var_field0);
       case 9:
-        var var_field0 = sse_decode_u_32(deserializer);
-        return RustPlayerEvent_Bitrate(var_field0);
+        var var_field0 = sse_decode_i_32(deserializer);
+        return RustPlayerEvent_CurrentIndex(var_field0);
       case 10:
-        var var_field0 = sse_decode_u_32(deserializer);
-        return RustPlayerEvent_BufferSize(var_field0);
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_IsCrossfading(var_field0);
       case 11:
-        var var_field0 = sse_decode_box_autoadd_rust_audio_device(deserializer);
-        return RustPlayerEvent_Device(var_field0);
+        var var_field0 =
+            sse_decode_box_autoadd_rust_crossfade_config(deserializer);
+        return RustPlayerEvent_CrossfadeConfig(var_field0);
       case 12:
         var var_field0 =
             sse_decode_box_autoadd_rust_visualizer_data(deserializer);
@@ -7018,53 +4930,115 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_field0 = sse_decode_bool(deserializer);
         return RustPlayerEvent_VisualizerEnabled(var_field0);
       case 14:
-        var var_field0 =
-            sse_decode_box_autoadd_rust_buffered_range(deserializer);
-        return RustPlayerEvent_BufferedRange(var_field0);
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_Volume(var_field0);
       case 15:
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_Rate(var_field0);
+      case 16:
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_Pitch(var_field0);
+      case 17:
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_Balance(var_field0);
+      case 18:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_Mono(var_field0);
+      case 19:
+        var var_field0 = sse_decode_u_32(deserializer);
+        return RustPlayerEvent_Bitrate(var_field0);
+      case 20:
+        var var_field0 = sse_decode_u_32(deserializer);
+        return RustPlayerEvent_BufferSize(var_field0);
+      case 21:
         var var_field0 =
             sse_decode_box_autoadd_rust_silence_config(deserializer);
         return RustPlayerEvent_SilenceConfig(var_field0);
-      case 16:
+      case 22:
         var var_field0 = sse_decode_i_64(deserializer);
         return RustPlayerEvent_SilenceSaved(var_field0);
-      case 17:
+      case 23:
         var var_field0 =
             sse_decode_box_autoadd_rust_equalizer_params(deserializer);
         return RustPlayerEvent_Equalizer(var_field0);
-      case 18:
+      case 24:
         var var_field0 = sse_decode_f_32(deserializer);
         return RustPlayerEvent_Preamp(var_field0);
-      case 19:
+      case 25:
         var var_field0 =
             sse_decode_box_autoadd_rust_replay_gain_config(deserializer);
         return RustPlayerEvent_ReplayGain(var_field0);
-      case 20:
-        var var_field0 = sse_decode_f_32(deserializer);
-        return RustPlayerEvent_Balance(var_field0);
-      case 21:
-        var var_field0 = sse_decode_bool(deserializer);
-        return RustPlayerEvent_Mono(var_field0);
-      case 22:
+      case 26:
         var var_field0 = sse_decode_i_32(deserializer);
         return RustPlayerEvent_Crossfeed(var_field0);
-      case 23:
+      case 27:
         var var_enabled = sse_decode_bool(deserializer);
         var var_width = sse_decode_f_32(deserializer);
         return RustPlayerEvent_Spatializer(
             enabled: var_enabled, width: var_width);
-      case 24:
+      case 28:
         var var_field0 =
             sse_decode_box_autoadd_rust_reverb_params(deserializer);
         return RustPlayerEvent_Reverb(var_field0);
-      case 25:
+      case 29:
         var var_field0 = sse_decode_bool(deserializer);
         return RustPlayerEvent_Limiter(var_field0);
-      case 26:
+      case 30:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_IsRecording(var_field0);
+      case 31:
+        var var_field0 = sse_decode_u_64(deserializer);
+        return RustPlayerEvent_RecordedDuration(var_field0);
+      case 32:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_IsDuckingActive(var_field0);
+      case 33:
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_MicRmsLevel(var_field0);
+      case 34:
+        var var_field0 = sse_decode_u_32(deserializer);
+        return RustPlayerEvent_VoiceCompleted(var_field0);
+      case 35:
+        var var_field0 = sse_decode_list_prim_u_8_strict(deserializer);
+        return RustPlayerEvent_MetaBytes(var_field0);
+      case 36:
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_CueVolume(var_field0);
+      case 37:
+        var var_field0 = sse_decode_i_32(deserializer);
+        return RustPlayerEvent_CueSource(var_field0);
+      case 38:
+        var var_field0 = sse_decode_i_32(deserializer);
+        return RustPlayerEvent_LoopMode(var_field0);
+      case 39:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_IsShuffled(var_field0);
+      case 40:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_PauseOnDeviceChange(var_field0);
+      case 41:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_MicrophoneEnabled(var_field0);
+      case 42:
+        var var_field0 = sse_decode_f_32(deserializer);
+        return RustPlayerEvent_MicVolume(var_field0);
+      case 43:
+        var var_field0 = sse_decode_bool(deserializer);
+        return RustPlayerEvent_DirectMonitoringEnabled(var_field0);
+      case 44:
+        var var_field0 = sse_decode_list_rust_audio_device(deserializer);
+        return RustPlayerEvent_OutputDevices(var_field0);
+      case 45:
+        var var_field0 = sse_decode_list_rust_audio_device(deserializer);
+        return RustPlayerEvent_InputDevices(var_field0);
+      case 46:
         var var_field0 =
             sse_decode_box_autoadd_rust_dart_read_request(deserializer);
         return RustPlayerEvent_DartReadRequest(var_field0);
-      case 27:
+      case 47:
+        var var_field0 = sse_decode_box_autoadd_rust_audio_device(deserializer);
+        return RustPlayerEvent_Device(var_field0);
+      case 48:
         var var_message = sse_decode_String(deserializer);
         var var_code = sse_decode_i_32(deserializer);
         return RustPlayerEvent_Error(message: var_message, code: var_code);
@@ -7101,6 +5075,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         bitrate: var_bitrate,
         sampleRate: var_sampleRate,
         channels: var_channels);
+  }
+
+  @protected
+  RustRecordingResult sse_decode_rust_recording_result(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_path = sse_decode_String(deserializer);
+    var var_durationMs = sse_decode_u_64(deserializer);
+    var var_bytesWritten = sse_decode_usize(deserializer);
+    var var_sampleCount = sse_decode_u_64(deserializer);
+    return RustRecordingResult(
+        path: var_path,
+        durationMs: var_durationMs,
+        bytesWritten: var_bytesWritten,
+        sampleCount: var_sampleCount);
   }
 
   @protected
@@ -7258,6 +5247,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TelemetryFilter sse_decode_telemetry_filter(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_state = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_phase = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_pos = sse_decode_i_64(deserializer);
+    var var_dur = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_index = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_bitrate = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_bufferedEnd = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_isBuffering = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_isXfading = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_isRecording = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_isDucking = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_isPlaying = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_isCompleted = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_replayGain =
+        sse_decode_opt_box_autoadd_record_u_32_u_32_bool(deserializer);
+    return TelemetryFilter(
+        state: var_state,
+        phase: var_phase,
+        pos: var_pos,
+        dur: var_dur,
+        index: var_index,
+        bitrate: var_bitrate,
+        bufferedEnd: var_bufferedEnd,
+        isBuffering: var_isBuffering,
+        isXfading: var_isXfading,
+        isRecording: var_isRecording,
+        isDucking: var_isDucking,
+        isPlaying: var_isPlaying,
+        isCompleted: var_isCompleted,
+        replayGain: var_replayGain);
+  }
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
@@ -7295,98 +5319,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          RustEngine self, SseSerializer serializer) {
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+          EventReporter self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-        (self as RustEngineImpl).frbInternalSseEncode(move: true), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          RustPlayer self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as RustPlayerImpl).frbInternalSseEncode(move: true), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          RustVoicePool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as RustVoicePoolImpl).frbInternalSseEncode(move: true),
+        (self as EventReporterImpl).frbInternalSseEncode(move: true),
         serializer);
   }
 
   @protected
   void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          RustEngine self, SseSerializer serializer) {
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          RustMiniaudioPlayer self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-        (self as RustEngineImpl).frbInternalSseEncode(move: false), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          RustPlayer self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as RustPlayerImpl).frbInternalSseEncode(move: false), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          RustVoicePool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as RustVoicePoolImpl).frbInternalSseEncode(move: false),
+        (self as RustMiniaudioPlayerImpl).frbInternalSseEncode(move: true),
         serializer);
   }
 
   @protected
   void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          RustEngine self, SseSerializer serializer) {
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+          EventReporter self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-        (self as RustEngineImpl).frbInternalSseEncode(move: null), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          RustPlayer self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as RustPlayerImpl).frbInternalSseEncode(move: null), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          RustVoicePool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as RustVoicePoolImpl).frbInternalSseEncode(move: null),
+        (self as EventReporterImpl).frbInternalSseEncode(move: false),
         serializer);
   }
 
   @protected
-  void sse_encode_StreamSink_rust_engine_event_Sse(
-      RustStreamSink<RustEngineEvent> self, SseSerializer serializer) {
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          RustMiniaudioPlayer self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(
-        self.setupAndSerialize(
-            codec: SseCodec(
-          decodeSuccessData: sse_decode_rust_engine_event,
-          decodeErrorData: sse_decode_AnyhowException,
-        )),
+    sse_encode_usize(
+        (self as RustMiniaudioPlayerImpl).frbInternalSseEncode(move: false),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+          EventReporter self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as EventReporterImpl).frbInternalSseEncode(move: null),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          RustMiniaudioPlayer self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as RustMiniaudioPlayerImpl).frbInternalSseEncode(move: null),
         serializer);
   }
 
@@ -7416,6 +5403,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_f_32(self, serializer);
@@ -7435,10 +5428,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_record_u_32_u_32_bool(
+      (int, int, bool) self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_record_u_32_u_32_bool(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_rust_audio_device(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_rust_audio_output(
+      RustAudioOutput self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_rust_audio_output(self, serializer);
   }
 
   @protected
@@ -7470,10 +5477,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_rust_ducking_config(
+      RustDuckingConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_rust_ducking_config(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_rust_effect_config(
+      RustEffectConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_rust_effect_config(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_rust_equalizer_params(
       RustEqualizerParams self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_rust_equalizer_params(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_rust_player_config(
+      RustPlayerConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_rust_player_config(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_rust_player_event(
+      RustPlayerEvent self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_rust_player_event(self, serializer);
   }
 
   @protected
@@ -7526,21 +5561,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_64(self, serializer);
   }
 
   @protected
-  void sse_encode_box_autoadd_usize(BigInt self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(self, serializer);
-  }
-
-  @protected
   void sse_encode_f_32(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat32(self);
+  }
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat64(self);
   }
 
   @protected
@@ -7556,36 +5597,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_list_prim_f_32_loose(
-      List<double> self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    serializer.buffer.putFloat32List(
-        self is Float32List ? self : Float32List.fromList(self));
-  }
-
-  @protected
   void sse_encode_list_prim_f_32_strict(
       Float32List self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putFloat32List(self);
-  }
-
-  @protected
-  void sse_encode_list_prim_u_32_strict(
-      Uint32List self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    serializer.buffer.putUint32List(self);
-  }
-
-  @protected
-  void sse_encode_list_prim_u_64_strict(
-      Uint64List self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    serializer.buffer.putUint64List(self);
   }
 
   @protected
@@ -7616,6 +5632,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_rust_audio_output(
+      List<RustAudioOutput> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_rust_audio_output(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_rust_audio_source(
       List<RustAudioSource> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -7642,6 +5668,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_bool(self, serializer);
     }
   }
 
@@ -7677,6 +5713,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_record_u_32_u_32_bool(
+      (int, int, bool)? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_record_u_32_u_32_bool(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_ducking_config(
+      RustDuckingConfig? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_rust_ducking_config(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_rust_spatial_emitter(
       RustSpatialEmitter? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -7699,23 +5757,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_32(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_u_64(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_box_autoadd_usize(
-      BigInt? self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_usize(self, serializer);
     }
   }
 
@@ -7742,16 +5799,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_record_u_32_u_32_bool(
+      (int, int, bool) self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.$1, serializer);
+    sse_encode_u_32(self.$2, serializer);
+    sse_encode_bool(self.$3, serializer);
+  }
+
+  @protected
   void sse_encode_rust_audio_analysis_result(
       RustAudioAnalysisResult self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_64(self.durationMs, serializer);
     sse_encode_u_32(self.sampleRate, serializer);
     sse_encode_u_32(self.channels, serializer);
+    sse_encode_u_32(self.bitrate, serializer);
     sse_encode_f_32(self.peakAmplitude, serializer);
     sse_encode_f_32(self.rmsAmplitude, serializer);
+    sse_encode_bool(self.hasReplayGain, serializer);
     sse_encode_f_32(self.integratedLufs, serializer);
     sse_encode_f_32(self.replayGainDb, serializer);
+    sse_encode_bool(self.hasWaveform, serializer);
     sse_encode_f_32(self.spectralCentroid, serializer);
     sse_encode_list_prim_f_32_strict(self.frequencyBands, serializer);
     sse_encode_list_prim_f_32_strict(self.waveformPeaks, serializer);
@@ -7766,6 +5835,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.name, serializer);
     sse_encode_bool(self.isDefault, serializer);
     sse_encode_bool(self.isAuto, serializer);
+  }
+
+  @protected
+  void sse_encode_rust_audio_output(
+      RustAudioOutput self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case RustAudioOutput_Speaker(exclusiveMode: final exclusiveMode):
+        sse_encode_i_32(0, serializer);
+        sse_encode_bool(exclusiveMode, serializer);
+      case RustAudioOutput_Device(
+          deviceId: final deviceId,
+          exclusiveMode: final exclusiveMode
+        ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(deviceId, serializer);
+        sse_encode_bool(exclusiveMode, serializer);
+      case RustAudioOutput_Cue(deviceId: final deviceId, source: final source):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(deviceId, serializer);
+        sse_encode_i_32(source, serializer);
+      case RustAudioOutput_File(path: final path, format: final format):
+        sse_encode_i_32(3, serializer);
+        sse_encode_String(path, serializer);
+        sse_encode_i_32(format, serializer);
+    }
   }
 
   @protected
@@ -7786,18 +5881,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_64(self.startMs, serializer);
     sse_encode_i_64(self.endMs, serializer);
-    sse_encode_i_64(self.durationMs, serializer);
-    sse_encode_f_32(self.fillPercentage, serializer);
-    sse_encode_f_32(self.streamPercentage, serializer);
     sse_encode_bool(self.isBuffering, serializer);
-    sse_encode_bool(self.isEof, serializer);
   }
 
   @protected
   void sse_encode_rust_crossfade_config(
       RustCrossfadeConfig self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_u_64(self.durationMs, serializer);
+    sse_encode_u_64(self.autoDurationMs, serializer);
     sse_encode_u_64(self.manualDurationMs, serializer);
     sse_encode_i_32(self.curve, serializer);
   }
@@ -7842,119 +5933,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_rust_engine_event(
-      RustEngineEvent self, SseSerializer serializer) {
+  void sse_encode_rust_effect_config(
+      RustEffectConfig self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    switch (self) {
-      case RustEngineEvent_Phase(field0: final field0):
-        sse_encode_i_32(0, serializer);
-        sse_encode_i_32(field0, serializer);
-      case RustEngineEvent_State(field0: final field0):
-        sse_encode_i_32(1, serializer);
-        sse_encode_i_32(field0, serializer);
-      case RustEngineEvent_Position(field0: final field0):
-        sse_encode_i_32(2, serializer);
-        sse_encode_i_64(field0, serializer);
-      case RustEngineEvent_Duration(field0: final field0):
-        sse_encode_i_32(3, serializer);
-        sse_encode_i_64(field0, serializer);
-      case RustEngineEvent_IsPlaying(field0: final field0):
-        sse_encode_i_32(4, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_IsBuffering(field0: final field0):
-        sse_encode_i_32(5, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_IsCompleted(field0: final field0):
-        sse_encode_i_32(6, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_CurrentIndex(field0: final field0):
-        sse_encode_i_32(7, serializer);
-        sse_encode_i_32(field0, serializer);
-      case RustEngineEvent_QueueChanged(field0: final field0):
-        sse_encode_i_32(8, serializer);
-        sse_encode_list_rust_audio_source(field0, serializer);
-      case RustEngineEvent_NeedMoreTracks(
-          currentTrackId: final currentTrackId,
-          remainingTracks: final remainingTracks
-        ):
-        sse_encode_i_32(9, serializer);
-        sse_encode_i_64(currentTrackId, serializer);
-        sse_encode_usize(remainingTracks, serializer);
-      case RustEngineEvent_Volume(field0: final field0):
-        sse_encode_i_32(10, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustEngineEvent_Rate(field0: final field0):
-        sse_encode_i_32(11, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustEngineEvent_Pitch(field0: final field0):
-        sse_encode_i_32(12, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustEngineEvent_Bitrate(field0: final field0):
-        sse_encode_i_32(13, serializer);
-        sse_encode_u_32(field0, serializer);
-      case RustEngineEvent_BufferSize(field0: final field0):
-        sse_encode_i_32(14, serializer);
-        sse_encode_u_32(field0, serializer);
-      case RustEngineEvent_Device(field0: final field0):
-        sse_encode_i_32(15, serializer);
-        sse_encode_box_autoadd_rust_audio_device(field0, serializer);
-      case RustEngineEvent_Visualizer(field0: final field0):
-        sse_encode_i_32(16, serializer);
-        sse_encode_box_autoadd_rust_visualizer_data(field0, serializer);
-      case RustEngineEvent_VisualizerEnabled(field0: final field0):
-        sse_encode_i_32(17, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_BufferedRange(field0: final field0):
-        sse_encode_i_32(18, serializer);
-        sse_encode_box_autoadd_rust_buffered_range(field0, serializer);
-      case RustEngineEvent_Equalizer(field0: final field0):
-        sse_encode_i_32(19, serializer);
-        sse_encode_box_autoadd_rust_equalizer_params(field0, serializer);
-      case RustEngineEvent_Preamp(field0: final field0):
-        sse_encode_i_32(20, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustEngineEvent_ReplayGain(field0: final field0):
-        sse_encode_i_32(21, serializer);
-        sse_encode_box_autoadd_rust_replay_gain_config(field0, serializer);
-      case RustEngineEvent_Balance(field0: final field0):
-        sse_encode_i_32(22, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustEngineEvent_Mono(field0: final field0):
-        sse_encode_i_32(23, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_Crossfeed(field0: final field0):
-        sse_encode_i_32(24, serializer);
-        sse_encode_i_32(field0, serializer);
-      case RustEngineEvent_Spatializer(
-          enabled: final enabled,
-          width: final width
-        ):
-        sse_encode_i_32(25, serializer);
-        sse_encode_bool(enabled, serializer);
-        sse_encode_f_32(width, serializer);
-      case RustEngineEvent_Reverb(field0: final field0):
-        sse_encode_i_32(26, serializer);
-        sse_encode_box_autoadd_rust_reverb_params(field0, serializer);
-      case RustEngineEvent_Limiter(field0: final field0):
-        sse_encode_i_32(27, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_CrossfadeConfig(field0: final field0):
-        sse_encode_i_32(28, serializer);
-        sse_encode_box_autoadd_rust_crossfade_config(field0, serializer);
-      case RustEngineEvent_LoopMode(field0: final field0):
-        sse_encode_i_32(29, serializer);
-        sse_encode_i_32(field0, serializer);
-      case RustEngineEvent_Shuffle(field0: final field0):
-        sse_encode_i_32(30, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustEngineEvent_MetaBytes(field0: final field0):
-        sse_encode_i_32(31, serializer);
-        sse_encode_list_prim_u_8_strict(field0, serializer);
-      case RustEngineEvent_Error(message: final message, code: final code):
-        sse_encode_i_32(32, serializer);
-        sse_encode_String(message, serializer);
-        sse_encode_i_32(code, serializer);
-    }
+    sse_encode_f_32(self.volume, serializer);
+    sse_encode_f_32(self.balance, serializer);
+    sse_encode_f_32(self.pitch, serializer);
+    sse_encode_f_32(self.rate, serializer);
+    sse_encode_bool(self.looping, serializer);
+    sse_encode_u_8(self.priority, serializer);
+    sse_encode_f_32(self.pitchJitter, serializer);
+    sse_encode_f_32(self.volumeJitter, serializer);
+    sse_encode_opt_box_autoadd_rust_spatial_emitter(self.spatial, serializer);
   }
 
   @protected
@@ -7974,97 +5964,172 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_rust_player_config(
+      RustPlayerConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.bufferSizeFrames, serializer);
+    sse_encode_u_32(self.maxVoices, serializer);
+    sse_encode_usize(self.maxRamBytes, serializer);
+    sse_encode_bool(self.pauseOnDeviceChange, serializer);
+    sse_encode_u_64(self.bufferLocalDurationMs, serializer);
+    sse_encode_u_64(self.bufferNetworkDurationMs, serializer);
+  }
+
+  @protected
   void sse_encode_rust_player_event(
       RustPlayerEvent self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
-      case RustPlayerEvent_State(field0: final field0):
+      case RustPlayerEvent_PlaybackState(field0: final field0):
         sse_encode_i_32(0, serializer);
         sse_encode_i_32(field0, serializer);
-      case RustPlayerEvent_Position(field0: final field0):
+      case RustPlayerEvent_State(field0: final field0):
         sse_encode_i_32(1, serializer);
-        sse_encode_i_64(field0, serializer);
-      case RustPlayerEvent_Duration(field0: final field0):
+        sse_encode_i_32(field0, serializer);
+      case RustPlayerEvent_Position(field0: final field0):
         sse_encode_i_32(2, serializer);
         sse_encode_i_64(field0, serializer);
-      case RustPlayerEvent_IsPlaying(field0: final field0):
+      case RustPlayerEvent_Duration(field0: final field0):
         sse_encode_i_32(3, serializer);
-        sse_encode_bool(field0, serializer);
-      case RustPlayerEvent_IsBuffering(field0: final field0):
+        sse_encode_i_64(field0, serializer);
+      case RustPlayerEvent_IsPlaying(field0: final field0):
         sse_encode_i_32(4, serializer);
         sse_encode_bool(field0, serializer);
-      case RustPlayerEvent_IsCompleted(field0: final field0):
+      case RustPlayerEvent_IsBuffering(field0: final field0):
         sse_encode_i_32(5, serializer);
         sse_encode_bool(field0, serializer);
-      case RustPlayerEvent_Volume(field0: final field0):
+      case RustPlayerEvent_IsCompleted(field0: final field0):
         sse_encode_i_32(6, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustPlayerEvent_Rate(field0: final field0):
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_BufferedRange(field0: final field0):
         sse_encode_i_32(7, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustPlayerEvent_Pitch(field0: final field0):
+        sse_encode_box_autoadd_rust_buffered_range(field0, serializer);
+      case RustPlayerEvent_Queue(field0: final field0):
         sse_encode_i_32(8, serializer);
-        sse_encode_f_32(field0, serializer);
-      case RustPlayerEvent_Bitrate(field0: final field0):
+        sse_encode_list_rust_audio_source(field0, serializer);
+      case RustPlayerEvent_CurrentIndex(field0: final field0):
         sse_encode_i_32(9, serializer);
-        sse_encode_u_32(field0, serializer);
-      case RustPlayerEvent_BufferSize(field0: final field0):
+        sse_encode_i_32(field0, serializer);
+      case RustPlayerEvent_IsCrossfading(field0: final field0):
         sse_encode_i_32(10, serializer);
-        sse_encode_u_32(field0, serializer);
-      case RustPlayerEvent_Device(field0: final field0):
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_CrossfadeConfig(field0: final field0):
         sse_encode_i_32(11, serializer);
-        sse_encode_box_autoadd_rust_audio_device(field0, serializer);
+        sse_encode_box_autoadd_rust_crossfade_config(field0, serializer);
       case RustPlayerEvent_Visualizer(field0: final field0):
         sse_encode_i_32(12, serializer);
         sse_encode_box_autoadd_rust_visualizer_data(field0, serializer);
       case RustPlayerEvent_VisualizerEnabled(field0: final field0):
         sse_encode_i_32(13, serializer);
         sse_encode_bool(field0, serializer);
-      case RustPlayerEvent_BufferedRange(field0: final field0):
+      case RustPlayerEvent_Volume(field0: final field0):
         sse_encode_i_32(14, serializer);
-        sse_encode_box_autoadd_rust_buffered_range(field0, serializer);
-      case RustPlayerEvent_SilenceConfig(field0: final field0):
-        sse_encode_i_32(15, serializer);
-        sse_encode_box_autoadd_rust_silence_config(field0, serializer);
-      case RustPlayerEvent_SilenceSaved(field0: final field0):
-        sse_encode_i_32(16, serializer);
-        sse_encode_i_64(field0, serializer);
-      case RustPlayerEvent_Equalizer(field0: final field0):
-        sse_encode_i_32(17, serializer);
-        sse_encode_box_autoadd_rust_equalizer_params(field0, serializer);
-      case RustPlayerEvent_Preamp(field0: final field0):
-        sse_encode_i_32(18, serializer);
         sse_encode_f_32(field0, serializer);
-      case RustPlayerEvent_ReplayGain(field0: final field0):
-        sse_encode_i_32(19, serializer);
-        sse_encode_box_autoadd_rust_replay_gain_config(field0, serializer);
+      case RustPlayerEvent_Rate(field0: final field0):
+        sse_encode_i_32(15, serializer);
+        sse_encode_f_32(field0, serializer);
+      case RustPlayerEvent_Pitch(field0: final field0):
+        sse_encode_i_32(16, serializer);
+        sse_encode_f_32(field0, serializer);
       case RustPlayerEvent_Balance(field0: final field0):
-        sse_encode_i_32(20, serializer);
+        sse_encode_i_32(17, serializer);
         sse_encode_f_32(field0, serializer);
       case RustPlayerEvent_Mono(field0: final field0):
-        sse_encode_i_32(21, serializer);
+        sse_encode_i_32(18, serializer);
         sse_encode_bool(field0, serializer);
-      case RustPlayerEvent_Crossfeed(field0: final field0):
+      case RustPlayerEvent_Bitrate(field0: final field0):
+        sse_encode_i_32(19, serializer);
+        sse_encode_u_32(field0, serializer);
+      case RustPlayerEvent_BufferSize(field0: final field0):
+        sse_encode_i_32(20, serializer);
+        sse_encode_u_32(field0, serializer);
+      case RustPlayerEvent_SilenceConfig(field0: final field0):
+        sse_encode_i_32(21, serializer);
+        sse_encode_box_autoadd_rust_silence_config(field0, serializer);
+      case RustPlayerEvent_SilenceSaved(field0: final field0):
         sse_encode_i_32(22, serializer);
+        sse_encode_i_64(field0, serializer);
+      case RustPlayerEvent_Equalizer(field0: final field0):
+        sse_encode_i_32(23, serializer);
+        sse_encode_box_autoadd_rust_equalizer_params(field0, serializer);
+      case RustPlayerEvent_Preamp(field0: final field0):
+        sse_encode_i_32(24, serializer);
+        sse_encode_f_32(field0, serializer);
+      case RustPlayerEvent_ReplayGain(field0: final field0):
+        sse_encode_i_32(25, serializer);
+        sse_encode_box_autoadd_rust_replay_gain_config(field0, serializer);
+      case RustPlayerEvent_Crossfeed(field0: final field0):
+        sse_encode_i_32(26, serializer);
         sse_encode_i_32(field0, serializer);
       case RustPlayerEvent_Spatializer(
           enabled: final enabled,
           width: final width
         ):
-        sse_encode_i_32(23, serializer);
+        sse_encode_i_32(27, serializer);
         sse_encode_bool(enabled, serializer);
         sse_encode_f_32(width, serializer);
       case RustPlayerEvent_Reverb(field0: final field0):
-        sse_encode_i_32(24, serializer);
+        sse_encode_i_32(28, serializer);
         sse_encode_box_autoadd_rust_reverb_params(field0, serializer);
       case RustPlayerEvent_Limiter(field0: final field0):
-        sse_encode_i_32(25, serializer);
+        sse_encode_i_32(29, serializer);
         sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_IsRecording(field0: final field0):
+        sse_encode_i_32(30, serializer);
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_RecordedDuration(field0: final field0):
+        sse_encode_i_32(31, serializer);
+        sse_encode_u_64(field0, serializer);
+      case RustPlayerEvent_IsDuckingActive(field0: final field0):
+        sse_encode_i_32(32, serializer);
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_MicRmsLevel(field0: final field0):
+        sse_encode_i_32(33, serializer);
+        sse_encode_f_32(field0, serializer);
+      case RustPlayerEvent_VoiceCompleted(field0: final field0):
+        sse_encode_i_32(34, serializer);
+        sse_encode_u_32(field0, serializer);
+      case RustPlayerEvent_MetaBytes(field0: final field0):
+        sse_encode_i_32(35, serializer);
+        sse_encode_list_prim_u_8_strict(field0, serializer);
+      case RustPlayerEvent_CueVolume(field0: final field0):
+        sse_encode_i_32(36, serializer);
+        sse_encode_f_32(field0, serializer);
+      case RustPlayerEvent_CueSource(field0: final field0):
+        sse_encode_i_32(37, serializer);
+        sse_encode_i_32(field0, serializer);
+      case RustPlayerEvent_LoopMode(field0: final field0):
+        sse_encode_i_32(38, serializer);
+        sse_encode_i_32(field0, serializer);
+      case RustPlayerEvent_IsShuffled(field0: final field0):
+        sse_encode_i_32(39, serializer);
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_PauseOnDeviceChange(field0: final field0):
+        sse_encode_i_32(40, serializer);
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_MicrophoneEnabled(field0: final field0):
+        sse_encode_i_32(41, serializer);
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_MicVolume(field0: final field0):
+        sse_encode_i_32(42, serializer);
+        sse_encode_f_32(field0, serializer);
+      case RustPlayerEvent_DirectMonitoringEnabled(field0: final field0):
+        sse_encode_i_32(43, serializer);
+        sse_encode_bool(field0, serializer);
+      case RustPlayerEvent_OutputDevices(field0: final field0):
+        sse_encode_i_32(44, serializer);
+        sse_encode_list_rust_audio_device(field0, serializer);
+      case RustPlayerEvent_InputDevices(field0: final field0):
+        sse_encode_i_32(45, serializer);
+        sse_encode_list_rust_audio_device(field0, serializer);
       case RustPlayerEvent_DartReadRequest(field0: final field0):
-        sse_encode_i_32(26, serializer);
+        sse_encode_i_32(46, serializer);
         sse_encode_box_autoadd_rust_dart_read_request(field0, serializer);
+      case RustPlayerEvent_Device(field0: final field0):
+        sse_encode_i_32(47, serializer);
+        sse_encode_box_autoadd_rust_audio_device(field0, serializer);
       case RustPlayerEvent_Error(message: final message, code: final code):
-        sse_encode_i_32(27, serializer);
+        sse_encode_i_32(48, serializer);
         sse_encode_String(message, serializer);
         sse_encode_i_32(code, serializer);
     }
@@ -8086,6 +6151,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.bitrate, serializer);
     sse_encode_u_32(self.sampleRate, serializer);
     sse_encode_u_32(self.channels, serializer);
+  }
+
+  @protected
+  void sse_encode_rust_recording_result(
+      RustRecordingResult self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.path, serializer);
+    sse_encode_u_64(self.durationMs, serializer);
+    sse_encode_usize(self.bytesWritten, serializer);
+    sse_encode_u_64(self.sampleCount, serializer);
   }
 
   @protected
@@ -8194,6 +6269,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_telemetry_filter(
+      TelemetryFilter self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_i_32(self.state, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.phase, serializer);
+    sse_encode_i_64(self.pos, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.dur, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.index, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.bitrate, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.bufferedEnd, serializer);
+    sse_encode_opt_box_autoadd_bool(self.isBuffering, serializer);
+    sse_encode_opt_box_autoadd_bool(self.isXfading, serializer);
+    sse_encode_opt_box_autoadd_bool(self.isRecording, serializer);
+    sse_encode_opt_box_autoadd_bool(self.isDucking, serializer);
+    sse_encode_opt_box_autoadd_bool(self.isPlaying, serializer);
+    sse_encode_opt_box_autoadd_bool(self.isCompleted, serializer);
+    sse_encode_opt_box_autoadd_record_u_32_u_32_bool(
+        self.replayGain, serializer);
+  }
+
+  @protected
   void sse_encode_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint32(self);
@@ -8224,673 +6320,311 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 }
 
 @sealed
-class RustEngineImpl extends RustOpaque implements RustEngine {
+class EventReporterImpl extends RustOpaque implements EventReporter {
   // Not to be used by end users
-  RustEngineImpl.frbInternalDcoDecode(List<dynamic> wire)
+  EventReporterImpl.frbInternalDcoDecode(List<dynamic> wire)
       : super.frbInternalDcoDecode(wire, _kStaticData);
 
   // Not to be used by end users
-  RustEngineImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+  EventReporterImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
       : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
 
   static final _kStaticData = RustArcStaticData(
     rustArcIncrementStrongCount:
-        RustLib.instance.api.rust_arc_increment_strong_count_RustEngine,
+        RustLib.instance.api.rust_arc_increment_strong_count_EventReporter,
     rustArcDecrementStrongCount:
-        RustLib.instance.api.rust_arc_decrement_strong_count_RustEngine,
+        RustLib.instance.api.rust_arc_decrement_strong_count_EventReporter,
     rustArcDecrementStrongCountPtr:
-        RustLib.instance.api.rust_arc_decrement_strong_count_RustEnginePtr,
+        RustLib.instance.api.rust_arc_decrement_strong_count_EventReporterPtr,
   );
 
-  Future<void> append({required List<RustAudioSource> items}) =>
-      RustLib.instance.api
-          .crateApiEngineRustEngineAppend(that: this, items: items);
-
-  Future<void> clearQueue({required bool keepCurrent}) => RustLib.instance.api
-      .crateApiEngineRustEngineClearQueue(that: this, keepCurrent: keepCurrent);
-
-  void configureCueOutput(
-          {String? cueDeviceId, required double volume, required int mode}) =>
-      RustLib.instance.api.crateApiEngineRustEngineConfigureCueOutput(
-          that: this, cueDeviceId: cueDeviceId, volume: volume, mode: mode);
-
-  void disableCueOutput() =>
-      RustLib.instance.api.crateApiEngineRustEngineDisableCueOutput(
+  Future<void> clearSink() =>
+      RustLib.instance.api.crateApiPlayerEventReporterClearSink(
         that: this,
       );
 
-  void disableMicrophone() =>
-      RustLib.instance.api.crateApiEngineRustEngineDisableMicrophone(
-        that: this,
-      );
+  Future<void> emit({required RustPlayerEvent event}) => RustLib.instance.api
+      .crateApiPlayerEventReporterEmit(that: this, event: event);
 
-  void enableMicrophone(
-          {String? captureDeviceId,
-          required bool autoDucking,
-          required double duckingDb,
-          required double thresholdDb}) =>
-      RustLib.instance.api.crateApiEngineRustEngineEnableMicrophone(
-          that: this,
-          captureDeviceId: captureDeviceId,
-          autoDucking: autoDucking,
-          duckingDb: duckingDb,
-          thresholdDb: thresholdDb);
-
-  BigInt? getCurrentIndex() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetCurrentIndex(
-        that: this,
-      );
-
-  PlatformInt64? getCurrentTrackId() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetCurrentTrackId(
-        that: this,
-      );
-
-  PlatformInt64 getDurationMs() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetDurationMs(
-        that: this,
-      );
-
-  bool getInfiniteMix() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetInfiniteMix(
-        that: this,
-      );
-
-  int getPhase() => RustLib.instance.api.crateApiEngineRustEngineGetPhase(
-        that: this,
-      );
-
-  PlatformInt64 getPositionMs() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetPositionMs(
-        that: this,
-      );
-
-  List<RustAudioSource> getQueue() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetQueue(
-        that: this,
-      );
-
-  BigInt getQueueLen() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetQueueLen(
-        that: this,
-      );
-
-  RustVisualizerData getVisualizerData() =>
-      RustLib.instance.api.crateApiEngineRustEngineGetVisualizerData(
-        that: this,
-      );
-
-  double getVolume() => RustLib.instance.api.crateApiEngineRustEngineGetVolume(
-        that: this,
-      );
-
-  Future<void> insertNext({required RustAudioSource item}) =>
-      RustLib.instance.api
-          .crateApiEngineRustEngineInsertNext(that: this, item: item);
-
-  bool isBuffering() =>
-      RustLib.instance.api.crateApiEngineRustEngineIsBuffering(
-        that: this,
-      );
-
-  bool isCompleted() =>
-      RustLib.instance.api.crateApiEngineRustEngineIsCompleted(
-        that: this,
-      );
-
-  bool isPlaying() => RustLib.instance.api.crateApiEngineRustEngineIsPlaying(
-        that: this,
-      );
-
-  bool isRecording() =>
-      RustLib.instance.api.crateApiEngineRustEngineIsRecording(
-        that: this,
-      );
-
-  Future<void> next({BigInt? crossfadeDurationMs, int? curve}) =>
-      RustLib.instance.api.crateApiEngineRustEngineNext(
-          that: this, crossfadeDurationMs: crossfadeDurationMs, curve: curve);
-
-  Future<BigInt> offlineBounce(
-          {required String path,
-          required RustWavFormat format,
-          required PlatformInt64 durationMs}) =>
-      RustLib.instance.api.crateApiEngineRustEngineOfflineBounce(
-          that: this, path: path, format: format, durationMs: durationMs);
-
-  void pause() => RustLib.instance.api.crateApiEngineRustEnginePause(
-        that: this,
-      );
-
-  void play() => RustLib.instance.api.crateApiEngineRustEnginePlay(
-        that: this,
-      );
-
-  Future<void> previous({BigInt? crossfadeDurationMs, int? curve}) =>
-      RustLib.instance.api.crateApiEngineRustEnginePrevious(
-          that: this, crossfadeDurationMs: crossfadeDurationMs, curve: curve);
-
-  Future<void> removeAt({required BigInt index}) => RustLib.instance.api
-      .crateApiEngineRustEngineRemoveAt(that: this, index: index);
-
-  Future<void> reorder({required BigInt from, required BigInt to}) =>
-      RustLib.instance.api
-          .crateApiEngineRustEngineReorder(that: this, from: from, to: to);
-
-  void seek({required PlatformInt64 positionMs}) => RustLib.instance.api
-      .crateApiEngineRustEngineSeek(that: this, positionMs: positionMs);
-
-  void setBalance({required double balance}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetBalance(that: this, balance: balance);
-
-  void setCrossfadeConfig({required RustCrossfadeConfig config}) => RustLib
-      .instance.api
-      .crateApiEngineRustEngineSetCrossfadeConfig(that: this, config: config);
-
-  void setCrossfeed({required int mode}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetCrossfeed(that: this, mode: mode);
-
-  void setCueMode({required int mode}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetCueMode(that: this, mode: mode);
-
-  void setCueVolume({required double volume}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetCueVolume(that: this, volume: volume);
-
-  void setDevice({required String deviceId}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetDevice(that: this, deviceId: deviceId);
-
-  void setEqualizer({required RustEqualizerParams params}) =>
-      RustLib.instance.api
-          .crateApiEngineRustEngineSetEqualizer(that: this, params: params);
-
-  void setEqualizerBand({required int band, required double gainDb}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetEqualizerBand(
-          that: this, band: band, gainDb: gainDb);
-
-  void setInfiniteMix({required bool enabled}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetInfiniteMix(that: this, enabled: enabled);
-
-  void setLimiter({required bool enabled}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetLimiter(that: this, enabled: enabled);
-
-  void setLoopMode({required int mode}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetLoopMode(that: this, mode: mode);
-
-  void setMicVolume({required double volume}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetMicVolume(that: this, volume: volume);
-
-  void setMono({required bool enabled}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetMono(that: this, enabled: enabled);
-
-  void setPitch({required double pitch}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetPitch(that: this, pitch: pitch);
-
-  void setPreamp({required double preampDb}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetPreamp(that: this, preampDb: preampDb);
-
-  Future<void> setQueue(
-          {required List<RustAudioSource> items, BigInt? startIndex}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetQueue(
-          that: this, items: items, startIndex: startIndex);
-
-  void setRate({required double rate}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetRate(that: this, rate: rate);
-
-  void setReplayGain(
-          {required double gainDb,
-          required double peak,
-          required bool preventClipping}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetReplayGain(
-          that: this,
-          gainDb: gainDb,
-          peak: peak,
-          preventClipping: preventClipping);
-
-  void setReverb({required RustReverbParams params}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetReverb(that: this, params: params);
-
-  void setShuffle({required bool enabled}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetShuffle(that: this, enabled: enabled);
-
-  void setSpatialDopplerFactor({required double factor}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetSpatialDopplerFactor(
-          that: this, factor: factor);
-
-  void setSpatialEmitter({required RustSpatialEmitter emitter}) => RustLib
-      .instance.api
-      .crateApiEngineRustEngineSetSpatialEmitter(that: this, emitter: emitter);
-
-  void setSpatialEnabled({required bool enabled}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetSpatialEnabled(that: this, enabled: enabled);
-
-  void setSpatialListener({required RustSpatialListener listener}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetSpatialListener(
-          that: this, listener: listener);
-
-  void setSpatialSpeedOfSound({required double speed}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetSpatialSpeedOfSound(that: this, speed: speed);
-
-  void setSpatializer({required bool enabled, required double width}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetSpatializer(
-          that: this, enabled: enabled, width: width);
-
-  void setVisualizerEnabled({required bool enabled}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSetVisualizerEnabled(
-          that: this, enabled: enabled);
-
-  void setVolume({required double volume}) => RustLib.instance.api
-      .crateApiEngineRustEngineSetVolume(that: this, volume: volume);
-
-  Future<void> skipToIndex(
-          {required BigInt index, BigInt? crossfadeDurationMs, int? curve}) =>
-      RustLib.instance.api.crateApiEngineRustEngineSkipToIndex(
-          that: this,
-          index: index,
-          crossfadeDurationMs: crossfadeDurationMs,
-          curve: curve);
-
-  void startRecording({required String path, required RustWavFormat format}) =>
-      RustLib.instance.api.crateApiEngineRustEngineStartRecording(
-          that: this, path: path, format: format);
-
-  void stop() => RustLib.instance.api.crateApiEngineRustEngineStop(
-        that: this,
-      );
-
-  BigInt stopRecording() =>
-      RustLib.instance.api.crateApiEngineRustEngineStopRecording(
-        that: this,
-      );
-
-  Stream<RustEngineEvent> subscribeEvents() =>
-      RustLib.instance.api.crateApiEngineRustEngineSubscribeEvents(
+  Stream<RustPlayerEvent> setSink() =>
+      RustLib.instance.api.crateApiPlayerEventReporterSetSink(
         that: this,
       );
 }
 
 @sealed
-class RustPlayerImpl extends RustOpaque implements RustPlayer {
+class RustMiniaudioPlayerImpl extends RustOpaque
+    implements RustMiniaudioPlayer {
   // Not to be used by end users
-  RustPlayerImpl.frbInternalDcoDecode(List<dynamic> wire)
+  RustMiniaudioPlayerImpl.frbInternalDcoDecode(List<dynamic> wire)
       : super.frbInternalDcoDecode(wire, _kStaticData);
 
   // Not to be used by end users
-  RustPlayerImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+  RustMiniaudioPlayerImpl.frbInternalSseDecode(
+      BigInt ptr, int externalSizeOnNative)
       : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
 
   static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        RustLib.instance.api.rust_arc_increment_strong_count_RustPlayer,
-    rustArcDecrementStrongCount:
-        RustLib.instance.api.rust_arc_decrement_strong_count_RustPlayer,
-    rustArcDecrementStrongCountPtr:
-        RustLib.instance.api.rust_arc_decrement_strong_count_RustPlayerPtr,
+    rustArcIncrementStrongCount: RustLib
+        .instance.api.rust_arc_increment_strong_count_RustMiniaudioPlayer,
+    rustArcDecrementStrongCount: RustLib
+        .instance.api.rust_arc_decrement_strong_count_RustMiniaudioPlayer,
+    rustArcDecrementStrongCountPtr: RustLib
+        .instance.api.rust_arc_decrement_strong_count_RustMiniaudioPlayerPtr,
   );
 
-  void clearReplayGain() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerClearReplayGain(
+  void addOutput({required RustAudioOutput output}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerAddOutput(that: this, output: output);
+
+  void append({required List<RustAudioSource> sources}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerAppend(that: this, sources: sources);
+
+  void clearQueue({required bool keepCurrent}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerClearQueue(
+          that: this, keepCurrent: keepCurrent);
+
+  Future<void> configureOutputs({required List<RustAudioOutput> outputs}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerConfigureOutputs(
+          that: this, outputs: outputs);
+
+  void disableMicrophone() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerDisableMicrophone(
         that: this,
       );
 
-  void dispose() => RustLib.instance.api.crateApiPlayerRustPlayerDispose(
+  void dispose() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerDispose(
         that: this,
       );
 
-  PlatformInt64 getAudioDataOffset() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetAudioDataOffset(
-        that: this,
-      );
-
-  int getBitrate() => RustLib.instance.api.crateApiPlayerRustPlayerGetBitrate(
-        that: this,
-      );
-
-  int getBufferSize() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetBufferSize(
-        that: this,
-      );
-
-  RustBufferedRange getBufferedRange() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetBufferedRange(
-        that: this,
-      );
-
-  int getChannels() => RustLib.instance.api.crateApiPlayerRustPlayerGetChannels(
-        that: this,
-      );
-
-  RustAudioDevice getCurrentDevice() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetCurrentDevice(
-        that: this,
-      );
-
-  PlatformInt64 getDurationMs() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetDurationMs(
-        that: this,
-      );
-
-  RustEqualizerParams getEqualizer() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetEqualizer(
-        that: this,
-      );
-
-  Uint8List? getMetaBytes() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetMetaBytes(
-        that: this,
-      );
-
-  bool getPauseOnDeviceChange() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetPauseOnDeviceChange(
-        that: this,
-      );
-
-  PlatformInt64 getPinnedHeadSize() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetPinnedHeadSize(
-        that: this,
-      );
-
-  RustPlayerStatus getPlayerStatus() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetPlayerStatus(
-        that: this,
-      );
-
-  int getSampleRate() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetSampleRate(
-        that: this,
-      );
-
-  RustSilenceConfig getSilenceConfig() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetSilenceConfig(
-        that: this,
-      );
-
-  PlatformInt64 getSilenceSavedMs() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetSilenceSavedMs(
-        that: this,
-      );
-
-  RustVisualizerData getVisualizerData() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerGetVisualizerData(
-        that: this,
-      );
-
-  bool isCompleted() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerIsCompleted(
-        that: this,
-      );
-
-  bool isLiveStream() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerIsLiveStream(
-        that: this,
-      );
-
-  bool isPlaying() => RustLib.instance.api.crateApiPlayerRustPlayerIsPlaying(
-        that: this,
-      );
-
-  bool isVisualizerEnabled() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerIsVisualizerEnabled(
-        that: this,
-      );
-
-  void notifyCustomError(
-          {required int streamId,
-          required BigInt requestId,
-          required String errorMessage}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerNotifyCustomError(
+  Future<void> enableMicrophone(
+          {String? deviceId,
+          required double volume,
+          RustDuckingConfig? ducking,
+          required bool monitorDirect,
+          required double monitorVolume}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerEnableMicrophone(
           that: this,
-          streamId: streamId,
-          requestId: requestId,
-          errorMessage: errorMessage);
+          deviceId: deviceId,
+          volume: volume,
+          ducking: ducking,
+          monitorDirect: monitorDirect,
+          monitorVolume: monitorVolume);
 
-  Future<void> openAudioSource({required RustAudioSource source}) =>
+  void insertNext({required RustAudioSource source}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerInsertNext(that: this, source: source);
+
+  Future<void> loadEffect(
+          {required String id,
+          required List<int> bytes,
+          required BigInt maxPolyphony,
+          required bool pinned}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerLoadEffect(
+          that: this,
+          id: id,
+          bytes: bytes,
+          maxPolyphony: maxPolyphony,
+          pinned: pinned);
+
+  Future<void> next({BigInt? crossfadeDurationMs}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerNext(
+          that: this, crossfadeDurationMs: crossfadeDurationMs);
+
+  Future<void> open(
+          {required List<RustAudioSource> queue,
+          required BigInt startIndex,
+          required bool autoPlay}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerOpen(
+          that: this, queue: queue, startIndex: startIndex, autoPlay: autoPlay);
+
+  void pause() => RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPause(
+        that: this,
+      );
+
+  void play() => RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPlay(
+        that: this,
+      );
+
+  int playEffect(
+          {required String id,
+          required int dspRouting,
+          required RustEffectConfig config}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPlayEffect(
+          that: this, id: id, dspRouting: dspRouting, config: config);
+
+  Future<void> previous() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPrevious(
+        that: this,
+      );
+
+  bool removeAt({required BigInt index}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerRemoveAt(that: this, index: index);
+
+  void removeOutput({required RustAudioOutput output}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerRemoveOutput(
+          that: this, output: output);
+
+  bool reorder({required BigInt oldIndex, required BigInt newIndex}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerReorder(
+          that: this, oldIndex: oldIndex, newIndex: newIndex);
+
+  void respondDartReadRequest(
+          {required BigInt requestId,
+          required List<int> bytes,
+          required bool isEof}) =>
       RustLib.instance.api
-          .crateApiPlayerRustPlayerOpenAudioSource(that: this, source: source);
+          .crateApiPlayerRustMiniaudioPlayerRespondDartReadRequest(
+              that: this, requestId: requestId, bytes: bytes, isEof: isEof);
 
-  Future<void> openCustomStream(
-          {required int streamId,
-          BigInt? totalSize,
-          required bool isSeekable,
-          required List<int> initialBytes}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerOpenCustomStream(
-          that: this,
-          streamId: streamId,
-          totalSize: totalSize,
-          isSeekable: isSeekable,
-          initialBytes: initialBytes);
+  void seek({required PlatformInt64 positionMs}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSeek(
+          that: this, positionMs: positionMs);
 
-  Future<void> openMemory({required List<int> data}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerOpenMemory(that: this, data: data);
+  void setBalance({required double balance}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetBalance(
+          that: this, balance: balance);
 
-  Future<void> openSource(
-          {required String source, List<RustHttpHeader>? headers}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerOpenSource(
-          that: this, source: source, headers: headers);
+  void setBufferSize({required int bufferSizeFrames}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetBufferSize(
+          that: this, bufferSizeFrames: bufferSizeFrames);
 
-  Future<void> pause() => RustLib.instance.api.crateApiPlayerRustPlayerPause(
-        that: this,
-      );
-
-  Future<void> play() => RustLib.instance.api.crateApiPlayerRustPlayerPlay(
-        that: this,
-      );
-
-  Future<void> seek({required PlatformInt64 positionMs}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSeek(that: this, positionMs: positionMs);
-
-  void setBalance({required double pan}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetBalance(that: this, pan: pan);
-
-  void setBufferSize({required int frames}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetBufferSize(that: this, frames: frames);
+  void setCrossfade({required RustCrossfadeConfig config}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetCrossfade(
+          that: this, config: config);
 
   void setCrossfeed({required int mode}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetCrossfeed(that: this, mode: mode);
+      .crateApiPlayerRustMiniaudioPlayerSetCrossfeed(that: this, mode: mode);
 
-  Future<void> setDevice({required String deviceId}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetDevice(that: this, deviceId: deviceId);
+  void setCueSource({required int source}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetCueSource(
+          that: this, source: source);
+
+  void setCueVolume({required double volume}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetCueVolume(
+          that: this, volume: volume);
+
+  void setDirectMonitoring({required bool enabled, required double volume}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetDirectMonitoring(
+          that: this, enabled: enabled, volume: volume);
+
+  void setDopplerParameters(
+          {required double factor, required double speedOfSound}) =>
+      RustLib.instance.api
+          .crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
+              that: this, factor: factor, speedOfSound: speedOfSound);
+
+  void setDucking({required RustDuckingConfig config}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerSetDucking(that: this, config: config);
+
+  void setEffectBalance({required int voiceId, required double balance}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
+          that: this, voiceId: voiceId, balance: balance);
+
+  void setEffectEmitter({required int voiceId, RustSpatialEmitter? emitter}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
+          that: this, voiceId: voiceId, emitter: emitter);
+
+  void setEffectPitch({required int voiceId, required double pitch}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
+          that: this, voiceId: voiceId, pitch: pitch);
+
+  void setEffectVolume({required int voiceId, required double volume}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
+          that: this, voiceId: voiceId, volume: volume);
 
   void setEqualizer({required RustEqualizerParams params}) =>
-      RustLib.instance.api
-          .crateApiPlayerRustPlayerSetEqualizer(that: this, params: params);
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEqualizer(
+          that: this, params: params);
 
-  void setEqualizerBand({required int band, required double gainDb}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetEqualizerBand(
-          that: this, band: band, gainDb: gainDb);
+  void setLimiter({required bool enabled}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetLimiter(
+          that: this, enabled: enabled);
 
-  void setLimiter({required bool enabled}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetLimiter(that: this, enabled: enabled);
+  void setListener({required RustSpatialListener listener}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetListener(
+          that: this, listener: listener);
+
+  void setLoopMode({required int mode}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerSetLoopMode(that: this, mode: mode);
+
+  void setMicrophoneVolume({required double volume}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetMicrophoneVolume(
+          that: this, volume: volume);
 
   void setMono({required bool enabled}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetMono(that: this, enabled: enabled);
+      .crateApiPlayerRustMiniaudioPlayerSetMono(that: this, enabled: enabled);
 
-  void setPauseOnDeviceChange({required bool enabled}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetPauseOnDeviceChange(
+  void setPauseOnDeviceChange({required bool enabled}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
           that: this, enabled: enabled);
 
   void setPitch({required double pitch}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetPitch(that: this, pitch: pitch);
+      .crateApiPlayerRustMiniaudioPlayerSetPitch(that: this, pitch: pitch);
 
-  void setPreamp({required double preampDb}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetPreamp(that: this, preampDb: preampDb);
+  void setPreamp({required double preampDb}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetPreamp(
+          that: this, preampDb: preampDb);
 
   void setRate({required double rate}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetRate(that: this, rate: rate);
+      .crateApiPlayerRustMiniaudioPlayerSetRate(that: this, rate: rate);
 
-  void setReplayGain(
-          {required double gainDb,
-          required double peak,
-          required bool preventClipping}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetReplayGain(
-          that: this,
-          gainDb: gainDb,
-          peak: peak,
-          preventClipping: preventClipping);
+  void setReplayGain({required RustReplayGainConfig config}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetReplayGain(
+          that: this, config: config);
 
   void setReverb({required RustReverbParams params}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetReverb(that: this, params: params);
+      .crateApiPlayerRustMiniaudioPlayerSetReverb(that: this, params: params);
 
-  void setSilenceConfig({required RustSilenceConfig config}) =>
-      RustLib.instance.api
-          .crateApiPlayerRustPlayerSetSilenceConfig(that: this, config: config);
+  void setShuffle({required bool enabled}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetShuffle(
+          that: this, enabled: enabled);
 
-  void setSpatialDopplerFactor({required double factor}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetSpatialDopplerFactor(
-          that: this, factor: factor);
-
-  void setSpatialEmitter({required RustSpatialEmitter emitter}) => RustLib
-      .instance.api
-      .crateApiPlayerRustPlayerSetSpatialEmitter(that: this, emitter: emitter);
-
-  void setSpatialEnabled({required bool enabled}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetSpatialEnabled(that: this, enabled: enabled);
-
-  void setSpatialListener({required RustSpatialListener listener}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetSpatialListener(
-          that: this, listener: listener);
-
-  void setSpatialSpeedOfSound({required double speed}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetSpatialSpeedOfSound(that: this, speed: speed);
+  void setSkipSilence({required RustSilenceConfig config}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetSkipSilence(
+          that: this, config: config);
 
   void setSpatializer({required bool enabled, required double width}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetSpatializer(
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetSpatializer(
           that: this, enabled: enabled, width: width);
 
-  void setVisualizerEnabled({required bool enabled}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSetVisualizerEnabled(
+  void setVisualizerEnabled({required bool enabled}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
           that: this, enabled: enabled);
 
   void setVolume({required double volume}) => RustLib.instance.api
-      .crateApiPlayerRustPlayerSetVolume(that: this, volume: volume);
+      .crateApiPlayerRustMiniaudioPlayerSetVolume(that: this, volume: volume);
 
-  Future<void> stop() => RustLib.instance.api.crateApiPlayerRustPlayerStop(
+  Future<void> skipToIndex(
+          {required BigInt index, BigInt? crossfadeDurationMs}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSkipToIndex(
+          that: this, index: index, crossfadeDurationMs: crossfadeDurationMs);
+
+  Future<void> startRecording({required String path, required int format}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStartRecording(
+          that: this, path: path, format: format);
+
+  void stop() => RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStop(
+        that: this,
+      );
+
+  void stopAllEffects({required BigInt fadeOutMs}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStopAllEffects(
+          that: this, fadeOutMs: fadeOutMs);
+
+  void stopEffect({required int voiceId, required BigInt fadeOutMs}) =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStopEffect(
+          that: this, voiceId: voiceId, fadeOutMs: fadeOutMs);
+
+  Future<RustRecordingResult> stopRecording() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStopRecording(
         that: this,
       );
 
   Stream<RustPlayerEvent> subscribeEvents() =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSubscribeEvents(
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSubscribeEvents(
         that: this,
       );
 
-  void supplyCustomBytes(
-          {required int streamId,
-          required BigInt requestId,
-          required List<int> data,
-          required bool isEof}) =>
-      RustLib.instance.api.crateApiPlayerRustPlayerSupplyCustomBytes(
-          that: this,
-          streamId: streamId,
-          requestId: requestId,
-          data: data,
-          isEof: isEof);
-}
-
-@sealed
-class RustVoicePoolImpl extends RustOpaque implements RustVoicePool {
-  // Not to be used by end users
-  RustVoicePoolImpl.frbInternalDcoDecode(List<dynamic> wire)
-      : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  RustVoicePoolImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
-      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        RustLib.instance.api.rust_arc_increment_strong_count_RustVoicePool,
-    rustArcDecrementStrongCount:
-        RustLib.instance.api.rust_arc_decrement_strong_count_RustVoicePool,
-    rustArcDecrementStrongCountPtr:
-        RustLib.instance.api.rust_arc_decrement_strong_count_RustVoicePoolPtr,
-  );
-
-  int activeVoicesCount() =>
-      RustLib.instance.api.crateApiGameRustVoicePoolActiveVoicesCount(
-        that: this,
-      );
-
-  Future<RustSoundBufferInfo> loadSound({required List<int> bytes}) =>
-      RustLib.instance.api
-          .crateApiGameRustVoicePoolLoadSound(that: this, bytes: bytes);
-
-  Future<RustSoundBufferInfo> loadSoundFile({required String path}) =>
-      RustLib.instance.api
-          .crateApiGameRustVoicePoolLoadSoundFile(that: this, path: path);
-
-  int playOneShot(
-          {required BigInt bufferId,
-          required double volume,
-          required double pitch,
-          required double pitchJitter,
-          required double volumeJitter,
-          required int priority,
-          RustSpatialEmitter? emitter}) =>
-      RustLib.instance.api.crateApiGameRustVoicePoolPlayOneShot(
-          that: this,
-          bufferId: bufferId,
-          volume: volume,
-          pitch: pitch,
-          pitchJitter: pitchJitter,
-          volumeJitter: volumeJitter,
-          priority: priority,
-          emitter: emitter);
-
-  int playSound(
-          {required BigInt bufferId,
-          required double volume,
-          required double pitch,
-          required int priority,
-          required bool looping,
-          RustSpatialEmitter? emitter}) =>
-      RustLib.instance.api.crateApiGameRustVoicePoolPlaySound(
-          that: this,
-          bufferId: bufferId,
-          volume: volume,
-          pitch: pitch,
-          priority: priority,
-          looping: looping,
-          emitter: emitter);
-
-  Uint32List playStems(
-          {required Uint64List bufferIds,
-          required List<double> volumes,
-          required bool looping}) =>
-      RustLib.instance.api.crateApiGameRustVoicePoolPlayStems(
-          that: this, bufferIds: bufferIds, volumes: volumes, looping: looping);
-
-  void setListener({required RustSpatialListener listener}) =>
-      RustLib.instance.api
-          .crateApiGameRustVoicePoolSetListener(that: this, listener: listener);
-
-  void setMasterVolume({required double volume}) => RustLib.instance.api
-      .crateApiGameRustVoicePoolSetMasterVolume(that: this, volume: volume);
-
-  void setPolicy({required RustVoiceStealingPolicy policy}) =>
-      RustLib.instance.api
-          .crateApiGameRustVoicePoolSetPolicy(that: this, policy: policy);
-
-  void setTimeScale({required double scale}) => RustLib.instance.api
-      .crateApiGameRustVoicePoolSetTimeScale(that: this, scale: scale);
-
-  void setVoiceEmitter({required int voiceId, RustSpatialEmitter? emitter}) =>
-      RustLib.instance.api.crateApiGameRustVoicePoolSetVoiceEmitter(
-          that: this, voiceId: voiceId, emitter: emitter);
-
-  void setVoicePitch({required int voiceId, required double pitch}) =>
-      RustLib.instance.api.crateApiGameRustVoicePoolSetVoicePitch(
-          that: this, voiceId: voiceId, pitch: pitch);
-
-  void setVoiceVolume({required int voiceId, required double volume}) =>
-      RustLib.instance.api.crateApiGameRustVoicePoolSetVoiceVolume(
-          that: this, voiceId: voiceId, volume: volume);
-
-  void stopAll() => RustLib.instance.api.crateApiGameRustVoicePoolStopAll(
-        that: this,
-      );
-
-  void stopVoice({required int voiceId}) => RustLib.instance.api
-      .crateApiGameRustVoicePoolStopVoice(that: this, voiceId: voiceId);
-
-  bool unloadSound({required BigInt bufferId}) => RustLib.instance.api
-      .crateApiGameRustVoicePoolUnloadSound(that: this, bufferId: bufferId);
+  bool unloadEffect({required String id}) => RustLib.instance.api
+      .crateApiPlayerRustMiniaudioPlayerUnloadEffect(that: this, id: id);
 }

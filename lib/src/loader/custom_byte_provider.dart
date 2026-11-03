@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../api/logger.dart';
-import '../platform/platform_backend.dart';
+import '../rust/api/player.dart' as rust;
 import '../rust/api/types.dart';
 
 /// Contract for asynchronous custom byte streams in Dart (DRM, encrypted streams, tokenized storage).
@@ -28,27 +28,26 @@ abstract class CustomByteProvider {
 
 /// Bridges a Dart [CustomByteProvider] to the Rust `CustomDartByteSource` over FRB.
 class DartByteProviderBridge {
-  final PlayerBackend _backend;
+  final rust.RustMiniaudioPlayer _rust;
   final CustomByteProvider _provider;
+  final Stream<RustDartReadRequest> _requestStream;
   StreamSubscription<RustDartReadRequest>? _subscription;
 
-  DartByteProviderBridge(this._backend, this._provider);
+  DartByteProviderBridge({
+    required rust.RustMiniaudioPlayer rust,
+    required CustomByteProvider provider,
+    required Stream<RustDartReadRequest> requestStream,
+  })  : _rust = rust,
+        _provider = provider,
+        _requestStream = requestStream;
 
-  /// Starts the custom byte bridge by reading initial bytes and opening the stream in Rust.
+  /// Starts the custom byte bridge by listening to read requests.
   Future<void> start() async {
     MapLogger.info(
       'DartByteProviderBridge starting (streamId: ${_provider.streamId}, '
       'totalBytes: ${_provider.totalBytes}, seekable: ${_provider.isSeekable})',
     );
-    _subscription = _backend.onDartReadRequest.listen(_handleReadRequest);
-
-    final initial = await _provider.readInitialBytes();
-    await _backend.openCustomStream(
-      streamId: _provider.streamId,
-      totalSize: _provider.totalBytes,
-      isSeekable: _provider.isSeekable,
-      initialBytes: initial,
-    );
+    _subscription = _requestStream.listen(_handleReadRequest);
   }
 
   Future<void> _handleReadRequest(RustDartReadRequest req) async {
@@ -63,20 +62,14 @@ class DartByteProviderBridge {
         req.length,
       );
       final isEof = chunk.length < req.length;
-      _backend.supplyCustomBytes(
-        streamId: _provider.streamId,
-        requestId: req.requestId.toInt(),
-        data: chunk,
+      _rust.respondDartReadRequest(
+        requestId: req.requestId,
+        bytes: chunk,
         isEof: isEof,
       );
     } catch (e) {
       MapLogger.error(
         'CustomByteProvider read error (requestId: ${req.requestId}): $e',
-      );
-      _backend.notifyCustomError(
-        streamId: _provider.streamId,
-        requestId: req.requestId.toInt(),
-        errorMessage: e.toString(),
       );
     }
   }

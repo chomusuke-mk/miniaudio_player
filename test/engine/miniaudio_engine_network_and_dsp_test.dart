@@ -17,6 +17,7 @@ void main() {
   int? serverPort;
 
   setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
     localWavFile1 = File('test/fixtures/test_24bit_stereo.wav');
     localWavFile2 = File('test/fixtures/cbr_noxing.mp3');
     memoryWavBytes = await File('test/fixtures/test_24bit.wav').readAsBytes();
@@ -66,10 +67,10 @@ void main() {
   });
 
   group('2.3 Network & Web Audio: Strict Separation of open and play()', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>();
+      engine = MiniaudioPlayer<String>();
     });
 
     tearDown(() async {
@@ -140,18 +141,22 @@ void main() {
         isTrue,
       );
       // Allow manual crossfade to settle
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      int elapsed = 0;
+      while (engine.state.phase != EnginePhase.playing && elapsed < 1000) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        elapsed += 50;
+      }
       expect(engine.state.phase, equals(EnginePhase.playing));
     });
   });
 
   group('2.3 Network & Livestreams in Mixed Queue (LiveStreamAudioSource)', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(seconds: 2),
+          autoDuration: const Duration(seconds: 2),
           manualDuration: const Duration(milliseconds: 200),
           curve: CrossfadeCurve.linear,
         ),
@@ -220,7 +225,11 @@ void main() {
       expect(engine.state.currentItem?.data, equals('Local File'));
 
       // Allow crossfade (200ms) to complete
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      int elapsedXfade = 0;
+      while (engine.state.phase != EnginePhase.playing && elapsedXfade < 1000) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        elapsedXfade += 50;
+      }
       expect(engine.state.phase, equals(EnginePhase.playing));
       expect(engine.state.playing, isTrue);
       expect(engine.state.isLiveStream, isFalse);
@@ -228,10 +237,10 @@ void main() {
   });
 
   group('2.4 ReplayGain Normalization per Track', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>();
+      engine = MiniaudioPlayer<String>();
     });
 
     tearDown(() async {
@@ -375,10 +384,10 @@ void main() {
   });
 
   group('2.4 Dual-Deck Studio DSP Synchronization & Visualizer State', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
           manualDuration: const Duration(milliseconds: 100),
         ),

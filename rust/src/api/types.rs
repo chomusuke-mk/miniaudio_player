@@ -30,7 +30,7 @@ impl From<crate::buffer::DartReadRequest> for RustDartReadRequest {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RustAudioDevice {
     pub id: String,
     pub effective_id: String,
@@ -67,11 +67,7 @@ impl From<&crate::sync::telemetry::DeviceInfo> for RustAudioDevice {
 pub struct RustBufferedRange {
     pub start_ms: i64,
     pub end_ms: i64,
-    pub duration_ms: i64,
-    pub fill_percentage: f32,
-    pub stream_percentage: f32,
     pub is_buffering: bool,
-    pub is_eof: bool,
 }
 
 impl From<crate::bridge::ffi::MiniaudioBufferedRange> for RustBufferedRange {
@@ -79,11 +75,7 @@ impl From<crate::bridge::ffi::MiniaudioBufferedRange> for RustBufferedRange {
         Self {
             start_ms: r.start_ms,
             end_ms: r.end_ms,
-            duration_ms: r.duration_ms,
-            fill_percentage: r.fill_percentage,
-            stream_percentage: r.stream_percentage,
             is_buffering: r.is_buffering != 0,
-            is_eof: r.is_eof != 0,
         }
     }
 }
@@ -93,11 +85,7 @@ impl From<crate::sync::telemetry::BufferedRange> for RustBufferedRange {
         Self {
             start_ms: r.start_ms,
             end_ms: r.end_ms,
-            duration_ms: r.duration_ms,
-            fill_percentage: r.fill_percentage,
-            stream_percentage: r.stream_percentage,
             is_buffering: r.is_buffering != 0,
-            is_eof: r.is_eof != 0,
         }
     }
 }
@@ -253,8 +241,8 @@ pub struct RustPlayerStatus {
     pub channels: u32,
 }
 
-impl From<crate::core::player::MiniaudioPlayerStatus> for RustPlayerStatus {
-    fn from(status: crate::core::player::MiniaudioPlayerStatus) -> Self {
+impl From<crate::core::dual_source::MiniaudioPlayerStatus> for RustPlayerStatus {
+    fn from(status: crate::core::dual_source::MiniaudioPlayerStatus) -> Self {
         Self {
             position_ms: status.position_ms,
             duration_ms: status.duration_ms,
@@ -277,10 +265,13 @@ pub struct RustAudioAnalysisResult {
     pub duration_ms: i64,
     pub sample_rate: u32,
     pub channels: u32,
+    pub bitrate: u32,
     pub peak_amplitude: f32,
     pub rms_amplitude: f32,
+    pub has_replay_gain: bool,
     pub integrated_lufs: f32,
     pub replay_gain_db: f32,
+    pub has_waveform: bool,
     pub spectral_centroid: f32,
     pub frequency_bands: Vec<f32>,
     pub waveform_peaks: Vec<f32>,
@@ -288,7 +279,9 @@ pub struct RustAudioAnalysisResult {
 
 impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult {
     fn from(result: crate::dsp::analysis::AudioAnalysisResult) -> Self {
-        let waveform_peaks = if result.has_waveform != 0 {
+        let has_waveform = result.has_waveform != 0;
+        let has_replay_gain = result.has_replay_gain != 0;
+        let waveform_peaks = if has_waveform {
             result.waveform.points
         } else {
             Vec::new()
@@ -297,18 +290,21 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
             duration_ms: result.duration_ms,
             sample_rate: result.sample_rate,
             channels: result.channels,
+            bitrate: result.bitrate,
             peak_amplitude: result.peak,
             rms_amplitude: result.peak,
-            integrated_lufs: if result.has_replay_gain != 0 {
+            has_replay_gain,
+            integrated_lufs: if has_replay_gain {
                 result.replay_gain.lufs
             } else {
                 0.0
             },
-            replay_gain_db: if result.has_replay_gain != 0 {
+            replay_gain_db: if has_replay_gain {
                 result.replay_gain.gain_db
             } else {
                 0.0
             },
+            has_waveform,
             spectral_centroid: 0.0,
             frequency_bands: Vec::new(),
             waveform_peaks,
@@ -316,50 +312,18 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum RustPlayerEvent {
-    State(i32),
-    Position(i64),
-    Duration(i64),
-    IsPlaying(bool),
-    IsBuffering(bool),
-    IsCompleted(bool),
-    Volume(f32),
-    Rate(f32),
-    Pitch(f32),
-    Bitrate(u32),
-    BufferSize(u32),
-    Device(RustAudioDevice),
-    Visualizer(RustVisualizerData),
-    VisualizerEnabled(bool),
-    BufferedRange(RustBufferedRange),
-    SilenceConfig(RustSilenceConfig),
-    SilenceSaved(i64),
-    Equalizer(RustEqualizerParams),
-    Preamp(f32),
-    ReplayGain(RustReplayGainConfig),
-    Balance(f32),
-    Mono(bool),
-    Crossfeed(i32),
-    Spatializer { enabled: bool, width: f32 },
-    Reverb(RustReverbParams),
-    Limiter(bool),
-    DartReadRequest(RustDartReadRequest),
-    Error { message: String, code: i32 },
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RustCrossfadeConfig {
-    pub duration_ms: u64,
+    pub auto_duration_ms: u64,
     pub manual_duration_ms: u64,
-    pub curve: i32, // 0: equalPower, 1: linear
+    pub curve: i32,
 }
 
 impl Default for RustCrossfadeConfig {
     fn default() -> Self {
         Self {
-            duration_ms: 5000,
-            manual_duration_ms: 100,
+            auto_duration_ms: 5000,
+            manual_duration_ms: 500,
             curve: 0,
         }
     }
@@ -375,7 +339,7 @@ pub struct RustAudioSource {
     pub replay_peak: Option<f32>,
 }
 
-impl From<RustAudioSource> for crate::core::engine::AudioSourceCore {
+impl From<RustAudioSource> for crate::core::dual_source::AudioSourceCore {
     fn from(it: RustAudioSource) -> Self {
         Self {
             id: it.id,
@@ -388,8 +352,8 @@ impl From<RustAudioSource> for crate::core::engine::AudioSourceCore {
     }
 }
 
-impl From<&crate::core::engine::AudioSourceCore> for RustAudioSource {
-    fn from(it: &crate::core::engine::AudioSourceCore) -> Self {
+impl From<&crate::core::dual_source::AudioSourceCore> for RustAudioSource {
+    fn from(it: &crate::core::dual_source::AudioSourceCore) -> Self {
         Self {
             id: it.id,
             source: it.source.clone(),
@@ -656,4 +620,155 @@ pub struct RustCueConfig {
     pub device_id: Option<String>,
     pub volume: f32,
     pub mode: i32, // 0: Deck A, 1: Deck B, 2: Master
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RustPlayerConfig {
+    pub buffer_size_frames: u32,
+    pub max_voices: u32,
+    pub max_ram_bytes: usize,
+    pub pause_on_device_change: bool,
+    pub buffer_local_duration_ms: u64,
+    pub buffer_network_duration_ms: u64,
+}
+
+impl Default for RustPlayerConfig {
+    fn default() -> Self {
+        Self {
+            buffer_size_frames: 1024,
+            max_voices: 64,
+            max_ram_bytes: 64 * 1024 * 1024,
+            pause_on_device_change: true,
+            buffer_local_duration_ms: 30000,
+            buffer_network_duration_ms: 30000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RustAudioOutput {
+    Speaker { exclusive_mode: bool },
+    Device { device_id: String, exclusive_mode: bool },
+    Cue { device_id: String, source: i32 },
+    File { path: String, format: i32 },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustAudioInput {
+    pub device_id: Option<String>,
+    pub volume: f32,
+    pub ducking: Option<RustDuckingConfig>,
+    pub monitor_direct: bool,
+    pub monitor_volume: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct RustAudioEffect {
+    pub id: String,
+    pub source: RustAudioSource,
+    pub max_polyphony: u32,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RustEffectConfig {
+    pub volume: f32,
+    pub balance: f32,
+    pub pitch: f32,
+    pub rate: f32,
+    pub looping: bool,
+    pub priority: u8,
+    pub pitch_jitter: f32,
+    pub volume_jitter: f32,
+    pub spatial: Option<RustSpatialEmitter>,
+}
+
+impl From<RustEffectConfig> for crate::core::voice_pool::EffectConfig {
+    fn from(c: RustEffectConfig) -> Self {
+        Self {
+            volume: c.volume,
+            balance: c.balance,
+            pitch: c.pitch,
+            rate: c.rate,
+            looping: c.looping,
+            priority: c.priority,
+            pitch_jitter: c.pitch_jitter,
+            volume_jitter: c.volume_jitter,
+            spatial: c.spatial.map(Into::into),
+        }
+    }
+}
+
+impl From<crate::core::dual_source::AudioSourceCore> for RustAudioSource {
+    fn from(s: crate::core::dual_source::AudioSourceCore) -> Self {
+        Self {
+            id: s.id,
+            source: s.source,
+            headers: s.headers,
+            data_bytes: s.data_bytes,
+            replay_gain_db: s.replay_gain_db,
+            replay_peak: s.replay_peak,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RustRecordingResult {
+    pub path: String,
+    pub duration_ms: u64,
+    pub bytes_written: usize,
+    pub sample_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum RustPlayerEvent {
+    PlaybackState(i32),
+    State(i32),
+    Position(i64),
+    Duration(i64),
+    IsPlaying(bool),
+    IsBuffering(bool),
+    IsCompleted(bool),
+    BufferedRange(RustBufferedRange),
+    Queue(Vec<RustAudioSource>),
+    CurrentIndex(i32),
+    IsCrossfading(bool),
+    CrossfadeConfig(RustCrossfadeConfig),
+    Visualizer(RustVisualizerData),
+    VisualizerEnabled(bool),
+    Volume(f32),
+    Rate(f32),
+    Pitch(f32),
+    Balance(f32),
+    Mono(bool),
+    Bitrate(u32),
+    BufferSize(u32),
+    SilenceConfig(RustSilenceConfig),
+    SilenceSaved(i64),
+    Equalizer(RustEqualizerParams),
+    Preamp(f32),
+    ReplayGain(RustReplayGainConfig),
+    Crossfeed(i32),
+    Spatializer { enabled: bool, width: f32 },
+    Reverb(RustReverbParams),
+    Limiter(bool),
+    IsRecording(bool),
+    RecordedDuration(u64),
+    IsDuckingActive(bool),
+    MicRmsLevel(f32),
+    VoiceCompleted(u32),
+    MetaBytes(Vec<u8>),
+    CueVolume(f32),
+    CueSource(i32),
+    LoopMode(i32),
+    IsShuffled(bool),
+    PauseOnDeviceChange(bool),
+    MicrophoneEnabled(bool),
+    MicVolume(f32),
+    DirectMonitoringEnabled(bool),
+    OutputDevices(Vec<RustAudioDevice>),
+    InputDevices(Vec<RustAudioDevice>),
+    DartReadRequest(RustDartReadRequest),
+    Device(RustAudioDevice),
+    Error { message: String, code: i32 },
 }

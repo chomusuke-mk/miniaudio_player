@@ -7,6 +7,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   group('AudioCodec Pure Magic-Bytes Sniffing (No Extension Reliance)', () {
     test('Sniffs FLAC magic bytes (fLaC)', () {
       final bytes = Uint8List.fromList([0x66, 0x4C, 0x61, 0x43, 0x00, 0x00]);
@@ -157,14 +161,12 @@ void main() {
     late Directory tempDir;
 
     setUp(() async {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
       tempDir = Directory.systemTemp.createTempSync('miniaudio_codec_test_');
     });
 
     tearDown(() async {
-      if (!player.isDisposed) {
-        await player.dispose();
-      }
+      await player.dispose();
       if (tempDir.existsSync()) {
         tempDir.deleteSync(recursive: true);
       }
@@ -229,13 +231,11 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
-      if (!player.isDisposed) {
-        await player.dispose();
-      }
+      await player.dispose();
     });
 
     test('Global config accepts typed Duration buffer settings', () {
@@ -254,32 +254,18 @@ void main() {
       expect(MiniaudioPlayer.globalConfig.bufferBehindLocalDuration.inSeconds, equals(4));
       expect(MiniaudioPlayer.globalConfig.bufferBehindNetworkDuration.inSeconds, equals(12));
       expect(MiniaudioPlayer.globalConfig.bufferBehindLiveStreamDuration.inSeconds, equals(6));
-
-      // Player instance delegates cleanly to global config
-      expect(player.bufferLocalDuration.inSeconds, equals(8));
-      expect(player.bufferNetworkDuration.inSeconds, equals(30));
-      expect(player.bufferLiveStreamDuration.inSeconds, equals(15));
-      expect(player.bufferBehindLocalDuration.inSeconds, equals(4));
-      expect(player.bufferBehindNetworkDuration.inSeconds, equals(12));
-      expect(player.bufferBehindLiveStreamDuration.inSeconds, equals(6));
     });
 
-    test('BufferedRange telemetry calculation and getters', () {
+    test('BufferedRange telemetry properties', () {
       const range = BufferedRange(
         start: Duration(seconds: 5),
         end: Duration(seconds: 25),
-        duration: Duration(seconds: 100),
         isBuffering: false,
-        isEof: false,
       );
 
-      expect(range.windowDuration, equals(const Duration(seconds: 20)));
-      expect(range.percentage, closeTo(0.25, 0.001));
-      expect(range.fillPercentage, closeTo(0.20, 0.001));
-      expect(range.percentage, closeTo(0.25, 0.001));
-      expect(range.contains(const Duration(seconds: 10)), isTrue);
-      expect(range.contains(const Duration(seconds: 3)), isFalse);
-      expect(range.contains(const Duration(seconds: 30)), isFalse);
+      expect(range.start, equals(const Duration(seconds: 5)));
+      expect(range.end, equals(const Duration(seconds: 25)));
+      expect(range.isBuffering, isFalse);
     });
 
     test('Playback populates sampleRate, channels, and buffered telemetry', () async {
@@ -288,8 +274,8 @@ void main() {
 
       await player.action.open(AudioSource(file.path));
 
-      expect(player.sampleRate, greaterThan(0));
-      expect(player.channels, greaterThan(0));
+      expect(player.state.sampleRate, greaterThan(0));
+      expect(player.state.channels, greaterThan(0));
       expect(player.state.trackMetadata, isNotNull);
       expect(player.state.trackMetadata!.codec, equals(AudioCodec.mp3));
       expect(player.state.trackMetadata!.sampleRate, greaterThan(0));

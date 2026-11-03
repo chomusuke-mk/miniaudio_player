@@ -9,7 +9,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::core::player::{STATE_BUFFERING, STATE_COMPLETED, STATE_PLAYING};
+use crate::core::dual_source::{STATE_BUFFERING, STATE_COMPLETED, STATE_PLAYING};
 use crate::dsp::chain::DspChain;
 use crate::dsp::crossfeed::CrossfeedMode;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -70,6 +70,7 @@ pub unsafe extern "C" fn audio_renderer_notif_trampoline(
 #[repr(C)]
 pub struct AudioRenderer {
     pub header: PcmRendererHeader,
+    pub deck_id: usize,
     pub consumer: AudioConsumer,
     pub cmd_consumer: rtrb::Consumer<DspCommand>,
 
@@ -239,12 +240,18 @@ impl AudioRenderer {
 
             let decoder_at_eof = self.decoder_eof.load(Ordering::Acquire);
             let seek_pending = self.seek_request_ms.load(Ordering::Acquire) >= 0;
+            let dur = self.duration_ms.load(Ordering::Acquire);
+            let pos = self.position_ms.load(Ordering::Acquire);
             if decoder_at_eof && !seek_pending && read_samples == 0 {
-                self.state.store(STATE_COMPLETED, Ordering::Release);
-                self.completed_flag.store(true, Ordering::Release);
+                if cur_state == STATE_PLAYING && (dur <= 0 || pos > 0 || dur <= 100) {
+                    self.state.store(STATE_COMPLETED, Ordering::Release);
+                    self.completed_flag.store(true, Ordering::Release);
+                }
             } else if read_samples == 0 && self.is_stream.load(Ordering::Acquire) {
-                self.state.store(STATE_BUFFERING, Ordering::Release);
-                self.buffering_flag.store(true, Ordering::Release);
+                if cur_state == STATE_PLAYING {
+                    self.state.store(STATE_BUFFERING, Ordering::Release);
+                    self.buffering_flag.store(true, Ordering::Release);
+                }
             }
         }
 

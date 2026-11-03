@@ -64,6 +64,8 @@ pub struct DeviceCaptureNode {
     pub receiver_ptr: *mut CaptureReceiver,
     pub is_active: Arc<AtomicBool>,
     pub mic_volume: Arc<AtomicU32>,
+    pub monitor_direct: Arc<AtomicBool>,
+    pub monitor_volume: Arc<AtomicU32>,
     pub sample_rate: u32,
     pub channels: u32,
 }
@@ -141,6 +143,8 @@ impl DeviceCaptureNode {
             receiver_ptr,
             is_active,
             mic_volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            monitor_direct: Arc::new(AtomicBool::new(false)),
+            monitor_volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             sample_rate: sr,
             channels: ch,
         });
@@ -180,6 +184,19 @@ impl DeviceCaptureNode {
 
     pub fn mic_volume(&self) -> f32 {
         f32::from_bits(self.mic_volume.load(Ordering::Relaxed))
+    }
+
+    pub fn set_direct_monitoring(&self, enabled: bool, volume: f32) {
+        self.monitor_direct.store(enabled, Ordering::Release);
+        self.monitor_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Release);
+    }
+
+    pub fn is_direct_monitoring(&self) -> bool {
+        self.monitor_direct.load(Ordering::Acquire)
+    }
+
+    pub fn monitor_volume(&self) -> f32 {
+        f32::from_bits(self.monitor_volume.load(Ordering::Relaxed))
     }
 
     /// Feeds simulated PCM frames for testing in headless / CI environments without audio inputs.

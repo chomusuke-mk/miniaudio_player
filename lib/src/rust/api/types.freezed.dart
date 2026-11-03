@@ -14,11 +14,11 @@ part of 'types.dart';
 T _$identity<T>(T value) => value;
 
 /// @nodoc
-mixin _$RustEngineEvent {
+mixin _$RustAudioOutput {
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
-        (other.runtimeType == runtimeType && other is RustEngineEvent);
+        (other.runtimeType == runtimeType && other is RustAudioOutput);
   }
 
   @override
@@ -26,18 +26,18 @@ mixin _$RustEngineEvent {
 
   @override
   String toString() {
-    return 'RustEngineEvent()';
+    return 'RustAudioOutput()';
   }
 }
 
 /// @nodoc
-class $RustEngineEventCopyWith<$Res> {
-  $RustEngineEventCopyWith(
-      RustEngineEvent _, $Res Function(RustEngineEvent) __);
+class $RustAudioOutputCopyWith<$Res> {
+  $RustAudioOutputCopyWith(
+      RustAudioOutput _, $Res Function(RustAudioOutput) __);
 }
 
-/// Adds pattern-matching-related methods to [RustEngineEvent].
-extension RustEngineEventPatterns on RustEngineEvent {
+/// Adds pattern-matching-related methods to [RustAudioOutput].
+extension RustAudioOutputPatterns on RustAudioOutput {
   /// A variant of `map` that fallback to returning `orElse`.
   ///
   /// It is equivalent to doing:
@@ -52,110 +52,22 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
-    TResult Function(RustEngineEvent_Phase value)? phase,
-    TResult Function(RustEngineEvent_State value)? state,
-    TResult Function(RustEngineEvent_Position value)? position,
-    TResult Function(RustEngineEvent_Duration value)? duration,
-    TResult Function(RustEngineEvent_IsPlaying value)? isPlaying,
-    TResult Function(RustEngineEvent_IsBuffering value)? isBuffering,
-    TResult Function(RustEngineEvent_IsCompleted value)? isCompleted,
-    TResult Function(RustEngineEvent_CurrentIndex value)? currentIndex,
-    TResult Function(RustEngineEvent_QueueChanged value)? queueChanged,
-    TResult Function(RustEngineEvent_NeedMoreTracks value)? needMoreTracks,
-    TResult Function(RustEngineEvent_Volume value)? volume,
-    TResult Function(RustEngineEvent_Rate value)? rate,
-    TResult Function(RustEngineEvent_Pitch value)? pitch,
-    TResult Function(RustEngineEvent_Bitrate value)? bitrate,
-    TResult Function(RustEngineEvent_BufferSize value)? bufferSize,
-    TResult Function(RustEngineEvent_Device value)? device,
-    TResult Function(RustEngineEvent_Visualizer value)? visualizer,
-    TResult Function(RustEngineEvent_VisualizerEnabled value)?
-        visualizerEnabled,
-    TResult Function(RustEngineEvent_BufferedRange value)? bufferedRange,
-    TResult Function(RustEngineEvent_Equalizer value)? equalizer,
-    TResult Function(RustEngineEvent_Preamp value)? preamp,
-    TResult Function(RustEngineEvent_ReplayGain value)? replayGain,
-    TResult Function(RustEngineEvent_Balance value)? balance,
-    TResult Function(RustEngineEvent_Mono value)? mono,
-    TResult Function(RustEngineEvent_Crossfeed value)? crossfeed,
-    TResult Function(RustEngineEvent_Spatializer value)? spatializer,
-    TResult Function(RustEngineEvent_Reverb value)? reverb,
-    TResult Function(RustEngineEvent_Limiter value)? limiter,
-    TResult Function(RustEngineEvent_CrossfadeConfig value)? crossfadeConfig,
-    TResult Function(RustEngineEvent_LoopMode value)? loopMode,
-    TResult Function(RustEngineEvent_Shuffle value)? shuffle,
-    TResult Function(RustEngineEvent_MetaBytes value)? metaBytes,
-    TResult Function(RustEngineEvent_Error value)? error,
+    TResult Function(RustAudioOutput_Speaker value)? speaker,
+    TResult Function(RustAudioOutput_Device value)? device,
+    TResult Function(RustAudioOutput_Cue value)? cue,
+    TResult Function(RustAudioOutput_File value)? file,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
-      case RustEngineEvent_Phase() when phase != null:
-        return phase(_that);
-      case RustEngineEvent_State() when state != null:
-        return state(_that);
-      case RustEngineEvent_Position() when position != null:
-        return position(_that);
-      case RustEngineEvent_Duration() when duration != null:
-        return duration(_that);
-      case RustEngineEvent_IsPlaying() when isPlaying != null:
-        return isPlaying(_that);
-      case RustEngineEvent_IsBuffering() when isBuffering != null:
-        return isBuffering(_that);
-      case RustEngineEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that);
-      case RustEngineEvent_CurrentIndex() when currentIndex != null:
-        return currentIndex(_that);
-      case RustEngineEvent_QueueChanged() when queueChanged != null:
-        return queueChanged(_that);
-      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
-        return needMoreTracks(_that);
-      case RustEngineEvent_Volume() when volume != null:
-        return volume(_that);
-      case RustEngineEvent_Rate() when rate != null:
-        return rate(_that);
-      case RustEngineEvent_Pitch() when pitch != null:
-        return pitch(_that);
-      case RustEngineEvent_Bitrate() when bitrate != null:
-        return bitrate(_that);
-      case RustEngineEvent_BufferSize() when bufferSize != null:
-        return bufferSize(_that);
-      case RustEngineEvent_Device() when device != null:
+      case RustAudioOutput_Speaker() when speaker != null:
+        return speaker(_that);
+      case RustAudioOutput_Device() when device != null:
         return device(_that);
-      case RustEngineEvent_Visualizer() when visualizer != null:
-        return visualizer(_that);
-      case RustEngineEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that);
-      case RustEngineEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that);
-      case RustEngineEvent_Equalizer() when equalizer != null:
-        return equalizer(_that);
-      case RustEngineEvent_Preamp() when preamp != null:
-        return preamp(_that);
-      case RustEngineEvent_ReplayGain() when replayGain != null:
-        return replayGain(_that);
-      case RustEngineEvent_Balance() when balance != null:
-        return balance(_that);
-      case RustEngineEvent_Mono() when mono != null:
-        return mono(_that);
-      case RustEngineEvent_Crossfeed() when crossfeed != null:
-        return crossfeed(_that);
-      case RustEngineEvent_Spatializer() when spatializer != null:
-        return spatializer(_that);
-      case RustEngineEvent_Reverb() when reverb != null:
-        return reverb(_that);
-      case RustEngineEvent_Limiter() when limiter != null:
-        return limiter(_that);
-      case RustEngineEvent_CrossfadeConfig() when crossfadeConfig != null:
-        return crossfadeConfig(_that);
-      case RustEngineEvent_LoopMode() when loopMode != null:
-        return loopMode(_that);
-      case RustEngineEvent_Shuffle() when shuffle != null:
-        return shuffle(_that);
-      case RustEngineEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that);
-      case RustEngineEvent_Error() when error != null:
-        return error(_that);
+      case RustAudioOutput_Cue() when cue != null:
+        return cue(_that);
+      case RustAudioOutput_File() when file != null:
+        return file(_that);
       case _:
         return orElse();
     }
@@ -176,112 +88,21 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(RustEngineEvent_Phase value) phase,
-    required TResult Function(RustEngineEvent_State value) state,
-    required TResult Function(RustEngineEvent_Position value) position,
-    required TResult Function(RustEngineEvent_Duration value) duration,
-    required TResult Function(RustEngineEvent_IsPlaying value) isPlaying,
-    required TResult Function(RustEngineEvent_IsBuffering value) isBuffering,
-    required TResult Function(RustEngineEvent_IsCompleted value) isCompleted,
-    required TResult Function(RustEngineEvent_CurrentIndex value) currentIndex,
-    required TResult Function(RustEngineEvent_QueueChanged value) queueChanged,
-    required TResult Function(RustEngineEvent_NeedMoreTracks value)
-        needMoreTracks,
-    required TResult Function(RustEngineEvent_Volume value) volume,
-    required TResult Function(RustEngineEvent_Rate value) rate,
-    required TResult Function(RustEngineEvent_Pitch value) pitch,
-    required TResult Function(RustEngineEvent_Bitrate value) bitrate,
-    required TResult Function(RustEngineEvent_BufferSize value) bufferSize,
-    required TResult Function(RustEngineEvent_Device value) device,
-    required TResult Function(RustEngineEvent_Visualizer value) visualizer,
-    required TResult Function(RustEngineEvent_VisualizerEnabled value)
-        visualizerEnabled,
-    required TResult Function(RustEngineEvent_BufferedRange value)
-        bufferedRange,
-    required TResult Function(RustEngineEvent_Equalizer value) equalizer,
-    required TResult Function(RustEngineEvent_Preamp value) preamp,
-    required TResult Function(RustEngineEvent_ReplayGain value) replayGain,
-    required TResult Function(RustEngineEvent_Balance value) balance,
-    required TResult Function(RustEngineEvent_Mono value) mono,
-    required TResult Function(RustEngineEvent_Crossfeed value) crossfeed,
-    required TResult Function(RustEngineEvent_Spatializer value) spatializer,
-    required TResult Function(RustEngineEvent_Reverb value) reverb,
-    required TResult Function(RustEngineEvent_Limiter value) limiter,
-    required TResult Function(RustEngineEvent_CrossfadeConfig value)
-        crossfadeConfig,
-    required TResult Function(RustEngineEvent_LoopMode value) loopMode,
-    required TResult Function(RustEngineEvent_Shuffle value) shuffle,
-    required TResult Function(RustEngineEvent_MetaBytes value) metaBytes,
-    required TResult Function(RustEngineEvent_Error value) error,
+    required TResult Function(RustAudioOutput_Speaker value) speaker,
+    required TResult Function(RustAudioOutput_Device value) device,
+    required TResult Function(RustAudioOutput_Cue value) cue,
+    required TResult Function(RustAudioOutput_File value) file,
   }) {
     final _that = this;
     switch (_that) {
-      case RustEngineEvent_Phase():
-        return phase(_that);
-      case RustEngineEvent_State():
-        return state(_that);
-      case RustEngineEvent_Position():
-        return position(_that);
-      case RustEngineEvent_Duration():
-        return duration(_that);
-      case RustEngineEvent_IsPlaying():
-        return isPlaying(_that);
-      case RustEngineEvent_IsBuffering():
-        return isBuffering(_that);
-      case RustEngineEvent_IsCompleted():
-        return isCompleted(_that);
-      case RustEngineEvent_CurrentIndex():
-        return currentIndex(_that);
-      case RustEngineEvent_QueueChanged():
-        return queueChanged(_that);
-      case RustEngineEvent_NeedMoreTracks():
-        return needMoreTracks(_that);
-      case RustEngineEvent_Volume():
-        return volume(_that);
-      case RustEngineEvent_Rate():
-        return rate(_that);
-      case RustEngineEvent_Pitch():
-        return pitch(_that);
-      case RustEngineEvent_Bitrate():
-        return bitrate(_that);
-      case RustEngineEvent_BufferSize():
-        return bufferSize(_that);
-      case RustEngineEvent_Device():
+      case RustAudioOutput_Speaker():
+        return speaker(_that);
+      case RustAudioOutput_Device():
         return device(_that);
-      case RustEngineEvent_Visualizer():
-        return visualizer(_that);
-      case RustEngineEvent_VisualizerEnabled():
-        return visualizerEnabled(_that);
-      case RustEngineEvent_BufferedRange():
-        return bufferedRange(_that);
-      case RustEngineEvent_Equalizer():
-        return equalizer(_that);
-      case RustEngineEvent_Preamp():
-        return preamp(_that);
-      case RustEngineEvent_ReplayGain():
-        return replayGain(_that);
-      case RustEngineEvent_Balance():
-        return balance(_that);
-      case RustEngineEvent_Mono():
-        return mono(_that);
-      case RustEngineEvent_Crossfeed():
-        return crossfeed(_that);
-      case RustEngineEvent_Spatializer():
-        return spatializer(_that);
-      case RustEngineEvent_Reverb():
-        return reverb(_that);
-      case RustEngineEvent_Limiter():
-        return limiter(_that);
-      case RustEngineEvent_CrossfadeConfig():
-        return crossfadeConfig(_that);
-      case RustEngineEvent_LoopMode():
-        return loopMode(_that);
-      case RustEngineEvent_Shuffle():
-        return shuffle(_that);
-      case RustEngineEvent_MetaBytes():
-        return metaBytes(_that);
-      case RustEngineEvent_Error():
-        return error(_that);
+      case RustAudioOutput_Cue():
+        return cue(_that);
+      case RustAudioOutput_File():
+        return file(_that);
     }
   }
 
@@ -299,109 +120,21 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(RustEngineEvent_Phase value)? phase,
-    TResult? Function(RustEngineEvent_State value)? state,
-    TResult? Function(RustEngineEvent_Position value)? position,
-    TResult? Function(RustEngineEvent_Duration value)? duration,
-    TResult? Function(RustEngineEvent_IsPlaying value)? isPlaying,
-    TResult? Function(RustEngineEvent_IsBuffering value)? isBuffering,
-    TResult? Function(RustEngineEvent_IsCompleted value)? isCompleted,
-    TResult? Function(RustEngineEvent_CurrentIndex value)? currentIndex,
-    TResult? Function(RustEngineEvent_QueueChanged value)? queueChanged,
-    TResult? Function(RustEngineEvent_NeedMoreTracks value)? needMoreTracks,
-    TResult? Function(RustEngineEvent_Volume value)? volume,
-    TResult? Function(RustEngineEvent_Rate value)? rate,
-    TResult? Function(RustEngineEvent_Pitch value)? pitch,
-    TResult? Function(RustEngineEvent_Bitrate value)? bitrate,
-    TResult? Function(RustEngineEvent_BufferSize value)? bufferSize,
-    TResult? Function(RustEngineEvent_Device value)? device,
-    TResult? Function(RustEngineEvent_Visualizer value)? visualizer,
-    TResult? Function(RustEngineEvent_VisualizerEnabled value)?
-        visualizerEnabled,
-    TResult? Function(RustEngineEvent_BufferedRange value)? bufferedRange,
-    TResult? Function(RustEngineEvent_Equalizer value)? equalizer,
-    TResult? Function(RustEngineEvent_Preamp value)? preamp,
-    TResult? Function(RustEngineEvent_ReplayGain value)? replayGain,
-    TResult? Function(RustEngineEvent_Balance value)? balance,
-    TResult? Function(RustEngineEvent_Mono value)? mono,
-    TResult? Function(RustEngineEvent_Crossfeed value)? crossfeed,
-    TResult? Function(RustEngineEvent_Spatializer value)? spatializer,
-    TResult? Function(RustEngineEvent_Reverb value)? reverb,
-    TResult? Function(RustEngineEvent_Limiter value)? limiter,
-    TResult? Function(RustEngineEvent_CrossfadeConfig value)? crossfadeConfig,
-    TResult? Function(RustEngineEvent_LoopMode value)? loopMode,
-    TResult? Function(RustEngineEvent_Shuffle value)? shuffle,
-    TResult? Function(RustEngineEvent_MetaBytes value)? metaBytes,
-    TResult? Function(RustEngineEvent_Error value)? error,
+    TResult? Function(RustAudioOutput_Speaker value)? speaker,
+    TResult? Function(RustAudioOutput_Device value)? device,
+    TResult? Function(RustAudioOutput_Cue value)? cue,
+    TResult? Function(RustAudioOutput_File value)? file,
   }) {
     final _that = this;
     switch (_that) {
-      case RustEngineEvent_Phase() when phase != null:
-        return phase(_that);
-      case RustEngineEvent_State() when state != null:
-        return state(_that);
-      case RustEngineEvent_Position() when position != null:
-        return position(_that);
-      case RustEngineEvent_Duration() when duration != null:
-        return duration(_that);
-      case RustEngineEvent_IsPlaying() when isPlaying != null:
-        return isPlaying(_that);
-      case RustEngineEvent_IsBuffering() when isBuffering != null:
-        return isBuffering(_that);
-      case RustEngineEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that);
-      case RustEngineEvent_CurrentIndex() when currentIndex != null:
-        return currentIndex(_that);
-      case RustEngineEvent_QueueChanged() when queueChanged != null:
-        return queueChanged(_that);
-      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
-        return needMoreTracks(_that);
-      case RustEngineEvent_Volume() when volume != null:
-        return volume(_that);
-      case RustEngineEvent_Rate() when rate != null:
-        return rate(_that);
-      case RustEngineEvent_Pitch() when pitch != null:
-        return pitch(_that);
-      case RustEngineEvent_Bitrate() when bitrate != null:
-        return bitrate(_that);
-      case RustEngineEvent_BufferSize() when bufferSize != null:
-        return bufferSize(_that);
-      case RustEngineEvent_Device() when device != null:
+      case RustAudioOutput_Speaker() when speaker != null:
+        return speaker(_that);
+      case RustAudioOutput_Device() when device != null:
         return device(_that);
-      case RustEngineEvent_Visualizer() when visualizer != null:
-        return visualizer(_that);
-      case RustEngineEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that);
-      case RustEngineEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that);
-      case RustEngineEvent_Equalizer() when equalizer != null:
-        return equalizer(_that);
-      case RustEngineEvent_Preamp() when preamp != null:
-        return preamp(_that);
-      case RustEngineEvent_ReplayGain() when replayGain != null:
-        return replayGain(_that);
-      case RustEngineEvent_Balance() when balance != null:
-        return balance(_that);
-      case RustEngineEvent_Mono() when mono != null:
-        return mono(_that);
-      case RustEngineEvent_Crossfeed() when crossfeed != null:
-        return crossfeed(_that);
-      case RustEngineEvent_Spatializer() when spatializer != null:
-        return spatializer(_that);
-      case RustEngineEvent_Reverb() when reverb != null:
-        return reverb(_that);
-      case RustEngineEvent_Limiter() when limiter != null:
-        return limiter(_that);
-      case RustEngineEvent_CrossfadeConfig() when crossfadeConfig != null:
-        return crossfadeConfig(_that);
-      case RustEngineEvent_LoopMode() when loopMode != null:
-        return loopMode(_that);
-      case RustEngineEvent_Shuffle() when shuffle != null:
-        return shuffle(_that);
-      case RustEngineEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that);
-      case RustEngineEvent_Error() when error != null:
-        return error(_that);
+      case RustAudioOutput_Cue() when cue != null:
+        return cue(_that);
+      case RustAudioOutput_File() when file != null:
+        return file(_that);
       case _:
         return null;
     }
@@ -421,110 +154,22 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(int field0)? phase,
-    TResult Function(int field0)? state,
-    TResult Function(PlatformInt64 field0)? position,
-    TResult Function(PlatformInt64 field0)? duration,
-    TResult Function(bool field0)? isPlaying,
-    TResult Function(bool field0)? isBuffering,
-    TResult Function(bool field0)? isCompleted,
-    TResult Function(int field0)? currentIndex,
-    TResult Function(List<RustAudioSource> field0)? queueChanged,
-    TResult Function(PlatformInt64 currentTrackId, BigInt remainingTracks)?
-        needMoreTracks,
-    TResult Function(double field0)? volume,
-    TResult Function(double field0)? rate,
-    TResult Function(double field0)? pitch,
-    TResult Function(int field0)? bitrate,
-    TResult Function(int field0)? bufferSize,
-    TResult Function(RustAudioDevice field0)? device,
-    TResult Function(RustVisualizerData field0)? visualizer,
-    TResult Function(bool field0)? visualizerEnabled,
-    TResult Function(RustBufferedRange field0)? bufferedRange,
-    TResult Function(RustEqualizerParams field0)? equalizer,
-    TResult Function(double field0)? preamp,
-    TResult Function(RustReplayGainConfig field0)? replayGain,
-    TResult Function(double field0)? balance,
-    TResult Function(bool field0)? mono,
-    TResult Function(int field0)? crossfeed,
-    TResult Function(bool enabled, double width)? spatializer,
-    TResult Function(RustReverbParams field0)? reverb,
-    TResult Function(bool field0)? limiter,
-    TResult Function(RustCrossfadeConfig field0)? crossfadeConfig,
-    TResult Function(int field0)? loopMode,
-    TResult Function(bool field0)? shuffle,
-    TResult Function(Uint8List field0)? metaBytes,
-    TResult Function(String message, int code)? error,
+    TResult Function(bool exclusiveMode)? speaker,
+    TResult Function(String deviceId, bool exclusiveMode)? device,
+    TResult Function(String deviceId, int source)? cue,
+    TResult Function(String path, int format)? file,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
-      case RustEngineEvent_Phase() when phase != null:
-        return phase(_that.field0);
-      case RustEngineEvent_State() when state != null:
-        return state(_that.field0);
-      case RustEngineEvent_Position() when position != null:
-        return position(_that.field0);
-      case RustEngineEvent_Duration() when duration != null:
-        return duration(_that.field0);
-      case RustEngineEvent_IsPlaying() when isPlaying != null:
-        return isPlaying(_that.field0);
-      case RustEngineEvent_IsBuffering() when isBuffering != null:
-        return isBuffering(_that.field0);
-      case RustEngineEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that.field0);
-      case RustEngineEvent_CurrentIndex() when currentIndex != null:
-        return currentIndex(_that.field0);
-      case RustEngineEvent_QueueChanged() when queueChanged != null:
-        return queueChanged(_that.field0);
-      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
-        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
-      case RustEngineEvent_Volume() when volume != null:
-        return volume(_that.field0);
-      case RustEngineEvent_Rate() when rate != null:
-        return rate(_that.field0);
-      case RustEngineEvent_Pitch() when pitch != null:
-        return pitch(_that.field0);
-      case RustEngineEvent_Bitrate() when bitrate != null:
-        return bitrate(_that.field0);
-      case RustEngineEvent_BufferSize() when bufferSize != null:
-        return bufferSize(_that.field0);
-      case RustEngineEvent_Device() when device != null:
-        return device(_that.field0);
-      case RustEngineEvent_Visualizer() when visualizer != null:
-        return visualizer(_that.field0);
-      case RustEngineEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that.field0);
-      case RustEngineEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that.field0);
-      case RustEngineEvent_Equalizer() when equalizer != null:
-        return equalizer(_that.field0);
-      case RustEngineEvent_Preamp() when preamp != null:
-        return preamp(_that.field0);
-      case RustEngineEvent_ReplayGain() when replayGain != null:
-        return replayGain(_that.field0);
-      case RustEngineEvent_Balance() when balance != null:
-        return balance(_that.field0);
-      case RustEngineEvent_Mono() when mono != null:
-        return mono(_that.field0);
-      case RustEngineEvent_Crossfeed() when crossfeed != null:
-        return crossfeed(_that.field0);
-      case RustEngineEvent_Spatializer() when spatializer != null:
-        return spatializer(_that.enabled, _that.width);
-      case RustEngineEvent_Reverb() when reverb != null:
-        return reverb(_that.field0);
-      case RustEngineEvent_Limiter() when limiter != null:
-        return limiter(_that.field0);
-      case RustEngineEvent_CrossfadeConfig() when crossfadeConfig != null:
-        return crossfadeConfig(_that.field0);
-      case RustEngineEvent_LoopMode() when loopMode != null:
-        return loopMode(_that.field0);
-      case RustEngineEvent_Shuffle() when shuffle != null:
-        return shuffle(_that.field0);
-      case RustEngineEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that.field0);
-      case RustEngineEvent_Error() when error != null:
-        return error(_that.message, _that.code);
+      case RustAudioOutput_Speaker() when speaker != null:
+        return speaker(_that.exclusiveMode);
+      case RustAudioOutput_Device() when device != null:
+        return device(_that.deviceId, _that.exclusiveMode);
+      case RustAudioOutput_Cue() when cue != null:
+        return cue(_that.deviceId, _that.source);
+      case RustAudioOutput_File() when file != null:
+        return file(_that.path, _that.format);
       case _:
         return orElse();
     }
@@ -545,110 +190,21 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(int field0) phase,
-    required TResult Function(int field0) state,
-    required TResult Function(PlatformInt64 field0) position,
-    required TResult Function(PlatformInt64 field0) duration,
-    required TResult Function(bool field0) isPlaying,
-    required TResult Function(bool field0) isBuffering,
-    required TResult Function(bool field0) isCompleted,
-    required TResult Function(int field0) currentIndex,
-    required TResult Function(List<RustAudioSource> field0) queueChanged,
-    required TResult Function(
-            PlatformInt64 currentTrackId, BigInt remainingTracks)
-        needMoreTracks,
-    required TResult Function(double field0) volume,
-    required TResult Function(double field0) rate,
-    required TResult Function(double field0) pitch,
-    required TResult Function(int field0) bitrate,
-    required TResult Function(int field0) bufferSize,
-    required TResult Function(RustAudioDevice field0) device,
-    required TResult Function(RustVisualizerData field0) visualizer,
-    required TResult Function(bool field0) visualizerEnabled,
-    required TResult Function(RustBufferedRange field0) bufferedRange,
-    required TResult Function(RustEqualizerParams field0) equalizer,
-    required TResult Function(double field0) preamp,
-    required TResult Function(RustReplayGainConfig field0) replayGain,
-    required TResult Function(double field0) balance,
-    required TResult Function(bool field0) mono,
-    required TResult Function(int field0) crossfeed,
-    required TResult Function(bool enabled, double width) spatializer,
-    required TResult Function(RustReverbParams field0) reverb,
-    required TResult Function(bool field0) limiter,
-    required TResult Function(RustCrossfadeConfig field0) crossfadeConfig,
-    required TResult Function(int field0) loopMode,
-    required TResult Function(bool field0) shuffle,
-    required TResult Function(Uint8List field0) metaBytes,
-    required TResult Function(String message, int code) error,
+    required TResult Function(bool exclusiveMode) speaker,
+    required TResult Function(String deviceId, bool exclusiveMode) device,
+    required TResult Function(String deviceId, int source) cue,
+    required TResult Function(String path, int format) file,
   }) {
     final _that = this;
     switch (_that) {
-      case RustEngineEvent_Phase():
-        return phase(_that.field0);
-      case RustEngineEvent_State():
-        return state(_that.field0);
-      case RustEngineEvent_Position():
-        return position(_that.field0);
-      case RustEngineEvent_Duration():
-        return duration(_that.field0);
-      case RustEngineEvent_IsPlaying():
-        return isPlaying(_that.field0);
-      case RustEngineEvent_IsBuffering():
-        return isBuffering(_that.field0);
-      case RustEngineEvent_IsCompleted():
-        return isCompleted(_that.field0);
-      case RustEngineEvent_CurrentIndex():
-        return currentIndex(_that.field0);
-      case RustEngineEvent_QueueChanged():
-        return queueChanged(_that.field0);
-      case RustEngineEvent_NeedMoreTracks():
-        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
-      case RustEngineEvent_Volume():
-        return volume(_that.field0);
-      case RustEngineEvent_Rate():
-        return rate(_that.field0);
-      case RustEngineEvent_Pitch():
-        return pitch(_that.field0);
-      case RustEngineEvent_Bitrate():
-        return bitrate(_that.field0);
-      case RustEngineEvent_BufferSize():
-        return bufferSize(_that.field0);
-      case RustEngineEvent_Device():
-        return device(_that.field0);
-      case RustEngineEvent_Visualizer():
-        return visualizer(_that.field0);
-      case RustEngineEvent_VisualizerEnabled():
-        return visualizerEnabled(_that.field0);
-      case RustEngineEvent_BufferedRange():
-        return bufferedRange(_that.field0);
-      case RustEngineEvent_Equalizer():
-        return equalizer(_that.field0);
-      case RustEngineEvent_Preamp():
-        return preamp(_that.field0);
-      case RustEngineEvent_ReplayGain():
-        return replayGain(_that.field0);
-      case RustEngineEvent_Balance():
-        return balance(_that.field0);
-      case RustEngineEvent_Mono():
-        return mono(_that.field0);
-      case RustEngineEvent_Crossfeed():
-        return crossfeed(_that.field0);
-      case RustEngineEvent_Spatializer():
-        return spatializer(_that.enabled, _that.width);
-      case RustEngineEvent_Reverb():
-        return reverb(_that.field0);
-      case RustEngineEvent_Limiter():
-        return limiter(_that.field0);
-      case RustEngineEvent_CrossfadeConfig():
-        return crossfadeConfig(_that.field0);
-      case RustEngineEvent_LoopMode():
-        return loopMode(_that.field0);
-      case RustEngineEvent_Shuffle():
-        return shuffle(_that.field0);
-      case RustEngineEvent_MetaBytes():
-        return metaBytes(_that.field0);
-      case RustEngineEvent_Error():
-        return error(_that.message, _that.code);
+      case RustAudioOutput_Speaker():
+        return speaker(_that.exclusiveMode);
+      case RustAudioOutput_Device():
+        return device(_that.deviceId, _that.exclusiveMode);
+      case RustAudioOutput_Cue():
+        return cue(_that.deviceId, _that.source);
+      case RustAudioOutput_File():
+        return file(_that.path, _that.format);
     }
   }
 
@@ -666,109 +222,21 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(int field0)? phase,
-    TResult? Function(int field0)? state,
-    TResult? Function(PlatformInt64 field0)? position,
-    TResult? Function(PlatformInt64 field0)? duration,
-    TResult? Function(bool field0)? isPlaying,
-    TResult? Function(bool field0)? isBuffering,
-    TResult? Function(bool field0)? isCompleted,
-    TResult? Function(int field0)? currentIndex,
-    TResult? Function(List<RustAudioSource> field0)? queueChanged,
-    TResult? Function(PlatformInt64 currentTrackId, BigInt remainingTracks)?
-        needMoreTracks,
-    TResult? Function(double field0)? volume,
-    TResult? Function(double field0)? rate,
-    TResult? Function(double field0)? pitch,
-    TResult? Function(int field0)? bitrate,
-    TResult? Function(int field0)? bufferSize,
-    TResult? Function(RustAudioDevice field0)? device,
-    TResult? Function(RustVisualizerData field0)? visualizer,
-    TResult? Function(bool field0)? visualizerEnabled,
-    TResult? Function(RustBufferedRange field0)? bufferedRange,
-    TResult? Function(RustEqualizerParams field0)? equalizer,
-    TResult? Function(double field0)? preamp,
-    TResult? Function(RustReplayGainConfig field0)? replayGain,
-    TResult? Function(double field0)? balance,
-    TResult? Function(bool field0)? mono,
-    TResult? Function(int field0)? crossfeed,
-    TResult? Function(bool enabled, double width)? spatializer,
-    TResult? Function(RustReverbParams field0)? reverb,
-    TResult? Function(bool field0)? limiter,
-    TResult? Function(RustCrossfadeConfig field0)? crossfadeConfig,
-    TResult? Function(int field0)? loopMode,
-    TResult? Function(bool field0)? shuffle,
-    TResult? Function(Uint8List field0)? metaBytes,
-    TResult? Function(String message, int code)? error,
+    TResult? Function(bool exclusiveMode)? speaker,
+    TResult? Function(String deviceId, bool exclusiveMode)? device,
+    TResult? Function(String deviceId, int source)? cue,
+    TResult? Function(String path, int format)? file,
   }) {
     final _that = this;
     switch (_that) {
-      case RustEngineEvent_Phase() when phase != null:
-        return phase(_that.field0);
-      case RustEngineEvent_State() when state != null:
-        return state(_that.field0);
-      case RustEngineEvent_Position() when position != null:
-        return position(_that.field0);
-      case RustEngineEvent_Duration() when duration != null:
-        return duration(_that.field0);
-      case RustEngineEvent_IsPlaying() when isPlaying != null:
-        return isPlaying(_that.field0);
-      case RustEngineEvent_IsBuffering() when isBuffering != null:
-        return isBuffering(_that.field0);
-      case RustEngineEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that.field0);
-      case RustEngineEvent_CurrentIndex() when currentIndex != null:
-        return currentIndex(_that.field0);
-      case RustEngineEvent_QueueChanged() when queueChanged != null:
-        return queueChanged(_that.field0);
-      case RustEngineEvent_NeedMoreTracks() when needMoreTracks != null:
-        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
-      case RustEngineEvent_Volume() when volume != null:
-        return volume(_that.field0);
-      case RustEngineEvent_Rate() when rate != null:
-        return rate(_that.field0);
-      case RustEngineEvent_Pitch() when pitch != null:
-        return pitch(_that.field0);
-      case RustEngineEvent_Bitrate() when bitrate != null:
-        return bitrate(_that.field0);
-      case RustEngineEvent_BufferSize() when bufferSize != null:
-        return bufferSize(_that.field0);
-      case RustEngineEvent_Device() when device != null:
-        return device(_that.field0);
-      case RustEngineEvent_Visualizer() when visualizer != null:
-        return visualizer(_that.field0);
-      case RustEngineEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that.field0);
-      case RustEngineEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that.field0);
-      case RustEngineEvent_Equalizer() when equalizer != null:
-        return equalizer(_that.field0);
-      case RustEngineEvent_Preamp() when preamp != null:
-        return preamp(_that.field0);
-      case RustEngineEvent_ReplayGain() when replayGain != null:
-        return replayGain(_that.field0);
-      case RustEngineEvent_Balance() when balance != null:
-        return balance(_that.field0);
-      case RustEngineEvent_Mono() when mono != null:
-        return mono(_that.field0);
-      case RustEngineEvent_Crossfeed() when crossfeed != null:
-        return crossfeed(_that.field0);
-      case RustEngineEvent_Spatializer() when spatializer != null:
-        return spatializer(_that.enabled, _that.width);
-      case RustEngineEvent_Reverb() when reverb != null:
-        return reverb(_that.field0);
-      case RustEngineEvent_Limiter() when limiter != null:
-        return limiter(_that.field0);
-      case RustEngineEvent_CrossfadeConfig() when crossfadeConfig != null:
-        return crossfadeConfig(_that.field0);
-      case RustEngineEvent_LoopMode() when loopMode != null:
-        return loopMode(_that.field0);
-      case RustEngineEvent_Shuffle() when shuffle != null:
-        return shuffle(_that.field0);
-      case RustEngineEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that.field0);
-      case RustEngineEvent_Error() when error != null:
-        return error(_that.message, _that.code);
+      case RustAudioOutput_Speaker() when speaker != null:
+        return speaker(_that.exclusiveMode);
+      case RustAudioOutput_Device() when device != null:
+        return device(_that.deviceId, _that.exclusiveMode);
+      case RustAudioOutput_Cue() when cue != null:
+        return cue(_that.deviceId, _that.source);
+      case RustAudioOutput_File() when file != null:
+        return file(_that.path, _that.format);
       case _:
         return null;
     }
@@ -777,334 +245,67 @@ extension RustEngineEventPatterns on RustEngineEvent {
 
 /// @nodoc
 
-class RustEngineEvent_Phase extends RustEngineEvent {
-  const RustEngineEvent_Phase(this.field0) : super._();
+class RustAudioOutput_Speaker extends RustAudioOutput {
+  const RustAudioOutput_Speaker({required this.exclusiveMode}) : super._();
 
-  final int field0;
+  final bool exclusiveMode;
 
-  /// Create a copy of RustEngineEvent
+  /// Create a copy of RustAudioOutput
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $RustEngineEvent_PhaseCopyWith<RustEngineEvent_Phase> get copyWith =>
-      _$RustEngineEvent_PhaseCopyWithImpl<RustEngineEvent_Phase>(
+  $RustAudioOutput_SpeakerCopyWith<RustAudioOutput_Speaker> get copyWith =>
+      _$RustAudioOutput_SpeakerCopyWithImpl<RustAudioOutput_Speaker>(
           this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Phase &&
-            (identical(other.field0, field0) || other.field0 == field0));
+            other is RustAudioOutput_Speaker &&
+            (identical(other.exclusiveMode, exclusiveMode) ||
+                other.exclusiveMode == exclusiveMode));
   }
 
   @override
   int get hashCode {
-    return Object.hash(runtimeType, field0);
+    return Object.hash(runtimeType, exclusiveMode);
   }
 
   @override
   String toString() {
-    return 'RustEngineEvent.phase(field0: $field0)';
+    return 'RustAudioOutput.speaker(exclusiveMode: $exclusiveMode)';
   }
 }
 
 /// @nodoc
-abstract mixin class $RustEngineEvent_PhaseCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_PhaseCopyWith(RustEngineEvent_Phase value,
-          $Res Function(RustEngineEvent_Phase) _then) =
-      _$RustEngineEvent_PhaseCopyWithImpl;
+abstract mixin class $RustAudioOutput_SpeakerCopyWith<$Res>
+    implements $RustAudioOutputCopyWith<$Res> {
+  factory $RustAudioOutput_SpeakerCopyWith(RustAudioOutput_Speaker value,
+          $Res Function(RustAudioOutput_Speaker) _then) =
+      _$RustAudioOutput_SpeakerCopyWithImpl;
   @useResult
-  $Res call({int field0});
+  $Res call({bool exclusiveMode});
 }
 
 /// @nodoc
-class _$RustEngineEvent_PhaseCopyWithImpl<$Res>
-    implements $RustEngineEvent_PhaseCopyWith<$Res> {
-  _$RustEngineEvent_PhaseCopyWithImpl(this._self, this._then);
+class _$RustAudioOutput_SpeakerCopyWithImpl<$Res>
+    implements $RustAudioOutput_SpeakerCopyWith<$Res> {
+  _$RustAudioOutput_SpeakerCopyWithImpl(this._self, this._then);
 
-  final RustEngineEvent_Phase _self;
-  final $Res Function(RustEngineEvent_Phase) _then;
+  final RustAudioOutput_Speaker _self;
+  final $Res Function(RustAudioOutput_Speaker) _then;
 
-  /// Create a copy of RustEngineEvent
+  /// Create a copy of RustAudioOutput
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   $Res call({
-    Object? field0 = null,
+    Object? exclusiveMode = null,
   }) {
-    return _then(RustEngineEvent_Phase(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_State extends RustEngineEvent {
-  const RustEngineEvent_State(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_StateCopyWith<RustEngineEvent_State> get copyWith =>
-      _$RustEngineEvent_StateCopyWithImpl<RustEngineEvent_State>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_State &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.state(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_StateCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_StateCopyWith(RustEngineEvent_State value,
-          $Res Function(RustEngineEvent_State) _then) =
-      _$RustEngineEvent_StateCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_StateCopyWithImpl<$Res>
-    implements $RustEngineEvent_StateCopyWith<$Res> {
-  _$RustEngineEvent_StateCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_State _self;
-  final $Res Function(RustEngineEvent_State) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_State(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Position extends RustEngineEvent {
-  const RustEngineEvent_Position(this.field0) : super._();
-
-  final PlatformInt64 field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_PositionCopyWith<RustEngineEvent_Position> get copyWith =>
-      _$RustEngineEvent_PositionCopyWithImpl<RustEngineEvent_Position>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Position &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.position(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_PositionCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_PositionCopyWith(RustEngineEvent_Position value,
-          $Res Function(RustEngineEvent_Position) _then) =
-      _$RustEngineEvent_PositionCopyWithImpl;
-  @useResult
-  $Res call({PlatformInt64 field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_PositionCopyWithImpl<$Res>
-    implements $RustEngineEvent_PositionCopyWith<$Res> {
-  _$RustEngineEvent_PositionCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Position _self;
-  final $Res Function(RustEngineEvent_Position) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Position(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as PlatformInt64,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Duration extends RustEngineEvent {
-  const RustEngineEvent_Duration(this.field0) : super._();
-
-  final PlatformInt64 field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_DurationCopyWith<RustEngineEvent_Duration> get copyWith =>
-      _$RustEngineEvent_DurationCopyWithImpl<RustEngineEvent_Duration>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Duration &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.duration(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_DurationCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_DurationCopyWith(RustEngineEvent_Duration value,
-          $Res Function(RustEngineEvent_Duration) _then) =
-      _$RustEngineEvent_DurationCopyWithImpl;
-  @useResult
-  $Res call({PlatformInt64 field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_DurationCopyWithImpl<$Res>
-    implements $RustEngineEvent_DurationCopyWith<$Res> {
-  _$RustEngineEvent_DurationCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Duration _self;
-  final $Res Function(RustEngineEvent_Duration) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Duration(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as PlatformInt64,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_IsPlaying extends RustEngineEvent {
-  const RustEngineEvent_IsPlaying(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_IsPlayingCopyWith<RustEngineEvent_IsPlaying> get copyWith =>
-      _$RustEngineEvent_IsPlayingCopyWithImpl<RustEngineEvent_IsPlaying>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_IsPlaying &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.isPlaying(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_IsPlayingCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_IsPlayingCopyWith(RustEngineEvent_IsPlaying value,
-          $Res Function(RustEngineEvent_IsPlaying) _then) =
-      _$RustEngineEvent_IsPlayingCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_IsPlayingCopyWithImpl<$Res>
-    implements $RustEngineEvent_IsPlayingCopyWith<$Res> {
-  _$RustEngineEvent_IsPlayingCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_IsPlaying _self;
-  final $Res Function(RustEngineEvent_IsPlaying) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_IsPlaying(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
+    return _then(RustAudioOutput_Speaker(
+      exclusiveMode: null == exclusiveMode
+          ? _self.exclusiveMode
+          : exclusiveMode // ignore: cast_nullable_to_non_nullable
               as bool,
     ));
   }
@@ -1112,1924 +313,227 @@ class _$RustEngineEvent_IsPlayingCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustEngineEvent_IsBuffering extends RustEngineEvent {
-  const RustEngineEvent_IsBuffering(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_IsBufferingCopyWith<RustEngineEvent_IsBuffering>
-      get copyWith => _$RustEngineEvent_IsBufferingCopyWithImpl<
-          RustEngineEvent_IsBuffering>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_IsBuffering &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.isBuffering(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_IsBufferingCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_IsBufferingCopyWith(
-          RustEngineEvent_IsBuffering value,
-          $Res Function(RustEngineEvent_IsBuffering) _then) =
-      _$RustEngineEvent_IsBufferingCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_IsBufferingCopyWithImpl<$Res>
-    implements $RustEngineEvent_IsBufferingCopyWith<$Res> {
-  _$RustEngineEvent_IsBufferingCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_IsBuffering _self;
-  final $Res Function(RustEngineEvent_IsBuffering) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_IsBuffering(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_IsCompleted extends RustEngineEvent {
-  const RustEngineEvent_IsCompleted(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_IsCompletedCopyWith<RustEngineEvent_IsCompleted>
-      get copyWith => _$RustEngineEvent_IsCompletedCopyWithImpl<
-          RustEngineEvent_IsCompleted>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_IsCompleted &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.isCompleted(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_IsCompletedCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_IsCompletedCopyWith(
-          RustEngineEvent_IsCompleted value,
-          $Res Function(RustEngineEvent_IsCompleted) _then) =
-      _$RustEngineEvent_IsCompletedCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_IsCompletedCopyWithImpl<$Res>
-    implements $RustEngineEvent_IsCompletedCopyWith<$Res> {
-  _$RustEngineEvent_IsCompletedCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_IsCompleted _self;
-  final $Res Function(RustEngineEvent_IsCompleted) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_IsCompleted(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_CurrentIndex extends RustEngineEvent {
-  const RustEngineEvent_CurrentIndex(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_CurrentIndexCopyWith<RustEngineEvent_CurrentIndex>
-      get copyWith => _$RustEngineEvent_CurrentIndexCopyWithImpl<
-          RustEngineEvent_CurrentIndex>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_CurrentIndex &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.currentIndex(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_CurrentIndexCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_CurrentIndexCopyWith(
-          RustEngineEvent_CurrentIndex value,
-          $Res Function(RustEngineEvent_CurrentIndex) _then) =
-      _$RustEngineEvent_CurrentIndexCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_CurrentIndexCopyWithImpl<$Res>
-    implements $RustEngineEvent_CurrentIndexCopyWith<$Res> {
-  _$RustEngineEvent_CurrentIndexCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_CurrentIndex _self;
-  final $Res Function(RustEngineEvent_CurrentIndex) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_CurrentIndex(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_QueueChanged extends RustEngineEvent {
-  const RustEngineEvent_QueueChanged(List<RustAudioSource> field0)
-      : _field0 = field0,
-        super._();
-
-  final List<RustAudioSource> _field0;
-  List<RustAudioSource> get field0 {
-    if (_field0 is EqualUnmodifiableListView) return _field0;
-    // ignore: implicit_dynamic_type
-    return EqualUnmodifiableListView(_field0);
-  }
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_QueueChangedCopyWith<RustEngineEvent_QueueChanged>
-      get copyWith => _$RustEngineEvent_QueueChangedCopyWithImpl<
-          RustEngineEvent_QueueChanged>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_QueueChanged &&
-            const DeepCollectionEquality().equals(other.field0, _field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(
-        runtimeType, const DeepCollectionEquality().hash(_field0));
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.queueChanged(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_QueueChangedCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_QueueChangedCopyWith(
-          RustEngineEvent_QueueChanged value,
-          $Res Function(RustEngineEvent_QueueChanged) _then) =
-      _$RustEngineEvent_QueueChangedCopyWithImpl;
-  @useResult
-  $Res call({List<RustAudioSource> field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_QueueChangedCopyWithImpl<$Res>
-    implements $RustEngineEvent_QueueChangedCopyWith<$Res> {
-  _$RustEngineEvent_QueueChangedCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_QueueChanged _self;
-  final $Res Function(RustEngineEvent_QueueChanged) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_QueueChanged(
-      null == field0
-          ? _self._field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as List<RustAudioSource>,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_NeedMoreTracks extends RustEngineEvent {
-  const RustEngineEvent_NeedMoreTracks(
-      {required this.currentTrackId, required this.remainingTracks})
+class RustAudioOutput_Device extends RustAudioOutput {
+  const RustAudioOutput_Device(
+      {required this.deviceId, required this.exclusiveMode})
       : super._();
 
-  final PlatformInt64 currentTrackId;
-  final BigInt remainingTracks;
+  final String deviceId;
+  final bool exclusiveMode;
 
-  /// Create a copy of RustEngineEvent
+  /// Create a copy of RustAudioOutput
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $RustEngineEvent_NeedMoreTracksCopyWith<RustEngineEvent_NeedMoreTracks>
-      get copyWith => _$RustEngineEvent_NeedMoreTracksCopyWithImpl<
-          RustEngineEvent_NeedMoreTracks>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_NeedMoreTracks &&
-            (identical(other.currentTrackId, currentTrackId) ||
-                other.currentTrackId == currentTrackId) &&
-            (identical(other.remainingTracks, remainingTracks) ||
-                other.remainingTracks == remainingTracks));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, currentTrackId, remainingTracks);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.needMoreTracks(currentTrackId: $currentTrackId, remainingTracks: $remainingTracks)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_NeedMoreTracksCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_NeedMoreTracksCopyWith(
-          RustEngineEvent_NeedMoreTracks value,
-          $Res Function(RustEngineEvent_NeedMoreTracks) _then) =
-      _$RustEngineEvent_NeedMoreTracksCopyWithImpl;
-  @useResult
-  $Res call({PlatformInt64 currentTrackId, BigInt remainingTracks});
-}
-
-/// @nodoc
-class _$RustEngineEvent_NeedMoreTracksCopyWithImpl<$Res>
-    implements $RustEngineEvent_NeedMoreTracksCopyWith<$Res> {
-  _$RustEngineEvent_NeedMoreTracksCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_NeedMoreTracks _self;
-  final $Res Function(RustEngineEvent_NeedMoreTracks) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? currentTrackId = null,
-    Object? remainingTracks = null,
-  }) {
-    return _then(RustEngineEvent_NeedMoreTracks(
-      currentTrackId: null == currentTrackId
-          ? _self.currentTrackId
-          : currentTrackId // ignore: cast_nullable_to_non_nullable
-              as PlatformInt64,
-      remainingTracks: null == remainingTracks
-          ? _self.remainingTracks
-          : remainingTracks // ignore: cast_nullable_to_non_nullable
-              as BigInt,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Volume extends RustEngineEvent {
-  const RustEngineEvent_Volume(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_VolumeCopyWith<RustEngineEvent_Volume> get copyWith =>
-      _$RustEngineEvent_VolumeCopyWithImpl<RustEngineEvent_Volume>(
+  $RustAudioOutput_DeviceCopyWith<RustAudioOutput_Device> get copyWith =>
+      _$RustAudioOutput_DeviceCopyWithImpl<RustAudioOutput_Device>(
           this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Volume &&
-            (identical(other.field0, field0) || other.field0 == field0));
+            other is RustAudioOutput_Device &&
+            (identical(other.deviceId, deviceId) ||
+                other.deviceId == deviceId) &&
+            (identical(other.exclusiveMode, exclusiveMode) ||
+                other.exclusiveMode == exclusiveMode));
   }
 
   @override
   int get hashCode {
-    return Object.hash(runtimeType, field0);
+    return Object.hash(runtimeType, deviceId, exclusiveMode);
   }
 
   @override
   String toString() {
-    return 'RustEngineEvent.volume(field0: $field0)';
+    return 'RustAudioOutput.device(deviceId: $deviceId, exclusiveMode: $exclusiveMode)';
   }
 }
 
 /// @nodoc
-abstract mixin class $RustEngineEvent_VolumeCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_VolumeCopyWith(RustEngineEvent_Volume value,
-          $Res Function(RustEngineEvent_Volume) _then) =
-      _$RustEngineEvent_VolumeCopyWithImpl;
+abstract mixin class $RustAudioOutput_DeviceCopyWith<$Res>
+    implements $RustAudioOutputCopyWith<$Res> {
+  factory $RustAudioOutput_DeviceCopyWith(RustAudioOutput_Device value,
+          $Res Function(RustAudioOutput_Device) _then) =
+      _$RustAudioOutput_DeviceCopyWithImpl;
   @useResult
-  $Res call({double field0});
+  $Res call({String deviceId, bool exclusiveMode});
 }
 
 /// @nodoc
-class _$RustEngineEvent_VolumeCopyWithImpl<$Res>
-    implements $RustEngineEvent_VolumeCopyWith<$Res> {
-  _$RustEngineEvent_VolumeCopyWithImpl(this._self, this._then);
+class _$RustAudioOutput_DeviceCopyWithImpl<$Res>
+    implements $RustAudioOutput_DeviceCopyWith<$Res> {
+  _$RustAudioOutput_DeviceCopyWithImpl(this._self, this._then);
 
-  final RustEngineEvent_Volume _self;
-  final $Res Function(RustEngineEvent_Volume) _then;
+  final RustAudioOutput_Device _self;
+  final $Res Function(RustAudioOutput_Device) _then;
 
-  /// Create a copy of RustEngineEvent
+  /// Create a copy of RustAudioOutput
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   $Res call({
-    Object? field0 = null,
+    Object? deviceId = null,
+    Object? exclusiveMode = null,
   }) {
-    return _then(RustEngineEvent_Volume(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Rate extends RustEngineEvent {
-  const RustEngineEvent_Rate(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_RateCopyWith<RustEngineEvent_Rate> get copyWith =>
-      _$RustEngineEvent_RateCopyWithImpl<RustEngineEvent_Rate>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Rate &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.rate(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_RateCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_RateCopyWith(RustEngineEvent_Rate value,
-          $Res Function(RustEngineEvent_Rate) _then) =
-      _$RustEngineEvent_RateCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_RateCopyWithImpl<$Res>
-    implements $RustEngineEvent_RateCopyWith<$Res> {
-  _$RustEngineEvent_RateCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Rate _self;
-  final $Res Function(RustEngineEvent_Rate) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Rate(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Pitch extends RustEngineEvent {
-  const RustEngineEvent_Pitch(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_PitchCopyWith<RustEngineEvent_Pitch> get copyWith =>
-      _$RustEngineEvent_PitchCopyWithImpl<RustEngineEvent_Pitch>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Pitch &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.pitch(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_PitchCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_PitchCopyWith(RustEngineEvent_Pitch value,
-          $Res Function(RustEngineEvent_Pitch) _then) =
-      _$RustEngineEvent_PitchCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_PitchCopyWithImpl<$Res>
-    implements $RustEngineEvent_PitchCopyWith<$Res> {
-  _$RustEngineEvent_PitchCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Pitch _self;
-  final $Res Function(RustEngineEvent_Pitch) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Pitch(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Bitrate extends RustEngineEvent {
-  const RustEngineEvent_Bitrate(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_BitrateCopyWith<RustEngineEvent_Bitrate> get copyWith =>
-      _$RustEngineEvent_BitrateCopyWithImpl<RustEngineEvent_Bitrate>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Bitrate &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.bitrate(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_BitrateCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_BitrateCopyWith(RustEngineEvent_Bitrate value,
-          $Res Function(RustEngineEvent_Bitrate) _then) =
-      _$RustEngineEvent_BitrateCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_BitrateCopyWithImpl<$Res>
-    implements $RustEngineEvent_BitrateCopyWith<$Res> {
-  _$RustEngineEvent_BitrateCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Bitrate _self;
-  final $Res Function(RustEngineEvent_Bitrate) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Bitrate(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_BufferSize extends RustEngineEvent {
-  const RustEngineEvent_BufferSize(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_BufferSizeCopyWith<RustEngineEvent_BufferSize>
-      get copyWith =>
-          _$RustEngineEvent_BufferSizeCopyWithImpl<RustEngineEvent_BufferSize>(
-              this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_BufferSize &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.bufferSize(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_BufferSizeCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_BufferSizeCopyWith(RustEngineEvent_BufferSize value,
-          $Res Function(RustEngineEvent_BufferSize) _then) =
-      _$RustEngineEvent_BufferSizeCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_BufferSizeCopyWithImpl<$Res>
-    implements $RustEngineEvent_BufferSizeCopyWith<$Res> {
-  _$RustEngineEvent_BufferSizeCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_BufferSize _self;
-  final $Res Function(RustEngineEvent_BufferSize) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_BufferSize(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Device extends RustEngineEvent {
-  const RustEngineEvent_Device(this.field0) : super._();
-
-  final RustAudioDevice field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_DeviceCopyWith<RustEngineEvent_Device> get copyWith =>
-      _$RustEngineEvent_DeviceCopyWithImpl<RustEngineEvent_Device>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Device &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.device(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_DeviceCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_DeviceCopyWith(RustEngineEvent_Device value,
-          $Res Function(RustEngineEvent_Device) _then) =
-      _$RustEngineEvent_DeviceCopyWithImpl;
-  @useResult
-  $Res call({RustAudioDevice field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_DeviceCopyWithImpl<$Res>
-    implements $RustEngineEvent_DeviceCopyWith<$Res> {
-  _$RustEngineEvent_DeviceCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Device _self;
-  final $Res Function(RustEngineEvent_Device) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Device(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustAudioDevice,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Visualizer extends RustEngineEvent {
-  const RustEngineEvent_Visualizer(this.field0) : super._();
-
-  final RustVisualizerData field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_VisualizerCopyWith<RustEngineEvent_Visualizer>
-      get copyWith =>
-          _$RustEngineEvent_VisualizerCopyWithImpl<RustEngineEvent_Visualizer>(
-              this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Visualizer &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.visualizer(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_VisualizerCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_VisualizerCopyWith(RustEngineEvent_Visualizer value,
-          $Res Function(RustEngineEvent_Visualizer) _then) =
-      _$RustEngineEvent_VisualizerCopyWithImpl;
-  @useResult
-  $Res call({RustVisualizerData field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_VisualizerCopyWithImpl<$Res>
-    implements $RustEngineEvent_VisualizerCopyWith<$Res> {
-  _$RustEngineEvent_VisualizerCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Visualizer _self;
-  final $Res Function(RustEngineEvent_Visualizer) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Visualizer(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustVisualizerData,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_VisualizerEnabled extends RustEngineEvent {
-  const RustEngineEvent_VisualizerEnabled(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_VisualizerEnabledCopyWith<RustEngineEvent_VisualizerEnabled>
-      get copyWith => _$RustEngineEvent_VisualizerEnabledCopyWithImpl<
-          RustEngineEvent_VisualizerEnabled>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_VisualizerEnabled &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.visualizerEnabled(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_VisualizerEnabledCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_VisualizerEnabledCopyWith(
-          RustEngineEvent_VisualizerEnabled value,
-          $Res Function(RustEngineEvent_VisualizerEnabled) _then) =
-      _$RustEngineEvent_VisualizerEnabledCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_VisualizerEnabledCopyWithImpl<$Res>
-    implements $RustEngineEvent_VisualizerEnabledCopyWith<$Res> {
-  _$RustEngineEvent_VisualizerEnabledCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_VisualizerEnabled _self;
-  final $Res Function(RustEngineEvent_VisualizerEnabled) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_VisualizerEnabled(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_BufferedRange extends RustEngineEvent {
-  const RustEngineEvent_BufferedRange(this.field0) : super._();
-
-  final RustBufferedRange field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_BufferedRangeCopyWith<RustEngineEvent_BufferedRange>
-      get copyWith => _$RustEngineEvent_BufferedRangeCopyWithImpl<
-          RustEngineEvent_BufferedRange>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_BufferedRange &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.bufferedRange(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_BufferedRangeCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_BufferedRangeCopyWith(
-          RustEngineEvent_BufferedRange value,
-          $Res Function(RustEngineEvent_BufferedRange) _then) =
-      _$RustEngineEvent_BufferedRangeCopyWithImpl;
-  @useResult
-  $Res call({RustBufferedRange field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_BufferedRangeCopyWithImpl<$Res>
-    implements $RustEngineEvent_BufferedRangeCopyWith<$Res> {
-  _$RustEngineEvent_BufferedRangeCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_BufferedRange _self;
-  final $Res Function(RustEngineEvent_BufferedRange) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_BufferedRange(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustBufferedRange,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Equalizer extends RustEngineEvent {
-  const RustEngineEvent_Equalizer(this.field0) : super._();
-
-  final RustEqualizerParams field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_EqualizerCopyWith<RustEngineEvent_Equalizer> get copyWith =>
-      _$RustEngineEvent_EqualizerCopyWithImpl<RustEngineEvent_Equalizer>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Equalizer &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.equalizer(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_EqualizerCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_EqualizerCopyWith(RustEngineEvent_Equalizer value,
-          $Res Function(RustEngineEvent_Equalizer) _then) =
-      _$RustEngineEvent_EqualizerCopyWithImpl;
-  @useResult
-  $Res call({RustEqualizerParams field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_EqualizerCopyWithImpl<$Res>
-    implements $RustEngineEvent_EqualizerCopyWith<$Res> {
-  _$RustEngineEvent_EqualizerCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Equalizer _self;
-  final $Res Function(RustEngineEvent_Equalizer) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Equalizer(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustEqualizerParams,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Preamp extends RustEngineEvent {
-  const RustEngineEvent_Preamp(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_PreampCopyWith<RustEngineEvent_Preamp> get copyWith =>
-      _$RustEngineEvent_PreampCopyWithImpl<RustEngineEvent_Preamp>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Preamp &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.preamp(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_PreampCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_PreampCopyWith(RustEngineEvent_Preamp value,
-          $Res Function(RustEngineEvent_Preamp) _then) =
-      _$RustEngineEvent_PreampCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_PreampCopyWithImpl<$Res>
-    implements $RustEngineEvent_PreampCopyWith<$Res> {
-  _$RustEngineEvent_PreampCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Preamp _self;
-  final $Res Function(RustEngineEvent_Preamp) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Preamp(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_ReplayGain extends RustEngineEvent {
-  const RustEngineEvent_ReplayGain(this.field0) : super._();
-
-  final RustReplayGainConfig field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_ReplayGainCopyWith<RustEngineEvent_ReplayGain>
-      get copyWith =>
-          _$RustEngineEvent_ReplayGainCopyWithImpl<RustEngineEvent_ReplayGain>(
-              this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_ReplayGain &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.replayGain(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_ReplayGainCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_ReplayGainCopyWith(RustEngineEvent_ReplayGain value,
-          $Res Function(RustEngineEvent_ReplayGain) _then) =
-      _$RustEngineEvent_ReplayGainCopyWithImpl;
-  @useResult
-  $Res call({RustReplayGainConfig field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_ReplayGainCopyWithImpl<$Res>
-    implements $RustEngineEvent_ReplayGainCopyWith<$Res> {
-  _$RustEngineEvent_ReplayGainCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_ReplayGain _self;
-  final $Res Function(RustEngineEvent_ReplayGain) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_ReplayGain(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustReplayGainConfig,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Balance extends RustEngineEvent {
-  const RustEngineEvent_Balance(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_BalanceCopyWith<RustEngineEvent_Balance> get copyWith =>
-      _$RustEngineEvent_BalanceCopyWithImpl<RustEngineEvent_Balance>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Balance &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.balance(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_BalanceCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_BalanceCopyWith(RustEngineEvent_Balance value,
-          $Res Function(RustEngineEvent_Balance) _then) =
-      _$RustEngineEvent_BalanceCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_BalanceCopyWithImpl<$Res>
-    implements $RustEngineEvent_BalanceCopyWith<$Res> {
-  _$RustEngineEvent_BalanceCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Balance _self;
-  final $Res Function(RustEngineEvent_Balance) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Balance(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Mono extends RustEngineEvent {
-  const RustEngineEvent_Mono(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_MonoCopyWith<RustEngineEvent_Mono> get copyWith =>
-      _$RustEngineEvent_MonoCopyWithImpl<RustEngineEvent_Mono>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Mono &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.mono(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_MonoCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_MonoCopyWith(RustEngineEvent_Mono value,
-          $Res Function(RustEngineEvent_Mono) _then) =
-      _$RustEngineEvent_MonoCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_MonoCopyWithImpl<$Res>
-    implements $RustEngineEvent_MonoCopyWith<$Res> {
-  _$RustEngineEvent_MonoCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Mono _self;
-  final $Res Function(RustEngineEvent_Mono) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Mono(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Crossfeed extends RustEngineEvent {
-  const RustEngineEvent_Crossfeed(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_CrossfeedCopyWith<RustEngineEvent_Crossfeed> get copyWith =>
-      _$RustEngineEvent_CrossfeedCopyWithImpl<RustEngineEvent_Crossfeed>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Crossfeed &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.crossfeed(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_CrossfeedCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_CrossfeedCopyWith(RustEngineEvent_Crossfeed value,
-          $Res Function(RustEngineEvent_Crossfeed) _then) =
-      _$RustEngineEvent_CrossfeedCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_CrossfeedCopyWithImpl<$Res>
-    implements $RustEngineEvent_CrossfeedCopyWith<$Res> {
-  _$RustEngineEvent_CrossfeedCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Crossfeed _self;
-  final $Res Function(RustEngineEvent_Crossfeed) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Crossfeed(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Spatializer extends RustEngineEvent {
-  const RustEngineEvent_Spatializer(
-      {required this.enabled, required this.width})
-      : super._();
-
-  final bool enabled;
-  final double width;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_SpatializerCopyWith<RustEngineEvent_Spatializer>
-      get copyWith => _$RustEngineEvent_SpatializerCopyWithImpl<
-          RustEngineEvent_Spatializer>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Spatializer &&
-            (identical(other.enabled, enabled) || other.enabled == enabled) &&
-            (identical(other.width, width) || other.width == width));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, enabled, width);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.spatializer(enabled: $enabled, width: $width)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_SpatializerCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_SpatializerCopyWith(
-          RustEngineEvent_Spatializer value,
-          $Res Function(RustEngineEvent_Spatializer) _then) =
-      _$RustEngineEvent_SpatializerCopyWithImpl;
-  @useResult
-  $Res call({bool enabled, double width});
-}
-
-/// @nodoc
-class _$RustEngineEvent_SpatializerCopyWithImpl<$Res>
-    implements $RustEngineEvent_SpatializerCopyWith<$Res> {
-  _$RustEngineEvent_SpatializerCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Spatializer _self;
-  final $Res Function(RustEngineEvent_Spatializer) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? enabled = null,
-    Object? width = null,
-  }) {
-    return _then(RustEngineEvent_Spatializer(
-      enabled: null == enabled
-          ? _self.enabled
-          : enabled // ignore: cast_nullable_to_non_nullable
-              as bool,
-      width: null == width
-          ? _self.width
-          : width // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Reverb extends RustEngineEvent {
-  const RustEngineEvent_Reverb(this.field0) : super._();
-
-  final RustReverbParams field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_ReverbCopyWith<RustEngineEvent_Reverb> get copyWith =>
-      _$RustEngineEvent_ReverbCopyWithImpl<RustEngineEvent_Reverb>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Reverb &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.reverb(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_ReverbCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_ReverbCopyWith(RustEngineEvent_Reverb value,
-          $Res Function(RustEngineEvent_Reverb) _then) =
-      _$RustEngineEvent_ReverbCopyWithImpl;
-  @useResult
-  $Res call({RustReverbParams field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_ReverbCopyWithImpl<$Res>
-    implements $RustEngineEvent_ReverbCopyWith<$Res> {
-  _$RustEngineEvent_ReverbCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Reverb _self;
-  final $Res Function(RustEngineEvent_Reverb) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Reverb(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustReverbParams,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Limiter extends RustEngineEvent {
-  const RustEngineEvent_Limiter(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_LimiterCopyWith<RustEngineEvent_Limiter> get copyWith =>
-      _$RustEngineEvent_LimiterCopyWithImpl<RustEngineEvent_Limiter>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Limiter &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.limiter(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_LimiterCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_LimiterCopyWith(RustEngineEvent_Limiter value,
-          $Res Function(RustEngineEvent_Limiter) _then) =
-      _$RustEngineEvent_LimiterCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_LimiterCopyWithImpl<$Res>
-    implements $RustEngineEvent_LimiterCopyWith<$Res> {
-  _$RustEngineEvent_LimiterCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Limiter _self;
-  final $Res Function(RustEngineEvent_Limiter) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Limiter(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_CrossfadeConfig extends RustEngineEvent {
-  const RustEngineEvent_CrossfadeConfig(this.field0) : super._();
-
-  final RustCrossfadeConfig field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_CrossfadeConfigCopyWith<RustEngineEvent_CrossfadeConfig>
-      get copyWith => _$RustEngineEvent_CrossfadeConfigCopyWithImpl<
-          RustEngineEvent_CrossfadeConfig>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_CrossfadeConfig &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.crossfadeConfig(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_CrossfadeConfigCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_CrossfadeConfigCopyWith(
-          RustEngineEvent_CrossfadeConfig value,
-          $Res Function(RustEngineEvent_CrossfadeConfig) _then) =
-      _$RustEngineEvent_CrossfadeConfigCopyWithImpl;
-  @useResult
-  $Res call({RustCrossfadeConfig field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_CrossfadeConfigCopyWithImpl<$Res>
-    implements $RustEngineEvent_CrossfadeConfigCopyWith<$Res> {
-  _$RustEngineEvent_CrossfadeConfigCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_CrossfadeConfig _self;
-  final $Res Function(RustEngineEvent_CrossfadeConfig) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_CrossfadeConfig(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustCrossfadeConfig,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_LoopMode extends RustEngineEvent {
-  const RustEngineEvent_LoopMode(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_LoopModeCopyWith<RustEngineEvent_LoopMode> get copyWith =>
-      _$RustEngineEvent_LoopModeCopyWithImpl<RustEngineEvent_LoopMode>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_LoopMode &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.loopMode(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_LoopModeCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_LoopModeCopyWith(RustEngineEvent_LoopMode value,
-          $Res Function(RustEngineEvent_LoopMode) _then) =
-      _$RustEngineEvent_LoopModeCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_LoopModeCopyWithImpl<$Res>
-    implements $RustEngineEvent_LoopModeCopyWith<$Res> {
-  _$RustEngineEvent_LoopModeCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_LoopMode _self;
-  final $Res Function(RustEngineEvent_LoopMode) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_LoopMode(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Shuffle extends RustEngineEvent {
-  const RustEngineEvent_Shuffle(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_ShuffleCopyWith<RustEngineEvent_Shuffle> get copyWith =>
-      _$RustEngineEvent_ShuffleCopyWithImpl<RustEngineEvent_Shuffle>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Shuffle &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.shuffle(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_ShuffleCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_ShuffleCopyWith(RustEngineEvent_Shuffle value,
-          $Res Function(RustEngineEvent_Shuffle) _then) =
-      _$RustEngineEvent_ShuffleCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_ShuffleCopyWithImpl<$Res>
-    implements $RustEngineEvent_ShuffleCopyWith<$Res> {
-  _$RustEngineEvent_ShuffleCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Shuffle _self;
-  final $Res Function(RustEngineEvent_Shuffle) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_Shuffle(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_MetaBytes extends RustEngineEvent {
-  const RustEngineEvent_MetaBytes(this.field0) : super._();
-
-  final Uint8List field0;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_MetaBytesCopyWith<RustEngineEvent_MetaBytes> get copyWith =>
-      _$RustEngineEvent_MetaBytesCopyWithImpl<RustEngineEvent_MetaBytes>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_MetaBytes &&
-            const DeepCollectionEquality().equals(other.field0, field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(
-        runtimeType, const DeepCollectionEquality().hash(field0));
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.metaBytes(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_MetaBytesCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_MetaBytesCopyWith(RustEngineEvent_MetaBytes value,
-          $Res Function(RustEngineEvent_MetaBytes) _then) =
-      _$RustEngineEvent_MetaBytesCopyWithImpl;
-  @useResult
-  $Res call({Uint8List field0});
-}
-
-/// @nodoc
-class _$RustEngineEvent_MetaBytesCopyWithImpl<$Res>
-    implements $RustEngineEvent_MetaBytesCopyWith<$Res> {
-  _$RustEngineEvent_MetaBytesCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_MetaBytes _self;
-  final $Res Function(RustEngineEvent_MetaBytes) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustEngineEvent_MetaBytes(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as Uint8List,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustEngineEvent_Error extends RustEngineEvent {
-  const RustEngineEvent_Error({required this.message, required this.code})
-      : super._();
-
-  final String message;
-  final int code;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustEngineEvent_ErrorCopyWith<RustEngineEvent_Error> get copyWith =>
-      _$RustEngineEvent_ErrorCopyWithImpl<RustEngineEvent_Error>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustEngineEvent_Error &&
-            (identical(other.message, message) || other.message == message) &&
-            (identical(other.code, code) || other.code == code));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, message, code);
-  }
-
-  @override
-  String toString() {
-    return 'RustEngineEvent.error(message: $message, code: $code)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustEngineEvent_ErrorCopyWith<$Res>
-    implements $RustEngineEventCopyWith<$Res> {
-  factory $RustEngineEvent_ErrorCopyWith(RustEngineEvent_Error value,
-          $Res Function(RustEngineEvent_Error) _then) =
-      _$RustEngineEvent_ErrorCopyWithImpl;
-  @useResult
-  $Res call({String message, int code});
-}
-
-/// @nodoc
-class _$RustEngineEvent_ErrorCopyWithImpl<$Res>
-    implements $RustEngineEvent_ErrorCopyWith<$Res> {
-  _$RustEngineEvent_ErrorCopyWithImpl(this._self, this._then);
-
-  final RustEngineEvent_Error _self;
-  final $Res Function(RustEngineEvent_Error) _then;
-
-  /// Create a copy of RustEngineEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? message = null,
-    Object? code = null,
-  }) {
-    return _then(RustEngineEvent_Error(
-      message: null == message
-          ? _self.message
-          : message // ignore: cast_nullable_to_non_nullable
+    return _then(RustAudioOutput_Device(
+      deviceId: null == deviceId
+          ? _self.deviceId
+          : deviceId // ignore: cast_nullable_to_non_nullable
               as String,
-      code: null == code
-          ? _self.code
-          : code // ignore: cast_nullable_to_non_nullable
+      exclusiveMode: null == exclusiveMode
+          ? _self.exclusiveMode
+          : exclusiveMode // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustAudioOutput_Cue extends RustAudioOutput {
+  const RustAudioOutput_Cue({required this.deviceId, required this.source})
+      : super._();
+
+  final String deviceId;
+  final int source;
+
+  /// Create a copy of RustAudioOutput
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustAudioOutput_CueCopyWith<RustAudioOutput_Cue> get copyWith =>
+      _$RustAudioOutput_CueCopyWithImpl<RustAudioOutput_Cue>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustAudioOutput_Cue &&
+            (identical(other.deviceId, deviceId) ||
+                other.deviceId == deviceId) &&
+            (identical(other.source, source) || other.source == source));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, deviceId, source);
+  }
+
+  @override
+  String toString() {
+    return 'RustAudioOutput.cue(deviceId: $deviceId, source: $source)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustAudioOutput_CueCopyWith<$Res>
+    implements $RustAudioOutputCopyWith<$Res> {
+  factory $RustAudioOutput_CueCopyWith(
+          RustAudioOutput_Cue value, $Res Function(RustAudioOutput_Cue) _then) =
+      _$RustAudioOutput_CueCopyWithImpl;
+  @useResult
+  $Res call({String deviceId, int source});
+}
+
+/// @nodoc
+class _$RustAudioOutput_CueCopyWithImpl<$Res>
+    implements $RustAudioOutput_CueCopyWith<$Res> {
+  _$RustAudioOutput_CueCopyWithImpl(this._self, this._then);
+
+  final RustAudioOutput_Cue _self;
+  final $Res Function(RustAudioOutput_Cue) _then;
+
+  /// Create a copy of RustAudioOutput
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? deviceId = null,
+    Object? source = null,
+  }) {
+    return _then(RustAudioOutput_Cue(
+      deviceId: null == deviceId
+          ? _self.deviceId
+          : deviceId // ignore: cast_nullable_to_non_nullable
+              as String,
+      source: null == source
+          ? _self.source
+          : source // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustAudioOutput_File extends RustAudioOutput {
+  const RustAudioOutput_File({required this.path, required this.format})
+      : super._();
+
+  final String path;
+  final int format;
+
+  /// Create a copy of RustAudioOutput
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustAudioOutput_FileCopyWith<RustAudioOutput_File> get copyWith =>
+      _$RustAudioOutput_FileCopyWithImpl<RustAudioOutput_File>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustAudioOutput_File &&
+            (identical(other.path, path) || other.path == path) &&
+            (identical(other.format, format) || other.format == format));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, path, format);
+  }
+
+  @override
+  String toString() {
+    return 'RustAudioOutput.file(path: $path, format: $format)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustAudioOutput_FileCopyWith<$Res>
+    implements $RustAudioOutputCopyWith<$Res> {
+  factory $RustAudioOutput_FileCopyWith(RustAudioOutput_File value,
+          $Res Function(RustAudioOutput_File) _then) =
+      _$RustAudioOutput_FileCopyWithImpl;
+  @useResult
+  $Res call({String path, int format});
+}
+
+/// @nodoc
+class _$RustAudioOutput_FileCopyWithImpl<$Res>
+    implements $RustAudioOutput_FileCopyWith<$Res> {
+  _$RustAudioOutput_FileCopyWithImpl(this._self, this._then);
+
+  final RustAudioOutput_File _self;
+  final $Res Function(RustAudioOutput_File) _then;
+
+  /// Create a copy of RustAudioOutput
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? path = null,
+    Object? format = null,
+  }) {
+    return _then(RustAudioOutput_File(
+      path: null == path
+          ? _self.path
+          : path // ignore: cast_nullable_to_non_nullable
+              as String,
+      format: null == format
+          ? _self.format
+          : format // ignore: cast_nullable_to_non_nullable
               as int,
     ));
   }
@@ -3074,39 +578,65 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(RustPlayerEvent_PlaybackState value)? playbackState,
     TResult Function(RustPlayerEvent_State value)? state,
     TResult Function(RustPlayerEvent_Position value)? position,
     TResult Function(RustPlayerEvent_Duration value)? duration,
     TResult Function(RustPlayerEvent_IsPlaying value)? isPlaying,
     TResult Function(RustPlayerEvent_IsBuffering value)? isBuffering,
     TResult Function(RustPlayerEvent_IsCompleted value)? isCompleted,
-    TResult Function(RustPlayerEvent_Volume value)? volume,
-    TResult Function(RustPlayerEvent_Rate value)? rate,
-    TResult Function(RustPlayerEvent_Pitch value)? pitch,
-    TResult Function(RustPlayerEvent_Bitrate value)? bitrate,
-    TResult Function(RustPlayerEvent_BufferSize value)? bufferSize,
-    TResult Function(RustPlayerEvent_Device value)? device,
+    TResult Function(RustPlayerEvent_BufferedRange value)? bufferedRange,
+    TResult Function(RustPlayerEvent_Queue value)? queue,
+    TResult Function(RustPlayerEvent_CurrentIndex value)? currentIndex,
+    TResult Function(RustPlayerEvent_IsCrossfading value)? isCrossfading,
+    TResult Function(RustPlayerEvent_CrossfadeConfig value)? crossfadeConfig,
     TResult Function(RustPlayerEvent_Visualizer value)? visualizer,
     TResult Function(RustPlayerEvent_VisualizerEnabled value)?
         visualizerEnabled,
-    TResult Function(RustPlayerEvent_BufferedRange value)? bufferedRange,
+    TResult Function(RustPlayerEvent_Volume value)? volume,
+    TResult Function(RustPlayerEvent_Rate value)? rate,
+    TResult Function(RustPlayerEvent_Pitch value)? pitch,
+    TResult Function(RustPlayerEvent_Balance value)? balance,
+    TResult Function(RustPlayerEvent_Mono value)? mono,
+    TResult Function(RustPlayerEvent_Bitrate value)? bitrate,
+    TResult Function(RustPlayerEvent_BufferSize value)? bufferSize,
     TResult Function(RustPlayerEvent_SilenceConfig value)? silenceConfig,
     TResult Function(RustPlayerEvent_SilenceSaved value)? silenceSaved,
     TResult Function(RustPlayerEvent_Equalizer value)? equalizer,
     TResult Function(RustPlayerEvent_Preamp value)? preamp,
     TResult Function(RustPlayerEvent_ReplayGain value)? replayGain,
-    TResult Function(RustPlayerEvent_Balance value)? balance,
-    TResult Function(RustPlayerEvent_Mono value)? mono,
     TResult Function(RustPlayerEvent_Crossfeed value)? crossfeed,
     TResult Function(RustPlayerEvent_Spatializer value)? spatializer,
     TResult Function(RustPlayerEvent_Reverb value)? reverb,
     TResult Function(RustPlayerEvent_Limiter value)? limiter,
+    TResult Function(RustPlayerEvent_IsRecording value)? isRecording,
+    TResult Function(RustPlayerEvent_RecordedDuration value)? recordedDuration,
+    TResult Function(RustPlayerEvent_IsDuckingActive value)? isDuckingActive,
+    TResult Function(RustPlayerEvent_MicRmsLevel value)? micRmsLevel,
+    TResult Function(RustPlayerEvent_VoiceCompleted value)? voiceCompleted,
+    TResult Function(RustPlayerEvent_MetaBytes value)? metaBytes,
+    TResult Function(RustPlayerEvent_CueVolume value)? cueVolume,
+    TResult Function(RustPlayerEvent_CueSource value)? cueSource,
+    TResult Function(RustPlayerEvent_LoopMode value)? loopMode,
+    TResult Function(RustPlayerEvent_IsShuffled value)? isShuffled,
+    TResult Function(RustPlayerEvent_PauseOnDeviceChange value)?
+        pauseOnDeviceChange,
+    TResult Function(RustPlayerEvent_MicrophoneEnabled value)?
+        microphoneEnabled,
+    TResult Function(RustPlayerEvent_MicVolume value)? micVolume,
+    TResult Function(RustPlayerEvent_DirectMonitoringEnabled value)?
+        directMonitoringEnabled,
+    TResult Function(RustPlayerEvent_OutputDevices value)? outputDevices,
+    TResult Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
+    TResult Function(RustPlayerEvent_Device value)? device,
     TResult Function(RustPlayerEvent_Error value)? error,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_PlaybackState() when playbackState != null:
+        return playbackState(_that);
       case RustPlayerEvent_State() when state != null:
         return state(_that);
       case RustPlayerEvent_Position() when position != null:
@@ -3119,24 +649,34 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return isBuffering(_that);
       case RustPlayerEvent_IsCompleted() when isCompleted != null:
         return isCompleted(_that);
+      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
+        return bufferedRange(_that);
+      case RustPlayerEvent_Queue() when queue != null:
+        return queue(_that);
+      case RustPlayerEvent_CurrentIndex() when currentIndex != null:
+        return currentIndex(_that);
+      case RustPlayerEvent_IsCrossfading() when isCrossfading != null:
+        return isCrossfading(_that);
+      case RustPlayerEvent_CrossfadeConfig() when crossfadeConfig != null:
+        return crossfadeConfig(_that);
+      case RustPlayerEvent_Visualizer() when visualizer != null:
+        return visualizer(_that);
+      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
+        return visualizerEnabled(_that);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that);
       case RustPlayerEvent_Rate() when rate != null:
         return rate(_that);
       case RustPlayerEvent_Pitch() when pitch != null:
         return pitch(_that);
+      case RustPlayerEvent_Balance() when balance != null:
+        return balance(_that);
+      case RustPlayerEvent_Mono() when mono != null:
+        return mono(_that);
       case RustPlayerEvent_Bitrate() when bitrate != null:
         return bitrate(_that);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that);
-      case RustPlayerEvent_Visualizer() when visualizer != null:
-        return visualizer(_that);
-      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that);
-      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
         return silenceConfig(_that);
       case RustPlayerEvent_SilenceSaved() when silenceSaved != null:
@@ -3147,10 +687,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that);
-      case RustPlayerEvent_Balance() when balance != null:
-        return balance(_that);
-      case RustPlayerEvent_Mono() when mono != null:
-        return mono(_that);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -3159,8 +695,44 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that);
+      case RustPlayerEvent_IsRecording() when isRecording != null:
+        return isRecording(_that);
+      case RustPlayerEvent_RecordedDuration() when recordedDuration != null:
+        return recordedDuration(_that);
+      case RustPlayerEvent_IsDuckingActive() when isDuckingActive != null:
+        return isDuckingActive(_that);
+      case RustPlayerEvent_MicRmsLevel() when micRmsLevel != null:
+        return micRmsLevel(_that);
+      case RustPlayerEvent_VoiceCompleted() when voiceCompleted != null:
+        return voiceCompleted(_that);
+      case RustPlayerEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that);
+      case RustPlayerEvent_CueVolume() when cueVolume != null:
+        return cueVolume(_that);
+      case RustPlayerEvent_CueSource() when cueSource != null:
+        return cueSource(_that);
+      case RustPlayerEvent_LoopMode() when loopMode != null:
+        return loopMode(_that);
+      case RustPlayerEvent_IsShuffled() when isShuffled != null:
+        return isShuffled(_that);
+      case RustPlayerEvent_PauseOnDeviceChange()
+          when pauseOnDeviceChange != null:
+        return pauseOnDeviceChange(_that);
+      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
+        return microphoneEnabled(_that);
+      case RustPlayerEvent_MicVolume() when micVolume != null:
+        return micVolume(_that);
+      case RustPlayerEvent_DirectMonitoringEnabled()
+          when directMonitoringEnabled != null:
+        return directMonitoringEnabled(_that);
+      case RustPlayerEvent_OutputDevices() when outputDevices != null:
+        return outputDevices(_that);
+      case RustPlayerEvent_InputDevices() when inputDevices != null:
+        return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
+      case RustPlayerEvent_Device() when device != null:
+        return device(_that);
       case RustPlayerEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -3183,41 +755,74 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(RustPlayerEvent_PlaybackState value)
+        playbackState,
     required TResult Function(RustPlayerEvent_State value) state,
     required TResult Function(RustPlayerEvent_Position value) position,
     required TResult Function(RustPlayerEvent_Duration value) duration,
     required TResult Function(RustPlayerEvent_IsPlaying value) isPlaying,
     required TResult Function(RustPlayerEvent_IsBuffering value) isBuffering,
     required TResult Function(RustPlayerEvent_IsCompleted value) isCompleted,
-    required TResult Function(RustPlayerEvent_Volume value) volume,
-    required TResult Function(RustPlayerEvent_Rate value) rate,
-    required TResult Function(RustPlayerEvent_Pitch value) pitch,
-    required TResult Function(RustPlayerEvent_Bitrate value) bitrate,
-    required TResult Function(RustPlayerEvent_BufferSize value) bufferSize,
-    required TResult Function(RustPlayerEvent_Device value) device,
+    required TResult Function(RustPlayerEvent_BufferedRange value)
+        bufferedRange,
+    required TResult Function(RustPlayerEvent_Queue value) queue,
+    required TResult Function(RustPlayerEvent_CurrentIndex value) currentIndex,
+    required TResult Function(RustPlayerEvent_IsCrossfading value)
+        isCrossfading,
+    required TResult Function(RustPlayerEvent_CrossfadeConfig value)
+        crossfadeConfig,
     required TResult Function(RustPlayerEvent_Visualizer value) visualizer,
     required TResult Function(RustPlayerEvent_VisualizerEnabled value)
         visualizerEnabled,
-    required TResult Function(RustPlayerEvent_BufferedRange value)
-        bufferedRange,
+    required TResult Function(RustPlayerEvent_Volume value) volume,
+    required TResult Function(RustPlayerEvent_Rate value) rate,
+    required TResult Function(RustPlayerEvent_Pitch value) pitch,
+    required TResult Function(RustPlayerEvent_Balance value) balance,
+    required TResult Function(RustPlayerEvent_Mono value) mono,
+    required TResult Function(RustPlayerEvent_Bitrate value) bitrate,
+    required TResult Function(RustPlayerEvent_BufferSize value) bufferSize,
     required TResult Function(RustPlayerEvent_SilenceConfig value)
         silenceConfig,
     required TResult Function(RustPlayerEvent_SilenceSaved value) silenceSaved,
     required TResult Function(RustPlayerEvent_Equalizer value) equalizer,
     required TResult Function(RustPlayerEvent_Preamp value) preamp,
     required TResult Function(RustPlayerEvent_ReplayGain value) replayGain,
-    required TResult Function(RustPlayerEvent_Balance value) balance,
-    required TResult Function(RustPlayerEvent_Mono value) mono,
     required TResult Function(RustPlayerEvent_Crossfeed value) crossfeed,
     required TResult Function(RustPlayerEvent_Spatializer value) spatializer,
     required TResult Function(RustPlayerEvent_Reverb value) reverb,
     required TResult Function(RustPlayerEvent_Limiter value) limiter,
+    required TResult Function(RustPlayerEvent_IsRecording value) isRecording,
+    required TResult Function(RustPlayerEvent_RecordedDuration value)
+        recordedDuration,
+    required TResult Function(RustPlayerEvent_IsDuckingActive value)
+        isDuckingActive,
+    required TResult Function(RustPlayerEvent_MicRmsLevel value) micRmsLevel,
+    required TResult Function(RustPlayerEvent_VoiceCompleted value)
+        voiceCompleted,
+    required TResult Function(RustPlayerEvent_MetaBytes value) metaBytes,
+    required TResult Function(RustPlayerEvent_CueVolume value) cueVolume,
+    required TResult Function(RustPlayerEvent_CueSource value) cueSource,
+    required TResult Function(RustPlayerEvent_LoopMode value) loopMode,
+    required TResult Function(RustPlayerEvent_IsShuffled value) isShuffled,
+    required TResult Function(RustPlayerEvent_PauseOnDeviceChange value)
+        pauseOnDeviceChange,
+    required TResult Function(RustPlayerEvent_MicrophoneEnabled value)
+        microphoneEnabled,
+    required TResult Function(RustPlayerEvent_MicVolume value) micVolume,
+    required TResult Function(RustPlayerEvent_DirectMonitoringEnabled value)
+        directMonitoringEnabled,
+    required TResult Function(RustPlayerEvent_OutputDevices value)
+        outputDevices,
+    required TResult Function(RustPlayerEvent_InputDevices value) inputDevices,
     required TResult Function(RustPlayerEvent_DartReadRequest value)
         dartReadRequest,
+    required TResult Function(RustPlayerEvent_Device value) device,
     required TResult Function(RustPlayerEvent_Error value) error,
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_PlaybackState():
+        return playbackState(_that);
       case RustPlayerEvent_State():
         return state(_that);
       case RustPlayerEvent_Position():
@@ -3230,24 +835,34 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return isBuffering(_that);
       case RustPlayerEvent_IsCompleted():
         return isCompleted(_that);
+      case RustPlayerEvent_BufferedRange():
+        return bufferedRange(_that);
+      case RustPlayerEvent_Queue():
+        return queue(_that);
+      case RustPlayerEvent_CurrentIndex():
+        return currentIndex(_that);
+      case RustPlayerEvent_IsCrossfading():
+        return isCrossfading(_that);
+      case RustPlayerEvent_CrossfadeConfig():
+        return crossfadeConfig(_that);
+      case RustPlayerEvent_Visualizer():
+        return visualizer(_that);
+      case RustPlayerEvent_VisualizerEnabled():
+        return visualizerEnabled(_that);
       case RustPlayerEvent_Volume():
         return volume(_that);
       case RustPlayerEvent_Rate():
         return rate(_that);
       case RustPlayerEvent_Pitch():
         return pitch(_that);
+      case RustPlayerEvent_Balance():
+        return balance(_that);
+      case RustPlayerEvent_Mono():
+        return mono(_that);
       case RustPlayerEvent_Bitrate():
         return bitrate(_that);
       case RustPlayerEvent_BufferSize():
         return bufferSize(_that);
-      case RustPlayerEvent_Device():
-        return device(_that);
-      case RustPlayerEvent_Visualizer():
-        return visualizer(_that);
-      case RustPlayerEvent_VisualizerEnabled():
-        return visualizerEnabled(_that);
-      case RustPlayerEvent_BufferedRange():
-        return bufferedRange(_that);
       case RustPlayerEvent_SilenceConfig():
         return silenceConfig(_that);
       case RustPlayerEvent_SilenceSaved():
@@ -3258,10 +873,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that);
       case RustPlayerEvent_ReplayGain():
         return replayGain(_that);
-      case RustPlayerEvent_Balance():
-        return balance(_that);
-      case RustPlayerEvent_Mono():
-        return mono(_that);
       case RustPlayerEvent_Crossfeed():
         return crossfeed(_that);
       case RustPlayerEvent_Spatializer():
@@ -3270,8 +881,42 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that);
       case RustPlayerEvent_Limiter():
         return limiter(_that);
+      case RustPlayerEvent_IsRecording():
+        return isRecording(_that);
+      case RustPlayerEvent_RecordedDuration():
+        return recordedDuration(_that);
+      case RustPlayerEvent_IsDuckingActive():
+        return isDuckingActive(_that);
+      case RustPlayerEvent_MicRmsLevel():
+        return micRmsLevel(_that);
+      case RustPlayerEvent_VoiceCompleted():
+        return voiceCompleted(_that);
+      case RustPlayerEvent_MetaBytes():
+        return metaBytes(_that);
+      case RustPlayerEvent_CueVolume():
+        return cueVolume(_that);
+      case RustPlayerEvent_CueSource():
+        return cueSource(_that);
+      case RustPlayerEvent_LoopMode():
+        return loopMode(_that);
+      case RustPlayerEvent_IsShuffled():
+        return isShuffled(_that);
+      case RustPlayerEvent_PauseOnDeviceChange():
+        return pauseOnDeviceChange(_that);
+      case RustPlayerEvent_MicrophoneEnabled():
+        return microphoneEnabled(_that);
+      case RustPlayerEvent_MicVolume():
+        return micVolume(_that);
+      case RustPlayerEvent_DirectMonitoringEnabled():
+        return directMonitoringEnabled(_that);
+      case RustPlayerEvent_OutputDevices():
+        return outputDevices(_that);
+      case RustPlayerEvent_InputDevices():
+        return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that);
+      case RustPlayerEvent_Device():
+        return device(_that);
       case RustPlayerEvent_Error():
         return error(_that);
     }
@@ -3291,38 +936,64 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(RustPlayerEvent_PlaybackState value)? playbackState,
     TResult? Function(RustPlayerEvent_State value)? state,
     TResult? Function(RustPlayerEvent_Position value)? position,
     TResult? Function(RustPlayerEvent_Duration value)? duration,
     TResult? Function(RustPlayerEvent_IsPlaying value)? isPlaying,
     TResult? Function(RustPlayerEvent_IsBuffering value)? isBuffering,
     TResult? Function(RustPlayerEvent_IsCompleted value)? isCompleted,
-    TResult? Function(RustPlayerEvent_Volume value)? volume,
-    TResult? Function(RustPlayerEvent_Rate value)? rate,
-    TResult? Function(RustPlayerEvent_Pitch value)? pitch,
-    TResult? Function(RustPlayerEvent_Bitrate value)? bitrate,
-    TResult? Function(RustPlayerEvent_BufferSize value)? bufferSize,
-    TResult? Function(RustPlayerEvent_Device value)? device,
+    TResult? Function(RustPlayerEvent_BufferedRange value)? bufferedRange,
+    TResult? Function(RustPlayerEvent_Queue value)? queue,
+    TResult? Function(RustPlayerEvent_CurrentIndex value)? currentIndex,
+    TResult? Function(RustPlayerEvent_IsCrossfading value)? isCrossfading,
+    TResult? Function(RustPlayerEvent_CrossfadeConfig value)? crossfadeConfig,
     TResult? Function(RustPlayerEvent_Visualizer value)? visualizer,
     TResult? Function(RustPlayerEvent_VisualizerEnabled value)?
         visualizerEnabled,
-    TResult? Function(RustPlayerEvent_BufferedRange value)? bufferedRange,
+    TResult? Function(RustPlayerEvent_Volume value)? volume,
+    TResult? Function(RustPlayerEvent_Rate value)? rate,
+    TResult? Function(RustPlayerEvent_Pitch value)? pitch,
+    TResult? Function(RustPlayerEvent_Balance value)? balance,
+    TResult? Function(RustPlayerEvent_Mono value)? mono,
+    TResult? Function(RustPlayerEvent_Bitrate value)? bitrate,
+    TResult? Function(RustPlayerEvent_BufferSize value)? bufferSize,
     TResult? Function(RustPlayerEvent_SilenceConfig value)? silenceConfig,
     TResult? Function(RustPlayerEvent_SilenceSaved value)? silenceSaved,
     TResult? Function(RustPlayerEvent_Equalizer value)? equalizer,
     TResult? Function(RustPlayerEvent_Preamp value)? preamp,
     TResult? Function(RustPlayerEvent_ReplayGain value)? replayGain,
-    TResult? Function(RustPlayerEvent_Balance value)? balance,
-    TResult? Function(RustPlayerEvent_Mono value)? mono,
     TResult? Function(RustPlayerEvent_Crossfeed value)? crossfeed,
     TResult? Function(RustPlayerEvent_Spatializer value)? spatializer,
     TResult? Function(RustPlayerEvent_Reverb value)? reverb,
     TResult? Function(RustPlayerEvent_Limiter value)? limiter,
+    TResult? Function(RustPlayerEvent_IsRecording value)? isRecording,
+    TResult? Function(RustPlayerEvent_RecordedDuration value)? recordedDuration,
+    TResult? Function(RustPlayerEvent_IsDuckingActive value)? isDuckingActive,
+    TResult? Function(RustPlayerEvent_MicRmsLevel value)? micRmsLevel,
+    TResult? Function(RustPlayerEvent_VoiceCompleted value)? voiceCompleted,
+    TResult? Function(RustPlayerEvent_MetaBytes value)? metaBytes,
+    TResult? Function(RustPlayerEvent_CueVolume value)? cueVolume,
+    TResult? Function(RustPlayerEvent_CueSource value)? cueSource,
+    TResult? Function(RustPlayerEvent_LoopMode value)? loopMode,
+    TResult? Function(RustPlayerEvent_IsShuffled value)? isShuffled,
+    TResult? Function(RustPlayerEvent_PauseOnDeviceChange value)?
+        pauseOnDeviceChange,
+    TResult? Function(RustPlayerEvent_MicrophoneEnabled value)?
+        microphoneEnabled,
+    TResult? Function(RustPlayerEvent_MicVolume value)? micVolume,
+    TResult? Function(RustPlayerEvent_DirectMonitoringEnabled value)?
+        directMonitoringEnabled,
+    TResult? Function(RustPlayerEvent_OutputDevices value)? outputDevices,
+    TResult? Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult? Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
+    TResult? Function(RustPlayerEvent_Device value)? device,
     TResult? Function(RustPlayerEvent_Error value)? error,
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_PlaybackState() when playbackState != null:
+        return playbackState(_that);
       case RustPlayerEvent_State() when state != null:
         return state(_that);
       case RustPlayerEvent_Position() when position != null:
@@ -3335,24 +1006,34 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return isBuffering(_that);
       case RustPlayerEvent_IsCompleted() when isCompleted != null:
         return isCompleted(_that);
+      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
+        return bufferedRange(_that);
+      case RustPlayerEvent_Queue() when queue != null:
+        return queue(_that);
+      case RustPlayerEvent_CurrentIndex() when currentIndex != null:
+        return currentIndex(_that);
+      case RustPlayerEvent_IsCrossfading() when isCrossfading != null:
+        return isCrossfading(_that);
+      case RustPlayerEvent_CrossfadeConfig() when crossfadeConfig != null:
+        return crossfadeConfig(_that);
+      case RustPlayerEvent_Visualizer() when visualizer != null:
+        return visualizer(_that);
+      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
+        return visualizerEnabled(_that);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that);
       case RustPlayerEvent_Rate() when rate != null:
         return rate(_that);
       case RustPlayerEvent_Pitch() when pitch != null:
         return pitch(_that);
+      case RustPlayerEvent_Balance() when balance != null:
+        return balance(_that);
+      case RustPlayerEvent_Mono() when mono != null:
+        return mono(_that);
       case RustPlayerEvent_Bitrate() when bitrate != null:
         return bitrate(_that);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that);
-      case RustPlayerEvent_Visualizer() when visualizer != null:
-        return visualizer(_that);
-      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that);
-      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
         return silenceConfig(_that);
       case RustPlayerEvent_SilenceSaved() when silenceSaved != null:
@@ -3363,10 +1044,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that);
-      case RustPlayerEvent_Balance() when balance != null:
-        return balance(_that);
-      case RustPlayerEvent_Mono() when mono != null:
-        return mono(_that);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -3375,8 +1052,44 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that);
+      case RustPlayerEvent_IsRecording() when isRecording != null:
+        return isRecording(_that);
+      case RustPlayerEvent_RecordedDuration() when recordedDuration != null:
+        return recordedDuration(_that);
+      case RustPlayerEvent_IsDuckingActive() when isDuckingActive != null:
+        return isDuckingActive(_that);
+      case RustPlayerEvent_MicRmsLevel() when micRmsLevel != null:
+        return micRmsLevel(_that);
+      case RustPlayerEvent_VoiceCompleted() when voiceCompleted != null:
+        return voiceCompleted(_that);
+      case RustPlayerEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that);
+      case RustPlayerEvent_CueVolume() when cueVolume != null:
+        return cueVolume(_that);
+      case RustPlayerEvent_CueSource() when cueSource != null:
+        return cueSource(_that);
+      case RustPlayerEvent_LoopMode() when loopMode != null:
+        return loopMode(_that);
+      case RustPlayerEvent_IsShuffled() when isShuffled != null:
+        return isShuffled(_that);
+      case RustPlayerEvent_PauseOnDeviceChange()
+          when pauseOnDeviceChange != null:
+        return pauseOnDeviceChange(_that);
+      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
+        return microphoneEnabled(_that);
+      case RustPlayerEvent_MicVolume() when micVolume != null:
+        return micVolume(_that);
+      case RustPlayerEvent_DirectMonitoringEnabled()
+          when directMonitoringEnabled != null:
+        return directMonitoringEnabled(_that);
+      case RustPlayerEvent_OutputDevices() when outputDevices != null:
+        return outputDevices(_that);
+      case RustPlayerEvent_InputDevices() when inputDevices != null:
+        return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
+      case RustPlayerEvent_Device() when device != null:
+        return device(_that);
       case RustPlayerEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -3398,38 +1111,61 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(int field0)? playbackState,
     TResult Function(int field0)? state,
     TResult Function(PlatformInt64 field0)? position,
     TResult Function(PlatformInt64 field0)? duration,
     TResult Function(bool field0)? isPlaying,
     TResult Function(bool field0)? isBuffering,
     TResult Function(bool field0)? isCompleted,
+    TResult Function(RustBufferedRange field0)? bufferedRange,
+    TResult Function(List<RustAudioSource> field0)? queue,
+    TResult Function(int field0)? currentIndex,
+    TResult Function(bool field0)? isCrossfading,
+    TResult Function(RustCrossfadeConfig field0)? crossfadeConfig,
+    TResult Function(RustVisualizerData field0)? visualizer,
+    TResult Function(bool field0)? visualizerEnabled,
     TResult Function(double field0)? volume,
     TResult Function(double field0)? rate,
     TResult Function(double field0)? pitch,
+    TResult Function(double field0)? balance,
+    TResult Function(bool field0)? mono,
     TResult Function(int field0)? bitrate,
     TResult Function(int field0)? bufferSize,
-    TResult Function(RustAudioDevice field0)? device,
-    TResult Function(RustVisualizerData field0)? visualizer,
-    TResult Function(bool field0)? visualizerEnabled,
-    TResult Function(RustBufferedRange field0)? bufferedRange,
     TResult Function(RustSilenceConfig field0)? silenceConfig,
     TResult Function(PlatformInt64 field0)? silenceSaved,
     TResult Function(RustEqualizerParams field0)? equalizer,
     TResult Function(double field0)? preamp,
     TResult Function(RustReplayGainConfig field0)? replayGain,
-    TResult Function(double field0)? balance,
-    TResult Function(bool field0)? mono,
     TResult Function(int field0)? crossfeed,
     TResult Function(bool enabled, double width)? spatializer,
     TResult Function(RustReverbParams field0)? reverb,
     TResult Function(bool field0)? limiter,
+    TResult Function(bool field0)? isRecording,
+    TResult Function(BigInt field0)? recordedDuration,
+    TResult Function(bool field0)? isDuckingActive,
+    TResult Function(double field0)? micRmsLevel,
+    TResult Function(int field0)? voiceCompleted,
+    TResult Function(Uint8List field0)? metaBytes,
+    TResult Function(double field0)? cueVolume,
+    TResult Function(int field0)? cueSource,
+    TResult Function(int field0)? loopMode,
+    TResult Function(bool field0)? isShuffled,
+    TResult Function(bool field0)? pauseOnDeviceChange,
+    TResult Function(bool field0)? microphoneEnabled,
+    TResult Function(double field0)? micVolume,
+    TResult Function(bool field0)? directMonitoringEnabled,
+    TResult Function(List<RustAudioDevice> field0)? outputDevices,
+    TResult Function(List<RustAudioDevice> field0)? inputDevices,
     TResult Function(RustDartReadRequest field0)? dartReadRequest,
+    TResult Function(RustAudioDevice field0)? device,
     TResult Function(String message, int code)? error,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_PlaybackState() when playbackState != null:
+        return playbackState(_that.field0);
       case RustPlayerEvent_State() when state != null:
         return state(_that.field0);
       case RustPlayerEvent_Position() when position != null:
@@ -3442,24 +1178,34 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return isBuffering(_that.field0);
       case RustPlayerEvent_IsCompleted() when isCompleted != null:
         return isCompleted(_that.field0);
+      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
+        return bufferedRange(_that.field0);
+      case RustPlayerEvent_Queue() when queue != null:
+        return queue(_that.field0);
+      case RustPlayerEvent_CurrentIndex() when currentIndex != null:
+        return currentIndex(_that.field0);
+      case RustPlayerEvent_IsCrossfading() when isCrossfading != null:
+        return isCrossfading(_that.field0);
+      case RustPlayerEvent_CrossfadeConfig() when crossfadeConfig != null:
+        return crossfadeConfig(_that.field0);
+      case RustPlayerEvent_Visualizer() when visualizer != null:
+        return visualizer(_that.field0);
+      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
+        return visualizerEnabled(_that.field0);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that.field0);
       case RustPlayerEvent_Rate() when rate != null:
         return rate(_that.field0);
       case RustPlayerEvent_Pitch() when pitch != null:
         return pitch(_that.field0);
+      case RustPlayerEvent_Balance() when balance != null:
+        return balance(_that.field0);
+      case RustPlayerEvent_Mono() when mono != null:
+        return mono(_that.field0);
       case RustPlayerEvent_Bitrate() when bitrate != null:
         return bitrate(_that.field0);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that.field0);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that.field0);
-      case RustPlayerEvent_Visualizer() when visualizer != null:
-        return visualizer(_that.field0);
-      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that.field0);
-      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that.field0);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
         return silenceConfig(_that.field0);
       case RustPlayerEvent_SilenceSaved() when silenceSaved != null:
@@ -3470,10 +1216,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that.field0);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that.field0);
-      case RustPlayerEvent_Balance() when balance != null:
-        return balance(_that.field0);
-      case RustPlayerEvent_Mono() when mono != null:
-        return mono(_that.field0);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that.field0);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -3482,8 +1224,44 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that.field0);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that.field0);
+      case RustPlayerEvent_IsRecording() when isRecording != null:
+        return isRecording(_that.field0);
+      case RustPlayerEvent_RecordedDuration() when recordedDuration != null:
+        return recordedDuration(_that.field0);
+      case RustPlayerEvent_IsDuckingActive() when isDuckingActive != null:
+        return isDuckingActive(_that.field0);
+      case RustPlayerEvent_MicRmsLevel() when micRmsLevel != null:
+        return micRmsLevel(_that.field0);
+      case RustPlayerEvent_VoiceCompleted() when voiceCompleted != null:
+        return voiceCompleted(_that.field0);
+      case RustPlayerEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that.field0);
+      case RustPlayerEvent_CueVolume() when cueVolume != null:
+        return cueVolume(_that.field0);
+      case RustPlayerEvent_CueSource() when cueSource != null:
+        return cueSource(_that.field0);
+      case RustPlayerEvent_LoopMode() when loopMode != null:
+        return loopMode(_that.field0);
+      case RustPlayerEvent_IsShuffled() when isShuffled != null:
+        return isShuffled(_that.field0);
+      case RustPlayerEvent_PauseOnDeviceChange()
+          when pauseOnDeviceChange != null:
+        return pauseOnDeviceChange(_that.field0);
+      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
+        return microphoneEnabled(_that.field0);
+      case RustPlayerEvent_MicVolume() when micVolume != null:
+        return micVolume(_that.field0);
+      case RustPlayerEvent_DirectMonitoringEnabled()
+          when directMonitoringEnabled != null:
+        return directMonitoringEnabled(_that.field0);
+      case RustPlayerEvent_OutputDevices() when outputDevices != null:
+        return outputDevices(_that.field0);
+      case RustPlayerEvent_InputDevices() when inputDevices != null:
+        return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_Device() when device != null:
+        return device(_that.field0);
       case RustPlayerEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -3506,37 +1284,60 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(int field0) playbackState,
     required TResult Function(int field0) state,
     required TResult Function(PlatformInt64 field0) position,
     required TResult Function(PlatformInt64 field0) duration,
     required TResult Function(bool field0) isPlaying,
     required TResult Function(bool field0) isBuffering,
     required TResult Function(bool field0) isCompleted,
+    required TResult Function(RustBufferedRange field0) bufferedRange,
+    required TResult Function(List<RustAudioSource> field0) queue,
+    required TResult Function(int field0) currentIndex,
+    required TResult Function(bool field0) isCrossfading,
+    required TResult Function(RustCrossfadeConfig field0) crossfadeConfig,
+    required TResult Function(RustVisualizerData field0) visualizer,
+    required TResult Function(bool field0) visualizerEnabled,
     required TResult Function(double field0) volume,
     required TResult Function(double field0) rate,
     required TResult Function(double field0) pitch,
+    required TResult Function(double field0) balance,
+    required TResult Function(bool field0) mono,
     required TResult Function(int field0) bitrate,
     required TResult Function(int field0) bufferSize,
-    required TResult Function(RustAudioDevice field0) device,
-    required TResult Function(RustVisualizerData field0) visualizer,
-    required TResult Function(bool field0) visualizerEnabled,
-    required TResult Function(RustBufferedRange field0) bufferedRange,
     required TResult Function(RustSilenceConfig field0) silenceConfig,
     required TResult Function(PlatformInt64 field0) silenceSaved,
     required TResult Function(RustEqualizerParams field0) equalizer,
     required TResult Function(double field0) preamp,
     required TResult Function(RustReplayGainConfig field0) replayGain,
-    required TResult Function(double field0) balance,
-    required TResult Function(bool field0) mono,
     required TResult Function(int field0) crossfeed,
     required TResult Function(bool enabled, double width) spatializer,
     required TResult Function(RustReverbParams field0) reverb,
     required TResult Function(bool field0) limiter,
+    required TResult Function(bool field0) isRecording,
+    required TResult Function(BigInt field0) recordedDuration,
+    required TResult Function(bool field0) isDuckingActive,
+    required TResult Function(double field0) micRmsLevel,
+    required TResult Function(int field0) voiceCompleted,
+    required TResult Function(Uint8List field0) metaBytes,
+    required TResult Function(double field0) cueVolume,
+    required TResult Function(int field0) cueSource,
+    required TResult Function(int field0) loopMode,
+    required TResult Function(bool field0) isShuffled,
+    required TResult Function(bool field0) pauseOnDeviceChange,
+    required TResult Function(bool field0) microphoneEnabled,
+    required TResult Function(double field0) micVolume,
+    required TResult Function(bool field0) directMonitoringEnabled,
+    required TResult Function(List<RustAudioDevice> field0) outputDevices,
+    required TResult Function(List<RustAudioDevice> field0) inputDevices,
     required TResult Function(RustDartReadRequest field0) dartReadRequest,
+    required TResult Function(RustAudioDevice field0) device,
     required TResult Function(String message, int code) error,
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_PlaybackState():
+        return playbackState(_that.field0);
       case RustPlayerEvent_State():
         return state(_that.field0);
       case RustPlayerEvent_Position():
@@ -3549,24 +1350,34 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return isBuffering(_that.field0);
       case RustPlayerEvent_IsCompleted():
         return isCompleted(_that.field0);
+      case RustPlayerEvent_BufferedRange():
+        return bufferedRange(_that.field0);
+      case RustPlayerEvent_Queue():
+        return queue(_that.field0);
+      case RustPlayerEvent_CurrentIndex():
+        return currentIndex(_that.field0);
+      case RustPlayerEvent_IsCrossfading():
+        return isCrossfading(_that.field0);
+      case RustPlayerEvent_CrossfadeConfig():
+        return crossfadeConfig(_that.field0);
+      case RustPlayerEvent_Visualizer():
+        return visualizer(_that.field0);
+      case RustPlayerEvent_VisualizerEnabled():
+        return visualizerEnabled(_that.field0);
       case RustPlayerEvent_Volume():
         return volume(_that.field0);
       case RustPlayerEvent_Rate():
         return rate(_that.field0);
       case RustPlayerEvent_Pitch():
         return pitch(_that.field0);
+      case RustPlayerEvent_Balance():
+        return balance(_that.field0);
+      case RustPlayerEvent_Mono():
+        return mono(_that.field0);
       case RustPlayerEvent_Bitrate():
         return bitrate(_that.field0);
       case RustPlayerEvent_BufferSize():
         return bufferSize(_that.field0);
-      case RustPlayerEvent_Device():
-        return device(_that.field0);
-      case RustPlayerEvent_Visualizer():
-        return visualizer(_that.field0);
-      case RustPlayerEvent_VisualizerEnabled():
-        return visualizerEnabled(_that.field0);
-      case RustPlayerEvent_BufferedRange():
-        return bufferedRange(_that.field0);
       case RustPlayerEvent_SilenceConfig():
         return silenceConfig(_that.field0);
       case RustPlayerEvent_SilenceSaved():
@@ -3577,10 +1388,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that.field0);
       case RustPlayerEvent_ReplayGain():
         return replayGain(_that.field0);
-      case RustPlayerEvent_Balance():
-        return balance(_that.field0);
-      case RustPlayerEvent_Mono():
-        return mono(_that.field0);
       case RustPlayerEvent_Crossfeed():
         return crossfeed(_that.field0);
       case RustPlayerEvent_Spatializer():
@@ -3589,8 +1396,42 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that.field0);
       case RustPlayerEvent_Limiter():
         return limiter(_that.field0);
+      case RustPlayerEvent_IsRecording():
+        return isRecording(_that.field0);
+      case RustPlayerEvent_RecordedDuration():
+        return recordedDuration(_that.field0);
+      case RustPlayerEvent_IsDuckingActive():
+        return isDuckingActive(_that.field0);
+      case RustPlayerEvent_MicRmsLevel():
+        return micRmsLevel(_that.field0);
+      case RustPlayerEvent_VoiceCompleted():
+        return voiceCompleted(_that.field0);
+      case RustPlayerEvent_MetaBytes():
+        return metaBytes(_that.field0);
+      case RustPlayerEvent_CueVolume():
+        return cueVolume(_that.field0);
+      case RustPlayerEvent_CueSource():
+        return cueSource(_that.field0);
+      case RustPlayerEvent_LoopMode():
+        return loopMode(_that.field0);
+      case RustPlayerEvent_IsShuffled():
+        return isShuffled(_that.field0);
+      case RustPlayerEvent_PauseOnDeviceChange():
+        return pauseOnDeviceChange(_that.field0);
+      case RustPlayerEvent_MicrophoneEnabled():
+        return microphoneEnabled(_that.field0);
+      case RustPlayerEvent_MicVolume():
+        return micVolume(_that.field0);
+      case RustPlayerEvent_DirectMonitoringEnabled():
+        return directMonitoringEnabled(_that.field0);
+      case RustPlayerEvent_OutputDevices():
+        return outputDevices(_that.field0);
+      case RustPlayerEvent_InputDevices():
+        return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_Device():
+        return device(_that.field0);
       case RustPlayerEvent_Error():
         return error(_that.message, _that.code);
     }
@@ -3610,37 +1451,60 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(int field0)? playbackState,
     TResult? Function(int field0)? state,
     TResult? Function(PlatformInt64 field0)? position,
     TResult? Function(PlatformInt64 field0)? duration,
     TResult? Function(bool field0)? isPlaying,
     TResult? Function(bool field0)? isBuffering,
     TResult? Function(bool field0)? isCompleted,
+    TResult? Function(RustBufferedRange field0)? bufferedRange,
+    TResult? Function(List<RustAudioSource> field0)? queue,
+    TResult? Function(int field0)? currentIndex,
+    TResult? Function(bool field0)? isCrossfading,
+    TResult? Function(RustCrossfadeConfig field0)? crossfadeConfig,
+    TResult? Function(RustVisualizerData field0)? visualizer,
+    TResult? Function(bool field0)? visualizerEnabled,
     TResult? Function(double field0)? volume,
     TResult? Function(double field0)? rate,
     TResult? Function(double field0)? pitch,
+    TResult? Function(double field0)? balance,
+    TResult? Function(bool field0)? mono,
     TResult? Function(int field0)? bitrate,
     TResult? Function(int field0)? bufferSize,
-    TResult? Function(RustAudioDevice field0)? device,
-    TResult? Function(RustVisualizerData field0)? visualizer,
-    TResult? Function(bool field0)? visualizerEnabled,
-    TResult? Function(RustBufferedRange field0)? bufferedRange,
     TResult? Function(RustSilenceConfig field0)? silenceConfig,
     TResult? Function(PlatformInt64 field0)? silenceSaved,
     TResult? Function(RustEqualizerParams field0)? equalizer,
     TResult? Function(double field0)? preamp,
     TResult? Function(RustReplayGainConfig field0)? replayGain,
-    TResult? Function(double field0)? balance,
-    TResult? Function(bool field0)? mono,
     TResult? Function(int field0)? crossfeed,
     TResult? Function(bool enabled, double width)? spatializer,
     TResult? Function(RustReverbParams field0)? reverb,
     TResult? Function(bool field0)? limiter,
+    TResult? Function(bool field0)? isRecording,
+    TResult? Function(BigInt field0)? recordedDuration,
+    TResult? Function(bool field0)? isDuckingActive,
+    TResult? Function(double field0)? micRmsLevel,
+    TResult? Function(int field0)? voiceCompleted,
+    TResult? Function(Uint8List field0)? metaBytes,
+    TResult? Function(double field0)? cueVolume,
+    TResult? Function(int field0)? cueSource,
+    TResult? Function(int field0)? loopMode,
+    TResult? Function(bool field0)? isShuffled,
+    TResult? Function(bool field0)? pauseOnDeviceChange,
+    TResult? Function(bool field0)? microphoneEnabled,
+    TResult? Function(double field0)? micVolume,
+    TResult? Function(bool field0)? directMonitoringEnabled,
+    TResult? Function(List<RustAudioDevice> field0)? outputDevices,
+    TResult? Function(List<RustAudioDevice> field0)? inputDevices,
     TResult? Function(RustDartReadRequest field0)? dartReadRequest,
+    TResult? Function(RustAudioDevice field0)? device,
     TResult? Function(String message, int code)? error,
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_PlaybackState() when playbackState != null:
+        return playbackState(_that.field0);
       case RustPlayerEvent_State() when state != null:
         return state(_that.field0);
       case RustPlayerEvent_Position() when position != null:
@@ -3653,24 +1517,34 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return isBuffering(_that.field0);
       case RustPlayerEvent_IsCompleted() when isCompleted != null:
         return isCompleted(_that.field0);
+      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
+        return bufferedRange(_that.field0);
+      case RustPlayerEvent_Queue() when queue != null:
+        return queue(_that.field0);
+      case RustPlayerEvent_CurrentIndex() when currentIndex != null:
+        return currentIndex(_that.field0);
+      case RustPlayerEvent_IsCrossfading() when isCrossfading != null:
+        return isCrossfading(_that.field0);
+      case RustPlayerEvent_CrossfadeConfig() when crossfadeConfig != null:
+        return crossfadeConfig(_that.field0);
+      case RustPlayerEvent_Visualizer() when visualizer != null:
+        return visualizer(_that.field0);
+      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
+        return visualizerEnabled(_that.field0);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that.field0);
       case RustPlayerEvent_Rate() when rate != null:
         return rate(_that.field0);
       case RustPlayerEvent_Pitch() when pitch != null:
         return pitch(_that.field0);
+      case RustPlayerEvent_Balance() when balance != null:
+        return balance(_that.field0);
+      case RustPlayerEvent_Mono() when mono != null:
+        return mono(_that.field0);
       case RustPlayerEvent_Bitrate() when bitrate != null:
         return bitrate(_that.field0);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that.field0);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that.field0);
-      case RustPlayerEvent_Visualizer() when visualizer != null:
-        return visualizer(_that.field0);
-      case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
-        return visualizerEnabled(_that.field0);
-      case RustPlayerEvent_BufferedRange() when bufferedRange != null:
-        return bufferedRange(_that.field0);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
         return silenceConfig(_that.field0);
       case RustPlayerEvent_SilenceSaved() when silenceSaved != null:
@@ -3681,10 +1555,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that.field0);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that.field0);
-      case RustPlayerEvent_Balance() when balance != null:
-        return balance(_that.field0);
-      case RustPlayerEvent_Mono() when mono != null:
-        return mono(_that.field0);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that.field0);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -3693,13 +1563,117 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return reverb(_that.field0);
       case RustPlayerEvent_Limiter() when limiter != null:
         return limiter(_that.field0);
+      case RustPlayerEvent_IsRecording() when isRecording != null:
+        return isRecording(_that.field0);
+      case RustPlayerEvent_RecordedDuration() when recordedDuration != null:
+        return recordedDuration(_that.field0);
+      case RustPlayerEvent_IsDuckingActive() when isDuckingActive != null:
+        return isDuckingActive(_that.field0);
+      case RustPlayerEvent_MicRmsLevel() when micRmsLevel != null:
+        return micRmsLevel(_that.field0);
+      case RustPlayerEvent_VoiceCompleted() when voiceCompleted != null:
+        return voiceCompleted(_that.field0);
+      case RustPlayerEvent_MetaBytes() when metaBytes != null:
+        return metaBytes(_that.field0);
+      case RustPlayerEvent_CueVolume() when cueVolume != null:
+        return cueVolume(_that.field0);
+      case RustPlayerEvent_CueSource() when cueSource != null:
+        return cueSource(_that.field0);
+      case RustPlayerEvent_LoopMode() when loopMode != null:
+        return loopMode(_that.field0);
+      case RustPlayerEvent_IsShuffled() when isShuffled != null:
+        return isShuffled(_that.field0);
+      case RustPlayerEvent_PauseOnDeviceChange()
+          when pauseOnDeviceChange != null:
+        return pauseOnDeviceChange(_that.field0);
+      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
+        return microphoneEnabled(_that.field0);
+      case RustPlayerEvent_MicVolume() when micVolume != null:
+        return micVolume(_that.field0);
+      case RustPlayerEvent_DirectMonitoringEnabled()
+          when directMonitoringEnabled != null:
+        return directMonitoringEnabled(_that.field0);
+      case RustPlayerEvent_OutputDevices() when outputDevices != null:
+        return outputDevices(_that.field0);
+      case RustPlayerEvent_InputDevices() when inputDevices != null:
+        return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_Device() when device != null:
+        return device(_that.field0);
       case RustPlayerEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
         return null;
     }
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_PlaybackState extends RustPlayerEvent {
+  const RustPlayerEvent_PlaybackState(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_PlaybackStateCopyWith<RustPlayerEvent_PlaybackState>
+      get copyWith => _$RustPlayerEvent_PlaybackStateCopyWithImpl<
+          RustPlayerEvent_PlaybackState>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_PlaybackState &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.playbackState(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_PlaybackStateCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_PlaybackStateCopyWith(
+          RustPlayerEvent_PlaybackState value,
+          $Res Function(RustPlayerEvent_PlaybackState) _then) =
+      _$RustPlayerEvent_PlaybackStateCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_PlaybackStateCopyWithImpl<$Res>
+    implements $RustPlayerEvent_PlaybackStateCopyWith<$Res> {
+  _$RustPlayerEvent_PlaybackStateCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_PlaybackState _self;
+  final $Res Function(RustPlayerEvent_PlaybackState) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_PlaybackState(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
   }
 }
 
@@ -4109,6 +2083,489 @@ class _$RustPlayerEvent_IsCompletedCopyWithImpl<$Res>
 
 /// @nodoc
 
+class RustPlayerEvent_BufferedRange extends RustPlayerEvent {
+  const RustPlayerEvent_BufferedRange(this.field0) : super._();
+
+  final RustBufferedRange field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_BufferedRangeCopyWith<RustPlayerEvent_BufferedRange>
+      get copyWith => _$RustPlayerEvent_BufferedRangeCopyWithImpl<
+          RustPlayerEvent_BufferedRange>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_BufferedRange &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.bufferedRange(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_BufferedRangeCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_BufferedRangeCopyWith(
+          RustPlayerEvent_BufferedRange value,
+          $Res Function(RustPlayerEvent_BufferedRange) _then) =
+      _$RustPlayerEvent_BufferedRangeCopyWithImpl;
+  @useResult
+  $Res call({RustBufferedRange field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_BufferedRangeCopyWithImpl<$Res>
+    implements $RustPlayerEvent_BufferedRangeCopyWith<$Res> {
+  _$RustPlayerEvent_BufferedRangeCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_BufferedRange _self;
+  final $Res Function(RustPlayerEvent_BufferedRange) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_BufferedRange(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustBufferedRange,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_Queue extends RustPlayerEvent {
+  const RustPlayerEvent_Queue(List<RustAudioSource> field0)
+      : _field0 = field0,
+        super._();
+
+  final List<RustAudioSource> _field0;
+  List<RustAudioSource> get field0 {
+    if (_field0 is EqualUnmodifiableListView) return _field0;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_field0);
+  }
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_QueueCopyWith<RustPlayerEvent_Queue> get copyWith =>
+      _$RustPlayerEvent_QueueCopyWithImpl<RustPlayerEvent_Queue>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_Queue &&
+            const DeepCollectionEquality().equals(other.field0, _field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(_field0));
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.queue(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_QueueCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_QueueCopyWith(RustPlayerEvent_Queue value,
+          $Res Function(RustPlayerEvent_Queue) _then) =
+      _$RustPlayerEvent_QueueCopyWithImpl;
+  @useResult
+  $Res call({List<RustAudioSource> field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_QueueCopyWithImpl<$Res>
+    implements $RustPlayerEvent_QueueCopyWith<$Res> {
+  _$RustPlayerEvent_QueueCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_Queue _self;
+  final $Res Function(RustPlayerEvent_Queue) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_Queue(
+      null == field0
+          ? _self._field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as List<RustAudioSource>,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_CurrentIndex extends RustPlayerEvent {
+  const RustPlayerEvent_CurrentIndex(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_CurrentIndexCopyWith<RustPlayerEvent_CurrentIndex>
+      get copyWith => _$RustPlayerEvent_CurrentIndexCopyWithImpl<
+          RustPlayerEvent_CurrentIndex>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_CurrentIndex &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.currentIndex(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_CurrentIndexCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_CurrentIndexCopyWith(
+          RustPlayerEvent_CurrentIndex value,
+          $Res Function(RustPlayerEvent_CurrentIndex) _then) =
+      _$RustPlayerEvent_CurrentIndexCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_CurrentIndexCopyWithImpl<$Res>
+    implements $RustPlayerEvent_CurrentIndexCopyWith<$Res> {
+  _$RustPlayerEvent_CurrentIndexCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_CurrentIndex _self;
+  final $Res Function(RustPlayerEvent_CurrentIndex) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_CurrentIndex(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_IsCrossfading extends RustPlayerEvent {
+  const RustPlayerEvent_IsCrossfading(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_IsCrossfadingCopyWith<RustPlayerEvent_IsCrossfading>
+      get copyWith => _$RustPlayerEvent_IsCrossfadingCopyWithImpl<
+          RustPlayerEvent_IsCrossfading>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_IsCrossfading &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.isCrossfading(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_IsCrossfadingCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_IsCrossfadingCopyWith(
+          RustPlayerEvent_IsCrossfading value,
+          $Res Function(RustPlayerEvent_IsCrossfading) _then) =
+      _$RustPlayerEvent_IsCrossfadingCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_IsCrossfadingCopyWithImpl<$Res>
+    implements $RustPlayerEvent_IsCrossfadingCopyWith<$Res> {
+  _$RustPlayerEvent_IsCrossfadingCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_IsCrossfading _self;
+  final $Res Function(RustPlayerEvent_IsCrossfading) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_IsCrossfading(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_CrossfadeConfig extends RustPlayerEvent {
+  const RustPlayerEvent_CrossfadeConfig(this.field0) : super._();
+
+  final RustCrossfadeConfig field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_CrossfadeConfigCopyWith<RustPlayerEvent_CrossfadeConfig>
+      get copyWith => _$RustPlayerEvent_CrossfadeConfigCopyWithImpl<
+          RustPlayerEvent_CrossfadeConfig>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_CrossfadeConfig &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.crossfadeConfig(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_CrossfadeConfigCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_CrossfadeConfigCopyWith(
+          RustPlayerEvent_CrossfadeConfig value,
+          $Res Function(RustPlayerEvent_CrossfadeConfig) _then) =
+      _$RustPlayerEvent_CrossfadeConfigCopyWithImpl;
+  @useResult
+  $Res call({RustCrossfadeConfig field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_CrossfadeConfigCopyWithImpl<$Res>
+    implements $RustPlayerEvent_CrossfadeConfigCopyWith<$Res> {
+  _$RustPlayerEvent_CrossfadeConfigCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_CrossfadeConfig _self;
+  final $Res Function(RustPlayerEvent_CrossfadeConfig) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_CrossfadeConfig(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustCrossfadeConfig,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_Visualizer extends RustPlayerEvent {
+  const RustPlayerEvent_Visualizer(this.field0) : super._();
+
+  final RustVisualizerData field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_VisualizerCopyWith<RustPlayerEvent_Visualizer>
+      get copyWith =>
+          _$RustPlayerEvent_VisualizerCopyWithImpl<RustPlayerEvent_Visualizer>(
+              this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_Visualizer &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.visualizer(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_VisualizerCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_VisualizerCopyWith(RustPlayerEvent_Visualizer value,
+          $Res Function(RustPlayerEvent_Visualizer) _then) =
+      _$RustPlayerEvent_VisualizerCopyWithImpl;
+  @useResult
+  $Res call({RustVisualizerData field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_VisualizerCopyWithImpl<$Res>
+    implements $RustPlayerEvent_VisualizerCopyWith<$Res> {
+  _$RustPlayerEvent_VisualizerCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_Visualizer _self;
+  final $Res Function(RustPlayerEvent_Visualizer) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_Visualizer(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustVisualizerData,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_VisualizerEnabled extends RustPlayerEvent {
+  const RustPlayerEvent_VisualizerEnabled(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_VisualizerEnabledCopyWith<RustPlayerEvent_VisualizerEnabled>
+      get copyWith => _$RustPlayerEvent_VisualizerEnabledCopyWithImpl<
+          RustPlayerEvent_VisualizerEnabled>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_VisualizerEnabled &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.visualizerEnabled(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_VisualizerEnabledCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_VisualizerEnabledCopyWith(
+          RustPlayerEvent_VisualizerEnabled value,
+          $Res Function(RustPlayerEvent_VisualizerEnabled) _then) =
+      _$RustPlayerEvent_VisualizerEnabledCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_VisualizerEnabledCopyWithImpl<$Res>
+    implements $RustPlayerEvent_VisualizerEnabledCopyWith<$Res> {
+  _$RustPlayerEvent_VisualizerEnabledCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_VisualizerEnabled _self;
+  final $Res Function(RustPlayerEvent_VisualizerEnabled) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_VisualizerEnabled(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
 class RustPlayerEvent_Volume extends RustPlayerEvent {
   const RustPlayerEvent_Volume(this.field0) : super._();
 
@@ -4310,6 +2767,140 @@ class _$RustPlayerEvent_PitchCopyWithImpl<$Res>
 
 /// @nodoc
 
+class RustPlayerEvent_Balance extends RustPlayerEvent {
+  const RustPlayerEvent_Balance(this.field0) : super._();
+
+  final double field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_BalanceCopyWith<RustPlayerEvent_Balance> get copyWith =>
+      _$RustPlayerEvent_BalanceCopyWithImpl<RustPlayerEvent_Balance>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_Balance &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.balance(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_BalanceCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_BalanceCopyWith(RustPlayerEvent_Balance value,
+          $Res Function(RustPlayerEvent_Balance) _then) =
+      _$RustPlayerEvent_BalanceCopyWithImpl;
+  @useResult
+  $Res call({double field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_BalanceCopyWithImpl<$Res>
+    implements $RustPlayerEvent_BalanceCopyWith<$Res> {
+  _$RustPlayerEvent_BalanceCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_Balance _self;
+  final $Res Function(RustPlayerEvent_Balance) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_Balance(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as double,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_Mono extends RustPlayerEvent {
+  const RustPlayerEvent_Mono(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MonoCopyWith<RustPlayerEvent_Mono> get copyWith =>
+      _$RustPlayerEvent_MonoCopyWithImpl<RustPlayerEvent_Mono>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_Mono &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.mono(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MonoCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MonoCopyWith(RustPlayerEvent_Mono value,
+          $Res Function(RustPlayerEvent_Mono) _then) =
+      _$RustPlayerEvent_MonoCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MonoCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MonoCopyWith<$Res> {
+  _$RustPlayerEvent_MonoCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_Mono _self;
+  final $Res Function(RustPlayerEvent_Mono) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_Mono(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
 class RustPlayerEvent_Bitrate extends RustPlayerEvent {
   const RustPlayerEvent_Bitrate(this.field0) : super._();
 
@@ -4439,277 +3030,6 @@ class _$RustPlayerEvent_BufferSizeCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_Device extends RustPlayerEvent {
-  const RustPlayerEvent_Device(this.field0) : super._();
-
-  final RustAudioDevice field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_DeviceCopyWith<RustPlayerEvent_Device> get copyWith =>
-      _$RustPlayerEvent_DeviceCopyWithImpl<RustPlayerEvent_Device>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Device &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.device(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_DeviceCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_DeviceCopyWith(RustPlayerEvent_Device value,
-          $Res Function(RustPlayerEvent_Device) _then) =
-      _$RustPlayerEvent_DeviceCopyWithImpl;
-  @useResult
-  $Res call({RustAudioDevice field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_DeviceCopyWithImpl<$Res>
-    implements $RustPlayerEvent_DeviceCopyWith<$Res> {
-  _$RustPlayerEvent_DeviceCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_Device _self;
-  final $Res Function(RustPlayerEvent_Device) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_Device(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustAudioDevice,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_Visualizer extends RustPlayerEvent {
-  const RustPlayerEvent_Visualizer(this.field0) : super._();
-
-  final RustVisualizerData field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_VisualizerCopyWith<RustPlayerEvent_Visualizer>
-      get copyWith =>
-          _$RustPlayerEvent_VisualizerCopyWithImpl<RustPlayerEvent_Visualizer>(
-              this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Visualizer &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.visualizer(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_VisualizerCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_VisualizerCopyWith(RustPlayerEvent_Visualizer value,
-          $Res Function(RustPlayerEvent_Visualizer) _then) =
-      _$RustPlayerEvent_VisualizerCopyWithImpl;
-  @useResult
-  $Res call({RustVisualizerData field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_VisualizerCopyWithImpl<$Res>
-    implements $RustPlayerEvent_VisualizerCopyWith<$Res> {
-  _$RustPlayerEvent_VisualizerCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_Visualizer _self;
-  final $Res Function(RustPlayerEvent_Visualizer) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_Visualizer(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustVisualizerData,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_VisualizerEnabled extends RustPlayerEvent {
-  const RustPlayerEvent_VisualizerEnabled(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_VisualizerEnabledCopyWith<RustPlayerEvent_VisualizerEnabled>
-      get copyWith => _$RustPlayerEvent_VisualizerEnabledCopyWithImpl<
-          RustPlayerEvent_VisualizerEnabled>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_VisualizerEnabled &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.visualizerEnabled(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_VisualizerEnabledCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_VisualizerEnabledCopyWith(
-          RustPlayerEvent_VisualizerEnabled value,
-          $Res Function(RustPlayerEvent_VisualizerEnabled) _then) =
-      _$RustPlayerEvent_VisualizerEnabledCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_VisualizerEnabledCopyWithImpl<$Res>
-    implements $RustPlayerEvent_VisualizerEnabledCopyWith<$Res> {
-  _$RustPlayerEvent_VisualizerEnabledCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_VisualizerEnabled _self;
-  final $Res Function(RustPlayerEvent_VisualizerEnabled) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_VisualizerEnabled(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_BufferedRange extends RustPlayerEvent {
-  const RustPlayerEvent_BufferedRange(this.field0) : super._();
-
-  final RustBufferedRange field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_BufferedRangeCopyWith<RustPlayerEvent_BufferedRange>
-      get copyWith => _$RustPlayerEvent_BufferedRangeCopyWithImpl<
-          RustPlayerEvent_BufferedRange>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_BufferedRange &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.bufferedRange(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_BufferedRangeCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_BufferedRangeCopyWith(
-          RustPlayerEvent_BufferedRange value,
-          $Res Function(RustPlayerEvent_BufferedRange) _then) =
-      _$RustPlayerEvent_BufferedRangeCopyWithImpl;
-  @useResult
-  $Res call({RustBufferedRange field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_BufferedRangeCopyWithImpl<$Res>
-    implements $RustPlayerEvent_BufferedRangeCopyWith<$Res> {
-  _$RustPlayerEvent_BufferedRangeCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_BufferedRange _self;
-  final $Res Function(RustPlayerEvent_BufferedRange) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_BufferedRange(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as RustBufferedRange,
     ));
   }
 }
@@ -5054,140 +3374,6 @@ class _$RustPlayerEvent_ReplayGainCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustPlayerEvent_Balance extends RustPlayerEvent {
-  const RustPlayerEvent_Balance(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_BalanceCopyWith<RustPlayerEvent_Balance> get copyWith =>
-      _$RustPlayerEvent_BalanceCopyWithImpl<RustPlayerEvent_Balance>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Balance &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.balance(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_BalanceCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_BalanceCopyWith(RustPlayerEvent_Balance value,
-          $Res Function(RustPlayerEvent_Balance) _then) =
-      _$RustPlayerEvent_BalanceCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_BalanceCopyWithImpl<$Res>
-    implements $RustPlayerEvent_BalanceCopyWith<$Res> {
-  _$RustPlayerEvent_BalanceCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_Balance _self;
-  final $Res Function(RustPlayerEvent_Balance) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_Balance(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_Mono extends RustPlayerEvent {
-  const RustPlayerEvent_Mono(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_MonoCopyWith<RustPlayerEvent_Mono> get copyWith =>
-      _$RustPlayerEvent_MonoCopyWithImpl<RustPlayerEvent_Mono>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Mono &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.mono(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_MonoCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_MonoCopyWith(RustPlayerEvent_Mono value,
-          $Res Function(RustPlayerEvent_Mono) _then) =
-      _$RustPlayerEvent_MonoCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_MonoCopyWithImpl<$Res>
-    implements $RustPlayerEvent_MonoCopyWith<$Res> {
-  _$RustPlayerEvent_MonoCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_Mono _self;
-  final $Res Function(RustPlayerEvent_Mono) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_Mono(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
 class RustPlayerEvent_Crossfeed extends RustPlayerEvent {
   const RustPlayerEvent_Crossfeed(this.field0) : super._();
 
@@ -5466,6 +3652,1108 @@ class _$RustPlayerEvent_LimiterCopyWithImpl<$Res>
 
 /// @nodoc
 
+class RustPlayerEvent_IsRecording extends RustPlayerEvent {
+  const RustPlayerEvent_IsRecording(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_IsRecordingCopyWith<RustPlayerEvent_IsRecording>
+      get copyWith => _$RustPlayerEvent_IsRecordingCopyWithImpl<
+          RustPlayerEvent_IsRecording>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_IsRecording &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.isRecording(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_IsRecordingCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_IsRecordingCopyWith(
+          RustPlayerEvent_IsRecording value,
+          $Res Function(RustPlayerEvent_IsRecording) _then) =
+      _$RustPlayerEvent_IsRecordingCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_IsRecordingCopyWithImpl<$Res>
+    implements $RustPlayerEvent_IsRecordingCopyWith<$Res> {
+  _$RustPlayerEvent_IsRecordingCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_IsRecording _self;
+  final $Res Function(RustPlayerEvent_IsRecording) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_IsRecording(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_RecordedDuration extends RustPlayerEvent {
+  const RustPlayerEvent_RecordedDuration(this.field0) : super._();
+
+  final BigInt field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_RecordedDurationCopyWith<RustPlayerEvent_RecordedDuration>
+      get copyWith => _$RustPlayerEvent_RecordedDurationCopyWithImpl<
+          RustPlayerEvent_RecordedDuration>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_RecordedDuration &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.recordedDuration(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_RecordedDurationCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_RecordedDurationCopyWith(
+          RustPlayerEvent_RecordedDuration value,
+          $Res Function(RustPlayerEvent_RecordedDuration) _then) =
+      _$RustPlayerEvent_RecordedDurationCopyWithImpl;
+  @useResult
+  $Res call({BigInt field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_RecordedDurationCopyWithImpl<$Res>
+    implements $RustPlayerEvent_RecordedDurationCopyWith<$Res> {
+  _$RustPlayerEvent_RecordedDurationCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_RecordedDuration _self;
+  final $Res Function(RustPlayerEvent_RecordedDuration) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_RecordedDuration(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as BigInt,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_IsDuckingActive extends RustPlayerEvent {
+  const RustPlayerEvent_IsDuckingActive(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_IsDuckingActiveCopyWith<RustPlayerEvent_IsDuckingActive>
+      get copyWith => _$RustPlayerEvent_IsDuckingActiveCopyWithImpl<
+          RustPlayerEvent_IsDuckingActive>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_IsDuckingActive &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.isDuckingActive(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_IsDuckingActiveCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_IsDuckingActiveCopyWith(
+          RustPlayerEvent_IsDuckingActive value,
+          $Res Function(RustPlayerEvent_IsDuckingActive) _then) =
+      _$RustPlayerEvent_IsDuckingActiveCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_IsDuckingActiveCopyWithImpl<$Res>
+    implements $RustPlayerEvent_IsDuckingActiveCopyWith<$Res> {
+  _$RustPlayerEvent_IsDuckingActiveCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_IsDuckingActive _self;
+  final $Res Function(RustPlayerEvent_IsDuckingActive) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_IsDuckingActive(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_MicRmsLevel extends RustPlayerEvent {
+  const RustPlayerEvent_MicRmsLevel(this.field0) : super._();
+
+  final double field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MicRmsLevelCopyWith<RustPlayerEvent_MicRmsLevel>
+      get copyWith => _$RustPlayerEvent_MicRmsLevelCopyWithImpl<
+          RustPlayerEvent_MicRmsLevel>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_MicRmsLevel &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.micRmsLevel(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MicRmsLevelCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MicRmsLevelCopyWith(
+          RustPlayerEvent_MicRmsLevel value,
+          $Res Function(RustPlayerEvent_MicRmsLevel) _then) =
+      _$RustPlayerEvent_MicRmsLevelCopyWithImpl;
+  @useResult
+  $Res call({double field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MicRmsLevelCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MicRmsLevelCopyWith<$Res> {
+  _$RustPlayerEvent_MicRmsLevelCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_MicRmsLevel _self;
+  final $Res Function(RustPlayerEvent_MicRmsLevel) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_MicRmsLevel(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as double,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_VoiceCompleted extends RustPlayerEvent {
+  const RustPlayerEvent_VoiceCompleted(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_VoiceCompletedCopyWith<RustPlayerEvent_VoiceCompleted>
+      get copyWith => _$RustPlayerEvent_VoiceCompletedCopyWithImpl<
+          RustPlayerEvent_VoiceCompleted>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_VoiceCompleted &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.voiceCompleted(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_VoiceCompletedCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_VoiceCompletedCopyWith(
+          RustPlayerEvent_VoiceCompleted value,
+          $Res Function(RustPlayerEvent_VoiceCompleted) _then) =
+      _$RustPlayerEvent_VoiceCompletedCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_VoiceCompletedCopyWithImpl<$Res>
+    implements $RustPlayerEvent_VoiceCompletedCopyWith<$Res> {
+  _$RustPlayerEvent_VoiceCompletedCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_VoiceCompleted _self;
+  final $Res Function(RustPlayerEvent_VoiceCompleted) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_VoiceCompleted(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_MetaBytes extends RustPlayerEvent {
+  const RustPlayerEvent_MetaBytes(this.field0) : super._();
+
+  final Uint8List field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MetaBytesCopyWith<RustPlayerEvent_MetaBytes> get copyWith =>
+      _$RustPlayerEvent_MetaBytesCopyWithImpl<RustPlayerEvent_MetaBytes>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_MetaBytes &&
+            const DeepCollectionEquality().equals(other.field0, field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(field0));
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.metaBytes(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MetaBytesCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MetaBytesCopyWith(RustPlayerEvent_MetaBytes value,
+          $Res Function(RustPlayerEvent_MetaBytes) _then) =
+      _$RustPlayerEvent_MetaBytesCopyWithImpl;
+  @useResult
+  $Res call({Uint8List field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MetaBytesCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MetaBytesCopyWith<$Res> {
+  _$RustPlayerEvent_MetaBytesCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_MetaBytes _self;
+  final $Res Function(RustPlayerEvent_MetaBytes) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_MetaBytes(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as Uint8List,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_CueVolume extends RustPlayerEvent {
+  const RustPlayerEvent_CueVolume(this.field0) : super._();
+
+  final double field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_CueVolumeCopyWith<RustPlayerEvent_CueVolume> get copyWith =>
+      _$RustPlayerEvent_CueVolumeCopyWithImpl<RustPlayerEvent_CueVolume>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_CueVolume &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.cueVolume(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_CueVolumeCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_CueVolumeCopyWith(RustPlayerEvent_CueVolume value,
+          $Res Function(RustPlayerEvent_CueVolume) _then) =
+      _$RustPlayerEvent_CueVolumeCopyWithImpl;
+  @useResult
+  $Res call({double field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_CueVolumeCopyWithImpl<$Res>
+    implements $RustPlayerEvent_CueVolumeCopyWith<$Res> {
+  _$RustPlayerEvent_CueVolumeCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_CueVolume _self;
+  final $Res Function(RustPlayerEvent_CueVolume) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_CueVolume(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as double,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_CueSource extends RustPlayerEvent {
+  const RustPlayerEvent_CueSource(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_CueSourceCopyWith<RustPlayerEvent_CueSource> get copyWith =>
+      _$RustPlayerEvent_CueSourceCopyWithImpl<RustPlayerEvent_CueSource>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_CueSource &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.cueSource(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_CueSourceCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_CueSourceCopyWith(RustPlayerEvent_CueSource value,
+          $Res Function(RustPlayerEvent_CueSource) _then) =
+      _$RustPlayerEvent_CueSourceCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_CueSourceCopyWithImpl<$Res>
+    implements $RustPlayerEvent_CueSourceCopyWith<$Res> {
+  _$RustPlayerEvent_CueSourceCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_CueSource _self;
+  final $Res Function(RustPlayerEvent_CueSource) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_CueSource(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_LoopMode extends RustPlayerEvent {
+  const RustPlayerEvent_LoopMode(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_LoopModeCopyWith<RustPlayerEvent_LoopMode> get copyWith =>
+      _$RustPlayerEvent_LoopModeCopyWithImpl<RustPlayerEvent_LoopMode>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_LoopMode &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.loopMode(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_LoopModeCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_LoopModeCopyWith(RustPlayerEvent_LoopMode value,
+          $Res Function(RustPlayerEvent_LoopMode) _then) =
+      _$RustPlayerEvent_LoopModeCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_LoopModeCopyWithImpl<$Res>
+    implements $RustPlayerEvent_LoopModeCopyWith<$Res> {
+  _$RustPlayerEvent_LoopModeCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_LoopMode _self;
+  final $Res Function(RustPlayerEvent_LoopMode) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_LoopMode(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_IsShuffled extends RustPlayerEvent {
+  const RustPlayerEvent_IsShuffled(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_IsShuffledCopyWith<RustPlayerEvent_IsShuffled>
+      get copyWith =>
+          _$RustPlayerEvent_IsShuffledCopyWithImpl<RustPlayerEvent_IsShuffled>(
+              this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_IsShuffled &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.isShuffled(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_IsShuffledCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_IsShuffledCopyWith(RustPlayerEvent_IsShuffled value,
+          $Res Function(RustPlayerEvent_IsShuffled) _then) =
+      _$RustPlayerEvent_IsShuffledCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_IsShuffledCopyWithImpl<$Res>
+    implements $RustPlayerEvent_IsShuffledCopyWith<$Res> {
+  _$RustPlayerEvent_IsShuffledCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_IsShuffled _self;
+  final $Res Function(RustPlayerEvent_IsShuffled) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_IsShuffled(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_PauseOnDeviceChange extends RustPlayerEvent {
+  const RustPlayerEvent_PauseOnDeviceChange(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_PauseOnDeviceChangeCopyWith<
+          RustPlayerEvent_PauseOnDeviceChange>
+      get copyWith => _$RustPlayerEvent_PauseOnDeviceChangeCopyWithImpl<
+          RustPlayerEvent_PauseOnDeviceChange>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_PauseOnDeviceChange &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.pauseOnDeviceChange(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_PauseOnDeviceChangeCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_PauseOnDeviceChangeCopyWith(
+          RustPlayerEvent_PauseOnDeviceChange value,
+          $Res Function(RustPlayerEvent_PauseOnDeviceChange) _then) =
+      _$RustPlayerEvent_PauseOnDeviceChangeCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_PauseOnDeviceChangeCopyWithImpl<$Res>
+    implements $RustPlayerEvent_PauseOnDeviceChangeCopyWith<$Res> {
+  _$RustPlayerEvent_PauseOnDeviceChangeCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_PauseOnDeviceChange _self;
+  final $Res Function(RustPlayerEvent_PauseOnDeviceChange) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_PauseOnDeviceChange(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_MicrophoneEnabled extends RustPlayerEvent {
+  const RustPlayerEvent_MicrophoneEnabled(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MicrophoneEnabledCopyWith<RustPlayerEvent_MicrophoneEnabled>
+      get copyWith => _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl<
+          RustPlayerEvent_MicrophoneEnabled>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_MicrophoneEnabled &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.microphoneEnabled(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MicrophoneEnabledCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MicrophoneEnabledCopyWith(
+          RustPlayerEvent_MicrophoneEnabled value,
+          $Res Function(RustPlayerEvent_MicrophoneEnabled) _then) =
+      _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MicrophoneEnabledCopyWith<$Res> {
+  _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_MicrophoneEnabled _self;
+  final $Res Function(RustPlayerEvent_MicrophoneEnabled) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_MicrophoneEnabled(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_MicVolume extends RustPlayerEvent {
+  const RustPlayerEvent_MicVolume(this.field0) : super._();
+
+  final double field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MicVolumeCopyWith<RustPlayerEvent_MicVolume> get copyWith =>
+      _$RustPlayerEvent_MicVolumeCopyWithImpl<RustPlayerEvent_MicVolume>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_MicVolume &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.micVolume(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MicVolumeCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MicVolumeCopyWith(RustPlayerEvent_MicVolume value,
+          $Res Function(RustPlayerEvent_MicVolume) _then) =
+      _$RustPlayerEvent_MicVolumeCopyWithImpl;
+  @useResult
+  $Res call({double field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MicVolumeCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MicVolumeCopyWith<$Res> {
+  _$RustPlayerEvent_MicVolumeCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_MicVolume _self;
+  final $Res Function(RustPlayerEvent_MicVolume) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_MicVolume(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as double,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_DirectMonitoringEnabled extends RustPlayerEvent {
+  const RustPlayerEvent_DirectMonitoringEnabled(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_DirectMonitoringEnabledCopyWith<
+          RustPlayerEvent_DirectMonitoringEnabled>
+      get copyWith => _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl<
+          RustPlayerEvent_DirectMonitoringEnabled>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_DirectMonitoringEnabled &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.directMonitoringEnabled(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_DirectMonitoringEnabledCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_DirectMonitoringEnabledCopyWith(
+          RustPlayerEvent_DirectMonitoringEnabled value,
+          $Res Function(RustPlayerEvent_DirectMonitoringEnabled) _then) =
+      _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl<$Res>
+    implements $RustPlayerEvent_DirectMonitoringEnabledCopyWith<$Res> {
+  _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_DirectMonitoringEnabled _self;
+  final $Res Function(RustPlayerEvent_DirectMonitoringEnabled) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_DirectMonitoringEnabled(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_OutputDevices extends RustPlayerEvent {
+  const RustPlayerEvent_OutputDevices(List<RustAudioDevice> field0)
+      : _field0 = field0,
+        super._();
+
+  final List<RustAudioDevice> _field0;
+  List<RustAudioDevice> get field0 {
+    if (_field0 is EqualUnmodifiableListView) return _field0;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_field0);
+  }
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_OutputDevicesCopyWith<RustPlayerEvent_OutputDevices>
+      get copyWith => _$RustPlayerEvent_OutputDevicesCopyWithImpl<
+          RustPlayerEvent_OutputDevices>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_OutputDevices &&
+            const DeepCollectionEquality().equals(other.field0, _field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(_field0));
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.outputDevices(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_OutputDevicesCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_OutputDevicesCopyWith(
+          RustPlayerEvent_OutputDevices value,
+          $Res Function(RustPlayerEvent_OutputDevices) _then) =
+      _$RustPlayerEvent_OutputDevicesCopyWithImpl;
+  @useResult
+  $Res call({List<RustAudioDevice> field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_OutputDevicesCopyWithImpl<$Res>
+    implements $RustPlayerEvent_OutputDevicesCopyWith<$Res> {
+  _$RustPlayerEvent_OutputDevicesCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_OutputDevices _self;
+  final $Res Function(RustPlayerEvent_OutputDevices) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_OutputDevices(
+      null == field0
+          ? _self._field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as List<RustAudioDevice>,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_InputDevices extends RustPlayerEvent {
+  const RustPlayerEvent_InputDevices(List<RustAudioDevice> field0)
+      : _field0 = field0,
+        super._();
+
+  final List<RustAudioDevice> _field0;
+  List<RustAudioDevice> get field0 {
+    if (_field0 is EqualUnmodifiableListView) return _field0;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_field0);
+  }
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_InputDevicesCopyWith<RustPlayerEvent_InputDevices>
+      get copyWith => _$RustPlayerEvent_InputDevicesCopyWithImpl<
+          RustPlayerEvent_InputDevices>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_InputDevices &&
+            const DeepCollectionEquality().equals(other.field0, _field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(_field0));
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.inputDevices(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_InputDevicesCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_InputDevicesCopyWith(
+          RustPlayerEvent_InputDevices value,
+          $Res Function(RustPlayerEvent_InputDevices) _then) =
+      _$RustPlayerEvent_InputDevicesCopyWithImpl;
+  @useResult
+  $Res call({List<RustAudioDevice> field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_InputDevicesCopyWithImpl<$Res>
+    implements $RustPlayerEvent_InputDevicesCopyWith<$Res> {
+  _$RustPlayerEvent_InputDevicesCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_InputDevices _self;
+  final $Res Function(RustPlayerEvent_InputDevices) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_InputDevices(
+      null == field0
+          ? _self._field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as List<RustAudioDevice>,
+    ));
+  }
+}
+
+/// @nodoc
+
 class RustPlayerEvent_DartReadRequest extends RustPlayerEvent {
   const RustPlayerEvent_DartReadRequest(this.field0) : super._();
 
@@ -5528,6 +4816,73 @@ class _$RustPlayerEvent_DartReadRequestCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as RustDartReadRequest,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_Device extends RustPlayerEvent {
+  const RustPlayerEvent_Device(this.field0) : super._();
+
+  final RustAudioDevice field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_DeviceCopyWith<RustPlayerEvent_Device> get copyWith =>
+      _$RustPlayerEvent_DeviceCopyWithImpl<RustPlayerEvent_Device>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_Device &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.device(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_DeviceCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_DeviceCopyWith(RustPlayerEvent_Device value,
+          $Res Function(RustPlayerEvent_Device) _then) =
+      _$RustPlayerEvent_DeviceCopyWithImpl;
+  @useResult
+  $Res call({RustAudioDevice field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_DeviceCopyWithImpl<$Res>
+    implements $RustPlayerEvent_DeviceCopyWith<$Res> {
+  _$RustPlayerEvent_DeviceCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_Device _self;
+  final $Res Function(RustPlayerEvent_Device) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_Device(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustAudioDevice,
     ));
   }
 }

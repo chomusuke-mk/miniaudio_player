@@ -37,6 +37,7 @@ void main() {
   }
 
   setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
     // Generate fixtures if not present
     final fixtureCheck = File('test/fixtures/tripartite/giant_cover.mp3');
     if (!fixtureCheck.existsSync()) {
@@ -94,7 +95,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      player = MiniaudioPlayer();
     });
 
     tearDown(() async {
@@ -327,8 +328,8 @@ void main() {
       await player.action.stop();
     });
 
-    test('Test 6: MiniaudioEngine Deck Forwarding of metaBytes', () async {
-      final engine = MiniaudioEngine();
+    test('Test 6: MiniaudioPlayer Deck Forwarding of metaBytes', () async {
+      final engine = MiniaudioPlayer();
       final receivedEngineMeta = <Uint8List>[];
 
       final engineMetaSub = engine.stream.metaBytes.listen((bytes) {
@@ -351,18 +352,18 @@ void main() {
 
       final icyContainers = receivedEngineMeta.where((m) => m.length > 128).toList();
       expect(icyContainers, isNotEmpty,
-          reason: 'MiniaudioEngine must forward metaBytes from active deck');
+          reason: 'MiniaudioPlayer must forward metaBytes from active deck');
 
       final firstMeta = icyContainers.first;
       expect(utf8.decode(firstMeta.sublist(0, 3)), equals('ID3'),
-          reason: 'Engine metaBytes must forward synthesized ID3 container');
+          reason: 'Player metaBytes must forward synthesized ID3 container');
 
       final engineMetaStr = utf8.decode(firstMeta, allowMalformed: true);
       expect(engineMetaStr.contains('TIT2'), isTrue,
-          reason: 'Engine metaBytes must contain TIT2 frame with ICY stream title');
+          reason: 'Player metaBytes must contain TIT2 frame with ICY stream title');
 
       expect(engine.state.metaBytes, isNotNull,
-          reason: 'EngineState.metaBytes must expose current metadata snapshot');
+          reason: 'PlayerState.metaBytes must expose current metadata snapshot');
       expect(utf8.decode(engine.state.metaBytes!.sublist(0, 3)), equals('ID3'));
 
       await engine.action.stop();
@@ -371,13 +372,13 @@ void main() {
 
     test('Test 7: 3 MB Head & 25 KB Tail with 5-Second Buffer Integrity', () async {
       // Small 1 MB circular buffer (~5 seconds at 44.1kHz 16-bit stereo)
-      final smallBufferPlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'), bufferSize: 1);
+      final smallBufferPlayer = MiniaudioPlayer(bufferSize: 1);
       final url = 'http://127.0.0.1:$serverPort/music/head_3mb_tail_25kb.mp3';
 
       await smallBufferPlayer.action.open(AudioSource(url));
 
       // Verify Head is not truncated to 256 KB, but retains all ~3 MB of metadata
-      final pinnedHeadBytes = smallBufferPlayer.pinnedHeadSize;
+      final pinnedHeadBytes = smallBufferPlayer.state.pinnedHeadSize;
       expect(pinnedHeadBytes, greaterThan(3 * 1000 * 1000),
           reason: 'Head must retain full 3 MB of metadata without truncation to 256 KB');
 
@@ -394,12 +395,10 @@ void main() {
       final tailTag = meta.sublist(meta.length - 128, meta.length - 125);
       expect(utf8.decode(tailTag), equals('TAG'));
 
-      // Play through
       await smallBufferPlayer.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 500));
       expect(smallBufferPlayer.state.position.inMilliseconds, greaterThan(0));
 
-      // Seek back to 0 must be served instantly from pinned Head in RAM with 0 range requests
       await smallBufferPlayer.action.seek(Duration.zero);
       expect(smallBufferPlayer.state.position, equals(Duration.zero));
 
@@ -408,7 +407,7 @@ void main() {
     });
 
     test('Test 8: Metadata Lifecycle: open() & dispose() reset, stop() preserves', () async {
-      final lifecyclePlayer = MiniaudioPlayer(AudioSource('test/fixtures/tripartite/eof_chirp.mp3'));
+      final lifecyclePlayer = MiniaudioPlayer();
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
 
       final metaEmissions = <Uint8List?>[];

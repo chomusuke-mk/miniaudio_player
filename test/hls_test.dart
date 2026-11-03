@@ -13,6 +13,7 @@ void main() {
     int? serverPort;
 
     setUpAll(() async {
+      await MiniaudioPlayer.ensureInitialized();
       final completer = Completer<int>();
       serverProcess = await Process.start(
         'python3',
@@ -59,9 +60,9 @@ void main() {
 
     test('auto-detects and plays HLS stream from arbitrary URL lacking any extension', () async {
       final streamUrl = 'http://127.0.0.1:$serverPort/arbitrary-channel?token=secret123';
-      final player = MiniaudioPlayer(AudioSource(streamUrl));
+      final player = MiniaudioPlayer(source: [AudioSource(streamUrl)]);
       try {
-        await player.waitUntilOpen;
+        await player.action.waitUntilOpen();
 
         expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));
         await player.action.play();
@@ -76,9 +77,9 @@ void main() {
 
     test('plays multi-segment HLS playlist served locally from test/fixtures', () async {
       final streamUrl = 'http://127.0.0.1:$serverPort/salida.m3u8';
-      final player = MiniaudioPlayer(AudioSource(streamUrl));
+      final player = MiniaudioPlayer(source: [AudioSource(streamUrl)]);
       try {
-        await player.waitUntilOpen;
+        await player.action.waitUntilOpen();
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 600));
         expect(player.state.playing, isTrue);

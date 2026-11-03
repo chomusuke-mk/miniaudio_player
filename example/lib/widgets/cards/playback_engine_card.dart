@@ -310,8 +310,8 @@ class PlaybackEngineCard extends StatelessWidget {
                               onPressed: engine.action.stop,
                             ),
                             StreamBuilder<bool>(
-                              stream: engine.stream.shuffle,
-                              initialData: engine.state.shuffle,
+                              stream: engine.stream.isShuffled,
+                              initialData: engine.state.isShuffled,
                               builder: (context, shuffleSnap) {
                                 final isShuffle = shuffleSnap.data ?? false;
                                 return IconButton(

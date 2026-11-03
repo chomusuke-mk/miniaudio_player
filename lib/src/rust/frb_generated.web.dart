@@ -6,8 +6,6 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
-import 'api/engine.dart';
-import 'api/game.dart';
 import 'api/player.dart';
 import 'api/types.dart';
 import 'dart:async';
@@ -23,67 +21,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     required super.portManager,
   });
 
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RustEnginePtr =>
-      wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RustPlayerPtr =>
-      wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer;
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_EventReporterPtr => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter;
 
   CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_RustVoicePoolPtr => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool;
+      get rust_arc_decrement_strong_count_RustMiniaudioPlayerPtr => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer;
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
-  RustEngine
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  EventReporter
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           dynamic raw);
 
   @protected
-  RustPlayer
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  RustMiniaudioPlayer
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           dynamic raw);
 
   @protected
-  RustVoicePool
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  EventReporter
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           dynamic raw);
 
   @protected
-  RustEngine
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  RustMiniaudioPlayer
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           dynamic raw);
 
   @protected
-  RustPlayer
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  EventReporter
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           dynamic raw);
 
   @protected
-  RustVoicePool
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  RustMiniaudioPlayer
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           dynamic raw);
-
-  @protected
-  RustEngine
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          dynamic raw);
-
-  @protected
-  RustPlayer
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          dynamic raw);
-
-  @protected
-  RustVoicePool
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          dynamic raw);
-
-  @protected
-  RustStreamSink<RustEngineEvent> dco_decode_StreamSink_rust_engine_event_Sse(
-      dynamic raw);
 
   @protected
   RustStreamSink<RustPlayerEvent> dco_decode_StreamSink_rust_player_event_Sse(
@@ -96,6 +73,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw);
+
+  @protected
   double dco_decode_box_autoadd_f_32(dynamic raw);
 
   @protected
@@ -105,7 +85,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  (int, int, bool) dco_decode_box_autoadd_record_u_32_u_32_bool(dynamic raw);
+
+  @protected
   RustAudioDevice dco_decode_box_autoadd_rust_audio_device(dynamic raw);
+
+  @protected
+  RustAudioOutput dco_decode_box_autoadd_rust_audio_output(dynamic raw);
 
   @protected
   RustAudioSource dco_decode_box_autoadd_rust_audio_source(dynamic raw);
@@ -121,7 +107,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
+  RustDuckingConfig dco_decode_box_autoadd_rust_ducking_config(dynamic raw);
+
+  @protected
+  RustEffectConfig dco_decode_box_autoadd_rust_effect_config(dynamic raw);
+
+  @protected
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(dynamic raw);
+
+  @protected
+  RustPlayerConfig dco_decode_box_autoadd_rust_player_config(dynamic raw);
+
+  @protected
+  RustPlayerEvent dco_decode_box_autoadd_rust_player_event(dynamic raw);
 
   @protected
   RustReplayGainConfig dco_decode_box_autoadd_rust_replay_gain_config(
@@ -146,13 +144,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustVisualizerData dco_decode_box_autoadd_rust_visualizer_data(dynamic raw);
 
   @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
-  BigInt dco_decode_box_autoadd_usize(dynamic raw);
+  double dco_decode_f_32(dynamic raw);
 
   @protected
-  double dco_decode_f_32(dynamic raw);
+  double dco_decode_f_64(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
@@ -161,16 +162,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
-  List<double> dco_decode_list_prim_f_32_loose(dynamic raw);
-
-  @protected
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
-
-  @protected
-  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
-
-  @protected
-  Uint64List dco_decode_list_prim_u_64_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -182,6 +174,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustAudioDevice> dco_decode_list_rust_audio_device(dynamic raw);
 
   @protected
+  List<RustAudioOutput> dco_decode_list_rust_audio_output(dynamic raw);
+
+  @protected
   List<RustAudioSource> dco_decode_list_rust_audio_source(dynamic raw);
 
   @protected
@@ -189,6 +184,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
 
   @protected
   double? dco_decode_opt_box_autoadd_f_32(dynamic raw);
@@ -200,6 +198,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
+  (int, int, bool)? dco_decode_opt_box_autoadd_record_u_32_u_32_bool(
+      dynamic raw);
+
+  @protected
+  RustDuckingConfig? dco_decode_opt_box_autoadd_rust_ducking_config(
+      dynamic raw);
+
+  @protected
   RustSpatialEmitter? dco_decode_opt_box_autoadd_rust_spatial_emitter(
       dynamic raw);
 
@@ -207,10 +213,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustVector3? dco_decode_opt_box_autoadd_rust_vector_3(dynamic raw);
 
   @protected
-  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
-  BigInt? dco_decode_opt_box_autoadd_usize(dynamic raw);
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
@@ -219,10 +225,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustHttpHeader>? dco_decode_opt_list_rust_http_header(dynamic raw);
 
   @protected
+  (int, int, bool) dco_decode_record_u_32_u_32_bool(dynamic raw);
+
+  @protected
   RustAudioAnalysisResult dco_decode_rust_audio_analysis_result(dynamic raw);
 
   @protected
   RustAudioDevice dco_decode_rust_audio_device(dynamic raw);
+
+  @protected
+  RustAudioOutput dco_decode_rust_audio_output(dynamic raw);
 
   @protected
   RustAudioSource dco_decode_rust_audio_source(dynamic raw);
@@ -246,7 +258,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustDuckingConfig dco_decode_rust_ducking_config(dynamic raw);
 
   @protected
-  RustEngineEvent dco_decode_rust_engine_event(dynamic raw);
+  RustEffectConfig dco_decode_rust_effect_config(dynamic raw);
 
   @protected
   RustEqualizerParams dco_decode_rust_equalizer_params(dynamic raw);
@@ -255,10 +267,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustHttpHeader dco_decode_rust_http_header(dynamic raw);
 
   @protected
+  RustPlayerConfig dco_decode_rust_player_config(dynamic raw);
+
+  @protected
   RustPlayerEvent dco_decode_rust_player_event(dynamic raw);
 
   @protected
   RustPlayerStatus dco_decode_rust_player_status(dynamic raw);
+
+  @protected
+  RustRecordingResult dco_decode_rust_recording_result(dynamic raw);
 
   @protected
   RustReplayGainConfig dco_decode_rust_replay_gain_config(dynamic raw);
@@ -291,6 +309,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustWavFormat dco_decode_rust_wav_format(dynamic raw);
 
   @protected
+  TelemetryFilter dco_decode_telemetry_filter(dynamic raw);
+
+  @protected
   int dco_decode_u_32(dynamic raw);
 
   @protected
@@ -309,53 +330,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
-  RustEngine
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  EventReporter
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           SseDeserializer deserializer);
 
   @protected
-  RustPlayer
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  RustMiniaudioPlayer
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           SseDeserializer deserializer);
 
   @protected
-  RustVoicePool
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  EventReporter
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           SseDeserializer deserializer);
 
   @protected
-  RustEngine
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  RustMiniaudioPlayer
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           SseDeserializer deserializer);
 
   @protected
-  RustPlayer
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  EventReporter
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           SseDeserializer deserializer);
 
   @protected
-  RustVoicePool
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+  RustMiniaudioPlayer
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           SseDeserializer deserializer);
-
-  @protected
-  RustEngine
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          SseDeserializer deserializer);
-
-  @protected
-  RustPlayer
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          SseDeserializer deserializer);
-
-  @protected
-  RustVoicePool
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          SseDeserializer deserializer);
-
-  @protected
-  RustStreamSink<RustEngineEvent> sse_decode_StreamSink_rust_engine_event_Sse(
-      SseDeserializer deserializer);
 
   @protected
   RustStreamSink<RustPlayerEvent> sse_decode_StreamSink_rust_player_event_Sse(
@@ -368,6 +370,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   double sse_decode_box_autoadd_f_32(SseDeserializer deserializer);
 
   @protected
@@ -377,7 +382,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  (int, int, bool) sse_decode_box_autoadd_record_u_32_u_32_bool(
+      SseDeserializer deserializer);
+
+  @protected
   RustAudioDevice sse_decode_box_autoadd_rust_audio_device(
+      SseDeserializer deserializer);
+
+  @protected
+  RustAudioOutput sse_decode_box_autoadd_rust_audio_output(
       SseDeserializer deserializer);
 
   @protected
@@ -397,7 +410,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustDuckingConfig sse_decode_box_autoadd_rust_ducking_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustEffectConfig sse_decode_box_autoadd_rust_effect_config(
+      SseDeserializer deserializer);
+
+  @protected
   RustEqualizerParams sse_decode_box_autoadd_rust_equalizer_params(
+      SseDeserializer deserializer);
+
+  @protected
+  RustPlayerConfig sse_decode_box_autoadd_rust_player_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustPlayerEvent sse_decode_box_autoadd_rust_player_event(
       SseDeserializer deserializer);
 
   @protected
@@ -429,13 +458,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
-  BigInt sse_decode_box_autoadd_usize(SseDeserializer deserializer);
+  double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
-  double sse_decode_f_32(SseDeserializer deserializer);
+  double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -444,16 +476,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
-  List<double> sse_decode_list_prim_f_32_loose(SseDeserializer deserializer);
-
-  @protected
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
-
-  @protected
-  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
-
-  @protected
-  Uint64List sse_decode_list_prim_u_64_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -463,6 +486,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<RustAudioDevice> sse_decode_list_rust_audio_device(
+      SseDeserializer deserializer);
+
+  @protected
+  List<RustAudioOutput> sse_decode_list_rust_audio_output(
       SseDeserializer deserializer);
 
   @protected
@@ -477,6 +504,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer);
 
   @protected
@@ -484,6 +514,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  (int, int, bool)? sse_decode_opt_box_autoadd_record_u_32_u_32_bool(
+      SseDeserializer deserializer);
+
+  @protected
+  RustDuckingConfig? sse_decode_opt_box_autoadd_rust_ducking_config(
+      SseDeserializer deserializer);
 
   @protected
   RustSpatialEmitter? sse_decode_opt_box_autoadd_rust_spatial_emitter(
@@ -494,10 +532,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
-  BigInt? sse_decode_opt_box_autoadd_usize(SseDeserializer deserializer);
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -507,11 +545,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  (int, int, bool) sse_decode_record_u_32_u_32_bool(
+      SseDeserializer deserializer);
+
+  @protected
   RustAudioAnalysisResult sse_decode_rust_audio_analysis_result(
       SseDeserializer deserializer);
 
   @protected
   RustAudioDevice sse_decode_rust_audio_device(SseDeserializer deserializer);
+
+  @protected
+  RustAudioOutput sse_decode_rust_audio_output(SseDeserializer deserializer);
 
   @protected
   RustAudioSource sse_decode_rust_audio_source(SseDeserializer deserializer);
@@ -540,7 +585,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  RustEngineEvent sse_decode_rust_engine_event(SseDeserializer deserializer);
+  RustEffectConfig sse_decode_rust_effect_config(SseDeserializer deserializer);
 
   @protected
   RustEqualizerParams sse_decode_rust_equalizer_params(
@@ -550,10 +595,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustHttpHeader sse_decode_rust_http_header(SseDeserializer deserializer);
 
   @protected
+  RustPlayerConfig sse_decode_rust_player_config(SseDeserializer deserializer);
+
+  @protected
   RustPlayerEvent sse_decode_rust_player_event(SseDeserializer deserializer);
 
   @protected
   RustPlayerStatus sse_decode_rust_player_status(SseDeserializer deserializer);
+
+  @protected
+  RustRecordingResult sse_decode_rust_recording_result(
+      SseDeserializer deserializer);
 
   @protected
   RustReplayGainConfig sse_decode_rust_replay_gain_config(
@@ -593,6 +645,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustWavFormat sse_decode_rust_wav_format(SseDeserializer deserializer);
 
   @protected
+  TelemetryFilter sse_decode_telemetry_filter(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
@@ -613,52 +668,33 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          RustEngine self, SseSerializer serializer);
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+          EventReporter self, SseSerializer serializer);
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          RustPlayer self, SseSerializer serializer);
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          RustMiniaudioPlayer self, SseSerializer serializer);
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          RustVoicePool self, SseSerializer serializer);
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+          EventReporter self, SseSerializer serializer);
 
   @protected
   void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          RustEngine self, SseSerializer serializer);
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          RustMiniaudioPlayer self, SseSerializer serializer);
 
   @protected
   void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          RustPlayer self, SseSerializer serializer);
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
+          EventReporter self, SseSerializer serializer);
 
   @protected
   void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          RustVoicePool self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
-          RustEngine self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          RustPlayer self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          RustVoicePool self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_StreamSink_rust_engine_event_Sse(
-      RustStreamSink<RustEngineEvent> self, SseSerializer serializer);
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          RustMiniaudioPlayer self, SseSerializer serializer);
 
   @protected
   void sse_encode_StreamSink_rust_player_event_Sse(
@@ -671,6 +707,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer);
 
   @protected
@@ -681,8 +720,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PlatformInt64 self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_record_u_32_u_32_bool(
+      (int, int, bool) self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_audio_output(
+      RustAudioOutput self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_audio_source(
@@ -701,8 +748,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustDartReadRequest self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_ducking_config(
+      RustDuckingConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_effect_config(
+      RustEffectConfig self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_equalizer_params(
       RustEqualizerParams self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_player_config(
+      RustPlayerConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_player_event(
+      RustPlayerEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_replay_gain_config(
@@ -733,13 +796,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustVisualizerData self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_usize(BigInt self, SseSerializer serializer);
+  void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
-  void sse_encode_f_32(double self, SseSerializer serializer);
+  void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
@@ -748,20 +814,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_prim_f_32_loose(
-      List<double> self, SseSerializer serializer);
-
-  @protected
   void sse_encode_list_prim_f_32_strict(
       Float32List self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_list_prim_u_32_strict(
-      Uint32List self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_list_prim_u_64_strict(
-      Uint64List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -775,6 +829,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustAudioDevice> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_rust_audio_output(
+      List<RustAudioOutput> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_rust_audio_source(
       List<RustAudioSource> self, SseSerializer serializer);
 
@@ -784,6 +842,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_f_32(double? self, SseSerializer serializer);
@@ -796,6 +857,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PlatformInt64? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_record_u_32_u_32_bool(
+      (int, int, bool)? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_ducking_config(
+      RustDuckingConfig? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_rust_spatial_emitter(
       RustSpatialEmitter? self, SseSerializer serializer);
 
@@ -804,10 +873,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustVector3? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_usize(BigInt? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_list_prim_u_8_strict(
@@ -818,12 +887,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustHttpHeader>? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_record_u_32_u_32_bool(
+      (int, int, bool) self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_audio_analysis_result(
       RustAudioAnalysisResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_audio_output(
+      RustAudioOutput self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_audio_source(
@@ -853,8 +930,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustDuckingConfig self, SseSerializer serializer);
 
   @protected
-  void sse_encode_rust_engine_event(
-      RustEngineEvent self, SseSerializer serializer);
+  void sse_encode_rust_effect_config(
+      RustEffectConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_equalizer_params(
@@ -865,12 +942,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustHttpHeader self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_player_config(
+      RustPlayerConfig self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_player_event(
       RustPlayerEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_player_status(
       RustPlayerStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_recording_result(
+      RustRecordingResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_replay_gain_config(
@@ -911,6 +996,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_rust_wav_format(RustWavFormat self, SseSerializer serializer);
 
   @protected
+  void sse_encode_telemetry_filter(
+      TelemetryFilter self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
@@ -931,40 +1020,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 class RustLibWire implements BaseWire {
   RustLibWire.fromExternalLibrary(ExternalLibrary lib);
 
-  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           int ptr) =>
       wasmModule
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
               ptr);
 
-  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           int ptr) =>
       wasmModule
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
               ptr);
 
-  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           int ptr) =>
       wasmModule
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
               ptr);
 
-  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           int ptr) =>
       wasmModule
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-              ptr);
-
-  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          int ptr) =>
-      wasmModule
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-              ptr);
-
-  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          int ptr) =>
-      wasmModule
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
               ptr);
 }
 
@@ -975,26 +1052,18 @@ external RustLibWasmModule get wasmModule;
 @anonymous
 extension type RustLibWasmModule._(JSObject _) implements JSObject {
   external void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           int ptr);
 
   external void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustEngine(
+      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEventReporter(
           int ptr);
 
   external void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
+      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           int ptr);
 
   external void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustPlayer(
-          int ptr);
-
-  external void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
-          int ptr);
-
-  external void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustVoicePool(
+      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           int ptr);
 }

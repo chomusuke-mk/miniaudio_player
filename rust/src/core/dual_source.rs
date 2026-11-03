@@ -181,6 +181,7 @@ fn build_network_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(3))
         .timeout_read(Duration::from_secs(5))
+        .max_idle_connections(0)
         .build()
 }
 
@@ -486,6 +487,9 @@ fn spawn_network_streamer_thread(
                             && decoder_running.load(Ordering::Relaxed)
                         {
                             match trip.feed_chunk(&chunk[offset..n]) {
+                                Ok(0) => {
+                                    std::thread::sleep(Duration::from_millis(10));
+                                }
                                 Ok(written) => offset += written,
                                 Err(crate::buffer::BufferError::Busy) => {
                                     crate::map_log!(2, "Network streamer buffer busy, throttling 20ms");
@@ -652,6 +656,8 @@ impl PcmAdaptationPipeline {
 /// Background decoding worker orchestrating decoder lifecycle, stream re-init,
 /// seek synchronization, PCM adaptation, and ring-buffer feeding.
 struct DecoderWorker {
+    #[allow(dead_code)]
+    deck_id: usize,
     running: Arc<AtomicBool>,
     #[allow(dead_code)]
     wake: Arc<(Mutex<bool>, Condvar)>,
@@ -721,6 +727,7 @@ impl DecoderWorker {
     fn poll_renderer_flags(&mut self) {
         if self.completed_flag.swap(false, Ordering::AcqRel) {
             let dur = self.dur_ms.load(Ordering::Relaxed);
+            self.state.store(STATE_COMPLETED, Ordering::Release);
             self.tele
                 .post_event(EventType::Position, MapEventData { position_ms: dur });
             self.tele
@@ -903,8 +910,10 @@ impl DecoderWorker {
             self.stream_reinit_needed.store(false, Ordering::Release);
             self.decoder_eof_arc.store(false, Ordering::Relaxed);
             self.pipeline.clear_pending_and_resampler();
+            true
+        } else {
+            false
         }
-        true
     }
 
     fn dispatch_periodic_telemetry(&mut self) {
@@ -979,7 +988,9 @@ impl DecoderWorker {
                 .unwrap_or(true);
 
             if !is_buf_eof {
-                self.transition_to_buffering();
+                if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
+                    self.transition_to_buffering();
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 thread::sleep(Duration::from_millis(15));
                 return;
@@ -1003,9 +1014,11 @@ impl DecoderWorker {
     fn decode_and_process_step(&mut self) {
         let mut decoded_ok = false;
         let mut eof_reached = false;
+        let mut has_engine = false;
 
         if let Ok(mut eng_lock) = self.engine_arc.lock() {
             if let Some(ref mut eng) = *eng_lock {
+                has_engine = true;
                 match eng.decode_next_frame(&mut self.frame_buf) {
                     Ok(true) => {
                         decoded_ok = true;
@@ -1024,7 +1037,7 @@ impl DecoderWorker {
                     Err(err) => {
                         if self.is_stream_arc.load(Ordering::Relaxed) {
                             if self.is_producer_empty()
-                                && self.state.load(Ordering::Relaxed) != STATE_BUFFERING
+                                && self.state.load(Ordering::Relaxed) == STATE_PLAYING
                             {
                                 self.transition_to_buffering();
                             }
@@ -1038,6 +1051,11 @@ impl DecoderWorker {
                     }
                 }
             }
+        }
+
+        if !has_engine {
+            self.wait_for_wake(20);
+            return;
         }
 
         if eof_reached {
@@ -1057,7 +1075,7 @@ impl DecoderWorker {
             let cur_dev_ch = (self.dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
             let cur_silence_cfg = *self.silence_cfg_arc.read().unwrap();
 
-            let new_saved = self.pipeline.process_frame(
+            let _new_saved = self.pipeline.process_frame(
                 &self.frame_buf,
                 cur_track_sr,
                 cur_track_ch,
@@ -1066,17 +1084,9 @@ impl DecoderWorker {
                 cur_silence_cfg,
             );
 
-            let old_saved = self.silence_saved_arc.swap(new_saved, Ordering::Relaxed);
-            if new_saved != old_saved {
-                self.tele.post_event(
-                    EventType::SilenceSaved,
-                    MapEventData {
-                        silence_saved_ms: new_saved,
-                    },
-                );
-            }
-
-            let _ = self.pipeline.drain_pending_to(&self.producer_arc);
+            let _drained = self.pipeline.drain_pending_to(&self.producer_arc);
+        } else if !eof_reached {
+            self.wait_for_wake(5);
         }
     }
 
@@ -1092,6 +1102,12 @@ impl DecoderWorker {
             let cur_state = self.state.load(Ordering::Relaxed);
             if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
                 self.wait_for_wake(30);
+                continue;
+            }
+
+            let cur_flush = self.flush_generation.load(Ordering::Acquire);
+            if self.flush_acknowledged.load(Ordering::Acquire) < cur_flush {
+                self.wait_for_wake(5);
                 continue;
             }
 
@@ -1163,7 +1179,8 @@ impl DecoderWorker {
     }
 }
 
-pub struct PlayerCoordinator {
+pub struct StreamingDeck {
+    pub deck_id: usize,
     pub device_ctx: *mut MapDeviceContext,
     pub renderer_ptr: *mut AudioRenderer,
 
@@ -1227,11 +1244,11 @@ pub struct PlayerCoordinator {
     pub decoder_thread: Option<JoinHandle<()>>,
 }
 
-// PlayerCoordinator is Send + Sync across threads
-unsafe impl Send for PlayerCoordinator {}
-unsafe impl Sync for PlayerCoordinator {}
+// StreamingDeck is Send + Sync across threads
+unsafe impl Send for StreamingDeck {}
+unsafe impl Sync for StreamingDeck {}
 
-impl PlayerCoordinator {
+impl StreamingDeck {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(
         target_sample_rate: u32,
@@ -1317,6 +1334,9 @@ impl PlayerCoordinator {
 
         let silence_config = Arc::new(RwLock::new(SilenceConfig::default()));
 
+        static DECK_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        let deck_id = DECK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+
         let ring_cap = (sr as usize * ch as usize * 3).max(262144);
         let (producer, consumer) = AudioRingBuffer::create(ring_cap);
         let audio_producer = Arc::new(Mutex::new(Some(producer)));
@@ -1374,6 +1394,7 @@ impl PlayerCoordinator {
                 render_fn: crate::core::renderer::audio_renderer_render_trampoline,
                 notif_fn: crate::core::renderer::audio_renderer_notif_trampoline,
             },
+            deck_id,
             consumer,
             cmd_consumer: cmd_cons,
             state: state.clone(),
@@ -1440,6 +1461,7 @@ impl PlayerCoordinator {
         }
 
         let mut coordinator = Box::new(Self {
+            deck_id,
             device_ctx,
             renderer_ptr,
             state,
@@ -1532,6 +1554,7 @@ impl PlayerCoordinator {
         let cur_dev_ch = (self.device_channels.load(Ordering::Relaxed) as usize).clamp(1, 16);
 
         let mut worker = DecoderWorker {
+            deck_id: self.deck_id,
             running: self.decoder_running.clone(),
             wake: self.decoder_wake.clone(),
             state: self.state.clone(),
@@ -1768,7 +1791,7 @@ impl PlayerCoordinator {
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         };
 
-        let res_code = self.open_stream_ex(&first_audio, None, -1, true, 4 * 1024 * 1024, seg_fmt);
+        let res_code = self.open_stream_ex(&first_audio, None, -1, is_live, 4 * 1024 * 1024, seg_fmt);
         if res_code != MAP_SUCCESS {
             return res_code;
         }
@@ -2323,11 +2346,7 @@ impl PlayerCoordinator {
                     buffered_range: crate::sync::telemetry::BufferedRange {
                         start_ms: br.start_ms,
                         end_ms: br.end_ms,
-                        duration_ms: br.duration_ms,
-                        fill_percentage: br.fill_percentage,
-                        stream_percentage: br.stream_percentage,
                         is_buffering: br.is_buffering,
-                        is_eof: br.is_eof,
                     },
                 },
             );
@@ -2535,9 +2554,6 @@ impl PlayerCoordinator {
         if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
             let r = trip.get_range();
             out_range.start_ms = 0;
-            out_range.duration_ms = duration;
-            out_range.fill_percentage = r.fill_percentage * 100.0;
-            out_range.stream_percentage = r.stream_percentage * 100.0;
             if r.total_bytes > 0 && duration > 0 {
                 out_range.end_ms =
                     ((r.end_byte as f64 / r.total_bytes as f64) * duration as f64) as i64;
@@ -2545,16 +2561,11 @@ impl PlayerCoordinator {
                 out_range.end_ms = 0;
             }
             out_range.is_buffering = (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
-            out_range.is_eof = r.is_eof;
             MAP_SUCCESS
         } else {
             out_range.start_ms = 0;
             out_range.end_ms = duration.max(0);
-            out_range.duration_ms = duration.max(0);
-            out_range.fill_percentage = if duration > 0 { 100.0 } else { 0.0 };
-            out_range.stream_percentage = if duration > 0 { 100.0 } else { 0.0 };
             out_range.is_buffering = 0;
-            out_range.is_eof = 1;
             MAP_SUCCESS
         }
     }
@@ -2612,6 +2623,16 @@ impl PlayerCoordinator {
         } else {
             0
         }
+    }
+
+    pub fn get_meta_bytes(&self) -> Option<Vec<u8>> {
+        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
+            let bytes = trip.get_meta_bytes();
+            if !bytes.is_empty() {
+                return Some(bytes);
+            }
+        }
+        None
     }
 
     pub fn copy_meta_bytes(&self, out: &mut [u8]) -> usize {
@@ -2684,6 +2705,10 @@ impl PlayerCoordinator {
             return MAP_ERROR_INVALID_STATE;
         }
 
+        if cur == STATE_COMPLETED {
+            let _ = self.seek(0);
+        }
+
         if let Ok(guard) = self.trip_buffer.read() {
             if let Some(ref trip) = *guard {
                 trip.clear_abort();
@@ -2753,6 +2778,9 @@ impl PlayerCoordinator {
 
         self.network_streamer_abort.store(true, Ordering::Release);
         self.decoder_eof.store(false, Ordering::Relaxed);
+        self.buffering_flag.store(false, Ordering::Release);
+        self.buffering_resumed_flag.store(false, Ordering::Release);
+        self.completed_flag.store(false, Ordering::Release);
         if let Ok(guard) = self.trip_buffer.read() {
             if let Some(ref trip) = *guard {
                 trip.abort();
@@ -2784,7 +2812,7 @@ impl PlayerCoordinator {
         self.position_ms.store(0, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
-        if !self.is_live_stream() && self.engine.lock().unwrap().is_some() {
+        if !self.is_stream.load(Ordering::Relaxed) && self.engine.lock().unwrap().is_some() {
             self.seek_request_ms.store(0, Ordering::SeqCst);
         }
         self.telemetry.post_event(
@@ -3175,6 +3203,11 @@ impl PlayerCoordinator {
     pub fn destroy(&mut self) {
         let _ = self.stop();
         self.network_streamer_abort.store(true, Ordering::Release);
+        if let Ok(guard) = self.trip_buffer.read() {
+            if let Some(ref trip) = *guard {
+                trip.abort();
+            }
+        }
         self.telemetry.stop();
         if let Ok(mut cb) = self.completion_cb.write() {
             *cb = None;
@@ -3203,8 +3236,769 @@ impl PlayerCoordinator {
     }
 }
 
-impl Drop for PlayerCoordinator {
+impl Drop for StreamingDeck {
     fn drop(&mut self) {
         self.destroy();
     }
 }
+
+// =========================================================================
+// Dual Source Pipeline (CurrentSlot / StandbySlot) and Queue Management
+// =========================================================================
+
+#[derive(Debug, Clone, Default)]
+pub struct AudioSourceCore {
+    pub id: i64,
+    pub source: String,
+    pub headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+    pub data_bytes: Option<Vec<u8>>,
+    pub replay_gain_db: Option<f32>,
+    pub replay_peak: Option<f32>,
+}
+
+#[repr(C)]
+pub struct CrossfadeAtomic {
+    pub is_active: AtomicBool,
+    pub from_deck: AtomicI32, // 0: A, 1: B
+    pub to_deck: AtomicI32,   // 0: A, 1: B
+    pub current_frame: AtomicU64,
+    pub total_frames: AtomicU64,
+    pub curve: AtomicI32, // 0: EqualPower, 1: Linear
+}
+
+impl Default for CrossfadeAtomic {
+    fn default() -> Self {
+        Self {
+            is_active: AtomicBool::new(false),
+            from_deck: AtomicI32::new(0),
+            to_deck: AtomicI32::new(1),
+            current_frame: AtomicU64::new(0),
+            total_frames: AtomicU64::new(0),
+            curve: AtomicI32::new(0),
+        }
+    }
+}
+
+impl CrossfadeAtomic {
+    #[inline]
+    pub fn begin(&self, from_deck: i32, to_deck: i32, total_frames: u64, curve: i32) {
+        self.from_deck.store(from_deck, Ordering::Relaxed);
+        self.to_deck.store(to_deck, Ordering::Relaxed);
+        self.current_frame.store(0, Ordering::Relaxed);
+        self.total_frames
+            .store(total_frames.max(1), Ordering::Relaxed);
+        self.curve.store(curve, Ordering::Relaxed);
+        self.is_active.store(true, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn abort(&self) {
+        self.is_active.store(false, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn compute_gains(curve: i32, progress: f32) -> (f32, f32) {
+        let p = progress.clamp(0.0, 1.0);
+        if curve == 1 {
+            (1.0 - p, p)
+        } else {
+            let angle = p * std::f32::consts::FRAC_PI_2;
+            (angle.cos(), angle.sin())
+        }
+    }
+
+    #[inline]
+    pub fn advance_and_get_gains(&self, frame_count: u64) -> (f32, f32) {
+        let cur = self.current_frame.fetch_add(frame_count, Ordering::Relaxed);
+        let tot = self.total_frames.load(Ordering::Relaxed).max(1);
+        let curve = self.curve.load(Ordering::Relaxed);
+        let progress = (cur as f32 / tot as f32).min(1.0);
+        if cur + frame_count >= tot {
+            self.is_active.store(false, Ordering::Release);
+        }
+        let (gain_from, gain_to) = Self::compute_gains(curve, progress);
+        if self.from_deck.load(Ordering::Relaxed) == 0 {
+            (gain_from, gain_to)
+        } else {
+            (gain_to, gain_from)
+        }
+    }
+}
+
+pub type CustomSourceFactory = Arc<
+    dyn Fn(
+            u32,
+            Option<u64>,
+            Vec<u8>,
+        ) -> (
+            crate::buffer::CustomDartByteSource,
+            crate::buffer::CustomByteSourceHandle,
+        ) + Send
+        + Sync,
+>;
+
+pub const ENGINE_PHASE_IDLE: i32 = 0;
+pub const ENGINE_PHASE_LOADING: i32 = 1;
+pub const ENGINE_PHASE_PLAYING: i32 = 2;
+pub const ENGINE_PHASE_PAUSED: i32 = 3;
+pub const ENGINE_PHASE_AUTO_CROSSFADING: i32 = 4;
+pub const ENGINE_PHASE_MANUAL_CROSSFADING: i32 = 5;
+pub const ENGINE_PHASE_COMPLETED: i32 = 6;
+pub const ENGINE_PHASE_ERROR: i32 = 7;
+pub const ENGINE_PHASE_DISPOSED: i32 = 8;
+
+pub struct DualSource {
+    pub deck_a: Box<StreamingDeck>,
+    pub deck_b: Box<StreamingDeck>,
+    pub active_deck: Arc<AtomicI32>,
+    pub crossfade: Arc<CrossfadeAtomic>,
+    pub crossfade_completed_flag: Arc<AtomicBool>,
+    pub phase: Arc<AtomicI32>,
+
+    pub queue: Arc<RwLock<Vec<AudioSourceCore>>>,
+    pub canonical_queue: Arc<RwLock<Vec<AudioSourceCore>>>,
+    pub original_indices: Arc<RwLock<Vec<usize>>>,
+    pub current_index: Arc<AtomicI64>,
+    pub loop_mode: Arc<AtomicI32>,
+    pub shuffle_enabled: Arc<AtomicBool>,
+    pub infinite_mix_enabled: Arc<AtomicBool>,
+
+    pub auto_crossfade_duration_ms: Arc<AtomicU64>,
+    pub manual_crossfade_duration_ms: Arc<AtomicU64>,
+    pub crossfade_curve: Arc<AtomicI32>,
+    pub auto_crossfade_target_index: Arc<AtomicI64>,
+
+    pub sample_rate: u32,
+    pub channels: u32,
+    pub period_size: u32,
+    pub custom_source_factory: Option<CustomSourceFactory>,
+}
+
+unsafe impl Send for DualSource {}
+unsafe impl Sync for DualSource {}
+
+impl DualSource {
+    pub fn new(sample_rate: u32, channels: u32, period_size: u32) -> Result<Self, i32> {
+        let sr = if sample_rate > 0 { sample_rate } else { 44100 };
+        let ch = if channels > 0 { channels } else { 2 };
+        let period = if period_size > 0 { period_size } else { 1024 };
+
+        let deck_a = StreamingDeck::new_deck(sr, ch, period)?;
+        let deck_b = StreamingDeck::new_deck(sr, ch, period)?;
+
+        Ok(Self {
+            deck_a,
+            deck_b,
+            active_deck: Arc::new(AtomicI32::new(0)),
+            crossfade: Arc::new(CrossfadeAtomic::default()),
+            crossfade_completed_flag: Arc::new(AtomicBool::new(false)),
+            phase: Arc::new(AtomicI32::new(ENGINE_PHASE_IDLE)),
+            queue: Arc::new(RwLock::new(Vec::new())),
+            canonical_queue: Arc::new(RwLock::new(Vec::new())),
+            original_indices: Arc::new(RwLock::new(Vec::new())),
+            current_index: Arc::new(AtomicI64::new(0)),
+            loop_mode: Arc::new(AtomicI32::new(0)),
+            shuffle_enabled: Arc::new(AtomicBool::new(false)),
+            infinite_mix_enabled: Arc::new(AtomicBool::new(false)),
+            auto_crossfade_duration_ms: Arc::new(AtomicU64::new(5000)),
+            manual_crossfade_duration_ms: Arc::new(AtomicU64::new(500)),
+            crossfade_curve: Arc::new(AtomicI32::new(0)),
+            auto_crossfade_target_index: Arc::new(AtomicI64::new(-1)),
+            sample_rate: sr,
+            channels: ch,
+            period_size: period,
+            custom_source_factory: None,
+        })
+    }
+
+    #[inline]
+    pub fn active_deck_mut(&mut self) -> &mut StreamingDeck {
+        if self.active_deck.load(Ordering::Relaxed) == 0 {
+            &mut self.deck_a
+        } else {
+            &mut self.deck_b
+        }
+    }
+
+    #[inline]
+    pub fn standby_deck_mut(&mut self) -> &mut StreamingDeck {
+        if self.active_deck.load(Ordering::Relaxed) == 0 {
+            &mut self.deck_b
+        } else {
+            &mut self.deck_a
+        }
+    }
+
+    #[inline]
+    pub fn active_deck_ref(&self) -> &StreamingDeck {
+        if self.active_deck.load(Ordering::Relaxed) == 0 {
+            &self.deck_a
+        } else {
+            &self.deck_b
+        }
+    }
+
+    #[inline]
+    pub fn standby_deck_ref(&self) -> &StreamingDeck {
+        if self.active_deck.load(Ordering::Relaxed) == 0 {
+            &self.deck_b
+        } else {
+            &self.deck_a
+        }
+    }
+
+    pub fn open_deck_source(
+        deck: &mut StreamingDeck,
+        item: &AudioSourceCore,
+        custom_factory: Option<&CustomSourceFactory>,
+    ) -> i32 {
+        if item.source.starts_with("custom:") || item.source.starts_with("custom://") {
+            let id_str = item
+                .source
+                .trim_start_matches("custom://")
+                .trim_start_matches("custom:");
+            let (stream_id, total_size) = if let Some((id_part, query_part)) = id_str.split_once('?') {
+                let s_id = id_part.parse::<u32>().unwrap_or(0);
+                let mut size = None;
+                for pair in query_part.split('&') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        if k == "size" {
+                            size = v.parse::<u64>().ok();
+                        }
+                    }
+                }
+                (s_id, size)
+            } else {
+                (id_str.parse::<u32>().unwrap_or(0), None)
+            };
+            let init_bytes = item.data_bytes.clone().unwrap_or_default();
+            if let Some(factory) = custom_factory {
+                let (source, handle) = factory(stream_id, total_size, init_bytes.clone());
+                return deck.open_custom_source(source, handle, total_size, true, &init_bytes);
+            }
+            return MAP_ERROR_UNSUPPORTED;
+        }
+        if let Some(ref data) = item.data_bytes {
+            let ext_hint = FormatSniffer::extract_extension_hint(&item.source);
+            deck.open_memory_with_hint(data, ext_hint)
+        } else {
+            deck.open_source(&item.source, item.headers.as_deref())
+        }
+    }
+
+    pub fn open_queue(
+        &mut self,
+        items: Vec<AudioSourceCore>,
+        start_index: usize,
+        auto_play: bool,
+    ) -> Result<(), String> {
+        self.crossfade.abort();
+        self.deck_a.stop();
+        self.deck_b.stop();
+
+        *self.canonical_queue.write().unwrap() = items.clone();
+        *self.original_indices.write().unwrap() = (0..items.len()).collect();
+        *self.queue.write().unwrap() = items;
+
+        if self.shuffle_enabled.load(Ordering::Relaxed) {
+            self.apply_shuffle(start_index);
+        } else {
+            self.current_index.store(start_index as i64, Ordering::Release);
+        }
+
+        let q_guard = self.queue.read().unwrap();
+        if q_guard.is_empty() {
+            self.current_index.store(-1, Ordering::Release);
+            return Ok(());
+        }
+
+        let cur_idx = self.current_index.load(Ordering::Relaxed) as usize;
+        let start_item = q_guard[cur_idx].clone();
+        drop(q_guard);
+
+        let active_deck = self.active_deck.load(Ordering::Relaxed);
+        let active_slot = if active_deck == 0 {
+            &mut self.deck_a
+        } else {
+            &mut self.deck_b
+        };
+
+        let res = Self::open_deck_source(active_slot, &start_item, self.custom_source_factory.as_ref());
+        if res != 0 {
+            return Err(format!("Failed to open track: error {}", res));
+        }
+
+        if let Some(gain) = start_item.replay_gain_db {
+            let peak = start_item.replay_peak.unwrap_or(1.0);
+            active_slot.set_replay_gain(gain, peak, 1);
+        } else {
+            active_slot.clear_replay_gain();
+        }
+
+        if auto_play {
+            active_slot.play();
+            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+        } else {
+            self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+        }
+
+        self.preload_standby_deck();
+        Ok(())
+    }
+
+    pub fn preload_standby_deck(&mut self) {
+        if self.crossfade.is_active.load(Ordering::Relaxed) {
+            return;
+        }
+        let q = self.queue.read().unwrap();
+        if q.is_empty() {
+            return;
+        }
+
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if cur < 0 {
+            return;
+        }
+
+        let cur_u = cur as usize;
+        let next_idx = cur_u + 1;
+        let loop_mode = self.loop_mode.load(Ordering::Relaxed);
+
+        let target_item = if next_idx < q.len() {
+            Some(q[next_idx].clone())
+        } else if loop_mode == 2 && !q.is_empty() {
+            // LoopMode.all wraps to index 0
+            Some(q[0].clone())
+        } else {
+            None
+        };
+        drop(q);
+
+        let active_deck = self.active_deck.load(Ordering::Relaxed);
+        let standby_deck = if active_deck == 0 {
+            &mut self.deck_b
+        } else {
+            &mut self.deck_a
+        };
+
+        if let Some(item) = target_item {
+            let res = Self::open_deck_source(standby_deck, &item, self.custom_source_factory.as_ref());
+            if res == 0 {
+                if let Some(gain) = item.replay_gain_db {
+                    let peak = item.replay_peak.unwrap_or(1.0);
+                    standby_deck.set_replay_gain(gain, peak, 1);
+                } else {
+                    standby_deck.clear_replay_gain();
+                }
+                standby_deck.pause();
+            }
+        } else {
+            standby_deck.stop();
+        }
+    }
+
+    pub fn append_items(&mut self, items: Vec<AudioSourceCore>) {
+        let mut can = self.canonical_queue.write().unwrap();
+        let start = can.len();
+        can.extend(items.clone());
+        let mut orig_idx = self.original_indices.write().unwrap();
+        orig_idx.extend(start..can.len());
+        let mut q = self.queue.write().unwrap();
+        q.extend(items);
+        drop(q);
+        drop(orig_idx);
+        drop(can);
+        self.preload_standby_deck();
+    }
+
+    pub fn insert_next_item(&mut self, item: AudioSourceCore) {
+        let mut q = self.queue.write().unwrap();
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let insert_idx = ((cur + 1).max(0) as usize).min(q.len());
+        q.insert(insert_idx, item);
+        drop(q);
+        self.preload_standby_deck();
+    }
+
+    pub fn remove_item_at(&mut self, index: usize) -> Option<AudioSourceCore> {
+        let mut q = self.queue.write().unwrap();
+        if index >= q.len() {
+            return None;
+        }
+        let removed = q.remove(index);
+        {
+            let mut can = self.canonical_queue.write().unwrap();
+            can.retain(|it| it.id != removed.id);
+            let n = can.len();
+            *self.original_indices.write().unwrap() = (0..n).collect();
+        }
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if (index as i64) < cur {
+            self.current_index.store(cur - 1, Ordering::Release);
+        } else if (index as i64) == cur {
+            if q.is_empty() {
+                self.current_index.store(-1, Ordering::Release);
+                self.deck_a.stop();
+                self.deck_b.stop();
+            } else {
+                let new_idx = if cur >= q.len() as i64 {
+                    (q.len() - 1) as i64
+                } else {
+                    cur
+                };
+                self.current_index.store(new_idx, Ordering::Release);
+                let next_item = q[new_idx as usize].clone();
+                drop(q);
+                let factory = self.custom_source_factory.clone();
+                let active = self.active_deck_mut();
+                Self::open_deck_source(active, &next_item, factory.as_ref());
+                active.play();
+                self.preload_standby_deck();
+                return Some(removed);
+            }
+        }
+        drop(q);
+        self.preload_standby_deck();
+        Some(removed)
+    }
+
+    pub fn reorder_item(&mut self, from: usize, to: usize) -> bool {
+        let mut q = self.queue.write().unwrap();
+        if from >= q.len() || to >= q.len() || from == to {
+            return false;
+        }
+        let item = q.remove(from);
+        q.insert(to, item);
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let cur_u = cur as usize;
+        if cur >= 0 {
+            if cur_u == from {
+                self.current_index.store(to as i64, Ordering::Release);
+            } else if from < cur_u && to >= cur_u {
+                self.current_index.store(cur - 1, Ordering::Release);
+            } else if from > cur_u && to <= cur_u {
+                self.current_index.store(cur + 1, Ordering::Release);
+            }
+        }
+        drop(q);
+        self.preload_standby_deck();
+        true
+    }
+
+    pub fn clear_items(&mut self, keep_current: bool) {
+        self.canonical_queue.write().unwrap().clear();
+        self.original_indices.write().unwrap().clear();
+        let mut q = self.queue.write().unwrap();
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if keep_current && cur >= 0 && (cur as usize) < q.len() {
+            let current_item = q[cur as usize].clone();
+            q.clear();
+            q.push(current_item.clone());
+            self.canonical_queue.write().unwrap().push(current_item);
+            self.original_indices.write().unwrap().push(0);
+            self.current_index.store(0, Ordering::Release);
+        } else {
+            q.clear();
+            self.current_index.store(-1, Ordering::Release);
+            self.deck_a.stop();
+            self.deck_b.stop();
+        }
+    }
+
+    pub fn next(&mut self, manual_crossfade_ms: Option<u64>) -> Result<(), String> {
+        let cur_phase = self.phase.load(Ordering::Relaxed);
+        if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
+            let auto_target = self.auto_crossfade_target_index.load(Ordering::Relaxed);
+            if auto_target >= 0 {
+                self.current_index.store(auto_target, Ordering::Release);
+            }
+            let manual_ms = manual_crossfade_ms.unwrap_or_else(|| {
+                self.manual_crossfade_duration_ms.load(Ordering::Relaxed)
+            });
+            let sr = self.sample_rate.max(1);
+            let max_frames = (manual_ms * sr as u64) / 1000;
+            let cur_frame = self.crossfade.current_frame.load(Ordering::Relaxed);
+            let tot_frame = self.crossfade.total_frames.load(Ordering::Relaxed);
+            if tot_frame > cur_frame + max_frames {
+                self.crossfade.total_frames.store(cur_frame + max_frames, Ordering::Release);
+            }
+            self.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
+            return Ok(());
+        }
+
+        let q = self.queue.read().unwrap();
+        if q.is_empty() {
+            return Ok(());
+        }
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let next_idx = cur + 1;
+        let loop_mode = self.loop_mode.load(Ordering::Relaxed);
+
+        let target_idx = if next_idx < q.len() as i64 {
+            next_idx
+        } else if loop_mode == 2 {
+            0
+        } else {
+            return Ok(());
+        };
+        drop(q);
+        self.skip_to_index(target_idx as usize, manual_crossfade_ms)
+    }
+
+    pub fn previous(&mut self) -> Result<(), String> {
+        let cur_deck = self.active_deck_ref();
+        let pos_ms = cur_deck.position_ms.load(Ordering::Relaxed);
+        let cur_phase = self.phase.load(Ordering::Relaxed);
+        let is_live = cur_deck.is_live_stream();
+
+        if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
+            self.abort_active_crossfade();
+            if !is_live && pos_ms > 3000 {
+                self.active_deck_mut().seek(0);
+                return Ok(());
+            }
+        } else if !is_live && pos_ms > 3000 {
+            self.abort_active_crossfade();
+            self.active_deck_mut().seek(0);
+            return Ok(());
+        }
+
+        let q = self.queue.read().unwrap();
+        if q.is_empty() {
+            return Ok(());
+        }
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let target_idx = if cur > 0 {
+            cur - 1
+        } else {
+            0
+        };
+        drop(q);
+        self.skip_to_index(target_idx as usize, None)
+    }
+
+    pub fn skip_to_index(
+        &mut self,
+        index: usize,
+        manual_crossfade_ms: Option<u64>,
+    ) -> Result<(), String> {
+        if self.crossfade.is_active.load(Ordering::Relaxed) {
+            self.abort_active_crossfade();
+        }
+        let q = self.queue.read().unwrap();
+        if index >= q.len() {
+            return Err(format!("Index {} out of bounds (queue size {})", index, q.len()));
+        }
+        let item = q[index].clone();
+        drop(q);
+
+        self.auto_crossfade_target_index.store(-1, Ordering::Release);
+        self.crossfade_completed_flag.store(false, Ordering::Release);
+
+        let active_deck = self.active_deck.load(Ordering::Relaxed);
+        let cur_phase = self.phase.load(Ordering::Relaxed);
+        let was_playing = cur_phase == ENGINE_PHASE_PLAYING
+            || cur_phase == ENGINE_PHASE_AUTO_CROSSFADING
+            || cur_phase == ENGINE_PHASE_MANUAL_CROSSFADING;
+
+        let to_deck = if active_deck == 0 { 1 } else { 0 };
+        let to_slot = if to_deck == 0 {
+            &mut self.deck_a
+        } else {
+            &mut self.deck_b
+        };
+
+        let res = Self::open_deck_source(to_slot, &item, self.custom_source_factory.as_ref());
+        if res != 0 {
+            return Err(format!("Failed to open track: error {}", res));
+        }
+
+        if let Some(gain) = item.replay_gain_db {
+            let peak = item.replay_peak.unwrap_or(1.0);
+            to_slot.set_replay_gain(gain, peak, 1);
+        } else {
+            to_slot.clear_replay_gain();
+        }
+
+        if !was_playing {
+            let from_slot = if active_deck == 0 {
+                &mut self.deck_a
+            } else {
+                &mut self.deck_b
+            };
+            from_slot.stop();
+            self.active_deck.store(to_deck, Ordering::Release);
+            self.current_index.store(index as i64, Ordering::Release);
+            self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+            self.preload_standby_deck();
+            return Ok(());
+        }
+
+        to_slot.play();
+
+        let xfade_ms = manual_crossfade_ms.unwrap_or_else(|| {
+            self.manual_crossfade_duration_ms.load(Ordering::Relaxed)
+        });
+
+        if xfade_ms > 0 {
+            let sr = self.sample_rate;
+            let total_frames = (xfade_ms as u64 * sr as u64) / 1000;
+            let curve = self.crossfade_curve.load(Ordering::Relaxed);
+            self.crossfade.begin(active_deck, to_deck, total_frames, curve);
+            self.current_index.store(index as i64, Ordering::Release);
+            self.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
+        } else {
+            self.active_deck.store(to_deck, Ordering::Release);
+            let from_slot = if active_deck == 0 {
+                &mut self.deck_a
+            } else {
+                &mut self.deck_b
+            };
+            from_slot.stop();
+            self.current_index.store(index as i64, Ordering::Release);
+            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+        }
+
+        self.preload_standby_deck();
+        Ok(())
+    }
+
+    pub fn set_loop_mode(&mut self, mode: i32) {
+        self.loop_mode.store(mode.clamp(0, 2), Ordering::Release);
+        self.preload_standby_deck();
+    }
+
+    pub fn set_shuffle(&mut self, enabled: bool) {
+        let cur_enabled = self.shuffle_enabled.load(Ordering::Relaxed);
+        if cur_enabled == enabled {
+            return;
+        }
+        self.shuffle_enabled.store(enabled, Ordering::Release);
+
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if enabled {
+            self.apply_shuffle(cur.max(0) as usize);
+        } else {
+            self.restore_canonical_order(cur.max(0) as usize);
+        }
+        self.preload_standby_deck();
+    }
+
+    fn apply_shuffle(&mut self, current_idx: usize) {
+        let mut q = self.queue.write().unwrap();
+        if q.len() <= 1 {
+            return;
+        }
+
+        let cur_item = if current_idx < q.len() {
+            Some(q[current_idx].clone())
+        } else {
+            None
+        };
+
+        use rand::seq::SliceRandom;
+        let mut rng = rand::thread_rng();
+        q.shuffle(&mut rng);
+
+        if let Some(item) = cur_item {
+            if let Some(new_pos) = q.iter().position(|it| it.id == item.id) {
+                q.swap(0, new_pos);
+                self.current_index.store(0, Ordering::Release);
+            }
+        }
+    }
+
+    fn restore_canonical_order(&mut self, current_idx: usize) {
+        let can = self.canonical_queue.read().unwrap();
+        let mut q = self.queue.write().unwrap();
+        if current_idx < q.len() {
+            let cur_id = q[current_idx].id;
+            *q = can.clone();
+            if let Some(canonical_pos) = q.iter().position(|it| it.id == cur_id) {
+                self.current_index.store(canonical_pos as i64, Ordering::Release);
+            }
+        } else {
+            *q = can.clone();
+        }
+    }
+
+    pub fn set_crossfade(&mut self, duration_ms: u64, manual_duration_ms: u64, curve: i32) {
+        self.auto_crossfade_duration_ms.store(duration_ms, Ordering::Release);
+        self.manual_crossfade_duration_ms.store(manual_duration_ms, Ordering::Release);
+        self.crossfade_curve.store(curve.clamp(0, 1), Ordering::Release);
+    }
+
+    pub fn abort_active_crossfade(&mut self) {
+        let phase = self.phase.load(Ordering::Relaxed);
+        self.auto_crossfade_target_index.store(-1, Ordering::Release);
+        if phase == ENGINE_PHASE_AUTO_CROSSFADING {
+            self.crossfade.abort();
+            self.standby_deck_mut().stop();
+            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+        } else if phase == ENGINE_PHASE_MANUAL_CROSSFADING {
+            self.crossfade.abort();
+            let to_deck = self.crossfade.to_deck.load(Ordering::Relaxed);
+            self.active_deck.store(to_deck, Ordering::Release);
+            self.standby_deck_mut().stop();
+            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+        } else {
+            self.crossfade.abort();
+        }
+    }
+
+    pub fn play(&mut self) -> i32 {
+        let cur_phase = self.phase.load(Ordering::Relaxed);
+        if cur_phase == ENGINE_PHASE_COMPLETED {
+            let q_len = self.queue.read().unwrap().len();
+            if q_len > 0 {
+                let _ = self.skip_to_index(0, None);
+            }
+        }
+        let res = self.active_deck_mut().play();
+        if res == 0 {
+            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+        }
+        res
+    }
+
+    pub fn pause(&mut self) {
+        self.active_deck_mut().pause();
+        self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+    }
+
+    pub fn stop(&mut self) {
+        self.abort_active_crossfade();
+        self.deck_a.stop();
+        self.deck_b.stop();
+        self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+    }
+
+    pub fn seek(&mut self, position_ms: i64) -> i32 {
+        let cur_phase = self.phase.load(Ordering::Relaxed);
+        if cur_phase == ENGINE_PHASE_MANUAL_CROSSFADING {
+            self.abort_active_crossfade();
+            return self.active_deck_mut().seek(position_ms);
+        } else if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
+            let dur = self.active_deck_ref().duration_ms.load(Ordering::Relaxed);
+            let auto_ms = self.auto_crossfade_duration_ms.load(Ordering::Relaxed);
+            let in_xfade_zone = auto_ms > 0 && dur > auto_ms as i64 && position_ms >= (dur - auto_ms as i64);
+            if in_xfade_zone {
+                let sr = self.sample_rate.max(1);
+                let eff_ms = if dur > position_ms {
+                    ((dur - position_ms) as u64).clamp(50, auto_ms)
+                } else {
+                    auto_ms
+                };
+                let rem_frames = (eff_ms * sr as u64) / 1000;
+                let cur_frame = self.crossfade.current_frame.load(Ordering::Relaxed);
+                self.crossfade.total_frames.store(cur_frame + rem_frames, Ordering::Release);
+                return self.active_deck_mut().seek(position_ms);
+            } else {
+                self.abort_active_crossfade();
+                return self.active_deck_mut().seek(position_ms);
+            }
+        }
+        self.active_deck_mut().seek(position_ms)
+    }
+}
+

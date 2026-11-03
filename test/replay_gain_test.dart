@@ -6,6 +6,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
+  });
+
   File resolveAsset(String path) {
     final file = File(path);
     if (file.existsSync()) return file;
@@ -192,7 +196,7 @@ void main() {
       expect(source.replayGainDb, equals(-6.5));
       expect(source.replayPeak, equals(0.95));
 
-      final player = MiniaudioPlayer(source);
+      final player = MiniaudioPlayer(source: [source]);
       try {
         await player.action.waitUntilOpen();
 

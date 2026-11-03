@@ -12,6 +12,7 @@ void main() {
   late File trackD;
 
   setUpAll(() async {
+    await MiniaudioPlayer.ensureInitialized();
     trackA = File('test/fixtures/test_24bit.wav');
     trackB = File('test/fixtures/test_24bit_stereo.wav');
     trackC = File('test/fixtures/cbr_noxing.mp3');
@@ -19,12 +20,12 @@ void main() {
   });
 
   group('Rust-Authoritative Queue & Infinite Mix Parity', () {
-    late MiniaudioEngine<String> engine;
+    late MiniaudioPlayer<String> engine;
 
     setUp(() {
-      engine = MiniaudioEngine<String>(
+      engine = MiniaudioPlayer<String>(
         crossfadeConfig: CrossfadeConfig(
-          duration: const Duration(milliseconds: 300),
+          autoDuration: const Duration(milliseconds: 300),
           manualDuration: const Duration(milliseconds: 100),
         ),
       );

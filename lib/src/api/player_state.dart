@@ -1,15 +1,18 @@
-// ignore_for_file: prefer_initializing_formals
-
 import 'dart:typed_data';
 
+import '../equalizer.dart';
+import '../reverb.dart';
 import 'audio_device.dart';
+import 'audio_source.dart';
 import 'buffered_range.dart';
+import 'crossfade_config.dart';
 import 'dsp_config.dart';
+import 'loop_mode.dart';
+import 'miniaudio_player.dart';
+import 'player_models.dart';
 import 'silence_skip_config.dart';
 import 'track_metadata.dart';
 import 'visualizer_data.dart';
-import '../equalizer.dart';
-import '../reverb.dart';
 
 /// Represents the high-level playback and lifecycle states of [MiniaudioPlayer].
 enum PlaybackState {
@@ -44,223 +47,163 @@ enum PlaybackState {
   bool get isError => this == PlaybackState.error;
 }
 
-/// Synchronous snapshot of the current player and DSP states.
-class PlayerState {
-  final Duration Function() _getPosition;
-  final Duration Function() _getDuration;
-  final bool Function() _getPlaying;
-  final bool Function() _getBuffering;
-  final bool Function() _getCompleted;
-  final bool Function() _getOpening;
-  final PlaybackState Function() _getPlaybackState;
-  final Duration Function() _getBufferedPosition;
-  final double Function() _getBufferedPercentage;
-  final BufferedRange Function() _getBufferedRange;
-  final AudioTrackMetadata? Function() _getTrackMetadata;
-  final double Function() _getVolume;
-  final double Function() _getRate;
-  final double Function() _getPitch;
-  final int Function() _getBufferSize;
-  final int Function() _getAudioBitrate;
-  final Equalizer Function() _getEqualizer;
-  final AudioDevice Function() _getAudioDevice;
-  final bool Function() _getSkipSilence;
-  final SilenceSkipMode Function() _getSilenceSkipMode;
-  final SilenceSkipConfig Function() _getSilenceConfig;
-  final Duration Function() _getSilenceSavedDuration;
-  final VisualizerData Function() _getVisualizer;
-  final bool Function() _getVisualizerEnabled;
-  final double Function() _getPreamp;
-  final ReplayGainConfig Function() _getReplayGain;
-  final double Function() _getBalance;
-  final bool Function() _getMono;
-  final CrossfeedMode Function() _getCrossfeed;
-  final bool Function() _getSpatializerEnabled;
-  final double Function() _getSpatializerWidth;
-  final Reverb Function() _getReverb;
-  final bool Function() _getLimiterEnabled;
-  final bool Function() _getPauseOnDeviceChange;
-  final Uint8List? Function()? _getMetaBytes;
+/// Explicit finite state machine (FSM) phases for queue and crossfade lifecycle.
+enum EnginePhase {
+  idle,
+  loading,
+  playing,
+  paused,
+  autoCrossfading,
+  manualCrossfading,
+  completed,
+  error,
+  disposed,
+}
 
-  PlayerState({
-    required Duration Function() getPosition,
-    required Duration Function() getDuration,
-    required bool Function() getPlaying,
-    required bool Function() getBuffering,
-    required bool Function() getCompleted,
-    required bool Function() getOpening,
-    required PlaybackState Function() getPlaybackState,
-    required Duration Function() getBufferedPosition,
-    required double Function() getBufferedPercentage,
-    required BufferedRange Function() getBufferedRange,
-    required AudioTrackMetadata? Function() getTrackMetadata,
-    required double Function() getVolume,
-    required double Function() getRate,
-    required double Function() getPitch,
-    required int Function() getBufferSize,
-    required int Function() getAudioBitrate,
-    required Equalizer Function() getEqualizer,
-    required AudioDevice Function() getAudioDevice,
-    required bool Function() getPauseOnDeviceChange,
-    required bool Function() getSkipSilence,
-    required SilenceSkipMode Function() getSilenceSkipMode,
-    required SilenceSkipConfig Function() getSilenceConfig,
-    required Duration Function() getSilenceSavedDuration,
-    required VisualizerData Function() getVisualizer,
-    required bool Function() getVisualizerEnabled,
-    required double Function() getPreamp,
-    required ReplayGainConfig Function() getReplayGain,
-    required double Function() getBalance,
-    required bool Function() getMono,
-    required CrossfeedMode Function() getCrossfeed,
-    required bool Function() getSpatializerEnabled,
-    required double Function() getSpatializerWidth,
-    required Reverb Function() getReverb,
-    required bool Function() getLimiterEnabled,
-    Uint8List? Function()? getMetaBytes,
-  })  : _getPosition = getPosition,
-        _getDuration = getDuration,
-        _getPlaying = getPlaying,
-        _getBuffering = getBuffering,
-        _getCompleted = getCompleted,
-        _getOpening = getOpening,
-        _getPlaybackState = getPlaybackState,
-        _getBufferedPosition = getBufferedPosition,
-        _getBufferedPercentage = getBufferedPercentage,
-        _getBufferedRange = getBufferedRange,
-        _getTrackMetadata = getTrackMetadata,
-        _getVolume = getVolume,
-        _getRate = getRate,
-        _getPitch = getPitch,
-        _getBufferSize = getBufferSize,
-        _getAudioBitrate = getAudioBitrate,
-        _getEqualizer = getEqualizer,
-        _getAudioDevice = getAudioDevice,
-        _getPauseOnDeviceChange = getPauseOnDeviceChange,
-        _getSkipSilence = getSkipSilence,
-        _getSilenceSkipMode = getSilenceSkipMode,
-        _getSilenceConfig = getSilenceConfig,
-        _getSilenceSavedDuration = getSilenceSavedDuration,
-        _getVisualizer = getVisualizer,
-        _getVisualizerEnabled = getVisualizerEnabled,
-        _getPreamp = getPreamp,
-        _getReplayGain = getReplayGain,
-        _getBalance = getBalance,
-        _getMono = getMono,
-        _getCrossfeed = getCrossfeed,
-        _getSpatializerEnabled = getSpatializerEnabled,
-        _getSpatializerWidth = getSpatializerWidth,
-        _getReverb = getReverb,
-        _getLimiterEnabled = getLimiterEnabled,
-        _getMetaBytes = getMetaBytes;
+/// Synchronous, lock-free $O(1)$ stream snapshot of the player, queue, effects, and DSP states.
+///
+/// In strict accordance with the stream-driven domain architecture, this state does NOT query
+/// Rust synchronously. It holds the latest snapshot delivered across the native event stream.
+class PlayerState<T> {
+  final MiniaudioPlayer<T> _player;
 
-  /// Current playback position.
-  Duration get position => _getPosition();
+  PlayerState(this._player);
 
-  /// Total duration of the current audio file.
-  Duration get duration => _getDuration();
+  MiniaudioPlayer<T> get player => _player;
 
-  /// Whether audio is actively playing.
-  bool get playing => _getPlaying();
+  Duration position = Duration.zero;
+  Duration duration = Duration.zero;
+  PlaybackState playbackState = PlaybackState.stopped;
+  EnginePhase phase = EnginePhase.idle;
 
-  /// Whether audio is currently buffering.
-  bool get buffering => _getBuffering();
+  bool isPlaying = false;
+  bool isBuffering = false;
+  bool isCompleted = false;
+  bool isOpening = false;
+  bool isPaused = false;
+  bool get playing => isPlaying;
+  bool get buffering => isBuffering;
+  bool get completed => isCompleted;
+  bool get opening => isOpening;
+  bool get isStopped => playbackState == PlaybackState.stopped;
+  bool get isError => playbackState == PlaybackState.error;
 
-  /// Whether audio reached the end of the track.
-  bool get completed => _getCompleted();
+  BufferedRange bufferedRange = const BufferedRange();
+  Duration bufferedPosition = Duration.zero;
+  double bufferedPercentage = 0.0;
+  AudioTrackMetadata? trackMetadata;
+  Uint8List? metaBytes;
 
-  /// Whether the player is currently opening or preparing an audio source.
-  bool get opening => _getOpening();
+  double volume = 1.0;
+  double rate = 1.0;
+  double pitch = 1.0;
+  double balance = 0.0;
+  bool mono = false;
+  bool get isMono => mono;
 
-  /// Comprehensive playback state enum representing the current lifecycle phase.
-  PlaybackState get playbackState => _getPlaybackState();
+  int bufferSize = 1024;
+  int get bufferSizeFrames => bufferSize;
+  int audioBitrate = 0;
+  int get bitrate => audioBitrate;
+  int sampleRate = 44100;
+  int channels = 2;
 
-  /// Furthest continuous timestamp preloaded in RAM buffer.
-  Duration get bufferedPosition => _getBufferedPosition();
+  Equalizer equalizer = Equalizer.flat;
+  AudioDevice audioDevice = AudioDevice.auto;
 
-  /// Fraction (0.0 to 1.0) of the total track loaded into the buffer (for preloaded bar).
-  double get bufferedPercentage => _getBufferedPercentage();
-
-  /// Comprehensive sliding-window circular buffer telemetry metrics.
-  BufferedRange get bufferedRange => _getBufferedRange();
-
-  /// Current audio track metadata, or `null` if no track is opened.
-  AudioTrackMetadata? get trackMetadata => _getTrackMetadata();
-
-  /// Current volume level (default: 1.0).
-  double get volume => _getVolume();
-
-  /// Current playback rate multiplier (default: 1.0).
-  double get rate => _getRate();
-
-  /// Current pitch multiplier (default: 1.0).
-  double get pitch => _getPitch();
-
-  /// Current internal buffer size in frames (0 = native default).
-  int get bufferSize => _getBufferSize();
-
-  /// Current audio nominal bitrate in bits per second (bps), or 0 if uninitialized.
-  int get bitrate => _getAudioBitrate();
-
-  /// Current 10-band equalizer settings (default: flat).
-  Equalizer get equalizer => _getEqualizer();
-
-  /// Currently active audio output device.
-  AudioDevice get audioDevice => _getAudioDevice();
-
-  /// Whether playback automatically pauses when the audio output device changes.
-  bool get pauseOnDeviceChange => _getPauseOnDeviceChange();
-
-  /// Whether silence skipping is currently enabled.
-  bool get skipSilence => _getSkipSilence();
-
-  /// Current silence skipping operational mode.
-  SilenceSkipMode get silenceSkipMode => _getSilenceSkipMode();
-
-  /// Current silence detection and skipping configuration.
-  SilenceSkipConfig get silenceConfig => _getSilenceConfig();
-
-  /// Cumulative duration of silence saved / skipped in the current track.
-  Duration get silenceSavedDuration => _getSilenceSavedDuration();
-
-  /// Real-time audio frequency visualizer snapshot (10 bands matching equalizer + volume metrics).
-  VisualizerData get visualizer => _getVisualizer();
-
-  /// Whether real-time visualizer DSP analysis is currently active.
-  bool get visualizerEnabled => _getVisualizerEnabled();
-
-  /// Current manual preamp gain in decibels applied prior to equalizer (default: 0.0 dB).
-  double get preamp => _getPreamp();
-
-  /// Current ReplayGain / EBU R128 track normalization configuration.
-  ReplayGainConfig get replayGain => _getReplayGain();
-
-  /// Current stereo balance / pan (-1.0 for left, 0.0 for center, +1.0 for right).
-  double get balance => _getBalance();
-
-  /// Whether mono downmix is currently active.
-  bool get mono => _getMono();
-
-  /// Current headphone binaural crossfeed (Bauer bs2b) mode.
-  CrossfeedMode get crossfeed => _getCrossfeed();
-
-  /// Whether stereo widener / spatializer is currently active.
-  bool get spatializerEnabled => _getSpatializerEnabled();
-
-  /// Current stereo widener width factor (1.0 to 2.0).
-  double get spatializerWidth => _getSpatializerWidth();
-
-  /// Current studio reverberation configuration.
-  Reverb get reverb => _getReverb();
-
-  /// Whether the True-Peak soft-knee output limiter protector is active.
-  bool get limiterEnabled => _getLimiterEnabled();
-
-  /// Clean synthesized container bytes containing all format headers, initial and trailing
-  /// metadata tags (ID3v2, ID3v1, APEv2, Vorbis Comments, FLAC PICTURE, MP4 ilst/udta, etc.)
-  /// with 0 seconds of audio samples, ready to be parsed in-memory by pub.dev packages
-  /// (e.g. `audio_metadata_reader`, `id3tag`, etc.) without touching disk or network.
+  /// Global system-wide audio output hardware endpoints (speakers, headphones, HDMI, Bluetooth)
+  /// currently connected and detected by the operating system.
   ///
-  /// Returns `null` if no media is loaded or if initial headers have not been received yet.
-  Uint8List? get metaBytes => _getMetaBytes?.call();
+  /// NOTE: This lists external OS hardware devices, NOT the player's active outputs.
+  List<AudioDevice> globalOutputDevices = const [AudioDevice.auto];
+
+  /// Global system-wide audio input hardware endpoints (microphones, line-in interfaces)
+  /// currently connected and detected by the operating system.
+  ///
+  /// NOTE: This lists external OS hardware devices, NOT the player's active inputs.
+  List<AudioDevice> globalInputDevices = const [
+    AudioDevice(id: 'auto', name: 'DEFAULT MICROPHONE', isAuto: true)
+  ];
+  AudioDevice? activeInputDevice;
+
+  bool skipSilence = false;
+  SilenceSkipMode silenceSkipMode = SilenceSkipMode.disabled;
+  SilenceSkipConfig silenceConfig = const SilenceSkipConfig();
+  Duration silenceSavedDuration = Duration.zero;
+
+  VisualizerData visualizer = VisualizerData.empty();
+  bool visualizerEnabled = false;
+  bool get isVisualizerEnabled => visualizerEnabled;
+
+  double preamp = 0.0;
+  double get preampDb => preamp;
+  ReplayGainConfig replayGain = const ReplayGainConfig();
+  bool volumeNormalization = true;
+  double defaultReplayGain = 0.0;
+  double forcedReplayGain = 0.0;
+  ReplayGainMode replayGainMode = ReplayGainMode.track;
+
+  CrossfeedMode crossfeed = CrossfeedMode.off;
+  bool spatializerEnabled = false;
+  double spatializerWidth = 1.0;
+  Reverb reverb = Reverb.off;
+  bool limiterEnabled = true;
+  bool get isLimiterEnabled => limiterEnabled;
+
+  bool pauseOnDeviceChange = false;
+
+  List<AudioSource<T>> queue = const [];
+  int currentIndex = -1;
+  LoopMode loopMode = LoopMode.off;
+  bool isShuffled = false;
+  bool get shuffle => isShuffled;
+  bool get infiniteMixEnabled => _player.infiniteMixEnabled;
+  bool isCrossfading = false;
+  CrossfadeConfig crossfadeConfig = const CrossfadeConfig();
+
+  int activeVoicesCount = 0;
+  int allocatedRamBytes = 0;
+  int maxRamBytes = 64 * 1024 * 1024;
+  List<String> loadedEffectIds = const [];
+
+  /// Set of active output destinations configured on this player instance
+  /// (e.g. default speaker, specific hardware device, headphone CUE, live file recording).
+  ///
+  /// Defaults to a Set containing [AudioOutput.speaker()].
+  Set<AudioOutput> outputs = {const AudioOutput.speaker()};
+
+  /// Set of active audio input sources currently routing audio into this player instance
+  /// (e.g. microphones, line-in).
+  ///
+  /// Defaults to an empty Set `{}`.
+  Set<AudioInput> inputs = const {};
+  bool isRecording = false;
+  Duration recordedDuration = Duration.zero;
+  double cueVolume = 1.0;
+  CueSource cueSource = CueSource.standbyTrack;
+
+  bool isMicrophoneEnabled = false;
+  double micVolume = 1.0;
+  bool isDuckingActive = false;
+  bool isDirectMonitoringEnabled = false;
+  double micRmsLevel = -100.0;
+
+  bool get hasNext => currentIndex >= 0 && currentIndex < queue.length - 1;
+  bool get hasPrevious => currentIndex > 0;
+  AudioSource<T>? get currentItem =>
+      (currentIndex >= 0 && currentIndex < queue.length) ? queue[currentIndex] : null;
+  T? get currentData => currentItem?.data;
+  int get pinnedHeadSize => metaBytes?.length ?? 0;
+
+  bool get isLiveStream {
+    if (trackMetadata != null) return trackMetadata!.isLiveStream;
+    final item = currentItem;
+    if (item is UriAudioSource) {
+      final s = (item as UriAudioSource).sourceString.toLowerCase();
+      final isNet = s.startsWith('http://') || s.startsWith('https://');
+      if (s.contains('.m3u8')) return true;
+      if (isNet && duration == Duration.zero) return true;
+    }
+    return false;
+  }
 }
