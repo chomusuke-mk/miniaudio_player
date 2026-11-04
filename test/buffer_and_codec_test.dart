@@ -107,16 +107,16 @@ void main() {
       expect(MiniaudioPlayer.globalConfig.bufferBehindLiveStreamDuration.inSeconds, equals(6));
     });
 
-    test('BufferedRange telemetry properties', () {
-      const range = BufferedRange(
+    test('Buffer telemetry properties', () {
+      const buffer = Buffer(
         start: Duration(seconds: 5),
         end: Duration(seconds: 25),
         isBuffering: false,
       );
 
-      expect(range.start, equals(const Duration(seconds: 5)));
-      expect(range.end, equals(const Duration(seconds: 25)));
-      expect(range.isBuffering, isFalse);
+      expect(buffer.start, equals(const Duration(seconds: 5)));
+      expect(buffer.end, equals(const Duration(seconds: 25)));
+      expect(buffer.isBuffering, isFalse);
     });
 
     test('Playback populates sampleRate, channels, and buffered telemetry', () async {
@@ -131,9 +131,9 @@ void main() {
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
-      final range = player.state.bufferedRange;
-      expect(range, isNotNull);
-      expect(player.state.bufferedPercentage, greaterThanOrEqualTo(0.0));
+      final buf = player.state.buffer;
+      expect(buf, isNotNull);
+      expect(buf.end, greaterThanOrEqualTo(Duration.zero));
 
       await player.action.stop();
     });

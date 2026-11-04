@@ -95,7 +95,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioSource dco_decode_box_autoadd_rust_audio_source(dynamic raw);
 
   @protected
-  RustBufferedRange dco_decode_box_autoadd_rust_buffered_range(dynamic raw);
+  RustBuffer dco_decode_box_autoadd_rust_buffer(dynamic raw);
 
   @protected
   RustCrossfadeConfig dco_decode_box_autoadd_rust_crossfade_config(dynamic raw);
@@ -160,7 +160,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
+
+  @protected
+  Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -238,7 +244,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioSource dco_decode_rust_audio_source(dynamic raw);
 
   @protected
-  RustBufferedRange dco_decode_rust_buffered_range(dynamic raw);
+  RustBuffer dco_decode_rust_buffer(dynamic raw);
 
   @protected
   RustCrossfadeConfig dco_decode_rust_crossfade_config(dynamic raw);
@@ -396,8 +402,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  RustBufferedRange sse_decode_box_autoadd_rust_buffered_range(
-      SseDeserializer deserializer);
+  RustBuffer sse_decode_box_autoadd_rust_buffer(SseDeserializer deserializer);
 
   @protected
   RustCrossfadeConfig sse_decode_box_autoadd_rust_crossfade_config(
@@ -474,7 +479,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
+
+  @protected
+  Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -560,8 +571,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioSource sse_decode_rust_audio_source(SseDeserializer deserializer);
 
   @protected
-  RustBufferedRange sse_decode_rust_buffered_range(
-      SseDeserializer deserializer);
+  RustBuffer sse_decode_rust_buffer(SseDeserializer deserializer);
 
   @protected
   RustCrossfadeConfig sse_decode_rust_crossfade_config(
@@ -734,8 +744,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioSource self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_rust_buffered_range(
-      RustBufferedRange self, SseSerializer serializer);
+  void sse_encode_box_autoadd_rust_buffer(
+      RustBuffer self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_crossfade_config(
@@ -812,8 +822,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_f_32_strict(
       Float32List self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_i_64_strict(
+      Int64List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -905,8 +922,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioSource self, SseSerializer serializer);
 
   @protected
-  void sse_encode_rust_buffered_range(
-      RustBufferedRange self, SseSerializer serializer);
+  void sse_encode_rust_buffer(RustBuffer self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_crossfade_config(

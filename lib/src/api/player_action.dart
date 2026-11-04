@@ -1,5 +1,8 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:typed_data' hide Int64List;
+
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show Int64List;
 
 import '../equalizer.dart';
 import '../reverb.dart';
@@ -51,7 +54,7 @@ class PlayerAction<T> {
   double? _forcedReplayGain;
   ReplayGainMode _replayGainMode = ReplayGainMode.track;
 
-  double? _effectiveReplayGain(AudioSource<T> source) {
+  double? _effectiveReplayGain(AudioSource<dynamic> source) {
     if (!_volumeNormalization) return null;
     if (_replayGainMode == ReplayGainMode.forced && _forcedReplayGain != null) {
       return _forcedReplayGain;
@@ -61,15 +64,16 @@ class PlayerAction<T> {
   }
 
   rust_types.RustAudioSource _toRustSource(
-    AudioSource<T> s,
+    AudioSource<dynamic> s,
     int id, [
     Uint8List? initBytes,
   ]) {
     final gain = _effectiveReplayGain(s);
     if (s is CustomAudioSource<T>) {
+      final streamId = s.provider.streamId != 0 ? s.provider.streamId : id;
       final url = s.provider.totalBytes != null
-          ? 'custom://${s.provider.streamId}?size=${s.provider.totalBytes}'
-          : 'custom://${s.provider.streamId}';
+          ? 'custom://$streamId?size=${s.provider.totalBytes}'
+          : 'custom://$streamId';
       return rust_types.RustAudioSource(
         id: id,
         source: url,
@@ -87,6 +91,40 @@ class PlayerAction<T> {
       replayGainDb: gain,
       replayPeak: raw.replayPeak,
     );
+  }
+
+  (AudioSource<T> retained, rust_types.RustAudioSource rustSource) _prepareSource(
+    AudioSource<T> s, [
+    Uint8List? customInitBytes,
+  ]) {
+    final uniqueId = s.id ?? _player.nextSourceId++;
+    s.attachEngineId(uniqueId);
+
+    final rustSource = _toRustSource(s, uniqueId, customInitBytes);
+
+    final AudioSource<T> retained;
+    if (s is MemoryAudioSource<T>) {
+      // Transfer byte payload ownership exclusively to Rust. Dart retains a lightweight
+      // descriptor without holding the large Uint8List buffer in memory.
+      retained = MemoryAudioSource<T>(
+        Uint8List(0),
+        data: s.data,
+        replayGainDb: s.replayGainDb,
+        replayPeak: s.replayPeak,
+        internalId: uniqueId,
+      );
+    } else if (s is CustomAudioSource<T>) {
+      _player.customProviders[uniqueId] = s.provider;
+      if (s.provider.streamId != 0) {
+        _player.customProviders[s.provider.streamId] = s.provider;
+      }
+      retained = s.copyWith(id: uniqueId);
+    } else {
+      retained = s.copyWith(id: uniqueId);
+    }
+
+    _player.sourceRegistry[uniqueId] = retained;
+    return (retained, rustSource);
   }
 
   // =========================================================================
@@ -166,23 +204,18 @@ class PlayerAction<T> {
         }
 
         final normalized = <AudioSource<T>>[];
+        final rustSources = <rust_types.RustAudioSource>[];
         for (var i = 0; i < source.length; i++) {
           final s = source[i];
-          final withId = s.id != null ? s : s.copyWith(id: i);
-          normalized.add(withId);
+          Uint8List? initBytes;
+          if (s is CustomAudioSource<T>) {
+            initBytes = await s.provider.readInitialBytes();
+          }
+          final (retained, rustSource) = _prepareSource(s, initBytes);
+          normalized.add(retained);
+          rustSources.add(rustSource);
         }
         _player.shadowQueue = List.of(normalized);
-        final rustSources = <rust_types.RustAudioSource>[];
-        for (var i = 0; i < normalized.length; i++) {
-          final s = normalized[i];
-          if (s is CustomAudioSource<T>) {
-            _player.customProviders[s.provider.streamId] = s.provider;
-            final initBytes = await s.provider.readInitialBytes();
-            rustSources.add(_toRustSource(s, s.id ?? i, initBytes));
-          } else {
-            rustSources.add(_toRustSource(s, s.id ?? i));
-          }
-        }
 
         try {
           await _rust.open(
@@ -214,46 +247,39 @@ class PlayerAction<T> {
     _player.ensureNotDisposed();
     if (sources.isEmpty) return;
 
-    final currentMaxId = _player.shadowQueue.fold<int>(
-      -1,
-      (max, s) => s.id != null && s.id! > max ? s.id! : max,
-    );
-    var nextId = currentMaxId + 1;
     final normalized = <AudioSource<T>>[];
+    final rustSources = <rust_types.RustAudioSource>[];
     for (final s in sources) {
-      final withId = s.id != null ? s : s.copyWith(id: nextId++);
-      if (withId is CustomAudioSource<T>) {
-        _player.customProviders[withId.provider.streamId] = withId.provider;
-      }
-      normalized.add(withId);
+      final (retained, rustSource) = _prepareSource(s);
+      normalized.add(retained);
+      rustSources.add(rustSource);
     }
     _player.shadowQueue.addAll(normalized);
-    final rustSources = normalized.map((s) => _toRustSource(s, s.id ?? 0)).toList();
+    _player.state.queue = List.of(_player.shadowQueue);
     _rust.append(sources: rustSources);
   }
 
   /// Inserts a track immediately after the active playing track.
   Future<void> insertNext(AudioSource<T> source) async {
     _player.ensureNotDisposed();
-    final currentMaxId = _player.shadowQueue.fold<int>(
-      -1,
-      (max, s) => s.id != null && s.id! > max ? s.id! : max,
-    );
-    final withId = source.id != null ? source : source.copyWith(id: currentMaxId + 1);
-    if (withId is CustomAudioSource<T>) {
-      _player.customProviders[withId.provider.streamId] = withId.provider;
-    }
+    final (retained, rustSource) = _prepareSource(source);
     final curIdx = _player.state.currentIndex;
     final insertIdx = (curIdx >= 0) ? curIdx + 1 : _player.shadowQueue.length;
-    _player.shadowQueue.insert(insertIdx, withId);
-    _rust.insertNext(source: _toRustSource(withId, withId.id ?? 0));
+    _player.shadowQueue.insert(insertIdx, retained);
+    _player.state.queue = List.of(_player.shadowQueue);
+    _rust.insertNext(source: rustSource);
   }
 
   /// Removes a track at [index] from the playlist queue.
   Future<void> removeAt(int index) async {
     _player.ensureNotDisposed();
     if (index >= 0 && index < _player.shadowQueue.length) {
-      _player.shadowQueue.removeAt(index);
+      final removed = _player.shadowQueue.removeAt(index);
+      if (removed.id != null) {
+        _player.sourceRegistry.remove(removed.id);
+        _player.customProviders.remove(removed.id);
+      }
+      _player.state.queue = List.of(_player.shadowQueue);
       _rust.removeAt(index: BigInt.from(index));
     }
   }
@@ -267,11 +293,26 @@ class PlayerAction<T> {
         newIndex < _player.shadowQueue.length) {
       final item = _player.shadowQueue.removeAt(oldIndex);
       _player.shadowQueue.insert(newIndex, item);
-      _rust.reorder(
-        oldIndex: BigInt.from(oldIndex),
-        newIndex: BigInt.from(newIndex),
-      );
+      _player.state.queue = List.of(_player.shadowQueue);
+      final ids = _player.shadowQueue.map((s) => s.id ?? 0).toList();
+      _rust.reorderByIds(ids: Int64List.fromList(ids));
     }
+  }
+
+  /// Reorders the playlist queue using an ordered list of unique track [ids].
+  Future<void> reorderByIds(List<int> ids) async {
+    _player.ensureNotDisposed();
+    final idMap = {for (final s in _player.shadowQueue) s.id: s};
+    final reordered = <AudioSource<T>>[];
+    for (final id in ids) {
+      final s = idMap[id];
+      if (s != null) reordered.add(s);
+    }
+    if (reordered.length == _player.shadowQueue.length) {
+      _player.shadowQueue = reordered;
+      _player.state.queue = List.of(_player.shadowQueue);
+    }
+    _rust.reorderByIds(ids: Int64List.fromList(ids));
   }
 
   /// Clears the playlist queue. If [keepCurrent] is true, retains the playing track.
@@ -283,9 +324,15 @@ class PlayerAction<T> {
         _player.state.currentIndex < _player.shadowQueue.length) {
       final cur = _player.shadowQueue[_player.state.currentIndex];
       _player.shadowQueue = [cur];
+      final curId = cur.id;
+      _player.sourceRegistry.removeWhere((id, _) => id != curId);
+      _player.customProviders.removeWhere((id, _) => id != curId);
     } else {
       _player.shadowQueue.clear();
+      _player.sourceRegistry.clear();
+      _player.customProviders.clear();
     }
+    _player.state.queue = List.of(_player.shadowQueue);
     _rust.clearQueue(keepCurrent: keepCurrent);
   }
 
@@ -661,25 +708,23 @@ class PlayerAction<T> {
   /// Loads and decodes an [AudioEffect] into fast preallocated RAM.
   Future<void> loadEffect(AudioEffect effect) async {
     _player.ensureNotDisposed();
-    final bytes = await effect.source.readBytes();
+    final rustSource = _toRustSource(effect.source, 0);
     await _rust.loadEffect(
       id: effect.id,
-      bytes: bytes,
+      source: rustSource,
       maxPolyphony: BigInt.from(effect.maxPolyphony),
       pinned: effect.pinned,
     );
-    if (!_player.state.loadedEffectIds.contains(effect.id)) {
-      _player.state.loadedEffectIds = [..._player.state.loadedEffectIds, effect.id];
-    }
-    _player.state.allocatedRamBytes += bytes.length;
+    _player.state.loadedEffectIds = _rust.getLoadedEffectIds();
+    _player.state.allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
   }
 
   /// Unloads a cached sound effect from RAM.
   Future<void> unloadEffect(String id) async {
     _player.ensureNotDisposed();
     _rust.unloadEffect(id: id);
-    _player.state.loadedEffectIds =
-        _player.state.loadedEffectIds.where((e) => e != id).toList();
+    _player.state.loadedEffectIds = _rust.getLoadedEffectIds();
+    _player.state.allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
   }
 
   /// Preloads a batch of sound effects in parallel.

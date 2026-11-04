@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -822602924;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1210080680;
 
 // Section: executor
 
@@ -602,6 +602,106 @@ fn wire__crate__api__player__RustMiniaudioPlayer_enable_microphone_impl(
         },
     )
 }
+fn wire__crate__api__player__RustMiniaudioPlayer_get_active_voices_count_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "RustMiniaudioPlayer_get_active_voices_count",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(
+                    crate::api::player::RustMiniaudioPlayer::get_active_voices_count(
+                        &*api_that_guard,
+                    ),
+                )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__player__RustMiniaudioPlayer_get_allocated_ram_bytes_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "RustMiniaudioPlayer_get_allocated_ram_bytes",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(
+                    crate::api::player::RustMiniaudioPlayer::get_allocated_ram_bytes(
+                        &*api_that_guard,
+                    ),
+                )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__player__RustMiniaudioPlayer_get_input_devices_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -658,6 +758,56 @@ fn wire__crate__api__player__RustMiniaudioPlayer_get_input_devices_sync_impl(
             deserializer.end();
             transform_result_sse::<_, String>((move || {
                 let output_ok = crate::api::player::RustMiniaudioPlayer::get_input_devices_sync()?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__player__RustMiniaudioPlayer_get_loaded_effect_ids_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "RustMiniaudioPlayer_get_loaded_effect_ids",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(
+                    crate::api::player::RustMiniaudioPlayer::get_loaded_effect_ids(
+                        &*api_that_guard,
+                    ),
+                )?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -802,7 +952,7 @@ fn wire__crate__api__player__RustMiniaudioPlayer_load_effect_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
             >>::sse_decode(&mut deserializer);
             let api_id = <String>::sse_decode(&mut deserializer);
-            let api_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_source = <crate::api::types::RustAudioSource>::sse_decode(&mut deserializer);
             let api_max_polyphony = <usize>::sse_decode(&mut deserializer);
             let api_pinned = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -825,7 +975,7 @@ fn wire__crate__api__player__RustMiniaudioPlayer_load_effect_impl(
                     let output_ok = crate::api::player::RustMiniaudioPlayer::load_effect(
                         &*api_that_guard,
                         api_id,
-                        api_bytes,
+                        api_source,
                         api_max_polyphony,
                         api_pinned,
                     )?;
@@ -1333,6 +1483,57 @@ fn wire__crate__api__player__RustMiniaudioPlayer_reorder_impl(
                     api_old_index,
                     api_new_index,
                 ))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__player__RustMiniaudioPlayer_reorder_by_ids_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "RustMiniaudioPlayer_reorder_by_ids",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
+            >>::sse_decode(&mut deserializer);
+            let api_ids = <Vec<i64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok =
+                    Ok::<_, ()>(crate::api::player::RustMiniaudioPlayer::reorder_by_ids(
+                        &*api_that_guard,
+                        api_ids,
+                    ))?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -3705,7 +3906,7 @@ fn wire__crate__api__types__rust_audio_source_default_impl(
         },
     )
 }
-fn wire__crate__api__types__rust_buffered_range_default_impl(
+fn wire__crate__api__types__rust_buffer_default_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -3713,7 +3914,7 @@ fn wire__crate__api__types__rust_buffered_range_default_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "rust_buffered_range_default",
+            debug_name: "rust_buffer_default",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -3730,7 +3931,7 @@ fn wire__crate__api__types__rust_buffered_range_default_impl(
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
-                    let output_ok = Ok::<_, ()>(crate::api::types::RustBufferedRange::default())?;
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustBuffer::default())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -4524,6 +4725,18 @@ impl SseDecode for i64 {
     }
 }
 
+impl SseDecode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<f32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4531,6 +4744,18 @@ impl SseDecode for Vec<f32> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<f32>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<i64>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -4878,13 +5103,13 @@ impl SseDecode for crate::api::types::RustAudioSource {
     }
 }
 
-impl SseDecode for crate::api::types::RustBufferedRange {
+impl SseDecode for crate::api::types::RustBuffer {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_startMs = <i64>::sse_decode(deserializer);
         let mut var_endMs = <i64>::sse_decode(deserializer);
         let mut var_isBuffering = <bool>::sse_decode(deserializer);
-        return crate::api::types::RustBufferedRange {
+        return crate::api::types::RustBuffer {
             start_ms: var_startMs,
             end_ms: var_endMs,
             is_buffering: var_isBuffering,
@@ -5076,9 +5301,8 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                 return crate::api::types::RustPlayerEvent::IsCompleted(var_field0);
             }
             7 => {
-                let mut var_field0 =
-                    <crate::api::types::RustBufferedRange>::sse_decode(deserializer);
-                return crate::api::types::RustPlayerEvent::BufferedRange(var_field0);
+                let mut var_field0 = <crate::api::types::RustBuffer>::sse_decode(deserializer);
+                return crate::api::types::RustPlayerEvent::Buffer(var_field0);
             }
             8 => {
                 let mut var_field0 =
@@ -5200,65 +5424,77 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                 return crate::api::types::RustPlayerEvent::VoiceCompleted(var_field0);
             }
             35 => {
+                let mut var_ids = <Vec<String>>::sse_decode(deserializer);
+                let mut var_allocatedBytes = <usize>::sse_decode(deserializer);
+                return crate::api::types::RustPlayerEvent::LoadedEffects {
+                    ids: var_ids,
+                    allocated_bytes: var_allocatedBytes,
+                };
+            }
+            36 => {
+                let mut var_field0 = <u32>::sse_decode(deserializer);
+                return crate::api::types::RustPlayerEvent::ActiveVoices(var_field0);
+            }
+            37 => {
                 let mut var_field0 = <Vec<u8>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::MetaBytes(var_field0);
             }
-            36 => {
+            38 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::MetaBytesEnabled(var_field0);
             }
-            37 => {
+            39 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::CueVolume(var_field0);
             }
-            38 => {
+            40 => {
                 let mut var_field0 = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::CueSource(var_field0);
             }
-            39 => {
+            41 => {
                 let mut var_field0 = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::LoopMode(var_field0);
             }
-            40 => {
+            42 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsShuffled(var_field0);
             }
-            41 => {
+            43 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::PauseOnDeviceChange(var_field0);
             }
-            42 => {
+            44 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::MicrophoneEnabled(var_field0);
             }
-            43 => {
+            45 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::MicVolume(var_field0);
             }
-            44 => {
+            46 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::DirectMonitoringEnabled(var_field0);
             }
-            45 => {
+            47 => {
                 let mut var_field0 =
                     <Vec<crate::api::types::RustAudioDevice>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::OutputDevices(var_field0);
             }
-            46 => {
+            48 => {
                 let mut var_field0 =
                     <Vec<crate::api::types::RustAudioDevice>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::InputDevices(var_field0);
             }
-            47 => {
+            49 => {
                 let mut var_field0 =
                     <crate::api::types::RustDartReadRequest>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::DartReadRequest(var_field0);
             }
-            48 => {
+            50 => {
                 let mut var_field0 = <crate::api::types::RustAudioDevice>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Device(var_field0);
             }
-            49 => {
+            51 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 let mut var_code = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Error {
@@ -5518,6 +5754,7 @@ impl SseDecode for crate::api::player::TelemetryFilter {
         let mut var_isCompleted = <Option<bool>>::sse_decode(deserializer);
         let mut var_replayGain = <Option<(u32, u32, bool)>>::sse_decode(deserializer);
         let mut var_metaBytes = <Option<Vec<u8>>>::sse_decode(deserializer);
+        let mut var_activeVoices = <Option<u32>>::sse_decode(deserializer);
         return crate::api::player::TelemetryFilter {
             state: var_state,
             phase: var_phase,
@@ -5534,6 +5771,7 @@ impl SseDecode for crate::api::player::TelemetryFilter {
             is_completed: var_isCompleted,
             replay_gain: var_replayGain,
             meta_bytes: var_metaBytes,
+            active_voices: var_activeVoices,
         };
     }
 }
@@ -5603,200 +5841,195 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__player__RustMiniaudioPlayer_get_input_devices_impl(
+        14 => wire__crate__api__player__RustMiniaudioPlayer_get_input_devices_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        14 => wire__crate__api__player__RustMiniaudioPlayer_get_output_devices_impl(
+        17 => wire__crate__api__player__RustMiniaudioPlayer_get_output_devices_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__player__RustMiniaudioPlayer_load_effect_impl(
+        20 => wire__crate__api__player__RustMiniaudioPlayer_load_effect_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__player__RustMiniaudioPlayer_next_impl(
+        22 => wire__crate__api__player__RustMiniaudioPlayer_next_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__player__RustMiniaudioPlayer_open_impl(
+        23 => wire__crate__api__player__RustMiniaudioPlayer_open_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__player__RustMiniaudioPlayer_previous_impl(
+        27 => wire__crate__api__player__RustMiniaudioPlayer_previous_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__player__RustMiniaudioPlayer_skip_to_index_impl(
+        65 => wire__crate__api__player__RustMiniaudioPlayer_skip_to_index_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__player__RustMiniaudioPlayer_start_recording_impl(
+        66 => wire__crate__api__player__RustMiniaudioPlayer_start_recording_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__player__RustMiniaudioPlayer_stop_recording_impl(
+        70 => wire__crate__api__player__RustMiniaudioPlayer_stop_recording_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__player__RustMiniaudioPlayer_subscribe_events_impl(
+        71 => wire__crate__api__player__RustMiniaudioPlayer_subscribe_events_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__player__analyze_audio_file_impl(port, ptr, rust_vec_len, data_len),
-        71 => {
+        73 => wire__crate__api__player__analyze_audio_file_impl(port, ptr, rust_vec_len, data_len),
+        75 => {
             wire__crate__api__player__analyze_audio_memory_impl(port, ptr, rust_vec_len, data_len)
         }
-        72 => wire__crate__api__types__rust_audio_analysis_result_default_impl(
+        76 => wire__crate__api__types__rust_audio_analysis_result_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__types__rust_audio_device_default_impl(
+        77 => wire__crate__api__types__rust_audio_device_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__types__rust_audio_source_default_impl(
+        78 => wire__crate__api__types__rust_audio_source_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__types__rust_buffered_range_default_impl(
+        79 => wire__crate__api__types__rust_buffer_default_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__types__rust_crossfade_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__types__rust_crossfade_config_default_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        77 => {
+        81 => {
             wire__crate__api__types__rust_cue_config_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        78 => wire__crate__api__types__rust_distance_model_default_impl(
+        82 => wire__crate__api__types__rust_distance_model_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__types__rust_ducking_config_default_impl(
+        83 => wire__crate__api__types__rust_ducking_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__types__rust_effect_config_default_impl(
+        84 => wire__crate__api__types__rust_effect_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__types__rust_equalizer_params_default_impl(
+        85 => wire__crate__api__types__rust_equalizer_params_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        82 => wire__crate__api__types__rust_http_header_default_impl(
+        86 => wire__crate__api__types__rust_http_header_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        83 => wire__crate__api__types__rust_player_config_default_impl(
+        87 => wire__crate__api__types__rust_player_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        84 => wire__crate__api__types__rust_player_status_default_impl(
+        88 => wire__crate__api__types__rust_player_status_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        85 => wire__crate__api__types__rust_replay_gain_config_default_impl(
+        89 => wire__crate__api__types__rust_replay_gain_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        86 => wire__crate__api__types__rust_reverb_params_default_impl(
+        90 => wire__crate__api__types__rust_reverb_params_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        87 => wire__crate__api__types__rust_silence_config_default_impl(
+        91 => wire__crate__api__types__rust_silence_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        88 => wire__crate__api__types__rust_sound_buffer_info_default_impl(
+        92 => wire__crate__api__types__rust_sound_buffer_info_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        89 => wire__crate__api__types__rust_spatial_emitter_default_impl(
+        93 => wire__crate__api__types__rust_spatial_emitter_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        90 => wire__crate__api__types__rust_spatial_listener_default_impl(
+        94 => wire__crate__api__types__rust_spatial_listener_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        91 => {
+        95 => {
             wire__crate__api__types__rust_vector_3_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        92 => wire__crate__api__types__rust_visualizer_data_default_impl(
+        96 => wire__crate__api__types__rust_visualizer_data_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        93 => wire__crate__api__types__rust_voice_stealing_policy_default_impl(
+        97 => wire__crate__api__types__rust_voice_stealing_policy_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        94 => {
+        98 => {
             wire__crate__api__types__rust_wav_format_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        96 => wire__crate__api__player__telemetry_filter_default_impl(
+        100 => wire__crate__api__player__telemetry_filter_default_impl(
             port,
             ptr,
             rust_vec_len,
@@ -5833,217 +6066,237 @@ fn pde_ffi_dispatcher_sync_impl(
         10 => {
             wire__crate__api__player__RustMiniaudioPlayer_dispose_impl(ptr, rust_vec_len, data_len)
         }
-        13 => wire__crate__api__player__RustMiniaudioPlayer_get_input_devices_sync_impl(
+        12 => wire__crate__api__player__RustMiniaudioPlayer_get_active_voices_count_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        15 => wire__crate__api__player__RustMiniaudioPlayer_get_output_devices_sync_impl(
+        13 => wire__crate__api__player__RustMiniaudioPlayer_get_allocated_ram_bytes_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__player__RustMiniaudioPlayer_insert_next_impl(
+        15 => wire__crate__api__player__RustMiniaudioPlayer_get_input_devices_sync_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__player__RustMiniaudioPlayer_new_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__player__RustMiniaudioPlayer_pause_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__player__RustMiniaudioPlayer_play_impl(ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__player__RustMiniaudioPlayer_play_effect_impl(
+        16 => wire__crate__api__player__RustMiniaudioPlayer_get_loaded_effect_ids_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__player__RustMiniaudioPlayer_remove_at_impl(
+        18 => wire__crate__api__player__RustMiniaudioPlayer_get_output_devices_sync_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__player__RustMiniaudioPlayer_remove_output_impl(
+        19 => wire__crate__api__player__RustMiniaudioPlayer_insert_next_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => {
+        21 => wire__crate__api__player__RustMiniaudioPlayer_new_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__player__RustMiniaudioPlayer_pause_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__player__RustMiniaudioPlayer_play_impl(ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__player__RustMiniaudioPlayer_play_effect_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        28 => wire__crate__api__player__RustMiniaudioPlayer_remove_at_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        29 => wire__crate__api__player__RustMiniaudioPlayer_remove_output_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        30 => {
             wire__crate__api__player__RustMiniaudioPlayer_reorder_impl(ptr, rust_vec_len, data_len)
         }
-        28 => wire__crate__api__player__RustMiniaudioPlayer_respond_dart_read_request_impl(
+        31 => wire__crate__api__player__RustMiniaudioPlayer_reorder_by_ids_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => wire__crate__api__player__RustMiniaudioPlayer_seek_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__player__RustMiniaudioPlayer_set_balance_impl(
+        32 => wire__crate__api__player__RustMiniaudioPlayer_respond_dart_read_request_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        31 => wire__crate__api__player__RustMiniaudioPlayer_set_buffer_size_impl(
+        33 => wire__crate__api__player__RustMiniaudioPlayer_seek_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__player__RustMiniaudioPlayer_set_balance_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        32 => wire__crate__api__player__RustMiniaudioPlayer_set_crossfade_impl(
+        35 => wire__crate__api__player__RustMiniaudioPlayer_set_buffer_size_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        33 => wire__crate__api__player__RustMiniaudioPlayer_set_crossfeed_impl(
+        36 => wire__crate__api__player__RustMiniaudioPlayer_set_crossfade_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => wire__crate__api__player__RustMiniaudioPlayer_set_cue_source_impl(
+        37 => wire__crate__api__player__RustMiniaudioPlayer_set_crossfeed_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        35 => wire__crate__api__player__RustMiniaudioPlayer_set_cue_volume_impl(
+        38 => wire__crate__api__player__RustMiniaudioPlayer_set_cue_source_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        36 => wire__crate__api__player__RustMiniaudioPlayer_set_direct_monitoring_impl(
+        39 => wire__crate__api__player__RustMiniaudioPlayer_set_cue_volume_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__player__RustMiniaudioPlayer_set_doppler_parameters_impl(
+        40 => wire__crate__api__player__RustMiniaudioPlayer_set_direct_monitoring_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__player__RustMiniaudioPlayer_set_ducking_impl(
+        41 => wire__crate__api__player__RustMiniaudioPlayer_set_doppler_parameters_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_balance_impl(
+        42 => wire__crate__api__player__RustMiniaudioPlayer_set_ducking_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_emitter_impl(
+        43 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_balance_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_pitch_impl(
+        44 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_emitter_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_volume_impl(
+        45 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_pitch_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__player__RustMiniaudioPlayer_set_equalizer_impl(
+        46 => wire__crate__api__player__RustMiniaudioPlayer_set_effect_volume_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        44 => wire__crate__api__player__RustMiniaudioPlayer_set_limiter_impl(
+        47 => wire__crate__api__player__RustMiniaudioPlayer_set_equalizer_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        45 => wire__crate__api__player__RustMiniaudioPlayer_set_listener_impl(
+        48 => wire__crate__api__player__RustMiniaudioPlayer_set_limiter_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__player__RustMiniaudioPlayer_set_loop_mode_impl(
+        49 => wire__crate__api__player__RustMiniaudioPlayer_set_listener_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        47 => wire__crate__api__player__RustMiniaudioPlayer_set_metabytes_enabled_impl(
+        50 => wire__crate__api__player__RustMiniaudioPlayer_set_loop_mode_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        48 => wire__crate__api__player__RustMiniaudioPlayer_set_microphone_volume_impl(
+        51 => wire__crate__api__player__RustMiniaudioPlayer_set_metabytes_enabled_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => {
-            wire__crate__api__player__RustMiniaudioPlayer_set_mono_impl(ptr, rust_vec_len, data_len)
-        }
-        50 => wire__crate__api__player__RustMiniaudioPlayer_set_pause_on_device_change_impl(
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        51 => wire__crate__api__player__RustMiniaudioPlayer_set_pitch_impl(
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        52 => wire__crate__api__player__RustMiniaudioPlayer_set_preamp_impl(
+        52 => wire__crate__api__player__RustMiniaudioPlayer_set_microphone_volume_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
         53 => {
+            wire__crate__api__player__RustMiniaudioPlayer_set_mono_impl(ptr, rust_vec_len, data_len)
+        }
+        54 => wire__crate__api__player__RustMiniaudioPlayer_set_pause_on_device_change_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        55 => wire__crate__api__player__RustMiniaudioPlayer_set_pitch_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        56 => wire__crate__api__player__RustMiniaudioPlayer_set_preamp_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        57 => {
             wire__crate__api__player__RustMiniaudioPlayer_set_rate_impl(ptr, rust_vec_len, data_len)
         }
-        54 => wire__crate__api__player__RustMiniaudioPlayer_set_replay_gain_impl(
+        58 => wire__crate__api__player__RustMiniaudioPlayer_set_replay_gain_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__player__RustMiniaudioPlayer_set_reverb_impl(
+        59 => wire__crate__api__player__RustMiniaudioPlayer_set_reverb_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__player__RustMiniaudioPlayer_set_shuffle_impl(
+        60 => wire__crate__api__player__RustMiniaudioPlayer_set_shuffle_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__player__RustMiniaudioPlayer_set_skip_silence_impl(
+        61 => wire__crate__api__player__RustMiniaudioPlayer_set_skip_silence_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => wire__crate__api__player__RustMiniaudioPlayer_set_spatializer_impl(
+        62 => wire__crate__api__player__RustMiniaudioPlayer_set_spatializer_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__player__RustMiniaudioPlayer_set_visualizer_enabled_impl(
+        63 => wire__crate__api__player__RustMiniaudioPlayer_set_visualizer_enabled_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__player__RustMiniaudioPlayer_set_volume_impl(
+        64 => wire__crate__api__player__RustMiniaudioPlayer_set_volume_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__player__RustMiniaudioPlayer_stop_impl(ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__player__RustMiniaudioPlayer_stop_all_effects_impl(
+        67 => wire__crate__api__player__RustMiniaudioPlayer_stop_impl(ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__player__RustMiniaudioPlayer_stop_all_effects_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__player__RustMiniaudioPlayer_stop_effect_impl(
+        69 => wire__crate__api__player__RustMiniaudioPlayer_stop_effect_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__player__RustMiniaudioPlayer_unload_effect_impl(
+        72 => wire__crate__api__player__RustMiniaudioPlayer_unload_effect_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        70 => wire__crate__api__player__analyze_audio_file_sync_impl(ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__player__set_log_level_impl(ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__player__analyze_audio_file_sync_impl(ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__player__set_log_level_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6210,7 +6463,7 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioSource>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::types::RustBufferedRange {
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustBuffer {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.start_ms.into_into_dart().into_dart(),
@@ -6220,14 +6473,11 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustBufferedRange {
         .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::types::RustBufferedRange
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::types::RustBuffer {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustBuffer>
+    for crate::api::types::RustBuffer
 {
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustBufferedRange>
-    for crate::api::types::RustBufferedRange
-{
-    fn into_into_dart(self) -> crate::api::types::RustBufferedRange {
+    fn into_into_dart(self) -> crate::api::types::RustBuffer {
         self
     }
 }
@@ -6466,7 +6716,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustPlayerEvent {
             crate::api::types::RustPlayerEvent::IsCompleted(field0) => {
                 [6.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::BufferedRange(field0) => {
+            crate::api::types::RustPlayerEvent::Buffer(field0) => {
                 [7.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Queue(field0) => {
@@ -6553,50 +6803,62 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustPlayerEvent {
             crate::api::types::RustPlayerEvent::VoiceCompleted(field0) => {
                 [34.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::MetaBytes(field0) => {
-                [35.into_dart(), field0.into_into_dart().into_dart()].into_dart()
-            }
-            crate::api::types::RustPlayerEvent::MetaBytesEnabled(field0) => {
+            crate::api::types::RustPlayerEvent::LoadedEffects {
+                ids,
+                allocated_bytes,
+            } => [
+                35.into_dart(),
+                ids.into_into_dart().into_dart(),
+                allocated_bytes.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::types::RustPlayerEvent::ActiveVoices(field0) => {
                 [36.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::CueVolume(field0) => {
+            crate::api::types::RustPlayerEvent::MetaBytes(field0) => {
                 [37.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::CueSource(field0) => {
+            crate::api::types::RustPlayerEvent::MetaBytesEnabled(field0) => {
                 [38.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::LoopMode(field0) => {
+            crate::api::types::RustPlayerEvent::CueVolume(field0) => {
                 [39.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::IsShuffled(field0) => {
+            crate::api::types::RustPlayerEvent::CueSource(field0) => {
                 [40.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::PauseOnDeviceChange(field0) => {
+            crate::api::types::RustPlayerEvent::LoopMode(field0) => {
                 [41.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::MicrophoneEnabled(field0) => {
+            crate::api::types::RustPlayerEvent::IsShuffled(field0) => {
                 [42.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::MicVolume(field0) => {
+            crate::api::types::RustPlayerEvent::PauseOnDeviceChange(field0) => {
                 [43.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::DirectMonitoringEnabled(field0) => {
+            crate::api::types::RustPlayerEvent::MicrophoneEnabled(field0) => {
                 [44.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::OutputDevices(field0) => {
+            crate::api::types::RustPlayerEvent::MicVolume(field0) => {
                 [45.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::InputDevices(field0) => {
+            crate::api::types::RustPlayerEvent::DirectMonitoringEnabled(field0) => {
                 [46.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::DartReadRequest(field0) => {
+            crate::api::types::RustPlayerEvent::OutputDevices(field0) => {
                 [47.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::Device(field0) => {
+            crate::api::types::RustPlayerEvent::InputDevices(field0) => {
                 [48.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::types::RustPlayerEvent::DartReadRequest(field0) => {
+                [49.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::types::RustPlayerEvent::Device(field0) => {
+                [50.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
             crate::api::types::RustPlayerEvent::Error { message, code } => [
-                49.into_dart(),
+                51.into_dart(),
                 message.into_into_dart().into_dart(),
                 code.into_into_dart().into_dart(),
             ]
@@ -6931,6 +7193,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::player::TelemetryFilter {
             self.is_completed.into_into_dart().into_dart(),
             self.replay_gain.into_into_dart().into_dart(),
             self.meta_bytes.into_into_dart().into_dart(),
+            self.active_voices.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -7041,12 +7304,32 @@ impl SseEncode for i64 {
     }
 }
 
+impl SseEncode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<f32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <f32>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <i64>::sse_encode(item, serializer);
         }
     }
 }
@@ -7315,7 +7598,7 @@ impl SseEncode for crate::api::types::RustAudioSource {
     }
 }
 
-impl SseEncode for crate::api::types::RustBufferedRange {
+impl SseEncode for crate::api::types::RustBuffer {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i64>::sse_encode(self.start_ms, serializer);
@@ -7457,9 +7740,9 @@ impl SseEncode for crate::api::types::RustPlayerEvent {
                 <i32>::sse_encode(6, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustPlayerEvent::BufferedRange(field0) => {
+            crate::api::types::RustPlayerEvent::Buffer(field0) => {
                 <i32>::sse_encode(7, serializer);
-                <crate::api::types::RustBufferedRange>::sse_encode(field0, serializer);
+                <crate::api::types::RustBuffer>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Queue(field0) => {
                 <i32>::sse_encode(8, serializer);
@@ -7570,64 +7853,76 @@ impl SseEncode for crate::api::types::RustPlayerEvent {
                 <i32>::sse_encode(34, serializer);
                 <u32>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustPlayerEvent::MetaBytes(field0) => {
+            crate::api::types::RustPlayerEvent::LoadedEffects {
+                ids,
+                allocated_bytes,
+            } => {
                 <i32>::sse_encode(35, serializer);
+                <Vec<String>>::sse_encode(ids, serializer);
+                <usize>::sse_encode(allocated_bytes, serializer);
+            }
+            crate::api::types::RustPlayerEvent::ActiveVoices(field0) => {
+                <i32>::sse_encode(36, serializer);
+                <u32>::sse_encode(field0, serializer);
+            }
+            crate::api::types::RustPlayerEvent::MetaBytes(field0) => {
+                <i32>::sse_encode(37, serializer);
                 <Vec<u8>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::MetaBytesEnabled(field0) => {
-                <i32>::sse_encode(36, serializer);
+                <i32>::sse_encode(38, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::CueVolume(field0) => {
-                <i32>::sse_encode(37, serializer);
+                <i32>::sse_encode(39, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::CueSource(field0) => {
-                <i32>::sse_encode(38, serializer);
+                <i32>::sse_encode(40, serializer);
                 <i32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::LoopMode(field0) => {
-                <i32>::sse_encode(39, serializer);
+                <i32>::sse_encode(41, serializer);
                 <i32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsShuffled(field0) => {
-                <i32>::sse_encode(40, serializer);
-                <bool>::sse_encode(field0, serializer);
-            }
-            crate::api::types::RustPlayerEvent::PauseOnDeviceChange(field0) => {
-                <i32>::sse_encode(41, serializer);
-                <bool>::sse_encode(field0, serializer);
-            }
-            crate::api::types::RustPlayerEvent::MicrophoneEnabled(field0) => {
                 <i32>::sse_encode(42, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustPlayerEvent::MicVolume(field0) => {
+            crate::api::types::RustPlayerEvent::PauseOnDeviceChange(field0) => {
                 <i32>::sse_encode(43, serializer);
-                <f32>::sse_encode(field0, serializer);
+                <bool>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustPlayerEvent::DirectMonitoringEnabled(field0) => {
+            crate::api::types::RustPlayerEvent::MicrophoneEnabled(field0) => {
                 <i32>::sse_encode(44, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustPlayerEvent::OutputDevices(field0) => {
+            crate::api::types::RustPlayerEvent::MicVolume(field0) => {
                 <i32>::sse_encode(45, serializer);
+                <f32>::sse_encode(field0, serializer);
+            }
+            crate::api::types::RustPlayerEvent::DirectMonitoringEnabled(field0) => {
+                <i32>::sse_encode(46, serializer);
+                <bool>::sse_encode(field0, serializer);
+            }
+            crate::api::types::RustPlayerEvent::OutputDevices(field0) => {
+                <i32>::sse_encode(47, serializer);
                 <Vec<crate::api::types::RustAudioDevice>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::InputDevices(field0) => {
-                <i32>::sse_encode(46, serializer);
+                <i32>::sse_encode(48, serializer);
                 <Vec<crate::api::types::RustAudioDevice>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::DartReadRequest(field0) => {
-                <i32>::sse_encode(47, serializer);
+                <i32>::sse_encode(49, serializer);
                 <crate::api::types::RustDartReadRequest>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Device(field0) => {
-                <i32>::sse_encode(48, serializer);
+                <i32>::sse_encode(50, serializer);
                 <crate::api::types::RustAudioDevice>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Error { message, code } => {
-                <i32>::sse_encode(49, serializer);
+                <i32>::sse_encode(51, serializer);
                 <String>::sse_encode(message, serializer);
                 <i32>::sse_encode(code, serializer);
             }
@@ -7810,6 +8105,7 @@ impl SseEncode for crate::api::player::TelemetryFilter {
         <Option<bool>>::sse_encode(self.is_completed, serializer);
         <Option<(u32, u32, bool)>>::sse_encode(self.replay_gain, serializer);
         <Option<Vec<u8>>>::sse_encode(self.meta_bytes, serializer);
+        <Option<u32>>::sse_encode(self.active_voices, serializer);
     }
 }
 

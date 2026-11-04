@@ -10,7 +10,7 @@ import '../rust/frb_generated.dart';
 import 'audio_analysis_result.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
-import 'buffered_range.dart';
+import 'buffer.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'logger.dart';
@@ -283,6 +283,8 @@ class MiniaudioPlayer<T> {
   bool get isDisposed => _isDisposed;
 
   List<AudioSource<T>> shadowQueue = [];
+  int nextSourceId = 1;
+  final Map<int, AudioSource<T>> sourceRegistry = {};
   final Map<int, CustomByteProvider> customProviders = {};
 
   final Set<AudioOutput> _activeOutputs = {const AudioOutput.speaker()};
@@ -422,20 +424,14 @@ class MiniaudioPlayer<T> {
         final dur = durMs > 0 ? Duration(milliseconds: durMs) : null;
         state.duration = dur;
         stream.durationController.add(dur);
-      case rust_types.RustPlayerEvent_BufferedRange(:final field0):
-        final br = BufferedRange(
+      case rust_types.RustPlayerEvent_Buffer(:final field0):
+        final b = Buffer(
           start: Duration(milliseconds: field0.startMs.toInt()),
           end: Duration(milliseconds: field0.endMs.toInt()),
           isBuffering: field0.isBuffering,
         );
-        state.bufferedRange = br;
-        state.bufferedPosition = Duration(milliseconds: field0.endMs.toInt());
-        state.bufferedPercentage = (state.duration?.inMilliseconds ?? 0) > 0
-            ? (field0.endMs.toDouble() / state.duration!.inMilliseconds)
-            : 0.0;
-        stream.bufferedRangeController.add(br);
-        stream.bufferedPositionController.add(state.bufferedPosition);
-        stream.bufferedPercentageController.add(state.bufferedPercentage);
+        state.buffer = b;
+        stream.bufferController.add(b);
       case rust_types.RustPlayerEvent_Volume(:final field0):
         state.volume = field0;
         stream.volumeController.add(field0);
@@ -562,6 +558,14 @@ class MiniaudioPlayer<T> {
         stream.micRmsLevelController.add(field0);
       case rust_types.RustPlayerEvent_VoiceCompleted(:final field0):
         stream.voiceCompletedController.add(field0);
+      case rust_types.RustPlayerEvent_LoadedEffects(:final ids, :final allocatedBytes):
+        state.loadedEffectIds = List.unmodifiable(ids);
+        state.allocatedRamBytes = allocatedBytes.toInt();
+        stream.loadedEffectIdsController.add(state.loadedEffectIds);
+        stream.allocatedRamBytesController.add(state.allocatedRamBytes);
+      case rust_types.RustPlayerEvent_ActiveVoices(:final field0):
+        state.activeVoicesCount = field0;
+        stream.activeVoicesCountController.add(field0);
       case rust_types.RustPlayerEvent_MetaBytes(:final field0):
         final mb = field0.isEmpty ? null : Uint8List.fromList(field0);
         state.metaBytes = mb;
@@ -618,7 +622,8 @@ class MiniaudioPlayer<T> {
         final reconciled = <AudioSource<T>>[];
         for (var i = 0; i < field0.length; i++) {
           final rs = field0[i];
-          final match = shadowQueue.cast<AudioSource<T>?>().firstWhere(
+          final match = sourceRegistry[rs.id] ??
+              shadowQueue.cast<AudioSource<T>?>().firstWhere(
                 (s) => s != null && s.id != null && s.id == rs.id,
                 orElse: () => shadowQueue.cast<AudioSource<T>?>().firstWhere(
                   (s) =>
@@ -631,9 +636,12 @@ class MiniaudioPlayer<T> {
                 ),
               );
           if (match != null) {
+            sourceRegistry[rs.id] = match;
             reconciled.add(match);
           } else {
-            reconciled.add(AudioSource<T>(rs.source, id: rs.id));
+            final fallback = AudioSource<T>(rs.source, id: rs.id);
+            sourceRegistry[rs.id] = fallback;
+            reconciled.add(fallback);
           }
         }
         state.queue = reconciled;

@@ -5,7 +5,7 @@ import '../equalizer.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
-import 'buffered_range.dart';
+import 'buffer.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'loop_mode.dart';
@@ -37,12 +37,8 @@ class PlayerStream<T> {
       StreamController<PlaybackState>.broadcast();
   final StreamController<EnginePhase> phaseController =
       StreamController<EnginePhase>.broadcast();
-  final StreamController<Duration> bufferedPositionController =
-      StreamController<Duration>.broadcast();
-  final StreamController<double> bufferedPercentageController =
-      StreamController<double>.broadcast();
-  final StreamController<BufferedRange> bufferedRangeController =
-      StreamController<BufferedRange>.broadcast();
+  final StreamController<Buffer> bufferController =
+      StreamController<Buffer>.broadcast();
   final StreamController<Uint8List?> metaBytesController =
       StreamController<Uint8List?>.broadcast();
   final StreamController<bool> metaBytesEnabledController =
@@ -137,6 +133,12 @@ class PlayerStream<T> {
       StreamController<double>.broadcast();
   final StreamController<VoiceId> voiceCompletedController =
       StreamController<VoiceId>.broadcast();
+  final StreamController<int> activeVoicesCountController =
+      StreamController<int>.broadcast();
+  final StreamController<int> allocatedRamBytesController =
+      StreamController<int>.broadcast();
+  final StreamController<List<String>> loadedEffectIdsController =
+      StreamController<List<String>>.broadcast();
   final StreamController<MiniaudioPlayerException> errorsController =
       StreamController<MiniaudioPlayerException>.broadcast();
   final StreamController<NeedMoreTracksEvent> needMoreTracksController =
@@ -153,9 +155,7 @@ class PlayerStream<T> {
   Stream<bool> get opening => openingController.stream;
   Stream<PlaybackState> get playbackState => playbackStateController.stream;
   Stream<EnginePhase> get phase => phaseController.stream;
-  Stream<Duration> get bufferedPosition => bufferedPositionController.stream;
-  Stream<double> get bufferedPercentage => bufferedPercentageController.stream;
-  Stream<BufferedRange> get bufferedRange => bufferedRangeController.stream;
+  Stream<Buffer> get buffer => bufferController.stream;
 
   /// Reactive broadcast stream emitting raw metadata bytes extracted by the native audio engine
   /// (e.g. ID3, Vorbis, ICY stream metadata).
@@ -238,6 +238,9 @@ class PlayerStream<T> {
       isDirectMonitoringEnabledController.stream;
   Stream<double> get micRmsLevel => micRmsLevelController.stream;
   Stream<VoiceId> get voiceCompleted => voiceCompletedController.stream;
+  Stream<int> get activeVoicesCount => activeVoicesCountController.stream;
+  Stream<int> get allocatedRamBytes => allocatedRamBytesController.stream;
+  Stream<List<String>> get loadedEffectIds => loadedEffectIdsController.stream;
   Stream<MiniaudioPlayerException> get errors => errorsController.stream;
   Stream<NeedMoreTracksEvent> get needMoreTracks =>
       needMoreTracksController.stream;
@@ -252,9 +255,10 @@ class PlayerStream<T> {
       openingController.close(),
       playbackStateController.close(),
       phaseController.close(),
-      bufferedPositionController.close(),
-      bufferedPercentageController.close(),
-      bufferedRangeController.close(),
+      bufferController.close(),
+      activeVoicesCountController.close(),
+      allocatedRamBytesController.close(),
+      loadedEffectIdsController.close(),
       metaBytesController.close(),
       metaBytesEnabledController.close(),
       sampleRateController.close(),

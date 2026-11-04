@@ -64,13 +64,13 @@ impl From<&crate::sync::telemetry::DeviceInfo> for RustAudioDevice {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RustBufferedRange {
+pub struct RustBuffer {
     pub start_ms: i64,
     pub end_ms: i64,
     pub is_buffering: bool,
 }
 
-impl From<crate::bridge::ffi::MiniaudioBufferedRange> for RustBufferedRange {
+impl From<crate::bridge::ffi::MiniaudioBufferedRange> for RustBuffer {
     fn from(r: crate::bridge::ffi::MiniaudioBufferedRange) -> Self {
         Self {
             start_ms: r.start_ms,
@@ -80,7 +80,7 @@ impl From<crate::bridge::ffi::MiniaudioBufferedRange> for RustBufferedRange {
     }
 }
 
-impl From<crate::sync::telemetry::BufferedRange> for RustBufferedRange {
+impl From<crate::sync::telemetry::BufferedRange> for RustBuffer {
     fn from(r: crate::sync::telemetry::BufferedRange) -> Self {
         Self {
             start_ms: r.start_ms,
@@ -388,7 +388,7 @@ pub enum RustEngineEvent {
     Device(RustAudioDevice),
     Visualizer(RustVisualizerData),
     VisualizerEnabled(bool),
-    BufferedRange(RustBufferedRange),
+    Buffer(RustBuffer),
     Equalizer(RustEqualizerParams),
     Preamp(f32),
     ReplayGain(RustReplayGainConfig),
@@ -729,7 +729,7 @@ pub enum RustPlayerEvent {
     IsPlaying(bool),
     IsBuffering(bool),
     IsCompleted(bool),
-    BufferedRange(RustBufferedRange),
+    Buffer(RustBuffer),
     Queue(Vec<RustAudioSource>),
     CurrentIndex(i32),
     IsCrossfading(bool),
@@ -757,6 +757,11 @@ pub enum RustPlayerEvent {
     IsDuckingActive(bool),
     MicRmsLevel(f32),
     VoiceCompleted(u32),
+    LoadedEffects {
+        ids: Vec<String>,
+        allocated_bytes: usize,
+    },
+    ActiveVoices(u32),
     MetaBytes(Vec<u8>),
     MetaBytesEnabled(bool),
     CueVolume(f32),

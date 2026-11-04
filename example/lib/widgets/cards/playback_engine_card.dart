@@ -136,11 +136,11 @@ class PlaybackEngineCard extends StatelessWidget {
                       ? (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0)
                       : 0.0;
 
-                  return StreamBuilder<Duration>(
-                    stream: engine.stream.bufferedPosition,
-                    initialData: engine.state.bufferedPosition,
+                  return StreamBuilder<Buffer>(
+                    stream: engine.stream.buffer,
+                    initialData: engine.state.buffer,
                     builder: (context, bufSnap) {
-                      final bufPos = bufSnap.data ?? engine.state.bufferedPosition;
+                      final buf = bufSnap.data ?? engine.state.buffer;
                       final isLocal = track?.source is MemoryAudioSource ||
                           (track?.source is UriAudioSource &&
                               !(track!.source as UriAudioSource)
@@ -150,9 +150,9 @@ class PlaybackEngineCard extends StatelessWidget {
                       final bufferedProgress = isLocal
                           ? 1.0
                           : (dur != null && dur.inMilliseconds > 0
-                              ? (bufPos.inMilliseconds / dur.inMilliseconds)
+                              ? (buf.end.inMilliseconds / dur.inMilliseconds)
                                   .clamp(0.0, 1.0)
-                              : engine.state.bufferedPercentage.clamp(0.0, 1.0));
+                              : 0.0);
 
                       return Column(
                         children: [

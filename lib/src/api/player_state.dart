@@ -4,7 +4,7 @@ import '../equalizer.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
-import 'buffered_range.dart';
+import 'buffer.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'loop_mode.dart';
@@ -97,9 +97,7 @@ class PlayerState<T> {
   bool get isStopped => playbackState == PlaybackState.stopped;
   bool get isError => playbackState == PlaybackState.error;
 
-  BufferedRange bufferedRange = const BufferedRange();
-  Duration bufferedPosition = Duration.zero;
-  double bufferedPercentage = 0.0;
+  Buffer buffer = const Buffer();
 
   /// Raw metadata bytes extracted by the native audio engine (e.g. ID3, Vorbis, ICY stream metadata).
   ///

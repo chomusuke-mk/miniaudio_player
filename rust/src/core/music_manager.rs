@@ -72,6 +72,11 @@ impl MusicManager {
     }
 
     #[inline]
+    pub fn reorder_by_ids(&mut self, ids: &[i64]) -> bool {
+        self.inner.reorder_by_ids(ids)
+    }
+
+    #[inline]
     pub fn clear_queue(&mut self, keep_current: bool) {
         self.inner.clear_items(keep_current);
     }

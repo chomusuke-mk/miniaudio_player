@@ -45,6 +45,7 @@ pub struct TelemetryFilter {
     pub is_completed: Option<bool>,
     pub replay_gain: Option<(u32, u32, bool)>,
     pub meta_bytes: Option<Vec<u8>>,
+    pub active_voices: Option<u32>,
 }
 
 impl Default for TelemetryFilter {
@@ -65,6 +66,7 @@ impl Default for TelemetryFilter {
             is_completed: Some(false),
             replay_gain: None,
             meta_bytes: None,
+            active_voices: None,
         }
     }
 }
@@ -195,12 +197,20 @@ impl EventReporter {
                     true
                 }
             }
-            RustPlayerEvent::BufferedRange(r) => {
+            RustPlayerEvent::Buffer(r) => {
                 if filter.buffered_end == Some(r.end_ms) && filter.is_buffering == Some(r.is_buffering) {
                     false
                 } else {
                     filter.buffered_end = Some(r.end_ms);
                     filter.is_buffering = Some(r.is_buffering);
+                    true
+                }
+            }
+            RustPlayerEvent::ActiveVoices(v) => {
+                if filter.active_voices == Some(*v) {
+                    false
+                } else {
+                    filter.active_voices = Some(*v);
                     true
                 }
             }
@@ -496,6 +506,7 @@ impl RustMiniaudioPlayer {
                         None
                     };
                     let rg = ply.music_dsp.equalizer.replay_gain();
+                    let active_voices = ply.effects_manager.active_voices_count();
 
                     let vis_data = if ply.output_manager.visualizer_enabled.load(Ordering::Relaxed) {
                         Some(ply.output_manager.visualizer_seqlock.read())
@@ -524,8 +535,9 @@ impl RustMiniaudioPlayer {
                     if bitrate > 0 {
                         worker_reporter.emit(RustPlayerEvent::Bitrate(bitrate));
                     }
+                    worker_reporter.emit(RustPlayerEvent::ActiveVoices(active_voices));
                     if has_br {
-                        worker_reporter.emit(RustPlayerEvent::BufferedRange(RustBufferedRange {
+                        worker_reporter.emit(RustPlayerEvent::Buffer(RustBuffer {
                             start_ms: br.start_ms,
                             end_ms: br.end_ms,
                             is_buffering: br.is_buffering != 0,
@@ -751,7 +763,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             self.emit_event(RustPlayerEvent::Bitrate(initial_bitrate));
         }
         if has_br {
-            self.emit_event(RustPlayerEvent::BufferedRange(RustBufferedRange {
+            self.emit_event(RustPlayerEvent::Buffer(RustBuffer {
                 start_ms: initial_br.start_ms,
                 end_ms: initial_br.end_ms,
                 is_buffering: initial_br.is_buffering != 0,
@@ -791,6 +803,15 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     #[flutter_rust_bridge::frb(sync)]
     pub fn reorder(&self, old_index: usize, new_index: usize) -> bool {
         let res = self.inner.lock().unwrap().music_manager.reorder(old_index, new_index);
+        if res {
+            self.emit_queue();
+        }
+        res
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn reorder_by_ids(&self, ids: Vec<i64>) -> bool {
+        let res = self.inner.lock().unwrap().music_manager.reorder_by_ids(&ids);
         if res {
             self.emit_queue();
         }
@@ -1088,23 +1109,68 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     pub fn load_effect(
         &self,
         id: String,
-        bytes: Vec<u8>,
+        source: RustAudioSource,
         max_polyphony: usize,
         pinned: bool,
     ) -> Result<(), String> {
-        let sound_buffer = SoundBuffer::decode_from_bytes(&bytes)
-            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))?;
-        self.inner.lock().unwrap().effects_manager.load_effect(
+        let sound_buffer = match source.data_bytes {
+            Some(bytes) if !bytes.is_empty() => SoundBuffer::decode_from_bytes(&bytes)
+                .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))?,
+            _ => {
+                let path = crate::core::dual_source::strip_file_prefix(&source.source);
+                let path = crate::core::dual_source::resolve_local_source_path(&path);
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("Failed to read effect file '{}': {}", path, e))?;
+                SoundBuffer::decode_from_bytes(&bytes)
+                    .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))?
+            }
+        };
+        let ply = self.inner.lock().unwrap();
+        ply.effects_manager.load_effect(
             id,
             sound_buffer,
             max_polyphony,
             pinned,
-        )
+        )?;
+        let loaded_ids = ply.effects_manager.loaded_effect_ids();
+        let ram_bytes = ply.effects_manager.allocated_ram_bytes();
+        drop(ply);
+        self.emit_event(RustPlayerEvent::LoadedEffects {
+            ids: loaded_ids,
+            allocated_bytes: ram_bytes,
+        });
+        Ok(())
     }
 
     #[flutter_rust_bridge::frb(sync)]
     pub fn unload_effect(&self, id: String) -> bool {
-        self.inner.lock().unwrap().effects_manager.unload_effect(&id)
+        let ply = self.inner.lock().unwrap();
+        let res = ply.effects_manager.unload_effect(&id);
+        if res {
+            let loaded_ids = ply.effects_manager.loaded_effect_ids();
+            let ram_bytes = ply.effects_manager.allocated_ram_bytes();
+            drop(ply);
+            self.emit_event(RustPlayerEvent::LoadedEffects {
+                ids: loaded_ids,
+                allocated_bytes: ram_bytes,
+            });
+        }
+        res
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_loaded_effect_ids(&self) -> Vec<String> {
+        self.inner.lock().unwrap().effects_manager.loaded_effect_ids()
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_allocated_ram_bytes(&self) -> usize {
+        self.inner.lock().unwrap().effects_manager.allocated_ram_bytes()
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_active_voices_count(&self) -> u32 {
+        self.inner.lock().unwrap().effects_manager.active_voices_count()
     }
 
     #[flutter_rust_bridge::frb(sync)]

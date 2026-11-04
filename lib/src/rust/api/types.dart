@@ -183,19 +183,19 @@ class RustAudioSource {
           replayPeak == other.replayPeak;
 }
 
-class RustBufferedRange {
+class RustBuffer {
   final PlatformInt64 startMs;
   final PlatformInt64 endMs;
   final bool isBuffering;
 
-  const RustBufferedRange({
+  const RustBuffer({
     required this.startMs,
     required this.endMs,
     required this.isBuffering,
   });
 
-  static Future<RustBufferedRange> default_() =>
-      RustLib.instance.api.crateApiTypesRustBufferedRangeDefault();
+  static Future<RustBuffer> default_() =>
+      RustLib.instance.api.crateApiTypesRustBufferDefault();
 
   @override
   int get hashCode => startMs.hashCode ^ endMs.hashCode ^ isBuffering.hashCode;
@@ -203,7 +203,7 @@ class RustBufferedRange {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is RustBufferedRange &&
+      other is RustBuffer &&
           runtimeType == other.runtimeType &&
           startMs == other.startMs &&
           endMs == other.endMs &&
@@ -521,9 +521,9 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.isCompleted(
     bool field0,
   ) = RustPlayerEvent_IsCompleted;
-  const factory RustPlayerEvent.bufferedRange(
-    RustBufferedRange field0,
-  ) = RustPlayerEvent_BufferedRange;
+  const factory RustPlayerEvent.buffer(
+    RustBuffer field0,
+  ) = RustPlayerEvent_Buffer;
   const factory RustPlayerEvent.queue(
     List<RustAudioSource> field0,
   ) = RustPlayerEvent_Queue;
@@ -606,6 +606,13 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.voiceCompleted(
     int field0,
   ) = RustPlayerEvent_VoiceCompleted;
+  const factory RustPlayerEvent.loadedEffects({
+    required List<String> ids,
+    required BigInt allocatedBytes,
+  }) = RustPlayerEvent_LoadedEffects;
+  const factory RustPlayerEvent.activeVoices(
+    int field0,
+  ) = RustPlayerEvent_ActiveVoices;
   const factory RustPlayerEvent.metaBytes(
     Uint8List field0,
   ) = RustPlayerEvent_MetaBytes;

@@ -24,9 +24,7 @@ void main() {
     test('EngineState reflects initial idle state correctly', () {
       final state = engine.state;
       expect(state.buffering, isFalse);
-      expect(state.bufferedPosition, Duration.zero);
-      expect(state.bufferedPercentage, 0.0);
-      expect(state.bufferedRange, const BufferedRange());
+      expect(state.buffer, const Buffer());
       expect(state.bufferSize, 0);
 
       // Active deck properties

@@ -89,11 +89,17 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
       required bool monitorDirect,
       required double monitorVolume});
 
+  int getActiveVoicesCount();
+
+  BigInt getAllocatedRamBytes();
+
   static Future<List<RustAudioDevice>> getInputDevices() =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerGetInputDevices();
 
   static List<RustAudioDevice> getInputDevicesSync() => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerGetInputDevicesSync();
+
+  List<String> getLoadedEffectIds();
 
   static Future<List<RustAudioDevice>> getOutputDevices() =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerGetOutputDevices();
@@ -105,7 +111,7 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
 
   Future<void> loadEffect(
       {required String id,
-      required List<int> bytes,
+      required RustAudioSource source,
       required BigInt maxPolyphony,
       required bool pinned});
 
@@ -145,6 +151,8 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   void removeOutput({required RustAudioOutput output});
 
   bool reorder({required BigInt oldIndex, required BigInt newIndex});
+
+  bool reorderByIds({required Int64List ids});
 
   void respondDartReadRequest(
       {required BigInt requestId,
@@ -250,6 +258,7 @@ class TelemetryFilter {
   final bool? isCompleted;
   final (int, int, bool)? replayGain;
   final Uint8List? metaBytes;
+  final int? activeVoices;
 
   const TelemetryFilter({
     this.state,
@@ -267,6 +276,7 @@ class TelemetryFilter {
     this.isCompleted,
     this.replayGain,
     this.metaBytes,
+    this.activeVoices,
   });
 
   static Future<TelemetryFilter> default_() =>
@@ -288,7 +298,8 @@ class TelemetryFilter {
       isPlaying.hashCode ^
       isCompleted.hashCode ^
       replayGain.hashCode ^
-      metaBytes.hashCode;
+      metaBytes.hashCode ^
+      activeVoices.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -309,5 +320,6 @@ class TelemetryFilter {
           isPlaying == other.isPlaying &&
           isCompleted == other.isCompleted &&
           replayGain == other.replayGain &&
-          metaBytes == other.metaBytes;
+          metaBytes == other.metaBytes &&
+          activeVoices == other.activeVoices;
 }

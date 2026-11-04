@@ -111,7 +111,7 @@ pub fn strip_file_prefix(source: &str) -> String {
     }
 }
 
-fn resolve_local_source_path(trimmed: &str) -> String {
+pub fn resolve_local_source_path(trimmed: &str) -> String {
     let raw_path = if let Some(stripped) = trimmed.strip_prefix("asset://") {
         stripped.strip_prefix('/').unwrap_or(stripped).to_string()
     } else if let Some(stripped) = trimmed.strip_prefix("asset:") {
@@ -3458,7 +3458,8 @@ impl DualSource {
                 .trim_start_matches("custom://")
                 .trim_start_matches("custom:");
             let (stream_id, total_size) = if let Some((id_part, query_part)) = id_str.split_once('?') {
-                let s_id = id_part.parse::<u32>().unwrap_or(0);
+                let parsed_id = id_part.parse::<u32>().unwrap_or(0);
+                let s_id = if parsed_id > 0 { parsed_id } else { item.id as u32 };
                 let mut size = None;
                 for pair in query_part.split('&') {
                     if let Some((k, v)) = pair.split_once('=') {
@@ -3469,7 +3470,9 @@ impl DualSource {
                 }
                 (s_id, size)
             } else {
-                (id_str.parse::<u32>().unwrap_or(0), None)
+                let parsed_id = id_str.parse::<u32>().unwrap_or(0);
+                let s_id = if parsed_id > 0 { parsed_id } else { item.id as u32 };
+                (s_id, None)
             };
             let init_bytes = item.data_bytes.clone().unwrap_or_default();
             if let Some(factory) = custom_factory {
@@ -3678,6 +3681,38 @@ impl DualSource {
                 self.current_index.store(cur - 1, Ordering::Release);
             } else if from > cur_u && to <= cur_u {
                 self.current_index.store(cur + 1, Ordering::Release);
+            }
+        }
+        drop(q);
+        self.preload_standby_deck();
+        true
+    }
+
+    pub fn reorder_by_ids(&mut self, ids: &[i64]) -> bool {
+        let mut q = self.queue.write().unwrap();
+        if q.is_empty() || ids.len() != q.len() {
+            return false;
+        }
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let current_id = if cur >= 0 && (cur as usize) < q.len() {
+            Some(q[cur as usize].id)
+        } else {
+            None
+        };
+
+        let mut reordered = Vec::with_capacity(q.len());
+        for &id in ids {
+            if let Some(pos) = q.iter().position(|item| item.id == id) {
+                reordered.push(q.remove(pos));
+            } else {
+                return false;
+            }
+        }
+        *q = reordered;
+
+        if let Some(cur_id) = current_id {
+            if let Some(new_idx) = q.iter().position(|item| item.id == cur_id) {
+                self.current_index.store(new_idx as i64, Ordering::Release);
             }
         }
         drop(q);
