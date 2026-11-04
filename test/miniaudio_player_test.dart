@@ -226,19 +226,18 @@ void main() {
   });
 
   group('AudioSource generic specialization and type casting', () {
-    test('AudioSource factory re-specializes generic type without runtime cast exception', () {
+    test('AudioSource withData<R> specializes generic type cleanly without re-wrapping', () {
       // Create an untyped / dynamic AudioSource
-      final AudioSource rawSource = AudioSource('test/fixtures/salida.mp3');
-      expect(rawSource, isA<UriAudioSource>());
-
-      // Re-wrap with specific type parameter AudioSource<Map<String, String>>
-      final dataMap = {'artist': 'Test Artist', 'track': 'Salida'};
-      final specializedSource = AudioSource<Map<String, String>>(
-        rawSource,
-        data: dataMap,
+      final AudioSource rawSource = AudioSource(
+        'test/fixtures/salida.mp3',
         replayGainDb: -3.5,
         replayPeak: 0.98,
       );
+      expect(rawSource, isA<UriAudioSource>());
+
+      // Specialize with specific type parameter AudioSource<Map<String, String>> via withData
+      final dataMap = {'artist': 'Test Artist', 'track': 'Salida'};
+      final specializedSource = rawSource.withData<Map<String, String>>(dataMap);
 
       expect(specializedSource, isA<AudioSource<Map<String, String>>>());
       expect(specializedSource.data, equals(dataMap));

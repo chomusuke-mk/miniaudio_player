@@ -60,49 +60,6 @@ sealed class AudioSource<T> {
     double? replayPeak,
     int? id,
   }) {
-    if (source is AudioSource) {
-      if (source is AudioSource<T> &&
-          headers == null &&
-          data == null &&
-          replayGainDb == null &&
-          replayPeak == null &&
-          id == null) {
-        return source;
-      }
-      final effectiveData = data ?? (source.data is T ? source.data as T : null);
-      final effectiveReplayGainDb = replayGainDb ?? source.replayGainDb;
-      final effectiveReplayPeak = replayPeak ?? source.replayPeak;
-      final effectiveId = id ?? source.id;
-
-      if (source is UriAudioSource) {
-        return UriAudioSource<T>(
-          source.sourceString,
-          headers: headers ?? source.headers,
-          data: effectiveData,
-          replayGainDb: effectiveReplayGainDb,
-          replayPeak: effectiveReplayPeak,
-          internalId: effectiveId,
-        );
-      }
-      if (source is MemoryAudioSource) {
-        return MemoryAudioSource<T>(
-          source.bytes,
-          data: effectiveData,
-          replayGainDb: effectiveReplayGainDb,
-          replayPeak: effectiveReplayPeak,
-          internalId: effectiveId,
-        );
-      }
-      if (source is CustomAudioSource) {
-        return CustomAudioSource<T>(
-          source.provider,
-          data: effectiveData,
-          replayGainDb: effectiveReplayGainDb,
-          replayPeak: effectiveReplayPeak,
-          internalId: effectiveId,
-        );
-      }
-    }
     if (source is Uri) {
       if (source.data != null) {
         return MemoryAudioSource<T>(
@@ -232,10 +189,51 @@ sealed class AudioSource<T> {
 
   /// Returns a copy of this [AudioSource] associated with a new generic data payload [data]
   /// and specialized to the new generic type parameter [R].
-  AudioSource<R> withData<R>(R? data) => AudioSource<R>(
-        this,
-        data: data,
-      );
+  AudioSource<R> withData<R>(R? data) {
+    return switch (this) {
+      UriAudioSource<T>(
+        :final sourceString,
+        :final headers,
+        :final replayGainDb,
+        :final replayPeak,
+        :final id,
+      ) =>
+        UriAudioSource<R>(
+          sourceString,
+          headers: headers,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+          internalId: id,
+        ),
+      MemoryAudioSource<T>(
+        :final bytes,
+        :final replayGainDb,
+        :final replayPeak,
+        :final id,
+      ) =>
+        MemoryAudioSource<R>(
+          bytes,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+          internalId: id,
+        ),
+      CustomAudioSource<T>(
+        :final provider,
+        :final replayGainDb,
+        :final replayPeak,
+        :final id,
+      ) =>
+        CustomAudioSource<R>(
+          provider,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+          internalId: id,
+        ),
+    };
+  }
 
   @override
   bool operator ==(Object other) =>
