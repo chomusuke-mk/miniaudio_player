@@ -127,18 +127,18 @@ void main() {
       final events = <bool>[];
       final sub = engine.stream.pauseOnDeviceChange.listen(events.add);
 
-      engine.action.setPauseOnDeviceChange(true);
-      await pumpEventQueue();
+      await engine.action.setPauseOnDeviceChange(true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(engine.state.pauseOnDeviceChange, isTrue);
       expect(events, equals([true]));
 
       // Redundant set does not emit duplicate
-      engine.action.setPauseOnDeviceChange(true);
-      await pumpEventQueue();
+      await engine.action.setPauseOnDeviceChange(true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(events, equals([true]));
 
-      engine.action.setPauseOnDeviceChange(false);
-      await pumpEventQueue();
+      await engine.action.setPauseOnDeviceChange(false);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(engine.state.pauseOnDeviceChange, isFalse);
       expect(events, equals([true, false]));
 
@@ -202,7 +202,7 @@ void main() {
       final player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
       try {
         await player.action.waitUntilOpen();
-        expect(player.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
+        expect(player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await player.action.play();
         for (int i = 0; i < 20 && !player.state.playing; i++) {
@@ -242,7 +242,7 @@ void main() {
       final engine = MiniaudioPlayer(pauseOnDeviceChange: true);
       try {
         await engine.action.open([AudioSource(testWavFile.path)]);
-        expect(engine.state.duration.inMilliseconds, greaterThanOrEqualTo(4900));
+        expect(engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
 
         await engine.action.play();
         expect(engine.state.phase, equals(EnginePhase.playing));

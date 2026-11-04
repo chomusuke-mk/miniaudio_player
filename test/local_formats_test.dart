@@ -55,9 +55,9 @@ void main() {
       final fileName = file.uri.pathSegments.last;
       test('1.openFile: $fileName', () async {
         // 1. openFile
-        await player.action.open(AudioSource(file.path));
+        await player.action.open([AudioSource(file.path)]);
         final duration = player.state.duration;
-        expect(duration.inMilliseconds, greaterThan(0),
+        expect(duration?.inMilliseconds, greaterThan(0),
             reason: '$fileName duration should be greater than 0');
 
         // 2. play
@@ -71,7 +71,7 @@ void main() {
             reason: '$fileName position should be non-negative');
 
         // 3. seek
-        if (duration > const Duration(seconds: 3)) {
+        if (duration != null && duration > const Duration(seconds: 3)) {
           const seekTarget = Duration(seconds: 2);
           await player.action.seek(seekTarget);
           await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -104,9 +104,9 @@ void main() {
       test('2.openMemory: $fileName', () async {
         final bytes = await file.readAsBytes();
 
-        await player.action.open(AudioSource(bytes));
+        await player.action.open([AudioSource(bytes)]);
         final duration = player.state.duration;
-        expect(duration.inMilliseconds, greaterThan(0),
+        expect(duration?.inMilliseconds, greaterThan(0),
             reason: '$fileName in-memory duration should be > 0');
 
         await player.action.play();
@@ -115,7 +115,7 @@ void main() {
             reason: '$fileName in-memory should be playing');
 
         // Seek validation in memory
-        if (duration > const Duration(seconds: 3)) {
+        if (duration != null && duration > const Duration(seconds: 3)) {
           const seekTarget = Duration(seconds: 2);
           await player.action.seek(seekTarget);
           await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -159,8 +159,8 @@ void main() {
 
       test('3.openAsset: $fileName ($fmt)', () async {
         final assetKey = 'test/fixtures/$fileName';
-        await player.action.open(AudioSource(assetKey));
-        expect(player.state.duration.inMilliseconds, greaterThan(0));
+        await player.action.open([AudioSource(assetKey)]);
+        expect(player.state.duration?.inMilliseconds, greaterThan(0));
 
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -183,8 +183,8 @@ void main() {
 
     test('4.1: AudioSource.file opens and plays local file', () async {
       final file = File('test/fixtures/salida.mp3');
-      await player.action.open(AudioSource(file.path));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource(file.path)]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.playing, isTrue);
@@ -193,8 +193,8 @@ void main() {
 
     test('4.2: AudioSource.uri with file:// URI opens and plays local file', () async {
       final file = File('test/fixtures/salida.wav');
-      await player.action.open(AudioSource(file.absolute.uri));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource(file.absolute.uri)]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.playing, isTrue);
@@ -203,8 +203,8 @@ void main() {
 
     test('4.3: Direct File instance passed to player.action.open()', () async {
       final file = File('test/fixtures/salida.flac');
-      await player.action.open(AudioSource(file.path));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource(file.path)]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.playing, isTrue);
@@ -212,8 +212,8 @@ void main() {
     });
 
     test('4.4: Raw path String passed to player.action.open()', () async {
-      await player.action.open(AudioSource('test/fixtures/salida_aac.m4a'));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource('test/fixtures/salida_aac.m4a')]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.playing, isTrue);
@@ -245,7 +245,7 @@ void main() {
     test('5.1: Corrupt local file throws controlled exception without breaking player', () async {
       // 1. Attempt to open corrupt local file
       await expectLater(
-        player.action.open(AudioSource(corruptFile.path)),
+        player.action.open([AudioSource(corruptFile.path)]),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
@@ -255,8 +255,8 @@ void main() {
       expect(player.state.playing, isFalse);
 
       // 3. Immediately recover by opening valid local file
-      await player.action.open(AudioSource('test/fixtures/salida.mp3'));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource('test/fixtures/salida.mp3')]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.playing, isTrue);
@@ -278,13 +278,13 @@ void main() {
       await dummyFile.writeAsString('not a real audio stream');
       try {
         await expectLater(
-          player.action.open(AudioSource(dummyFile.path)),
+          player.action.open([AudioSource(dummyFile.path)]),
           throwsA(isA<MiniaudioPlayerException>()),
         );
 
         // Player must be immediately reusable
-        await player.action.open(AudioSource('test/fixtures/salida_alac.m4a'));
-        expect(player.state.duration.inMilliseconds, greaterThan(0));
+        await player.action.open([AudioSource('test/fixtures/salida_alac.m4a')]);
+        expect(player.state.duration?.inMilliseconds, greaterThan(0));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.playing, isTrue);
@@ -316,7 +316,7 @@ void main() {
 
         // Step 1: Open track A and play
         trace.log('Step 1: openFile(trackA)');
-        await player.action.open(AudioSource(trackA));
+        await player.action.open([AudioSource(trackA)]);
         trace.log('Step 1.1: play()');
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -337,7 +337,7 @@ void main() {
         trace.log('Step 3.1: paused verified');
 
         // Step 4: Seek near end while paused
-        final nearEnd = player.state.duration - const Duration(milliseconds: 300);
+        final nearEnd = (player.state.duration ?? Duration.zero) - const Duration(milliseconds: 300);
         trace.log('Step 4: seek near end', {'target': nearEnd.inMilliseconds});
         await player.action.seek(nearEnd);
 
@@ -362,12 +362,12 @@ void main() {
 
         // Step 7: Switch in flight to M4A (AAC) track B
         trace.log('Step 7: switch to track B (M4A AAC)');
-        await player.action.open(AudioSource(trackB));
+        await player.action.open([AudioSource(trackB)]);
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);
-        expect(player.state.duration.inMilliseconds, greaterThan(0));
-        trace.log('Step 7.1: track B playing verified', {'duration': player.state.duration.inMilliseconds});
+        expect(player.state.duration?.inMilliseconds, greaterThan(0));
+        trace.log('Step 7.1: track B playing verified', {'duration': player.state.duration?.inMilliseconds});
 
         // Step 8: Seek on track B
         trace.log('Step 8: seek(2s) on track B');
@@ -378,11 +378,11 @@ void main() {
 
         // Step 9: Switch in flight to M4A (ALAC) track C
         trace.log('Step 9: switch to track C (M4A ALAC)');
-        await player.action.open(AudioSource(trackC));
+        await player.action.open([AudioSource(trackC)]);
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.playing, isTrue);
-        trace.log('Step 9.1: track C playing verified', {'duration': player.state.duration.inMilliseconds});
+        trace.log('Step 9.1: track C playing verified', {'duration': player.state.duration?.inMilliseconds});
 
         // Step 10: Final clean stop
         trace.log('Step 10: stop()');

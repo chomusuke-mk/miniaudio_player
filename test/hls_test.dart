@@ -64,7 +64,6 @@ void main() {
       try {
         await player.action.waitUntilOpen();
 
-        expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 600));
 

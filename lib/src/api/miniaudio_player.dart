@@ -22,7 +22,6 @@ import 'player_models.dart';
 import 'player_state.dart';
 import 'player_stream.dart';
 import 'silence_skip_config.dart';
-import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
 /// Ensures native Rust library is initialized before calling static methods.
@@ -320,10 +319,7 @@ class MiniaudioPlayer<T> {
   }) {
     MapLogger.info('Initializing MiniaudioPlayer');
     action = PlayerAction<T>(this);
-    stream = PlayerStream<T>(
-      onVisualizerListen: _onVisualizerListen,
-      onVisualizerCancel: _onVisualizerCancel,
-    );
+    stream = PlayerStream<T>();
     state = PlayerState<T>(this);
 
     state.bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
@@ -376,27 +372,6 @@ class MiniaudioPlayer<T> {
     }
   }
 
-  bool? _manualVisualizerOverride;
-
-  void _onVisualizerListen() {
-    if (_isDisposed) return;
-    final shouldEnable = _manualVisualizerOverride ?? true;
-    _rustPlayer.setVisualizerEnabled(enabled: shouldEnable);
-  }
-
-  void _onVisualizerCancel() {
-    if (_isDisposed) return;
-    final shouldEnable = _manualVisualizerOverride ?? false;
-    _rustPlayer.setVisualizerEnabled(enabled: shouldEnable);
-  }
-
-  void setManualVisualizerOverride(bool? override) {
-    if (_isDisposed) return;
-    _manualVisualizerOverride = override;
-    final shouldEnable = override ?? (stream.visualizerController.hasListener);
-    _rustPlayer.setVisualizerEnabled(enabled: shouldEnable);
-  }
-
   // =========================================================================
   // Native Rust Event Dispatcher (Fine-Grained Active Stream Ingestion)
   // =========================================================================
@@ -441,14 +416,12 @@ class MiniaudioPlayer<T> {
         state.position = pos;
         stream.positionController.add(pos);
       case rust_types.RustPlayerEvent_Duration(:final field0):
-        final dur = Duration(milliseconds: field0.toInt());
+        final durMs = field0.toInt();
+        // durMs <= 0 represents an uninitialized track or a live / unbounded stream.
+        // durMs > 0 represents a finite track (even very short ones like 15ms-100ms sound effects).
+        final dur = durMs > 0 ? Duration(milliseconds: durMs) : null;
         state.duration = dur;
         stream.durationController.add(dur);
-        if (state.trackMetadata != null) {
-          final updated = state.trackMetadata!.copyWith(duration: dur);
-          state.trackMetadata = updated;
-          stream.trackMetadataController.add(updated);
-        }
       case rust_types.RustPlayerEvent_BufferedRange(:final field0):
         final br = BufferedRange(
           start: Duration(milliseconds: field0.startMs.toInt()),
@@ -457,8 +430,8 @@ class MiniaudioPlayer<T> {
         );
         state.bufferedRange = br;
         state.bufferedPosition = Duration(milliseconds: field0.endMs.toInt());
-        state.bufferedPercentage = state.duration.inMilliseconds > 0
-            ? (field0.endMs.toDouble() / state.duration.inMilliseconds)
+        state.bufferedPercentage = (state.duration?.inMilliseconds ?? 0) > 0
+            ? (field0.endMs.toDouble() / state.duration!.inMilliseconds)
             : 0.0;
         stream.bufferedRangeController.add(br);
         stream.bufferedPositionController.add(state.bufferedPosition);
@@ -590,23 +563,16 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_VoiceCompleted(:final field0):
         stream.voiceCompletedController.add(field0);
       case rust_types.RustPlayerEvent_MetaBytes(:final field0):
-        final mb = Uint8List.fromList(field0);
+        final mb = field0.isEmpty ? null : Uint8List.fromList(field0);
         state.metaBytes = mb;
         stream.metaBytesController.add(mb);
-        final curSource = state.currentItem;
-        if (curSource != null) {
-          final meta = AudioTrackMetadata.resolve(
-            sourceHint: curSource.sourceKey,
-            durationMs: state.duration.inMilliseconds,
-            bitrate: state.bitrate,
-            sampleRate: state.sampleRate,
-            channels: state.channels,
-            audioDataOffset: 0,
-            headerBytes: mb,
-          );
-          state.trackMetadata = meta;
-          stream.trackMetadataController.add(meta);
+      case rust_types.RustPlayerEvent_MetaBytesEnabled(:final field0):
+        state.metaBytesEnabled = field0;
+        if (!field0) {
+          state.metaBytes = null;
+          stream.metaBytesController.add(null);
         }
+        stream.metaBytesEnabledController.add(field0);
       case rust_types.RustPlayerEvent_SilenceConfig(:final field0):
         final sc = SilenceSkipConfig(
           thresholdDb: field0.thresholdDb,
@@ -647,22 +613,6 @@ class MiniaudioPlayer<T> {
         stream.currentIndexController.add(field0);
         final curSource = state.currentItem;
         stream.currentItemController.add(curSource);
-        if (curSource != null) {
-          final meta = AudioTrackMetadata.resolve(
-            sourceHint: curSource.sourceKey,
-            durationMs: state.duration.inMilliseconds,
-            bitrate: state.bitrate,
-            sampleRate: state.sampleRate,
-            channels: state.channels,
-            audioDataOffset: 0,
-            headerBytes: state.metaBytes,
-          );
-          state.trackMetadata = meta;
-          stream.trackMetadataController.add(meta);
-        } else {
-          state.trackMetadata = null;
-          stream.trackMetadataController.add(null);
-        }
         checkInfiniteMix();
       case rust_types.RustPlayerEvent_Queue(:final field0):
         final reconciled = <AudioSource<T>>[];
@@ -765,7 +715,6 @@ class MiniaudioPlayer<T> {
     _isDisposed = true;
     MapLogger.info('Disposing MiniaudioPlayer instance');
     state.metaBytes = null;
-    state.trackMetadata = null;
     _eventSub?.cancel();
     _eventSub = null;
     try {
@@ -780,27 +729,7 @@ class MiniaudioPlayer<T> {
     await stream.dispose();
   }
 
-  // Model Mappers & Source Normalization
-  static List<AudioSource<T>> normalizeSource<T>(Object? source) {
-    if (source == null) return const [];
-    if (source is AudioSource<T>) return [source];
-    if (source is AudioSource) return [AudioSource<T>(source)];
-    if (source is List) {
-      return List.unmodifiable(
-        source.map((s) => s is AudioSource<T> ? s : AudioSource<T>(s)),
-      );
-    }
-    if (source is String) return [AudioSource<T>(source)];
-    if (source is Uint8List) return [AudioSource<T>(source)];
-    if (source is List<int>) {
-      return [AudioSource<T>(Uint8List.fromList(source))];
-    }
-    throw ArgumentError(
-      'The source parameter must be AudioSource<$T>, List<AudioSource<$T>>, String, Uint8List, or null. '
-      'Received type: ${source.runtimeType}',
-    );
-  }
-
+  // Model Mappers
   static AudioDevice _toAudioDevice(rust_types.RustAudioDevice dev) {
     return AudioDevice(
       id: dev.id,

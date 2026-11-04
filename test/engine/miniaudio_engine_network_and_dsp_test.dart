@@ -169,7 +169,7 @@ void main() {
       }
     });
 
-    test('LiveStreamAudioSource reports isLiveStream == true and seek is a safe no-op', () async {
+    test('LiveStreamAudioSource reports duration == null and seek is a safe no-op', () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.open([
         AudioSource<String>(
@@ -178,7 +178,7 @@ void main() {
         ),
       ]);
 
-      expect(engine.state.isLiveStream, isTrue);
+      expect(engine.state.duration, isNull);
       await engine.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(engine.state.playing, isTrue);
@@ -197,14 +197,20 @@ void main() {
 
       await engine.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      expect(engine.state.isLiveStream, isTrue);
+      expect(engine.state.duration, isNull);
       expect(engine.state.currentIndex, equals(1));
 
       // Calling previous() on livestream steps back directly to index 0
       await engine.action.previous();
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.currentItem?.data, equals('Local Track 1'));
-      expect(engine.state.isLiveStream, isFalse);
+
+      int waitMs = 0;
+      while (engine.state.duration == null && waitMs < 1000) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        waitMs += 50;
+      }
+      expect(engine.state.duration, isNotNull);
     });
 
     test('manual crossfade between livestream and local file runs smoothly', () async {
@@ -217,7 +223,7 @@ void main() {
       await engine.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.isLiveStream, isTrue);
+      expect(engine.state.duration, isNull);
 
       // next() initiates manual crossfade from livestream to local file
       await engine.action.next();
@@ -232,7 +238,7 @@ void main() {
       }
       expect(engine.state.phase, equals(EnginePhase.playing));
       expect(engine.state.playing, isTrue);
-      expect(engine.state.isLiveStream, isFalse);
+      expect(engine.state.duration, isNotNull);
     });
   });
 
@@ -443,18 +449,17 @@ void main() {
       expect(engine.state.spatializerWidth, closeTo(1.5, 1e-4));
     });
 
-    test('Visualizer FFT computation enables only when listened and stays false on standby deck', () async {
+    test('Visualizer FFT computation is controlled via action.setVisualizerEnabled and persists across deck swaps', () async {
       await engine.action.open([
         AudioSource(localWavFile1.path, data: 'Track 1'),
         AudioSource(localWavFile2.path, data: 'Track 2'),
       ]);
 
-      // Initially no listeners -> visualizerEnabled is false
+      // Initially visualizerEnabled is false
       expect(engine.state.visualizerEnabled, isFalse);
 
-      // Listen to visualizer stream -> activates on active deck
-      final sub = engine.stream.visualizer.listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Enable visualizer via action
+      await engine.action.setVisualizerEnabled(true);
       expect(engine.state.visualizerEnabled, isTrue);
 
       // Advance deck -> visualizer state remains enabled on new active deck
@@ -463,9 +468,8 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(engine.state.visualizerEnabled, isTrue);
 
-      // Canceling subscription disables visualizer to save CPU
-      await sub.cancel();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Explicitly disabling visualizer
+      await engine.action.setVisualizerEnabled(false);
       expect(engine.state.visualizerEnabled, isFalse);
     });
   });

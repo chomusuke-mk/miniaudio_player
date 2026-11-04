@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -9,151 +8,6 @@ void main() {
 
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
-  });
-
-  group('AudioCodec Pure Magic-Bytes Sniffing (No Extension Reliance)', () {
-    test('Sniffs FLAC magic bytes (fLaC)', () {
-      final bytes = Uint8List.fromList([0x66, 0x4C, 0x61, 0x43, 0x00, 0x00]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.flac));
-    });
-
-    test('Sniffs WAV / PCM (RIFF....WAVE)', () {
-      final bytes = Uint8List.fromList([
-        0x52, 0x49, 0x46, 0x46, // RIFF
-        0x24, 0x00, 0x00, 0x00, // Size
-        0x57, 0x41, 0x56, 0x45, // WAVE
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.pcm));
-    });
-
-    test('Sniffs RF64 / PCM (RF64....WAVE)', () {
-      final bytes = Uint8List.fromList([
-        0x52, 0x46, 0x36, 0x34, // RF64
-        0xFF, 0xFF, 0xFF, 0xFF, // Size
-        0x57, 0x41, 0x56, 0x45, // WAVE
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.pcm));
-    });
-
-    test('Sniffs AIFF / PCM (FORM....AIFF)', () {
-      final bytes = Uint8List.fromList([
-        0x46, 0x4F, 0x52, 0x4D, // FORM
-        0x00, 0x00, 0x10, 0x00, // Size
-        0x41, 0x49, 0x46, 0x46, // AIFF
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.pcm));
-    });
-
-    test('Sniffs Ogg Opus (OggS....OpusHead)', () {
-      final bytes = Uint8List.fromList([
-        0x4F, 0x67, 0x67, 0x53, // OggS
-        0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x13,
-        0x4F, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, // OpusHead
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.opus));
-    });
-
-    test('Sniffs Ogg Vorbis (OggS....vorbis)', () {
-      final bytes = Uint8List.fromList([
-        0x4F, 0x67, 0x67, 0x53, // OggS
-        0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x1E,
-        0x01, 0x76, 0x6F, 0x72, 0x62, 0x69, 0x73, // vorbis
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.vorbis));
-    });
-
-    test('Sniffs MP3 with ID3v2 tag (ID3)', () {
-      final bytes = Uint8List.fromList([
-        0x49, 0x44, 0x33, // ID3
-        0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.mp3));
-    });
-
-    test('Sniffs MP3 MPEG sync word without ID3 (0xFFFB)', () {
-      final bytes = Uint8List.fromList([
-        0xFF, 0xFB, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00,
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.mp3));
-    });
-
-    test('Sniffs AAC ADTS sync word (0xFFF1)', () {
-      final bytes = Uint8List.fromList([
-        0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC,
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.aac));
-    });
-
-    test('Sniffs MP4 / M4A AAC (ftypM4A)', () {
-      final bytes = Uint8List.fromList([
-        0x00, 0x00, 0x00, 0x20, // size
-        0x66, 0x74, 0x79, 0x70, // ftyp
-        0x4D, 0x34, 0x41, 0x20, // M4A 
-        0x00, 0x00, 0x00, 0x00,
-      ]);
-      expect(AudioCodec.detect(bytes), equals(AudioCodec.aac));
-    });
-
-    test('Falls back to MIME type when magic bytes are unknown', () {
-      final unknownBytes = Uint8List.fromList([0x12, 0x34, 0x56, 0x78]);
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'audio/flac'),
-        equals(AudioCodec.flac),
-      );
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'audio/mpeg'),
-        equals(AudioCodec.mp3),
-      );
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'audio/aac'),
-        equals(AudioCodec.aac),
-      );
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'audio/opus'),
-        equals(AudioCodec.opus),
-      );
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'audio/ogg'),
-        equals(AudioCodec.vorbis),
-      );
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'audio/wav'),
-        equals(AudioCodec.pcm),
-      );
-      expect(
-        AudioCodec.detect(unknownBytes, mime: 'application/octet-stream'),
-        equals(AudioCodec.unknown),
-      );
-    });
-
-    test('Real asset files codec detection matches expected codecs', () {
-      final assets = {
-        'test/fixtures/salida.flac': AudioCodec.flac,
-        'test/fixtures/salida.mp3': AudioCodec.mp3,
-        'test/fixtures/cbr_noxing.mp3': AudioCodec.mp3,
-        'test/fixtures/salida.wav': AudioCodec.pcm,
-        'test/fixtures/salida.ogg': AudioCodec.vorbis,
-        'test/fixtures/salida_aac.m4a': AudioCodec.aac,
-        'test/fixtures/salida_alac.m4a': AudioCodec.alac,
-      };
-
-      for (final entry in assets.entries) {
-        final file = File(entry.key);
-        if (file.existsSync()) {
-          final header = file.openSync().readSync(4096);
-          final detected = AudioCodec.detect(header);
-          expect(
-            detected,
-            equals(entry.value),
-            reason: '${entry.key} detected as $detected instead of ${entry.value}',
-          );
-        }
-      }
-    });
   });
 
   group('Misnamed Files and Extensionless URLs Handling', () {
@@ -179,9 +33,8 @@ void main() {
       final misnamed = File('${tempDir.path}/track_actually_mp3.wav');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open(AudioSource(misnamed.path));
-      expect(player.state.trackMetadata?.codec, equals(AudioCodec.mp3));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource(misnamed.path)]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 150));
@@ -197,9 +50,8 @@ void main() {
       final extensionless = File('${tempDir.path}/audio_stream_payload');
       extensionless.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open(AudioSource(extensionless.path));
-      expect(player.state.trackMetadata?.codec, equals(AudioCodec.flac));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource(extensionless.path)]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 150));
@@ -215,9 +67,8 @@ void main() {
       final misnamed = File('${tempDir.path}/opaque_blob.bin');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open(AudioSource(misnamed.path));
-      expect(player.state.trackMetadata?.codec, equals(AudioCodec.aac));
-      expect(player.state.duration.inMilliseconds, greaterThan(0));
+      await player.action.open([AudioSource(misnamed.path)]);
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 150));
@@ -272,14 +123,10 @@ void main() {
       final file = File('test/fixtures/salida.mp3');
       if (!file.existsSync()) return;
 
-      await player.action.open(AudioSource(file.path));
+      await player.action.open([AudioSource(file.path)]);
 
       expect(player.state.sampleRate, greaterThan(0));
       expect(player.state.channels, greaterThan(0));
-      expect(player.state.trackMetadata, isNotNull);
-      expect(player.state.trackMetadata!.codec, equals(AudioCodec.mp3));
-      expect(player.state.trackMetadata!.sampleRate, greaterThan(0));
-      expect(player.state.trackMetadata!.channels, greaterThan(0));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));

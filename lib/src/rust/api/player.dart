@@ -188,6 +188,8 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
 
   void setLoopMode({required int mode});
 
+  void setMetabytesEnabled({required bool enabled});
+
   void setMicrophoneVolume({required double volume});
 
   void setMono({required bool enabled});
@@ -247,6 +249,7 @@ class TelemetryFilter {
   final bool? isPlaying;
   final bool? isCompleted;
   final (int, int, bool)? replayGain;
+  final Uint8List? metaBytes;
 
   const TelemetryFilter({
     this.state,
@@ -263,6 +266,7 @@ class TelemetryFilter {
     this.isPlaying,
     this.isCompleted,
     this.replayGain,
+    this.metaBytes,
   });
 
   static Future<TelemetryFilter> default_() =>
@@ -283,7 +287,8 @@ class TelemetryFilter {
       isDucking.hashCode ^
       isPlaying.hashCode ^
       isCompleted.hashCode ^
-      replayGain.hashCode;
+      replayGain.hashCode ^
+      metaBytes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -303,5 +308,6 @@ class TelemetryFilter {
           isDucking == other.isDucking &&
           isPlaying == other.isPlaying &&
           isCompleted == other.isCompleted &&
-          replayGain == other.replayGain;
+          replayGain == other.replayGain &&
+          metaBytes == other.metaBytes;
 }

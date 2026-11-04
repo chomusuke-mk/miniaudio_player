@@ -210,7 +210,7 @@ void main() {
           replayGainDb: -3.0,
           replayPeak: 0.8,
         );
-        await player.action.open(source2);
+        await player.action.open([source2]);
         await player.action.waitUntilOpen();
 
         expect(player.state.replayGain.enabled, isTrue);

@@ -111,9 +111,9 @@ void main() {
         isTrue,
       );
 
-      await player.action.open(
+      await player.action.open([
         AudioSource('test/fixtures/salida.wav'),
-      );
+      ]);
       expect(
         messages.any((m) => m.contains('open() requested for source')),
         isTrue,

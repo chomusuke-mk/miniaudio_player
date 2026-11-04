@@ -145,7 +145,7 @@ void main() {
     });
 
     test('dynamic toggling of skipSilence mid-playback engages without crashing', () async {
-      await player.action.open(AudioSource('test/fixtures/salida.wav'));
+      await player.action.open([AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();
 
       // Toggle silence skip ON while playing
@@ -163,7 +163,7 @@ void main() {
 
     test('seeking resets silence detector and preserves engine stability', () async {
       await player.action.setSilenceConfig(const SilenceSkipConfig.all());
-      await player.action.open(AudioSource('test/fixtures/salida.wav'));
+      await player.action.open([AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();
 
       await Future<void>.delayed(const Duration(milliseconds: 150));

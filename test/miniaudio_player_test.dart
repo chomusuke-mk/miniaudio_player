@@ -159,7 +159,7 @@ void main() {
     final player = MiniaudioPlayer(source: [AudioSource(bytes)]);
     try {
       await player.action.waitUntilOpen();
-      expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
+      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
 
       await player.action.play();
       expect(player.state.playing, isTrue);
@@ -207,19 +207,19 @@ void main() {
     try {
       // 1. Open track 1
       await player.action.waitUntilOpen();
-      expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
+      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
       await player.action.play();
       expect(player.state.playing, isTrue);
 
       // 2. Switch directly to track 2 while playing (previously caused crash/segfault)
-      await player.action.open(AudioSource(bytes2));
-      expect(player.state.duration.inMilliseconds, inInclusiveRange(65000, 72000));
+      await player.action.open([AudioSource(bytes2)]);
+      expect(player.state.duration?.inMilliseconds, inInclusiveRange(65000, 72000));
       await player.action.play();
       expect(player.state.playing, isTrue);
 
       // 3. Switch back to track 1
-      await player.action.open(AudioSource(bytes1));
-      expect(player.state.duration.inMilliseconds, inInclusiveRange(10000, 10100));
+      await player.action.open([AudioSource(bytes1)]);
+      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
     } finally {
       await player.dispose();
     }

@@ -44,6 +44,7 @@ pub struct TelemetryFilter {
     pub is_playing: Option<bool>,
     pub is_completed: Option<bool>,
     pub replay_gain: Option<(u32, u32, bool)>,
+    pub meta_bytes: Option<Vec<u8>>,
 }
 
 impl Default for TelemetryFilter {
@@ -63,6 +64,7 @@ impl Default for TelemetryFilter {
             is_playing: Some(false),
             is_completed: Some(false),
             replay_gain: None,
+            meta_bytes: None,
         }
     }
 }
@@ -210,6 +212,14 @@ impl EventReporter {
                     true
                 }
             }
+            RustPlayerEvent::MetaBytes(b) => {
+                if filter.meta_bytes.as_ref() == Some(b) {
+                    false
+                } else {
+                    filter.meta_bytes = Some(b.clone());
+                    true
+                }
+            }
             _ => true,
         };
         if !should_emit {
@@ -237,6 +247,7 @@ pub struct RustMiniaudioPlayer {
     _monitor_thread: Option<JoinHandle<()>>,
     device_trigger: Arc<(Mutex<bool>, Condvar)>,
     _watcher_thread: Option<JoinHandle<()>>,
+    metabytes_enabled: Arc<AtomicBool>,
 }
 
 unsafe impl Send for RustMiniaudioPlayer {}
@@ -273,6 +284,7 @@ impl RustMiniaudioPlayer {
         let reporter = EventReporter::new();
         let custom_handle = Arc::new(Mutex::new(None));
         let monitor_running = Arc::new(AtomicBool::new(true));
+        let metabytes_enabled = Arc::new(AtomicBool::new(false));
 
         let watcher_trigger = device_trigger.clone();
         let watcher_running = monitor_running.clone();
@@ -320,6 +332,7 @@ impl RustMiniaudioPlayer {
         let worker_inner = inner.clone();
         let worker_reporter = reporter.clone();
         let worker_running = monitor_running.clone();
+        let meta_enabled = metabytes_enabled.clone();
 
         let monitor_thread = thread::Builder::new()
             .name("map-telemetry-monitor".to_string())
@@ -477,7 +490,11 @@ impl RustMiniaudioPlayer {
                     let is_rec = ply.output_manager.is_recording();
                     let is_ducking = ply.input_manager.is_ducking_active();
                     let mic_rms = ply.input_manager.last_rms_db();
-                    let meta_to_send = active_deck.get_meta_bytes();
+                    let meta_to_send = if meta_enabled.load(Ordering::Relaxed) {
+                        active_deck.get_meta_bytes()
+                    } else {
+                        None
+                    };
                     let rg = ply.music_dsp.equalizer.replay_gain();
 
                     let vis_data = if ply.output_manager.visualizer_enabled.load(Ordering::Relaxed) {
@@ -546,6 +563,7 @@ impl RustMiniaudioPlayer {
             _monitor_thread: monitor_thread,
             device_trigger,
             _watcher_thread: watcher_thread,
+            metabytes_enabled,
         })
     }
 
@@ -711,20 +729,24 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let initial_meta = active_deck.get_meta_bytes();
         let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
         let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
+        if let Ok(mut f) = self.reporter.filter.lock() {
+            *f = TelemetryFilter::default();
+        }
         Self::sync_deck_replay_gain(&mut ply, start_index);
         drop(ply);
         self.emit_queue();
         self.emit_event(RustPlayerEvent::CurrentIndex(start_index as i32));
         self.emit_event(RustPlayerEvent::IsCompleted(false));
-        if let Some(mb) = initial_meta {
-            self.emit_event(RustPlayerEvent::MetaBytes(mb));
+        if self.metabytes_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            self.emit_event(RustPlayerEvent::MetaBytes(Vec::new()));
+            if let Some(mb) = initial_meta {
+                self.emit_event(RustPlayerEvent::MetaBytes(mb));
+            }
         }
         if initial_pos > 0 {
             self.emit_event(RustPlayerEvent::Position(initial_pos));
         }
-        if initial_dur > 0 {
-            self.emit_event(RustPlayerEvent::Duration(initial_dur));
-        }
+        self.emit_event(RustPlayerEvent::Duration(initial_dur));
         if initial_bitrate > 0 {
             self.emit_event(RustPlayerEvent::Bitrate(initial_bitrate));
         }
@@ -1030,6 +1052,22 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             self.emit_event(RustPlayerEvent::VisualizerEnabled(enabled));
             if !enabled {
                 self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
+            }
+        }
+    }
+
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_metabytes_enabled(&self, enabled: bool) {
+        let prev = self.metabytes_enabled.swap(enabled, std::sync::atomic::Ordering::Relaxed);
+        if prev != enabled {
+            self.emit_event(RustPlayerEvent::MetaBytesEnabled(enabled));
+            if enabled {
+                let ply = self.inner.lock().unwrap();
+                if let Some(mb) = ply.music_manager.active_deck_ref().get_meta_bytes() {
+                    self.emit_event(RustPlayerEvent::MetaBytes(mb));
+                }
+            } else {
+                self.emit_event(RustPlayerEvent::MetaBytes(Vec::new()));
             }
         }
     }

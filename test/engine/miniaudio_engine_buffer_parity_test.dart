@@ -33,7 +33,6 @@ void main() {
       expect(state.sampleRate, anyOf(0, 44100, 48000));
       expect(state.channels, anyOf(0, 1, 2));
       expect(state.bitrate, 0);
-      expect(state.trackMetadata, isNull);
       expect(state.playbackState, PlaybackState.stopped);
       expect(state.isPaused, isFalse);
       expect(state.isStopped, isTrue);

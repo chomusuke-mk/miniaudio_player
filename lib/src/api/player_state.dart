@@ -11,7 +11,6 @@ import 'loop_mode.dart';
 import 'miniaudio_player.dart';
 import 'player_models.dart';
 import 'silence_skip_config.dart';
-import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
 /// Represents the high-level playback and lifecycle states of [MiniaudioPlayer].
@@ -72,7 +71,17 @@ class PlayerState<T> {
   MiniaudioPlayer<T> get player => _player;
 
   Duration position = Duration.zero;
-  Duration duration = Duration.zero;
+
+  /// Total timeline duration of the currently active audio track.
+  ///
+  /// This value is nullable (`Duration?`) by design:
+  /// - It is `null` when no track is loaded, or when the current audio source
+  ///   is a live broadcast, infinite/unbounded stream, internet radio, or HLS stream
+  ///   where the duration is undefined or continuous.
+  /// - It is a non-null [Duration] when playing finite audio files or finite network
+  ///   streams with a known end, including very short audio clips (e.g. 15ms-100ms sound effects).
+  Duration? duration;
+
   PlaybackState playbackState = PlaybackState.stopped;
   EnginePhase phase = EnginePhase.idle;
 
@@ -91,8 +100,18 @@ class PlayerState<T> {
   BufferedRange bufferedRange = const BufferedRange();
   Duration bufferedPosition = Duration.zero;
   double bufferedPercentage = 0.0;
-  AudioTrackMetadata? trackMetadata;
+
+  /// Raw metadata bytes extracted by the native audio engine (e.g. ID3, Vorbis, ICY stream metadata).
+  ///
+  /// `metaBytes` is only populated when [metaBytesEnabled] is `true`.
+  /// If [metaBytesEnabled] is `false`, this is always `null` to conserve bandwidth and prevent
+  /// event bus overhead.
   Uint8List? metaBytes;
+
+  /// Whether the native engine is actively dispatching raw metadata bytes.
+  ///
+  /// Defaults to `false`. Can be toggled using `player.action.setMetaBytesEnabled(bool)`.
+  bool metaBytesEnabled = false;
 
   double volume = 1.0;
   double rate = 1.0;
@@ -132,8 +151,11 @@ class PlayerState<T> {
   Duration silenceSavedDuration = Duration.zero;
 
   VisualizerData visualizer = VisualizerData.empty();
+
+  /// Whether real-time 10-band FFT spectrum visualizer calculation is enabled.
+  ///
+  /// Defaults to `false`. Can be activated via `player.action.setVisualizerEnabled(true)`.
   bool visualizerEnabled = false;
-  bool get isVisualizerEnabled => visualizerEnabled;
 
   double preamp = 0.0;
   double get preampDb => preamp;
@@ -194,16 +216,4 @@ class PlayerState<T> {
       (currentIndex >= 0 && currentIndex < queue.length) ? queue[currentIndex] : null;
   T? get currentData => currentItem?.data;
   int get pinnedHeadSize => metaBytes?.length ?? 0;
-
-  bool get isLiveStream {
-    if (trackMetadata != null) return trackMetadata!.isLiveStream;
-    final item = currentItem;
-    if (item is UriAudioSource) {
-      final s = (item as UriAudioSource).sourceString.toLowerCase();
-      final isNet = s.startsWith('http://') || s.startsWith('https://');
-      if (s.contains('.m3u8')) return true;
-      if (isNet && duration == Duration.zero) return true;
-    }
-    return false;
-  }
 }

@@ -132,7 +132,7 @@ class PlaybackEngineCard extends StatelessWidget {
                 builder: (context, posSnap) {
                   final pos = posSnap.data ?? Duration.zero;
                   final dur = engine.state.duration;
-                  final progress = (dur.inMilliseconds > 0)
+                  final progress = (dur != null && dur.inMilliseconds > 0)
                       ? (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0)
                       : 0.0;
 
@@ -149,7 +149,7 @@ class PlaybackEngineCard extends StatelessWidget {
                                   .startsWith('http'));
                       final bufferedProgress = isLocal
                           ? 1.0
-                          : (dur.inMilliseconds > 0
+                          : (dur != null && dur.inMilliseconds > 0
                               ? (bufPos.inMilliseconds / dur.inMilliseconds)
                                   .clamp(0.0, 1.0)
                               : engine.state.bufferedPercentage.clamp(0.0, 1.0));
@@ -161,16 +161,19 @@ class PlaybackEngineCard extends StatelessWidget {
                               return GestureDetector(
                                 behavior: HitTestBehavior.opaque,
                                 onTapDown: (details) {
+                                  if (dur == null) return;
                                   final frac = details.localPosition.dx /
                                       constraints.maxWidth;
                                   _seekToFraction(context, frac, dur);
                                 },
                                 onHorizontalDragStart: (details) {
+                                  if (dur == null) return;
                                   final frac = details.localPosition.dx /
                                       constraints.maxWidth;
                                   _seekToFraction(context, frac, dur);
                                 },
                                 onHorizontalDragUpdate: (details) {
+                                  if (dur == null) return;
                                   final frac = details.localPosition.dx /
                                       constraints.maxWidth;
                                   _seekToFraction(context, frac, dur);
@@ -224,7 +227,7 @@ class PlaybackEngineCard extends StatelessWidget {
                               ),
                               Flexible(
                                 child: Text(
-                                  _formatDuration(dur),
+                                  dur != null ? _formatDuration(dur) : 'LIVE',
                                   style: const TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w700,

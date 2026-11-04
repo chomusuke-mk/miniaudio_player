@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import '../equalizer.dart';
@@ -20,7 +18,6 @@ import 'player_state.dart';
 import 'recording.dart' show DuckingConfig;
 import 'silence_skip_config.dart';
 import 'spatial.dart';
-import 'track_metadata.dart';
 
 /// Action interface executing asynchronous playback, queue, effects, and DSP controls.
 ///
@@ -143,9 +140,13 @@ class PlayerAction<T> {
   // Playlist Queue Management
   // =========================================================================
 
-  /// Opens an audio source or playlist, replacing the current queue.
+  /// Opens an audio source playlist, replacing the current queue.
+  ///
+  /// In strict accordance with the stream-driven architecture, this method passes the
+  /// sources directly to the native audio engine without performing file I/O, parsing,
+  /// or emitting artificial state transitions in Dart.
   Future<void> open(
-    Object? source, {
+    List<AudioSource<T>> source, {
     int startIndex = 0,
     bool autoPlay = false,
   }) {
@@ -154,24 +155,19 @@ class PlayerAction<T> {
 
     return _serialize(() async {
       _player.ensureNotDisposed();
-      _player.state.metaBytes = null;
-      if (!_player.stream.metaBytesController.isClosed) {
-        _player.stream.metaBytesController.add(null);
-      }
 
       try {
-        final sources = MiniaudioPlayer.normalizeSource<T>(source);
-        if (sources.length == 1) {
-          MapLogger.info('open() requested for source: ${sources.first}');
+        if (source.length == 1) {
+          MapLogger.info('open() requested for source: ${source.first}');
         } else {
           MapLogger.info(
-            'open() requested for source: ${sources.length} items (startIndex: $startIndex, autoPlay: $autoPlay)',
+            'open() requested for source: ${source.length} items (startIndex: $startIndex, autoPlay: $autoPlay)',
           );
         }
 
         final normalized = <AudioSource<T>>[];
-        for (var i = 0; i < sources.length; i++) {
-          final s = sources[i];
+        for (var i = 0; i < source.length; i++) {
+          final s = source[i];
           final withId = s.id != null ? s : s.copyWith(id: i);
           normalized.add(withId);
         }
@@ -197,47 +193,6 @@ class PlayerAction<T> {
         } catch (e) {
           if (e is MiniaudioPlayerException) rethrow;
           throw MiniaudioPlayerException.fromRustError(e);
-        }
-
-        if (sources.isNotEmpty && startIndex >= 0 && startIndex < sources.length) {
-          final activeSource = sources[startIndex];
-          Uint8List? headerBytes;
-          if (activeSource is MemoryAudioSource<T>) {
-            headerBytes = activeSource.bytes;
-          } else if (activeSource is UriAudioSource<T>) {
-            final uri = Uri.tryParse(activeSource.sourceString);
-            final file = (uri != null && uri.scheme == 'file')
-                ? File.fromUri(uri)
-                : File(activeSource.sourceString);
-            if (file.existsSync()) {
-              try {
-                final raf = file.openSync();
-                headerBytes = raf.readSync(min(8192, file.lengthSync()));
-                raf.closeSync();
-              } catch (_) {}
-            }
-          }
-          if (headerBytes != null &&
-              !_player.isDisposed &&
-              !_player.stream.metaBytesController.isClosed) {
-            _player.state.metaBytes = headerBytes;
-            _player.stream.metaBytesController.add(headerBytes);
-          }
-
-          final meta = AudioTrackMetadata.resolve(
-            sourceHint: activeSource.sourceKey,
-            durationMs: _player.state.duration.inMilliseconds,
-            bitrate: _player.state.bitrate,
-            sampleRate: _player.state.sampleRate,
-            channels: _player.state.channels,
-            audioDataOffset: 0,
-            headerBytes: headerBytes,
-          );
-          _player.state.trackMetadata = meta;
-          if (!_player.isDisposed &&
-              !_player.stream.trackMetadataController.isClosed) {
-            _player.stream.trackMetadataController.add(meta);
-          }
         }
 
         await applyCurrentTrackReplayGain();
@@ -490,18 +445,26 @@ class PlayerAction<T> {
     await Future<void>.delayed(Duration.zero);
   }
 
-  /// Toggles real-time 10-band FFT spectrum visualizer calculation.
+  /// Enables or disables real-time 10-band FFT spectrum visualizer calculation in the native engine.
+  ///
+  /// For events to be emitted across [PlayerStream.visualizer], this must be set to `true`.
+  /// Defaults to `false`.
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player.ensureNotDisposed();
-    _player.setManualVisualizerOverride(enabled);
-    await Future<void>.delayed(Duration.zero);
+    _rust.setVisualizerEnabled(enabled: enabled);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Clears manual visualizer override.
-  Future<void> clearVisualizerOverride() async {
+  /// Enables or disables raw metadata dispatch from the native audio engine.
+  ///
+  /// When enabled, raw metadata bytes (e.g. ID3, Vorbis, ICY stream metadata) are emitted
+  /// across [PlayerStream.metaBytes] and stored in [PlayerState.metaBytes].
+  ///
+  /// Defaults to `false` to avoid saturating the event bus.
+  Future<void> setMetaBytesEnabled(bool enabled) async {
     _player.ensureNotDisposed();
-    _player.setManualVisualizerOverride(null);
-    await Future<void>.delayed(Duration.zero);
+    _rust.setMetabytesEnabled(enabled: enabled);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures intelligent silence detection and skipping.
@@ -667,7 +630,7 @@ class PlayerAction<T> {
   Future<void> setPauseOnDeviceChange(bool enabled) async {
     _player.ensureNotDisposed();
     _rust.setPauseOnDeviceChange(enabled: enabled);
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Switches primary audio playback to [device].

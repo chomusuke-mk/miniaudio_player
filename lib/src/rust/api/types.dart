@@ -609,6 +609,9 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.metaBytes(
     Uint8List field0,
   ) = RustPlayerEvent_MetaBytes;
+  const factory RustPlayerEvent.metaBytesEnabled(
+    bool field0,
+  ) = RustPlayerEvent_MetaBytesEnabled;
   const factory RustPlayerEvent.cueVolume(
     double field0,
   ) = RustPlayerEvent_CueVolume;

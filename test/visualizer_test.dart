@@ -66,19 +66,24 @@ void main() {
       expect(player.state.visualizerEnabled, isFalse);
     });
 
-    test('Listening to player.stream.visualizer automatically activates visualizer on-demand', () async {
+    test('Listening to player.stream.visualizer does NOT auto-enable visualizer; requires action.setVisualizerEnabled(true)', () async {
       final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
       expect(player.state.visualizerEnabled, isFalse);
 
       final sub = player.stream.visualizer.listen((_) {});
-      // Waiting brief moment for onListen callback
       await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(player.state.visualizerEnabled, isFalse);
+
+      await player.action.setVisualizerEnabled(true);
       expect(player.state.visualizerEnabled, isTrue);
 
       await sub.cancel();
       await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(player.state.visualizerEnabled, isTrue);
+
+      await player.action.setVisualizerEnabled(false);
       expect(player.state.visualizerEnabled, isFalse);
     });
 
@@ -88,6 +93,9 @@ void main() {
 
       final player = MiniaudioPlayer(source: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
+
+      await player.action.setVisualizerEnabled(true);
+      expect(player.state.visualizerEnabled, isTrue);
 
       final emittedData = <VisualizerData>[];
       final sub = player.stream.visualizer.listen((data) {
@@ -124,17 +132,17 @@ void main() {
       expect(player.state.visualizer.rms, equals(0.0));
     });
 
-    test('setVisualizerEnabled(false) force-disables visualizer DSP even with active stream listeners', () async {
+    test('setVisualizerEnabled controls visualizer DSP and emits empty visualizer when disabled', () async {
       final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
-      // 1. Subscribe to visualizer stream -> should auto-enable
-      final sub = player.stream.visualizer.listen((_) {});
-      addTearDown(() => sub.cancel());
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(player.state.visualizerEnabled, isFalse);
+
+      // 1. Enable via action
+      await player.action.setVisualizerEnabled(true);
       expect(player.state.visualizerEnabled, isTrue);
 
-      // 2. Explicitly force-disable via action
+      // 2. Disable via action
       await player.action.setVisualizerEnabled(false);
       expect(player.state.visualizerEnabled, isFalse);
 
@@ -151,27 +159,20 @@ void main() {
       expect(player.state.visualizerEnabled, isFalse);
     });
 
-    test('clearVisualizerOverride reverts to listener-based automatic activation', () async {
+    test('stream.visualizerEnabled emits boolean transitions on action calls', () async {
       final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
-      final sub = player.stream.visualizer.listen((_) {});
+      final enabledStates = <bool>[];
+      final sub = player.stream.visualizerEnabled.listen(enabledStates.add);
       addTearDown(() => sub.cancel());
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(player.state.visualizerEnabled, isTrue);
 
-      // Force disable
+      await player.action.setVisualizerEnabled(true);
       await player.action.setVisualizerEnabled(false);
-      expect(player.state.visualizerEnabled, isFalse);
+      await player.action.setVisualizerEnabled(true);
+      await player.action.setVisualizerEnabled(false);
 
-      // Clear override -> should revert to listener presence (active)
-      await player.action.clearVisualizerOverride();
-      expect(player.state.visualizerEnabled, isTrue);
-
-      // Cancel listener -> should revert to disabled
-      await sub.cancel();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(player.state.visualizerEnabled, isFalse);
+      expect(enabledStates, equals([true, false, true, false]));
     });
 
     test('Playback visualizer stream receives empty data when force-disabled mid-playback', () async {
@@ -180,6 +181,8 @@ void main() {
 
       final player = MiniaudioPlayer(source: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
+
+      await player.action.setVisualizerEnabled(true);
 
       final emitted = <VisualizerData>[];
       final sub = player.stream.visualizer.listen((data) {
@@ -204,7 +207,7 @@ void main() {
       expect(emitted.last.bands.every((b) => b == 0.0), isTrue);
     });
 
-    test('visualizerEnabled broadcast stream emits correct transitions with manual override', () async {
+    test('visualizerEnabled broadcast stream and state snapshot maintain parity', () async {
       final player = MiniaudioPlayer(source: [dummySource]);
       addTearDown(() => player.dispose());
 
@@ -214,25 +217,17 @@ void main() {
       });
       addTearDown(() => subEnabled.cancel());
 
-      final visSub = player.stream.visualizer.listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      // Listener added -> true
+      await player.action.setVisualizerEnabled(true);
+      expect(player.state.visualizerEnabled, isTrue);
 
       await player.action.setVisualizerEnabled(false);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      // Force disabled -> false
+      expect(player.state.visualizerEnabled, isFalse);
 
       await player.action.setVisualizerEnabled(true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      // Force enabled -> true
-
-      await visSub.cancel();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      // Listener removed while override is true -> remains true
+      expect(player.state.visualizerEnabled, isTrue);
 
       await player.action.setVisualizerEnabled(false);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      // Force disabled -> false
+      expect(player.state.visualizerEnabled, isFalse);
 
       expect(enabledStates, equals([true, false, true, false]));
     });

@@ -758,6 +758,7 @@ pub enum RustPlayerEvent {
     MicRmsLevel(f32),
     VoiceCompleted(u32),
     MetaBytes(Vec<u8>),
+    MetaBytesEnabled(bool),
     CueVolume(f32),
     CueSource(i32),
     LoopMode(i32),

@@ -615,6 +615,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_MicRmsLevel value)? micRmsLevel,
     TResult Function(RustPlayerEvent_VoiceCompleted value)? voiceCompleted,
     TResult Function(RustPlayerEvent_MetaBytes value)? metaBytes,
+    TResult Function(RustPlayerEvent_MetaBytesEnabled value)? metaBytesEnabled,
     TResult Function(RustPlayerEvent_CueVolume value)? cueVolume,
     TResult Function(RustPlayerEvent_CueSource value)? cueSource,
     TResult Function(RustPlayerEvent_LoopMode value)? loopMode,
@@ -707,6 +708,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return voiceCompleted(_that);
       case RustPlayerEvent_MetaBytes() when metaBytes != null:
         return metaBytes(_that);
+      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
+        return metaBytesEnabled(_that);
       case RustPlayerEvent_CueVolume() when cueVolume != null:
         return cueVolume(_that);
       case RustPlayerEvent_CueSource() when cueSource != null:
@@ -800,6 +803,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_VoiceCompleted value)
         voiceCompleted,
     required TResult Function(RustPlayerEvent_MetaBytes value) metaBytes,
+    required TResult Function(RustPlayerEvent_MetaBytesEnabled value)
+        metaBytesEnabled,
     required TResult Function(RustPlayerEvent_CueVolume value) cueVolume,
     required TResult Function(RustPlayerEvent_CueSource value) cueSource,
     required TResult Function(RustPlayerEvent_LoopMode value) loopMode,
@@ -893,6 +898,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return voiceCompleted(_that);
       case RustPlayerEvent_MetaBytes():
         return metaBytes(_that);
+      case RustPlayerEvent_MetaBytesEnabled():
+        return metaBytesEnabled(_that);
       case RustPlayerEvent_CueVolume():
         return cueVolume(_that);
       case RustPlayerEvent_CueSource():
@@ -973,6 +980,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_MicRmsLevel value)? micRmsLevel,
     TResult? Function(RustPlayerEvent_VoiceCompleted value)? voiceCompleted,
     TResult? Function(RustPlayerEvent_MetaBytes value)? metaBytes,
+    TResult? Function(RustPlayerEvent_MetaBytesEnabled value)? metaBytesEnabled,
     TResult? Function(RustPlayerEvent_CueVolume value)? cueVolume,
     TResult? Function(RustPlayerEvent_CueSource value)? cueSource,
     TResult? Function(RustPlayerEvent_LoopMode value)? loopMode,
@@ -1064,6 +1072,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return voiceCompleted(_that);
       case RustPlayerEvent_MetaBytes() when metaBytes != null:
         return metaBytes(_that);
+      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
+        return metaBytesEnabled(_that);
       case RustPlayerEvent_CueVolume() when cueVolume != null:
         return cueVolume(_that);
       case RustPlayerEvent_CueSource() when cueSource != null:
@@ -1147,6 +1157,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(double field0)? micRmsLevel,
     TResult Function(int field0)? voiceCompleted,
     TResult Function(Uint8List field0)? metaBytes,
+    TResult Function(bool field0)? metaBytesEnabled,
     TResult Function(double field0)? cueVolume,
     TResult Function(int field0)? cueSource,
     TResult Function(int field0)? loopMode,
@@ -1236,6 +1247,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return voiceCompleted(_that.field0);
       case RustPlayerEvent_MetaBytes() when metaBytes != null:
         return metaBytes(_that.field0);
+      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
+        return metaBytesEnabled(_that.field0);
       case RustPlayerEvent_CueVolume() when cueVolume != null:
         return cueVolume(_that.field0);
       case RustPlayerEvent_CueSource() when cueSource != null:
@@ -1320,6 +1333,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(double field0) micRmsLevel,
     required TResult Function(int field0) voiceCompleted,
     required TResult Function(Uint8List field0) metaBytes,
+    required TResult Function(bool field0) metaBytesEnabled,
     required TResult Function(double field0) cueVolume,
     required TResult Function(int field0) cueSource,
     required TResult Function(int field0) loopMode,
@@ -1408,6 +1422,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return voiceCompleted(_that.field0);
       case RustPlayerEvent_MetaBytes():
         return metaBytes(_that.field0);
+      case RustPlayerEvent_MetaBytesEnabled():
+        return metaBytesEnabled(_that.field0);
       case RustPlayerEvent_CueVolume():
         return cueVolume(_that.field0);
       case RustPlayerEvent_CueSource():
@@ -1487,6 +1503,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(double field0)? micRmsLevel,
     TResult? Function(int field0)? voiceCompleted,
     TResult? Function(Uint8List field0)? metaBytes,
+    TResult? Function(bool field0)? metaBytesEnabled,
     TResult? Function(double field0)? cueVolume,
     TResult? Function(int field0)? cueSource,
     TResult? Function(int field0)? loopMode,
@@ -1575,6 +1592,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return voiceCompleted(_that.field0);
       case RustPlayerEvent_MetaBytes() when metaBytes != null:
         return metaBytes(_that.field0);
+      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
+        return metaBytesEnabled(_that.field0);
       case RustPlayerEvent_CueVolume() when cueVolume != null:
         return cueVolume(_that.field0);
       case RustPlayerEvent_CueSource() when cueSource != null:
@@ -4054,6 +4073,74 @@ class _$RustPlayerEvent_MetaBytesCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as Uint8List,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_MetaBytesEnabled extends RustPlayerEvent {
+  const RustPlayerEvent_MetaBytesEnabled(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MetaBytesEnabledCopyWith<RustPlayerEvent_MetaBytesEnabled>
+      get copyWith => _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl<
+          RustPlayerEvent_MetaBytesEnabled>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_MetaBytesEnabled &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.metaBytesEnabled(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MetaBytesEnabledCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MetaBytesEnabledCopyWith(
+          RustPlayerEvent_MetaBytesEnabled value,
+          $Res Function(RustPlayerEvent_MetaBytesEnabled) _then) =
+      _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MetaBytesEnabledCopyWith<$Res> {
+  _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_MetaBytesEnabled _self;
+  final $Res Function(RustPlayerEvent_MetaBytesEnabled) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_MetaBytesEnabled(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as bool,
     ));
   }
 }

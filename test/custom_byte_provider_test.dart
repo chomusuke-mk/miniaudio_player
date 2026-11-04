@@ -52,7 +52,7 @@ void main() {
     final provider = MockCustomByteProvider(bytes, streamId: 202);
     final source = AudioSource.custom(provider);
 
-    await player.action.open(source);
+    await player.action.open([source]);
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     await player.action.play();

@@ -14,7 +14,6 @@ import 'player_exception.dart';
 import 'player_models.dart';
 import 'player_state.dart' show EnginePhase, PlaybackState;
 import 'silence_skip_config.dart';
-import 'track_metadata.dart';
 import 'visualizer_data.dart';
 
 /// Reactive broadcast streams for observing playback, queue, effects, and DSP state changes.
@@ -24,8 +23,8 @@ import 'visualizer_data.dart';
 class PlayerStream<T> {
   final StreamController<Duration> positionController =
       StreamController<Duration>.broadcast();
-  final StreamController<Duration> durationController =
-      StreamController<Duration>.broadcast();
+  final StreamController<Duration?> durationController =
+      StreamController<Duration?>.broadcast();
   final StreamController<bool> playingController =
       StreamController<bool>.broadcast();
   final StreamController<bool> bufferingController =
@@ -44,10 +43,14 @@ class PlayerStream<T> {
       StreamController<double>.broadcast();
   final StreamController<BufferedRange> bufferedRangeController =
       StreamController<BufferedRange>.broadcast();
-  final StreamController<AudioTrackMetadata?> trackMetadataController =
-      StreamController<AudioTrackMetadata?>.broadcast();
   final StreamController<Uint8List?> metaBytesController =
       StreamController<Uint8List?>.broadcast();
+  final StreamController<bool> metaBytesEnabledController =
+      StreamController<bool>.broadcast();
+  final StreamController<int> sampleRateController =
+      StreamController<int>.broadcast();
+  final StreamController<int> channelsController =
+      StreamController<int>.broadcast();
   final StreamController<double> volumeController =
       StreamController<double>.broadcast();
   final StreamController<double> rateController =
@@ -82,7 +85,8 @@ class PlayerStream<T> {
       StreamController<SilenceSkipConfig>.broadcast();
   final StreamController<Duration> silenceSavedDurationController =
       StreamController<Duration>.broadcast();
-  final StreamController<VisualizerData> visualizerController;
+  final StreamController<VisualizerData> visualizerController =
+      StreamController<VisualizerData>.broadcast();
   final StreamController<bool> visualizerEnabledController =
       StreamController<bool>.broadcast();
   final StreamController<double> preampController =
@@ -138,16 +142,10 @@ class PlayerStream<T> {
   final StreamController<NeedMoreTracksEvent> needMoreTracksController =
       StreamController<NeedMoreTracksEvent>.broadcast();
 
-  PlayerStream({
-    void Function()? onVisualizerListen,
-    void Function()? onVisualizerCancel,
-  }) : visualizerController = StreamController<VisualizerData>.broadcast(
-          onListen: onVisualizerListen,
-          onCancel: onVisualizerCancel,
-        );
+  PlayerStream();
 
   Stream<Duration> get position => positionController.stream;
-  Stream<Duration> get duration => durationController.stream;
+  Stream<Duration?> get duration => durationController.stream;
   Stream<bool> get playing => playingController.stream;
   Stream<bool> get isPlaying => playingController.stream;
   Stream<bool> get buffering => bufferingController.stream;
@@ -158,8 +156,24 @@ class PlayerStream<T> {
   Stream<Duration> get bufferedPosition => bufferedPositionController.stream;
   Stream<double> get bufferedPercentage => bufferedPercentageController.stream;
   Stream<BufferedRange> get bufferedRange => bufferedRangeController.stream;
-  Stream<AudioTrackMetadata?> get trackMetadata => trackMetadataController.stream;
+
+  /// Reactive broadcast stream emitting raw metadata bytes extracted by the native audio engine
+  /// (e.g. ID3, Vorbis, ICY stream metadata).
+  ///
+  /// Note: In Dart, this stream is always open and ready for listeners, but events are ONLY
+  /// emitted through this stream when [metaBytesEnabled] is set to `true`
+  /// (via `player.action.setMetaBytesEnabled(true)`).
+  /// By default, [metaBytesEnabled] is `false` to avoid saturating the event bus.
   Stream<Uint8List?> get metaBytes => metaBytesController.stream;
+
+  /// Reactive broadcast stream emitting updates whenever metadata dispatch is enabled or disabled.
+  Stream<bool> get metaBytesEnabled => metaBytesEnabledController.stream;
+
+  /// Reactive broadcast stream emitting the native sample rate (Hz) of the active playback.
+  Stream<int> get sampleRate => sampleRateController.stream;
+
+  /// Reactive broadcast stream emitting the channel count (e.g. 1 for mono, 2 for stereo) of the active playback.
+  Stream<int> get channels => channelsController.stream;
   Stream<double> get volume => volumeController.stream;
   Stream<double> get rate => rateController.stream;
   Stream<double> get pitch => pitchController.stream;
@@ -189,7 +203,15 @@ class PlayerStream<T> {
   Stream<SilenceSkipConfig> get silenceConfig => silenceConfigController.stream;
   Stream<Duration> get silenceSavedDuration =>
       silenceSavedDurationController.stream;
+  /// Reactive broadcast stream emitting real-time 10-band FFT spectrum visualizer metrics.
+  ///
+  /// Note: In Dart, this stream is always open and ready for listeners, but for events
+  /// to actually be computed and emitted here, the visualizer must be activated by setting
+  /// [visualizerEnabled] to `true` (via `player.action.setVisualizerEnabled(true)`).
+  /// By default, [visualizerEnabled] is `false`.
   Stream<VisualizerData> get visualizer => visualizerController.stream;
+
+  /// Reactive broadcast stream emitting updates whenever the visualizer DSP calculation is enabled or disabled.
   Stream<bool> get visualizerEnabled => visualizerEnabledController.stream;
   Stream<double> get preamp => preampController.stream;
   Stream<ReplayGainConfig> get replayGain => replayGainController.stream;
@@ -233,8 +255,10 @@ class PlayerStream<T> {
       bufferedPositionController.close(),
       bufferedPercentageController.close(),
       bufferedRangeController.close(),
-      trackMetadataController.close(),
       metaBytesController.close(),
+      metaBytesEnabledController.close(),
+      sampleRateController.close(),
+      channelsController.close(),
       volumeController.close(),
       rateController.close(),
       pitchController.close(),
