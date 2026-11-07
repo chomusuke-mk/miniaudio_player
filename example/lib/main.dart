@@ -7,8 +7,9 @@ export 'app.dart';
 export 'models/audio_track.dart';
 export 'widgets/painters/waveform_painter.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await MiniaudioPlayer.ensureInitialized();
   MiniaudioPlayer.config(
     defaultBufferSize: 0,
     logLevel: MiniaudioLogLevel.verbose,

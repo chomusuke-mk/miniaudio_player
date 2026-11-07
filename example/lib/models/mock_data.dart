@@ -61,22 +61,8 @@ abstract final class MockData {
   }
 
   static bool isAudioFile(String path) {
-    final lower = path.toLowerCase();
-    return lower.endsWith('.mp3') ||
-        lower.endsWith('.wav') ||
-        lower.endsWith('.flac') ||
-        lower.endsWith('.ogg') ||
-        lower.endsWith('.opus') ||
-        lower.endsWith('.aac') ||
-        lower.endsWith('.m4a') ||
-        lower.endsWith('.aif') ||
-        lower.endsWith('.aiff') ||
-        lower.endsWith('.aifc') ||
-        lower.endsWith('.webm') ||
-        lower.endsWith('.w64') ||
-        lower.endsWith('.rf64') ||
-        lower.endsWith('.bwf') ||
-        lower.endsWith('.mp2');
+    final lower = path.toLowerCase().split('.').last;
+    return miniAudioPlayerSupportedExtensions.contains(lower);
   }
 
   static Future<List<AudioTrack>> loadTracks({AssetBundle? bundle}) async {

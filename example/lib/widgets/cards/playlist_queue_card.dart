@@ -34,6 +34,17 @@ class PlaylistQueueCard extends StatelessWidget {
                 color: StudioColors.accentCyan,
               ),
               IconButton.filledTonal(
+                icon: const Icon(Icons.swap_vert, size: 18),
+                tooltip: 'Reverse Queue via native reorderByIds',
+                visualDensity: VisualDensity.compact,
+                style: IconButton.styleFrom(
+                  backgroundColor: StudioColors.cardBorder,
+                  foregroundColor: StudioColors.accentPurple,
+                  padding: const EdgeInsets.all(6),
+                ),
+                onPressed: controller.reverseQueueByIds,
+              ),
+              IconButton.filledTonal(
                 icon: const Icon(Icons.add, size: 18),
                 tooltip: 'Add URL, URI, or file to queue',
                 visualDensity: VisualDensity.compact,
@@ -275,9 +286,22 @@ class PlaylistQueueCard extends StatelessWidget {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    trailing: StudioBadge(
-                                      label: track.resourceBadge,
-                                      color: track.iconColor,
+                                    trailing: Wrap(
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      spacing: 4,
+                                      children: [
+                                        if (queue.isNotEmpty &&
+                                            index < queue.length &&
+                                            queue[index].id != null)
+                                          StudioBadge(
+                                            label: 'ID #${queue[index].id}',
+                                            color: StudioColors.accentPurple,
+                                          ),
+                                        StudioBadge(
+                                          label: track.resourceBadge,
+                                          color: track.iconColor,
+                                        ),
+                                      ],
                                     ),
                                     onTap: () async {
                                       await controller.engine.action.skipToIndex(index);

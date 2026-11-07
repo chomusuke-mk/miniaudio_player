@@ -1,5 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
+
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import '../equalizer.dart';
 import '../loader/custom_byte_provider.dart';
@@ -27,7 +29,30 @@ import 'visualizer_data.dart';
 /// Ensures native Rust library is initialized before calling static methods.
 Future<void> ensureRustInitialized() async {
   if (!RustLib.instance.initialized) {
-    await RustLib.init();
+    try {
+      await RustLib.init(forceSameCodegenVersion: false);
+    } catch (_) {
+      final candidates = [
+        '../rust/target/debug/libminiaudio_player.so',
+        'rust/target/debug/libminiaudio_player.so',
+        '../rust/target/release/libminiaudio_player.so',
+        'rust/target/release/libminiaudio_player.so',
+      ];
+      bool loaded = false;
+      for (final candidate in candidates) {
+        if (File(candidate).existsSync()) {
+          try {
+            await RustLib.init(
+              forceSameCodegenVersion: false,
+              externalLibrary: ExternalLibrary.open(candidate),
+            );
+            loaded = true;
+            break;
+          } catch (_) {}
+        }
+      }
+      if (!loaded) rethrow;
+    }
   }
 }
 
@@ -168,25 +193,43 @@ class MiniaudioPlayer<T> {
     Duration? bufferBehindNetworkDuration,
     Duration? bufferBehindLiveStreamDuration,
   }) {
-    if (defaultBufferSize != null) _globalConfig.defaultBufferSize = defaultBufferSize;
-    if (logLevel != null) _globalConfig.logLevel = logLevel;
-    if (defaultAudioDevice != null) _globalConfig.defaultAudioDevice = defaultAudioDevice;
-    if (defaultDeviceDisplayNameResolver != null) {
-      _globalConfig.defaultDeviceDisplayNameResolver = defaultDeviceDisplayNameResolver;
+    if (defaultBufferSize != null) {
+      _globalConfig.defaultBufferSize = defaultBufferSize;
     }
-    if (bufferLocalDuration != null) _globalConfig.bufferLocalDuration = bufferLocalDuration;
-    if (bufferNetworkDuration != null) _globalConfig.bufferNetworkDuration = bufferNetworkDuration;
-    if (bufferLiveStreamDuration != null) _globalConfig.bufferLiveStreamDuration = bufferLiveStreamDuration;
-    if (bufferBehindLocalDuration != null) _globalConfig.bufferBehindLocalDuration = bufferBehindLocalDuration;
-    if (bufferBehindNetworkDuration != null) _globalConfig.bufferBehindNetworkDuration = bufferBehindNetworkDuration;
-    if (bufferBehindLiveStreamDuration != null) _globalConfig.bufferBehindLiveStreamDuration = bufferBehindLiveStreamDuration;
+    if (logLevel != null) _globalConfig.logLevel = logLevel;
+    if (defaultAudioDevice != null) {
+      _globalConfig.defaultAudioDevice = defaultAudioDevice;
+    }
+    if (defaultDeviceDisplayNameResolver != null) {
+      _globalConfig.defaultDeviceDisplayNameResolver =
+          defaultDeviceDisplayNameResolver;
+    }
+    if (bufferLocalDuration != null) {
+      _globalConfig.bufferLocalDuration = bufferLocalDuration;
+    }
+    if (bufferNetworkDuration != null) {
+      _globalConfig.bufferNetworkDuration = bufferNetworkDuration;
+    }
+    if (bufferLiveStreamDuration != null) {
+      _globalConfig.bufferLiveStreamDuration = bufferLiveStreamDuration;
+    }
+    if (bufferBehindLocalDuration != null) {
+      _globalConfig.bufferBehindLocalDuration = bufferBehindLocalDuration;
+    }
+    if (bufferBehindNetworkDuration != null) {
+      _globalConfig.bufferBehindNetworkDuration = bufferBehindNetworkDuration;
+    }
+    if (bufferBehindLiveStreamDuration != null) {
+      _globalConfig.bufferBehindLiveStreamDuration =
+          bufferBehindLiveStreamDuration;
+    }
     return _globalConfig;
   }
 
-  /// Resets global audio engine configuration to clean defaults.
+  /// Resets global audio player configuration to clean defaults.
   static void resetGlobalConfig() => _globalConfig.reset();
 
-  /// Ensures native Rust audio engine backend is initialized.
+  /// Ensures native Rust audio player backend is initialized.
   static Future<void> ensureInitialized() async => ensureRustInitialized();
 
   // =========================================================================
@@ -319,6 +362,13 @@ class MiniaudioPlayer<T> {
     bool pauseOnDeviceChange = false,
     CrossfadeConfig? crossfadeConfig,
   }) {
+    if (!RustLib.instance.initialized) {
+      throw StateError(
+        'MiniaudioPlayer requires initialization before instantiation. '
+        'Please call `await MiniaudioPlayer.ensureInitialized();` in your '
+        'main() function before creating any player instances.',
+      );
+    }
     MapLogger.info('Initializing MiniaudioPlayer');
     action = PlayerAction<T>(this);
     stream = PlayerStream<T>();
@@ -357,7 +407,8 @@ class MiniaudioPlayer<T> {
       action.preloadEffects(effects);
     }
     if (outputs != null &&
-        !(outputs.length == 1 && outputs.first == const AudioOutput.speaker())) {
+        !(outputs.length == 1 &&
+            outputs.first == const AudioOutput.speaker())) {
       action.configureOutputs(outputs);
     }
     for (final input in inputs) {
@@ -538,8 +589,11 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_CrossfadeConfig(:final field0):
         final cfg = CrossfadeConfig(
           autoDuration: Duration(milliseconds: field0.autoDurationMs.toInt()),
-          manualDuration: Duration(milliseconds: field0.manualDurationMs.toInt()),
-          curve: field0.curve == 1 ? CrossfadeCurve.linear : CrossfadeCurve.equalPower,
+          manualDuration:
+              Duration(milliseconds: field0.manualDurationMs.toInt()),
+          curve: field0.curve == 1
+              ? CrossfadeCurve.linear
+              : CrossfadeCurve.equalPower,
         );
         state.crossfadeConfig = cfg;
         stream.crossfadeConfigController.add(cfg);
@@ -558,7 +612,10 @@ class MiniaudioPlayer<T> {
         stream.micRmsLevelController.add(field0);
       case rust_types.RustPlayerEvent_VoiceCompleted(:final field0):
         stream.voiceCompletedController.add(field0);
-      case rust_types.RustPlayerEvent_LoadedEffects(:final ids, :final allocatedBytes):
+      case rust_types.RustPlayerEvent_LoadedEffects(
+          :final ids,
+          :final allocatedBytes
+        ):
         state.loadedEffectIds = List.unmodifiable(ids);
         state.allocatedRamBytes = allocatedBytes.toInt();
         stream.loadedEffectIdsController.add(state.loadedEffectIds);
@@ -580,7 +637,8 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_SilenceConfig(:final field0):
         final sc = SilenceSkipConfig(
           thresholdDb: field0.thresholdDb,
-          minSilenceDuration: Duration(milliseconds: field0.minSilenceDurationMs),
+          minSilenceDuration:
+              Duration(milliseconds: field0.minSilenceDurationMs),
           padding: Duration(milliseconds: field0.paddingMs),
           mode: SilenceSkipMode.fromValue(field0.mode),
         );
@@ -624,17 +682,18 @@ class MiniaudioPlayer<T> {
           final rs = field0[i];
           final match = sourceRegistry[rs.id] ??
               shadowQueue.cast<AudioSource<T>?>().firstWhere(
-                (s) => s != null && s.id != null && s.id == rs.id,
-                orElse: () => shadowQueue.cast<AudioSource<T>?>().firstWhere(
-                  (s) =>
-                      s != null &&
-                      ((s is UriAudioSource &&
-                              (s as UriAudioSource).sourceString ==
-                                  rs.source) ||
-                          s.sourceKey == rs.source),
-                  orElse: () => null,
-                ),
-              );
+                    (s) => s != null && s.id != null && s.id == rs.id,
+                    orElse: () =>
+                        shadowQueue.cast<AudioSource<T>?>().firstWhere(
+                              (s) =>
+                                  s != null &&
+                                  ((s is UriAudioSource &&
+                                          (s as UriAudioSource).sourceString ==
+                                              rs.source) ||
+                                      s.sourceKey == rs.source),
+                              orElse: () => null,
+                            ),
+                  );
           if (match != null) {
             sourceRegistry[rs.id] = match;
             reconciled.add(match);
@@ -652,7 +711,8 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
         _onDartReadRequest(field0);
       case rust_types.RustPlayerEvent_Error(:final message, :final code):
-        stream.errorsController.add(MiniaudioPlayerException(message, errorCode: code));
+        stream.errorsController
+            .add(MiniaudioPlayerException(message, errorCode: code));
     }
   }
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.1.0
+
+- **Library Initialization & Startup Safety (`MiniaudioPlayer.ensureInitialized`)**:
+  - Made explicit initialization mandatory via `await MiniaudioPlayer.ensureInitialized();` in `main()` prior to any player instantiation.
+  - Added an early defensive check inside `MiniaudioPlayer` constructor throwing a descriptive `StateError` with actionable troubleshooting if instantiated before initialization.
+- **Buffer Telemetry Simplification & Zero Bloat (`Buffer`)**:
+  - Replaced legacy `BufferedRange` and eliminated `bufferedPosition` and `bufferedPercentage` in favor of a clean, unbloated `Buffer` model (`start`, `end`, `isBuffering`).
+  - Removed duplicate convenience getters and redundant utility methods to maintain strict, clean separation of concerns.
+- **Reactive Stream Activators & Event Switches (`visualizerEnabled` & `metaBytesEnabled`)**:
+  - Added `action.setVisualizerEnabled(bool)` and `action.setMetaBytesEnabled(bool)` control switches.
+  - Telemetry event streams for 10-band BPF visualizer and raw metadata packets operate at 0% idle CPU and zero channel saturation by default until activated.
+  - Added synchronous state flags (`state.visualizerEnabled`, `state.metaBytesEnabled`) and reactive broadcast streams (`stream.visualizerEnabled`, `stream.metaBytesEnabled`).
+  - Raw stream metadata bytes are detected and streamed 100% natively from Rust via `stream.metaBytes` without Dart-side parsing or polling overhead.
+- **Native RAM Sound Effects & Memory Management (100% Rust Decoded Voice Pool)**:
+  - Transitioned RAM sound effects management 100% to Rust via Symphonia, completely bypassing Dart garbage collection and isolate heap memory.
+  - Zero Dart memory duplication: audio bytes and file references transfer memory ownership directly to Rust.
+  - Real-time Rust memory tracking: exposes `state.allocatedRamBytes`, `state.loadedEffectIds`, and `state.activeVoicesCount` (along with reactive broadcast streams).
+  - Polyphonic concurrent playback up to 64 voices with independent volume and pitch control via `action.playEffect()`, `action.stopEffect()`, `action.loadEffect()`, and `action.unloadEffect()`.
+- **Monotonic 64-bit Queue IDs & Native Reordering (`reorderByIds`)**:
+  - Each `AudioSource` added to a playlist queue is assigned an immutable, monotonically increasing 64-bit integer ID (`id: 1, 2, 3...`) unique across the player lifecycle.
+  - Added `action.reorderByIds(List<int> ids)` for deterministic $\mathcal{O}(1)$ queue reordering directly in Rust without re-allocating or re-encoding.
+  - Refactored `AudioSource` factory constructors with clean Dart 3 pattern matching, removing `source is AudioSource` anti-patterns.
+- **Studio Master Console Example Overhaul**:
+  - Fixed startup crash where `MiniaudioPlayer` was instantiated before `RustLib.init()`.
+  - Added live Continuous Buffer Range and Buffering Status telemetry strip in `PlaybackEngineCard`.
+  - Added MetaBytes Stream Event Bus activator and live packet counter.
+  - Added dedicated `RamSoundEffectsCard` showcasing real-time Rust RAM allocation (in KB), active voice count, polyphonic laser/chime/beep sound triggers, and immediate 0 KB release upon unload.
+  - Enhanced `PlaylistQueueCard` with monotonic track ID badges (`#1`, `#2`, ...) and `reverseQueueByIds` native reordering demonstration.
+
 ## 3.0.2
 
 - **WAV & Audio Container Sniffing & Duration Detection**:

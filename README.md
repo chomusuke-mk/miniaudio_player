@@ -168,7 +168,7 @@ Both [`MiniaudioPlayer`](https://github.com/chomusuke-mk/miniaudio_player/blob/m
 | Facade Domain | Component Type                  | Execution Timing               | Primary Responsibilities                                                                                                                                                                                                                          |
 | :------------ | :------------------------------ | :----------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **`.action`** | `PlayerAction` / `EngineAction` | Asynchronous (`Future<T>`)     | Transports commands (`open`, `play`, `pause`, `seek`, `stop`), DSP modifiers (`setEqualizer`, `setReverb`, `setVolume`), and queue transitions (`next`, `previous`, `skipToIndex`, `setShuffle`). Enforces the Opening Gate and Zero-Alias Axiom. |
-| **`.state`**  | `PlayerState` / `EngineState`   | Synchronous ($\mathcal{O}(1)$) | Immediate, zero-cost access to playback metrics: `position`, `duration`, `playbackState`, `volume`, `rate`, `pitch`, `equalizer`, `reverb`, `bufferedRange`, `visualizer`, `audioDevice`, `pauseOnDeviceChange`, and `currentItem`.               |
+| **`.state`**  | `PlayerState` / `EngineState`   | Synchronous ($\mathcal{O}(1)$) | Immediate, zero-cost access to playback metrics: `position`, `duration`, `playbackState`, `volume`, `rate`, `pitch`, `equalizer`, `reverb`, `buffer`, `visualizer`, `audioDevice`, `pauseOnDeviceChange`, and `currentItem`.                      |
 | **`.stream`** | `PlayerStream` / `EngineStream` | Reactive (`Stream<T>`)         | Fine-grained broadcast streams for UI widgets (`StreamBuilder`). Delivers granular updates only when specific properties change without widget rebuilding overhead.                                                                               |
 
 ---
@@ -236,9 +236,24 @@ Or for pure Dart console / backend applications:
 dart pub add miniaudio_player
 ```
 
+### Initialization
+
+Before creating any player or engine instances, initialize the native Rust engine in your application's `main()` entrypoint:
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Ensures the native Rust library and FFI bridge are initialized
+  await MiniaudioPlayer.ensureInitialized();
+
+  runApp(const MyApp());
+}
+```
+
 ### Platform Setup
 
-- **Android / iOS / macOS / Windows / Linux**: No additional build setup required! Dart Native Assets automatically orchestrates C compilation and bundles native binaries with optimal link flags.
+- **Android / iOS / macOS / Windows / Linux**: No additional build setup required! Dart Native Assets automatically orchestrates C/Rust compilation and bundles native binaries with optimal link flags.
 - **Flutter Web**: Ensure `assets/miniaudio_player.wasm` is included in your `pubspec.yaml` assets (included by default when adding the package).
 
 ---
@@ -463,25 +478,121 @@ await player.action.play();
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/spectrum_visualizer.png" alt="Real-Time Reactive Spectrum Visualizer" width="600" />
 </p>
 
-The visualizer engine embeds a 10-band hardware BPF filter bank directly inside the native C audio pipeline matching the ISO 266 equalizer frequencies, writing telemetry into a 64-byte atomic sequence lock (`map_seqlock_t`):
+The visualizer engine embeds a 10-band hardware BPF filter bank directly inside the native audio pipeline matching the ISO 266 equalizer frequencies. In Dart, the visualizer stream is always listening, but native telemetry events are only emitted when `visualizerEnabled` is set to `true`:
 
 ```dart
-// Enable the real-time visualizer tap
+// 1. Enable visualizer stream emission (disabled by default for 0% CPU consumption)
 await player.action.setVisualizerEnabled(true);
 
-// Subscribe reactively (~30 fps telemetry updates, 0% CPU when stopped)
+// 2. Query state synchronously
+print('Visualizer active: ${player.state.visualizerEnabled}');
+
+// 3. Subscribe reactively (~30 fps telemetry updates, 0% CPU when disabled)
 player.stream.visualizer.listen((VisualizerData data) {
   final List<double> bands = data.bands; // 10 normalized filter bank magnitudes (0.0 to 1.0)
   final double leftVu = data.left;       // Left channel peak/RMS level
   final double rightVu = data.right;     // Right channel peak/RMS level
 
-  // Update your CustomPainter or UI widgets
+  // Update CustomPainter or UI spectrum analyzer widgets
 });
 ```
 
 ---
 
-### 7.5 Unified Single-Pass Audio Analysis (Loudness, True-Peak & Waveform)
+### 7.5 Raw Stream Metadata & Event Bus Activator (`metaBytesEnabled`)
+
+For live network streams (such as ICY/Shoutcast, Icecast, or HLS timed ID3 metadata), raw metadata bytes are detected and parsed 100% natively in Rust without any Dart-side polling or parsing:
+
+```dart
+// Activate raw metadata event streaming (disabled by default to prevent channel saturation)
+await player.action.setMetaBytesEnabled(true);
+
+// Subscribe to raw byte packets
+player.stream.metaBytes.listen((Uint8List? rawBytes) {
+  if (rawBytes != null) {
+    print('Received ${rawBytes.length} bytes of raw stream metadata');
+  }
+});
+```
+
+---
+
+### 7.6 Continuous Buffer Telemetry (`Buffer`)
+
+Audio buffer state is encapsulated in a clean `Buffer` model without superfluous or confusing convenience getters:
+
+```dart
+// Synchronous state snapshot
+final Buffer buffer = player.state.buffer;
+print('Buffer Range: ${buffer.start} to ${buffer.end}');
+print('Duration in buffer: ${buffer.end - buffer.start}');
+print('Is actively re-buffering: ${buffer.isBuffering}');
+
+// Reactive broadcast stream for custom waveform progress bars & loading spinners
+player.stream.buffer.listen((Buffer buffer) {
+  final double bufferedFraction = duration != null && duration.inMilliseconds > 0
+      ? (buffer.end.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
+      : 0.0;
+  // Update UI seekbar cached range
+});
+```
+
+---
+
+### 7.7 Native RAM Sound Effects & Memory Management (100% Rust Decoded Voice Pool)
+
+Sound effects (SFX) are decoded and managed **100% natively in Rust** via Symphonia, completely bypassing Dart garbage collection and isolate heap memory. Dart hands over audio bytes or file references directly to Rust with zero memory duplication:
+
+```dart
+// 1. Preload sound effect into native RAM (decoded once, ready for instant polyphonic playback)
+await player.action.loadEffect(
+  AudioEffect(
+    id: 'laser_sfx',
+    source: AudioSource.file('/path/to/laser.wav'), // Or AudioSource(bytes)
+    maxPolyphony: 8, // Up to 8 concurrent voices
+  ),
+);
+
+// 2. Play concurrent polyphonic voices with independent pitch and volume
+final int voice1 = await player.action.playEffect('laser_sfx', volume: 0.9, pitch: 1.0);
+final int voice2 = await player.action.playEffect('laser_sfx', volume: 0.7, pitch: 1.5);
+
+// 3. Inspect real-time native memory consumption and voice allocations
+print('Allocated RAM in Rust: ${player.state.allocatedRamBytes} bytes');
+print('Active polyphonic voices: ${player.state.activeVoicesCount}');
+print('Loaded SFX IDs: ${player.state.loadedEffectIds}');
+
+// 4. Stop voice or unload sound effect (immediately frees native RAM)
+await player.action.stopEffect(voice1);
+await player.action.unloadEffect('laser_sfx');
+// RAM drops back to 0 bytes immediately!
+```
+
+---
+
+### 7.8 Monotonic 64-bit Queue IDs & Native Reordering (`reorderByIds`)
+
+Each track added to a playlist queue is assigned an immutable, monotonically increasing 64-bit integer ID (`id: 1, 2, 3...`) unique across the player lifecycle:
+
+```dart
+// Inspect assigned unique IDs
+for (final source in player.state.queue) {
+  print('Track ID: #${source.id}');
+}
+
+// Reorder queue by IDs in O(1) natively in Rust without re-allocating or re-encoding
+final List<int> reversedIds = player.state.queue
+    .map((s) => s.id!)
+    .toList()
+    .reversed
+    .toList();
+
+await player.action.reorderByIds(reversedIds);
+```
+
+---
+
+### 7.9 Unified Single-Pass Audio Analysis (Loudness, True-Peak & Waveform)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/audio_analyzer.png" alt="Unified Audio Analyzer - Loudness & Waveform" width="600" />
@@ -511,7 +622,7 @@ await player.action.setReplayGain(
 
 ---
 
-### 7.6 Standard ISO 266 10-Band Parametric Equalizer
+### 7.10 Standard ISO 266 10-Band Parametric Equalizer
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/equalizer.png" alt="ISO 266 10-Band Parametric Equalizer" width="600" />
@@ -536,7 +647,7 @@ await player.action.setPreamp(1.5); // +1.5 dB preamp
 
 ---
 
-### 7.7 Studio-Grade Algorithmic Reverb (Freeverb Model)
+### 7.11 Studio-Grade Algorithmic Reverb (Freeverb Model)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/algorithmic_reverb.png" alt="Studio Algorithmic Reverb" width="600" />
@@ -565,7 +676,7 @@ await player.action.setReverb(
 
 ---
 
-### 7.8 Spatial Processing, Limiter & Silence Detection
+### 7.12 Spatial Processing, Limiter & Silence Detection
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/spatial_limiter_silence.png" alt="Spatial Processing, Limiter & Silence Detection" width="600" />
@@ -596,7 +707,7 @@ player.stream.silenceSaved.listen((savedDuration) {
 
 ---
 
-### 7.9 Hardware Routing & Zero-Leak Pause (`pauseOnDeviceChange`)
+### 7.13 Hardware Routing & Zero-Leak Pause (`pauseOnDeviceChange`)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/hardware_routing.png" alt="Hardware Audio Routing & Zero-Leak Protection" width="600" />
@@ -619,7 +730,7 @@ player.action.setPauseOnDeviceChange(true);
 
 ---
 
-### 7.10 Ingest Matrix & Native Tripartite Buffer (`map_buffer_t`)
+### 7.14 Ingest Matrix & Native Tripartite Buffer (`map_buffer_t`)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/ingest_matrix.png" alt="Ingest & Buffer Matrix Architecture" width="600" />
@@ -629,7 +740,7 @@ The Ingest Matrix view in the example app visualizes the engine's 5-level promot
 
 ---
 
-### 7.11 Flutter UI Integration (Reactive StreamBuilder & Instant State Sync)
+### 7.15 Flutter UI Integration (Reactive StreamBuilder & Instant State Sync)
 
 ```dart
 class NowPlayingWidget extends StatelessWidget {

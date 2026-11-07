@@ -58,6 +58,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPlayerUpdate() {
+    if (mounted) {
+      setState(() {});
+    }
     final curTrack = _playerController.selectedTrack;
     if (curTrack != null && curTrack.id != _lastAnalyzedTrack?.id) {
       _lastAnalyzedTrack = curTrack;

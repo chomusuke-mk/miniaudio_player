@@ -1,4 +1,4 @@
-/// Repeat / loop policy for [MiniaudioEngine] queue navigation.
+/// Repeat / loop policy for [MiniaudioPlayer] queue navigation.
 enum LoopMode {
   /// Queue stops after the final item finishes (unless Infinite Mix is enabled).
   off,

@@ -6,6 +6,7 @@ import '../widgets/cards/audio_analyzer_card.dart';
 import '../widgets/cards/equalizer_card.dart';
 import '../widgets/cards/playback_engine_card.dart';
 import '../widgets/cards/playlist_queue_card.dart';
+import '../widgets/cards/ram_sound_effects_card.dart';
 import '../widgets/cards/spatial_limiter_silence_card.dart';
 import '../widgets/cards/spectrum_visualizer_card.dart';
 import '../widgets/common/responsive_grid.dart';
@@ -33,6 +34,7 @@ class StudioConsoleView extends StatelessWidget {
           playerController: playerController,
           analyzerController: analyzerController,
         ),
+        RamSoundEffectsCard(controller: playerController),
         EqualizerCard(controller: playerController),
         AlgorithmicReverbCard(controller: playerController),
         SpatialLimiterSilenceCard(controller: playerController),

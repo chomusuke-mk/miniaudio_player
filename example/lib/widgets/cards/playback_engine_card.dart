@@ -239,6 +239,48 @@ class PlaybackEngineCard extends StatelessWidget {
                               ),
                             ],
                           ),
+                          const SizedBox(height: 4),
+
+                          // Continuous Buffer Range & Telemetry HUD
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF070B14),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: StudioColors.cardBorder, width: 0.8),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  buf.isBuffering ? Icons.sync : Icons.download_done,
+                                  size: 13,
+                                  color: buf.isBuffering
+                                      ? StudioColors.accentAmber
+                                      : StudioColors.accentCyan,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  'Buffer: ${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}',
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
+                                    fontFamily: 'monospace',
+                                    color: StudioColors.textPrimary,
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (buf.isBuffering)
+                                  const StudioBadge(
+                                    label: 'BUFFERING',
+                                    color: StudioColors.accentAmber,
+                                  )
+                                else
+                                  StudioBadge(
+                                    label: '${_formatDuration(buf.end - buf.start)} cached',
+                                    color: StudioColors.accentEmerald,
+                                  ),
+                              ],
+                            ),
+                          ),
                         ],
                       );
                     },
@@ -599,6 +641,83 @@ class PlaybackEngineCard extends StatelessWidget {
                           value: controller.pauseOnDeviceChange,
                           activeThumbColor: StudioColors.accentCyan,
                           onChanged: (val) => controller.setPauseOnDeviceChange(val),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: StudioColors.cardBackgroundDark,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: StudioColors.cardBorder),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.tag,
+                                size: 14,
+                                color: controller.metaBytesEnabled
+                                    ? StudioColors.accentAmber
+                                    : StudioColors.textMuted,
+                              ),
+                              const SizedBox(width: 6),
+                              const Expanded(
+                                child: Text(
+                                  'MetaBytes Stream Event Bus',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: StudioColors.textPrimary,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            controller.metaBytesEnabled
+                                ? 'Active: Rust streams raw metadata bytes (${controller.metaBytesPacketCount} pkts, ${controller.lastMetaBytes?.length ?? 0} B)'
+                                : 'Disabled by default: 0 channel saturation until activated',
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: StudioColors.textMuted,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          controller.metaBytesEnabled ? 'ON' : 'OFF',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: controller.metaBytesEnabled
+                                ? StudioColors.accentAmber
+                                : StudioColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Switch(
+                          value: controller.metaBytesEnabled,
+                          activeThumbColor: StudioColors.accentAmber,
+                          onChanged: (val) => controller.setMetaBytesEnabled(val),
                         ),
                       ],
                     ),
