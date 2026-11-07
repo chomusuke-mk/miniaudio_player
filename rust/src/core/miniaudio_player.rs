@@ -24,22 +24,32 @@ use crate::core::renderer::PcmRendererHeader;
 use crate::core::simd_mixer::SimdMixer;
 use crate::dsp::limiter::SoftLimiter;
 
+/// Real-time audio renderer executing on the OS audio callback thread.
 #[repr(C)]
 pub struct MiniaudioPlayerRenderer {
+    /// C-ABI callback function pointer header.
     pub header: PcmRendererHeader,
+    /// Raw pointer to the owning [`MiniaudioPlayer`].
     pub player_ptr: *mut MiniaudioPlayer,
 
     // Real-Time Preallocated Scratch Buffers (O(1) L1 Cache)
+    /// Scratch buffer holding fused deck music.
     pub scratch_music: Vec<f32>,
+    /// Scratch buffer holding effect voices for isolated DSP processing.
     pub scratch_voice: Vec<f32>,
+    /// Master accumulation buffer before limiting.
     pub super_flow: Vec<f32>,
+    /// Output sample rate in Hz.
     pub sample_rate: u32,
+    /// Output audio channel count.
     pub channels: usize,
+    /// Device change trigger notification synchronization primitive.
     pub device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
 }
 
 unsafe impl Send for MiniaudioPlayerRenderer {}
 
+/// C trampoline forwarding audio frame rendering to [`MiniaudioPlayerRenderer::render_pcm`].
 pub unsafe extern "C" fn miniaudio_player_render_trampoline(
     ptr: *mut c_void,
     output: *mut f32,
@@ -49,6 +59,7 @@ pub unsafe extern "C" fn miniaudio_player_render_trampoline(
     r.render_pcm(output, count);
 }
 
+/// C trampoline forwarding miniaudio hardware device events.
 pub unsafe extern "C" fn miniaudio_player_notif_trampoline(ptr: *mut c_void, notif: i32) {
     if ptr.is_null() {
         return;

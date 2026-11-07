@@ -32,6 +32,7 @@ class AudioAnalysisResult {
   /// or `null` if Waveform extraction was disabled (`waveform: false`).
   final WaveformResult? waveform;
 
+  /// Creates an [AudioAnalysisResult] with acoustic metrics.
   const AudioAnalysisResult({
     required this.duration,
     required this.sampleRate,
@@ -84,6 +85,7 @@ class WaveformResult {
   /// recordings still utilize the full visual height of custom UI components.
   final List<double> points;
 
+  /// Creates a [WaveformResult] with normalized amplitude points.
   const WaveformResult({required this.points});
 
   /// Total number of extracted waveform points.
@@ -143,6 +145,7 @@ class ReplayGainResult {
   /// Integrated perceived loudness of the audio track measured in LUFS (LKFS).
   final double lufs;
 
+  /// Creates a [ReplayGainResult] with loudness normalization metrics.
   const ReplayGainResult({
     required this.gainDb,
     required this.peak,

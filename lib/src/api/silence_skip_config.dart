@@ -1,20 +1,24 @@
-// Operational modes for silence detection and skipping.
+/// Operational modes for silence detection and skipping.
 enum SilenceSkipMode {
   /// Silence skipping is disabled (standard playback).
   disabled(0),
 
   /// Trims lead-in silence (at track start) and lead-out silence (at track end).
+  ///
   /// Middle pauses are preserved. Ideal for music.
   trimEdges(1),
 
-  /// Dynamically truncates / skips continuous pauses anywhere in the track.
+  /// Dynamically truncates or skips continuous pauses anywhere in the track.
+  ///
   /// Ideal for podcasts, audiobooks, and talk shows.
   continuous(2),
 
   /// Applies both: trims start/end edges and skips in-between pauses.
   all(3);
 
+  /// The raw numeric integer mode.
   final int value;
+
   const SilenceSkipMode(this.value);
 
   /// Converts a native integer mode to [SilenceSkipMode].
@@ -29,26 +33,27 @@ enum SilenceSkipMode {
 
 /// Configuration settings for dynamic silence detection and skipping.
 class SilenceSkipConfig {
-  /// Operational mode of the silence detector.
+  /// The operational mode of the silence detector.
   final SilenceSkipMode mode;
 
-  /// Silence threshold in decibels full-scale (dBFS).
+  /// The silence threshold in decibels full-scale (dBFS).
   ///
   /// Signals below this level are considered silence.
   /// Typical range is `-60.0` to `-30.0` dBFS (default: `-45.0`).
   final double thresholdDb;
 
-  /// Minimum continuous silence duration required before triggering skipping.
+  /// The minimum continuous silence duration required before triggering skipping.
   ///
   /// Natural pauses shorter than this are kept intact.
   /// Default: 300 ms.
   final Duration minSilenceDuration;
 
-  /// Safety margin preserved before and after non-silent audio to prevent clipping word edges.
+  /// The safety margin preserved before and after non-silent audio to prevent clipping word edges.
   ///
   /// Default: 50 ms.
   final Duration padding;
 
+  /// Creates a [SilenceSkipConfig] with optional settings.
   const SilenceSkipConfig({
     this.mode = SilenceSkipMode.disabled,
     this.thresholdDb = -45.0,

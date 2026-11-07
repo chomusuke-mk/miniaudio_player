@@ -91,14 +91,17 @@ impl<S: ByteSource> MediaSource for ByteSourceStream<S> {
 // 1. FileByteSource
 // ----------------------------------------------------------------------------
 
+/// Buffered byte source for reading local audio files from the filesystem.
 pub struct FileByteSource {
     reader: BufReader<File>,
     size: u64,
 }
 
 impl FileByteSource {
+    /// Read buffer capacity in bytes (64 KB).
     pub const BUFFER_CAPACITY: usize = 64 * 1024;
 
+    /// Wraps an open `File` handle into a `FileByteSource`.
     pub fn new(file: File) -> IoResult<Self> {
         let size = file.metadata()?.len();
         Ok(Self {
@@ -107,11 +110,13 @@ impl FileByteSource {
         })
     }
 
+    /// Opens the file at `path` and creates a `FileByteSource`.
     pub fn open(path: &std::path::Path) -> IoResult<Self> {
         let file = File::open(path)?;
         Self::new(file)
     }
 
+    /// Returns the total size of the file in bytes.
     #[inline]
     pub fn size(&self) -> u64 {
         self.size
@@ -162,12 +167,14 @@ impl MediaSource for FileByteSource {
 // 2. MemoryByteSource
 // ----------------------------------------------------------------------------
 
+/// Byte source reading from an in-memory byte buffer via `Cursor`.
 pub struct MemoryByteSource {
     cursor: Cursor<Vec<u8>>,
     size: u64,
 }
 
 impl MemoryByteSource {
+    /// Creates a new `MemoryByteSource` wrapping raw byte data.
     pub fn new(data: Vec<u8>) -> Self {
         let size = data.len() as u64;
         Self {
@@ -221,17 +228,20 @@ impl MediaSource for MemoryByteSource {
 // 3. TripartiteByteSource (Progressive HTTP & Sliding Buffer)
 // ----------------------------------------------------------------------------
 
+/// Byte source reading progressively downloaded stream data from a `TripartiteBuffer`.
 pub struct TripartiteByteSource {
     reader: BufferStreamReader,
 }
 
 impl TripartiteByteSource {
+    /// Creates a new `TripartiteByteSource` wrapping the tripartite buffer.
     pub fn new(buffer: TripartiteBuffer) -> Self {
         Self {
             reader: BufferStreamReader::new(buffer),
         }
     }
 
+    /// Returns a reference to the underlying tripartite buffer.
     #[inline]
     pub fn buffer(&self) -> &TripartiteBuffer {
         self.reader.buffer()
@@ -291,12 +301,16 @@ impl MediaSource for TripartiteByteSource {
 // 4. CustomDartByteSource (Asynchronous Pull-with-Prefetch Bridge)
 // ----------------------------------------------------------------------------
 
-/// Read request dispatched from Rust to Dart over FRB event stream.
+/// Read request dispatched from Rust to Dart over the FRB event stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DartReadRequest {
+    /// Unique identifier for the custom byte stream.
     pub stream_id: u32,
+    /// Monotonically increasing request identifier.
     pub request_id: u64,
+    /// Absolute byte offset in the stream to read from.
     pub offset: u64,
+    /// Number of bytes requested.
     pub length: u32,
 }
 
@@ -346,6 +360,7 @@ pub struct CustomByteSourceHandle {
 }
 
 impl CustomByteSourceHandle {
+    /// Delivers requested byte data and EOF status to the awaiting reader thread.
     pub fn supply_bytes(&self, request_id: u64, data: Vec<u8>, is_eof: bool) {
         let (lock, cvar) = &*self.shared;
         let mut guard = lock.lock().unwrap();
@@ -356,6 +371,7 @@ impl CustomByteSourceHandle {
         }
     }
 
+    /// Notifies the awaiting reader thread that a custom stream read operation failed.
     pub fn notify_error(&self, request_id: u64, err_msg: String) {
         let (lock, cvar) = &*self.shared;
         let mut guard = lock.lock().unwrap();
@@ -378,9 +394,12 @@ pub struct CustomDartByteSource {
 }
 
 impl CustomDartByteSource {
+    /// Minimum prefetch chunk size in bytes (32 KB).
     pub const MIN_PREFETCH_BYTES: usize = 32 * 1024;
+    /// Maximum duration to wait for a Dart read response before timing out (10s).
     pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
+    /// Creates a new `CustomDartByteSource` and its accompanying response controller handle.
     pub fn new(
         stream_id: u32,
         total_size: Option<u64>,
@@ -424,6 +443,7 @@ impl CustomDartByteSource {
         (source, handle)
     }
 
+    /// Obtains a new thread-safe controller handle for this source.
     pub fn handle(&self) -> CustomByteSourceHandle {
         CustomByteSourceHandle {
             shared: self.shared.clone(),

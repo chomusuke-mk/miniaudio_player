@@ -2,14 +2,20 @@
 
 use std::f64::consts::PI;
 
-pub const BS2B_DEFAULT_CLEVEL: u32 = 700 | (45 << 16); // Moffat-Bauer: 700 Hz, 4.5 dB
-pub const BS2B_CMOY_CLEVEL: u32 = 700 | (60 << 16); // Chu Moy: 700 Hz, 6.0 dB
+/// Default crossfeed level for Moffat-Bauer curve: 700 Hz cutoff, 4.5 dB crossfeed.
+pub const BS2B_DEFAULT_CLEVEL: u32 = 700 | (45 << 16);
+/// Crossfeed level for Chu Moy curve: 700 Hz cutoff, 6.0 dB crossfeed.
+pub const BS2B_CMOY_CLEVEL: u32 = 700 | (60 << 16);
 
+/// Bauer binaural crossfeed operating modes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossfeedMode {
+    /// Crossfeed processing disabled.
     Off = 0,
+    /// Moffat-Bauer standard curve (700 Hz, 4.5 dB).
     MoffatBauer = 1,
+    /// Chu Moy classic headphone crossfeed curve (700 Hz, 6.0 dB).
     ChuMoy = 2,
 }
 
@@ -19,6 +25,7 @@ impl Default for CrossfeedMode {
     }
 }
 
+/// Bauer stereophonic-to-binaural (BS2B) crossfeed processor reducing headphone listening fatigue.
 #[derive(Debug, Clone)]
 pub struct Bs2bCrossfeed {
     mode: CrossfeedMode,
@@ -37,6 +44,7 @@ pub struct Bs2bCrossfeed {
 }
 
 impl Bs2bCrossfeed {
+    /// Constructs a `Bs2bCrossfeed` instance with the given sample rate and crossfeed mode.
     pub fn new(sample_rate: u32, mode: CrossfeedMode) -> Self {
         let mut cf = Self {
             mode,
@@ -55,6 +63,7 @@ impl Bs2bCrossfeed {
         cf
     }
 
+    /// Sets the crossfeed mode and recalculates filter coefficients.
     pub fn set_mode(&mut self, mode: CrossfeedMode) {
         if self.mode != mode {
             self.mode = mode;
@@ -62,10 +71,12 @@ impl Bs2bCrossfeed {
         }
     }
 
+    /// Returns the active crossfeed mode.
     pub fn mode(&self) -> CrossfeedMode {
         self.mode
     }
 
+    /// Updates the sample rate and recalculates filter coefficients.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         let sr = sample_rate.clamp(2000, 384000);
         if self.sample_rate != sr {
@@ -74,12 +85,14 @@ impl Bs2bCrossfeed {
         }
     }
 
+    /// Resets internal IIR delay line history buffers to zero.
     pub fn reset_state(&mut self) {
         self.asis = [0.0; 2];
         self.lo = [0.0; 2];
         self.hi = [0.0; 2];
     }
 
+    /// Processes interleaved stereo samples in-place, applying binaural crossfeed mixing.
     pub fn process_frames(&mut self, samples: &mut [f32], channels: usize) {
         if self.mode == CrossfeedMode::Off || channels < 2 || samples.is_empty() {
             return;

@@ -16,18 +16,18 @@ enum CrossfadeCurve {
 /// Immutable configuration governing automatic and manual crossfade transitions
 /// in [MiniaudioPlayer].
 class CrossfadeConfig {
-  /// Target overlap duration for automatic end-of-track transitions.
+  /// The target overlap duration for automatic end-of-track transitions.
   ///
   /// Defaults to 5 seconds (`const Duration(seconds: 5)`).
   final Duration autoDuration;
 
-  /// Target overlap duration for manual user-initiated transitions (`next`,
+  /// The target overlap duration for manual user-initiated transitions (`next`,
   /// `previous`, `skipToIndex`) to eliminate digital clicks.
   ///
   /// Defaults to 500 milliseconds (`const Duration(milliseconds: 500)`).
   final Duration manualDuration;
 
-  /// Gain interpolation curve applied to the outgoing and incoming decks.
+  /// The gain interpolation curve applied to the outgoing and incoming decks.
   final CrossfadeCurve curve;
 
   /// Creates a [CrossfadeConfig] governing track crossfading transitions.

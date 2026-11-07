@@ -3,7 +3,7 @@ class NeedMoreTracksEvent {
   /// The unique ID of the track currently playing or being prepared.
   final int currentTrackId;
 
-  /// Number of tracks remaining ahead in the queue.
+  /// The number of tracks remaining ahead in the queue.
   final int remainingTracks;
 
   /// Creates a [NeedMoreTracksEvent] notification.

@@ -7,11 +7,15 @@ use symphonia::core::io::MediaSource;
 
 use super::extended_pcm::PcmSampleNormalizer;
 
+/// Result of probing a media source for Monkey's Audio (`.ape`) container format.
 pub enum ApeProbe {
+    /// Source matched Monkey's Audio format and initialized an `ApeReader`.
     Matched(ApeReader),
+    /// Source did not match Monkey's Audio; stream was rewound and returned.
     NotMatched(Box<dyn MediaSource>),
 }
 
+/// Decoder reader parsing and decoding Monkey's Audio (`.ape`) frames into normalized float PCM.
 pub struct ApeReader {
     decoder: ApeDecoder<Box<dyn MediaSource>>,
     sample_rate: u32,
@@ -23,6 +27,7 @@ pub struct ApeReader {
 }
 
 impl ApeReader {
+    /// Attempts to probe magic bytes and initialize an `ApeReader` from a media source.
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<ApeProbe, SymphoniaError> {
         if source.seek(SeekFrom::Start(0)).is_err() {
             return Ok(ApeProbe::NotMatched(source));
@@ -60,21 +65,25 @@ impl ApeReader {
         }))
     }
 
+    /// Returns the audio sample rate in Hz.
     #[inline]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the number of audio channels.
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
     }
 
+    /// Returns the total duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         self.duration_ms
     }
 
+    /// Seeks to the specified position in milliseconds.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_sample = ((position_ms as f64 / 1000.0) * self.sample_rate as f64) as u64;
         let seek_res = self
@@ -85,6 +94,7 @@ impl ApeReader {
         Ok(())
     }
 
+    /// Decodes the next audio frame into the output normalized float PCM buffer.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
         if self.current_frame >= self.total_frames {

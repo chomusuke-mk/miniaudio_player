@@ -8,36 +8,59 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::sync::MonotonicInstant;
 
+/// Operational states for the elastic tripartite buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferState {
+    /// Buffer has not yet been initialized.
     Uninitialized = 0,
+    /// Head segment is being probed for audio headers and metadata.
     ProbingHead = 1,
+    /// Buffer contains enough data for active playback.
     Ready = 2,
+    /// Buffer is stalled awaiting data ingress.
     Buffering = 3,
+    /// Ingestion source has completed.
     Eof = 4,
+    /// Ingestion was aborted.
     Aborted = 5,
 }
 
+/// Contiguous byte range and fullness telemetry.
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 pub struct BufferRange {
+    /// Starting byte offset cached in the sliding window.
     pub start_byte: i64,
+    /// Furthest byte offset cached in the sliding window.
     pub end_byte: i64,
+    /// Total known stream length in bytes, or -1 if unbounded.
     pub total_bytes: i64,
+    /// Current read cursor byte offset.
     pub read_cursor_byte: i64,
+    /// Buffer fill percentage of target window capacity.
     pub fill_percentage: f32,
+    /// Overall stream download percentage.
     pub stream_percentage: f32,
+    /// Non-zero if reader is stalled waiting for data.
     pub is_buffering: i32,
+    /// Non-zero if end of stream reached.
     pub is_eof: i32,
 }
 
+/// Buffer error conditions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferError {
+    /// Invalid arguments supplied.
     InvalidArgs,
+    /// Buffer is currently locked or busy.
     Busy,
+    /// Operation was aborted.
     Aborted,
+    /// End of stream reached.
     Eof,
+    /// Memory allocation failed.
     OutOfMemory,
+    /// Read operation would block in non-blocking mode.
     WouldBlock,
 }
 

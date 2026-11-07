@@ -1,3 +1,8 @@
+//! HTTP Live Streaming (HLS) protocol support.
+//!
+//! Includes M3U8 manifest parsing (master playlists and media playlists),
+//! AES-128 segment decryption, and MPEG-TS container demuxing.
+
 pub mod crypto;
 pub mod m3u8_parser;
 pub mod mpegts;
@@ -28,6 +33,9 @@ unsafe fn export_c_buffer(bytes: Vec<u8>, out_ptr: *mut *mut u8, out_len: *mut u
     }
 }
 
+/// C ABI: Checks if a raw byte slice starts with an `#EXTM3U` header.
+///
+/// Returns 1 if true, 0 if false.
 #[no_mangle]
 pub unsafe extern "C" fn map_hls_is_m3u8(data: *const u8, len: usize) -> i32 {
     if data.is_null() || len == 0 {
@@ -37,6 +45,9 @@ pub unsafe extern "C" fn map_hls_is_m3u8(data: *const u8, len: usize) -> i32 {
     i32::from(M3u8Parser::is_m3u8(slice))
 }
 
+/// C ABI: Probes whether a byte slice contains MPEG-TS sync markers.
+///
+/// Returns 1 if true, 0 if false.
 #[no_mangle]
 pub unsafe extern "C" fn map_hls_is_mpeg_ts(data: *const u8, len: usize) -> i32 {
     if data.is_null() || len == 0 {
@@ -46,6 +57,10 @@ pub unsafe extern "C" fn map_hls_is_mpeg_ts(data: *const u8, len: usize) -> i32 
     i32::from(MpegTsDemuxer::is_mpeg_ts(slice))
 }
 
+/// C ABI: Demuxes an MPEG-TS segment slice into elementary audio bitstream bytes.
+///
+/// Populates `out_audio_data`, `out_audio_len`, and `out_codec` (1=AAC, 2=MP3, 3=AC3, 0=Unknown).
+/// Returns 0 on success, or -1 on invalid argument pointers.
 #[no_mangle]
 pub unsafe extern "C" fn map_hls_demux_ts(
     ts_data: *const u8,
@@ -78,6 +93,7 @@ pub unsafe extern "C" fn map_hls_demux_ts(
     0
 }
 
+/// C ABI: Deallocates a buffer allocated by HLS FFI helper functions.
 #[no_mangle]
 pub unsafe extern "C" fn map_hls_free_buffer(buf: *mut u8, len: usize) {
     if !buf.is_null() && len > 0 {
@@ -88,6 +104,9 @@ pub unsafe extern "C" fn map_hls_free_buffer(buf: *mut u8, len: usize) {
     }
 }
 
+/// C ABI: Decrypts an AES-128-CBC encrypted HLS audio segment.
+///
+/// Returns 0 on success, -1 on invalid arguments, or -2 on decryption failure.
 #[no_mangle]
 pub unsafe extern "C" fn map_hls_decrypt_aes128(
     encrypted_data: *const u8,

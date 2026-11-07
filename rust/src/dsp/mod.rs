@@ -1,3 +1,5 @@
+//! Digital Signal Processing (DSP) algorithms, filters, analysis, and spatialization.
+
 pub mod analysis;
 pub mod biquad;
 pub mod chain;

@@ -9,14 +9,20 @@ use std::sync::{Arc, Mutex};
 use crate::core::voice_pool::{DspRouting, EffectConfig, SoundBuffer, VoicePool};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener};
 
+/// Domain manager for polyphonic RAM sound effects, 3D spatial audio, and voice pooling.
 pub struct EffectsManager {
+    /// Mutex-wrapped voice pool holding preloaded audio buffers and active voices.
     pub pool: Arc<Mutex<VoicePool>>,
+    /// Preallocated scratch buffer for rendering isolated DSP effect voices.
     pub effects_work_buffer: Vec<f32>,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Channel count.
     pub channels: usize,
 }
 
 impl EffectsManager {
+    /// Creates a new `EffectsManager` with voice capacity and memory budget limits.
     pub fn new(max_voices: usize, max_ram_bytes: usize, sample_rate: u32, channels: usize) -> Self {
         let pool = Arc::new(Mutex::new(VoicePool::new(
             max_voices,

@@ -1,3 +1,5 @@
+//! Ingestion buffering, elastic tripartite caching, and byte source abstraction.
+
 pub mod source;
 pub mod stream_reader;
 pub mod tripartite;

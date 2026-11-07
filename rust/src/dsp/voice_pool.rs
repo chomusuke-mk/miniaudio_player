@@ -18,13 +18,18 @@ pub const DEFAULT_MAX_VOICES: usize = 64;
 /// Pre-decoded PCM audio buffer in memory, shared across multiple voices with zero copies.
 #[derive(Debug, Clone)]
 pub struct SoundBuffer {
+    /// Shared reference to interleaved float PCM audio samples.
     pub samples: Arc<[f32]>,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Channel count.
     pub channels: usize,
+    /// Total duration in milliseconds.
     pub duration_ms: u64,
 }
 
 impl SoundBuffer {
+    /// Creates a new sound buffer from raw PCM samples, sample rate, and channel count.
     pub fn new(samples: Vec<f32>, sample_rate: u32, channels: usize) -> Self {
         let ch = channels.max(1);
         let sr = sample_rate.max(8000);
@@ -38,6 +43,7 @@ impl SoundBuffer {
         }
     }
 
+    /// Decodes an audio file in memory (MP3, WAV, FLAC, OGG, AAC) into a `SoundBuffer`.
     pub fn decode_from_bytes(bytes: &[u8]) -> Result<Self, String> {
         use crate::decoder::sniffer::FormatSniffer;
         use crate::decoder::symphonia_engine::SymphoniaEngine;
@@ -73,6 +79,7 @@ impl SoundBuffer {
         Ok(Self::new(pcm, sr, ch))
     }
 
+    /// Returns the total number of audio frames in the buffer.
     #[inline]
     pub fn frame_count(&self) -> usize {
         if self.channels > 0 {
@@ -104,10 +111,14 @@ impl SoundBuffer {
 /// Eviction policy used when all voices in the pool are active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VoiceStealingPolicy {
+    /// Steals the voice with the lowest priority value.
     #[default]
     LowestPriority,
+    /// Steals the voice that has been playing the longest.
     Oldest,
+    /// Steals the voice with the quietest effective volume.
     Quietest,
+    /// Steals the voice located farthest from the listener.
     Farthest,
 }
 
@@ -121,15 +132,25 @@ enum VoiceState {
 /// A single polyphonic audio voice with encapsulated state and rendering logic.
 #[derive(Clone)]
 pub struct Voice {
+    /// Unique identifier of the currently playing voice.
     pub id: u32,
+    /// Pre-decoded PCM sound buffer.
     pub buffer: Option<SoundBuffer>,
+    /// Fractional playback frame position.
     pub frame_cursor: f64,
+    /// Playback volume multiplier.
     pub volume: f32,
+    /// Playback pitch multiplier.
     pub pitch: f32,
+    /// Eviction priority (0 = lowest, 255 = highest).
     pub priority: u8,
+    /// Whether the voice loops when reaching the end of the sound buffer.
     pub looping: bool,
+    /// Optional 3D spatial emitter parameters.
     pub spatial_emitter: Option<SpatialEmitter>,
+    /// Spatial processor instance for smoothing and 3D calculations.
     pub spatial_processor: SpatialProcessor,
+    /// Age in rendered output frames since activation.
     pub play_time_samples: u64,
     state: VoiceState,
 }
@@ -153,16 +174,19 @@ impl Default for Voice {
 }
 
 impl Voice {
+    /// Returns whether the voice is active (either playing or fading out).
     #[inline]
     pub fn is_active(&self) -> bool {
         self.state != VoiceState::Stopped
     }
 
+    /// Returns whether the voice is currently in the active playing state (not fading out).
     #[inline]
     pub fn is_playing(&self) -> bool {
         self.state == VoiceState::Playing
     }
 
+    /// Activates this voice slot with the specified sound buffer and playback parameters.
     pub fn activate(
         &mut self,
         voice_id: u32,
@@ -186,6 +210,7 @@ impl Voice {
         self.state = VoiceState::Playing;
     }
 
+    /// Starts a 5 ms anti-click quick fade-out ramp before stopping.
     pub fn quick_fadeout(&mut self, sample_rate: u32) {
         if self.state == VoiceState::Playing {
             let fade_frames = (sample_rate as f32 * 0.005).max(1.0);
@@ -196,6 +221,7 @@ impl Voice {
         }
     }
 
+    /// Immediately stops the voice and releases its sound buffer.
     pub fn stop(&mut self) {
         self.state = VoiceState::Stopped;
         self.buffer = None;
@@ -244,6 +270,7 @@ impl Voice {
         }
     }
 
+    /// Renders audio frames from this voice into the output buffer with spatial mixing.
     pub fn render_into(
         &mut self,
         out_buffer: &mut [f32],
@@ -335,6 +362,7 @@ impl Default for VoicePool {
 }
 
 impl VoicePool {
+    /// Creates a new `VoicePool` with the specified capacity and stealing policy.
     pub fn new(capacity: usize, policy: VoiceStealingPolicy) -> Self {
         let cap = capacity.clamp(1, 256);
         Self {
@@ -347,32 +375,39 @@ impl VoicePool {
         }
     }
 
+    /// Returns the maximum number of concurrent voice slots allocated.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.voices.len()
     }
 
+    /// Returns the count of currently active voices.
     pub fn active_voice_count(&self) -> usize {
         self.voices.iter().filter(|v| v.is_active()).count()
     }
 
+    /// Updates the voice stealing eviction policy.
     pub fn set_policy(&mut self, policy: VoiceStealingPolicy) {
         self.policy = policy;
     }
 
+    /// Sets the master volume multiplier applied to all voices `[0.0, 2.0]`.
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume.clamp(0.0, 2.0);
     }
 
+    /// Sets the global time scale multiplier for game sound effects `[0.01, 10.0]`.
     pub fn set_time_scale(&mut self, scale: f32) {
         self.time_scale = scale.clamp(0.01, 10.0);
     }
 
+    /// Returns the current global time scale multiplier.
     #[inline]
     pub fn time_scale(&self) -> f32 {
         self.time_scale
     }
 
+    /// Sets the playback volume for an active voice.
     pub fn set_voice_volume(&mut self, voice_id: u32, volume: f32) {
         if let Some(v) = self
             .voices
@@ -383,6 +418,7 @@ impl VoicePool {
         }
     }
 
+    /// Sets the pitch multiplier for an active voice.
     pub fn set_voice_pitch(&mut self, voice_id: u32, pitch: f32) {
         if let Some(v) = self
             .voices
@@ -393,6 +429,7 @@ impl VoicePool {
         }
     }
 
+    /// Sets or updates the 3D spatial emitter for an active voice.
     pub fn set_voice_emitter(&mut self, voice_id: u32, emitter: Option<SpatialEmitter>) {
         if let Some(v) = self
             .voices
@@ -403,12 +440,16 @@ impl VoicePool {
         }
     }
 
+    /// Checks whether the specified voice is currently playing or fading out.
     pub fn is_voice_playing(&self, voice_id: u32) -> bool {
         self.voices
             .iter()
             .any(|v| v.id == voice_id && v.is_active())
     }
 
+    /// Attempts to play a sound assigning a specific caller-provided `voice_id`.
+    ///
+    /// If all voice slots are busy, steals a voice according to [`VoiceStealingPolicy`].
     pub fn play_sound_with_id(
         &mut self,
         voice_id: u32,
@@ -434,6 +475,7 @@ impl VoicePool {
         false
     }
 
+    /// Plays a sound in an available voice slot, returning the assigned voice ID.
     pub fn play_sound(
         &mut self,
         buffer: SoundBuffer,
@@ -451,6 +493,7 @@ impl VoicePool {
         }
     }
 
+    /// Plays a one-shot sound with randomized pitch and volume jitter.
     pub fn play_one_shot(
         &mut self,
         buffer: SoundBuffer,
@@ -484,18 +527,21 @@ impl VoicePool {
         )
     }
 
+    /// Initiates a quick anti-click fadeout for the specified voice.
     pub fn stop_voice(&mut self, voice_id: u32, sample_rate: u32) {
         if let Some(v) = self.voices.iter_mut().find(|v| v.id == voice_id) {
             v.quick_fadeout(sample_rate);
         }
     }
 
+    /// Immediately stops all playing voices in the pool.
     pub fn stop_all(&mut self) {
         for v in &mut self.voices {
             v.stop();
         }
     }
 
+    /// Returns a reference to the voice with the given ID if found.
     pub fn get_voice(&self, voice_id: u32) -> Option<&Voice> {
         self.voices.iter().find(|v| v.id == voice_id)
     }

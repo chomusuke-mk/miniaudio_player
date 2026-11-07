@@ -30,6 +30,7 @@ import 'spatial.dart';
 class PlayerAction<T> {
   final MiniaudioPlayer<T> _player;
 
+  /// Creates a [PlayerAction] command dispatcher for [_player].
   PlayerAction(this._player);
 
   rust.RustMiniaudioPlayer get _rust => _player.rustPlayer;

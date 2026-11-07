@@ -32,6 +32,7 @@ class VisualizerData {
   /// Right channel energy level scaled between `0.0` and `1.0`.
   final double right;
 
+  /// Creates a [VisualizerData] snapshot with frequency bands and amplitude levels.
   const VisualizerData({
     required this.bands,
     required this.rms,

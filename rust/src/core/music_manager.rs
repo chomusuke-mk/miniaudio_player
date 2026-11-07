@@ -7,16 +7,24 @@ use std::sync::atomic::Ordering;
 
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 
+/// Domain manager governing dual streaming decks (Deck A & Deck B), crossfading, and playback queue.
 pub struct MusicManager {
+    /// Underlying dual-deck engine instance.
     pub inner: DualSource,
+    /// Preallocated scratch buffer for Deck A rendering.
     pub scratch_deck_a: Vec<f32>,
+    /// Preallocated scratch buffer for Deck B rendering.
     pub scratch_deck_b: Vec<f32>,
+    /// Preallocated scratch buffer for standby deck CUE monitoring.
     pub scratch_standby: Vec<f32>,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Channel count.
     pub channels: usize,
 }
 
 impl MusicManager {
+    /// Creates a new `MusicManager` initialized with the given sample rate and channels.
     pub fn new(sample_rate: u32, channels: u32, period_size: u32) -> Result<Self, String> {
         let sr = if sample_rate > 0 { sample_rate } else { 44100 };
         let ch = if channels > 0 { channels as usize } else { 2 };

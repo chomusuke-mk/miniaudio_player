@@ -3,9 +3,11 @@
 //! Provides lock-free, zero-allocation summing, crossfading, gain modulation, and soft-knee
 //! peak saturation to prevent digital harshness before the True-Peak limiter.
 
+/// SIMD-accelerated audio sample mixer with AVX2/NEON and scalar fallback routines.
 pub struct SimdMixer;
 
 impl SimdMixer {
+    /// Creates a new `SimdMixer` instance.
     #[inline]
     pub fn new() -> Self {
         Self

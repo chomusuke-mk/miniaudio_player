@@ -2,20 +2,31 @@
 
 use m3u8_rs::{Key, KeyMethod, MasterPlaylist, MediaPlaylist, MediaSegment, Playlist};
 
+/// Metadata for an alternative variant stream in an HLS master playlist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariantStreamInfo {
+    /// URI of the variant media playlist.
     pub uri: String,
+    /// Peak bitrate requirement in bits per second.
     pub bandwidth: u64,
+    /// Codec specification string (e.g. "mp4a.40.2").
     pub codecs: Option<String>,
+    /// Video resolution width and height, if present.
     pub resolution: Option<(u64, u64)>,
+    /// Associated audio group identifier.
     pub audio: Option<String>,
 }
 
+/// Encryption key metadata extracted from `#EXT-X-KEY`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EncryptionKeyInfo {
+    /// Encryption method ("AES-128", "SAMPLE-AES", etc.).
     pub method: String,
+    /// URI to fetch the 16-byte cryptographic key.
     pub uri: Option<String>,
+    /// Explicit 128-bit Initialization Vector in hex string form, if present.
     pub iv: Option<String>,
+    /// Key format identifier (e.g. "identity").
     pub keyformat: Option<String>,
 }
 
@@ -36,13 +47,20 @@ impl EncryptionKeyInfo {
     }
 }
 
+/// Metadata describing a single HLS media segment (`#EXTINF`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SegmentInfo {
+    /// Segment URI (relative or absolute).
     pub uri: String,
+    /// Duration of the segment in seconds.
     pub duration_seconds: f32,
+    /// Optional human-readable segment title.
     pub title: Option<String>,
+    /// Byte range `(length, offset)` if `#EXT-X-BYTERANGE` applies.
     pub byte_range: Option<(u64, u64)>,
+    /// Calculated media sequence index of this segment.
     pub sequence_number: u64,
+    /// Active encryption key parameters for this segment.
     pub key: Option<EncryptionKeyInfo>,
 }
 
@@ -66,20 +84,30 @@ impl SegmentInfo {
     }
 }
 
+/// Parsed representation of an HLS playlist (Master or Media).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParsedHlsPlaylist {
+    /// Master playlist containing multiple quality variants.
     Master {
+        /// List of available variant media stream definitions.
         variants: Vec<VariantStreamInfo>,
     },
+    /// Media playlist containing a sequence of downloadable audio/video segments.
     Media {
+        /// Whether the playlist represents a live stream without `#EXT-X-ENDLIST`.
         is_live: bool,
+        /// Maximum duration for any segment in the playlist.
         target_duration: f32,
+        /// Starting sequence number from `#EXT-X-MEDIA-SEQUENCE`.
         media_sequence: u64,
+        /// List of media segments in order.
         segments: Vec<SegmentInfo>,
+        /// Sum of durations across all parsed segments in seconds.
         total_duration_seconds: f64,
     },
 }
 
+/// High-level parser for HLS M3U8 master and media manifests.
 pub struct M3u8Parser;
 
 impl M3u8Parser {

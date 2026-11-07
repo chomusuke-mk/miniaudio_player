@@ -59,21 +59,22 @@ class DuckingConfig {
   /// Whether auto-ducking is enabled when voice activity is detected.
   final bool enabled;
 
-  /// Target attenuation in decibels applied to the music master bus (e.g. -14.0 dB).
+  /// The target attenuation in decibels applied to the music master bus (e.g. -14.0 dB).
   final double duckingDb;
 
-  /// Detection threshold in decibels above which ducking triggers (e.g. -30.0 dB).
+  /// The detection threshold in decibels above which ducking triggers (e.g. -30.0 dB).
   final double thresholdDb;
 
-  /// Attack time in milliseconds to ramp down the music volume (e.g. 30.0 ms).
+  /// The attack time in milliseconds to ramp down the music volume (e.g. 30.0 ms).
   final double attackMs;
 
-  /// Hold time in milliseconds after silence before releasing the duck (e.g. 250.0 ms).
+  /// The hold time in milliseconds after silence before releasing the duck (e.g. 250.0 ms).
   final double holdMs;
 
-  /// Release time in milliseconds to smoothly restore full music volume (e.g. 400.0 ms).
+  /// The release time in milliseconds to smoothly restore full music volume (e.g. 400.0 ms).
   final double releaseMs;
 
+  /// Creates a [DuckingConfig] with sidechain compression parameters.
   const DuckingConfig({
     this.enabled = true,
     this.duckingDb = -14.0,
@@ -138,6 +139,7 @@ class CueConfig {
   /// Source routing mode (Deck A, Deck B, or Master).
   final CueMode mode;
 
+  /// Creates a [CueConfig] with output routing settings.
   const CueConfig({
     this.enabled = false,
     this.deviceId,

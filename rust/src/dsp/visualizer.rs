@@ -3,15 +3,22 @@
 use super::biquad::BiquadDf2t;
 use super::equalizer::{EQ_BAND_COUNT, EQ_FREQUENCIES};
 
+/// Perceptual amplitude weighting factors for each of the 10 visualizer frequency bands.
 pub const BAND_WEIGHTS: [f32; EQ_BAND_COUNT] = [1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.8, 3.2, 3.6, 4.0];
 
+/// Instantaneous visualizer measurements including 10-band spectrum, RMS, and channel peaks.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VisualizerData {
+    /// Normalized amplitude `[0.0, 1.0]` across 10 EQ frequency bands.
     pub bands: [f32; 10],
+    /// Overall Root-Mean-Square (RMS) power level `[0.0, 1.0]`.
     pub rms: f32,
+    /// Maximum absolute peak level across channels `[0.0, 1.0]`.
     pub peak: f32,
+    /// Left channel peak level `[0.0, 1.0]`.
     pub left: f32,
+    /// Right channel peak level `[0.0, 1.0]`.
     pub right: f32,
 }
 
@@ -28,6 +35,7 @@ impl Default for VisualizerData {
 }
 
 impl VisualizerData {
+    /// Checks whether any metric in this measurement differs from `other` beyond a threshold of `1e-4`.
     pub fn is_different_from(&self, other: &Self) -> bool {
         if (self.rms - other.rms).abs() > 1e-4 {
             return true;
@@ -47,6 +55,7 @@ impl VisualizerData {
     }
 }
 
+/// Real-time audio visualizer analyzing 10 frequency bands and signal levels.
 pub struct Visualizer {
     enabled: bool,
     sample_rate: u32,
@@ -56,6 +65,7 @@ pub struct Visualizer {
 }
 
 impl Visualizer {
+    /// Creates a new `Visualizer` instance for the specified channel count and sample rate.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let sr = if sample_rate == 0 { 44100 } else { sample_rate };
         let mut vis = Self {
@@ -69,6 +79,7 @@ impl Visualizer {
         vis
     }
 
+    /// Enables or disables real-time visualizer processing.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
@@ -76,10 +87,12 @@ impl Visualizer {
         }
     }
 
+    /// Returns whether the visualizer is enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
+    /// Updates the sample rate and recalculates bandpass filter coefficients.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if self.sample_rate != sample_rate && sample_rate > 0 {
             self.sample_rate = sample_rate;
@@ -87,14 +100,17 @@ impl Visualizer {
         }
     }
 
+    /// Returns the latest calculated visualizer measurements.
     pub fn get_data(&self) -> VisualizerData {
         self.current_data
     }
 
+    /// Returns the latest calculated visualizer measurements.
     pub fn data(&self) -> VisualizerData {
         self.current_data
     }
 
+    /// Processes a buffer of interleaved float frames and updates band energies and peak levels.
     pub fn process_frames(&mut self, frames: &[f32]) {
         if !self.enabled || frames.is_empty() || self.channels == 0 {
             return;

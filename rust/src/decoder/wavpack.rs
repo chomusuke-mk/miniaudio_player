@@ -57,11 +57,15 @@ impl WavpackStreamParser {
     }
 }
 
+/// Result of probing a media source for WavPack (`.wv`) audio format.
 pub enum WavpackProbe {
+    /// Source matched WavPack format and initialized a `WavpackReader`.
     Matched(WavpackReader),
+    /// Source did not match WavPack format; stream was rewound and returned.
     NotMatched(Box<dyn MediaSource>),
 }
 
+/// Decoder reader parsing and decoding WavPack (`.wv`) streams into normalized float PCM.
 pub struct WavpackReader {
     sample_rate: u32,
     channels: u32,
@@ -72,8 +76,10 @@ pub struct WavpackReader {
 }
 
 impl WavpackReader {
+    /// Number of audio frames emitted per decode block.
     pub const FRAMES_PER_CHUNK: usize = 1024;
 
+    /// Attempts to parse `"wvpk"` magic headers and initialize a `WavpackReader`.
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<WavpackProbe, SymphoniaError> {
         if source.seek(SeekFrom::Start(0)).is_err() {
             return Ok(WavpackProbe::NotMatched(source));
@@ -119,27 +125,32 @@ impl WavpackReader {
         }))
     }
 
+    /// Returns the audio sample rate in Hz.
     #[inline]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the number of audio channels.
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
     }
 
+    /// Returns total stream duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         self.duration_ms
     }
 
+    /// Seeks to the specified position in milliseconds.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_frame = ((position_ms as f64 / 1000.0) * self.sample_rate as f64) as usize;
         self.current_frame = target_frame.min(self.total_frames);
         Ok(())
     }
 
+    /// Emits the next chunk of decoded PCM frames into the output buffer.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
         if self.current_frame >= self.total_frames {

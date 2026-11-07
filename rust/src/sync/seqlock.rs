@@ -4,6 +4,9 @@ use crossbeam_utils::CachePadded;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 
+/// Cache-line padded sequence lock allowing lock-free reads of small `Copy` data structures.
+///
+/// Ensures readers never block the real-time audio thread while writers safely update state.
 pub struct CachePaddedSeqlock<T> {
     sequence: CachePadded<AtomicUsize>,
     writer_lock: AtomicBool,
@@ -14,6 +17,7 @@ unsafe impl<T: Send> Send for CachePaddedSeqlock<T> {}
 unsafe impl<T: Send> Sync for CachePaddedSeqlock<T> {}
 
 impl<T> CachePaddedSeqlock<T> {
+    /// Creates a new sequence lock wrapping the `initial` value.
     pub fn new(initial: T) -> Self {
         Self {
             sequence: CachePadded::new(AtomicUsize::new(0)),

@@ -1,38 +1,39 @@
 /// Immutable 10-band parametric equalizer representation for miniaudio_player.
+///
 /// Follows the ISO 266 standard preferred 1/1 octave band center frequencies:
 /// 31 Hz, 63 Hz, 125 Hz, 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz, 8 kHz, 16 kHz.
 class Equalizer {
-  /// Gain for 31 Hz band in dB
+  /// The gain for the 31 Hz band in decibels (dB).
   final double hz31;
 
-  /// Gain for 63 Hz band in dB
+  /// The gain for the 63 Hz band in decibels (dB).
   final double hz63;
 
-  /// Gain for 125 Hz band in dB
+  /// The gain for the 125 Hz band in decibels (dB).
   final double hz125;
 
-  /// Gain for 250 Hz band in dB
+  /// The gain for the 250 Hz band in decibels (dB).
   final double hz250;
 
-  /// Gain for 500 Hz band in dB
+  /// The gain for the 500 Hz band in decibels (dB).
   final double hz500;
 
-  /// Gain for 1 kHz band in dB
+  /// The gain for the 1 kHz band in decibels (dB).
   final double hz1k;
 
-  /// Gain for 2 kHz band in dB
+  /// The gain for the 2 kHz band in decibels (dB).
   final double hz2k;
 
-  /// Gain for 4 kHz band in dB
+  /// The gain for the 4 kHz band in decibels (dB).
   final double hz4k;
 
-  /// Gain for 8 kHz band in dB
+  /// The gain for the 8 kHz band in decibels (dB).
   final double hz8k;
 
-  /// Gain for 16 kHz band in dB
+  /// The gain for the 16 kHz band in decibels (dB).
   final double hz16k;
 
-  /// Creates an immutable [Equalizer] with optional band gains in dB (default 0.0 dB).
+  /// Creates an immutable [Equalizer] with optional band gains in dB (defaults to `0.0` dB).
   const Equalizer({
     this.hz31 = 0.0,
     this.hz63 = 0.0,

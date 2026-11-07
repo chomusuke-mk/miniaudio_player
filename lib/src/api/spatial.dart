@@ -4,15 +4,28 @@ import '../rust/api/types.dart';
 
 /// 3D Cartesian vector with single-precision floating point coordinates.
 class Vector3 {
+  /// The X Cartesian coordinate.
   final double x;
+
+  /// The Y Cartesian coordinate.
   final double y;
+
+  /// The Z Cartesian coordinate.
   final double z;
 
+  /// Creates a [Vector3] with [x], [y], and [z] coordinates.
   const Vector3(this.x, this.y, this.z);
 
+  /// Zero vector `(0.0, 0.0, 0.0)`.
   static const Vector3 zero = Vector3(0.0, 0.0, 0.0);
+
+  /// Unit forward vector `(0.0, 0.0, -1.0)`.
   static const Vector3 forward = Vector3(0.0, 0.0, -1.0);
+
+  /// Unit up vector `(0.0, 1.0, 0.0)`.
   static const Vector3 up = Vector3(0.0, 1.0, 0.0);
+
+  /// Unit right vector `(1.0, 0.0, 0.0)`.
   static const Vector3 right = Vector3(1.0, 0.0, 0.0);
 
   Vector3 operator +(Vector3 other) =>
@@ -106,18 +119,19 @@ enum DistanceModel {
 
 /// 3D Spatial Audio Listener state representing the player/camera/ears in space.
 class SpatialListener {
-  /// Position in world space coordinates.
+  /// The position in world space coordinates.
   final Vector3 position;
 
-  /// Velocity vector in meters per second (used for Doppler calculations).
+  /// The velocity vector in meters per second (used for Doppler calculations).
   final Vector3 velocity;
 
-  /// Unit forward orientation vector.
+  /// The unit forward orientation vector.
   final Vector3 forward;
 
-  /// Unit up orientation vector.
+  /// The unit up orientation vector.
   final Vector3 up;
 
+  /// Creates a [SpatialListener] with the given spatial parameters.
   const SpatialListener({
     this.position = Vector3.zero,
     this.velocity = Vector3.zero,
@@ -174,39 +188,40 @@ class SpatialListener {
 
 /// 3D Spatial Audio Emitter state representing the sound source in space.
 class SpatialEmitter {
-  /// Position in world space coordinates.
+  /// The position in world space coordinates.
   final Vector3 position;
 
-  /// Velocity vector in meters per second (used for Doppler calculations).
+  /// The velocity vector in meters per second (used for Doppler calculations).
   final Vector3 velocity;
 
-  /// Direction orientation vector for directional sound cones (null = omnidirectional).
+  /// The direction orientation vector for directional sound cones (or `null` if omnidirectional).
   final Vector3? direction;
 
-  /// Minimum distance where attenuation begins (sound is at full volume within this radius).
+  /// The minimum distance where attenuation begins (sound is at full volume within this radius).
   final double minDistance;
 
-  /// Maximum distance where attenuation reaches limit (clamped or zero).
+  /// The maximum distance where attenuation reaches limit (clamped or zero).
   final double maxDistance;
 
-  /// Rolloff factor scaling the distance attenuation slope (default 1.0).
+  /// The rolloff factor scaling the distance attenuation slope (default 1.0).
   final double rolloffFactor;
 
-  /// Emitter-specific Doppler factor scale (default 1.0).
+  /// The emitter-specific Doppler factor scale (default 1.0).
   final double dopplerFactor;
 
-  /// Inner cone angle in radians where gain is 1.0 (default 2*PI, omnidirectional).
+  /// The inner cone angle in radians where gain is 1.0 (default 2*PI, omnidirectional).
   final double innerAngleRad;
 
-  /// Outer cone angle in radians where gain transitions to [outerGain] (default 2*PI).
+  /// The outer cone angle in radians where gain transitions to [outerGain] (default 2*PI).
   final double outerAngleRad;
 
-  /// Gain applied outside the outer sound cone (0.0 to 1.0).
+  /// The gain applied outside the outer sound cone (0.0 to 1.0).
   final double outerGain;
 
-  /// Distance attenuation curve model.
+  /// The distance attenuation curve model.
   final DistanceModel distanceModel;
 
+  /// Creates a [SpatialEmitter] with positioning and sound cone parameters.
   const SpatialEmitter({
     this.position = Vector3.zero,
     this.velocity = Vector3.zero,

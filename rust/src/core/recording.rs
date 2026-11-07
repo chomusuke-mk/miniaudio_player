@@ -12,14 +12,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+/// Supported WAV PCM encoding formats for live recording and offline bouncing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WavFormat {
+    /// 16-bit signed integer linear PCM.
     #[default]
     Pcm16,
+    /// 32-bit floating point linear PCM.
     Float32,
 }
 
 impl WavFormat {
+    /// Returns the bit depth per sample for this encoding.
     #[inline]
     pub const fn bits_per_sample(self) -> u16 {
         match self {
@@ -28,6 +32,7 @@ impl WavFormat {
         }
     }
 
+    /// Returns the RIFF `wFormatTag` code.
     #[inline]
     pub const fn audio_format_code(self) -> u16 {
         match self {
@@ -37,6 +42,7 @@ impl WavFormat {
     }
 }
 
+/// Writes initial 44-byte RIFF/WAVE header with placeholder size fields.
 pub fn write_wav_header<W: Write>(
     writer: &mut W,
     sample_rate: u32,

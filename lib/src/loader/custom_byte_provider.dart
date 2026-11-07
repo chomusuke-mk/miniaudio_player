@@ -7,10 +7,10 @@ import '../rust/api/types.dart';
 
 /// Contract for asynchronous custom byte streams in Dart (DRM, encrypted streams, tokenized storage).
 abstract class CustomByteProvider {
-  /// Stream identifier matching Rust's stream_id.
+  /// The stream identifier matching the native Rust stream ID.
   int get streamId;
 
-  /// Total size of the stream in bytes, or `null` for unknown / unbounded streams.
+  /// The total size of the stream in bytes, or `null` for unknown or unbounded streams.
   int? get totalBytes;
 
   /// Whether random-access seeking is supported.
@@ -33,6 +33,7 @@ class DartByteProviderBridge {
   final Stream<RustDartReadRequest> _requestStream;
   StreamSubscription<RustDartReadRequest>? _subscription;
 
+  /// Creates a [DartByteProviderBridge] connecting [_provider] to [_rust].
   DartByteProviderBridge({
     required rust.RustMiniaudioPlayer rust,
     required CustomByteProvider provider,

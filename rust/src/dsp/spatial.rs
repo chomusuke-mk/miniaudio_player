@@ -9,17 +9,22 @@ use std::f32::consts::PI;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub struct Vector3 {
+    /// X coordinate.
     pub x: f32,
+    /// Y coordinate.
     pub y: f32,
+    /// Z coordinate.
     pub z: f32,
 }
 
 impl Vector3 {
+    /// Constructs a new 3D vector with the given `x`, `y`, and `z` components.
     #[inline]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
+    /// Returns a zeroed 3D vector `(0.0, 0.0, 0.0)`.
     #[inline]
     pub const fn zero() -> Self {
         Self {
@@ -29,11 +34,13 @@ impl Vector3 {
         }
     }
 
+    /// Computes the dot product of this vector and another.
     #[inline]
     pub fn dot(&self, other: &Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    /// Computes the cross product of this vector and another.
     #[inline]
     pub fn cross(&self, other: &Self) -> Self {
         Self {
@@ -43,16 +50,21 @@ impl Vector3 {
         }
     }
 
+    /// Computes the squared Euclidean length of this vector.
     #[inline]
     pub fn length_squared(&self) -> f32 {
         self.x * self.x + self.y * self.y + self.z * self.z
     }
 
+    /// Computes the Euclidean length (magnitude) of this vector.
     #[inline]
     pub fn length(&self) -> f32 {
         self.length_squared().sqrt()
     }
 
+    /// Returns a normalized (unit length) copy of this vector.
+    ///
+    /// If the magnitude is close to zero, returns [`Vector3::zero`].
     #[inline]
     pub fn normalize(&self) -> Self {
         let len = self.length();
@@ -67,6 +79,7 @@ impl Vector3 {
         }
     }
 
+    /// Subtracts `other` from this vector.
     #[inline]
     pub fn sub(&self, other: &Self) -> Self {
         Self {
@@ -76,6 +89,7 @@ impl Vector3 {
         }
     }
 
+    /// Adds `other` to this vector.
     #[inline]
     pub fn add(&self, other: &Self) -> Self {
         Self {
@@ -85,6 +99,7 @@ impl Vector3 {
         }
     }
 
+    /// Scales this vector by a scalar factor `s`.
     #[inline]
     pub fn scale(&self, s: f32) -> Self {
         Self {
@@ -99,18 +114,25 @@ impl Vector3 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
 pub enum DistanceModel {
+    /// Inverse distance model (OpenAL default): `gain = min_d / (min_d + rolloff * (d - min_d))`.
     #[default]
     Inverse = 0,
+    /// Linear distance model: `gain = 1.0 - rolloff * (d - min_d) / (max_d - min_d)`.
     Linear = 1,
+    /// Exponential distance model: `gain = (d / min_d) ^ (-rolloff)`.
     Exponential = 2,
 }
 
 /// 3D Spatial Listener parameters (representing the player or camera).
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialListener {
+    /// World position of the listener.
     pub position: Vector3,
+    /// Velocity vector of the listener in units per second.
     pub velocity: Vector3,
+    /// Unit vector pointing in the forward direction of the listener.
     pub forward: Vector3,
+    /// Unit vector pointing upwards relative to the listener orientation.
     pub up: Vector3,
 }
 
@@ -128,16 +150,27 @@ impl Default for SpatialListener {
 /// 3D Spatial Sound Emitter parameters (source of the audio).
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialEmitter {
+    /// World position of the emitter.
     pub position: Vector3,
+    /// Velocity vector of the emitter in units per second.
     pub velocity: Vector3,
+    /// Optional direction orientation of the sound cone.
     pub direction: Option<Vector3>,
+    /// Minimum distance where attenuation begins.
     pub min_distance: f32,
+    /// Maximum distance beyond which sound cannot attenuate further.
     pub max_distance: f32,
+    /// Rolloff attenuation factor.
     pub rolloff_factor: f32,
+    /// Doppler effect intensity factor.
     pub doppler_factor: f32,
+    /// Inner cone angle in radians where gain is 1.0.
     pub inner_angle_rad: f32,
+    /// Outer cone angle in radians where gain drops to `outer_gain`.
     pub outer_angle_rad: f32,
+    /// Gain multiplier outside the outer cone angle.
     pub outer_gain: f32,
+    /// Distance attenuation formula model.
     pub distance_model: DistanceModel,
 }
 
@@ -175,6 +208,7 @@ pub struct SpatialEvaluation {
 /// Real-time 3D spatial processor providing mathematical calculations and slew-rate smoothing.
 #[derive(Debug, Clone)]
 pub struct SpatialProcessor {
+    /// Speed of sound in medium (default: 343.3 m/s in dry air at 20°C).
     pub speed_of_sound: f32,
     current_doppler_ratio: f32,
     current_gain: f32,
@@ -189,6 +223,7 @@ impl Default for SpatialProcessor {
 }
 
 impl SpatialProcessor {
+    /// Creates a new `SpatialProcessor` with the specified speed of sound in units/s.
     pub fn new(speed_of_sound: f32) -> Self {
         Self {
             speed_of_sound: if speed_of_sound > 1.0 {
@@ -203,11 +238,15 @@ impl SpatialProcessor {
         }
     }
 
+    /// Returns whether 3D spatial audio processing is enabled.
     #[inline]
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
+    /// Enables or disables 3D spatial audio processing.
+    ///
+    /// When disabled, resets internal target parameters to unity gain and center pan.
     #[inline]
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
@@ -332,16 +371,19 @@ impl SpatialProcessor {
         self.current_pan += alpha * (target.pan - self.current_pan);
     }
 
+    /// Returns the currently smoothed Doppler pitch ratio.
     #[inline]
     pub fn current_doppler_ratio(&self) -> f32 {
         self.current_doppler_ratio
     }
 
+    /// Returns the currently smoothed distance/cone gain multiplier.
     #[inline]
     pub fn current_gain(&self) -> f32 {
         self.current_gain
     }
 
+    /// Returns the currently smoothed stereo panning value `[-1.0, 1.0]`.
     #[inline]
     pub fn current_pan(&self) -> f32 {
         self.current_pan

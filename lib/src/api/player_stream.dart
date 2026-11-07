@@ -144,17 +144,37 @@ class PlayerStream<T> {
   final StreamController<NeedMoreTracksEvent> needMoreTracksController =
       StreamController<NeedMoreTracksEvent>.broadcast();
 
+  /// Creates a [PlayerStream] container with broadcast stream controllers.
   PlayerStream();
 
+  /// Broadcast stream emitting the playback position within the active track.
   Stream<Duration> get position => positionController.stream;
+
+  /// Broadcast stream emitting the duration of the active track, or `null` if live or unbounded.
   Stream<Duration?> get duration => durationController.stream;
+
+  /// Broadcast stream emitting whether audio frames are actively rendering.
   Stream<bool> get playing => playingController.stream;
+
+  /// Broadcast stream emitting whether audio frames are actively rendering (convenience alias for [playing]).
   Stream<bool> get isPlaying => playingController.stream;
+
+  /// Broadcast stream emitting whether playback is stalled waiting for data.
   Stream<bool> get buffering => bufferingController.stream;
+
+  /// Broadcast stream emitting whether track playback has completed.
   Stream<bool> get completed => completedController.stream;
+
+  /// Broadcast stream emitting whether a track is currently opening or resolving.
   Stream<bool> get opening => openingController.stream;
+
+  /// Broadcast stream emitting high-level playback state changes.
   Stream<PlaybackState> get playbackState => playbackStateController.stream;
+
+  /// Broadcast stream emitting explicit FSM engine phase transitions.
   Stream<EnginePhase> get phase => phaseController.stream;
+
+  /// Broadcast stream emitting audio prefetch buffer metrics.
   Stream<Buffer> get buffer => bufferController.stream;
 
   /// Reactive broadcast stream emitting raw metadata bytes extracted by the native audio engine
@@ -174,15 +194,35 @@ class PlayerStream<T> {
 
   /// Reactive broadcast stream emitting the channel count (e.g. 1 for mono, 2 for stereo) of the active playback.
   Stream<int> get channels => channelsController.stream;
+
+  /// Broadcast stream emitting master volume updates (`0.0` to `2.0`).
   Stream<double> get volume => volumeController.stream;
+
+  /// Broadcast stream emitting playback rate multiplier updates (`0.5` to `2.0`).
   Stream<double> get rate => rateController.stream;
+
+  /// Broadcast stream emitting pitch shift multiplier updates (`0.5` to `2.0`).
   Stream<double> get pitch => pitchController.stream;
+
+  /// Broadcast stream emitting stereo balance panning updates (`-1.0` to `1.0`).
   Stream<double> get balance => balanceController.stream;
+
+  /// Broadcast stream emitting mono downmix state updates.
   Stream<bool> get mono => monoController.stream;
+
+  /// Broadcast stream emitting audio buffer frame size updates.
   Stream<int> get bufferSize => bufferSizeController.stream;
+
+  /// Broadcast stream emitting audio stream bitrate updates in bits per second.
   Stream<int> get bitrate => audioBitrateController.stream;
+
+  /// Broadcast stream emitting audio stream bitrate updates in bits per second (alias for [bitrate]).
   Stream<int> get audioBitrate => audioBitrateController.stream;
+
+  /// Broadcast stream emitting 10-band equalizer configuration updates.
   Stream<Equalizer> get equalizer => equalizerController.stream;
+
+  /// Broadcast stream emitting active primary audio device changes.
   Stream<AudioDevice> get audioDevice => audioDeviceController.stream;
 
   /// Reactive broadcast stream emitting this player's active output destinations.
@@ -198,11 +238,20 @@ class PlayerStream<T> {
   /// Reactive broadcast stream emitting updates to the global system input devices list.
   Stream<List<AudioDevice>> get globalInputDevices =>
       globalInputDevicesController.stream;
+
+  /// Broadcast stream emitting whether playback automatically pauses on output device disconnect.
   Stream<bool> get pauseOnDeviceChange => pauseOnDeviceChangeController.stream;
+
+  /// Broadcast stream emitting whether silence skipping is enabled.
   Stream<bool> get skipSilence => skipSilenceController.stream;
+
+  /// Broadcast stream emitting silence skipping configuration updates.
   Stream<SilenceSkipConfig> get silenceConfig => silenceConfigController.stream;
+
+  /// Broadcast stream emitting cumulative playback time saved by skipping silence.
   Stream<Duration> get silenceSavedDuration =>
       silenceSavedDurationController.stream;
+
   /// Reactive broadcast stream emitting real-time 10-band FFT spectrum visualizer metrics.
   ///
   /// Note: In Dart, this stream is always open and ready for listeners, but for events
@@ -213,38 +262,97 @@ class PlayerStream<T> {
 
   /// Reactive broadcast stream emitting updates whenever the visualizer DSP calculation is enabled or disabled.
   Stream<bool> get visualizerEnabled => visualizerEnabledController.stream;
+
+  /// Broadcast stream emitting master pre-amplification gain updates in dB.
   Stream<double> get preamp => preampController.stream;
+
+  /// Broadcast stream emitting ReplayGain normalization updates.
   Stream<ReplayGainConfig> get replayGain => replayGainController.stream;
+
+  /// Broadcast stream emitting Bauer stereophonic-to-binaural crossfeed mode updates.
   Stream<CrossfeedMode> get crossfeed => crossfeedController.stream;
+
+  /// Broadcast stream emitting whether stereo widening spatialization is enabled.
   Stream<bool> get spatializerEnabled => spatializerEnabledController.stream;
+
+  /// Broadcast stream emitting stereo widening width factor updates.
   Stream<double> get spatializerWidth => spatializerWidthController.stream;
+
+  /// Broadcast stream emitting studio algorithmic reverb configuration updates.
   Stream<Reverb> get reverb => reverbController.stream;
+
+  /// Broadcast stream emitting whether the master brickwall limiter is active.
   Stream<bool> get limiterEnabled => limiterEnabledController.stream;
+
+  /// Broadcast stream emitting the playlist queue of audio sources.
   Stream<List<AudioSource<T>>> get queue => queueController.stream;
+
+  /// Broadcast stream emitting the index of the currently playing track in [queue].
   Stream<int> get currentIndex => currentIndexController.stream;
+
+  /// Broadcast stream emitting the currently active [AudioSource], or `null` if empty.
   Stream<AudioSource<T>?> get currentItem => currentItemController.stream;
+
+  /// Broadcast stream emitting playlist repeat and looping policy updates.
   Stream<LoopMode> get loopMode => loopModeController.stream;
+
+  /// Broadcast stream emitting whether playlist shuffle mode is active.
   Stream<bool> get isShuffled => isShuffledController.stream;
+
+  /// Broadcast stream emitting whether an automatic or manual crossfade transition is currently in progress.
   Stream<bool> get isCrossfading => isCrossfadingController.stream;
+
+  /// Broadcast stream emitting crossfade duration and curve configuration updates.
   Stream<CrossfadeConfig> get crossfadeConfig => crossfadeConfigController.stream;
+
+  /// Broadcast stream emitting whether live audio recording to a file sink is actively running.
   Stream<bool> get isRecording => isRecordingController.stream;
+
+  /// Broadcast stream emitting the elapsed duration of active recording.
   Stream<Duration> get recordedDuration => recordedDurationController.stream;
+
+  /// Broadcast stream emitting DJ cue headphone volume updates.
   Stream<double> get cueVolume => cueVolumeController.stream;
+
+  /// Broadcast stream emitting DJ cue headphone routing source updates.
   Stream<CueSource> get cueSource => cueSourceController.stream;
+
+  /// Broadcast stream emitting whether hardware microphone capture is active.
   Stream<bool> get isMicrophoneEnabled => isMicrophoneEnabledController.stream;
+
+  /// Broadcast stream emitting microphone capture volume updates.
   Stream<double> get micVolume => micVolumeController.stream;
+
+  /// Broadcast stream emitting whether voice auto-ducking is currently active.
   Stream<bool> get isDuckingActive => isDuckingActiveController.stream;
+
+  /// Broadcast stream emitting whether direct microphone pass-through monitoring is active.
   Stream<bool> get isDirectMonitoringEnabled =>
       isDirectMonitoringEnabledController.stream;
+
+  /// Broadcast stream emitting instantaneous microphone RMS levels in dBFS.
   Stream<double> get micRmsLevel => micRmsLevelController.stream;
+
+  /// Broadcast stream emitting voice completion events for polyphonic effects.
   Stream<VoiceId> get voiceCompleted => voiceCompletedController.stream;
+
+  /// Broadcast stream emitting the number of active polyphonic effect voices.
   Stream<int> get activeVoicesCount => activeVoicesCountController.stream;
+
+  /// Broadcast stream emitting the total memory allocated for RAM sound effects in bytes.
   Stream<int> get allocatedRamBytes => allocatedRamBytesController.stream;
+
+  /// Broadcast stream emitting the list of loaded effect IDs currently in RAM.
   Stream<List<String>> get loadedEffectIds => loadedEffectIdsController.stream;
+
+  /// Broadcast stream emitting player exceptions and native errors.
   Stream<MiniaudioPlayerException> get errors => errorsController.stream;
+
+  /// Broadcast stream emitting events when Infinite Mix approaches the queue end.
   Stream<NeedMoreTracksEvent> get needMoreTracks =>
       needMoreTracksController.stream;
 
+  /// Closes all internal broadcast stream controllers.
   Future<void> dispose() async {
     await Future.wait([
       positionController.close(),

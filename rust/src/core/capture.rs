@@ -12,16 +12,22 @@ use crate::bridge::ffi::{
     MapDeviceContext, PcmCaptureHeader,
 };
 
+/// Real-time capture receiver receiving raw PCM frames from miniaudio and pushing to an SPSC queue.
 #[repr(C)]
 pub struct CaptureReceiver {
+    /// C-compatible function pointer header.
     pub header: PcmCaptureHeader,
+    /// Ring buffer producer pushing captured audio to the engine thread.
     pub producer: rtrb::Producer<f32>,
+    /// Atomic flag indicating whether capture is active.
     pub is_active: Arc<AtomicBool>,
+    /// Number of channels in the captured stream.
     pub channels: usize,
 }
 
 unsafe impl Send for CaptureReceiver {}
 
+/// C trampoline forwarding captured PCM frames to [`CaptureReceiver::on_captured_pcm`].
 pub unsafe extern "C" fn capture_receiver_capture_trampoline(
     ptr: *mut c_void,
     input: *const f32,
@@ -31,9 +37,11 @@ pub unsafe extern "C" fn capture_receiver_capture_trampoline(
     r.on_captured_pcm(input, count);
 }
 
+/// C trampoline for capture notifications (no-op).
 pub unsafe extern "C" fn capture_receiver_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
 
 impl CaptureReceiver {
+    /// Processes incoming captured PCM frames and enqueues them into the SPSC buffer.
     #[inline]
     pub fn on_captured_pcm(&mut self, input_frames: *const f32, frame_count: usize) {
         if input_frames.is_null() || frame_count == 0 || !self.is_active.load(Ordering::Relaxed) {
@@ -59,14 +67,23 @@ impl CaptureReceiver {
     }
 }
 
+/// Hardware capture node encapsulating device creation, start, stop, and volume controls.
 pub struct DeviceCaptureNode {
+    /// Raw pointer to the native miniaudio device context.
     pub device_ctx: *mut MapDeviceContext,
+    /// Raw pointer to the heap-allocated [`CaptureReceiver`].
     pub receiver_ptr: *mut CaptureReceiver,
+    /// Flag indicating if capture is running.
     pub is_active: Arc<AtomicBool>,
+    /// Input capture volume.
     pub mic_volume: Arc<AtomicU32>,
+    /// Whether direct monitor pass-through is active.
     pub monitor_direct: Arc<AtomicBool>,
+    /// Direct monitor volume.
     pub monitor_volume: Arc<AtomicU32>,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Audio channel count.
     pub channels: u32,
 }
 

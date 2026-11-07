@@ -5,17 +5,25 @@ pub(crate) fn c_buf_to_string(buf: &[u8]) -> String {
     String::from_utf8_lossy(&buf[..len]).to_string()
 }
 
+/// HTTP header key-value pair for network requests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RustHttpHeader {
+    /// Header field name.
     pub key: String,
+    /// Header field value.
     pub value: String,
 }
 
+/// Asynchronous read request dispatched from Rust to a Dart `CustomByteProvider`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RustDartReadRequest {
+    /// Stream identifier matching the requested custom source.
     pub stream_id: u32,
+    /// Unique monotonically increasing request sequence number.
     pub request_id: u64,
+    /// Starting byte offset in the source.
     pub offset: u64,
+    /// Number of bytes requested.
     pub length: u32,
 }
 
@@ -30,12 +38,18 @@ impl From<crate::buffer::DartReadRequest> for RustDartReadRequest {
     }
 }
 
+/// Hardware or virtual audio endpoint detected by the operating system.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RustAudioDevice {
+    /// Unique device identifier.
     pub id: String,
+    /// Underlying physical endpoint identifier in the operating system.
     pub effective_id: String,
+    /// Human-readable device display name.
     pub name: String,
+    /// Whether this device is the system default.
     pub is_default: bool,
+    /// Whether this device represents the automatic system default route.
     pub is_auto: bool,
 }
 
@@ -63,10 +77,14 @@ impl From<&crate::sync::telemetry::DeviceInfo> for RustAudioDevice {
     }
 }
 
+/// Continuous prefetch buffer telemetry metrics.
 #[derive(Debug, Clone, Default)]
 pub struct RustBuffer {
+    /// Earliest timestamp cached in RAM in milliseconds.
     pub start_ms: i64,
+    /// Furthest timestamp preloaded in RAM in milliseconds.
     pub end_ms: i64,
+    /// Whether the decoder is currently stalled waiting for network or I/O chunks.
     pub is_buffering: bool,
 }
 
@@ -90,9 +108,12 @@ impl From<crate::sync::telemetry::BufferedRange> for RustBuffer {
     }
 }
 
+/// Parameters configuring the 10-band ISO peaking equalizer.
 #[derive(Debug, Clone, Default)]
 pub struct RustEqualizerParams {
+    /// Gain adjustments in decibels across the 10 ISO standard center frequencies.
     pub gains: Vec<f32>,
+    /// Whether the equalizer DSP stage is actively applied.
     pub enabled: bool,
 }
 
@@ -122,11 +143,16 @@ impl From<crate::dsp::equalizer::EqualizerParams> for RustEqualizerParams {
     }
 }
 
+/// Configuration governing ReplayGain track loudness normalization.
 #[derive(Debug, Clone, Default)]
 pub struct RustReplayGainConfig {
+    /// Gain adjustment in decibels relative to target LUFS.
     pub gain_db: f32,
+    /// Absolute true peak amplitude.
     pub peak: f32,
+    /// Whether clipping prevention is active to prevent exceeding digital full scale.
     pub prevent_clipping: bool,
+    /// Whether ReplayGain is actively applied.
     pub enabled: bool,
 }
 
@@ -141,14 +167,22 @@ impl From<crate::dsp::equalizer::ReplayGainConfig> for RustReplayGainConfig {
     }
 }
 
+/// Parameters configuring algorithmic studio reverberation.
 #[derive(Debug, Clone, Default)]
 pub struct RustReverbParams {
+    /// Normalized room size determining decay time (0.0 to 1.0).
     pub room_size: f32,
+    /// High-frequency absorption and damping (0.0 to 1.0).
     pub damping: f32,
+    /// Wet reverberant signal mix level (0.0 to 2.0).
     pub wet: f32,
+    /// Dry unprocessed signal mix level (0.0 to 2.0).
     pub dry: f32,
+    /// Stereo width and spread of reflections (0.0 to 1.0).
     pub width: f32,
+    /// Acoustic mode selector.
     pub mode: f32,
+    /// Whether the reverb effect is actively processing audio.
     pub enabled: bool,
 }
 
@@ -166,12 +200,18 @@ impl From<crate::dsp::reverb::ReverbConfig> for RustReverbParams {
     }
 }
 
+/// Configuration settings for dynamic silence detection and skipping.
 #[derive(Debug, Clone, Default)]
 pub struct RustSilenceConfig {
+    /// Operational mode (0: disabled, 1: trimEdges, 2: continuous, 3: all).
     pub mode: i32,
+    /// Silence detection threshold in decibels full scale (dBFS).
     pub threshold_db: f32,
+    /// Minimum continuous duration in milliseconds before silence skipping triggers.
     pub min_silence_duration_ms: u32,
+    /// Margin padding in milliseconds preserved before and after non-silent audio.
     pub padding_ms: u32,
+    /// Whether silence detection is enabled.
     pub enabled: bool,
 }
 
@@ -204,12 +244,18 @@ impl From<RustSilenceConfig> for crate::dsp::silence::SilenceConfig {
     }
 }
 
+/// Instantaneous FFT spectrum and stereo amplitude metrics for UI visualizers.
 #[derive(Debug, Clone, Default)]
 pub struct RustVisualizerData {
+    /// Normalized frequency band intensities (0.0 to 1.0).
     pub bands: Vec<f32>,
+    /// Global root-mean-square (RMS) energy level (0.0 to 1.0).
     pub rms: f32,
+    /// Instantaneous peak sample amplitude (0.0 to 1.0).
     pub peak: f32,
+    /// Left channel energy level (0.0 to 1.0).
     pub left: f32,
+    /// Right channel energy level (0.0 to 1.0).
     pub right: f32,
 }
 
@@ -225,19 +271,32 @@ impl From<crate::dsp::visualizer::VisualizerData> for RustVisualizerData {
     }
 }
 
+/// Synchronous snapshot of playback telemetry metrics.
 #[derive(Debug, Clone, Default)]
 pub struct RustPlayerStatus {
+    /// Playback elapsed position in milliseconds.
     pub position_ms: i64,
+    /// Total duration in milliseconds, or -1 if live or unbounded.
     pub duration_ms: i64,
+    /// Playback state integer code.
     pub state: i32,
+    /// Whether audio is actively rendering.
     pub is_playing: bool,
+    /// Whether the engine is buffering.
     pub is_buffering: bool,
+    /// Whether playback of the track has completed.
     pub is_completed: bool,
+    /// Master volume level.
     pub volume: f32,
+    /// Playback speed rate multiplier.
     pub rate: f32,
+    /// Pitch shift multiplier.
     pub pitch: f32,
+    /// Stream nominal bitrate in bits per second.
     pub bitrate: u32,
+    /// Stream sample rate in Hz.
     pub sample_rate: u32,
+    /// Number of output channels.
     pub channels: u32,
 }
 
@@ -260,20 +319,34 @@ impl From<crate::core::dual_source::MiniaudioPlayerStatus> for RustPlayerStatus 
     }
 }
 
+/// Offline acoustic analysis results containing loudness, waveform, and format properties.
 #[derive(Debug, Clone, Default)]
 pub struct RustAudioAnalysisResult {
+    /// Total track duration in milliseconds.
     pub duration_ms: i64,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Audio channel count.
     pub channels: u32,
+    /// Average bitrate in bits per second.
     pub bitrate: u32,
+    /// Absolute true peak sample amplitude.
     pub peak_amplitude: f32,
+    /// RMS energy amplitude.
     pub rms_amplitude: f32,
+    /// Whether ReplayGain analysis was performed and populated.
     pub has_replay_gain: bool,
+    /// Integrated loudness in LUFS according to ITU-R BS.1770-4.
     pub integrated_lufs: f32,
+    /// Recommended volume normalization adjustment in decibels.
     pub replay_gain_db: f32,
+    /// Whether waveform points were computed.
     pub has_waveform: bool,
+    /// Spectral centroid metric in Hz.
     pub spectral_centroid: f32,
+    /// Spectral energy band values.
     pub frequency_bands: Vec<f32>,
+    /// Normalized amplitude envelope points for waveform display.
     pub waveform_peaks: Vec<f32>,
 }
 
@@ -312,10 +385,14 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
     }
 }
 
+/// Configuration governing crossfade transition durations and gain curves.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RustCrossfadeConfig {
+    /// Overlap duration for automatic end-of-track transitions in milliseconds.
     pub auto_duration_ms: u64,
+    /// Overlap duration for manual track skips in milliseconds.
     pub manual_duration_ms: u64,
+    /// Gain curve interpolation formula (0: equal power, 1: linear).
     pub curve: i32,
 }
 
@@ -329,13 +406,20 @@ impl Default for RustCrossfadeConfig {
     }
 }
 
+/// Representation of an audio track queued for playback.
 #[derive(Debug, Clone, Default)]
 pub struct RustAudioSource {
+    /// Monotonically increasing queue entry identifier.
     pub id: i64,
+    /// File path, HTTP URL, or stream URI.
     pub source: String,
+    /// Optional HTTP headers for network requests.
     pub headers: Option<Vec<RustHttpHeader>>,
+    /// Optional in-memory raw audio bytes.
     pub data_bytes: Option<Vec<u8>>,
+    /// Track-specific ReplayGain adjustment in dB.
     pub replay_gain_db: Option<f32>,
+    /// Track-specific true peak amplitude.
     pub replay_peak: Option<f32>,
 }
 
@@ -365,87 +449,152 @@ impl From<&crate::core::dual_source::AudioSourceCore> for RustAudioSource {
     }
 }
 
+/// Engine event dispatched internally between the audio thread and coordination threads.
 #[derive(Debug, Clone)]
 pub enum RustEngineEvent {
+    /// Playback phase transition code.
     Phase(i32),
+    /// Playback state integer code.
     State(i32),
+    /// Track elapsed position in milliseconds.
     Position(i64),
+    /// Track total duration in milliseconds.
     Duration(i64),
+    /// Whether audio is actively playing.
     IsPlaying(bool),
+    /// Whether the player is buffering data.
     IsBuffering(bool),
+    /// Whether the current track finished playing.
     IsCompleted(bool),
+    /// Active playlist queue index.
     CurrentIndex(i32),
+    /// Notification that the queued tracks list changed.
     QueueChanged(Vec<RustAudioSource>),
+    /// Notification that queue is approaching exhaustion and requires more tracks.
     NeedMoreTracks {
+        /// Current track ID triggering the threshold.
         current_track_id: i64,
+        /// Number of remaining tracks in the queue.
         remaining_tracks: usize,
     },
+    /// Master volume level.
     Volume(f32),
+    /// Playback speed rate multiplier.
     Rate(f32),
+    /// Playback pitch shift multiplier.
     Pitch(f32),
+    /// Stream nominal bitrate in bps.
     Bitrate(u32),
+    /// Audio buffer frame size.
     BufferSize(u32),
+    /// Active audio output device.
     Device(RustAudioDevice),
+    /// Real-time FFT spectrum and stereo energy data.
     Visualizer(RustVisualizerData),
+    /// Whether visualizer analysis is enabled.
     VisualizerEnabled(bool),
+    /// Tripartite ring buffer telemetry metrics.
     Buffer(RustBuffer),
+    /// Equalizer frequency band gains.
     Equalizer(RustEqualizerParams),
+    /// Equalizer pre-amplification gain in dB.
     Preamp(f32),
+    /// Active ReplayGain loudness normalization configuration.
     ReplayGain(RustReplayGainConfig),
+    /// Stereo balance pan (-1.0 to +1.0).
     Balance(f32),
+    /// Downmix stereo to mono.
     Mono(bool),
+    /// Bauer binaural crossfeed mode.
     Crossfeed(i32),
+    /// 3D stereo widening spatializer state and width multiplier.
     Spatializer {
+        /// Whether spatializer is enabled.
         enabled: bool,
+        /// Stereo widening factor.
         width: f32,
     },
+    /// Algorithmic studio reverberation parameters.
     Reverb(RustReverbParams),
+    /// Brickwall peak limiter enabled state.
     Limiter(bool),
+    /// Overlap crossfade duration and curve configuration.
     CrossfadeConfig(RustCrossfadeConfig),
+    /// Active loop mode policy (0: off, 1: one, 2: all).
     LoopMode(i32),
+    /// Playlist shuffle state.
     Shuffle(bool),
+    /// ICY/ID3 raw metadata byte payload.
     MetaBytes(Vec<u8>),
+    /// Unrecoverable playback or engine error.
     Error {
+        /// Detailed human-readable error description.
         message: String,
+        /// Numeric error categorization code.
         code: i32,
     },
 }
 
+/// Three-dimensional Cartesian coordinate vector used in 3D spatial audio calculations.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RustVector3 {
+    /// X axis position (left / right).
     pub x: f32,
+    /// Y axis position (up / down).
     pub y: f32,
+    /// Z axis position (forward / backward).
     pub z: f32,
 }
 
+/// Distance attenuation model for 3D positional audio emitters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustDistanceModel {
+    /// Realistic inverse distance rolloff according to the inverse-square law.
     #[default]
     Inverse,
+    /// Linear distance attenuation down to silence at maximum distance.
     Linear,
+    /// Exponential distance attenuation for rapid volume falloff.
     Exponential,
 }
 
+/// Listener orientation and position in 3D virtual acoustic space.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RustSpatialListener {
+    /// World position coordinates of the listener.
     pub position: RustVector3,
+    /// Linear velocity vector for Doppler effect calculation.
     pub velocity: RustVector3,
+    /// Forward orientation direction vector.
     pub forward: RustVector3,
+    /// Upward orientation direction vector.
     pub up: RustVector3,
 }
 
+/// Emitter parameters for 3D positional audio sources.
 #[derive(Debug, Clone, Copy)]
 pub struct RustSpatialEmitter {
+    /// World position coordinates of the emitter.
     pub position: RustVector3,
+    /// Velocity vector for Doppler pitch shift calculations.
     pub velocity: RustVector3,
+    /// Directional vector if emitting sound in a directional cone.
     pub direction: Option<RustVector3>,
+    /// Minimum distance where volume attenuation begins.
     pub min_distance: f32,
+    /// Maximum distance beyond which sound ceases or stays constant.
     pub max_distance: f32,
+    /// Attenuation rolloff rate multiplier.
     pub rolloff_factor: f32,
+    /// Doppler pitch frequency shift multiplier.
     pub doppler_factor: f32,
+    /// Inner cone angle in radians where sound plays at full gain.
     pub inner_angle_rad: f32,
+    /// Outer cone angle in radians where sound drops to outer gain.
     pub outer_angle_rad: f32,
+    /// Attenuation gain applied outside the outer directional cone.
     pub outer_gain: f32,
+    /// Mathematical distance attenuation curve model.
     pub distance_model: RustDistanceModel,
 }
 
@@ -526,12 +675,17 @@ impl From<RustSpatialEmitter> for crate::dsp::spatial::SpatialEmitter {
     }
 }
 
+/// Policy governing which active voice to terminate when polyphony limits are reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustVoiceStealingPolicy {
+    /// Steal voice with the lowest numerical priority level.
     #[default]
     LowestPriority,
+    /// Steal voice that has been playing the longest.
     Oldest,
+    /// Steal voice with the lowest computed audible amplitude.
     Quietest,
+    /// Steal voice located farthest from the 3D listener.
     Farthest,
 }
 
@@ -557,19 +711,28 @@ impl From<crate::dsp::voice_pool::VoiceStealingPolicy> for RustVoiceStealingPoli
     }
 }
 
+/// Metadata and specifications of a decoded audio sample held in memory.
 #[derive(Debug, Clone, Default)]
 pub struct RustSoundBufferInfo {
+    /// Unique integer buffer identifier.
     pub id: u64,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Number of audio channels.
     pub channels: u32,
+    /// Duration of audio in milliseconds.
     pub duration_ms: i64,
+    /// Total audio frame count.
     pub frame_count: usize,
 }
 
+/// Format and sample bit depth for captured audio recordings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustWavFormat {
+    /// 16-bit signed integer linear PCM.
     #[default]
     Pcm16,
+    /// 32-bit floating point linear PCM.
     Float32,
 }
 
@@ -591,13 +754,20 @@ impl From<crate::core::recording::WavFormat> for RustWavFormat {
     }
 }
 
+/// Dynamic sidechain ducking configuration parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RustDuckingConfig {
+    /// Whether automatic ducking is enabled.
     pub enabled: bool,
+    /// Attenuation gain in decibels applied to background music when ducking triggers.
     pub ducking_db: f32,
+    /// Threshold in decibels above which input signal triggers ducking.
     pub threshold_db: f32,
+    /// Attack ramp time in milliseconds.
     pub attack_ms: f32,
+    /// Hold time in milliseconds before release commences.
     pub hold_ms: f32,
+    /// Release ramp time in milliseconds back to unity gain.
     pub release_ms: f32,
 }
 
@@ -614,21 +784,33 @@ impl Default for RustDuckingConfig {
     }
 }
 
+/// Cue channel preview configuration for DJ workflows.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RustCueConfig {
+    /// Whether cue monitoring is active.
     pub enabled: bool,
+    /// Target audio output device ID for the cue feed.
     pub device_id: Option<String>,
+    /// Cue monitoring volume level.
     pub volume: f32,
-    pub mode: i32, // 0: Deck A, 1: Deck B, 2: Master
+    /// Cue source selection (0: Deck A, 1: Deck B, 2: Master).
+    pub mode: i32,
 }
 
+/// Initialization configuration for the audio player and backend engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RustPlayerConfig {
+    /// Render buffer chunk size in frames.
     pub buffer_size_frames: u32,
+    /// Maximum concurrent sound effect voices allowed.
     pub max_voices: u32,
+    /// Maximum RAM budget in bytes allocated for decoded sound effect samples.
     pub max_ram_bytes: usize,
+    /// Whether playback pauses automatically on audio device change or disconnection.
     pub pause_on_device_change: bool,
+    /// Ring buffer capacity for local file streaming in milliseconds.
     pub buffer_local_duration_ms: u64,
+    /// Ring buffer capacity for network HTTP streaming in milliseconds.
     pub buffer_network_duration_ms: u64,
 }
 
@@ -645,41 +827,85 @@ impl Default for RustPlayerConfig {
     }
 }
 
+/// Audio output routing destination descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RustAudioOutput {
-    Speaker { exclusive_mode: bool },
-    Device { device_id: String, exclusive_mode: bool },
-    Cue { device_id: String, source: i32 },
-    File { path: String, format: i32 },
+    /// Default system speaker output.
+    Speaker {
+        /// Whether exclusive hardware access mode is requested.
+        exclusive_mode: bool,
+    },
+    /// Explicit audio output device selected by identifier.
+    Device {
+        /// Unique device identifier.
+        device_id: String,
+        /// Whether exclusive hardware access mode is requested.
+        exclusive_mode: bool,
+    },
+    /// Dedicated headphone cue channel output.
+    Cue {
+        /// Target device identifier.
+        device_id: String,
+        /// Cue source channel code.
+        source: i32,
+    },
+    /// File sink capturing rendered master audio to disk.
+    File {
+        /// Target file system path.
+        path: String,
+        /// WAV file format code (0: Pcm16, 1: Float32).
+        format: i32,
+    },
 }
 
+/// Audio input configuration for recording and microphone pass-through.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustAudioInput {
+    /// Optional specific input device identifier.
     pub device_id: Option<String>,
+    /// Input capture gain volume multiplier.
     pub volume: f32,
+    /// Optional automatic ducking configuration.
     pub ducking: Option<RustDuckingConfig>,
+    /// Whether direct microphone monitoring is routed to output.
     pub monitor_direct: bool,
+    /// Direct monitoring volume level.
     pub monitor_volume: f32,
 }
 
+/// Sound effect asset registration descriptor.
 #[derive(Debug, Clone)]
 pub struct RustAudioEffect {
+    /// Unique identifier for the sound effect.
     pub id: String,
+    /// Audio source holding URI or raw decoded data.
     pub source: RustAudioSource,
+    /// Maximum polyphony instances for this specific effect.
     pub max_polyphony: u32,
+    /// Whether the decoded sample buffer is pinned in RAM.
     pub pinned: bool,
 }
 
+/// Playback properties when triggering an individual sound effect instance.
 #[derive(Debug, Clone, Default)]
 pub struct RustEffectConfig {
+    /// Instance playback volume.
     pub volume: f32,
+    /// Stereo panning balance (-1.0 to +1.0).
     pub balance: f32,
+    /// Pitch shift multiplier.
     pub pitch: f32,
+    /// Playback rate multiplier.
     pub rate: f32,
+    /// Whether the sound effect loops seamlessly until explicitly stopped.
     pub looping: bool,
+    /// Voice priority level for voice-stealing arbitration.
     pub priority: u8,
+    /// Random pitch jitter variance.
     pub pitch_jitter: f32,
+    /// Random volume jitter variance.
     pub volume_jitter: f32,
+    /// Optional 3D spatial emitter parameters.
     pub spatial: Option<RustSpatialEmitter>,
 }
 
@@ -712,69 +938,139 @@ impl From<crate::core::dual_source::AudioSourceCore> for RustAudioSource {
     }
 }
 
+/// Finalized summary metrics of a completed audio recording.
 #[derive(Debug, Clone)]
 pub struct RustRecordingResult {
+    /// File path where recorded audio was stored.
     pub path: String,
+    /// Total duration of recorded audio in milliseconds.
     pub duration_ms: u64,
+    /// Total bytes written to disk.
     pub bytes_written: usize,
+    /// Total PCM audio samples captured.
     pub sample_count: u64,
 }
 
+/// High-level event emitted over the Flutter Rust Bridge stream to Dart listeners.
 #[derive(Debug, Clone)]
 pub enum RustPlayerEvent {
+    /// Playback state transition code.
     PlaybackState(i32),
+    /// State machine integer code.
     State(i32),
+    /// Elapsed track position in milliseconds.
     Position(i64),
+    /// Total track duration in milliseconds.
     Duration(i64),
+    /// Whether audio is actively playing.
     IsPlaying(bool),
+    /// Whether player is buffering data.
     IsBuffering(bool),
+    /// Whether track has finished playback.
     IsCompleted(bool),
+    /// Tripartite ring buffer telemetry metrics.
     Buffer(RustBuffer),
+    /// Playlist queue contents.
     Queue(Vec<RustAudioSource>),
+    /// Active playlist queue index.
     CurrentIndex(i32),
+    /// Whether an overlap crossfade transition is active.
     IsCrossfading(bool),
+    /// Crossfade durations and interpolation curve configuration.
     CrossfadeConfig(RustCrossfadeConfig),
+    /// Instantaneous visualizer FFT and loudness data.
     Visualizer(RustVisualizerData),
+    /// Whether visualizer analysis is active.
     VisualizerEnabled(bool),
+    /// Master volume level.
     Volume(f32),
+    /// Playback speed rate multiplier.
     Rate(f32),
+    /// Playback pitch shift multiplier.
     Pitch(f32),
+    /// Stereo balance pan (-1.0 to +1.0).
     Balance(f32),
+    /// Downmix stereo to mono.
     Mono(bool),
+    /// Stream nominal bitrate in bps.
     Bitrate(u32),
+    /// Audio buffer frame size.
     BufferSize(u32),
+    /// Silence detection configuration.
     SilenceConfig(RustSilenceConfig),
+    /// Cumulative silence skipped in milliseconds.
     SilenceSaved(i64),
+    /// Equalizer 10-band gain parameters.
     Equalizer(RustEqualizerParams),
+    /// Equalizer preamp gain in dB.
     Preamp(f32),
+    /// Active ReplayGain loudness normalization settings.
     ReplayGain(RustReplayGainConfig),
+    /// Bauer binaural crossfeed mode code.
     Crossfeed(i32),
-    Spatializer { enabled: bool, width: f32 },
+    /// 3D stereo widening spatializer state.
+    Spatializer {
+        /// Whether spatializer is enabled.
+        enabled: bool,
+        /// Stereo widening factor.
+        width: f32,
+    },
+    /// Algorithmic studio reverberation settings.
     Reverb(RustReverbParams),
+    /// Brickwall peak limiter state.
     Limiter(bool),
+    /// Whether file recording is currently running.
     IsRecording(bool),
+    /// Cumulative recorded duration in milliseconds.
     RecordedDuration(u64),
+    /// Whether dynamic ducking is attenuating background music.
     IsDuckingActive(bool),
+    /// Live microphone input RMS loudness level.
     MicRmsLevel(f32),
+    /// Voice completion notification with voice ID.
     VoiceCompleted(u32),
+    /// Notification of registered sound effect assets and total RAM bytes allocated.
     LoadedEffects {
+        /// Identifiers of loaded sound effects.
         ids: Vec<String>,
+        /// Total RAM bytes occupied by decoded effect samples.
         allocated_bytes: usize,
     },
+    /// Number of concurrent active sound effect voices.
     ActiveVoices(u32),
+    /// Raw ICY/ID3 metadata stream payload.
     MetaBytes(Vec<u8>),
+    /// Whether metadata stream reception is enabled.
     MetaBytesEnabled(bool),
+    /// Cue monitoring volume level.
     CueVolume(f32),
+    /// Cue monitoring source channel code.
     CueSource(i32),
+    /// Active loop mode policy (0: off, 1: one, 2: all).
     LoopMode(i32),
+    /// Whether playlist shuffle is enabled.
     IsShuffled(bool),
+    /// Whether auto-pause on device change is enabled.
     PauseOnDeviceChange(bool),
+    /// Whether microphone capture is enabled.
     MicrophoneEnabled(bool),
+    /// Microphone input volume level.
     MicVolume(f32),
+    /// Whether direct microphone monitoring is active.
     DirectMonitoringEnabled(bool),
+    /// List of available audio output devices.
     OutputDevices(Vec<RustAudioDevice>),
+    /// List of available audio input devices.
     InputDevices(Vec<RustAudioDevice>),
+    /// Request for Dart to read custom stream bytes.
     DartReadRequest(RustDartReadRequest),
+    /// Active audio output device.
     Device(RustAudioDevice),
-    Error { message: String, code: i32 },
+    /// Error notification with message and code.
+    Error {
+        /// Detailed human-readable error description.
+        message: String,
+        /// Numeric error categorization code.
+        code: i32,
+    },
 }

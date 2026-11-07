@@ -25,10 +25,10 @@ enum ReplayGainMode {
 
 /// Immutable configuration of active ReplayGain / EBU R128 track normalization.
 class ReplayGainConfig {
-  /// Track gain in decibels relative to target LUFS (e.g. `-13.3`).
+  /// The track gain in decibels relative to target LUFS (e.g. `-13.3`).
   final double gainDb;
 
-  /// Peak amplitude of the track (where 1.0 = 0 dBFS).
+  /// The peak amplitude of the track (where `1.0` represents 0 dBFS).
   final double peak;
 
   /// Whether clipping defense is active (capping linear factor to `1.0 / peak`).
@@ -37,6 +37,7 @@ class ReplayGainConfig {
   /// Whether ReplayGain is actively applied or bypassed.
   final bool enabled;
 
+  /// Creates a [ReplayGainConfig] with normalization settings.
   const ReplayGainConfig({
     this.gainDb = 0.0,
     this.peak = 0.0,
@@ -44,7 +45,7 @@ class ReplayGainConfig {
     this.enabled = false,
   });
 
-  /// Effective decibel gain applied if enabled (`gainDb` when active, `0.0` if bypassed).
+  /// The effective decibel gain applied if enabled (`gainDb` when active, `0.0` if bypassed).
   double get effectiveGainDb => enabled ? gainDb : 0.0;
 
   @override

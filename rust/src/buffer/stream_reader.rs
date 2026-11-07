@@ -6,23 +6,28 @@ use symphonia::core::io::MediaSource;
 
 use super::tripartite::{BufferError, TripartiteBuffer};
 
+/// Sequential and random-access `Read + Seek + MediaSource` reader over an elastic [`TripartiteBuffer`].
 pub struct BufferStreamReader {
     buffer: TripartiteBuffer,
     cursor: u64,
 }
 
 impl BufferStreamReader {
+    /// Read timeout duration when polling for prefetch chunk delivery.
     pub const READ_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
+    /// Creates a new `BufferStreamReader` over the given buffer.
     pub fn new(buffer: TripartiteBuffer) -> Self {
         Self { buffer, cursor: 0 }
     }
 
+    /// Current byte read offset.
     #[inline]
     pub fn cursor(&self) -> u64 {
         self.cursor
     }
 
+    /// Reference to the underlying tripartite buffer.
     #[inline]
     pub fn buffer(&self) -> &TripartiteBuffer {
         &self.buffer

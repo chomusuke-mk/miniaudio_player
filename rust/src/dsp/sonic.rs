@@ -3,15 +3,31 @@
 
 use std::f32::consts::PI;
 
+/// Minimum pitch period in samples used for AMDF pitch detection.
 pub const SONIC_MIN_PITCH: usize = 22;
+
+/// Maximum pitch period in samples used for AMDF pitch detection.
 pub const SONIC_MAX_PITCH: usize = 400;
+
+/// Target sample rate for downsampled AMDF pitch estimation.
 pub const SONIC_AMDF_FREQ: usize = 4000;
 
+/// Minimum supported playback speed ratio (0.05x).
 pub const SONIC_MIN_SPEED: f32 = 0.05;
+
+/// Maximum supported playback speed ratio (20.0x).
 pub const SONIC_MAX_SPEED: f32 = 20.0;
+
+/// Minimum pitch scale setting (0.05x).
 pub const SONIC_MIN_PITCH_SETTING: f32 = 0.05;
+
+/// Maximum pitch scale setting (20.0x).
 pub const SONIC_MAX_PITCH_SETTING: f32 = 20.0;
+
+/// Minimum sample rate multiplier (0.05x).
 pub const SONIC_MIN_RATE: f32 = 0.05;
+
+/// Maximum sample rate multiplier (20.0x).
 pub const SONIC_MAX_RATE: f32 = 20.0;
 
 const SINC_FILTER_POINTS: usize = 12;
@@ -58,6 +74,10 @@ static SINC_TABLE_I16: [i16; SINC_TABLE_SIZE] = [
     0, 0, 0, 0, 0, 0, 0,
 ];
 
+/// A pure Rust time-stretching and pitch-shifting stream based on the Sonic algorithm.
+///
+/// Implements PICOLA / WSOLA (Waveform Similarity Overlap-Add) with equal-power
+/// crossfading and sinc-interpolated resampling.
 pub struct SonicStream {
     input_buffer: Vec<f32>,
     output_buffer: Vec<f32>,
@@ -93,6 +113,7 @@ pub struct SonicStream {
 }
 
 impl SonicStream {
+    /// Creates a new `SonicStream` configured for the specified sample rate and channel count.
     pub fn new(sample_rate: u32, num_channels: usize) -> Self {
         let sr = (sample_rate as usize).clamp(8000, 192000);
         let ch = num_channels.clamp(1, 8);
@@ -138,38 +159,47 @@ impl SonicStream {
         }
     }
 
+    /// Sets the playback speed ratio (e.g. 1.0 = normal, 1.5 = 50% faster without pitch shift).
     pub fn set_speed(&mut self, speed: f32) {
         self.speed = speed.clamp(SONIC_MIN_SPEED, SONIC_MAX_SPEED);
     }
 
+    /// Returns the current playback speed ratio.
     pub fn speed(&self) -> f32 {
         self.speed
     }
 
+    /// Sets the pitch scale factor (e.g. 1.0 = normal, 2.0 = one octave up).
     pub fn set_pitch(&mut self, pitch: f32) {
         self.pitch = pitch.clamp(SONIC_MIN_PITCH_SETTING, SONIC_MAX_PITCH_SETTING);
     }
 
+    /// Returns the current pitch scale factor.
     pub fn pitch(&self) -> f32 {
         self.pitch
     }
 
+    /// Sets the playback rate factor (adjusting both speed and pitch simultaneously).
     pub fn set_rate(&mut self, rate: f32) {
         self.rate = rate.clamp(SONIC_MIN_RATE, SONIC_MAX_RATE);
     }
 
+    /// Returns the current playback rate factor.
     pub fn rate(&self) -> f32 {
         self.rate
     }
 
+    /// Sets the stream output volume scaling factor.
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume;
     }
 
+    /// Sets the pitch estimation quality (0 for fast AMDF with downsampling, 1 for full precision).
     pub fn set_quality(&mut self, quality: i32) {
         self.quality = quality;
     }
 
+    /// Resets all internal audio buffers and time tracking states.
     pub fn reset(&mut self) {
         self.num_input_samples = 0;
         self.num_output_samples = 0;
@@ -182,10 +212,12 @@ impl SonicStream {
         self.prev_min_diff = 0;
     }
 
+    /// Returns the number of processed frames available to read.
     pub fn samples_available(&self) -> usize {
         self.num_output_samples
     }
 
+    /// Writes interleaved float samples to the input buffer and processes them.
     pub fn write_float(&mut self, samples: &[f32]) -> bool {
         if samples.is_empty() {
             return true;
@@ -201,6 +233,9 @@ impl SonicStream {
         self.process_stream_input()
     }
 
+    /// Reads up to `out_samples.len() / channels` processed frames into `out_samples`.
+    ///
+    /// Returns the number of frames actually read.
     pub fn read_float(&mut self, out_samples: &mut [f32]) -> usize {
         if self.num_output_samples == 0 || out_samples.is_empty() {
             return 0;
@@ -223,6 +258,7 @@ impl SonicStream {
         num_frames
     }
 
+    /// Flushes any pending input samples by padding with silence and processing remaining audio.
     pub fn flush(&mut self) -> bool {
         let max_req = self.max_required;
         let remaining = self.num_input_samples;
@@ -754,6 +790,7 @@ impl SonicStream {
 // C ABI compatibility functions
 // ----------------------------------------------------------------------------
 
+/// C ABI: Allocates and initializes a new SonicStream handle.
 #[no_mangle]
 pub unsafe extern "C" fn sonicCreateStream(
     sample_rate: i32,
@@ -763,6 +800,7 @@ pub unsafe extern "C" fn sonicCreateStream(
     Box::into_raw(stream)
 }
 
+/// C ABI: Deallocates a SonicStream instance created by [`sonicCreateStream`].
 #[no_mangle]
 pub unsafe extern "C" fn sonicDestroyStream(stream: *mut SonicStream) {
     if !stream.is_null() {
@@ -772,6 +810,7 @@ pub unsafe extern "C" fn sonicDestroyStream(stream: *mut SonicStream) {
     }
 }
 
+/// C ABI: Sets the pitch calculation quality on the stream.
 #[no_mangle]
 pub unsafe extern "C" fn sonicSetQuality(stream: *mut SonicStream, quality: i32) {
     if !stream.is_null() {
@@ -781,6 +820,7 @@ pub unsafe extern "C" fn sonicSetQuality(stream: *mut SonicStream, quality: i32)
     }
 }
 
+/// C ABI: Sets the playback speed ratio on the stream.
 #[no_mangle]
 pub unsafe extern "C" fn sonicSetSpeed(stream: *mut SonicStream, speed: f32) {
     if !stream.is_null() {
@@ -790,6 +830,7 @@ pub unsafe extern "C" fn sonicSetSpeed(stream: *mut SonicStream, speed: f32) {
     }
 }
 
+/// C ABI: Sets the pitch scaling ratio on the stream.
 #[no_mangle]
 pub unsafe extern "C" fn sonicSetPitch(stream: *mut SonicStream, pitch: f32) {
     if !stream.is_null() {
@@ -799,6 +840,7 @@ pub unsafe extern "C" fn sonicSetPitch(stream: *mut SonicStream, pitch: f32) {
     }
 }
 
+/// C ABI: Sets the rate multiplier on the stream.
 #[no_mangle]
 pub unsafe extern "C" fn sonicSetRate(stream: *mut SonicStream, rate: f32) {
     if !stream.is_null() {
@@ -808,6 +850,9 @@ pub unsafe extern "C" fn sonicSetRate(stream: *mut SonicStream, rate: f32) {
     }
 }
 
+/// C ABI: Writes interleaved float frames to the stream.
+///
+/// Returns 1 on success, 0 on failure.
 #[no_mangle]
 pub unsafe extern "C" fn sonicWriteFloatToStream(
     stream: *mut SonicStream,
@@ -828,6 +873,9 @@ pub unsafe extern "C" fn sonicWriteFloatToStream(
     }
 }
 
+/// C ABI: Reads interleaved float frames from the stream into `samples`.
+///
+/// Returns the number of frames read.
 #[no_mangle]
 pub unsafe extern "C" fn sonicReadFloatFromStream(
     stream: *mut SonicStream,
@@ -844,6 +892,7 @@ pub unsafe extern "C" fn sonicReadFloatFromStream(
     }
 }
 
+/// C ABI: Returns the number of processed frames available to read.
 #[no_mangle]
 pub unsafe extern "C" fn sonicSamplesAvailable(stream: *mut SonicStream) -> i32 {
     if stream.is_null() {
@@ -853,6 +902,7 @@ pub unsafe extern "C" fn sonicSamplesAvailable(stream: *mut SonicStream) -> i32 
     }
 }
 
+/// C ABI: Flushes remaining samples from the stream.
 #[no_mangle]
 pub unsafe extern "C" fn sonicFlushStream(stream: *mut SonicStream) -> i32 {
     if stream.is_null() {
@@ -868,6 +918,7 @@ pub unsafe extern "C" fn sonicFlushStream(stream: *mut SonicStream) -> i32 {
     }
 }
 
+/// C ABI: Resets the stream state and buffers.
 #[no_mangle]
 pub unsafe extern "C" fn sonicResetStream(stream: *mut SonicStream) {
     if !stream.is_null() {

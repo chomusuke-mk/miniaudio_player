@@ -5,6 +5,7 @@
 
 use rubato::{FftFixedInOut, Resampler};
 
+/// High-fidelity FFT-based sample rate converter powered by Rubato with SNR > 140 dB.
 pub struct RubatoResampler {
     resampler: Option<FftFixedInOut<f32>>,
     sample_rate_in: u32,
@@ -74,22 +75,27 @@ impl RubatoResampler {
         })
     }
 
+    /// Returns the expected input sample rate in Hz.
     pub fn sample_rate_in(&self) -> u32 {
         self.sample_rate_in
     }
 
+    /// Returns the target output sample rate in Hz.
     pub fn sample_rate_out(&self) -> u32 {
         self.sample_rate_out
     }
 
+    /// Returns the number of channels processed.
     pub fn channels(&self) -> usize {
         self.channels
     }
 
+    /// Returns the required input chunk size in frames per FFT step.
     pub fn chunk_size_in(&self) -> usize {
         self.chunk_size_in
     }
 
+    /// Returns the generated output chunk size in frames per FFT step.
     pub fn chunk_size_out(&self) -> usize {
         self.chunk_size_out
     }

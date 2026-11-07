@@ -217,11 +217,15 @@ impl DsdFirDecimator {
     }
 }
 
+/// Result of probing a media source for Direct Stream Digital (`.dsf`) audio container format.
 pub enum DsfProbe {
+    /// Source matched DSF format and initialized a `DsfReader`.
     Matched(DsfReader),
+    /// Source did not match DSF format; stream was rewound and returned.
     NotMatched(Box<dyn MediaSource>),
 }
 
+/// Decoder reader parsing and decimating DSD (`.dsf`) 1-bit PDM streams into PCM float audio.
 pub struct DsfReader {
     source: Box<dyn MediaSource>,
     sample_rate: u32,
@@ -239,6 +243,7 @@ pub struct DsfReader {
 }
 
 impl DsfReader {
+    /// Attempts to parse the DSF chunk hierarchy and initialize a `DsfReader`.
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<DsfProbe, SymphoniaError> {
         let Some(hdr) = DsfHeader::parse(&mut *source) else {
             let _ = source.seek(SeekFrom::Start(0));
@@ -265,26 +270,31 @@ impl DsfReader {
         }))
     }
 
+    /// Returns the raw 1-bit DSD sampling rate (e.g., 2,822,400 Hz for DSD64).
     #[inline]
     pub fn raw_sample_rate(&self) -> u32 {
         self.raw_sample_rate
     }
 
+    /// Returns the decimated output PCM sample rate in Hz.
     #[inline]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the number of audio channels.
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
     }
 
+    /// Returns total stream duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         self.duration_ms
     }
 
+    /// Seeks to the specified position in milliseconds.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_frame = ((position_ms as f64 / 1000.0) * self.sample_rate as f64) as u64;
         let clamped_frame = target_frame.min(self.total_samples_per_channel);
@@ -304,6 +314,7 @@ impl DsfReader {
         Ok(())
     }
 
+    /// Decodes and decimates the next block of DSD frames into normalized float PCM.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
 

@@ -1,30 +1,51 @@
 use std::os::raw::{c_char, c_void};
 
+/// Opaque marker type representing a miniaudio audio hardware device context.
 pub enum MapDeviceContextOpaque {}
+/// Type alias for the opaque device context pointer.
 pub type MapDeviceContext = MapDeviceContextOpaque;
 
-/* Códigos de error canónicos de miniaudio_player */
+/* Canonical error codes for miniaudio_player */
+/// Operation completed successfully.
 pub const MAP_SUCCESS: i32 = 0;
+/// Generic unspecified error.
 pub const MAP_ERROR_GENERIC: i32 = -1;
+/// Invalid arguments supplied.
 pub const MAP_ERROR_INVALID_ARGS: i32 = -2;
+/// Memory allocation failed.
 pub const MAP_ERROR_OUT_OF_MEMORY: i32 = -3;
+/// Audio backend engine initialization failed.
 pub const MAP_ERROR_ENGINE_INIT: i32 = -4;
+/// File or resource not found.
 pub const MAP_ERROR_FILE_NOT_FOUND: i32 = -5;
+/// Audio decoding failed.
 pub const MAP_ERROR_DECODE_FAILED: i32 = -6;
+/// Invalid player or device state.
 pub const MAP_ERROR_INVALID_STATE: i32 = -7;
+/// Seek operation failed.
 pub const MAP_ERROR_SEEK_FAILED: i32 = -8;
+/// Graph node operation failed.
 pub const MAP_ERROR_NODE_FAILED: i32 = -9;
+/// Requested feature is unsupported on this platform.
 pub const MAP_ERROR_UNSUPPORTED: i32 = -10;
+/// Hardware access permission denied.
 pub const MAP_ERROR_ACCESS_DENIED: i32 = -11;
+/// Audio subsystem or device is busy.
 pub const MAP_ERROR_BUSY: i32 = -12;
 
+/// Low-level audio device descriptor for C interop.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MapDeviceInfo {
+    /// Raw unique hardware device identifier bytes.
     pub id: [u8; 516],
+    /// Effective device identifier bytes.
     pub effective_id: [u8; 516],
+    /// Human-readable device name bytes.
     pub name: [u8; 256],
+    /// Whether this device is the operating system default.
     pub is_default: i32,
+    /// Whether this represents automatic default device routing.
     pub is_auto: i32,
 }
 
@@ -40,11 +61,15 @@ impl Default for MapDeviceInfo {
     }
 }
 
+/// C-compatible representation of buffered playback time boundaries.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MiniaudioBufferedRange {
+    /// Start timestamp of buffered audio in milliseconds.
     pub start_ms: i64,
+    /// End timestamp of buffered audio in milliseconds.
     pub end_ms: i64,
+    /// Non-zero if actively waiting for buffer refill.
     pub is_buffering: i32,
 }
 
@@ -387,12 +412,16 @@ mod wasm_device_bridge {
 #[cfg(target_arch = "wasm32")]
 pub use wasm_device_bridge::*;
 
+/// Function pointer vtable header for microphone capture callbacks from C to Rust.
 #[repr(C)]
 pub struct PcmCaptureHeader {
+    /// C callback delivering captured PCM float samples.
     pub capture_fn: unsafe extern "C" fn(ptr: *mut c_void, input: *const f32, count: usize),
+    /// C callback notifying device state transitions.
     pub notif_fn: unsafe extern "C" fn(ptr: *mut c_void, notif: i32),
 }
 
+/// Global C trampoline called by miniaudio to pull rendered audio frames from Rust.
 #[no_mangle]
 pub unsafe extern "C" fn rust_render_pcm_frames(
     user_data: *mut c_void,
@@ -405,6 +434,7 @@ pub unsafe extern "C" fn rust_render_pcm_frames(
     }
 }
 
+/// Global C trampoline called by miniaudio to deliver captured microphone frames to Rust.
 #[no_mangle]
 pub unsafe extern "C" fn rust_capture_pcm_frames(
     user_data: *mut c_void,
@@ -417,6 +447,7 @@ pub unsafe extern "C" fn rust_capture_pcm_frames(
     }
 }
 
+/// Global C trampoline notifying Rust when audio device state changes.
 #[no_mangle]
 pub unsafe extern "C" fn rust_on_device_notification(
     user_data: *mut c_void,

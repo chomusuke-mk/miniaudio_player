@@ -8,12 +8,16 @@
 
 use super::biquad::BiquadDf2t;
 
+/// Total number of standard ISO 266 frequency bands (10 bands).
 pub const EQ_BAND_COUNT: usize = 10;
+/// Center and corner frequencies for the 10 ISO 266 bands in Hz.
 pub const EQ_FREQUENCIES: [f64; EQ_BAND_COUNT] = [
     31.0, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
 ];
 
+/// Shelf slope factor (Q = 1 / sqrt(2) = 0.7071) for low/high shelf bands.
 pub const EQ_SHELF_SLOPE: f64 = 0.7071067811865475;
+/// Quality factor Q for the 8 internal peaking equalizer bands.
 pub const EQ_Q: f64 = 1.15;
 
 #[inline]
@@ -29,22 +33,34 @@ pub(crate) fn compute_smoothing_factor(sample_rate: u32) -> f32 {
     }
 }
 
+/// 10-band graphic equalizer gains in decibels (-24.0 dB to +24.0 dB).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EqualizerParams {
+    /// Gain for 31 Hz band (sub-bass low-shelf).
     pub hz31: f32,
+    /// Gain for 63 Hz band (bass peaking).
     pub hz63: f32,
+    /// Gain for 125 Hz band (upper bass peaking).
     pub hz125: f32,
+    /// Gain for 250 Hz band (low midrange peaking).
     pub hz250: f32,
+    /// Gain for 500 Hz band (midrange peaking).
     pub hz500: f32,
+    /// Gain for 1000 Hz band (center midrange peaking).
     pub hz1k: f32,
+    /// Gain for 2000 Hz band (upper midrange peaking).
     pub hz2k: f32,
+    /// Gain for 4000 Hz band (presence peaking).
     pub hz4k: f32,
+    /// Gain for 8000 Hz band (brilliance peaking).
     pub hz8k: f32,
+    /// Gain for 16000 Hz band (air high-shelf).
     pub hz16k: f32,
 }
 
 impl EqualizerParams {
+    /// Returns the 10 band gains as a contiguous fixed-size array.
     #[inline]
     pub const fn as_array(&self) -> [f32; EQ_BAND_COUNT] {
         [
@@ -53,6 +69,7 @@ impl EqualizerParams {
         ]
     }
 
+    /// Creates an `EqualizerParams` instance from an array of 10 band gains.
     #[inline]
     pub const fn from_array(arr: &[f32; EQ_BAND_COUNT]) -> Self {
         Self {
@@ -69,6 +86,7 @@ impl EqualizerParams {
         }
     }
 
+    /// Sets the gain for an individual band by its zero-based index.
     pub fn set_band(&mut self, band_index: usize, gain_db: f32) {
         if band_index < EQ_BAND_COUNT {
             let mut arr = self.as_array();
@@ -78,12 +96,17 @@ impl EqualizerParams {
     }
 }
 
+/// ReplayGain volume normalization and clipping prevention parameters.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReplayGainConfig {
+    /// Recommended volume adjustment in dB.
     pub gain_db: f32,
+    /// Track true peak sample amplitude.
     pub peak: f32,
+    /// Non-zero if clipping prevention is active.
     pub prevent_clipping: i32,
+    /// Non-zero if ReplayGain is enabled.
     pub enabled: i32,
 }
 
@@ -366,12 +389,16 @@ impl StereoImagingStage {
 pub struct Equalizer {
     channels: usize,
     sample_rate: u32,
+    /// Preamp and ReplayGain stage.
     pub preamp: PreampStage,
+    /// 10-band ISO 266 filter bank stage.
     pub bands: Iso10BandStage,
+    /// Stereo imaging and spatializer stage.
     pub stereo: StereoImagingStage,
 }
 
 impl Equalizer {
+    /// Constructs a new composite `Equalizer` pipeline with zeroed band gains and unity preamp.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let ch = channels.max(1);
         Self {
@@ -383,6 +410,7 @@ impl Equalizer {
         }
     }
 
+    /// Updates the sample rate across all sub-stages, recalculating filter coefficients.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if sample_rate > 0 && self.sample_rate != sample_rate {
             self.sample_rate = sample_rate;
@@ -392,76 +420,91 @@ impl Equalizer {
         }
     }
 
+    /// Sets the gain in dB for an individual band index (0 to 9).
     #[inline]
     pub fn set_band(&mut self, band_index: usize, gain_db: f32) {
         self.bands.set_band(band_index, gain_db);
     }
 
+    /// Updates all 10 equalizer band gains simultaneously.
     #[inline]
     pub fn set_all(&mut self, params: &EqualizerParams) {
         self.bands.set_all(params);
     }
 
+    /// Sets the pre-amplification gain in dB applied before equalization.
     #[inline]
     pub fn set_preamp_db(&mut self, preamp_db: f32) {
         self.preamp.set_preamp_db(preamp_db);
     }
 
+    /// Configures ReplayGain volume normalization and anti-clipping parameters.
     #[inline]
     pub fn set_replay_gain(&mut self, config: ReplayGainConfig) {
         self.preamp.set_replay_gain(config);
     }
 
+    /// Sets stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
     #[inline]
     pub fn set_balance(&mut self, balance: f32) {
         self.stereo.set_balance(balance);
     }
 
+    /// Enables or disables stereo downmixing to mono.
     #[inline]
     pub fn set_mono(&mut self, enabled: bool) {
         self.stereo.set_mono(enabled);
     }
 
+    /// Enables or disables Mid-Side stereo widening spatializer with width multiplier.
     #[inline]
     pub fn set_spatializer(&mut self, enabled: bool, width: f32) {
         self.stereo.set_spatializer(enabled, width);
     }
 
+    /// Returns the current 10-band equalizer gain parameters.
     #[inline]
     pub fn params(&self) -> EqualizerParams {
         self.bands.params()
     }
 
+    /// Returns the active pre-amplification gain in dB.
     #[inline]
     pub fn preamp_db(&self) -> f32 {
         self.preamp.preamp_db()
     }
 
+    /// Returns the active ReplayGain configuration settings.
     #[inline]
     pub fn replay_gain(&self) -> ReplayGainConfig {
         self.preamp.replay_gain()
     }
 
+    /// Returns the current stereo balance pan level.
     #[inline]
     pub fn balance(&self) -> f32 {
         self.stereo.balance()
     }
 
+    /// Returns whether mono downmix is active.
     #[inline]
     pub fn mono(&self) -> bool {
         self.stereo.mono()
     }
 
+    /// Returns whether the 3D stereo widening spatializer is enabled.
     #[inline]
     pub fn spatializer_enabled(&self) -> bool {
         self.stereo.spatializer_enabled()
     }
 
+    /// Returns the stereo widening factor (0.0 to 2.0).
     #[inline]
     pub fn spatializer_width(&self) -> f32 {
         self.stereo.spatializer_width()
     }
 
+    /// Processes interleaved PCM audio frames in-place across preamp, EQ, and stereo stages.
     pub fn process_interleaved(&mut self, samples: &mut [f32]) {
         if samples.is_empty() || self.channels == 0 {
             return;

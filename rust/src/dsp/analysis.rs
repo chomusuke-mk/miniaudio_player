@@ -14,14 +14,20 @@ use crate::decoder::SymphoniaEngine;
 
 use super::biquad::BiquadDf2t;
 
+/// Flag enabling ITU-R BS.1770-4 LUFS and ReplayGain calculation.
 pub const MAP_ANALYSIS_FLAG_REPLAY_GAIN: u32 = 1 << 0;
+/// Flag enabling peak waveform envelope extraction.
 pub const MAP_ANALYSIS_FLAG_WAVEFORM: u32 = 1 << 1;
 
+/// Configuration parameters governing offline audio analysis.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct AudioAnalysisConfig {
+    /// Bitmask of analysis flags (`MAP_ANALYSIS_FLAG_*`).
     pub flags: u32,
+    /// Target integrated loudness level in LUFS (typically -14.0 or -18.0).
     pub target_lufs: f32,
+    /// Target number of downsampled waveform points to extract.
     pub waveform_points: u32,
 }
 
@@ -35,35 +41,53 @@ impl Default for AudioAnalysisConfig {
     }
 }
 
+/// Computed ReplayGain loudness metrics.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ReplayGainData {
+    /// Recommended gain adjustment in dB.
     pub gain_db: f32,
+    /// Absolute true peak sample amplitude.
     pub peak: f32,
+    /// Integrated loudness in LUFS according to ITU-R BS.1770-4.
     pub lufs: f32,
 }
 
+/// Downsampled waveform envelope points for UI visualization.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WaveformData {
+    /// Number of points contained in the envelope vector.
     pub point_count: u32,
+    /// Normalized amplitude envelope points (0.0 to 1.0).
     pub points: Vec<f32>,
 }
 
+/// Comprehensive analysis results containing loudness, waveform, and audio stream metrics.
 #[repr(C)]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioAnalysisResult {
+    /// Status code (0 for success, non-zero for error).
     pub status: i32,
+    /// Total duration in milliseconds.
     pub duration_ms: i64,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Audio channel count.
     pub channels: u32,
+    /// Estimated nominal bitrate in bps.
     pub bitrate: u32,
+    /// Peak sample amplitude.
     pub peak: f32,
 
+    /// Non-zero if ReplayGain analysis was performed.
     pub has_replay_gain: i32,
+    /// ReplayGain analysis metrics.
     pub replay_gain: ReplayGainData,
 
+    /// Non-zero if waveform envelope points were extracted.
     pub has_waveform: i32,
+    /// Downsampled waveform envelope data.
     pub waveform: WaveformData,
 }
 
@@ -392,6 +416,7 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
     })
 }
 
+/// Decodes and performs offline acoustic loudness and waveform analysis on an audio file on disk.
 pub fn analyze_file(path: &str, config: &AudioAnalysisConfig) -> Result<AudioAnalysisResult, i32> {
     crate::map_log!(3, "analyze_file: path={}", path);
     let file = match File::open(path) {
@@ -410,6 +435,7 @@ pub fn analyze_file(path: &str, config: &AudioAnalysisConfig) -> Result<AudioAna
     analyze_media_source(file, ext, config, byte_size)
 }
 
+/// Decodes and performs offline acoustic loudness and waveform analysis on an in-memory byte buffer.
 pub fn analyze_memory(
     data: &[u8],
     config: &AudioAnalysisConfig,
@@ -421,6 +447,7 @@ pub fn analyze_memory(
     analyze_media_source(cursor, sniffer_hint, config, byte_size)
 }
 
+/// Clears allocated waveform buffers inside an `AudioAnalysisResult`.
 pub fn free_analysis_result(result: &mut AudioAnalysisResult) {
     result.waveform.points.clear();
     result.waveform.point_count = 0;

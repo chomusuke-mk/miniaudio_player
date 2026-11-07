@@ -120,20 +120,43 @@ typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
 
 /// Global configuration parameters for [MiniaudioPlayer] instances.
 class MiniaudioPlayerGlobalConfig {
+  /// The optional global log callback for intercepting or redirecting diagnostic messages.
   static MiniaudioLogCallback? onLog;
+
+  /// The optional global asset loader for resolving Flutter asset bundles.
   static AssetBytesLoader? assetLoader;
 
+  /// The default buffer frame size for newly created player instances.
   int defaultBufferSize;
+
+  /// The global native diagnostic logging verbosity level.
   MiniaudioLogLevel logLevel;
+
+  /// The default audio output device.
   AudioDevice defaultAudioDevice;
+
+  /// The resolver function producing a human-readable name for system default audio devices.
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
+
+  /// The prefetch buffer duration for local media files.
   Duration bufferLocalDuration;
+
+  /// The prefetch buffer duration for remote HTTP/HTTPS network streams.
   Duration bufferNetworkDuration;
+
+  /// The prefetch buffer duration for live unbounded streams.
   Duration bufferLiveStreamDuration;
+
+  /// The duration of played audio preserved in the ring buffer behind the playback position for local media.
   Duration bufferBehindLocalDuration;
+
+  /// The duration of played audio preserved in the ring buffer behind the playback position for network streams.
   Duration bufferBehindNetworkDuration;
+
+  /// The duration of played audio preserved in the ring buffer behind the playback position for live streams.
   Duration bufferBehindLiveStreamDuration;
 
+  /// Creates a [MiniaudioPlayerGlobalConfig] container with default options.
   MiniaudioPlayerGlobalConfig({
     this.defaultBufferSize = 0,
     this.logLevel = MiniaudioLogLevel.none,
@@ -153,6 +176,7 @@ class MiniaudioPlayerGlobalConfig {
     return clean.isEmpty ? 'System Default' : 'System Default ($clean)';
   }
 
+  /// Resets all global configuration parameters to their clean default values.
   void reset() {
     onLog = null;
     assetLoader = null;
@@ -180,7 +204,10 @@ class MiniaudioPlayer<T> {
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
+  /// The global configuration singleton for [MiniaudioPlayer].
   static MiniaudioPlayerGlobalConfig get globalConfig => _globalConfig;
+
+  /// Updates global configuration parameters and returns the configuration singleton.
   static MiniaudioPlayerGlobalConfig config({
     int? defaultBufferSize,
     MiniaudioLogLevel? logLevel,
@@ -260,6 +287,7 @@ class MiniaudioPlayer<T> {
     }
   }
 
+  /// Performs synchronous offline acoustic analysis of an audio file.
   static AudioAnalysisResult analyzeAudioSync(
     String filePath, {
     bool replayGain = true,
@@ -282,6 +310,7 @@ class MiniaudioPlayer<T> {
     }
   }
 
+  /// Performs offline acoustic analysis of in-memory audio bytes on a background worker thread.
   static Future<AudioAnalysisResult> analyzeAudioMemory(
     Uint8List bytes, {
     bool replayGain = true,
@@ -317,6 +346,8 @@ class MiniaudioPlayer<T> {
   // =========================================================================
 
   late final rust.RustMiniaudioPlayer _rustPlayer;
+
+  /// The underlying native Rust player bridge handle.
   rust.RustMiniaudioPlayer get rustPlayer => _rustPlayer;
 
   StreamSubscription<rust_types.RustPlayerEvent>? _eventSub;
@@ -325,15 +356,27 @@ class MiniaudioPlayer<T> {
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
 
+  /// The local shadow copy of the active playlist queue.
   List<AudioSource<T>> shadowQueue = [];
+
+  /// The monotonic counter allocating unique identifiers for queued sources.
   int nextSourceId = 1;
+
+  /// The lookup registry mapping unique IDs to their [AudioSource] instances.
   final Map<int, AudioSource<T>> sourceRegistry = {};
+
+  /// The active [CustomByteProvider] instances keyed by stream ID.
   final Map<int, CustomByteProvider> customProviders = {};
 
   final Set<AudioOutput> _activeOutputs = {const AudioOutput.speaker()};
+
+  /// The set of active [AudioOutput] destinations configured on this player.
   Set<AudioOutput> get activeOutputsSet => _activeOutputs;
 
+  /// Whether Infinite Mix dynamic queue replenishment is active.
   bool infiniteMixEnabled = false;
+
+  /// The callback supplying more tracks when Infinite Mix triggers.
   InfiniteMixProvider<T>? infiniteMixProvider;
 
   /// Action namespace executing asynchronous imperative playback and DSP controls.
@@ -743,6 +786,7 @@ class MiniaudioPlayer<T> {
     }
   }
 
+  /// Evaluates queue depth and triggers Infinite Mix replenishment if approaching the end of the queue.
   void checkInfiniteMix() async {
     if (!infiniteMixEnabled || !state.isPlaying) return;
     final curIdx = state.currentIndex;
@@ -767,6 +811,7 @@ class MiniaudioPlayer<T> {
     }
   }
 
+  /// Verifies that this player instance has not been disposed, throwing [StateError] otherwise.
   void ensureNotDisposed() {
     if (_isDisposed) {
       throw StateError('MiniaudioPlayer instance has been disposed');

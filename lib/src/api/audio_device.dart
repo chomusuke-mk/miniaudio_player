@@ -2,24 +2,25 @@ import 'miniaudio_player.dart';
 
 /// Represents an audio device (playback or capture).
 class AudioDevice {
-  /// Unique device identifier (hex-encoded string for hardware devices, or 'auto' for automatic default).
+  /// The unique device identifier (hex-encoded string for hardware devices, or 'auto' for automatic default).
   final String id;
 
-  /// Underlying physical hardware device endpoint ID currently active in the OS.
+  /// The underlying physical hardware device endpoint ID currently active in the OS.
   final String effectiveId;
 
-  /// Human-readable device name or 'SYSTEM DEFAULT'.
+  /// The human-readable device name or 'SYSTEM DEFAULT'.
   final String name;
 
-  /// Underlying hardware device name currently routed by the operating system (when [isAuto] is true).
+  /// The underlying hardware device name currently routed by the operating system (when [isAuto] is true).
   final String? _resolvedName;
 
   /// Whether this device represents the automatic system-managed output.
   final bool _isAuto;
 
-  /// Optional hardware device type code (e.g. Android AudioDeviceInfo.type).
+  /// The optional hardware device type code (e.g. Android AudioDeviceInfo.type).
   final int? type;
 
+  /// Creates an [AudioDevice] descriptor.
   const AudioDevice({
     required this.id,
     this.effectiveId = '',
@@ -30,13 +31,13 @@ class AudioDevice {
   })  : _resolvedName = resolvedName,
         _isAuto = isAuto || id == 'auto' || id == '';
 
-  /// Hardware device name currently routed by the OS (when [isAuto] is true).
+  /// The hardware device name currently routed by the OS (when [isAuto] is true).
   String? get resolvedName => _resolvedName;
 
   /// Whether this device represents the automatic system-managed output.
   bool get isAuto => _isAuto;
 
-  /// Automatic / system-managed default output audio device template.
+  /// The automatic system-managed default output audio device template.
   static const AudioDevice auto = AudioDevice(
     id: 'auto',
     effectiveId: '',
@@ -44,7 +45,7 @@ class AudioDevice {
     isAuto: true,
   );
 
-  /// User-friendly display name.
+  /// The user-friendly display name.
   ///
   /// Uses [MiniaudioPlayerGlobalConfig.defaultDeviceDisplayNameResolver] if this
   /// device is [isAuto], otherwise returns [name] directly.

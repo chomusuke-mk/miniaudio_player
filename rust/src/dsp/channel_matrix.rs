@@ -3,12 +3,14 @@
 //! Provides high-fidelity upmixing, downmixing, and layout mapping with
 //! ITU-R BS.775 compliance, constant-power scaling, and pre-allocated zero-allocation execution.
 
+/// Universal channel matrix mixer and adapter performing ITU-R BS.775 upmixing and downmixing.
 pub struct ChannelMatrix {
     channels_in: usize,
     channels_out: usize,
 }
 
 impl ChannelMatrix {
+    /// Constructs a `ChannelMatrix` converting between `channels_in` and `channels_out`.
     pub fn new(channels_in: usize, channels_out: usize) -> Self {
         let ch_in = channels_in.max(1);
         let ch_out = channels_out.max(1);
@@ -18,15 +20,18 @@ impl ChannelMatrix {
         }
     }
 
+    /// Reconfigures input and output channel counts.
     pub fn set_channels(&mut self, channels_in: usize, channels_out: usize) {
         self.channels_in = channels_in.max(1);
         self.channels_out = channels_out.max(1);
     }
 
+    /// Returns the input channel count.
     pub fn channels_in(&self) -> usize {
         self.channels_in
     }
 
+    /// Returns the output channel count.
     pub fn channels_out(&self) -> usize {
         self.channels_out
     }

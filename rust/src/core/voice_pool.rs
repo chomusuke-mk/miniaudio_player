@@ -8,12 +8,17 @@ use std::time::Instant;
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 pub use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoiceStealingPolicy};
 
+/// Maximum concurrent polyphonic voices rendered by the pool.
 pub const MAX_VOICES: usize = 64;
 
+/// DSP routing policies for polyphonic sound effect voices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspRouting {
+    /// Voice is mixed with the music bus and shares the master music DSP chain (default).
     Inherit = 0,
+    /// Voice undergoes isolated dedicated DSP processing without affecting music.
     Isolate = 1,
+    /// Voice bypasses all DSP processing and sums directly into the master output.
     Bypass = 2,
 }
 
@@ -27,16 +32,26 @@ impl From<i32> for DspRouting {
     }
 }
 
+/// Dynamic playback parameters applied when triggering a sound effect voice.
 #[derive(Debug, Clone)]
 pub struct EffectConfig {
+    /// Playback volume factor (0.0 to 2.0).
     pub volume: f32,
+    /// Stereo panning balance (-1.0 to 1.0).
     pub balance: f32,
+    /// Pitch shift multiplier (0.5 to 2.0).
     pub pitch: f32,
+    /// Speed rate multiplier (0.5 to 2.0).
     pub rate: f32,
+    /// Whether this voice should loop continuously.
     pub looping: bool,
+    /// Voice stealing priority (0..255).
     pub priority: u8,
+    /// Randomized pitch jitter range to reduce fatigue.
     pub pitch_jitter: f32,
+    /// Randomized volume jitter range to reduce fatigue.
     pub volume_jitter: f32,
+    /// Optional 3D spatial emitter parameters.
     pub spatial: Option<SpatialEmitter>,
 }
 

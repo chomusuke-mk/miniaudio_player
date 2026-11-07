@@ -14,40 +14,70 @@ use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
 use crate::dsp::visualizer::VisualizerData;
 
+/// Discrete event type discriminant for telemetry messages delivered across the C/Dart boundary.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventType {
+    /// No event.
     None = 0,
+    /// Playback state change.
     State = 1,
+    /// Playback position update.
     Position = 2,
+    /// Track duration notification.
     Duration = 3,
+    /// Is-playing boolean change.
     IsPlaying = 4,
+    /// Is-buffering boolean change.
     IsBuffering = 5,
+    /// Track playback completion.
     IsCompleted = 6,
+    /// Output volume change.
     Volume = 7,
+    /// Playback speed/rate change.
     Rate = 8,
+    /// Playback pitch shift change.
     Pitch = 9,
+    /// Decoded or container bitrate.
     Bitrate = 10,
+    /// Audio buffer capacity/occupancy size.
     BufferSize = 11,
+    /// Audio output device change.
     Device = 12,
+    /// Visualizer frequency band measurement.
     Visualizer = 13,
+    /// Visualizer enabled/disabled state.
     VisualizerEnabled = 14,
+    /// Network buffered range update.
     BufferedRange = 15,
+    /// Silence detection configuration.
     SilenceConfig = 16,
+    /// Accumulated silence skipped time.
     SilenceSaved = 17,
+    /// Equalizer 10-band gain settings.
     Equalizer = 18,
+    /// Preamp amplification level.
     Preamp = 19,
+    /// ReplayGain normalization settings.
     ReplayGain = 20,
+    /// Stereo balance pan position.
     Balance = 21,
+    /// Mono downmix toggle.
     Mono = 22,
+    /// Headphone crossfeed filter mode.
     Crossfeed = 23,
+    /// Spatializer stereo widening parameters.
     Spatializer = 24,
+    /// Algorithmic reverb configuration.
     Reverb = 25,
+    /// Lookahead safety limiter toggle.
     Limiter = 26,
+    /// Engine error notification.
     Error = 27,
 }
 
 impl EventType {
+    /// Constructs an `EventType` from an integer code.
     #[inline]
     pub fn from_i32(code: i32) -> Self {
         match code {
@@ -83,21 +113,31 @@ impl EventType {
     }
 }
 
+/// Start and end boundaries of a buffered audio range in milliseconds.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BufferedRange {
+    /// Start position in milliseconds.
     pub start_ms: i64,
+    /// End position in milliseconds.
     pub end_ms: i64,
+    /// 1 if actively downloading/buffering, 0 otherwise.
     pub is_buffering: i32,
 }
 
+/// Audio device metadata reported across FFI.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeviceInfo {
+    /// Target device ID string buffer.
     pub id: [u8; 516],
+    /// Effective active device ID string buffer.
     pub effective_id: [u8; 516],
+    /// Human-readable device display name.
     pub name: [u8; 256],
+    /// 1 if this is the system default audio device.
     pub is_default: i32,
+    /// 1 if automatic device routing is active.
     pub is_auto: i32,
 }
 
@@ -113,10 +153,13 @@ impl Default for DeviceInfo {
     }
 }
 
+/// Stereo spatializer widening configuration.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SpatializerData {
+    /// 1 if spatializer is enabled, 0 otherwise.
     pub enabled: i32,
+    /// Stereo widening factor (1.0 = normal stereo, > 1.0 = widened).
     pub width: f32,
 }
 
@@ -288,49 +331,87 @@ impl TelemetryEvent {
     }
 }
 
+/// C-compatible union carrying the payload for a telemetry event.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union MapEventData {
+    /// Playback state enum value.
     pub state: i32,
+    /// Playback position in milliseconds.
     pub position_ms: i64,
+    /// Track duration in milliseconds.
     pub duration_ms: i64,
+    /// 1 if playing, 0 otherwise.
     pub is_playing: i32,
+    /// 1 if buffering, 0 otherwise.
     pub is_buffering: i32,
+    /// 1 if track completed, 0 otherwise.
     pub is_completed: i32,
+    /// Volume multiplier.
     pub volume: f32,
+    /// Playback speed rate.
     pub rate: f32,
+    /// Pitch shift multiplier.
     pub pitch: f32,
+    /// Bitrate in kbps.
     pub bitrate: u32,
+    /// Buffer size in samples.
     pub buffer_size: u32,
+    /// Device metadata struct.
     pub device: DeviceInfo,
+    /// Visualizer band data.
     pub visualizer: VisualizerData,
+    /// 1 if visualizer is enabled, 0 otherwise.
     pub visualizer_enabled: i32,
+    /// Buffered range parameters.
     pub buffered_range: BufferedRange,
+    /// Silence detection configuration.
     pub silence_config: SilenceConfig,
+    /// Accumulated silence saved in milliseconds.
     pub silence_saved_ms: i64,
+    /// Equalizer 10-band parameters.
     pub equalizer: EqualizerParams,
+    /// Preamp gain in dB.
     pub preamp_db: f32,
+    /// ReplayGain configuration.
     pub replay_gain: ReplayGainConfig,
+    /// Balance stereo panning `[-1.0, 1.0]`.
     pub balance: f32,
+    /// 1 if mono downmixing is enabled, 0 otherwise.
     pub mono_enabled: i32,
+    /// Crossfeed filter mode code.
     pub crossfeed_mode: i32,
+    /// Spatializer configuration.
     pub spatializer: SpatializerData,
+    /// Reverb configuration.
     pub reverb: ReverbConfig,
+    /// 1 if limiter is enabled, 0 otherwise.
     pub limiter_enabled: i32,
+    /// Error code integer.
     pub error_code: i32,
 }
 
+/// Standard C-ABI telemetry event envelope.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct MapEvent {
+    /// Numeric [`EventType`] discriminant.
     pub event_type: i32,
+    /// 4-byte padding for 64-bit alignment of `timestamp_ns`.
     pub padding: i32,
+    /// Monotonic timestamp in nanoseconds when the event occurred.
     pub timestamp_ns: i64,
+    /// Event data payload union.
     pub data: MapEventData,
 }
 
+/// C ABI event callback function pointer type.
 pub type EventCallback = unsafe extern "C" fn(user_data: *mut c_void, event: *const MapEvent);
+
+/// Internal Rust event callback closure type.
 pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>;
+
+/// Strongly-typed event callback closure type.
 pub type TypedEventCallback = Box<dyn Fn(&TelemetryEvent) + Send + Sync>;
 
 /// Cross-platform monotonic instant that uses `std::time::Instant` on native targets
@@ -344,6 +425,7 @@ pub struct MonotonicInstant {
 }
 
 impl MonotonicInstant {
+    /// Returns the current monotonic instant.
     #[inline]
     pub fn now() -> Self {
         #[cfg(not(target_arch = "wasm32"))]
@@ -360,6 +442,7 @@ impl MonotonicInstant {
         }
     }
 
+    /// Measures the elapsed duration since this instant was recorded.
     #[inline]
     pub fn elapsed(&self) -> Duration {
         #[cfg(not(target_arch = "wasm32"))]
@@ -377,12 +460,14 @@ impl MonotonicInstant {
 
 static START_TIME: std::sync::OnceLock<MonotonicInstant> = std::sync::OnceLock::new();
 
+/// Returns the elapsed monotonic time in nanoseconds since engine startup.
 #[inline]
 pub fn monotonic_now_ns() -> i64 {
     let start = START_TIME.get_or_init(MonotonicInstant::now);
     start.elapsed().as_nanos() as i64
 }
 
+/// Fixed slot capacity for the lock-free circular event ring arena.
 pub const MAP_EVENT_RING_CAPACITY: usize = 128;
 
 /// Fixed-capacity circular arena for C-ABI `MapEvent` pointers.
@@ -486,6 +571,7 @@ impl CallbackRegistry {
     }
 }
 
+/// Central telemetry dispatcher broadcasting real-time engine events to C and Dart listeners.
 pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callbacks: Arc<CallbackRegistry>,
@@ -496,6 +582,7 @@ pub struct TelemetryDispatcher {
 }
 
 impl TelemetryDispatcher {
+    /// Creates a new `TelemetryDispatcher` initializing worker threads and the ring buffer arena.
     pub fn new(callback: Option<EventCallback>, user_data: *mut c_void) -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let callbacks = Arc::new(CallbackRegistry::default());
@@ -551,14 +638,17 @@ impl TelemetryDispatcher {
             .ok()
     }
 
+    /// Sets or clears the C-compatible event callback and opaque context pointer.
     pub fn set_callback(&self, callback: Option<EventCallback>, user_data: *mut c_void) {
         self.callbacks.set_c(callback, user_data);
     }
 
+    /// Sets or clears the internal Rust event callback closure.
     pub fn set_rust_callback(&self, callback: Option<RustEventCallback>) {
         self.callbacks.set_rust(callback);
     }
 
+    /// Sets or clears the strongly-typed batch event callback closure.
     pub fn set_typed_callback(&self, callback: Option<TypedEventCallback>) {
         self.callbacks.set_typed(callback);
     }
@@ -586,11 +676,13 @@ impl TelemetryDispatcher {
         }
     }
 
+    /// Posts an untyped event by converting `(event_type, data)` into a [`TelemetryEvent`].
     #[inline]
     pub fn post_event(&self, event_type: EventType, data: MapEventData) {
         self.post(TelemetryEvent::from_raw(event_type, &data));
     }
 
+    /// Dispatches a raw C `MapEvent` immediately to all registered callbacks.
     pub fn dispatch(&self, event: MapEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
@@ -606,6 +698,7 @@ impl TelemetryDispatcher {
             .notify_immediate(event_type, &event.data, event_ptr);
     }
 
+    /// Signals the dispatcher to stop all threads and release callbacks.
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
         self.callbacks.set_c(None, std::ptr::null_mut());

@@ -122,16 +122,27 @@ impl Default for Decibels {
 /// Strongly-typed player error conditions replacing integer codes `-1..-12`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlayerError {
+    /// General unspecified player failure.
     Failed,
+    /// Invalid arguments supplied to the operation.
     InvalidArgs,
+    /// Operation attempted in an invalid state.
     InvalidOperation,
+    /// Memory allocation budget exceeded.
     OutOfMemory,
+    /// Target file was not found.
     FileNotFound,
+    /// Audio decoding or demuxing failed.
     DecodeFailed,
+    /// Audio hardware device initialization failed.
     DeviceInitFailed,
+    /// Audio hardware device could not be started.
     DeviceStartFailed,
+    /// Asynchronous operation timed out.
     Timeout,
+    /// Audio format or container not supported.
     FormatNotSupported,
+    /// Streaming error with detailed message.
     StreamError(String),
 }
 

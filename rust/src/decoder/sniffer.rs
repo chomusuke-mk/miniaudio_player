@@ -2,21 +2,35 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
+/// Recognized container and codec encapsulation formats.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerFormat {
+    /// Unidentified audio format.
     Unknown = 0,
+    /// MPEG-1/2 Audio Layer III.
     Mp3 = 1,
+    /// AAC in Audio Data Transport Stream (ADTS).
     Adts = 2,
+    /// Free Lossless Audio Codec.
     Flac = 3,
+    /// Ogg Vorbis stream.
     OggVorbis = 4,
+    /// Ogg Opus stream.
     OggOpus = 5,
+    /// RIFF / WAVE container.
     Wav = 6,
+    /// ISO Base Media File Format (MP4 / M4A).
     Mp4 = 7,
+    /// Matroska / WebM container.
     Matroska = 8,
+    /// Direct Stream Digital (DSF / DSD).
     Dsf = 9,
+    /// Monkey's Audio (APE).
     Ape = 10,
+    /// WavPack hybrid lossless/lossy container.
     WavPack = 11,
+    /// HTTP Live Streaming (HLS / M3U8).
     Hls = 12,
 }
 
@@ -41,22 +55,33 @@ impl ContainerFormat {
     }
 }
 
+/// Boundary detection status.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundaryStatus {
+    /// Container format not supported.
     Unsupported = -1,
+    /// Additional bytes required to resolve boundary.
     NeedMore = 0,
+    /// Header boundary located successfully.
     Found = 1,
 }
 
+/// Calculated audio payload offsets and metadata boundaries within a container.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoundaryInfo {
+    /// Identified container format.
     pub container: ContainerFormat,
+    /// Byte offset where audio payload begins.
     pub audio_start: i64,
+    /// Byte offset where audio payload ends (-1 if unbounded/live).
     pub audio_end: i64,
+    /// Byte offset of the WAV data size field in RIFF headers.
     pub wav_data_size_field_offset: i64,
+    /// Byte offset of MP4 mdat atom.
     pub mp4_mdat_atom_offset: i64,
+    /// Header size of MP4 mdat atom.
     pub mp4_mdat_header_size: u32,
     pub head_has_mpeg_frame: i32,
     pub bytes_per_frame: u32,

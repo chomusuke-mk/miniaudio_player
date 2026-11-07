@@ -1,5 +1,6 @@
 //! Soft-knee True-Peak Limiter / DAC Protector preventing clipping and harsh digital distortion.
 
+/// Soft-knee brickwall peak limiter preventing digital DAC clipping and harsh inter-sample overs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SoftLimiter {
     enabled: bool,
@@ -15,6 +16,7 @@ impl Default for SoftLimiter {
 }
 
 impl SoftLimiter {
+    /// Constructs a `SoftLimiter` with soft saturation onset at 0.95 (-0.45 dBFS).
     pub const fn new(enabled: bool) -> Self {
         let threshold = 0.95f32;
         let range = 0.05f32;
@@ -27,14 +29,17 @@ impl SoftLimiter {
         }
     }
 
+    /// Enables or disables limiter saturation.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
+    /// Returns whether the limiter is active.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
+    /// Processes an individual sample through the soft-knee limiting saturation curve.
     #[inline(always)]
     pub fn process_sample(&self, x: f32) -> f32 {
         if !self.enabled {
@@ -55,6 +60,7 @@ impl SoftLimiter {
         }
     }
 
+    /// Processes a slice of audio samples in-place, limiting peaks exceeding threshold.
     pub fn process_frames(&self, samples: &mut [f32]) {
         if !self.enabled || samples.is_empty() {
             return;

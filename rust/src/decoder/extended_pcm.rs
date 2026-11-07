@@ -13,10 +13,11 @@ const W64_WAVE_GUID: [u8; 16] = [
 const W64_FMT_PREFIX: [u8; 4] = [0x66, 0x6d, 0x74, 0x20];
 const W64_DATA_PREFIX: [u8; 4] = [0x64, 0x61, 0x74, 0x61];
 
-/// Deterministic black-box PCM byte-to-f32 sample converter.
+/// Deterministic black-box PCM byte-to-f32 sample converter supporting 8/16/24/32-bit int and float.
 pub struct PcmSampleNormalizer;
 
 impl PcmSampleNormalizer {
+    /// Decodes raw PCM bytes of the specified bit depth and endianness into normalized `f32` samples (-1.0 to +1.0).
     pub fn decode_bytes(
         buf: &[u8],
         bits_per_sample: u16,
@@ -123,11 +124,15 @@ impl WaveFmtSpec {
     }
 }
 
+/// Result of probing a media source for extended PCM formats (`RF64`, `RIFX`, `W64`).
 pub enum ExtendedPcmProbe {
+    /// Source matched an extended PCM format and initialized an `ExtendedPcmReader`.
     Matched(ExtendedPcmReader),
+    /// Source did not match; stream was rewound and returned.
     NotMatched(Box<dyn MediaSource>),
 }
 
+/// Decoder reader parsing and decoding extended PCM containers (`RF64`, `RIFX`, `W64`).
 pub struct ExtendedPcmReader {
     source: Box<dyn MediaSource>,
     sample_rate: u32,
@@ -144,8 +149,10 @@ pub struct ExtendedPcmReader {
 }
 
 impl ExtendedPcmReader {
+    /// Number of audio frames read in each I/O batch.
     pub const FRAMES_PER_BLOCK: usize = 1024;
 
+    /// Attempts to identify container signatures and initialize an `ExtendedPcmReader`.
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<ExtendedPcmProbe, SymphoniaError> {
         if source.seek(SeekFrom::Start(0)).is_err() {
             return Ok(ExtendedPcmProbe::NotMatched(source));
@@ -292,21 +299,25 @@ impl ExtendedPcmReader {
         Self::build_from_spec(source, fmt, false, data_start, data_size)
     }
 
+    /// Returns the audio sample rate in Hz.
     #[inline]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the audio channel count.
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
     }
 
+    /// Returns total stream duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         Some(self.duration_ms)
     }
 
+    /// Decodes the next block of PCM audio frames into the output buffer.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         if self.current_frame >= self.total_frames {
             return Ok(false);
@@ -341,6 +352,7 @@ impl ExtendedPcmReader {
         Ok(true)
     }
 
+    /// Seeks to the specified position in milliseconds within the audio data chunk.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_frame = ((position_ms as u128 * self.sample_rate as u128) / 1000) as u64;
         let clamped_frame = target_frame.min(self.total_frames);

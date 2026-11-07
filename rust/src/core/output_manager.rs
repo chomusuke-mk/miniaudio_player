@@ -12,16 +12,24 @@ use crate::core::recording::WavFormat;
 use crate::dsp::visualizer::{Visualizer, VisualizerData};
 use crate::sync::seqlock::CachePaddedSeqlock;
 
+/// Domain manager governing output routing (Master, Cue headphones, file recording) and visualizer.
 pub struct OutputManager {
+    /// Multi-sink hardware output matrix.
     pub matrix: OutputMatrix,
+    /// Real-time FFT spectrum analyzer.
     pub visualizer: Visualizer,
+    /// Flag indicating if visualizer computation is active.
     pub visualizer_enabled: Arc<AtomicBool>,
+    /// Lock-free Seqlock storing the latest visualizer snapshot.
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Audio channel count.
     pub channels: usize,
 }
 
 impl OutputManager {
+    /// Creates a new `OutputManager` for the specified sample rate and channel count.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         Self {
             matrix: OutputMatrix::new(sample_rate, channels),

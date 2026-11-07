@@ -21,6 +21,7 @@ use super::dsf::{DsfProbe, DsfReader};
 use super::extended_pcm::{ExtendedPcmProbe, ExtendedPcmReader};
 use super::wavpack::{WavpackProbe, WavpackReader};
 
+/// Constructs a Symphonia `CodecRegistry` preloaded with standard codecs and external Opus/AAC adapters.
 pub fn create_codec_registry() -> CodecRegistry {
     let mut registry = CodecRegistry::new();
     symphonia::default::register_enabled_codecs(&mut registry);
@@ -268,6 +269,7 @@ enum EngineBackend {
     WavPack(WavpackReader),
 }
 
+/// Universal audio decoding engine probing and decoding audio streams into interleaved float PCM.
 pub struct SymphoniaEngine {
     backend: EngineBackend,
     sample_rate: u32,
@@ -276,6 +278,7 @@ pub struct SymphoniaEngine {
 }
 
 impl SymphoniaEngine {
+    /// Probes and instantiates the appropriate format reader and decoder for `source`.
     pub fn new<M: MediaSource + 'static>(
         source: M,
         hint_extension: Option<&str>,
@@ -349,21 +352,25 @@ impl SymphoniaEngine {
         })
     }
 
+    /// Returns the decoded stream sample rate in Hz.
     #[inline]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the decoded stream channel count.
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
     }
 
+    /// Returns the total stream duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         self.duration_ms
     }
 
+    /// Decodes the next packet or block into interleaved normalized float PCM samples.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         match &mut self.backend {
             EngineBackend::ExtendedPcm(pcm) => pcm.decode_next_frame(out_pcm),
@@ -379,6 +386,7 @@ impl SymphoniaEngine {
         }
     }
 
+    /// Seeks the underlying container stream to the specified position in milliseconds.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         match &mut self.backend {
             EngineBackend::ExtendedPcm(pcm) => pcm.seek_ms(position_ms),

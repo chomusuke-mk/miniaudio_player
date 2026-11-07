@@ -24,18 +24,22 @@ impl TimeStretchProcessor {
         }
     }
 
+    /// Returns the configured sample rate in Hz.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the configured channel count (1 or 2).
     pub fn channels(&self) -> usize {
         self.channels
     }
 
+    /// Returns the current playback speed multiplier.
     pub fn speed(&self) -> f32 {
         self.speed
     }
 
+    /// Returns the current pitch scaling multiplier.
     pub fn pitch(&self) -> f32 {
         self.pitch
     }

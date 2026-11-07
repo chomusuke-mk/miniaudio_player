@@ -30,65 +30,114 @@ use crate::sync::telemetry::{
     SpatializerData, TelemetryDispatcher,
 };
 
+/// Deck playback state: playback is stopped and position is reset.
 pub const STATE_STOPPED: i32 = 0;
+/// Deck playback state: audio is actively rendering.
 pub const STATE_PLAYING: i32 = 1;
+/// Deck playback state: playback is paused.
 pub const STATE_PAUSED: i32 = 2;
+/// Deck playback state: end of track has been reached.
 pub const STATE_COMPLETED: i32 = 3;
+/// Deck playback state: deck is waiting for buffer fill.
 pub const STATE_BUFFERING: i32 = 4;
+/// Deck playback state: an unrecoverable decoding or I/O error occurred.
 pub const STATE_ERROR: i32 = 5;
+/// Deck playback state: stream source or file is opening.
 pub const STATE_OPENING: i32 = 6;
 
+/// Stream seek cache miss: required target range must be downloaded.
 pub const MAP_STREAM_SEEK_CACHE_MISS: i32 = 0;
+/// Stream seek cache hit: target range is immediately available in memory buffer.
 pub const MAP_STREAM_SEEK_CACHE_HIT: i32 = 1;
+/// Stream seek cache hit within prefetch window.
 pub const MAP_STREAM_SEEK_CACHE_HIT_PREFETCH: i32 = 2;
 
+/// Telemetry metrics snapshot for a tripartite streaming buffer.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MiniaudioStreamStatus {
+    /// Total buffer capacity in bytes.
     pub buffer_capacity: usize,
+    /// Currently populated bytes in buffer.
     pub buffer_fill: usize,
+    /// Buffer fill percentage (0.0 to 1.0).
     pub fill_percentage: f32,
+    /// Non-zero if player is paused waiting for buffer refill.
     pub is_buffering: i32,
+    /// Non-zero if end-of-file has been reached by the stream loader.
     pub is_eof: i32,
+    /// Current consumer read cursor in stream bytes.
     pub read_cursor_byte: i64,
+    /// Start byte offset of the currently available contiguous buffer window.
     pub range_start: i64,
+    /// End byte offset of the currently available contiguous buffer window.
     pub range_end: i64,
 }
 
+/// Comprehensive synchronous telemetry status snapshot of a deck.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MiniaudioPlayerStatus {
+    /// Current elapsed playback position in milliseconds.
     pub position_ms: i64,
+    /// Total track duration in milliseconds, or -1 if unknown.
     pub duration_ms: i64,
+    /// Playback state integer code (`STATE_*`).
     pub state: i32,
+    /// Non-zero if audio is actively playing.
     pub is_playing: i32,
+    /// Non-zero if deck is stalled buffering.
     pub is_buffering: i32,
+    /// Non-zero if playback completed.
     pub is_completed: i32,
+    /// Master volume level.
     pub volume: f32,
+    /// Playback rate speed multiplier.
     pub rate: f32,
+    /// Pitch shift multiplier.
     pub pitch: f32,
+    /// Nominal bitrate in bps.
     pub bitrate: u32,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Audio channel count.
     pub channels: u32,
+    /// Equalizer frequency band gains.
     pub equalizer: EqualizerParams,
+    /// Active audio output device descriptor.
     pub device: MapDeviceInfo,
+    /// Silence trimming configuration.
     pub silence: SilenceConfig,
+    /// Cumulative silence skipped in milliseconds.
     pub silence_saved_ms: i64,
+    /// Non-zero if FFT visualizer is enabled.
     pub visualizer_enabled: i32,
+    /// Instantaneous FFT spectrum and amplitude metrics.
     pub visualizer: VisualizerData,
+    /// Equalizer preamp gain in dB.
     pub preamp_db: f32,
+    /// Active ReplayGain loudness normalization settings.
     pub replay_gain: ReplayGainConfig,
+    /// Stereo balance pan (-1.0 to +1.0).
     pub balance: f32,
+    /// Non-zero if stereo downmix to mono is active.
     pub mono_enabled: i32,
+    /// Bauer binaural crossfeed mode code.
     pub crossfeed_mode: i32,
+    /// Non-zero if 3D stereo widening spatializer is enabled.
     pub spatializer_enabled: i32,
+    /// 3D stereo widening factor.
     pub spatializer_width: f32,
+    /// Algorithmic studio reverberation settings.
     pub reverb: ReverbConfig,
+    /// Non-zero if output brickwall limiter is active.
     pub limiter_enabled: i32,
 }
 
+/// C completion callback invoked when a track finishes playback.
 pub type CompletionCallback = unsafe extern "C" fn(user_data: *mut c_void);
 
+/// Strips `file://` or `file://localhost/` URI schemes from filesystem paths.
 pub fn strip_file_prefix(source: &str) -> String {
     let s = source.trim();
     if let Some(stripped) = s.strip_prefix("file://localhost/") {
@@ -111,6 +160,7 @@ pub fn strip_file_prefix(source: &str) -> String {
     }
 }
 
+/// Normalizes local asset paths, stripping `asset://` prefixes and testing candidate locations.
 pub fn resolve_local_source_path(trimmed: &str) -> String {
     let raw_path = if let Some(stripped) = trimmed.strip_prefix("asset://") {
         stripped.strip_prefix('/').unwrap_or(stripped).to_string()
@@ -1179,54 +1229,95 @@ impl DecoderWorker {
     }
 }
 
+/// Self-contained audio playback deck driving background decoding, buffering, DSP, and ring-buffer production.
 pub struct StreamingDeck {
+    /// Zero-based numerical deck identifier (0: Deck A, 1: Deck B).
     pub deck_id: usize,
+    /// Native miniaudio device context pointer.
     pub device_ctx: *mut MapDeviceContext,
+    /// Lock-free C trampoline audio renderer pointer.
     pub renderer_ptr: *mut AudioRenderer,
 
+    /// Atomic playback state code (`STATE_*`).
     pub state: Arc<AtomicI32>,
+    /// Whether playback pauses automatically on audio device switch.
     pub pause_on_device_change: Arc<AtomicBool>,
+    /// Current elapsed playback position in milliseconds.
     pub position_ms: Arc<AtomicI64>,
+    /// Current elapsed playback position in rendered audio frames.
     pub position_frames: Arc<AtomicI64>,
+    /// Total stream duration in milliseconds.
     pub duration_ms: Arc<AtomicI64>,
+    /// Volume scale multiplier stored as atomic bits.
     pub volume: Arc<AtomicU32>,
+    /// Playback rate speed multiplier stored as atomic bits.
     pub rate: Arc<AtomicU32>,
+    /// Playback pitch shift multiplier stored as atomic bits.
     pub pitch: Arc<AtomicU32>,
+    /// Stream nominal bitrate in bps.
     pub bitrate: Arc<AtomicU32>,
+    /// Audio sample rate in Hz.
     pub sample_rate: Arc<AtomicU32>,
+    /// Audio channel count.
     pub channels: Arc<AtomicU32>,
+    /// Hardware device output sample rate.
     pub device_sample_rate: Arc<AtomicU32>,
+    /// Hardware device output channel count.
     pub device_channels: Arc<AtomicU32>,
+    /// Period size in audio frames per callback.
     pub period_size_in_frames: Arc<AtomicU32>,
+    /// Cumulative silence skipped in milliseconds.
     pub silence_saved_ms: Arc<AtomicI64>,
+    /// Whether FFT visualizer computation is active.
     pub visualizer_enabled: Arc<AtomicBool>,
 
+    /// Whether this deck is streaming from a network tripartite buffer.
     pub is_stream: Arc<AtomicBool>,
+    /// Optional progressive HTTP tripartite buffer.
     pub trip_buffer: Arc<RwLock<Option<TripartiteBuffer>>>,
+    /// Audio boundary information discovered by format sniffing.
     pub boundary_info: Arc<RwLock<Option<BoundaryInfo>>>,
+    /// Optional handle for custom Dart byte stream data injection.
     pub custom_source_handle: Arc<RwLock<Option<CustomByteSourceHandle>>>,
 
+    /// Telemetry event dispatcher delivering updates to Dart.
     pub telemetry: Arc<TelemetryDispatcher>,
+    /// Completion callback invoked upon reaching end-of-track.
     pub completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
 
+    /// Dynamic silence detection and trimming configuration.
     pub silence_config: Arc<RwLock<SilenceConfig>>,
 
+    /// Ring buffer producer feeding decoded PCM samples to the real-time audio thread.
     pub audio_producer: Arc<Mutex<Option<AudioProducer>>>,
+    /// Lock-free command producer sending real-time DSP adjustments to the renderer.
     pub cmd_producer: Arc<Mutex<Option<rtrb::Producer<DspCommand>>>>,
+    /// Lock-free Seqlock delivering visualizer metrics to telemetry readers.
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
 
+    /// Generation counter tracking requested seek flushes.
     pub flush_generation: Arc<AtomicU64>,
+    /// Generation counter acknowledging completed seek flushes by the audio thread.
     pub flush_acknowledged: Arc<AtomicU64>,
+    /// Whether playback reached the end of the current stream.
     pub completed_flag: Arc<AtomicBool>,
+    /// Whether the deck is waiting for buffer fill.
     pub buffering_flag: Arc<AtomicBool>,
+    /// Flag signaling buffering resumed after starvation.
     pub buffering_resumed_flag: Arc<AtomicBool>,
 
     // Cached DSP settings
+    /// Graphic equalizer band parameters.
     pub eq_params: Arc<RwLock<EqualizerParams>>,
+    /// Preamp gain in dB stored as atomic float bits.
     pub preamp_db: Arc<AtomicU32>,
+    /// ReplayGain loudness normalization settings.
     pub replay_gain: Arc<RwLock<ReplayGainConfig>>,
+    /// Stereo balance pan stored as atomic float bits.
     pub balance: Arc<AtomicU32>,
+    /// Stereo downmix to mono flag.
     pub mono_enabled: Arc<AtomicBool>,
+    /// 3D stereo widening spatializer flag.
     pub spatializer_enabled: Arc<AtomicBool>,
     pub spatializer_width: Arc<AtomicU32>,
     pub crossfeed_mode: Arc<AtomicI32>,
@@ -3246,24 +3337,38 @@ impl Drop for StreamingDeck {
 // Dual Source Pipeline (CurrentSlot / StandbySlot) and Queue Management
 // =========================================================================
 
+/// Core queued track item representation held in the dual-deck playlist.
 #[derive(Debug, Clone, Default)]
 pub struct AudioSourceCore {
+    /// Unique track identifier.
     pub id: i64,
+    /// URI or filesystem path string.
     pub source: String,
+    /// Optional HTTP headers for network streaming.
     pub headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+    /// Optional in-memory raw audio bytes.
     pub data_bytes: Option<Vec<u8>>,
+    /// Track-specific ReplayGain adjustment in dB.
     pub replay_gain_db: Option<f32>,
+    /// Track-specific true peak amplitude.
     pub replay_peak: Option<f32>,
 }
 
+/// Lock-free atomic tracker coordinating smooth crossfade transitions between Deck A and Deck B.
 #[repr(C)]
 pub struct CrossfadeAtomic {
+    /// Whether a crossfade transition is actively running.
     pub is_active: AtomicBool,
-    pub from_deck: AtomicI32, // 0: A, 1: B
-    pub to_deck: AtomicI32,   // 0: A, 1: B
+    /// Deck ID fading out (0: A, 1: B).
+    pub from_deck: AtomicI32,
+    /// Deck ID fading in (0: A, 1: B).
+    pub to_deck: AtomicI32,
+    /// Progress counter in audio frames rendered during this crossfade.
     pub current_frame: AtomicU64,
+    /// Total duration of the crossfade in audio frames.
     pub total_frames: AtomicU64,
-    pub curve: AtomicI32, // 0: EqualPower, 1: Linear
+    /// Volume curve formula (0: EqualPower, 1: Linear).
+    pub curve: AtomicI32,
 }
 
 impl Default for CrossfadeAtomic {
@@ -3280,6 +3385,7 @@ impl Default for CrossfadeAtomic {
 }
 
 impl CrossfadeAtomic {
+    /// Commences an atomic crossfade transition from `from_deck` to `to_deck`.
     #[inline]
     pub fn begin(&self, from_deck: i32, to_deck: i32, total_frames: u64, curve: i32) {
         self.from_deck.store(from_deck, Ordering::Relaxed);
@@ -3291,11 +3397,13 @@ impl CrossfadeAtomic {
         self.is_active.store(true, Ordering::Release);
     }
 
+    /// Aborts any active crossfade transition immediately.
     #[inline]
     pub fn abort(&self) {
         self.is_active.store(false, Ordering::Release);
     }
 
+    /// Computes instantaneous volume gains for (from_deck, to_deck) at a given normalized progress.
     #[inline]
     pub fn compute_gains(curve: i32, progress: f32) -> (f32, f32) {
         let p = progress.clamp(0.0, 1.0);
@@ -3307,6 +3415,7 @@ impl CrossfadeAtomic {
         }
     }
 
+    /// Advances the frame counter and computes the current volume gains for (Deck A, Deck B).
     #[inline]
     pub fn advance_and_get_gains(&self, frame_count: u64) -> (f32, f32) {
         let cur = self.current_frame.fetch_add(frame_count, Ordering::Relaxed);
@@ -3325,6 +3434,7 @@ impl CrossfadeAtomic {
     }
 }
 
+/// Factory function closure constructing a custom Dart byte source and response handle.
 pub type CustomSourceFactory = Arc<
     dyn Fn(
             u32,
@@ -3337,35 +3447,62 @@ pub type CustomSourceFactory = Arc<
         + Sync,
 >;
 
+/// Dual-deck engine phase: idle with no active playback.
 pub const ENGINE_PHASE_IDLE: i32 = 0;
+/// Dual-deck engine phase: pre-buffering or loading audio headers.
 pub const ENGINE_PHASE_LOADING: i32 = 1;
+/// Dual-deck engine phase: actively rendering audio.
 pub const ENGINE_PHASE_PLAYING: i32 = 2;
+/// Dual-deck engine phase: playback paused.
 pub const ENGINE_PHASE_PAUSED: i32 = 3;
+/// Dual-deck engine phase: automatic end-of-track overlap crossfade running.
 pub const ENGINE_PHASE_AUTO_CROSSFADING: i32 = 4;
+/// Dual-deck engine phase: user-initiated manual track skip crossfade running.
 pub const ENGINE_PHASE_MANUAL_CROSSFADING: i32 = 5;
+/// Dual-deck engine phase: entire playlist queue finished.
 pub const ENGINE_PHASE_COMPLETED: i32 = 6;
+/// Dual-deck engine phase: playback encountered an unrecoverable error.
 pub const ENGINE_PHASE_ERROR: i32 = 7;
+/// Dual-deck engine phase: engine resources released and destroyed.
 pub const ENGINE_PHASE_DISPOSED: i32 = 8;
 
+/// Dual-deck crossfading coordinator orchestrating two independent streaming decks (Deck A and Deck B).
 pub struct DualSource {
+    /// Primary streaming deck A.
     pub deck_a: Box<StreamingDeck>,
+    /// Secondary streaming deck B for gapless crossfades.
     pub deck_b: Box<StreamingDeck>,
+    /// Active deck indicator (0: Deck A, 1: Deck B).
     pub active_deck: Arc<AtomicI32>,
+    /// Lock-free atomic crossfade state coordinator.
     pub crossfade: Arc<CrossfadeAtomic>,
+    /// Flag indicating that a crossfade completed.
     pub crossfade_completed_flag: Arc<AtomicBool>,
+    /// High-level engine lifecycle phase (`ENGINE_PHASE_*`).
     pub phase: Arc<AtomicI32>,
 
+    /// Active playlist queue (shuffled or un-shuffled).
     pub queue: Arc<RwLock<Vec<AudioSourceCore>>>,
+    /// Canonical sequential order of the playlist queue.
     pub canonical_queue: Arc<RwLock<Vec<AudioSourceCore>>>,
+    /// Original sequential indices mapping into the active queue.
     pub original_indices: Arc<RwLock<Vec<usize>>>,
+    /// Current track index in the active queue.
     pub current_index: Arc<AtomicI64>,
+    /// Active playlist loop mode policy.
     pub loop_mode: Arc<AtomicI32>,
+    /// Whether playlist shuffle is active.
     pub shuffle_enabled: Arc<AtomicBool>,
+    /// Whether continuous auto-refill infinite mix mode is enabled.
     pub infinite_mix_enabled: Arc<AtomicBool>,
 
+    /// Duration in milliseconds for automatic end-of-track crossfades.
     pub auto_crossfade_duration_ms: Arc<AtomicU64>,
+    /// Duration in milliseconds for manual track skip crossfades.
     pub manual_crossfade_duration_ms: Arc<AtomicU64>,
+    /// Gain curve formula for crossfades (0: EqualPower, 1: Linear).
     pub crossfade_curve: Arc<AtomicI32>,
+    /// Target queue index for pending auto-crossfade.
     pub auto_crossfade_target_index: Arc<AtomicI64>,
 
     pub sample_rate: u32,

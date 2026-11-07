@@ -1,3 +1,5 @@
+//! Core audio engine subsystems, managers, rendering pipelines, and domain logic.
+
 pub mod capture;
 pub mod config;
 pub mod dsp_processor;

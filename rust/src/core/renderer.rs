@@ -42,13 +42,17 @@ pub enum DspCommand {
     SetSpatialSpeedOfSound(f32),
 }
 
+/// C-ABI compatible renderer header containing function pointers for miniaudio callback hooks.
 #[repr(C)]
 pub struct PcmRendererHeader {
+    /// Render callback invoked on the high-priority real-time audio thread.
     pub render_fn:
         unsafe extern "C" fn(ptr: *mut std::os::raw::c_void, output: *mut f32, count: usize),
+    /// Hardware notification callback invoked when device state changes.
     pub notif_fn: unsafe extern "C" fn(ptr: *mut std::os::raw::c_void, notif: i32),
 }
 
+/// C trampoline forwarding audio frame requests to [`AudioRenderer::render_pcm`].
 pub unsafe extern "C" fn audio_renderer_render_trampoline(
     ptr: *mut std::os::raw::c_void,
     output: *mut f32,
@@ -58,6 +62,7 @@ pub unsafe extern "C" fn audio_renderer_render_trampoline(
     r.render_pcm(output, count);
 }
 
+/// C trampoline forwarding hardware device notifications to [`AudioRenderer::on_device_notification`].
 pub unsafe extern "C" fn audio_renderer_notif_trampoline(
     ptr: *mut std::os::raw::c_void,
     notif: i32,

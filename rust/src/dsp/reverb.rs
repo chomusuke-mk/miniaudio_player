@@ -1,7 +1,10 @@
 //! Studio-grade Algorithmic Stereo Reverberation (Freeverb Model) in pure Rust.
 
+/// Number of parallel feedback comb filters per channel (8).
 pub const NUM_COMBS: usize = 8;
+/// Number of series all-pass diffusion filters per channel (4).
 pub const NUM_ALLPASS: usize = 4;
+/// Sample spread offset between left and right channels for stereo decorrelation.
 pub const STEREO_SPREAD: usize = 23;
 
 const COMB_TUNINGS_L: [usize; NUM_COMBS] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
@@ -14,14 +17,21 @@ const SCALE_WET: f32 = 2.50;
 const SCALE_INPUT: f32 = 0.015;
 const ALLPASS_FEEDBACK: f32 = 0.50;
 
+/// Parameters configuring algorithmic studio reverberation.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReverbConfig {
+    /// Non-zero if reverberation processing is enabled.
     pub enabled: i32,
+    /// Normalized room decay size (0.0 to 1.0).
     pub room_size: f32,
+    /// High-frequency absorption and damping factor (0.0 to 1.0).
     pub damping: f32,
+    /// Stereo reflection width spread (0.0 to 1.0).
     pub width: f32,
+    /// Wet reverberant signal mix gain (0.0 to 2.0).
     pub wet: f32,
+    /// Dry direct signal mix gain (0.0 to 2.0).
     pub dry: f32,
 }
 
@@ -142,6 +152,7 @@ impl AllpassFilter {
     }
 }
 
+/// Algorithmic studio reverberation unit based on the classic Freeverb physical model.
 pub struct Freeverb {
     sample_rate: u32,
     config: ReverbConfig,
@@ -163,6 +174,7 @@ pub struct Freeverb {
 }
 
 impl Freeverb {
+    /// Constructs a new `Freeverb` instance calibrated for the given sample rate.
     pub fn new(sample_rate: u32) -> Self {
         let sr = if sample_rate == 0 { 44100 } else { sample_rate };
         let rate_scale = sr as f64 / 44100.0;
@@ -208,6 +220,7 @@ impl Freeverb {
         rev
     }
 
+    /// Re-scales comb and all-pass delay line lengths to match the new sample rate.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         let sr = if sample_rate == 0 { 44100 } else { sample_rate };
         if self.sample_rate == sr {
@@ -233,15 +246,18 @@ impl Freeverb {
         }
     }
 
+    /// Updates reverb room size, damping, width, wet, and dry parameters.
     pub fn set_config(&mut self, config: ReverbConfig) {
         self.config = config;
         self.update_params();
     }
 
+    /// Returns a reference to the active reverb configuration.
     pub fn config(&self) -> &ReverbConfig {
         &self.config
     }
 
+    /// Clears all comb and all-pass delay line buffers to silence.
     pub fn clear(&mut self) {
         for c in &mut self.combs_l {
             c.clear();
@@ -257,6 +273,7 @@ impl Freeverb {
         }
     }
 
+    /// Processes interleaved PCM audio frames in-place through the reverberation network.
     pub fn process_frames(&mut self, samples: &mut [f32], channels: usize) {
         if samples.is_empty() || channels == 0 {
             return;

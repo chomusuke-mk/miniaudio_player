@@ -264,6 +264,7 @@ final class UriAudioSource<T> extends AudioSource<T> {
   /// Optional HTTP headers for network/HLS sources.
   final Map<String, String>? headers;
 
+  /// Creates a [UriAudioSource] from [sourceString] with optional [headers].
   UriAudioSource(
     this.sourceString, {
     this.headers,
@@ -319,9 +320,10 @@ final class UriAudioSource<T> extends AudioSource<T> {
 
 /// An in-memory audio source backed by raw bytes in RAM.
 final class MemoryAudioSource<T> extends AudioSource<T> {
-  /// Raw audio file bytes.
+  /// The raw audio file bytes.
   final Uint8List bytes;
 
+  /// Creates a [MemoryAudioSource] from raw audio [bytes].
   MemoryAudioSource(
     this.bytes, {
     super.data,
@@ -375,6 +377,7 @@ final class CustomAudioSource<T> extends AudioSource<T> {
   /// The underlying custom byte provider.
   final CustomByteProvider provider;
 
+  /// Creates a [CustomAudioSource] backed by a custom [provider].
   CustomAudioSource(
     this.provider, {
     super.data,

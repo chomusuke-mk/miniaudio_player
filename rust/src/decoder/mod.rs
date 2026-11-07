@@ -1,3 +1,5 @@
+//! Multi-format audio decoding and format sniffing subsystem.
+
 pub mod ape;
 pub mod dsf;
 pub mod extended_pcm;

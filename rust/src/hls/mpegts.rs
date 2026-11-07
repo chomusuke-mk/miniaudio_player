@@ -13,15 +13,21 @@ const STREAM_TYPE_METADATA_ID3: u8 = 0x15;
 const STREAM_TYPE_AC3: u8 = 0x81;
 const STREAM_TYPE_EAC3: u8 = 0x87;
 
+/// Elementary audio codec carried inside an MPEG-TS program.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsAudioCodec {
+    /// AAC in ADTS framing.
     AacAdts,
+    /// MPEG-1/2 Audio Layer III.
     Mp3,
+    /// AC-3 (Dolby Digital) or Enhanced AC-3.
     Ac3,
+    /// Unknown or unsupported stream type identifier.
     Unknown(u8),
 }
 
 impl TsAudioCodec {
+    /// Maps an MPEG-TS Program Map Table (PMT) stream type byte to a [`TsAudioCodec`].
     #[inline]
     pub fn from_stream_type(stream_type: u8) -> Self {
         match stream_type {
@@ -32,6 +38,7 @@ impl TsAudioCodec {
         }
     }
 
+    /// Sniffs the audio codec from elementary bitstream sync headers.
     pub fn sniff_elementary(data: &[u8]) -> Self {
         if data.len() >= 2 {
             if data[0] == 0xFF && (data[1] & 0xF6) == 0xF0 {
@@ -48,11 +55,16 @@ impl TsAudioCodec {
     }
 }
 
+/// Extracted elementary audio and metadata payloads from an MPEG-TS segment.
 #[derive(Debug, Clone)]
 pub struct MpegTsDemuxResult {
+    /// Continuous elementary audio bitstream bytes.
     pub audio_bytes: Vec<u8>,
+    /// Identified audio codec of the elementary stream.
     pub codec: TsAudioCodec,
+    /// Transport packet PID containing the audio stream.
     pub audio_pid: Option<u16>,
+    /// Optional ID3 timed metadata bytes extracted from the transport stream.
     pub id3_bytes: Option<Vec<u8>>,
 }
 
@@ -63,6 +75,7 @@ pub struct TsPacket<'a> {
 }
 
 impl<'a> TsPacket<'a> {
+    /// Parses a 188-byte slice into a `TsPacket` if the sync byte is `0x47`.
     #[inline]
     pub fn parse(slice: &'a [u8]) -> Option<Self> {
         let raw: &'a [u8; TS_PACKET_SIZE] = slice.try_into().ok()?;
@@ -72,21 +85,25 @@ impl<'a> TsPacket<'a> {
         Some(Self { raw })
     }
 
+    /// Returns whether the transport error indicator bit is set.
     #[inline]
     pub fn has_transport_error(&self) -> bool {
         (self.raw[1] & 0x80) != 0
     }
 
+    /// Returns whether this packet carries the start of a PES payload or PSI section.
     #[inline]
     pub fn payload_unit_start(&self) -> bool {
         (self.raw[1] & 0x40) != 0
     }
 
+    /// Returns the 13-bit Packet Identifier (PID).
     #[inline]
     pub fn pid(&self) -> u16 {
         (((self.raw[1] & 0x1F) as u16) << 8) | (self.raw[2] as u16)
     }
 
+    /// Returns a slice referencing the packet payload bytes, skipping adaptation fields.
     #[inline]
     pub fn payload(&self) -> Option<&'a [u8]> {
         let adaptation_ctrl = (self.raw[3] & 0x30) >> 4;
@@ -112,6 +129,7 @@ pub struct TsPacketIterator<'a> {
 }
 
 impl<'a> TsPacketIterator<'a> {
+    /// Creates a new `TsPacketIterator` searching for sync byte alignment in `data`.
     pub fn new(data: &'a [u8]) -> Self {
         let mut iter = Self { data, cursor: 0 };
         iter.align_initial_sync();
@@ -165,6 +183,7 @@ pub struct TsDemuxSession {
 }
 
 impl TsDemuxSession {
+    /// Creates a new demuxing session with an pre-allocated audio buffer capacity.
     pub fn with_capacity(estimated_audio_bytes: usize) -> Self {
         Self {
             pmt_pid: None,
@@ -176,6 +195,7 @@ impl TsDemuxSession {
         }
     }
 
+    /// Processes an individual TS packet, tracking PSI tables and extracting PES streams.
     pub fn process_packet(&mut self, packet: TsPacket<'_>) {
         let Some(payload) = packet.payload() else {
             return;
@@ -212,6 +232,7 @@ impl TsDemuxSession {
         }
     }
 
+    /// Finalizes demuxing and returns the extracted audio and metadata bytes.
     pub fn finalize(self) -> MpegTsDemuxResult {
         let codec = self
             .audio_stream_type
@@ -326,6 +347,7 @@ impl TsDemuxSession {
     }
 }
 
+/// High-level MPEG-2 Transport Stream demuxer for HLS segments.
 pub struct MpegTsDemuxer;
 
 impl MpegTsDemuxer {

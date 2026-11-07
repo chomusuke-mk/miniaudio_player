@@ -2,14 +2,22 @@
 
 use std::f64::consts::PI;
 
+/// Second-order IIR biquad filter implemented in Direct Form II Transposed (DF2T) architecture.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BiquadDf2t {
+    /// Feedforward coefficient 0.
     pub b0: f32,
+    /// Feedforward coefficient 1.
     pub b1: f32,
+    /// Feedforward coefficient 2.
     pub b2: f32,
+    /// Feedback coefficient 1.
     pub a1: f32,
+    /// Feedback coefficient 2.
     pub a2: f32,
+    /// Internal filter state register 1.
     pub s1: f32,
+    /// Internal filter state register 2.
     pub s2: f32,
 }
 
@@ -22,6 +30,7 @@ impl Default for BiquadDf2t {
 impl BiquadDf2t {
     const DENORMAL_THRESHOLD: f32 = 1e-20;
 
+    /// Creates a new biquad filter with specified coefficients and zeroed state registers.
     pub const fn new(b0: f32, b1: f32, b2: f32, a1: f32, a2: f32) -> Self {
         Self {
             b0,
@@ -34,10 +43,12 @@ impl BiquadDf2t {
         }
     }
 
+    /// Creates an identity pass-through biquad filter (`y[n] = x[n]`).
     pub const fn identity() -> Self {
         Self::new(1.0, 0.0, 0.0, 0.0, 0.0)
     }
 
+    /// Clears internal state registers `s1` and `s2` to prevent filter ringing.
     #[inline]
     pub fn reset_state(&mut self) {
         self.s1 = 0.0;
@@ -54,6 +65,7 @@ impl BiquadDf2t {
         self.a2 = prototype.a2;
     }
 
+    /// Processes a single input sample through the DF2T biquad, clamping denormals.
     #[inline(always)]
     pub fn process(&mut self, x: f32) -> f32 {
         let mut y = self.b0 * x + self.s1;
@@ -92,6 +104,7 @@ impl BiquadDf2t {
         fs > 0.0 && f0 > 0.0 && f0 < fs * 0.5 && param > 0.0
     }
 
+    /// Designs a low-shelf biquad filter according to the RBJ Audio EQ Cookbook.
     pub fn low_shelf(f0: f64, fs: f64, gain_db: f64, shelf_slope: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, shelf_slope) || gain_db.abs() < 1e-6 {
             return Self::identity();
@@ -117,6 +130,7 @@ impl BiquadDf2t {
         Self::from_normalized_f64(b0, b1, b2, a0, a1, a2)
     }
 
+    /// Designs a parametric peaking band biquad filter according to the RBJ Audio EQ Cookbook.
     pub fn peaking(f0: f64, fs: f64, gain_db: f64, q: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, q) || gain_db.abs() < 1e-6 {
             return Self::identity();
@@ -138,6 +152,7 @@ impl BiquadDf2t {
         Self::from_normalized_f64(b0, b1, b2, a0, a1, a2)
     }
 
+    /// Designs a high-shelf biquad filter according to the RBJ Audio EQ Cookbook.
     pub fn high_shelf(f0: f64, fs: f64, gain_db: f64, shelf_slope: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, shelf_slope) || gain_db.abs() < 1e-6 {
             return Self::identity();
@@ -163,6 +178,7 @@ impl BiquadDf2t {
         Self::from_normalized_f64(b0, b1, b2, a0, a1, a2)
     }
 
+    /// Designs a bandpass filter with constant skirt gain (peak gain = Q).
     pub fn bandpass(f0: f64, fs: f64, q: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, q) {
             return Self::identity();

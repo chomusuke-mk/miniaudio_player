@@ -1,11 +1,16 @@
 //! Silence Detection and Skipping FSM with 5ms smooth crossfade and saved time tracking.
 
+/// Dynamic silence skipping and trimming operational modes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SilenceMode {
+    /// Silence skipping disabled.
     Disabled = 0,
+    /// Trim silence from lead-in and lead-out only.
     TrimEdges = 1,
+    /// Continuously skip silence gaps throughout the stream.
     Continuous = 2,
+    /// Trim edges and skip continuous internal silence.
     All = 3,
 }
 
@@ -15,12 +20,17 @@ impl Default for SilenceMode {
     }
 }
 
+/// Configuration settings for dynamic silence detection and skipping.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SilenceConfig {
+    /// Operational mode policy (`SilenceMode`).
     pub mode: SilenceMode,
+    /// Silence detection threshold in decibels full scale (e.g. -45.0 dBFS).
     pub threshold_db: f32,
+    /// Minimum continuous duration in milliseconds before silence skipping triggers.
     pub min_silence_duration_ms: u32,
+    /// Margin padding in milliseconds preserved before and after non-silent audio.
     pub padding_ms: u32,
 }
 
@@ -35,13 +45,18 @@ impl Default for SilenceConfig {
     }
 }
 
+/// Operational state of the silence detection finite-state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SilenceState {
+    /// Audible audio is playing normally.
     Voice,
+    /// Trailing potential silence is being buffered in holding queue.
     Holding,
+    /// Silence confirmed; audio frames are skipped and discarded.
     Skipping,
 }
 
+/// Dynamic silence detector and skipper with 5ms smooth crossfade and cumulative saved time tracking.
 pub struct SilenceDetector {
     channels: usize,
     sample_rate: u32,
@@ -67,6 +82,7 @@ pub struct SilenceDetector {
 }
 
 impl SilenceDetector {
+    /// Constructs a `SilenceDetector` calibrated for the specified channel count and sample rate.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let ch = channels.max(1);
         let mut det = Self {
@@ -92,6 +108,7 @@ impl SilenceDetector {
         det
     }
 
+    /// Reconfigures silence detection thresholds, mode, and padding durations.
     pub fn set_config(&mut self, config: SilenceConfig) {
         let prev_mode = self.config.mode;
         self.config = config;
@@ -104,14 +121,17 @@ impl SilenceDetector {
         }
     }
 
+    /// Returns the number of channels processed.
     pub fn channels(&self) -> usize {
         self.channels
     }
 
+    /// Returns the active audio sample rate in Hz.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Updates the channel count and resets internal buffers.
     pub fn set_channels(&mut self, channels: usize) {
         let ch = channels.max(1);
         if self.channels != ch {
@@ -121,6 +141,7 @@ impl SilenceDetector {
         }
     }
 
+    /// Updates the sample rate and recalculates time-based frame thresholds.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if self.sample_rate != sample_rate && sample_rate > 0 {
             self.sample_rate = sample_rate;
@@ -128,6 +149,7 @@ impl SilenceDetector {
         }
     }
 
+    /// Resets state machine registers, optionally resetting cumulative saved counters if `is_start` is true.
     pub fn reset(&mut self, is_start: bool) {
         self.state = SilenceState::Voice;
         self.hold_frames_count = 0;
@@ -144,6 +166,7 @@ impl SilenceDetector {
         }
     }
 
+    /// Returns cumulative silence skipped in milliseconds.
     pub fn saved_ms(&self) -> u64 {
         if self.sample_rate == 0 {
             0
@@ -152,18 +175,22 @@ impl SilenceDetector {
         }
     }
 
+    /// Returns cumulative silence skipped in audio frames.
     pub fn saved_frames(&self) -> u64 {
         self.silence_saved_frames
     }
 
+    /// Returns the current state of the silence detector FSM.
     pub fn state(&self) -> SilenceState {
         self.state
     }
 
+    /// Returns whether the detector is currently buffering potential silence in its hold queue.
     pub fn is_holding(&self) -> bool {
         self.state == SilenceState::Holding
     }
 
+    /// Returns whether the detector is actively skipping audio frames.
     pub fn is_skipping(&self) -> bool {
         self.state == SilenceState::Skipping
     }

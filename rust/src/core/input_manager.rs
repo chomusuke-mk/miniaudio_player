@@ -10,20 +10,32 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::core::capture::DeviceCaptureNode;
 use crate::dsp::ducking::AutoDucker;
 
+/// Domain manager governing microphone capture, RMS detection, auto-ducking, and direct monitoring.
 pub struct InputManager {
+    /// Active hardware capture device node.
     pub capture_node: Arc<RwLock<Option<Box<DeviceCaptureNode>>>>,
+    /// Ring buffer consumer reading captured microphone samples.
     pub mic_consumer: Arc<Mutex<Option<rtrb::Consumer<f32>>>>,
+    /// Sidechain auto-ducker compressor.
     pub ducker: AutoDucker,
+    /// Whether microphone capture is active.
     pub mic_enabled: Arc<AtomicBool>,
+    /// Microphone capture input gain.
     pub mic_volume: Arc<AtomicU32>,
+    /// Whether low-latency direct voice monitoring to master is active.
     pub mic_monitor_direct: Arc<AtomicBool>,
+    /// Direct voice monitoring volume.
     pub mic_monitor_volume: Arc<AtomicU32>,
+    /// Scratch buffer holding captured voice frames.
     pub scratch_mic: Vec<f32>,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Output channel count.
     pub channels: usize,
 }
 
 impl InputManager {
+    /// Creates a new `InputManager` with the specified sample rate and channel count.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         Self {
             capture_node: Arc::new(RwLock::new(None)),

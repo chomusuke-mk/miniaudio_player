@@ -2,8 +2,10 @@
 //!
 //! Replaces runtime state integer checks with compile-time state guarantees.
 //! State transitions:
+//! ```text
 //! Uninitialized -> Open<S> -> Active<S> <-> Paused<S>
 //!                         \-> Stopped<S> -> Uninitialized
+//! ```
 
 use super::config::PlayerConfig;
 use super::types::{PlayerError, Volume};

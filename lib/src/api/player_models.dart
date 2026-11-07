@@ -78,7 +78,10 @@ sealed class AudioOutput {
 
 /// Default system speaker output configuration.
 class SpeakerAudioOutput extends AudioOutput {
+  /// Whether exclusive hardware access mode should be requested.
   final bool exclusiveMode;
+
+  /// Creates a [SpeakerAudioOutput] targeting the system speaker.
   const SpeakerAudioOutput({this.exclusiveMode = false});
 
   @override
@@ -92,8 +95,13 @@ class SpeakerAudioOutput extends AudioOutput {
 
 /// Specific hardware audio output device.
 class DeviceAudioOutput extends AudioOutput {
+  /// The unique hardware device identifier.
   final String deviceId;
+
+  /// Whether exclusive hardware access mode should be requested.
   final bool exclusiveMode;
+
+  /// Creates a [DeviceAudioOutput] targeting [deviceId].
   const DeviceAudioOutput(this.deviceId, {this.exclusiveMode = false});
 
   @override
@@ -109,8 +117,13 @@ class DeviceAudioOutput extends AudioOutput {
 
 /// Dedicated CUE pre-listening headphone output.
 class CueAudioOutput extends AudioOutput {
+  /// The hardware device identifier for headphone output.
   final String deviceId;
+
+  /// The audio signal routing source.
   final CueSource source;
+
+  /// Creates a [CueAudioOutput] targeting [deviceId] with cue [source].
   const CueAudioOutput(this.deviceId, {this.source = CueSource.standbyTrack});
 
   @override
@@ -126,8 +139,13 @@ class CueAudioOutput extends AudioOutput {
 
 /// Live audio file recording output sink.
 class FileAudioOutput extends AudioOutput {
+  /// The target file path on disk where rendered audio is saved.
   final String path;
+
+  /// The audio encoding format for the file recording.
   final AudioFileFormat format;
+
+  /// Creates a [FileAudioOutput] saving to [path] in [format].
   const FileAudioOutput(this.path, {this.format = AudioFileFormat.wav});
 
   @override
@@ -155,12 +173,22 @@ sealed class AudioInput {
 
 /// Hardware microphone input node configuration.
 class MicrophoneAudioInput extends AudioInput {
+  /// The optional hardware microphone device ID (`null` for system default).
   final String? deviceId;
+
+  /// The capture input gain/volume (`0.0` to `2.0`).
   final double volume;
+
+  /// Optional sidechain ducking configuration.
   final DuckingConfig? ducking;
+
+  /// Whether low-latency direct pass-through monitoring to the master output is enabled.
   final bool monitorDirect;
+
+  /// The volume level for direct voice monitoring.
   final double monitorVolume;
 
+  /// Creates a [MicrophoneAudioInput] capture node configuration.
   const MicrophoneAudioInput({
     this.deviceId,
     this.volume = 1.0,
@@ -190,11 +218,19 @@ class MicrophoneAudioInput extends AudioInput {
 
 /// Descriptor of an audio effect preloaded in memory for polyphonic playback.
 class AudioEffect {
+  /// The unique string identifier for this effect.
   final String id;
+
+  /// The audio source to be decoded and loaded into RAM.
   final AudioSource source;
+
+  /// The maximum number of simultaneous voices allowed for this effect.
   final int maxPolyphony;
+
+  /// Whether this effect is pinned to prevent LRU cache eviction under memory pressure.
   final bool pinned;
 
+  /// Creates an [AudioEffect] descriptor.
   const AudioEffect({
     required this.id,
     required this.source,
@@ -264,22 +300,52 @@ enum VoiceStealingPolicy {
 
 /// Configuration applied when triggering a polyphonic audio effect voice.
 class EffectConfig {
+  /// The volume attenuation factor (`0.0` to `2.0`).
   final double volume;
+
+  /// The stereo balance panning (`-1.0` full left to `1.0` full right).
   final double balance;
+
+  /// The pitch shift multiplier (`0.5` to `2.0`).
   final double pitch;
+
+  /// The playback playback speed rate multiplier (`0.5` to `2.0`).
   final double rate;
+
+  /// Whether the voice should loop continuously until explicitly stopped.
   final bool looping;
+
+  /// The playback priority (`0` to `255`, higher values are prioritized over lower ones).
   final int priority;
+
+  /// The randomized pitch jitter range applied to prevent acoustic repetition fatigue.
   final double pitchJitter;
+
+  /// The randomized volume jitter range applied to prevent acoustic repetition fatigue.
   final double volumeJitter;
+
+  /// Optional 3D spatial emitter parameters for spatial audio and Doppler simulation.
   final SpatialEmitter? spatial;
+
+  /// Optional per-voice 10-band equalizer settings.
   final Equalizer? equalizer;
+
+  /// Optional per-voice studio algorithmic reverb settings.
   final Reverb? reverb;
+
+  /// The voice stealing policy when the polyphony limit is reached.
   final VoiceStealingPolicy stealingPolicy;
+
+  /// The maximum number of simultaneous instances of this effect voice.
   final int maxPolyphony;
+
+  /// The DSP pipeline routing mode (inherit, isolate, or bypass).
   final DspRouting dspRouting;
+
+  /// Whether this voice is protected from LRU voice stealing.
   final bool pinned;
 
+  /// Creates an [EffectConfig] with custom voice parameters.
   const EffectConfig({
     this.volume = 1.0,
     this.balance = 0.0,
@@ -298,6 +364,7 @@ class EffectConfig {
     this.pinned = false,
   });
 
+  /// Returns a copy of this [EffectConfig] with modified properties.
   EffectConfig copyWith({
     double? volume,
     double? balance,
@@ -337,19 +404,43 @@ class EffectConfig {
 
 /// Configuration parameters governing [MiniaudioPlayer] behavior.
 class PlayerConfig {
+  /// The audio hardware output sample rate in Hz (e.g. 44100, 48000).
   final int sampleRate;
+
+  /// The number of audio output channels (typically 2 for stereo).
   final int channels;
+
+  /// The audio buffer size in frames.
   final int bufferSizeFrames;
+
+  /// The maximum number of concurrent polyphonic effect voices.
   final int maxVoices;
+
+  /// The maximum memory budget in bytes allocated for RAM sound effects.
   final int maxRamBytes;
+
+  /// The voice stealing policy when max voices are saturated.
   final VoiceStealingPolicy voiceStealingPolicy;
+
+  /// Whether audio should automatically play when an audio source is loaded.
   final bool autoPlay;
+
+  /// Whether playback should automatically pause when the active audio device disconnects.
   final bool pauseOnDeviceChange;
+
+  /// The target prefetch buffer duration for local files.
   final Duration bufferLocalDuration;
+
+  /// The target prefetch buffer duration for network streams.
   final Duration bufferNetworkDuration;
+
+  /// The default crossfade configuration for track transitions.
   final CrossfadeConfig? crossfade;
+
+  /// Whether 3D spatial audio processing is enabled.
   final bool enableSpatialAudio;
 
+  /// Creates a [PlayerConfig] with engine parameters.
   const PlayerConfig({
     this.sampleRate = 48000,
     this.channels = 2,
@@ -368,11 +459,19 @@ class PlayerConfig {
 
 /// Immutable record summarizing the metrics of a completed audio recording.
 class RecordingResult {
+  /// The file path on disk where the recording was saved.
   final String path;
+
+  /// The total duration of the recorded audio.
   final Duration duration;
+
+  /// The total number of bytes written to the file.
   final int bytesWritten;
+
+  /// The total number of PCM frames/samples written.
   final int sampleCount;
 
+  /// Creates a [RecordingResult] summarizing a completed recording.
   const RecordingResult({
     required this.path,
     required this.duration,

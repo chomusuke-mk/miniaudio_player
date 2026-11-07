@@ -12,10 +12,14 @@ use crate::bridge::ffi::{
 use crate::core::recording::{LiveRecorder, WavFormat};
 use crate::core::renderer::PcmRendererHeader;
 
+/// Audio sources routeable to the secondary DJ cue pre-listening output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CueSource {
+    /// Inactive or standby incoming track deck (PFL).
     StandbyTrack = 0,
+    /// Currently playing public master deck.
     ActiveTrack = 1,
+    /// Full master mix including effects and microphone.
     MasterMix = 2,
 }
 
@@ -29,17 +33,24 @@ impl From<i32> for CueSource {
     }
 }
 
+/// Real-time safe headphone pre-listening audio renderer.
 #[repr(C)]
 pub struct CueRenderer {
+    /// Function pointer header for miniaudio callback.
     pub header: PcmRendererHeader,
+    /// Ring buffer consumer reading cue audio.
     pub consumer: rtrb::Consumer<f32>,
+    /// Headphone volume control.
     pub volume: Arc<AtomicU32>,
+    /// Number of output audio channels.
     pub channels: usize,
+    /// Whether cue output is currently active.
     pub is_enabled: Arc<AtomicBool>,
 }
 
 unsafe impl Send for CueRenderer {}
 
+/// C trampoline forwarding audio frame requests to [`CueRenderer::render_pcm`].
 pub unsafe extern "C" fn cue_renderer_render_trampoline(
     ptr: *mut c_void,
     output: *mut f32,
@@ -49,6 +60,7 @@ pub unsafe extern "C" fn cue_renderer_render_trampoline(
     r.render_pcm(output, count);
 }
 
+/// C trampoline for cue device notifications (no-op).
 pub unsafe extern "C" fn cue_renderer_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
 
 impl CueRenderer {

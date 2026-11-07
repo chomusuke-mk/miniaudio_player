@@ -5,17 +5,26 @@
 use crate::dsp::equalizer::{Equalizer, EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::{Freeverb, ReverbConfig};
 
+/// Reusable vectorized DSP effect chain applying Equalizer, Reverb, Panning, and Volume.
 pub struct DspProcessor {
+    /// 10-band ISO peaking equalizer and preamp processor.
     pub equalizer: Equalizer,
+    /// Freeverb algorithmic stereo reverberation network.
     pub reverb: Freeverb,
+    /// Local volume factor.
     pub volume: f32,
+    /// Stereo panning balance (-1.0 to 1.0).
     pub balance: f32,
+    /// Whether monophonic downmixing is enabled.
     pub mono: bool,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Channel count.
     pub channels: usize,
 }
 
 impl DspProcessor {
+    /// Creates a new `DspProcessor` initialized with the given sample rate and channel count.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         let ch = channels.max(1);
         Self {

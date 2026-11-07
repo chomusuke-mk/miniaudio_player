@@ -6,9 +6,11 @@ use cbc::cipher::{BlockDecryptMut, KeyIvInit};
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
+/// HLS AES-128 segment decryptor compliant with RFC 8216.
 pub struct Aes128SegmentDecryptor;
 
 impl Aes128SegmentDecryptor {
+    /// AES block size in bytes (16 bytes / 128 bits).
     pub const BLOCK_SIZE: usize = 16;
 
     /// Parses a 16-byte IV from a hex string (with or without `0x`/`0X` prefix).

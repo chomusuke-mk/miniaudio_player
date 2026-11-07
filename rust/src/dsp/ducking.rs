@@ -6,14 +6,22 @@
 //! - Configurable attack, hold, and release envelopes to prevent audio pumping.
 //! - 100% Lock-Free and Zero-Allocation in the real-time audio thread.
 
+/// Real-time sidechain auto-ducking dynamics processor.
 #[derive(Debug, Clone)]
 pub struct AutoDucker {
+    /// Whether auto-ducking is enabled.
     pub enabled: bool,
+    /// Target attenuation in decibels applied to music when speech is present.
     pub ducking_db: f32,
+    /// Speech detection threshold in dBFS.
     pub threshold_db: f32,
+    /// Attack duration in milliseconds to ramp down the music volume.
     pub attack_time_ms: f32,
+    /// Hold duration in milliseconds after speech pauses before releasing attenuation.
     pub hold_time_ms: f32,
+    /// Release duration in milliseconds to smoothly restore music volume.
     pub release_time_ms: f32,
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
 
     current_gain: f32,
@@ -29,6 +37,7 @@ impl Default for AutoDucker {
 }
 
 impl AutoDucker {
+    /// Creates a new `AutoDucker` configured for the specified sample rate.
     pub fn new(sample_rate: u32) -> Self {
         let sr = sample_rate.max(8000);
         Self {
