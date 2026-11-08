@@ -88,9 +88,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (int, int, bool) dco_decode_box_autoadd_record_u_32_u_32_bool(dynamic raw);
 
   @protected
-  RustAudioDevice dco_decode_box_autoadd_rust_audio_device(dynamic raw);
-
-  @protected
   RustAudioOutput dco_decode_box_autoadd_rust_audio_output(dynamic raw);
 
   @protected
@@ -401,10 +398,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (int, int, bool) sse_decode_box_autoadd_record_u_32_u_32_bool(
-      SseDeserializer deserializer);
-
-  @protected
-  RustAudioDevice sse_decode_box_autoadd_rust_audio_device(
       SseDeserializer deserializer);
 
   @protected
@@ -757,10 +750,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_record_u_32_u_32_bool(
       (int, int, bool) self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_box_autoadd_rust_audio_device(
-      RustAudioDevice self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_audio_output(

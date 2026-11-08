@@ -86,9 +86,6 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Clears pending tracks from the queue, optionally preserving the currently active track.
   void clearQueue({required bool keepCurrent});
 
-  /// Configures the complete set of audio output destinations.
-  Future<void> configureOutputs({required List<RustAudioOutput> outputs});
-
   /// Stops and closes the active microphone capture device.
   void disableMicrophone();
 
@@ -138,13 +135,13 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
           required int sampleRate,
           required int channels,
           required int periodSize,
-          String? playbackDeviceId}) =>
+          required List<RustAudioOutput> initialOutputs}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerNew(
           config: config,
           sampleRate: sampleRate,
           channels: channels,
           periodSize: periodSize,
-          playbackDeviceId: playbackDeviceId);
+          initialOutputs: initialOutputs);
 
   /// Skips to the next track in the queue, optionally overriding crossfade duration.
   Future<void> next({BigInt? crossfadeDurationMs});
@@ -203,12 +200,6 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Sets the Bauer binaural headphone crossfeed mode (0: off, 1: 44.1kHz, 2: 48kHz, 3: high).
   void setCrossfeed({required int mode});
 
-  /// Selects the audio source routed to the auxiliary DJ cue monitoring channel.
-  void setCueSource({required int source});
-
-  /// Sets the volume of the auxiliary DJ cue headphone channel.
-  void setCueVolume({required double volume});
-
   /// Enables or disables direct microphone monitoring to the main speaker output.
   void setDirectMonitoring({required bool enabled, required double volume});
 
@@ -255,6 +246,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Toggles mono downmixing of multi-channel audio.
   void setMono({required bool enabled});
 
+  /// Replaces the active audio output destinations in the multi-sink matrix.
+  void setOutputs({required List<RustAudioOutput> outputs});
+
   /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
   void setPauseOnDeviceChange({required bool enabled});
 
@@ -291,8 +285,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Sets the master output volume level (0.0 to 1.0+).
   void setVolume({required double volume});
 
-  /// Begins recording rendered master output to a WAV file at `path`.
-  Future<void> startRecording({required String path, required int format});
+  /// Begins recording rendered audio to a WAV file at `path` with a selective source.
+  Future<void> startRecording(
+      {required String path, required int format, required int source});
 
   /// Stops playback and resets elapsed position to the beginning.
   void stop();

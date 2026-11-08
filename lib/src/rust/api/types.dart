@@ -9,8 +9,8 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `RustAudioInput`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustAudioInput`, `RustEngineEvent`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Offline acoustic analysis results containing loudness, waveform, and format properties.
 class RustAudioAnalysisResult {
@@ -192,42 +192,35 @@ class RustAudioEffect {
           pinned == other.pinned;
 }
 
-@freezed
-sealed class RustAudioOutput with _$RustAudioOutput {
-  const RustAudioOutput._();
+/// Audio hardware output endpoint configuration.
+class RustAudioOutput {
+  /// Optional specific hardware device identifier. If None, targets default/auto endpoint.
+  final String? deviceId;
 
-  /// Default system speaker output.
-  const factory RustAudioOutput.speaker({
-    /// Whether exclusive hardware access mode is requested.
-    required bool exclusiveMode,
-  }) = RustAudioOutput_Speaker;
+  /// Whether exclusive hardware access mode is requested.
+  final bool exclusiveMode;
 
-  /// Explicit audio output device selected by identifier.
-  const factory RustAudioOutput.device({
-    /// Unique device identifier.
-    required String deviceId,
+  /// Channel routing source (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
+  final int source;
 
-    /// Whether exclusive hardware access mode is requested.
-    required bool exclusiveMode,
-  }) = RustAudioOutput_Device;
+  const RustAudioOutput({
+    this.deviceId,
+    required this.exclusiveMode,
+    required this.source,
+  });
 
-  /// Dedicated headphone cue channel output.
-  const factory RustAudioOutput.cue({
-    /// Target device identifier.
-    required String deviceId,
+  @override
+  int get hashCode =>
+      deviceId.hashCode ^ exclusiveMode.hashCode ^ source.hashCode;
 
-    /// Cue source channel code.
-    required int source,
-  }) = RustAudioOutput_Cue;
-
-  /// File sink capturing rendered master audio to disk.
-  const factory RustAudioOutput.file({
-    /// Target file system path.
-    required String path,
-
-    /// WAV file format code (0: Pcm16, 1: Float32).
-    required int format,
-  }) = RustAudioOutput_File;
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioOutput &&
+          runtimeType == other.runtimeType &&
+          deviceId == other.deviceId &&
+          exclusiveMode == other.exclusiveMode &&
+          source == other.source;
 }
 
 /// Representation of an audio track queued for playback.
@@ -888,15 +881,14 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     bool field0,
   ) = RustPlayerEvent_MetaBytesEnabled;
 
-  /// Cue monitoring volume level.
-  const factory RustPlayerEvent.cueVolume(
-    double field0,
-  ) = RustPlayerEvent_CueVolume;
+  /// Live audio recording status and active source.
+  const factory RustPlayerEvent.recordingState({
+    /// Whether file recording is currently running.
+    required bool isRecording,
 
-  /// Cue monitoring source channel code.
-  const factory RustPlayerEvent.cueSource(
-    int field0,
-  ) = RustPlayerEvent_CueSource;
+    /// Audio signal source captured (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
+    required int source,
+  }) = RustPlayerEvent_RecordingState;
 
   /// Active loop mode policy (0: off, 1: one, 2: all).
   const factory RustPlayerEvent.loopMode(
@@ -943,10 +935,10 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     RustDartReadRequest field0,
   ) = RustPlayerEvent_DartReadRequest;
 
-  /// Active audio output device.
-  const factory RustPlayerEvent.device(
-    RustAudioDevice field0,
-  ) = RustPlayerEvent_Device;
+  /// Active audio output destinations in the multi-sink matrix.
+  const factory RustPlayerEvent.outputs(
+    List<RustAudioOutput> field0,
+  ) = RustPlayerEvent_Outputs;
 
   /// Error notification with message and code.
   const factory RustPlayerEvent.error({

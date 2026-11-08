@@ -8,7 +8,6 @@ import '../equalizer.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
 import '../rust/api/types.dart' as rust_types;
-import 'audio_device.dart';
 import 'audio_source.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
@@ -715,16 +714,6 @@ class PlayerAction<T> {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Switches primary audio playback to [device].
-  Future<void> setDevice(AudioDevice device) async {
-    _player.ensureNotDisposed();
-    if (device.isAuto) {
-      await configureOutputs([const AudioOutput.speaker()]);
-    } else {
-      await configureOutputs([AudioOutput.device(device.id)]);
-    }
-  }
-
   /// Updates playback buffer period size.
   Future<void> setBufferSize(int size) async {
     _player.ensureNotDisposed();
@@ -931,139 +920,55 @@ class PlayerAction<T> {
   // Multi-Destination Output Matrix & Recording
   // =========================================================================
 
-  /// Configures the active output destinations for this player instance.
-  Future<void> configureOutputs(Iterable<AudioOutput> outputs) async {
+  /// Sets the active outputs for this player instance, replacing any existing ones.
+  Future<void> setOutputs(Set<AudioOutput> outputs) async {
     _player.ensureNotDisposed();
     final rustOutputs = outputs.map((out) {
-      switch (out) {
-        case SpeakerAudioOutput(:final exclusiveMode):
-          return rust_types.RustAudioOutput.speaker(
-            exclusiveMode: exclusiveMode,
-          );
-        case DeviceAudioOutput(:final deviceId, :final exclusiveMode):
-          return rust_types.RustAudioOutput.device(
-            deviceId: deviceId,
-            exclusiveMode: exclusiveMode,
-          );
-        case CueAudioOutput(:final deviceId, :final source):
-          return rust_types.RustAudioOutput.cue(
-            deviceId: deviceId,
-            source: source.value,
-          );
-        case FileAudioOutput(:final path, :final format):
-          return rust_types.RustAudioOutput.file(
-            path: path,
-            format: format.index,
-          );
-      }
+      return rust_types.RustAudioOutput(
+        deviceId: out.deviceId,
+        exclusiveMode: out.exclusiveMode,
+        source: out.source.value,
+      );
     }).toList();
-    await _rust.configureOutputs(outputs: rustOutputs);
-    if (_player.isDisposed) return;
-    _player.state.outputs = Set.unmodifiable(outputs);
-    if (!_player.stream.outputsController.isClosed) {
-      _player.stream.outputsController.add(_player.state.outputs);
-    }
-    await Future<void>.delayed(Duration.zero);
+    _rust.setOutputs(outputs: rustOutputs);
   }
-
-  /// Sets the active outputs for this player instance, replacing any existing ones.
-  Future<void> setOutputs(Set<AudioOutput> outputs) =>
-      configureOutputs(outputs);
 
   /// Adds an output destination to this player's active outputs.
   Future<void> addOutput(AudioOutput output) async {
     _player.ensureNotDisposed();
-    switch (output) {
-      case SpeakerAudioOutput(:final exclusiveMode):
-        _rust.addOutput(
-          output: rust_types.RustAudioOutput.speaker(
-            exclusiveMode: exclusiveMode,
-          ),
-        );
-      case DeviceAudioOutput(:final deviceId, :final exclusiveMode):
-        _rust.addOutput(
-          output: rust_types.RustAudioOutput.device(
-            deviceId: deviceId,
-            exclusiveMode: exclusiveMode,
-          ),
-        );
-      case CueAudioOutput(:final deviceId, :final source):
-        _rust.addOutput(
-          output: rust_types.RustAudioOutput.cue(
-            deviceId: deviceId,
-            source: source.value,
-          ),
-        );
-      case FileAudioOutput(:final path, :final format):
-        await startRecording(path, format: format);
-    }
-    final next = Set<AudioOutput>.of(_player.state.outputs)..add(output);
-    _player.state.outputs = Set.unmodifiable(next);
-    _player.stream.outputsController.add(_player.state.outputs);
-    await Future<void>.delayed(Duration.zero);
+    _rust.addOutput(
+      output: rust_types.RustAudioOutput(
+        deviceId: output.deviceId,
+        exclusiveMode: output.exclusiveMode,
+        source: output.source.value,
+      ),
+    );
   }
 
   /// Removes an output destination from this player's active outputs.
   Future<void> removeOutput(AudioOutput output) async {
     _player.ensureNotDisposed();
-    switch (output) {
-      case SpeakerAudioOutput(:final exclusiveMode):
-        _rust.removeOutput(
-          output: rust_types.RustAudioOutput.speaker(
-            exclusiveMode: exclusiveMode,
-          ),
-        );
-      case DeviceAudioOutput(:final deviceId, :final exclusiveMode):
-        _rust.removeOutput(
-          output: rust_types.RustAudioOutput.device(
-            deviceId: deviceId,
-            exclusiveMode: exclusiveMode,
-          ),
-        );
-      case CueAudioOutput(:final deviceId, :final source):
-        _rust.removeOutput(
-          output: rust_types.RustAudioOutput.cue(
-            deviceId: deviceId,
-            source: source.value,
-          ),
-        );
-      case FileAudioOutput():
-        await stopRecording();
-    }
-    final next = Set<AudioOutput>.of(_player.state.outputs)..remove(output);
-    _player.state.outputs = Set.unmodifiable(next);
-    _player.stream.outputsController.add(_player.state.outputs);
-    await Future<void>.delayed(Duration.zero);
+    _rust.removeOutput(
+      output: rust_types.RustAudioOutput(
+        deviceId: output.deviceId,
+        exclusiveMode: output.exclusiveMode,
+        source: output.source.value,
+      ),
+    );
   }
 
-  /// Routes signal to headphone CUE pre-listening output.
-  Future<void> setCueSource(CueSource source) async {
-    _player.ensureNotDisposed();
-    _rust.setCueSource(source: source.value);
-    await Future<void>.delayed(Duration.zero);
-  }
-
-  /// Sets headphone CUE pre-listening volume multiplier (`>= 0.0`).
-  Future<void> setCueVolume(double volume) async {
-    _player.ensureNotDisposed();
-    if (volume.isNaN || volume.isInfinite || volume < 0.0) {
-      throw ArgumentError.value(volume, 'volume', 'Cue volume must be >= 0.0');
-    }
-    _rust.setCueVolume(volume: volume.toDouble());
-    await Future<void>.delayed(Duration.zero);
-  }
-
-  /// Starts live lock-free recording of the master bus to disk.
+  /// Starts live lock-free recording of rendered audio to disk with a selective source.
   Future<void> startRecording(
     String path, {
-    dynamic format = AudioFileFormat.wav,
+    AudioFileFormat format = AudioFileFormat.wav,
+    AudioOutputSource source = AudioOutputSource.all,
   }) async {
     _player.ensureNotDisposed();
-    int formatIndex = 0;
-    if (format is AudioFileFormat) {
-      formatIndex = format.index;
-    }
-    await _rust.startRecording(path: path, format: formatIndex);
+    await _rust.startRecording(
+      path: path,
+      format: format.index,
+      source: source.value,
+    );
     await Future<void>.delayed(Duration.zero);
   }
 

@@ -63,8 +63,6 @@ class PlayerStream<T> {
       StreamController<int>.broadcast();
   final StreamController<Equalizer> equalizerController =
       StreamController<Equalizer>.broadcast();
-  final StreamController<AudioDevice> audioDeviceController =
-      StreamController<AudioDevice>.broadcast();
   final StreamController<Set<AudioOutput>> outputsController =
       StreamController<Set<AudioOutput>>.broadcast();
   final StreamController<Set<AudioInput>> inputsController =
@@ -117,12 +115,10 @@ class PlayerStream<T> {
       StreamController<CrossfadeConfig>.broadcast();
   final StreamController<bool> isRecordingController =
       StreamController<bool>.broadcast();
+  final StreamController<AudioOutputSource?> recordingSourceController =
+      StreamController<AudioOutputSource?>.broadcast();
   final StreamController<Duration> recordedDurationController =
       StreamController<Duration>.broadcast();
-  final StreamController<double> cueVolumeController =
-      StreamController<double>.broadcast();
-  final StreamController<CueSource> cueSourceController =
-      StreamController<CueSource>.broadcast();
   final StreamController<bool> isMicrophoneEnabledController =
       StreamController<bool>.broadcast();
   final StreamController<double> micVolumeController =
@@ -233,9 +229,6 @@ class PlayerStream<T> {
   /// Broadcast stream emitting 10-band equalizer configuration updates.
   Stream<Equalizer> get equalizer => equalizerController.stream;
 
-  /// Broadcast stream emitting active primary audio device changes.
-  Stream<AudioDevice> get audioDevice => audioDeviceController.stream;
-
   /// Reactive broadcast stream emitting this player's active output destinations.
   Stream<Set<AudioOutput>> get outputs => outputsController.stream;
 
@@ -323,14 +316,12 @@ class PlayerStream<T> {
   /// Broadcast stream emitting whether live audio recording to a file sink is actively running.
   Stream<bool> get isRecording => isRecordingController.stream;
 
+  /// Broadcast stream emitting the audio signal source being captured by active recording.
+  Stream<AudioOutputSource?> get recordingSource =>
+      recordingSourceController.stream;
+
   /// Broadcast stream emitting the elapsed duration of active recording.
   Stream<Duration> get recordedDuration => recordedDurationController.stream;
-
-  /// Broadcast stream emitting DJ cue headphone volume updates.
-  Stream<double> get cueVolume => cueVolumeController.stream;
-
-  /// Broadcast stream emitting DJ cue headphone routing source updates.
-  Stream<CueSource> get cueSource => cueSourceController.stream;
 
   /// Broadcast stream emitting whether hardware microphone capture is active.
   Stream<bool> get isMicrophoneEnabled => isMicrophoneEnabledController.stream;
@@ -394,7 +385,6 @@ class PlayerStream<T> {
       bufferSizeController.close(),
       audioBitrateController.close(),
       equalizerController.close(),
-      audioDeviceController.close(),
       outputsController.close(),
       inputsController.close(),
       globalOutputDevicesController.close(),
@@ -421,9 +411,8 @@ class PlayerStream<T> {
       isCrossfadingController.close(),
       crossfadeConfigController.close(),
       isRecordingController.close(),
+      recordingSourceController.close(),
       recordedDurationController.close(),
-      cueVolumeController.close(),
-      cueSourceController.close(),
       isMicrophoneEnabledController.close(),
       micVolumeController.close(),
       isDuckingActiveController.close(),

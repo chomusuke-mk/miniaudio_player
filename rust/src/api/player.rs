@@ -3,7 +3,6 @@
 //! Exposes `RustMiniaudioPlayer` orchestrating music decks, RAM sound effects,
 //! multi-destination output matrix, and microphone capture sidechain.
 
-use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -11,11 +10,9 @@ use std::time::Duration;
 
 use crate::bridge::ffi::{
     map_device_enumerate_capture_devices, map_device_enumerate_devices, map_device_free_devices,
-    map_device_set_device,
 };
 use crate::core::dual_source::AudioSourceCore;
 use crate::core::miniaudio_player::MiniaudioPlayer;
-use crate::core::output_matrix::CueSource;
 use crate::core::recording::WavFormat;
 use crate::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
 use crate::dsp::analysis::{
@@ -300,22 +297,23 @@ impl RustMiniaudioPlayer {
         sample_rate: u32,
         channels: u32,
         period_size: u32,
-        playback_device_id: Option<String>,
+        initial_outputs: Vec<RustAudioOutput>,
     ) -> Result<RustMiniaudioPlayer, String> {
         let device_trigger = Arc::new((Mutex::new(true), Condvar::new()));
-        let player = MiniaudioPlayer::new(
+        let mut player = MiniaudioPlayer::new(
             sample_rate,
             channels,
             period_size,
-            playback_device_id,
             config.max_voices as usize,
             config.max_ram_bytes,
             Some(device_trigger.clone()),
         )?;
         player.output_manager.set_pause_on_device_change(config.pause_on_device_change);
+        let _ = player.output_manager.set_outputs(initial_outputs.clone(), player.device_ctx);
 
         let inner = Arc::new(Mutex::new(player));
         let reporter = EventReporter::new();
+        reporter.emit(RustPlayerEvent::Outputs(initial_outputs));
         let custom_handle = Arc::new(Mutex::new(None));
         let monitor_running = Arc::new(AtomicBool::new(true));
         let metabytes_enabled = Arc::new(AtomicBool::new(false));
@@ -323,6 +321,7 @@ impl RustMiniaudioPlayer {
         let watcher_trigger = device_trigger.clone();
         let watcher_running = monitor_running.clone();
         let watcher_reporter = reporter.clone();
+        let watcher_inner = inner.clone();
 
         // Background device watcher: reacts to hardware changes without polling every X seconds
         // and runs asynchronously to never block real-time audio, telemetry, or UI threads.
@@ -332,6 +331,7 @@ impl RustMiniaudioPlayer {
                 let (lock, cvar) = &*watcher_trigger;
                 let mut last_out_devices: Vec<RustAudioDevice> = Vec::new();
                 let mut last_in_devices: Vec<RustAudioDevice> = Vec::new();
+                let mut last_default_effective_id: Option<String> = None;
 
                 while watcher_running.load(Ordering::Relaxed) {
                     let mut triggered = lock.lock().unwrap();
@@ -350,7 +350,61 @@ impl RustMiniaudioPlayer {
                     if let Ok(out_devs) = Self::get_output_devices_sync() {
                         if out_devs != last_out_devices {
                             last_out_devices = out_devs.clone();
-                            watcher_reporter.emit(RustPlayerEvent::OutputDevices(out_devs));
+                            watcher_reporter.emit(RustPlayerEvent::OutputDevices(out_devs.clone()));
+
+                            // 1. Detect default device physical ID change
+                            let current_default = out_devs.iter().find(|d| d.is_default && !d.is_auto);
+                            let current_default_effective_id = current_default.map(|d| d.effective_id.clone());
+                            let default_changed = last_default_effective_id.is_some()
+                                && current_default_effective_id.is_some()
+                                && last_default_effective_id != current_default_effective_id;
+                            last_default_effective_id = current_default_effective_id;
+
+                            // 2. Check active outputs against current OS device list
+                            let mut ply = watcher_inner.lock().unwrap();
+                            let mut outputs = ply.output_manager.outputs.clone();
+                            let mut outputs_mutated = false;
+                            let mut device_disconnected = false;
+
+                            outputs.retain(|out| {
+                                if let Some(ref dev_id) = out.device_id {
+                                    let exists = out_devs.iter().any(|d| {
+                                        d.id == *dev_id || d.effective_id == *dev_id || d.name == *dev_id
+                                    });
+                                    if !exists {
+                                        device_disconnected = true;
+                                        outputs_mutated = true;
+                                        return false; // Evict disconnected device
+                                    }
+                                }
+                                true
+                            });
+
+                            let has_auto_output = outputs.iter().any(|o| o.device_id.is_none());
+
+                            // 3. If outputs mutated due to disconnection, update hardware and broadcast event
+                            if outputs_mutated {
+                                let dev_ctx = ply.device_ctx;
+                                let _ = ply.output_manager.set_outputs(outputs.clone(), dev_ctx);
+                                watcher_reporter.emit(RustPlayerEvent::Outputs(outputs));
+                            }
+
+                            // 4. Handle pause_on_device_change:
+                            let should_pause = device_disconnected || (has_auto_output && default_changed);
+                            if should_pause {
+                                if ply.output_manager.pause_on_device_change.load(Ordering::Relaxed) {
+                                    let deck = ply.music_manager.active_deck_ref();
+                                    if deck.state.load(Ordering::Relaxed) == crate::core::dual_source::STATE_PLAYING {
+                                        let _ = ply.music_manager.pause();
+                                        ply.music_manager.inner.phase.store(
+                                            crate::core::dual_source::ENGINE_PHASE_PAUSED,
+                                            Ordering::Release,
+                                        );
+                                        watcher_reporter.emit(RustPlayerEvent::PlaybackState(2)); // Paused
+                                    }
+                                }
+                            }
+                            drop(ply);
                         }
                     }
                     if let Ok(in_devs) = Self::get_input_devices_sync() {
@@ -630,6 +684,9 @@ impl RustMiniaudioPlayer {
         sink: StreamSink<RustPlayerEvent>,
     ) -> Result<(), String> {
         self.reporter.set_sink(sink);
+
+        let current_outputs = self.inner.lock().unwrap().output_manager.outputs.clone();
+        self.reporter.emit(RustPlayerEvent::Outputs(current_outputs));
 
         // Asynchronously notify background device watcher to deliver initial device snapshot
         let (lock, cvar) = &*self.device_trigger;
@@ -1357,102 +1414,81 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     // Multiple Outputs & Live Recording Methods
     // =========================================================================
 
-    /// Adds or routes an audio output destination to the output matrix.
+    /// Replaces the active audio output destinations in the multi-sink matrix.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn add_output(&self, output: RustAudioOutput) -> Result<(), String> {
+    pub fn set_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
-        let res = match output {
-            RustAudioOutput::Speaker { .. } => Ok(()),
-            RustAudioOutput::Device { device_id, .. } => {
-                let c_dev = CString::new(device_id).map_err(|e| e.to_string())?;
-                let r = unsafe { map_device_set_device(ply.device_ctx, c_dev.as_ptr()) };
-                if r != 0 {
-                    Err(format!("Setting device failed with code {}", r))
-                } else {
-                    Ok(())
-                }
-            }
-            RustAudioOutput::Cue { device_id, source } => {
-                ply.output_manager.enable_cue(Some(&device_id))?;
-                ply.output_manager.set_cue_source(CueSource::from(source));
-                Ok(())
-            }
-            RustAudioOutput::File { path, format } => {
-                let fmt = match format {
-                    1 => WavFormat::Float32,
-                    _ => WavFormat::Pcm16,
-                };
-                let r = ply.output_manager.start_recording(&path, fmt);
-                if r.is_ok() {
-                    self.emit_event(RustPlayerEvent::IsRecording(true));
-                }
-                r
-            }
-        };
+        let dev_ctx = ply.device_ctx;
+        ply.output_manager.set_outputs(outputs.clone(), dev_ctx)?;
         drop(ply);
+
+        self.emit_event(RustPlayerEvent::Outputs(outputs));
+
         let (lock, cvar) = &*self.device_trigger;
         if let Ok(mut flag) = lock.lock() {
             *flag = true;
             cvar.notify_one();
-        }
-        res
-    }
-
-    /// Removes an audio output destination from the output matrix.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn remove_output(&self, output: RustAudioOutput) {
-        let mut ply = self.inner.lock().unwrap();
-        match output {
-            RustAudioOutput::Speaker { .. } => {}
-            RustAudioOutput::Device { .. } => {
-                let _ = unsafe { map_device_set_device(ply.device_ctx, std::ptr::null()) };
-            }
-            RustAudioOutput::Cue { .. } => {
-                ply.output_manager.disable_cue();
-            }
-            RustAudioOutput::File { .. } => {
-                let _ = ply.output_manager.stop_recording();
-                self.emit_event(RustPlayerEvent::IsRecording(false));
-            }
-        }
-        drop(ply);
-        let (lock, cvar) = &*self.device_trigger;
-        if let Ok(mut flag) = lock.lock() {
-            *flag = true;
-            cvar.notify_one();
-        }
-    }
-
-    /// Configures the complete set of audio output destinations.
-    pub fn configure_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
-        for out in outputs {
-            self.add_output(out)?;
         }
         Ok(())
     }
 
-    /// Selects the audio source routed to the auxiliary DJ cue monitoring channel.
+    /// Adds or routes an audio output destination to the output matrix.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_cue_source(&self, source: i32) {
-        self.inner.lock().unwrap().output_manager.set_cue_source(CueSource::from(source));
-        self.emit_event(RustPlayerEvent::CueSource(source));
+    pub fn add_output(&self, output: RustAudioOutput) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        let mut current = ply.output_manager.outputs.clone();
+        if !current.contains(&output) {
+            current.push(output);
+            let dev_ctx = ply.device_ctx;
+            ply.output_manager.set_outputs(current.clone(), dev_ctx)?;
+            drop(ply);
+
+            self.emit_event(RustPlayerEvent::Outputs(current));
+
+            let (lock, cvar) = &*self.device_trigger;
+            if let Ok(mut flag) = lock.lock() {
+                *flag = true;
+                cvar.notify_one();
+            }
+        }
+        Ok(())
     }
 
-    /// Sets the volume of the auxiliary DJ cue headphone channel.
+    /// Removes an audio output destination from the output matrix.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_cue_volume(&self, volume: f32) {
-        self.inner.lock().unwrap().output_manager.set_cue_volume(volume);
-        self.emit_event(RustPlayerEvent::CueVolume(volume));
+    pub fn remove_output(&self, output: RustAudioOutput) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        let mut current = ply.output_manager.outputs.clone();
+        if let Some(pos) = current.iter().position(|x| *x == output) {
+            current.remove(pos);
+            let dev_ctx = ply.device_ctx;
+            ply.output_manager.set_outputs(current.clone(), dev_ctx)?;
+            drop(ply);
+
+            self.emit_event(RustPlayerEvent::Outputs(current));
+
+            let (lock, cvar) = &*self.device_trigger;
+            if let Ok(mut flag) = lock.lock() {
+                *flag = true;
+                cvar.notify_one();
+            }
+        }
+        Ok(())
     }
 
-    /// Begins recording rendered master output to a WAV file at `path`.
-    pub fn start_recording(&self, path: String, format: i32) -> Result<(), String> {
+    /// Begins recording rendered audio to a WAV file at `path` with a selective source.
+    pub fn start_recording(&self, path: String, format: i32, source: i32) -> Result<(), String> {
         let fmt = match format {
             1 => WavFormat::Float32,
             _ => WavFormat::Pcm16,
         };
-        self.inner.lock().unwrap().output_manager.start_recording(&path, fmt)?;
+        let src = AudioOutputSource::from(source);
+        self.inner.lock().unwrap().output_manager.start_recording(&path, fmt, src)?;
         self.emit_event(RustPlayerEvent::IsRecording(true));
+        self.emit_event(RustPlayerEvent::RecordingState {
+            is_recording: true,
+            source,
+        });
         Ok(())
     }
 
@@ -1462,6 +1498,10 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let (path, dur_ms, bytes_written, sample_count) = ply.output_manager.stop_recording()?;
         drop(ply);
         self.emit_event(RustPlayerEvent::IsRecording(false));
+        self.emit_event(RustPlayerEvent::RecordingState {
+            is_recording: false,
+            source: 0,
+        });
 
         Ok(RustRecordingResult {
             path,
@@ -1547,7 +1587,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_pause_on_device_change(&self, enabled: bool) {
         let ply = self.inner.lock().unwrap();
-        let prev = ply.output_manager.matrix.pause_on_device_change.load(std::sync::atomic::Ordering::Relaxed);
+        let prev = ply.output_manager.pause_on_device_change.load(std::sync::atomic::Ordering::Relaxed);
         if prev != enabled {
             ply.output_manager.set_pause_on_device_change(enabled);
             self.emit_event(RustPlayerEvent::PauseOnDeviceChange(enabled));

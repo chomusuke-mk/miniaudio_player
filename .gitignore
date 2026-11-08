@@ -31,8 +31,9 @@ migrate_working_dir/
 /coverage/
 /temp/
 /.agents/
+
 # Test audio fixtures (exclude binary audio files, track only MANIFEST.md)
 /test/fixtures/*
 !/test/fixtures/MANIFEST.md
-!/docs/
-!/docs/**
+/docs/
+!/docs/ARCHITECTURE.md

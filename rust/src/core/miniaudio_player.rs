@@ -69,7 +69,7 @@ pub unsafe extern "C" fn miniaudio_player_notif_trampoline(ptr: *mut c_void, not
     if notif == 1 || notif == 2 {
         if !r.player_ptr.is_null() {
             let ply = &mut *r.player_ptr;
-            if ply.output_manager.matrix.pause_on_device_change.load(Ordering::Relaxed) {
+            if ply.output_manager.pause_on_device_change.load(Ordering::Relaxed) {
                 let deck = ply.music_manager.active_deck_ref();
                 if deck.state.load(Ordering::Relaxed) == crate::core::dual_source::STATE_PLAYING {
                     let _ = ply.music_manager.pause();
@@ -138,9 +138,11 @@ impl MiniaudioPlayerRenderer {
         // 7. Master True-Peak Brickwall Limiter & Soft-Knee Saturation Headroom
         ply.master_limiter.process_frames(&mut self.super_flow[..sample_count]);
 
-        // 8. Output Dispatch to all active sinks (Master speakers, CUE DJ, WAV recorder, FFT visualizer)
+        // 8. Symmetrical Output Dispatch to all active sinks
         ply.output_manager.dispatch(
             &self.super_flow[..sample_count],
+            &self.scratch_music[..sample_count],
+            ply.music_manager.active_deck_buffer(),
             ply.music_manager.standby_buffer(),
             output,
             frame_count,
@@ -201,7 +203,6 @@ impl MiniaudioPlayer {
         sample_rate: u32,
         channels: u32,
         period_size: u32,
-        playback_device_id: Option<String>,
         max_voices: usize,
         max_ram_bytes: Option<usize>,
         device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
@@ -256,19 +257,13 @@ impl MiniaudioPlayer {
         let renderer_ptr = Box::into_raw(renderer);
         player.renderer_ptr = renderer_ptr;
 
-        let c_dev = match playback_device_id {
-            Some(s) if !s.is_empty() => Some(std::ffi::CString::new(s).map_err(|e| e.to_string())?),
-            _ => None,
-        };
-        let dev_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
-
         let mut dev_res = 0;
         let device_ctx = unsafe {
             map_device_create(
                 sr,
                 ch as u32,
                 period,
-                dev_ptr,
+                std::ptr::null(),
                 renderer_ptr as *mut c_void,
                 &mut dev_res,
             )

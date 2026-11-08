@@ -14,542 +14,6 @@ part of 'types.dart';
 T _$identity<T>(T value) => value;
 
 /// @nodoc
-mixin _$RustAudioOutput {
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType && other is RustAudioOutput);
-  }
-
-  @override
-  int get hashCode => runtimeType.hashCode;
-
-  @override
-  String toString() {
-    return 'RustAudioOutput()';
-  }
-}
-
-/// @nodoc
-class $RustAudioOutputCopyWith<$Res> {
-  $RustAudioOutputCopyWith(
-      RustAudioOutput _, $Res Function(RustAudioOutput) __);
-}
-
-/// Adds pattern-matching-related methods to [RustAudioOutput].
-extension RustAudioOutputPatterns on RustAudioOutput {
-  /// A variant of `map` that fallback to returning `orElse`.
-  ///
-  /// It is equivalent to doing:
-  /// ```dart
-  /// switch (sealedClass) {
-  ///   case final Subclass value:
-  ///     return ...;
-  ///   case _:
-  ///     return orElse();
-  /// }
-  /// ```
-
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(RustAudioOutput_Speaker value)? speaker,
-    TResult Function(RustAudioOutput_Device value)? device,
-    TResult Function(RustAudioOutput_Cue value)? cue,
-    TResult Function(RustAudioOutput_File value)? file,
-    required TResult orElse(),
-  }) {
-    final _that = this;
-    switch (_that) {
-      case RustAudioOutput_Speaker() when speaker != null:
-        return speaker(_that);
-      case RustAudioOutput_Device() when device != null:
-        return device(_that);
-      case RustAudioOutput_Cue() when cue != null:
-        return cue(_that);
-      case RustAudioOutput_File() when file != null:
-        return file(_that);
-      case _:
-        return orElse();
-    }
-  }
-
-  /// A `switch`-like method, using callbacks.
-  ///
-  /// Callbacks receives the raw object, upcasted.
-  /// It is equivalent to doing:
-  /// ```dart
-  /// switch (sealedClass) {
-  ///   case final Subclass value:
-  ///     return ...;
-  ///   case final Subclass2 value:
-  ///     return ...;
-  /// }
-  /// ```
-
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(RustAudioOutput_Speaker value) speaker,
-    required TResult Function(RustAudioOutput_Device value) device,
-    required TResult Function(RustAudioOutput_Cue value) cue,
-    required TResult Function(RustAudioOutput_File value) file,
-  }) {
-    final _that = this;
-    switch (_that) {
-      case RustAudioOutput_Speaker():
-        return speaker(_that);
-      case RustAudioOutput_Device():
-        return device(_that);
-      case RustAudioOutput_Cue():
-        return cue(_that);
-      case RustAudioOutput_File():
-        return file(_that);
-    }
-  }
-
-  /// A variant of `map` that fallback to returning `null`.
-  ///
-  /// It is equivalent to doing:
-  /// ```dart
-  /// switch (sealedClass) {
-  ///   case final Subclass value:
-  ///     return ...;
-  ///   case _:
-  ///     return null;
-  /// }
-  /// ```
-
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(RustAudioOutput_Speaker value)? speaker,
-    TResult? Function(RustAudioOutput_Device value)? device,
-    TResult? Function(RustAudioOutput_Cue value)? cue,
-    TResult? Function(RustAudioOutput_File value)? file,
-  }) {
-    final _that = this;
-    switch (_that) {
-      case RustAudioOutput_Speaker() when speaker != null:
-        return speaker(_that);
-      case RustAudioOutput_Device() when device != null:
-        return device(_that);
-      case RustAudioOutput_Cue() when cue != null:
-        return cue(_that);
-      case RustAudioOutput_File() when file != null:
-        return file(_that);
-      case _:
-        return null;
-    }
-  }
-
-  /// A variant of `when` that fallback to an `orElse` callback.
-  ///
-  /// It is equivalent to doing:
-  /// ```dart
-  /// switch (sealedClass) {
-  ///   case Subclass(:final field):
-  ///     return ...;
-  ///   case _:
-  ///     return orElse();
-  /// }
-  /// ```
-
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(bool exclusiveMode)? speaker,
-    TResult Function(String deviceId, bool exclusiveMode)? device,
-    TResult Function(String deviceId, int source)? cue,
-    TResult Function(String path, int format)? file,
-    required TResult orElse(),
-  }) {
-    final _that = this;
-    switch (_that) {
-      case RustAudioOutput_Speaker() when speaker != null:
-        return speaker(_that.exclusiveMode);
-      case RustAudioOutput_Device() when device != null:
-        return device(_that.deviceId, _that.exclusiveMode);
-      case RustAudioOutput_Cue() when cue != null:
-        return cue(_that.deviceId, _that.source);
-      case RustAudioOutput_File() when file != null:
-        return file(_that.path, _that.format);
-      case _:
-        return orElse();
-    }
-  }
-
-  /// A `switch`-like method, using callbacks.
-  ///
-  /// As opposed to `map`, this offers destructuring.
-  /// It is equivalent to doing:
-  /// ```dart
-  /// switch (sealedClass) {
-  ///   case Subclass(:final field):
-  ///     return ...;
-  ///   case Subclass2(:final field2):
-  ///     return ...;
-  /// }
-  /// ```
-
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(bool exclusiveMode) speaker,
-    required TResult Function(String deviceId, bool exclusiveMode) device,
-    required TResult Function(String deviceId, int source) cue,
-    required TResult Function(String path, int format) file,
-  }) {
-    final _that = this;
-    switch (_that) {
-      case RustAudioOutput_Speaker():
-        return speaker(_that.exclusiveMode);
-      case RustAudioOutput_Device():
-        return device(_that.deviceId, _that.exclusiveMode);
-      case RustAudioOutput_Cue():
-        return cue(_that.deviceId, _that.source);
-      case RustAudioOutput_File():
-        return file(_that.path, _that.format);
-    }
-  }
-
-  /// A variant of `when` that fallback to returning `null`
-  ///
-  /// It is equivalent to doing:
-  /// ```dart
-  /// switch (sealedClass) {
-  ///   case Subclass(:final field):
-  ///     return ...;
-  ///   case _:
-  ///     return null;
-  /// }
-  /// ```
-
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(bool exclusiveMode)? speaker,
-    TResult? Function(String deviceId, bool exclusiveMode)? device,
-    TResult? Function(String deviceId, int source)? cue,
-    TResult? Function(String path, int format)? file,
-  }) {
-    final _that = this;
-    switch (_that) {
-      case RustAudioOutput_Speaker() when speaker != null:
-        return speaker(_that.exclusiveMode);
-      case RustAudioOutput_Device() when device != null:
-        return device(_that.deviceId, _that.exclusiveMode);
-      case RustAudioOutput_Cue() when cue != null:
-        return cue(_that.deviceId, _that.source);
-      case RustAudioOutput_File() when file != null:
-        return file(_that.path, _that.format);
-      case _:
-        return null;
-    }
-  }
-}
-
-/// @nodoc
-
-class RustAudioOutput_Speaker extends RustAudioOutput {
-  const RustAudioOutput_Speaker({required this.exclusiveMode}) : super._();
-
-  /// Whether exclusive hardware access mode is requested.
-  final bool exclusiveMode;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustAudioOutput_SpeakerCopyWith<RustAudioOutput_Speaker> get copyWith =>
-      _$RustAudioOutput_SpeakerCopyWithImpl<RustAudioOutput_Speaker>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustAudioOutput_Speaker &&
-            (identical(other.exclusiveMode, exclusiveMode) ||
-                other.exclusiveMode == exclusiveMode));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, exclusiveMode);
-  }
-
-  @override
-  String toString() {
-    return 'RustAudioOutput.speaker(exclusiveMode: $exclusiveMode)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustAudioOutput_SpeakerCopyWith<$Res>
-    implements $RustAudioOutputCopyWith<$Res> {
-  factory $RustAudioOutput_SpeakerCopyWith(RustAudioOutput_Speaker value,
-          $Res Function(RustAudioOutput_Speaker) _then) =
-      _$RustAudioOutput_SpeakerCopyWithImpl;
-  @useResult
-  $Res call({bool exclusiveMode});
-}
-
-/// @nodoc
-class _$RustAudioOutput_SpeakerCopyWithImpl<$Res>
-    implements $RustAudioOutput_SpeakerCopyWith<$Res> {
-  _$RustAudioOutput_SpeakerCopyWithImpl(this._self, this._then);
-
-  final RustAudioOutput_Speaker _self;
-  final $Res Function(RustAudioOutput_Speaker) _then;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? exclusiveMode = null,
-  }) {
-    return _then(RustAudioOutput_Speaker(
-      exclusiveMode: null == exclusiveMode
-          ? _self.exclusiveMode
-          : exclusiveMode // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustAudioOutput_Device extends RustAudioOutput {
-  const RustAudioOutput_Device(
-      {required this.deviceId, required this.exclusiveMode})
-      : super._();
-
-  /// Unique device identifier.
-  final String deviceId;
-
-  /// Whether exclusive hardware access mode is requested.
-  final bool exclusiveMode;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustAudioOutput_DeviceCopyWith<RustAudioOutput_Device> get copyWith =>
-      _$RustAudioOutput_DeviceCopyWithImpl<RustAudioOutput_Device>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustAudioOutput_Device &&
-            (identical(other.deviceId, deviceId) ||
-                other.deviceId == deviceId) &&
-            (identical(other.exclusiveMode, exclusiveMode) ||
-                other.exclusiveMode == exclusiveMode));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, deviceId, exclusiveMode);
-  }
-
-  @override
-  String toString() {
-    return 'RustAudioOutput.device(deviceId: $deviceId, exclusiveMode: $exclusiveMode)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustAudioOutput_DeviceCopyWith<$Res>
-    implements $RustAudioOutputCopyWith<$Res> {
-  factory $RustAudioOutput_DeviceCopyWith(RustAudioOutput_Device value,
-          $Res Function(RustAudioOutput_Device) _then) =
-      _$RustAudioOutput_DeviceCopyWithImpl;
-  @useResult
-  $Res call({String deviceId, bool exclusiveMode});
-}
-
-/// @nodoc
-class _$RustAudioOutput_DeviceCopyWithImpl<$Res>
-    implements $RustAudioOutput_DeviceCopyWith<$Res> {
-  _$RustAudioOutput_DeviceCopyWithImpl(this._self, this._then);
-
-  final RustAudioOutput_Device _self;
-  final $Res Function(RustAudioOutput_Device) _then;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? deviceId = null,
-    Object? exclusiveMode = null,
-  }) {
-    return _then(RustAudioOutput_Device(
-      deviceId: null == deviceId
-          ? _self.deviceId
-          : deviceId // ignore: cast_nullable_to_non_nullable
-              as String,
-      exclusiveMode: null == exclusiveMode
-          ? _self.exclusiveMode
-          : exclusiveMode // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustAudioOutput_Cue extends RustAudioOutput {
-  const RustAudioOutput_Cue({required this.deviceId, required this.source})
-      : super._();
-
-  /// Target device identifier.
-  final String deviceId;
-
-  /// Cue source channel code.
-  final int source;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustAudioOutput_CueCopyWith<RustAudioOutput_Cue> get copyWith =>
-      _$RustAudioOutput_CueCopyWithImpl<RustAudioOutput_Cue>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustAudioOutput_Cue &&
-            (identical(other.deviceId, deviceId) ||
-                other.deviceId == deviceId) &&
-            (identical(other.source, source) || other.source == source));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, deviceId, source);
-  }
-
-  @override
-  String toString() {
-    return 'RustAudioOutput.cue(deviceId: $deviceId, source: $source)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustAudioOutput_CueCopyWith<$Res>
-    implements $RustAudioOutputCopyWith<$Res> {
-  factory $RustAudioOutput_CueCopyWith(
-          RustAudioOutput_Cue value, $Res Function(RustAudioOutput_Cue) _then) =
-      _$RustAudioOutput_CueCopyWithImpl;
-  @useResult
-  $Res call({String deviceId, int source});
-}
-
-/// @nodoc
-class _$RustAudioOutput_CueCopyWithImpl<$Res>
-    implements $RustAudioOutput_CueCopyWith<$Res> {
-  _$RustAudioOutput_CueCopyWithImpl(this._self, this._then);
-
-  final RustAudioOutput_Cue _self;
-  final $Res Function(RustAudioOutput_Cue) _then;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? deviceId = null,
-    Object? source = null,
-  }) {
-    return _then(RustAudioOutput_Cue(
-      deviceId: null == deviceId
-          ? _self.deviceId
-          : deviceId // ignore: cast_nullable_to_non_nullable
-              as String,
-      source: null == source
-          ? _self.source
-          : source // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustAudioOutput_File extends RustAudioOutput {
-  const RustAudioOutput_File({required this.path, required this.format})
-      : super._();
-
-  /// Target file system path.
-  final String path;
-
-  /// WAV file format code (0: Pcm16, 1: Float32).
-  final int format;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustAudioOutput_FileCopyWith<RustAudioOutput_File> get copyWith =>
-      _$RustAudioOutput_FileCopyWithImpl<RustAudioOutput_File>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustAudioOutput_File &&
-            (identical(other.path, path) || other.path == path) &&
-            (identical(other.format, format) || other.format == format));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, path, format);
-  }
-
-  @override
-  String toString() {
-    return 'RustAudioOutput.file(path: $path, format: $format)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustAudioOutput_FileCopyWith<$Res>
-    implements $RustAudioOutputCopyWith<$Res> {
-  factory $RustAudioOutput_FileCopyWith(RustAudioOutput_File value,
-          $Res Function(RustAudioOutput_File) _then) =
-      _$RustAudioOutput_FileCopyWithImpl;
-  @useResult
-  $Res call({String path, int format});
-}
-
-/// @nodoc
-class _$RustAudioOutput_FileCopyWithImpl<$Res>
-    implements $RustAudioOutput_FileCopyWith<$Res> {
-  _$RustAudioOutput_FileCopyWithImpl(this._self, this._then);
-
-  final RustAudioOutput_File _self;
-  final $Res Function(RustAudioOutput_File) _then;
-
-  /// Create a copy of RustAudioOutput
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? path = null,
-    Object? format = null,
-  }) {
-    return _then(RustAudioOutput_File(
-      path: null == path
-          ? _self.path
-          : path // ignore: cast_nullable_to_non_nullable
-              as String,
-      format: null == format
-          ? _self.format
-          : format // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
 mixin _$RustPlayerEvent {
   @override
   bool operator ==(Object other) {
@@ -628,8 +92,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_ActiveVoices value)? activeVoices,
     TResult Function(RustPlayerEvent_MetaBytes value)? metaBytes,
     TResult Function(RustPlayerEvent_MetaBytesEnabled value)? metaBytesEnabled,
-    TResult Function(RustPlayerEvent_CueVolume value)? cueVolume,
-    TResult Function(RustPlayerEvent_CueSource value)? cueSource,
+    TResult Function(RustPlayerEvent_RecordingState value)? recordingState,
     TResult Function(RustPlayerEvent_LoopMode value)? loopMode,
     TResult Function(RustPlayerEvent_IsShuffled value)? isShuffled,
     TResult Function(RustPlayerEvent_PauseOnDeviceChange value)?
@@ -642,7 +105,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
-    TResult Function(RustPlayerEvent_Device value)? device,
+    TResult Function(RustPlayerEvent_Outputs value)? outputs,
     TResult Function(RustPlayerEvent_Error value)? error,
     required TResult orElse(),
   }) {
@@ -726,10 +189,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return metaBytes(_that);
       case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
         return metaBytesEnabled(_that);
-      case RustPlayerEvent_CueVolume() when cueVolume != null:
-        return cueVolume(_that);
-      case RustPlayerEvent_CueSource() when cueSource != null:
-        return cueSource(_that);
+      case RustPlayerEvent_RecordingState() when recordingState != null:
+        return recordingState(_that);
       case RustPlayerEvent_LoopMode() when loopMode != null:
         return loopMode(_that);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
@@ -750,8 +211,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that);
+      case RustPlayerEvent_Outputs() when outputs != null:
+        return outputs(_that);
       case RustPlayerEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -823,8 +284,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_MetaBytes value) metaBytes,
     required TResult Function(RustPlayerEvent_MetaBytesEnabled value)
         metaBytesEnabled,
-    required TResult Function(RustPlayerEvent_CueVolume value) cueVolume,
-    required TResult Function(RustPlayerEvent_CueSource value) cueSource,
+    required TResult Function(RustPlayerEvent_RecordingState value)
+        recordingState,
     required TResult Function(RustPlayerEvent_LoopMode value) loopMode,
     required TResult Function(RustPlayerEvent_IsShuffled value) isShuffled,
     required TResult Function(RustPlayerEvent_PauseOnDeviceChange value)
@@ -839,7 +300,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_InputDevices value) inputDevices,
     required TResult Function(RustPlayerEvent_DartReadRequest value)
         dartReadRequest,
-    required TResult Function(RustPlayerEvent_Device value) device,
+    required TResult Function(RustPlayerEvent_Outputs value) outputs,
     required TResult Function(RustPlayerEvent_Error value) error,
   }) {
     final _that = this;
@@ -922,10 +383,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return metaBytes(_that);
       case RustPlayerEvent_MetaBytesEnabled():
         return metaBytesEnabled(_that);
-      case RustPlayerEvent_CueVolume():
-        return cueVolume(_that);
-      case RustPlayerEvent_CueSource():
-        return cueSource(_that);
+      case RustPlayerEvent_RecordingState():
+        return recordingState(_that);
       case RustPlayerEvent_LoopMode():
         return loopMode(_that);
       case RustPlayerEvent_IsShuffled():
@@ -944,8 +403,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that);
-      case RustPlayerEvent_Device():
-        return device(_that);
+      case RustPlayerEvent_Outputs():
+        return outputs(_that);
       case RustPlayerEvent_Error():
         return error(_that);
     }
@@ -1005,8 +464,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_ActiveVoices value)? activeVoices,
     TResult? Function(RustPlayerEvent_MetaBytes value)? metaBytes,
     TResult? Function(RustPlayerEvent_MetaBytesEnabled value)? metaBytesEnabled,
-    TResult? Function(RustPlayerEvent_CueVolume value)? cueVolume,
-    TResult? Function(RustPlayerEvent_CueSource value)? cueSource,
+    TResult? Function(RustPlayerEvent_RecordingState value)? recordingState,
     TResult? Function(RustPlayerEvent_LoopMode value)? loopMode,
     TResult? Function(RustPlayerEvent_IsShuffled value)? isShuffled,
     TResult? Function(RustPlayerEvent_PauseOnDeviceChange value)?
@@ -1019,7 +477,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult? Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult? Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
-    TResult? Function(RustPlayerEvent_Device value)? device,
+    TResult? Function(RustPlayerEvent_Outputs value)? outputs,
     TResult? Function(RustPlayerEvent_Error value)? error,
   }) {
     final _that = this;
@@ -1102,10 +560,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return metaBytes(_that);
       case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
         return metaBytesEnabled(_that);
-      case RustPlayerEvent_CueVolume() when cueVolume != null:
-        return cueVolume(_that);
-      case RustPlayerEvent_CueSource() when cueSource != null:
-        return cueSource(_that);
+      case RustPlayerEvent_RecordingState() when recordingState != null:
+        return recordingState(_that);
       case RustPlayerEvent_LoopMode() when loopMode != null:
         return loopMode(_that);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
@@ -1126,8 +582,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that);
+      case RustPlayerEvent_Outputs() when outputs != null:
+        return outputs(_that);
       case RustPlayerEvent_Error() when error != null:
         return error(_that);
       case _:
@@ -1188,8 +644,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(int field0)? activeVoices,
     TResult Function(Uint8List field0)? metaBytes,
     TResult Function(bool field0)? metaBytesEnabled,
-    TResult Function(double field0)? cueVolume,
-    TResult Function(int field0)? cueSource,
+    TResult Function(bool isRecording, int source)? recordingState,
     TResult Function(int field0)? loopMode,
     TResult Function(bool field0)? isShuffled,
     TResult Function(bool field0)? pauseOnDeviceChange,
@@ -1199,7 +654,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(List<RustAudioDevice> field0)? outputDevices,
     TResult Function(List<RustAudioDevice> field0)? inputDevices,
     TResult Function(RustDartReadRequest field0)? dartReadRequest,
-    TResult Function(RustAudioDevice field0)? device,
+    TResult Function(List<RustAudioOutput> field0)? outputs,
     TResult Function(String message, int code)? error,
     required TResult orElse(),
   }) {
@@ -1283,10 +738,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return metaBytes(_that.field0);
       case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
         return metaBytesEnabled(_that.field0);
-      case RustPlayerEvent_CueVolume() when cueVolume != null:
-        return cueVolume(_that.field0);
-      case RustPlayerEvent_CueSource() when cueSource != null:
-        return cueSource(_that.field0);
+      case RustPlayerEvent_RecordingState() when recordingState != null:
+        return recordingState(_that.isRecording, _that.source);
       case RustPlayerEvent_LoopMode() when loopMode != null:
         return loopMode(_that.field0);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
@@ -1307,8 +760,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that.field0);
+      case RustPlayerEvent_Outputs() when outputs != null:
+        return outputs(_that.field0);
       case RustPlayerEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -1371,8 +824,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(int field0) activeVoices,
     required TResult Function(Uint8List field0) metaBytes,
     required TResult Function(bool field0) metaBytesEnabled,
-    required TResult Function(double field0) cueVolume,
-    required TResult Function(int field0) cueSource,
+    required TResult Function(bool isRecording, int source) recordingState,
     required TResult Function(int field0) loopMode,
     required TResult Function(bool field0) isShuffled,
     required TResult Function(bool field0) pauseOnDeviceChange,
@@ -1382,7 +834,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(List<RustAudioDevice> field0) outputDevices,
     required TResult Function(List<RustAudioDevice> field0) inputDevices,
     required TResult Function(RustDartReadRequest field0) dartReadRequest,
-    required TResult Function(RustAudioDevice field0) device,
+    required TResult Function(List<RustAudioOutput> field0) outputs,
     required TResult Function(String message, int code) error,
   }) {
     final _that = this;
@@ -1465,10 +917,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return metaBytes(_that.field0);
       case RustPlayerEvent_MetaBytesEnabled():
         return metaBytesEnabled(_that.field0);
-      case RustPlayerEvent_CueVolume():
-        return cueVolume(_that.field0);
-      case RustPlayerEvent_CueSource():
-        return cueSource(_that.field0);
+      case RustPlayerEvent_RecordingState():
+        return recordingState(_that.isRecording, _that.source);
       case RustPlayerEvent_LoopMode():
         return loopMode(_that.field0);
       case RustPlayerEvent_IsShuffled():
@@ -1487,8 +937,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that.field0);
-      case RustPlayerEvent_Device():
-        return device(_that.field0);
+      case RustPlayerEvent_Outputs():
+        return outputs(_that.field0);
       case RustPlayerEvent_Error():
         return error(_that.message, _that.code);
     }
@@ -1547,8 +997,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(int field0)? activeVoices,
     TResult? Function(Uint8List field0)? metaBytes,
     TResult? Function(bool field0)? metaBytesEnabled,
-    TResult? Function(double field0)? cueVolume,
-    TResult? Function(int field0)? cueSource,
+    TResult? Function(bool isRecording, int source)? recordingState,
     TResult? Function(int field0)? loopMode,
     TResult? Function(bool field0)? isShuffled,
     TResult? Function(bool field0)? pauseOnDeviceChange,
@@ -1558,7 +1007,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(List<RustAudioDevice> field0)? outputDevices,
     TResult? Function(List<RustAudioDevice> field0)? inputDevices,
     TResult? Function(RustDartReadRequest field0)? dartReadRequest,
-    TResult? Function(RustAudioDevice field0)? device,
+    TResult? Function(List<RustAudioOutput> field0)? outputs,
     TResult? Function(String message, int code)? error,
   }) {
     final _that = this;
@@ -1641,10 +1090,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return metaBytes(_that.field0);
       case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
         return metaBytesEnabled(_that.field0);
-      case RustPlayerEvent_CueVolume() when cueVolume != null:
-        return cueVolume(_that.field0);
-      case RustPlayerEvent_CueSource() when cueSource != null:
-        return cueSource(_that.field0);
+      case RustPlayerEvent_RecordingState() when recordingState != null:
+        return recordingState(_that.isRecording, _that.source);
       case RustPlayerEvent_LoopMode() when loopMode != null:
         return loopMode(_that.field0);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
@@ -1665,8 +1112,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
-      case RustPlayerEvent_Device() when device != null:
-        return device(_that.field0);
+      case RustPlayerEvent_Outputs() when outputs != null:
+        return outputs(_that.field0);
       case RustPlayerEvent_Error() when error != null:
         return error(_that.message, _that.code);
       case _:
@@ -4347,133 +3794,80 @@ class _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustPlayerEvent_CueVolume extends RustPlayerEvent {
-  const RustPlayerEvent_CueVolume(this.field0) : super._();
+class RustPlayerEvent_RecordingState extends RustPlayerEvent {
+  const RustPlayerEvent_RecordingState(
+      {required this.isRecording, required this.source})
+      : super._();
 
-  final double field0;
+  /// Whether file recording is currently running.
+  final bool isRecording;
 
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_CueVolumeCopyWith<RustPlayerEvent_CueVolume> get copyWith =>
-      _$RustPlayerEvent_CueVolumeCopyWithImpl<RustPlayerEvent_CueVolume>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_CueVolume &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.cueVolume(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_CueVolumeCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_CueVolumeCopyWith(RustPlayerEvent_CueVolume value,
-          $Res Function(RustPlayerEvent_CueVolume) _then) =
-      _$RustPlayerEvent_CueVolumeCopyWithImpl;
-  @useResult
-  $Res call({double field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_CueVolumeCopyWithImpl<$Res>
-    implements $RustPlayerEvent_CueVolumeCopyWith<$Res> {
-  _$RustPlayerEvent_CueVolumeCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_CueVolume _self;
-  final $Res Function(RustPlayerEvent_CueVolume) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_CueVolume(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_CueSource extends RustPlayerEvent {
-  const RustPlayerEvent_CueSource(this.field0) : super._();
-
-  final int field0;
+  /// Audio signal source captured (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
+  final int source;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $RustPlayerEvent_CueSourceCopyWith<RustPlayerEvent_CueSource> get copyWith =>
-      _$RustPlayerEvent_CueSourceCopyWithImpl<RustPlayerEvent_CueSource>(
-          this, _$identity);
+  $RustPlayerEvent_RecordingStateCopyWith<RustPlayerEvent_RecordingState>
+      get copyWith => _$RustPlayerEvent_RecordingStateCopyWithImpl<
+          RustPlayerEvent_RecordingState>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_CueSource &&
-            (identical(other.field0, field0) || other.field0 == field0));
+            other is RustPlayerEvent_RecordingState &&
+            (identical(other.isRecording, isRecording) ||
+                other.isRecording == isRecording) &&
+            (identical(other.source, source) || other.source == source));
   }
 
   @override
   int get hashCode {
-    return Object.hash(runtimeType, field0);
+    return Object.hash(runtimeType, isRecording, source);
   }
 
   @override
   String toString() {
-    return 'RustPlayerEvent.cueSource(field0: $field0)';
+    return 'RustPlayerEvent.recordingState(isRecording: $isRecording, source: $source)';
   }
 }
 
 /// @nodoc
-abstract mixin class $RustPlayerEvent_CueSourceCopyWith<$Res>
+abstract mixin class $RustPlayerEvent_RecordingStateCopyWith<$Res>
     implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_CueSourceCopyWith(RustPlayerEvent_CueSource value,
-          $Res Function(RustPlayerEvent_CueSource) _then) =
-      _$RustPlayerEvent_CueSourceCopyWithImpl;
+  factory $RustPlayerEvent_RecordingStateCopyWith(
+          RustPlayerEvent_RecordingState value,
+          $Res Function(RustPlayerEvent_RecordingState) _then) =
+      _$RustPlayerEvent_RecordingStateCopyWithImpl;
   @useResult
-  $Res call({int field0});
+  $Res call({bool isRecording, int source});
 }
 
 /// @nodoc
-class _$RustPlayerEvent_CueSourceCopyWithImpl<$Res>
-    implements $RustPlayerEvent_CueSourceCopyWith<$Res> {
-  _$RustPlayerEvent_CueSourceCopyWithImpl(this._self, this._then);
+class _$RustPlayerEvent_RecordingStateCopyWithImpl<$Res>
+    implements $RustPlayerEvent_RecordingStateCopyWith<$Res> {
+  _$RustPlayerEvent_RecordingStateCopyWithImpl(this._self, this._then);
 
-  final RustPlayerEvent_CueSource _self;
-  final $Res Function(RustPlayerEvent_CueSource) _then;
+  final RustPlayerEvent_RecordingState _self;
+  final $Res Function(RustPlayerEvent_RecordingState) _then;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   $Res call({
-    Object? field0 = null,
+    Object? isRecording = null,
+    Object? source = null,
   }) {
-    return _then(RustPlayerEvent_CueSource(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
+    return _then(RustPlayerEvent_RecordingState(
+      isRecording: null == isRecording
+          ? _self.isRecording
+          : isRecording // ignore: cast_nullable_to_non_nullable
+              as bool,
+      source: null == source
+          ? _self.source
+          : source // ignore: cast_nullable_to_non_nullable
               as int,
     ));
   }
@@ -5109,55 +4503,63 @@ class _$RustPlayerEvent_DartReadRequestCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustPlayerEvent_Device extends RustPlayerEvent {
-  const RustPlayerEvent_Device(this.field0) : super._();
+class RustPlayerEvent_Outputs extends RustPlayerEvent {
+  const RustPlayerEvent_Outputs(List<RustAudioOutput> field0)
+      : _field0 = field0,
+        super._();
 
-  final RustAudioDevice field0;
+  final List<RustAudioOutput> _field0;
+  List<RustAudioOutput> get field0 {
+    if (_field0 is EqualUnmodifiableListView) return _field0;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_field0);
+  }
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $RustPlayerEvent_DeviceCopyWith<RustPlayerEvent_Device> get copyWith =>
-      _$RustPlayerEvent_DeviceCopyWithImpl<RustPlayerEvent_Device>(
+  $RustPlayerEvent_OutputsCopyWith<RustPlayerEvent_Outputs> get copyWith =>
+      _$RustPlayerEvent_OutputsCopyWithImpl<RustPlayerEvent_Outputs>(
           this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Device &&
-            (identical(other.field0, field0) || other.field0 == field0));
+            other is RustPlayerEvent_Outputs &&
+            const DeepCollectionEquality().equals(other.field0, _field0));
   }
 
   @override
   int get hashCode {
-    return Object.hash(runtimeType, field0);
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(_field0));
   }
 
   @override
   String toString() {
-    return 'RustPlayerEvent.device(field0: $field0)';
+    return 'RustPlayerEvent.outputs(field0: $field0)';
   }
 }
 
 /// @nodoc
-abstract mixin class $RustPlayerEvent_DeviceCopyWith<$Res>
+abstract mixin class $RustPlayerEvent_OutputsCopyWith<$Res>
     implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_DeviceCopyWith(RustPlayerEvent_Device value,
-          $Res Function(RustPlayerEvent_Device) _then) =
-      _$RustPlayerEvent_DeviceCopyWithImpl;
+  factory $RustPlayerEvent_OutputsCopyWith(RustPlayerEvent_Outputs value,
+          $Res Function(RustPlayerEvent_Outputs) _then) =
+      _$RustPlayerEvent_OutputsCopyWithImpl;
   @useResult
-  $Res call({RustAudioDevice field0});
+  $Res call({List<RustAudioOutput> field0});
 }
 
 /// @nodoc
-class _$RustPlayerEvent_DeviceCopyWithImpl<$Res>
-    implements $RustPlayerEvent_DeviceCopyWith<$Res> {
-  _$RustPlayerEvent_DeviceCopyWithImpl(this._self, this._then);
+class _$RustPlayerEvent_OutputsCopyWithImpl<$Res>
+    implements $RustPlayerEvent_OutputsCopyWith<$Res> {
+  _$RustPlayerEvent_OutputsCopyWithImpl(this._self, this._then);
 
-  final RustPlayerEvent_Device _self;
-  final $Res Function(RustPlayerEvent_Device) _then;
+  final RustPlayerEvent_Outputs _self;
+  final $Res Function(RustPlayerEvent_Outputs) _then;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -5165,11 +4567,11 @@ class _$RustPlayerEvent_DeviceCopyWithImpl<$Res>
   $Res call({
     Object? field0 = null,
   }) {
-    return _then(RustPlayerEvent_Device(
+    return _then(RustPlayerEvent_Outputs(
       null == field0
-          ? _self.field0
+          ? _self._field0
           : field0 // ignore: cast_nullable_to_non_nullable
-              as RustAudioDevice,
+              as List<RustAudioOutput>,
     ));
   }
 }

@@ -128,9 +128,6 @@ class MiniaudioPlayerGlobalConfig {
   /// The global native diagnostic logging verbosity level.
   MiniaudioLogLevel logLevel;
 
-  /// The default audio output device.
-  AudioDevice defaultAudioDevice;
-
   /// The resolver function producing a human-readable name for system default audio devices.
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
 
@@ -156,7 +153,6 @@ class MiniaudioPlayerGlobalConfig {
   MiniaudioPlayerGlobalConfig({
     this.defaultBufferSize = 0,
     this.logLevel = MiniaudioLogLevel.none,
-    this.defaultAudioDevice = AudioDevice.auto,
     DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
     this.bufferLocalDuration = const Duration(seconds: 30),
     this.bufferNetworkDuration = const Duration(seconds: 30),
@@ -177,7 +173,6 @@ class MiniaudioPlayerGlobalConfig {
     onLog = null;
     defaultBufferSize = 0;
     logLevel = MiniaudioLogLevel.none;
-    defaultAudioDevice = AudioDevice.auto;
     defaultDeviceDisplayNameResolver = _defaultDeviceDisplayNameResolver;
     bufferLocalDuration = const Duration(seconds: 30);
     bufferNetworkDuration = const Duration(seconds: 30);
@@ -206,7 +201,6 @@ class MiniaudioPlayer<T> {
   static MiniaudioPlayerGlobalConfig config({
     int? defaultBufferSize,
     MiniaudioLogLevel? logLevel,
-    AudioDevice? defaultAudioDevice,
     DefaultDeviceDisplayNameResolver? defaultDeviceDisplayNameResolver,
     Duration? bufferLocalDuration,
     Duration? bufferNetworkDuration,
@@ -219,9 +213,6 @@ class MiniaudioPlayer<T> {
       _globalConfig.defaultBufferSize = defaultBufferSize;
     }
     if (logLevel != null) _globalConfig.logLevel = logLevel;
-    if (defaultAudioDevice != null) {
-      _globalConfig.defaultAudioDevice = defaultAudioDevice;
-    }
     if (defaultDeviceDisplayNameResolver != null) {
       _globalConfig.defaultDeviceDisplayNameResolver =
           defaultDeviceDisplayNameResolver;
@@ -416,7 +407,6 @@ class MiniaudioPlayer<T> {
     PlayerConfig config = const PlayerConfig(),
     int? effectMemoryLimitMb,
     int? bufferSize,
-    AudioDevice? defaultAudioDevice,
     bool pauseOnDeviceChange = false,
     CrossfadeConfig? crossfadeConfig,
   }) {
@@ -432,13 +422,21 @@ class MiniaudioPlayer<T> {
     state = PlayerState<T>(this);
 
     state.bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
-    state.audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
     state.pauseOnDeviceChange = pauseOnDeviceChange;
 
     final int? resolvedMaxRamBytes = effectMemoryLimitMb != null
         ? effectMemoryLimitMb * 1024 * 1024
         : config.resolvedMaxRamBytes;
     state.maxRamBytes = resolvedMaxRamBytes;
+
+    final resolvedOutputs = outputs ?? {const AudioOutput()};
+    final rustOutputs = resolvedOutputs
+        .map((out) => rust_types.RustAudioOutput(
+              deviceId: out.deviceId,
+              exclusiveMode: out.exclusiveMode,
+              source: out.source.value,
+            ))
+        .toList();
 
     _rustPlayer = rust.RustMiniaudioPlayer(
       config: rust_types.RustPlayerConfig(
@@ -456,23 +454,15 @@ class MiniaudioPlayer<T> {
       sampleRate: 44100,
       channels: 2,
       periodSize: state.bufferSize > 0 ? state.bufferSize : 1024,
-      playbackDeviceId: state.audioDevice.isAuto ? null : state.audioDevice.id,
+      initialOutputs: rustOutputs,
     );
 
     action = PlayerAction<T>(this, _rustPlayer);
 
     _eventSub = _rustPlayer.subscribeEvents().listen(_onRustEvent);
 
-    final resolvedOutputs = outputs ?? {const AudioOutput.speaker()};
-    state.outputs = Set.unmodifiable(resolvedOutputs);
-
     if (effects.isNotEmpty) {
       action.setEffects(effects);
-    }
-    if (outputs != null &&
-        !(outputs.length == 1 &&
-            outputs.first == const AudioOutput.speaker())) {
-      action.configureOutputs(outputs);
     }
     for (final input in inputs) {
       action.addInput(input);
@@ -619,13 +609,25 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_PauseOnDeviceChange(:final field0):
         state.pauseOnDeviceChange = field0;
         stream.pauseOnDeviceChangeController.add(field0);
-      case rust_types.RustPlayerEvent_CueVolume(:final field0):
-        state.cueVolume = field0;
-        stream.cueVolumeController.add(field0);
-      case rust_types.RustPlayerEvent_CueSource(:final field0):
-        final cs = CueSource.fromValue(field0);
-        state.cueSource = cs;
-        stream.cueSourceController.add(cs);
+      case rust_types.RustPlayerEvent_Outputs(:final field0):
+        final outs = field0
+            .map((r) => AudioOutput(
+                  deviceId: r.deviceId,
+                  exclusiveMode: r.exclusiveMode,
+                  source: AudioOutputSource.fromValue(r.source),
+                ))
+            .toSet();
+        state.outputs = Set.unmodifiable(outs);
+        stream.outputsController.add(state.outputs);
+      case rust_types.RustPlayerEvent_RecordingState(
+          :final isRecording,
+          :final source,
+        ):
+        state.isRecording = isRecording;
+        state.recordingSource =
+            isRecording ? AudioOutputSource.fromValue(source) : null;
+        stream.isRecordingController.add(isRecording);
+        stream.recordingSourceController.add(state.recordingSource);
       case rust_types.RustPlayerEvent_LoopMode(:final field0):
         final lm = (field0 >= 0 && field0 < LoopMode.values.length)
             ? LoopMode.values[field0]
@@ -727,10 +729,6 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_Bitrate(:final field0):
         state.audioBitrate = field0;
         stream.audioBitrateController.add(field0);
-      case rust_types.RustPlayerEvent_Device(:final field0):
-        final dev = _toAudioDevice(field0);
-        state.audioDevice = dev;
-        stream.audioDeviceController.add(dev);
       case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
         final idx = field0 >= 0 ? field0 : null;
         state.currentIndex = idx;

@@ -239,6 +239,15 @@ impl MusicManager {
         &self.scratch_standby
     }
 
+    #[inline]
+    pub fn active_deck_buffer(&self) -> &[f32] {
+        if self.inner.active_deck.load(Ordering::Relaxed) == 0 {
+            &self.scratch_deck_a
+        } else {
+            &self.scratch_deck_b
+        }
+    }
+
     // =========================================================================
     // State Accessors
     // =========================================================================

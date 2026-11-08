@@ -1,465 +1,251 @@
-# Comprehensive Architectural Refactoring Plan: Queue, Sources, Effects, State & Crossfade Modernization
+# Architecture Specification: Zero-Primary Symmetrical Output Architecture & Independent Engine Clock
 
-## 1. Executive Summary & Design Scope
-
-This document establishes the comprehensive specification for the end-to-end modernization of `miniaudio_player`, bridging the high-level reactive Dart/Flutter API with the high-performance native Rust core.
-
-Following user requirements, this refactor permanently removes legacy naming conventions, convenience aliases, and backward-compatibility shims. Every component has a single, unambiguous canonical name and a clear domain boundary.
-
-### Key Architectural Pillars
-1. **Complete Elimination of `open`**: The historic `open` terminology is removed across both Dart and Rust. Music uses `setQueue(...)` and `play(...)`; effects use `setEffects(...)` and `playEffect(...)`.
-2. **Universal `play` Method & Removal of `skipToIndex`**: Playback is unified under `play({int? id, int? position, bool? shuffled, Duration? seek})`. Calling `play` with an `id` or `position` when already playing acts as a track skip utilizing a manual crossfade.
-3. **Crossfading Governed by `id` (Not Index)**: Crossfade state transitions track target items by their unique monotonic `target_id: i64`. Any queue mutation (removal, insertion, reordering) or track switch targeting a different ID immediately aborts the active crossfade safely.
-4. **Autonomous Memory-Budgeted Effect Subsystem**: Eager manual methods (`loadEffect`, `preloadEffects`, `unloadEffect`) are eliminated. Rust manages an effect RAM budget (default: **50 MB**, configurable, nullable for unlimited with danger alert). Memory-type effects are immune to eviction. Eviction occurs reactively without timers, balancing recency (LRU), source type penalties, and repetition frequency.
-5. **In-Depth Effect Setter & Spatial Analysis**: Disentangling static asset configuration from live running voice modulation, proposing the encapsulation of live voice controls into a `Voice` handle object returned by `playEffect`.
-6. **Unified `AudioSource`**: Merging `MemoryAudioSource` and `UriAudioSource` into a single `AudioSource<T>` class, freeing Dart byte arrays once transferred to Rust.
-7. **State Sanitization & Removal of Limiters**: Stripping all convenience aliases from `PlayerState`, allowing open-ended volume ($\ge 0.0$), validating rate and pitch strictly as $> 0.0$ in Rust, and making `currentIndex` nullable.
+> **Status:** Planned / Pending Implementation Approval  
+> **Scope:** Full-stack elimination of the "Primary Output" asymmetry, transition to 100% symmetrical output sinks, dedicated internal high-resolution engine clock (Heartbeat), and multi-rate/drift handling.  
+> **Backward Compatibility:** Zero legacy shims, zero aliases, full compliance with SSOT (`Set<AudioOutput>`).
 
 ---
 
-## 2. Audio Analysis & ReplayGain Integration (`audio_analysis_result.dart`)
+## 1. Executive Summary & Problem Statement
 
-### 2.1 Current State & Limitations
-Currently, `ReplayGainResult.getRecommendedVolume({bool preventClipping = true})` computes a linear volume multiplier via:
-$$\text{factor} = 10^{\text{gainDb} / 20}$$
-and advises the caller to invoke `player.action.setVolume(factor)`.
+### 1.1. The Legacy "Primary Device" Flaw
+In the original architecture inherited from single-device playback:
+1. `MiniaudioPlayer` maintained a dedicated hardware context `ply.device_ctx` (`map_device_create`) opened directly against the operating system.
+2. In `OutputManager`:
+   - `outputs[0]` was treated as the privileged "Primary Output", copied directly via raw memory pointers (`std::ptr::copy_nonoverlapping`) into DMA hardware memory.
+   - `outputs[1..N]` were treated as "Secondary Outputs", decoupled via SPSC ring buffers (`rtrb`).
+3. **Flaws introduced by this asymmetry**:
+   - **Forced Silence on Hardware**: When `outputs: {}` (pure recording or headless mode), `ply.device_ctx` had to remain open against the physical soundcard, filling its buffer with `0.0f32` (IEEE-754 silence) solely to keep the driver's interrupt callback ticking to advance the player's clock.
+   - **Fragile Clock Anchoring**: If the physical soundcard holding `outputs[0]` disconnected, the engine's clock stopped completely.
+   - **Code Duplication**: Mutating `outputs` required two completely different code paths (re-pointing `outputs[0]` via `map_device_set_device` vs allocating/destroying `ActiveOutputDevice` for `outputs[1..N]`).
 
-This approach conflates two fundamentally distinct concerns:
-* **User Master Volume**: The application's volume slider (e.g., 75% volume).
-* **Acoustic Loudness Normalization**: Per-track gain metadata according to ITU-R BS.1770-4 / EBU R128.
-
-Applying ReplayGain through `setVolume` forces the user to recalculate and overwrite the master volume on every track transition, breaking crossfades and manual volume adjustments.
-
-### 2.2 Modernized Solution
-* **Documentation Enhancement**:
-  Update `ReplayGainResult.getRecommendedVolume` to clearly document that instead of setting player volume, the **canonical and recommended approach** is to assign ReplayGain directly to the `AudioSource`:
-  ```dart
-  AudioSource(
-    filePath,
-    replayGainDb: result.replayGain?.gainDb,
-    replayPeak: result.replayGain?.peak,
-  )
-  ```
-* **Lossless Native DSP Normalization**:
-  The native Rust DSP pipeline (`ReplayGainStage` in `rust/src/dsp/equalizer.rs`) automatically applies loudness normalization in 32-bit floating point PCM before master limiting. This guarantees:
-  * Gapless transitions between tracks of wildly different recording levels.
-  * Complete independence for `player.action.setVolume(...)`, which remains dedicated solely to user interface controls.
-  * Full clipping protection via peak scaling (`1.0 / peak`) without audio ducking or manual math in Dart.
+### 1.2. The New Architecture: Zero-Primary & Dedicated Engine Clock
+1. **Zero Primary Output**: No device is primary. Every physical device in `outputs` is an identical `ActiveOutputDevice`.
+2. **Zero Devices when `outputs: {}`**: When `outputs` is empty, **zero** `ma_device` instances are opened in the OS. The soundcard is not touched, no driver is initialized, and no silence is pumped to speakers.
+3. **Independent Real-Time Clock (Heartbeat Thread)**: A dedicated high-resolution timer thread drives `render_pcm` at the exact mathematical sample rate.
+4. **Independent SPSC Ring Buffers**: Each active output device has its own decoupled lock-free SPSC buffer, reading at its own native hardware cadence.
 
 ---
 
-## 3. Audio Source Unification (`audio_source.dart`)
+## 2. Multi-Rate & Velocity Handling: Different Speeds Across Outputs
 
-### 3.1 Problem Analysis
-`AudioSource<T>` is currently defined as a `sealed` class with three subclasses: `UriAudioSource<T>`, `MemoryAudioSource<T>`, and `CustomAudioSource<T>`.
+How does the engine handle outputs demanding data at different speeds?
 
-**Why unifying is superior**:
-1. **Immediate Transfer to Native Memory**: When a user creates an `AudioSource` and passes it to the player, Dart immediately extracts the file path, network URL, or raw `Uint8List` bytes and sends them across the FFI bridge into Rust. Rust instantiates the underlying decoder or byte source.
-2. **Reclaiming Dart Heap Memory**: Retaining a `MemoryAudioSource` with large `Uint8List` byte arrays in Dart results in duplicated memory (once in Dart GC heap, once in native memory). Unifying the class allows Dart to clear its local `bytes` reference to `null` (or empty) once transferred, retaining only the lightweight descriptor (`id`, `data`, `replayGainDb`, `replayPeak`).
-3. **Elimination of Boilerplate**: Having separate classes forces exhaustive pattern matching across the player codebase. A single concrete class eliminates subclass branching while remaining 100% polymorphic at the input level.
+### 2.1. Scenario A: Different Hardware Sample Rates (e.g., 48 kHz vs 96 kHz)
+When Output 1 runs at 48,000 samples/sec and Output 2 runs at 96,000 samples/sec (literally $2\times$ the data consumption rate per second):
+- **Wall-Clock Musical Time**: Both outputs must play the song at normal speed ($1.0\times$ tempo). 1 second of music = 1 second of wall-clock time on both speakers.
+- **Sample Generation vs Consumption**:
+  - The engine's mixer and DSP pipeline renders at a master internal sample rate $F_{s,\text{engine}}$ (e.g. 48,000 Hz).
+  - Every 1024 frames rendered equals $\Delta t = \frac{1024}{48000} \approx 21.33\text{ ms}$.
+  - During that same 21.33 ms, Output 2 (96 kHz) requires $2048$ frames.
+- **Solution: Per-Device Resampler**:
+  - Each `ActiveOutputDevice` negotiates its own target rate with miniaudio.
+  - Miniaudio's internal `ma_resampler` (or Rust `rubato`) converts the engine's native 48 kHz frames into 96 kHz frames in the device's playback thread.
+  - SPSC ring buffer sizes are scaled proportionally to the device's sample rate:
+    $$\text{Capacity}_{\text{device}} = F_{s,\text{device}} \times \text{channels} \times \text{TargetBufferSeconds}$$
 
-### 3.2 Proposed Structure
-```mermaid
-classDiagram
-    class AudioSource~T~ {
-        +int? id
-        +T? data
-        +double? replayGainDb
-        +double? replayPeak
-        +String? uri
-        +Uint8List? bytes
-        +Map~String, String~? headers
-        +CustomByteProvider? customProvider
-        +String sourceKey
-        +bool hasValidSource
-        +AudioSource(Object source, ...)
-        +AudioSource~T~ copyWith(...)
-        +AudioSource~R~ withData~R~(R? data)
-        +Future~Uint8List~ readBytes()
-    }
-```
+### 2.2. Scenario B: Different Callback Period Sizes & Cadences (e.g., 256 vs 2048 frames)
+Even at the same sample rate (48 kHz), different OS soundcards and drivers request samples in different chunk sizes:
+- Device 1 (Low-latency USB interface): requests 256 frames every 5.33 ms.
+- Device 2 (Bluetooth / HDMI / Network): requests 2048 frames every 42.66 ms.
+- **Solution: Asynchronous SPSC Ring Buffers (`rtrb`)**:
+  - The producer (Heartbeat thread) writes chunks of 1024 frames into each device's producer.
+  - Device 1 reads in small frequent bursts of 256 frames.
+  - Device 2 reads in larger, less frequent bursts of 2048 frames.
+  - Because SPSC ring buffers are completely independent, Device 1 and Device 2 never block each other.
 
-#### Specifications:
-* **Single Concrete Class `AudioSource<T>`**:
-  * Unified Constructor (`AudioSource.custom` and all subclasses removed):
-    ```dart
-    AudioSource(
-      Object source, {
-      Map<String, String>? headers,
-      T? data,
-      double? replayGainDb,
-      double? replayPeak,
-      int? id,
-    })
-    ```
-    Accepts:
-    * `String` (file path, HTTP/HTTPS URL, HLS `.m3u8` stream, `data:` URI).
-    * `Uri` (file, network, or `data:` URI).
-    * `Uint8List` / `List<int>` (raw audio bytes in RAM).
-    * `CustomByteProvider` (custom pull-based byte stream for DRM, encrypted decryption, or tokenized storage).
-* **Protection of `attachEngineId` and `clearBytes`**:
-  * Annotated with `@internal`:
-    ```dart
-    /// > [!WARNING]
-    /// > Internal engine method. Application developers must NEVER invoke this directly.
-    /// > Track identifiers are assigned monotonically by the engine coordinator.
-    @internal
-    void attachEngineId(int newId) {
-      _id ??= newId;
-    }
-    ```
+### 2.3. Scenario C: Hardware Physical Clock Drift
+Two separate physical soundcards have independent quartz crystal oscillators. Even if both are set to 48,000 Hz, one might run at 48,001.2 Hz and the other at 47,998.7 Hz. Over 30 minutes, this would cause buffer overflow or underrun.
+- **Solution: Elastic Ring Buffer with Watermark Drift Compensation**:
+  - Each `ActiveOutputDevice` monitors its buffer fill level:
+    $$\text{Watermark} = \frac{\text{Available Frames in Ring Buffer}}{\text{Capacity}}$$
+  - **Nominal Target**: Watermark around 50%.
+  - If a device runs too fast (watermark drops below 25%): the device's callback inserts a micro-interpolated duplicate sample every few seconds (completely sub-audible).
+  - If a device runs too slow (watermark exceeds 75%): the device's callback drops 1 sample every few seconds.
+
+### 2.4. Scenario D: Different Musical Speeds (Deck A at 1.0x, Deck B Cueing at 2.0x)
+If a DJ wants to listen to the master mix on speakers at $1.0\times$ while cueing the standby track on headphones at $2.0\times$:
+- Deck A renders into `active_buffer` at $1.0\times$.
+- Deck B renders into `standby_buffer` with its own independent Sonic rate multiplier ($2.0\times$).
+- Output 1 routes `source: AudioOutputSource.all` (master at $1.0\times$).
+- Output 2 routes `source: AudioOutputSource.standbyTrack` (cueing at $2.0\times$).
+- Each stream maintains its own independent playback position and speed.
 
 ---
 
-## 4. Elimination of `open` & Canonical Naming Standards
-
-### 4.1 Rationale
-In audio frameworks, the verb `open` historically denoted "open a file handle". In modern high-level players, calling `open` on a playlist does not open a file; it replaces or configures the queue of tracks. Furthermore, mixing music and sound effects under the same generic terminology causes confusion over which subsystem is being manipulated.
-
-All `open` methods are permanently eliminated across both Dart and Rust.
-
-### 4.2 Canonical Naming Matrix
-
-| Old / Ambiguous Method | Domain | New Canonical Method | Purpose |
-| :--- | :--- | :--- | :--- |
-| `player.action.open(sources)` | Music | `player.action.setQueue(List<AudioSource<T>> sources)` | Sets or replaces the music playlist queue without starting playback. |
-| `DualSource::open_queue` | Music (Rust) | `DualSource::set_queue(sources)` | Replaces `sources` map and `original_order` vector. |
-| `player.action.play()` | Music | `player.action.play({int? id, int? position, bool? shuffled, Duration? seek})` | Starts, resumes, skips, or seeks music tracks. |
-| `player.action.skipToIndex(...)` | Music | *Removed* (unified into `play(position: ...)`) | Eliminates duplicate navigation paths. |
-| `player.action.loadEffect(...)` | Effects | `player.action.setEffects(List<AudioEffect> effects)` | Registers the sound effects catalog in the player. |
-| `player.action.preloadEffects(...)` | Effects | *Removed* (handled autonomously by Rust RAM budget) | Zero manual preloading required. |
-| `player.action.unloadEffect(...)` | Effects | *Removed* (handled autonomously by Rust LRU eviction) | Zero manual unloading required. |
-| `player.action.playEffect(...)` | Effects | `player.action.playEffect(String id, ...)` | Triggers a polyphonic sound effect voice. |
-
----
-
-## 5. Universal Music `play` Method Specifications
-
-### 5.1 Method Signature
-```dart
-Future<void> play({
-  int? id,
-  int? position,
-  bool? shuffled,
-  Duration? seek,
-});
-```
-
-### 5.2 Resolution Hierarchy
-* If `id` is non-null: `id` takes precedence over `position`.
-* If `id` is null and `position` is non-null: `position` is used.
-* If both are null: targets the current item or resumes playback.
-
-### 5.3 Detailed Behavior Specification
-
-```mermaid
-flowchart TD
-    Start["player.action.play(...)"] --> CheckInit{"Is playback active?<br/>(currentIndex != null)"}
-    
-    CheckInit -- "No (First Play)" --> FirstPlay["First Playback Execution"]
-    FirstPlay --> CheckShuf1{"shuffled == true?"}
-    
-    CheckShuf1 -- "Yes" --> FirstShuf["Find target track in _originalOrder<br/>(via id or position, default: 0)<br/>Pin target to index 0 of active queue<br/>Shuffle remaining items<br/>Start playback on index 0<br/>currentIndex = 0"]
-    CheckShuf1 -- "No" --> FirstSeq["Copy active queue from _originalOrder<br/>Start playback on position or id (default: 0)<br/>currentIndex = position"]
-    
-    CheckInit -- "Yes (Queue Active)" --> ActivePlay["Active Queue Navigation"]
-    ActivePlay --> CheckTarget{"id or position provided?"}
-    
-    CheckTarget -- "No (Both null)" --> Resume["Resume playback of current track.<br/>No shuffle change.<br/>Seek if Duration provided."]
-    CheckTarget -- "Yes" --> TrackSwitch["Track Switch Execution<br/>(Crossfade to target item)"]
-    TrackSwitch --> LookupPos["position refers to active queue!<br/>Do NOT re-shuffle queue.<br/>Trigger manual crossfade to target.<br/>If seek provided, begin at seek position.<br/>currentIndex = target position."]
-```
-
-#### First Playback Execution (`currentIndex == null`):
-1. **With target (`id` or `position`) and `shuffled: true`**:
-   * Example: `position: 3, shuffled: true`.
-   * Rust locates the target track in `_originalOrder` (at index 3).
-   * That track is placed as index 0 of `active_queue`.
-   * The remaining tracks from `_originalOrder` are shuffled randomly and placed after index 0.
-   * Playback begins immediately on index 0 (the requested track).
-   * If `seek` is provided, playback begins at that `seek` offset.
-   * `currentIndex` is set to `0`.
-   * Rust emits the new queue order `[id]` and `currentIndex = 0`.
-2. **Without target (`id: null, position: null`) and `shuffled: true`**:
-   * All tracks from `_originalOrder` are shuffled into `active_queue`.
-   * Playback starts on the first item (index 0).
-   * `currentIndex` is set to `0`.
-   * Rust emits the new queue order `[id]` and `currentIndex = 0`.
-3. **With `shuffled: false` (or omitted)**:
-   * `active_queue` is copied directly from `_originalOrder`.
-   * Playback starts on `position ?? 0` (or the track matching `id`).
-   * `currentIndex` is set to that index.
-   * Rust emits `active_queue` and `currentIndex`.
-
-#### Subsequent Calls When Queue Is Already Active (`currentIndex != null`):
-1. **Resuming playback (`id: null, position: null`)**:
-   * If paused or stopped, playback simply resumes.
-   * If `seek` is provided, seeks to that position within the current track.
-   * No re-shuffling or queue modification occurs.
-2. **Switching tracks (`id` or `position` provided)**:
-   * `position` explicitly refers to the **current active `queue`**, NOT `_originalOrder`.
-   * **Replaces the old `skipToIndex`**: Switching tracks when already playing initiates a **manual crossfade** from the active deck to the target deck.
-   * If `seek` is provided, the incoming track starts rendering from that `seek` offset.
-   * The active queue order is NOT re-shuffled.
-
-#### Toggling Shuffle Mode:
-* **Activating Shuffle (`setShuffle(true)` or `play(shuffled: true)` on active queue)**:
-  * The currently active item (`active_queue[currentIndex]`) becomes index 0 of the new `active_queue`.
-  * The remaining items in `active_queue` are shuffled randomly.
-  * `currentIndex` becomes 0.
-  * `_originalOrder` remains untouched.
-  * Rust emits the new queue `[id]` and `currentIndex = 0`.
-* **Deactivating Shuffle (`setShuffle(false)`)**:
-  * `active_queue` is restored to match `_originalOrder` exactly.
-  * The ID of the currently playing track is located in `_originalOrder`, and `currentIndex` is updated to that position.
-  * Rust emits the restored queue `[id]` and updated `currentIndex`.
-  * Playback continues uninterrupted on the current track.
-
----
-
-## 6. Crossfade by ID Architecture
-
-### 6.1 Vulnerability of Index-Based Crossfades
-Currently, `DualSource` tracks crossfades using an integer index: `auto_crossfade_target_index: Arc<AtomicI64>`.
-
-If the queue is mutated while an automatic or manual crossfade is transitioning (e.g. `removeAt`, `insert`, `setQueue`, or an unexpected track shift), the target index can suddenly point to a completely different audio file. Deck B would begin fading into the wrong song, causing jarring audio glitches and corrupted state.
-
-### 6.2 Target ID Tracking & Safety Invariant
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Crossfading: Trigger crossfade to Track B (target_id = B.id)
-    Crossfading --> CrossfadeComplete: Crossfade completes naturally<br/>Deck B becomes Active Deck
-    Crossfading --> Aborted: Queue mutated OR new play(C.id) requested<br/>(Expected next ID != target_id)
-    Aborted --> ActiveDeckRecovered: Stop Deck B immediately<br/>Active Deck continues or switches cleanly
-```
-
-1. **Replace Index with `crossfade_target_id: Arc<AtomicI64>`**:
-   * When Deck B is armed for an automatic or manual crossfade, `crossfade_target_id` stores the unique monotonic `id` of the target track (e.g. `42`).
-2. **Strict Cancellation Invariant**:
-   * If any queue mutation occurs (`remove`, `insert`, `setQueue`, `reorder`), Rust recalculates the ID of the expected next track.
-   * If the expected next track ID does **not match** `crossfade_target_id`:
-     * The crossfade is **instantly aborted** (`crossfade.abort()`).
-     * Deck B is immediately stopped and unloaded.
-     * The active deck is restored to unity gain without audio glitches.
-     * If the mutation was caused by an explicit `play(new_id)`, a new crossfade or clean jump to `new_id` is initiated immediately.
-
----
-
-## 7. Autonomous Memory-Budgeted Effect Subsystem
-
-### 7.1 Elimination of Eager Loading Methods
-The methods `loadEffect`, `preloadEffects`, and `unloadEffect` are permanently removed from `PlayerAction` and `MiniaudioPlayer`. 
-
-Dart no longer attempts to micromanage sound effect memory or decode audio bytes in background isolates.
-
-### 7.2 Configuration & Defaults
-* **`effectMemoryLimitMb`**:
-  * Configurable on `MiniaudioPlayer` or `PlayerConfig`.
-  * **Default value**: `50` (50 Megabytes).
-  * **Nullable**: If `null`, memory is completely unconstrained:
-    > [!CAUTION]
-    > **[DANGEROUS: UNLIMITED MEMORY]**: Setting `effectMemoryLimitMb: null` disables all RAM eviction. Sound effects will accumulate in memory indefinitely without safety boundaries. Use only in strictly controlled environments with finite, small audio assets.
-
-### 7.3 Autonomous Eviction & Lifecycle Mechanics
-Rust manages the effect RAM budget deterministically without background timers, polling intervals, or helper threads:
-
-```mermaid
-flowchart TD
-    Trigger["Event: playEffect(id) OR VoiceCompleted"] --> CheckMem{"Is allocated RAM > limit?"}
-    CheckMem -- "No" --> Done["No action needed"]
-    CheckMem -- "Yes" --> FindCand["Evaluate inactive effects (0 active voices)"]
-    FindCand --> MemoryImmune["Filter out Memory-type effects<br/>(Memory effects are IMMUNE to eviction)"]
-    MemoryImmune --> Score["Calculate Eviction Score for each inactive effect"]
-    Score --> EvictMin["Evict effect with lowest Score<br/>Free decoded PCM samples<br/>Subtract byte size from allocated RAM"]
-    EvictMin --> Recheck{"Is allocated RAM still > limit?"}
-    Recheck -- "Yes" --> FindCand
-    Recheck -- "No" --> Done
-```
-
-1. **Memory-Type Effects Immunity**:
-   * Effects backed by in-memory bytes (`MemoryAudioSource` / raw bytes in RAM) are **never evicted**. Evicting them would destroy the only copy of the audio data.
-   * However, their decoded PCM footprint **does count** towards `allocated_ram_bytes`.
-2. **Reactive Eviction Triggers (Zero Timers)**:
-   * **Trigger 1: On `playEffect(id)`**:
-     If effect `id` is not currently decoded in RAM, Rust decodes it. If this would exceed the memory limit, Rust evicts inactive effects *before* loading. If all loaded effects are currently playing, Rust temporarily permits the allocation without dropping audio, and evicts as soon as a voice finishes.
-   * **Trigger 2: On `VoiceCompleted`**:
-     Whenever an active voice finishes playing and frees its voice slot, Rust checks if `allocated_ram_bytes > max_ram_bytes`. If so, it immediately purges the lowest-scoring inactive effects.
-3. **Multi-Factor Eviction Scoring**:
-   The eviction score is calculated as:
-   $$\text{Score} = \text{SourceWeight} \times (1 + \text{TriggerFrequency}) \times \frac{1}{1 + \Delta t_{\text{seconds}}}$$
-   * **Source Weight**:
-     * `Memory`: $\infty$ (Pinned, immune).
-     * `Network` (Remote URL): `5.0` (Expensive to refetch over HTTP).
-     * `Local File`: `1.0` (Cheap to re-read from local disk).
-   * **Trigger Frequency**:
-     A monotonic counter incremented every time `playEffect` is called for this ID. A rapid-fire effect (e.g. gunshots or footsteps played 500 times in 10 seconds) accumulates a massive frequency multiplier, preventing it from being evicted.
-   * **Recency ($\Delta t$)**:
-     Seconds elapsed since `last_used`.
-   * The inactive effect with the **lowest score** is evicted first.
-
----
-
-## 8. In-Depth Analysis: Effect Parameter Setters & 3D Spatial Controls
-
-The user specifically requested an analysis of:
-`setEffectVolume`, `setEffectPitch`, `setEffectBalance`, `setEffectEmitter`, `setListener`, `setDopplerParameters`
-*Why do they exist, and shouldn't `playEffect` be the sole method responsible for all of them?*
-
-### 8.1 The Dual Nature of Sound Effects: Asset vs. Live Voice
-The fundamental confusion in the existing API stems from naming:
-* `AudioEffect`: A **static asset** (e.g., an MP3 file named `"engine_loop"` or `"laser"`).
-* `VoiceId`: A **live, running instance** rendered on the 64-channel polyphonic voice pool.
-
-When calling `setEffectVolume(voiceId, volume)` or `setEffectPitch(voiceId, pitch)`, the method is **not** modifying the static effect template. It is modulating a **currently active, playing voice**!
-
-### 8.2 Why They Exist in Audio Engines
-1. **One-Shot vs. Continuous / Looping Sounds**:
-   * For **95% of use cases** (one-shots: UI clicks, explosions, gunshots, alerts), all parameters are known at the moment of playback. `playEffect` can and should handle all of them in a single call.
-   * For **continuous or looping sounds** (e.g. a car engine running for 30 seconds, a moving vehicle in a game, ambient wind, a siren passing by):
-     * As a vehicle drives across the scene (e.g. at 60 FPS), its 3D position changes every 16ms. The game must update its position (`emitter`).
-     * As the vehicle accelerates, its pitch increases.
-     * If real-time voice modulation methods did not exist, the developer would be forced to stop and restart the sound every frame, causing audible clicks and audio stuttering.
-2. **The Spatial Listener**:
-   * The **Listener** represents the ears of the player or camera in 3D space.
-   * In any audio scene, there are many sound sources (emitters), but **only one listener**.
-   * Passing `SpatialListener` into `playEffect` would make no conceptual sense, because you do not attach the player's ears to a sound effect! The listener updates continuously as the player character walks through the virtual world.
-3. **Doppler Parameters**:
-   * `setDopplerParameters(factor, speedOfSound)` calibrates global physics (e.g., speed of sound = 343.3 m/s in air). This is a global engine constant, not an effect property.
-
-### 8.3 Recommended API Modernization
-To eliminate confusion while preserving high-performance 3D game audio capabilities:
-
-1. **`playEffect` as the Complete All-in-One Trigger**:
-   `playEffect` handles 100% of the initial parameters for all one-shot and starting playback needs:
-   ```dart
-   Future<VoiceId> playEffect(
-     String id, {
-     double? volume,
-     double? pitch,
-     double? balance,
-     double? pitchJitter,
-     double? volumeJitter,
-     SpatialEmitter? emitter,
-     bool? looping,
-     int? priority,
-     DspRouting? dspRouting,
-   });
-   ```
-2. **Encapsulate Real-Time Voice Modulation into a `Voice` Handle**:
-   Instead of scattering disconnected `setEffectVolume(voiceId, ...)` methods across `PlayerAction`, `playEffect` can return a `Voice` handle object:
-   ```dart
-   // Clean, object-oriented, self-explanatory:
-   final voice = await player.action.playEffect('engine_loop', looping: true);
-   voice.setVolume(0.8);
-   voice.setPitch(1.4);
-   voice.setEmitter(currentVehiclePosition);
-   voice.stop();
-   ```
-   Or if maintained on `PlayerAction`, rename them clearly to `action.setVoiceVolume(VoiceId, ...)`, removing the misleading word `Effect`.
-3. **Spatial Listener & Doppler Relocation**:
-   Relocate `setListener` and `setDopplerParameters` into a dedicated spatial namespace: `player.action.spatial.setListener(...)` and `player.action.spatial.setDopplerParameters(...)` (or keep clearly separated on `player.action.setListener(...)`), clarifying that they govern world listener physics, completely independent of individual sound effects.
-
----
-
-## 9. Player State & Modernization (`player_state.dart`)
-
-### 9.1 Elimination of Convenience Aliases
-All duplicate getters in `PlayerState` are removed permanently:
-
-| Deprecated / Removed Alias | Single Canonical Property |
-| :--- | :--- |
-| `bool get playing` | `bool isPlaying` |
-| `bool get buffering` | `bool isBuffering` |
-| `bool get completed` | `bool isCompleted` |
-| `bool get opening` | `bool isOpening` |
-| `bool get isStopped` | `playbackState == PlaybackState.stopped` |
-| `bool get isError` | `playbackState == PlaybackState.error` |
-| `bool get isMono` | `bool mono` |
-| `int get bufferSizeFrames` | `int bufferSize` |
-| `int get bitrate` | `int audioBitrate` |
-| `double get preampDb` | `double preamp` |
-| `bool get isLimiterEnabled` | `bool limiterEnabled` |
-| `bool get shuffle` | `bool isShuffled` |
-| `int get pinnedHeadSize` | `metaBytes?.length ?? 0` |
-
-### 9.2 Removal of Arbitrary Limiters
-* **Volume**:
-  * Removed the `2.0` upper clamp. Volume can now be any value $\ge 0.0$ (supporting high-gain amplification beyond 200%).
-* **Rate & Pitch**:
-  * Removed arbitrary range clamps (`[0.5, 2.0]` or `[0.05, 4.0]`).
-  * In both Dart and Rust, validate strictly that $\text{rate} > 0.0$ and $\text{pitch} > 0.0$.
-* **Mic & Cue Volume**:
-  * Removed artificial `2.0` clamp.
-
-### 9.3 Nullable `currentIndex`
-* `int? currentIndex`: Nullable by design. When no queue is loaded or before `play(...)` is invoked for the first time, `currentIndex == null`.
-* Derived getters:
-  ```dart
-  AudioSource<T>? get currentItem =>
-      (currentIndex != null && currentIndex! >= 0 && currentIndex! < queue.length)
-          ? queue[currentIndex!]
-          : null;
-
-  bool get hasNext => currentIndex != null && currentIndex! < queue.length - 1;
-  bool get hasPrevious => currentIndex != null && currentIndex! > 0;
-  ```
-
----
-
-## 10. End-to-End Migration & Implementation Blueprint
+## 3. High-Level Architecture
 
 ```mermaid
 graph TD
-    P1["Phase 1: Rust Core Subsystems<br/>(DualSource set_queue, play_with_options, crossfade_target_id, Effect budget LRU)"] --> P2["Phase 2: Rust API & Event Layer<br/>(RustPlayerEvent::Queue(Vec<i64>), eliminate open)"]
-    P2 --> P3["Phase 3: Dart AudioSource Consolidation<br/>(Unify Memory & Uri sources, protect attachEngineId)"]
-    P3 --> P4["Phase 4: Dart PlayerAction & State<br/>(setQueue, play, remove aliases, nullable currentIndex, Voice handle)"]
-    P4 --> P5["Phase 5: MiniaudioPlayer Orchestrator<br/>(Remove shadowQueue, activeOutputsSet, encapsulate _rustPlayer)"]
-    P5 --> P6["Phase 6: Verification & Test Suite Migration<br/>(cargo test & flutter test)"]
+    subgraph ClockSubsystem["Engine Clock Subsystem (Heartbeat)"]
+        ClockThread["Real-Time Heartbeat Thread (Instant + Sleep)"]
+        ClockThread -->|"Tick (every ~21.33 ms)"| RenderPcm["render_pcm(1024 frames)"]
+    end
+
+    subgraph AudioEngine["Audio Pipeline Core"]
+        RenderPcm --> Decks["Music Decks (A & B)"]
+        Decks --> StandbyBuf["standby_buffer (f32)"]
+        Decks --> ActiveBuf["active_buffer (f32)"]
+        Decks --> Crossfade["Crossfade Mixer"] --> MusicDSP["Music DSP (EQ, Reverb, Sonic)"] --> MusicMixBuf["music_mix_buffer (f32)"]
+        
+        MusicMixBuf --> MasterMixer["Master SimdMixer"]
+        SFX["Polyphonic SFX Voices"] --> MasterMixer
+        Mic["Microphone / Ducking"] --> MasterMixer
+        MasterMixer --> Limiter["True-Peak Brickwall Limiter"] --> AllBuf["all_buffer (f32)"]
+    end
+
+    subgraph OutputManager["OutputManager (100% Symmetrical Sinks)"]
+        AllBuf --> OutRouter{"Source Router"}
+        MusicMixBuf --> OutRouter
+        ActiveBuf --> OutRouter
+        StandbyBuf --> OutRouter
+
+        OutRouter -- "source: all" --> Dev1Ring["SPSC RingBuffer 1"] --> Dev1["ma_device (Parlantes USB)"]
+        OutRouter -- "source: standbyTrack" --> Dev2Ring["SPSC RingBuffer 2"] --> Dev2["ma_device (Auriculares DJ)"]
+        OutRouter -- "source: musicMix" --> Dev3Ring["SPSC RingBuffer 3"] --> Dev3["ma_device (Monitores)"]
+        OutRouter -- "recording_source" --> RecRing["SPSC RingBuffer Rec"] --> LiveRec["LiveRecorder (WAV a Disco)"]
+        AllBuf --> Visualizer["FFT Spectrum Visualizer"]
+    end
 ```
 
-### Phase 1: Rust Core Subsystems
-1. **`DualSource` (`rust/src/core/dual_source.rs`)**:
-   * Replace `open_queue` with `set_queue(sources: Vec<AudioSourceCore>)`.
-   * Replace `auto_crossfade_target_index: Arc<AtomicI64>` with `crossfade_target_id: Arc<AtomicI64>`.
-   * Implement target ID verification in `render_mix`: if the upcoming track ID != `crossfade_target_id`, abort the crossfade.
-   * Implement `play_track(id: Option<i64>, position: Option<usize>, shuffled: Option<bool>, seek_ms: Option<i64>)`.
-   * Remove upper clamp limits on rate and pitch (only check $> 0.0$).
-2. **`VoicePool` (`rust/src/core/voice_pool.rs`)**:
-   * Implement dynamic memory budget `max_ram_bytes: Option<usize>`.
-   * Implement multi-factor scoring (Source weight, frequency counter, recency).
-   * Implement reactive eviction in `play_effect` and on `VoiceCompleted`.
+---
 
-### Phase 2: Rust API & Bridge
-1. **`rust/src/api/types.rs`**:
-   * Update `RustPlayerEvent::Queue(Vec<i64>)` to send only track IDs.
-   * Update `CurrentIndex(Option<i32>)` or `-1` for null.
-2. **`rust/src/api/player.rs`**:
-   * Remove `open`; expose `set_queue` and `set_effects`.
-   * Expose `play` with `id`, `position`, `shuffled`, `seek_ms`.
+## 4. Sequence Diagrams
 
-### Phase 3: Dart `AudioSource`
-1. Merge `MemoryAudioSource`, `UriAudioSource`, and `CustomAudioSource` into a single concrete `AudioSource<T>` class.
-2. Remove `AudioSource.custom` and accept `CustomByteProvider` directly in the unified `AudioSource(Object source, ...)` constructor.
-3. Protect `attachEngineId` and `clearBytes` with `@internal` and warning docstrings.
+### 4.1. Headless / Pure Recording Lifecycle (`outputs: {}`)
 
-### Phase 4: Dart `PlayerState` & `PlayerAction`
-1. Remove all convenience aliases from `PlayerState`.
-2. Make `currentIndex` nullable (`int?`).
-3. Inject `_rustPlayer` directly into `PlayerAction(this, _rustPlayer)`.
-4. Replace `action.open` with `action.setQueue` and universal `action.play`.
-5. Remove `action.skipToIndex`.
-6. Implement `Voice` handle for real-time live voice modulation.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Dart Application
+    participant Action as PlayerAction
+    participant Rust as RustMiniaudioPlayer
+    participant Clock as Engine Heartbeat Thread
+    participant OutMgr as OutputManager
+    participant Disk as LiveRecorder (Disk Writer Thread)
+    participant OS as OS Audio Subsystem (ALSA/WASAPI)
 
-### Phase 5: Dart `MiniaudioPlayer`
-1. Remove `shadowQueue`.
-2. Remove `_activeOutputs` and `activeOutputsSet`.
-3. Relocate `infiniteMixEnabled` to `state`, `stream`, and `action`.
-4. Document all parameters of `analyzeAudio`, `analyzeAudioMemory`, `analyzeAudioSync`.
-5. Remove public getter `rustPlayer`.
+    Note over UI,OS: 1. Instantiation with outputs: {}
+    UI->>Action: MiniaudioPlayer(outputs: {})
+    Action->>Rust: RustMiniaudioPlayer::new(initial_outputs: [])
+    Rust->>OutMgr: set_outputs([])
+    Note over OutMgr,OS: Zero ma_device created! OS audio hardware is NEVER opened.
+    Rust->>Clock: Start Heartbeat Thread (Interval ~21.33 ms)
+    
+    Note over UI,OS: 2. Start Recording
+    UI->>Action: action.startRecording('/music/mix.wav', source: musicMix)
+    Action->>Rust: start_recording(..., source: 1)
+    Rust->>OutMgr: start_recording(...)
+    
+    Note over Clock,Disk: 3. Real-Time Processing Loop
+    loop Every ~21.33 ms
+        Clock->>Rust: render_pcm(1024 frames)
+        Rust->>OutMgr: dispatch(all, musicMix, active, standby)
+        Note over OutMgr: outputs list is empty -> Zero hardware writes!
+        OutMgr->>Disk: Push 1024 frames from musicMix to Recorder SPSC RingBuffer
+        Disk->>Disk: Write WAV PCM frames to disk
+    end
+```
 
-### Phase 6: Test Suite Validation
-1. Run `cargo check --manifest-path rust/Cargo.toml` and `cargo test`.
-2. Update unit tests in `test/` for `setQueue`, `play`, and unified `AudioSource`.
-3. Run `dart analyze lib test --fatal-infos`.
-4. Run `flutter test`.
+### 4.2. Symmetrical Dynamic Device Add / Remove
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Dart Application
+    participant Action as PlayerAction
+    participant Rust as RustMiniaudioPlayer
+    participant OutMgr as OutputManager
+    participant OS as OS Audio Driver
+    participant Event as RustPlayerEvent Stream
+
+    Note over UI,Event: 1. Add Device dynamically
+    UI->>Action: action.addOutput(AudioOutput(deviceId: 'dac_usb', source: all))
+    Action->>Rust: _rust.addOutput(...)
+    Rust->>OutMgr: add_output(...)
+    OutMgr->>OutMgr: Allocate SPSC RingBuffer (Capacity = 48000 * 2 * 0.25)
+    OutMgr->>OS: map_device_create('dac_usb', callback_trampoline)
+    OutMgr->>OS: map_device_start(ctx)
+    Rust->>Event: emit(RustPlayerEvent::Outputs(active_outputs))
+    Event->>UI: stream.outputs emits updated Set
+
+    Note over UI,Event: 2. Remove Device dynamically
+    UI->>Action: action.removeOutput(AudioOutput(deviceId: 'dac_usb'))
+    Action->>Rust: _rust.removeOutput(...)
+    Rust->>OutMgr: remove_output(...)
+    OutMgr->>OS: map_device_destroy(ctx)
+    OutMgr->>OutMgr: Drop SPSC RingBuffer
+    Rust->>Event: emit(RustPlayerEvent::Outputs(remaining_outputs))
+    Event->>UI: stream.outputs emits updated Set
+```
+
+---
+
+## 5. Technical Specification & Implementation Plan
+
+### 5.1. Rust Core Engine Updates
+
+#### 5.1.1. Heartbeat Clock Thread (`rust/src/core/clock.rs`)
+A new dedicated module `EngineClock`:
+- Spawns a high-priority background thread: `map-engine-clock`.
+- Maintains an atomic boolean `running`.
+- Loop timing:
+  ```rust
+  let period_duration = Duration::from_secs_f64(frame_count as f64 / sample_rate as f64);
+  let mut next_tick = Instant::now();
+  while running.load(Ordering::Relaxed) {
+      next_tick += period_duration;
+      // 1. Render PCM frames
+      renderer.render_pcm(frame_count);
+      // 2. High-precision sleep to next_tick
+      let now = Instant::now();
+      if now < next_tick {
+          std::thread::sleep(next_tick - now);
+      } else {
+          // Compensate for scheduler latency if overrun
+          next_tick = now;
+      }
+  }
+  ```
+
+#### 5.1.2. `OutputManager` Refactoring (`rust/src/core/output_manager.rs`)
+- Remove `primary_device_ctx: *mut MapDeviceContext` argument from `set_outputs`.
+- Replace distinction between `outputs[0]` and `secondary_devices` with a single collection:
+  ```rust
+  pub struct OutputManager {
+      pub outputs: Vec<RustAudioOutput>,
+      pub active_devices: Vec<ActiveOutputDevice>,
+      pub live_recorder: Option<LiveRecorder>,
+      pub record_producer: Option<rtrb::Producer<f32>>,
+      ...
+  }
+  ```
+- In `dispatch`:
+  - No `primary_hardware_out: *mut f32` parameter.
+  - Symmetrical loop over all `active_devices`:
+    ```rust
+    for dev in &mut self.active_devices {
+        let src_slice = select_source(dev.source);
+        let _ = dev.producer.write_chunk_uncommitted(src_slice);
+    }
+    ```
+
+#### 5.1.3. C Bridge (`rust/src/c/bridge.c`)
+- Remove global single `MapDeviceContext` inside `MiniaudioPlayer`.
+- All `MapDeviceContext` instances are created dynamically inside `ActiveOutputDevice` on demand.
+
+---
+
+## 6. Verification & Test Plan
+
+1. **Unit Tests (Rust)**:
+   - Verify `EngineClock` maintains exact frame count over 10 seconds ($\pm 0.01\%$).
+   - Verify `outputs: {}` opens zero hardware handles.
+   - Verify multiple devices with different buffer sizes run without blocking.
+2. **Integration Tests (Dart)**:
+   - Verify `MiniaudioPlayer(outputs: {})` records WAV to disk with exact RIFF headers and audible content.
+   - Verify dynamic `setOutputs` with 0, 1, and 2 devices updates `stream.outputs` cleanly.
+3. **Static Analysis**:
+   - `cargo check --manifest-path rust/Cargo.toml`
+   - `dart analyze lib test --fatal-infos`
+   - `cargo test` and `flutter test`.

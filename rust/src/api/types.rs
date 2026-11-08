@@ -487,8 +487,8 @@ pub enum RustEngineEvent {
     Bitrate(u32),
     /// Audio buffer frame size.
     BufferSize(u32),
-    /// Active audio output device.
-    Device(RustAudioDevice),
+    /// Active audio output destinations in the multi-sink matrix.
+    Outputs(Vec<RustAudioOutput>),
     /// Real-time FFT spectrum and stereo energy data.
     Visualizer(RustVisualizerData),
     /// Whether visualizer analysis is enabled.
@@ -827,35 +827,39 @@ impl Default for RustPlayerConfig {
     }
 }
 
-/// Audio output routing destination descriptor.
-#[derive(Debug, Clone, PartialEq)]
-pub enum RustAudioOutput {
-    /// Default system speaker output.
-    Speaker {
-        /// Whether exclusive hardware access mode is requested.
-        exclusive_mode: bool,
-    },
-    /// Explicit audio output device selected by identifier.
-    Device {
-        /// Unique device identifier.
-        device_id: String,
-        /// Whether exclusive hardware access mode is requested.
-        exclusive_mode: bool,
-    },
-    /// Dedicated headphone cue channel output.
-    Cue {
-        /// Target device identifier.
-        device_id: String,
-        /// Cue source channel code.
-        source: i32,
-    },
-    /// File sink capturing rendered master audio to disk.
-    File {
-        /// Target file system path.
-        path: String,
-        /// WAV file format code (0: Pcm16, 1: Float32).
-        format: i32,
-    },
+/// Audio signal source routed to an output device or live file recording session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioOutputSource {
+    /// Complete master mix (music + SFX voices + microphone + ducking + master limiter).
+    All = 0,
+    /// Pure music mix from decks with music DSP (EQ, Reverb), excluding SFX and microphone.
+    MusicMix = 1,
+    /// Isolated active deck track only.
+    ActiveTrack = 2,
+    /// Isolated standby deck track only (ideal for DJ pre-listening).
+    StandbyTrack = 3,
+}
+
+impl From<i32> for AudioOutputSource {
+    fn from(v: i32) -> Self {
+        match v {
+            1 => AudioOutputSource::MusicMix,
+            2 => AudioOutputSource::ActiveTrack,
+            3 => AudioOutputSource::StandbyTrack,
+            _ => AudioOutputSource::All,
+        }
+    }
+}
+
+/// Audio hardware output endpoint configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RustAudioOutput {
+    /// Optional specific hardware device identifier. If None, targets default/auto endpoint.
+    pub device_id: Option<String>,
+    /// Whether exclusive hardware access mode is requested.
+    pub exclusive_mode: bool,
+    /// Channel routing source (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
+    pub source: i32,
 }
 
 /// Audio input configuration for recording and microphone pass-through.
@@ -1053,10 +1057,13 @@ pub enum RustPlayerEvent {
     MetaBytes(Vec<u8>),
     /// Whether metadata stream reception is enabled.
     MetaBytesEnabled(bool),
-    /// Cue monitoring volume level.
-    CueVolume(f32),
-    /// Cue monitoring source channel code.
-    CueSource(i32),
+    /// Live audio recording status and active source.
+    RecordingState {
+        /// Whether file recording is currently running.
+        is_recording: bool,
+        /// Audio signal source captured (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
+        source: i32,
+    },
     /// Active loop mode policy (0: off, 1: one, 2: all).
     LoopMode(i32),
     /// Whether playlist shuffle is enabled.
@@ -1075,8 +1082,8 @@ pub enum RustPlayerEvent {
     InputDevices(Vec<RustAudioDevice>),
     /// Request for Dart to read custom stream bytes.
     DartReadRequest(RustDartReadRequest),
-    /// Active audio output device.
-    Device(RustAudioDevice),
+    /// Active audio output destinations in the multi-sink matrix.
+    Outputs(Vec<RustAudioOutput>),
     /// Error notification with message and code.
     Error {
         /// Detailed human-readable error description.

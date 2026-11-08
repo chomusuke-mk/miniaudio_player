@@ -180,9 +180,6 @@ class PlayerState<T> {
   /// The currently applied 10-band equalizer settings.
   Equalizer equalizer = Equalizer.flat;
 
-  /// The primary audio output device configured on the player.
-  AudioDevice audioDevice = AudioDevice.auto;
-
   /// Global system-wide audio output hardware endpoints (speakers, headphones, HDMI, Bluetooth)
   /// currently connected and detected by the operating system.
   ///
@@ -292,10 +289,10 @@ class PlayerState<T> {
   List<String> loadedEffectIds = const [];
 
   /// Set of active output destinations configured on this player instance
-  /// (e.g. default speaker, specific hardware device, headphone CUE, live file recording).
+  /// (e.g. default system audio output, specific hardware device, headphone CUE).
   ///
-  /// Defaults to a Set containing [AudioOutput.speaker()].
-  Set<AudioOutput> outputs = {const AudioOutput.speaker()};
+  /// Defaults to a Set containing the default system output: `{const AudioOutput()}`.
+  Set<AudioOutput> outputs = {const AudioOutput()};
 
   /// Set of active audio input sources currently routing audio into this player instance
   /// (e.g. microphones, line-in).
@@ -306,14 +303,11 @@ class PlayerState<T> {
   /// Whether live audio recording to a file sink is actively running.
   bool isRecording = false;
 
+  /// The audio signal source captured by the active recording session.
+  AudioOutputSource? recordingSource;
+
   /// The elapsed duration of the active live recording.
   Duration recordedDuration = Duration.zero;
-
-  /// The headphone volume for the secondary DJ cue output (`>= 0.0`).
-  double cueVolume = 1.0;
-
-  /// The source routing for the secondary DJ cue output.
-  CueSource cueSource = CueSource.standbyTrack;
 
   /// Whether hardware microphone capture is active.
   bool isMicrophoneEnabled = false;

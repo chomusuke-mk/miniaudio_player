@@ -121,61 +121,105 @@ void main() {
       await Future.wait([sub1.cancel(), sub2.cancel()]);
     });
 
-    test('DJ Cue headphone pre-listening device configuration and volume control', () async {
-      expect(engine.state.cueVolume, equals(1.0));
-
-      // Configure Cue output for Deck B pre-listening via matrix
-      await engine.action.addOutput(
-        const AudioOutput.cue(
-          'cue_headphone_device',
-          source: CueSource.standbyTrack,
-        ),
+    test('Selective AudioOutputSource configuration and output routing', () async {
+      const headphoneOutput = AudioOutput(
+        deviceId: 'headphone_device',
+        source: AudioOutputSource.standbyTrack,
       );
 
-      expect(engine.state.outputs.any((o) => o is CueAudioOutput), isTrue);
+      // Add output for standby track pre-listening
+      await engine.action.addOutput(headphoneOutput);
+      await Future.delayed(const Duration(milliseconds: 50));
 
-      // Adjust Cue headphone volume
-      await engine.action.setCueVolume(0.65);
-      expect(engine.state.cueVolume, closeTo(0.65, 0.001));
-
-      // Switch Cue source
-      await engine.action.setCueSource(CueSource.masterMix);
-      expect(engine.state.cueSource, equals(CueSource.masterMix));
-
-      // Remove Cue output
-      await engine.action.removeOutput(
-        const AudioOutput.cue(
-          'cue_headphone_device',
-          source: CueSource.standbyTrack,
+      expect(
+        engine.state.outputs.any(
+          (o) =>
+              o.source == AudioOutputSource.standbyTrack &&
+              o.deviceId == 'headphone_device',
         ),
+        isTrue,
       );
-      expect(engine.state.outputs.any((o) => o is CueAudioOutput), isFalse);
+
+      // Remove output
+      await engine.action.removeOutput(headphoneOutput);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        engine.state.outputs.any(
+          (o) =>
+              o.source == AudioOutputSource.standbyTrack &&
+              o.deviceId == 'headphone_device',
+        ),
+        isFalse,
+      );
     });
 
-    test('Unified configureOutputs configures master, cue, and recording in one call', () async {
+    test('Unified setOutputs configures audio outputs, while selective startRecording handles disk recording', () async {
       final tempDir = await Directory.systemTemp.createTemp('map_multi_out_test_');
       final recFile = File('${tempDir.path}/multi_out.wav');
 
       try {
-        await engine.action.configureOutputs([
-          const AudioOutput.speaker(),
-          const AudioOutput.cue('', source: CueSource.standbyTrack),
-          AudioOutput.file(recFile.path, format: AudioFileFormat.wav),
-        ]);
+        await engine.action.setOutputs({
+          const AudioOutput(),
+          const AudioOutput(deviceId: 'headphone_dev', source: AudioOutputSource.standbyTrack),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
 
-        expect(engine.state.outputs.length, equals(3));
-        expect(engine.state.outputs.any((o) => o is CueAudioOutput), isTrue);
-        expect(engine.state.outputs.any((o) => o is FileAudioOutput), isTrue);
+        expect(engine.state.outputs.length, equals(2));
+        expect(
+          engine.state.outputs.any((o) => o.source == AudioOutputSource.all),
+          isTrue,
+        );
+        expect(
+          engine.state.outputs.any((o) => o.source == AudioOutputSource.standbyTrack),
+          isTrue,
+        );
+
+        await engine.action.startRecording(
+          recFile.path,
+          format: AudioFileFormat.wav,
+          source: AudioOutputSource.musicMix,
+        );
         expect(engine.state.isRecording, isTrue);
+        expect(engine.state.recordingSource, equals(AudioOutputSource.musicMix));
 
         final recResult = await engine.action.stopRecording();
         expect(engine.state.isRecording, isFalse);
+        expect(engine.state.recordingSource, isNull);
         expect(recResult.path, equals(recFile.path));
         expect(recFile.existsSync(), isTrue);
       } finally {
         if (tempDir.existsSync()) {
           tempDir.deleteSync(recursive: true);
         }
+      }
+    });
+
+    test('Zero hardware outputs (outputs: {}) runs in pure recording mode', () async {
+      final recEngine = MiniaudioPlayer<String>(outputs: const {});
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(recEngine.state.outputs, isEmpty);
+
+      final tempDir = await Directory.systemTemp.createTemp('map_rec_only_test_');
+      final recFile = File('${tempDir.path}/rec_only.wav');
+      try {
+        await recEngine.action.startRecording(
+          recFile.path,
+          source: AudioOutputSource.all,
+        );
+        expect(recEngine.state.isRecording, isTrue);
+        expect(recEngine.state.recordingSource, equals(AudioOutputSource.all));
+
+        final result = await recEngine.action.stopRecording();
+        expect(recEngine.state.isRecording, isFalse);
+        expect(recEngine.state.recordingSource, isNull);
+        expect(result.path, equals(recFile.path));
+        expect(recFile.existsSync(), isTrue);
+      } finally {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+        await recEngine.dispose();
       }
     });
   });

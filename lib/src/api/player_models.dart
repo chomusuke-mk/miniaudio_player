@@ -74,134 +74,82 @@ enum AudioFileFormat {
   }
 }
 
-/// Routing source options for the secondary DJ CUE / headphone output.
-enum CueSource {
-  /// Incoming / standby track deck.
-  standbyTrack(0),
+/// Audio signal source routed to an output device or live file recording session.
+enum AudioOutputSource {
+  /// Complete master mix (music + SFX voices + microphone + ducking + master limiter).
+  all(0),
 
-  /// Active currently playing track deck.
-  activeTrack(1),
+  /// Pure music mix from decks with music DSP (EQ, Reverb), excluding SFX and microphone.
+  musicMix(1),
 
-  /// Full composite Master mix.
-  masterMix(2);
+  /// Isolated active deck track only.
+  activeTrack(2),
+
+  /// Isolated standby deck track only (ideal for DJ pre-listening).
+  standbyTrack(3);
 
   /// Raw native enum value.
   final int value;
-  const CueSource(this.value);
+  const AudioOutputSource(this.value);
 
-  /// Resolves a [CueSource] from its raw integer [val].
-  static CueSource fromValue(int val) {
+  /// Resolves an [AudioOutputSource] from its raw integer [val].
+  static AudioOutputSource fromValue(int val) {
     switch (val) {
-      case 0:
-        return CueSource.standbyTrack;
       case 1:
-        return CueSource.activeTrack;
+        return AudioOutputSource.musicMix;
       case 2:
+        return AudioOutputSource.activeTrack;
+      case 3:
+        return AudioOutputSource.standbyTrack;
+      case 0:
       default:
-        return CueSource.masterMix;
+        return AudioOutputSource.all;
     }
   }
 }
 
-/// Sealed hierarchy representing audio output destinations in the multi-matrix mixer.
-sealed class AudioOutput {
-  const AudioOutput();
+/// Represents a hardware or virtual audio playback destination.
+///
+/// When [deviceId] is null, the player routes audio to the operating system's
+/// default audio output endpoint (automatic routing).
+///
+/// [source] determines which audio stream is routed to this endpoint:
+/// - [AudioOutputSource.all]: Complete master mix (playback tracks + sound effects + mic).
+/// - [AudioOutputSource.musicMix]: Pure music mix from decks, excluding SFX and mic.
+/// - [AudioOutputSource.activeTrack]: Active deck track only.
+/// - [AudioOutputSource.standbyTrack]: Standby deck track only (pre-listening / cueing).
+class AudioOutput {
+  /// The unique operating system device identifier, or null for the automatic default device.
+  final String? deviceId;
 
-  /// Default system speaker output.
-  const factory AudioOutput.speaker({bool exclusiveMode}) = SpeakerAudioOutput;
-
-  /// Specific hardware output device identified by [deviceId].
-  const factory AudioOutput.device(String deviceId, {bool exclusiveMode}) =
-      DeviceAudioOutput;
-
-  /// Dedicated headphone CUE pre-listening output device.
-  const factory AudioOutput.cue(String deviceId, {CueSource source}) =
-      CueAudioOutput;
-
-  /// Real-time live file recording destination.
-  const factory AudioOutput.file(String path, {AudioFileFormat format}) =
-      FileAudioOutput;
-}
-
-/// Default system speaker output configuration.
-class SpeakerAudioOutput extends AudioOutput {
-  /// Whether exclusive hardware access mode should be requested.
+  /// Whether exclusive hardware access mode should be requested (e.g. WASAPI exclusive).
   final bool exclusiveMode;
 
-  /// Creates a [SpeakerAudioOutput] targeting the system speaker.
-  const SpeakerAudioOutput({this.exclusiveMode = false});
+  /// The audio signal routing source stream. Defaults to [AudioOutputSource.all].
+  final AudioOutputSource source;
+
+  /// Creates a unified [AudioOutput] destination.
+  const AudioOutput({
+    this.deviceId,
+    this.exclusiveMode = false,
+    this.source = AudioOutputSource.all,
+  });
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is SpeakerAudioOutput && exclusiveMode == other.exclusiveMode;
-
-  @override
-  int get hashCode => exclusiveMode.hashCode ^ 1;
-}
-
-/// Specific hardware audio output device.
-class DeviceAudioOutput extends AudioOutput {
-  /// The unique hardware device identifier.
-  final String deviceId;
-
-  /// Whether exclusive hardware access mode should be requested.
-  final bool exclusiveMode;
-
-  /// Creates a [DeviceAudioOutput] targeting [deviceId].
-  const DeviceAudioOutput(this.deviceId, {this.exclusiveMode = false});
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DeviceAudioOutput &&
+      other is AudioOutput &&
+          runtimeType == other.runtimeType &&
           deviceId == other.deviceId &&
-          exclusiveMode == other.exclusiveMode;
-
-  @override
-  int get hashCode => deviceId.hashCode ^ exclusiveMode.hashCode ^ 2;
-}
-
-/// Dedicated CUE pre-listening headphone output.
-class CueAudioOutput extends AudioOutput {
-  /// The hardware device identifier for headphone output.
-  final String deviceId;
-
-  /// The audio signal routing source.
-  final CueSource source;
-
-  /// Creates a [CueAudioOutput] targeting [deviceId] with cue [source].
-  const CueAudioOutput(this.deviceId, {this.source = CueSource.standbyTrack});
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CueAudioOutput &&
-          deviceId == other.deviceId &&
+          exclusiveMode == other.exclusiveMode &&
           source == other.source;
 
   @override
-  int get hashCode => deviceId.hashCode ^ source.hashCode ^ 3;
-}
-
-/// Live audio file recording output sink.
-class FileAudioOutput extends AudioOutput {
-  /// The target file path on disk where rendered audio is saved.
-  final String path;
-
-  /// The audio encoding format for the file recording.
-  final AudioFileFormat format;
-
-  /// Creates a [FileAudioOutput] saving to [path] in [format].
-  const FileAudioOutput(this.path, {this.format = AudioFileFormat.wav});
+  int get hashCode => Object.hash(deviceId, exclusiveMode, source);
 
   @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is FileAudioOutput && path == other.path && format == other.format;
-
-  @override
-  int get hashCode => path.hashCode ^ format.hashCode ^ 4;
+  String toString() =>
+      'AudioOutput(deviceId: $deviceId, exclusiveMode: $exclusiveMode, source: $source)';
 }
 
 /// Sealed hierarchy representing audio input sources.

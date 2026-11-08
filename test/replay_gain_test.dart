@@ -198,7 +198,10 @@ void main() {
 
       final player = MiniaudioPlayer(source: [source]);
       try {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        final stopwatch = Stopwatch()..start();
+        while (!player.state.replayGain.enabled && stopwatch.elapsedMilliseconds < 1000) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
 
         expect(player.state.replayGain.enabled, isTrue);
         expect(player.state.replayGain.gainDb, closeTo(-6.5, 1e-4));
