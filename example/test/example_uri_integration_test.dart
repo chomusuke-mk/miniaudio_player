@@ -15,8 +15,6 @@ class _MockCustomByteProvider implements CustomByteProvider {
   @override
   bool get isSeekable => true;
   @override
-  Future<Uint8List> readInitialBytes() async => Uint8List(0);
-  @override
   Future<Uint8List> readBytes(int offset, int length) async => Uint8List(0);
   @override
   Future<void> close() async {}

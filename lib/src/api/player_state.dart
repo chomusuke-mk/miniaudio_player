@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
+import '../crossfeed.dart';
 import '../equalizer.dart';
+import '../infinite_mix.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
@@ -178,7 +180,7 @@ class PlayerState<T> {
   int channels = 2;
 
   /// The currently applied 10-band equalizer settings.
-  Equalizer equalizer = Equalizer.flat;
+  Equalizer equalizer = Equalizer.off;
 
   /// Global system-wide audio output hardware endpoints (speakers, headphones, HDMI, Bluetooth)
   /// currently connected and detected by the operating system.
@@ -232,8 +234,8 @@ class PlayerState<T> {
   /// Whether automatic volume normalization is enabled.
   bool get volumeNormalization => replayGainMode != ReplayGainMode.disabled;
 
-  /// The active Bauer stereophonic-to-binaural crossfeed mode.
-  CrossfeedMode crossfeed = CrossfeedMode.off;
+  /// The active Bauer stereophonic-to-binaural crossfeed configuration.
+  Crossfeed crossfeed = Crossfeed.off;
 
   /// Whether stereo widening spatialization is enabled.
   bool spatializerEnabled = false;
@@ -263,8 +265,8 @@ class PlayerState<T> {
   /// Whether playlist shuffle mode is active.
   bool isShuffled = false;
 
-  /// Whether Infinite Mix dynamic queue replenishment is enabled.
-  bool infiniteMixEnabled = false;
+  /// The active Infinite Mix dynamic queue replenishment configuration.
+  InfiniteMixConfig infiniteMix = InfiniteMixConfig.off;
 
   /// Whether an automatic or manual crossfade transition is currently in progress.
   bool isCrossfading = false;

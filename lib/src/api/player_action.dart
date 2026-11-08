@@ -4,7 +4,9 @@ import 'dart:typed_data' hide Int64List;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Int64List;
 
+import '../crossfeed.dart';
 import '../equalizer.dart';
+import '../infinite_mix.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
 import '../rust/api/types.dart' as rust_types;
@@ -156,7 +158,6 @@ class PlayerAction<T> {
           if (e is MiniaudioPlayerException) rethrow;
           throw MiniaudioPlayerException.fromRustError(e);
         }
-        _player.checkInfiniteMix();
         await Future<void>.delayed(const Duration(milliseconds: 10));
       });
 
@@ -339,7 +340,6 @@ class PlayerAction<T> {
               ? BigInt.from(crossfadeDuration.inMilliseconds)
               : null,
         );
-        _player.checkInfiniteMix();
         await Future<void>.delayed(Duration.zero);
       });
 
@@ -347,7 +347,6 @@ class PlayerAction<T> {
   Future<void> previous() => _serialize(() async {
         _player.ensureNotDisposed();
         await _rust.previous();
-        _player.checkInfiniteMix();
         await Future<void>.delayed(Duration.zero);
       });
 
@@ -365,22 +364,23 @@ class PlayerAction<T> {
     await Future<void>.delayed(Duration.zero);
   }
 
+  /// Sets the dynamic queue replenishment provider callback for Infinite Mix.
+  ///
+  /// Pass `null` to remove the active provider.
+  void setInfiniteMixProvider(InfiniteMixProvider<T>? provider) {
+    _player.infiniteMixProvider = provider;
+  }
+
   /// Configures infinite queue replenishment when playback approaches the end of the queue.
-  Future<void> setInfiniteMix(
-    bool enabled, {
-    InfiniteMixProvider<T>? provider,
-    int remainingTracksThreshold = 2,
-  }) async {
+  Future<void> setInfiniteMix(InfiniteMixConfig config) async {
     _player.ensureNotDisposed();
-    _player.state.infiniteMixEnabled = enabled;
-    _player.infiniteMixThreshold = remainingTracksThreshold;
-    if (provider != null) {
-      _player.infiniteMixProvider = provider;
-    }
-    if (!_player.stream.infiniteMixEnabledController.isClosed) {
-      _player.stream.infiniteMixEnabledController.add(enabled);
-    }
-    _player.checkInfiniteMix();
+    _rust.setInfiniteMix(
+      config: rust_types.RustInfiniteMixConfig(
+        enabled: config.enabled,
+        remainingTracksThreshold: config.remainingTracksThreshold,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures crossfade duration and curve between queue tracks.
@@ -458,7 +458,7 @@ class PlayerAction<T> {
     _rust.setEqualizer(
       params: rust_types.RustEqualizerParams(
         gains: Float32List.fromList(equalizer.toList()),
-        enabled: true,
+        enabled: equalizer.enabled,
       ),
     );
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -557,10 +557,16 @@ class PlayerAction<T> {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Sets binaural crossfeed mode.
-  Future<void> setCrossfeed(CrossfeedMode mode) async {
+  /// Configures Bauer stereophonic-to-binaural (BS2B) crossfeed filtering.
+  Future<void> setCrossfeed(Crossfeed crossfeed) async {
     _player.ensureNotDisposed();
-    _rust.setCrossfeed(mode: mode.index);
+    _rust.setCrossfeed(
+      config: rust_types.RustCrossfeedConfig(
+        enabled: crossfeed.enabled,
+        cutoffHz: crossfeed.cutoffHz,
+        feedDb: crossfeed.feedDb,
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 

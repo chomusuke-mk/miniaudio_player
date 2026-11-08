@@ -2,33 +2,55 @@
 
 use std::f64::consts::PI;
 
-/// Default crossfeed level for Moffat-Bauer curve: 700 Hz cutoff, 4.5 dB crossfeed.
-pub const BS2B_DEFAULT_CLEVEL: u32 = 700 | (45 << 16);
-/// Crossfeed level for Chu Moy curve: 700 Hz cutoff, 6.0 dB crossfeed.
-pub const BS2B_CMOY_CLEVEL: u32 = 700 | (60 << 16);
-
-/// Bauer binaural crossfeed operating modes.
+/// BS2B crossfeed configuration parameters.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CrossfeedMode {
-    /// Crossfeed processing disabled.
-    Off = 0,
-    /// Moffat-Bauer standard curve (700 Hz, 4.5 dB).
-    MoffatBauer = 1,
-    /// Chu Moy classic headphone crossfeed curve (700 Hz, 6.0 dB).
-    ChuMoy = 2,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrossfeedConfig {
+    /// Whether crossfeed processing is actively applied.
+    pub enabled: bool,
+    /// Lowpass cutoff frequency in Hertz (typically 300 Hz to 2000 Hz, default 700 Hz).
+    pub cutoff_hz: f32,
+    /// Crossfeed attenuation / feed level in decibels (typically 1.0 dB to 15.0 dB, default 4.5 dB).
+    pub feed_db: f32,
 }
 
-impl Default for CrossfeedMode {
+impl Default for CrossfeedConfig {
     fn default() -> Self {
-        CrossfeedMode::Off
+        Self {
+            enabled: false,
+            cutoff_hz: 700.0,
+            feed_db: 4.5,
+        }
     }
+}
+
+impl CrossfeedConfig {
+    /// Completely disabled/bypassed crossfeed effect.
+    pub const OFF: Self = Self {
+        enabled: false,
+        cutoff_hz: 700.0,
+        feed_db: 4.5,
+    };
+
+    /// Moffat-Bauer standard curve (700 Hz cutoff, 4.5 dB crossfeed).
+    pub const MOFFAT_BAUER: Self = Self {
+        enabled: true,
+        cutoff_hz: 700.0,
+        feed_db: 4.5,
+    };
+
+    /// Chu Moy classic headphone crossfeed curve (700 Hz cutoff, 6.0 dB crossfeed).
+    pub const CHU_MOY: Self = Self {
+        enabled: true,
+        cutoff_hz: 700.0,
+        feed_db: 6.0,
+    };
 }
 
 /// Bauer stereophonic-to-binaural (BS2B) crossfeed processor reducing headphone listening fatigue.
 #[derive(Debug, Clone)]
 pub struct Bs2bCrossfeed {
-    mode: CrossfeedMode,
+    config: CrossfeedConfig,
     sample_rate: u32,
     a0_lo: f32,
     b1_lo: f32,
@@ -44,10 +66,10 @@ pub struct Bs2bCrossfeed {
 }
 
 impl Bs2bCrossfeed {
-    /// Constructs a `Bs2bCrossfeed` instance with the given sample rate and crossfeed mode.
-    pub fn new(sample_rate: u32, mode: CrossfeedMode) -> Self {
+    /// Constructs a `Bs2bCrossfeed` instance with the given sample rate and crossfeed configuration.
+    pub fn new(sample_rate: u32, config: CrossfeedConfig) -> Self {
         let mut cf = Self {
-            mode,
+            config,
             sample_rate: sample_rate.clamp(2000, 384000),
             a0_lo: 0.0,
             b1_lo: 0.0,
@@ -63,17 +85,17 @@ impl Bs2bCrossfeed {
         cf
     }
 
-    /// Sets the crossfeed mode and recalculates filter coefficients.
-    pub fn set_mode(&mut self, mode: CrossfeedMode) {
-        if self.mode != mode {
-            self.mode = mode;
+    /// Sets the crossfeed configuration and recalculates filter coefficients.
+    pub fn set_config(&mut self, config: CrossfeedConfig) {
+        if self.config != config {
+            self.config = config;
             self.recalculate();
         }
     }
 
-    /// Returns the active crossfeed mode.
-    pub fn mode(&self) -> CrossfeedMode {
-        self.mode
+    /// Returns the active crossfeed configuration.
+    pub fn config(&self) -> CrossfeedConfig {
+        self.config
     }
 
     /// Updates the sample rate and recalculates filter coefficients.
@@ -94,7 +116,7 @@ impl Bs2bCrossfeed {
 
     /// Processes interleaved stereo samples in-place, applying binaural crossfeed mixing.
     pub fn process_frames(&mut self, samples: &mut [f32], channels: usize) {
-        if self.mode == CrossfeedMode::Off || channels < 2 || samples.is_empty() {
+        if !self.config.enabled || channels < 2 || samples.is_empty() {
             return;
         }
 
@@ -160,25 +182,12 @@ impl Bs2bCrossfeed {
     }
 
     fn recalculate(&mut self) {
-        if self.mode == CrossfeedMode::Off {
+        if !self.config.enabled {
             return;
         }
 
-        let level = match self.mode {
-            CrossfeedMode::MoffatBauer => BS2B_DEFAULT_CLEVEL,
-            CrossfeedMode::ChuMoy => BS2B_CMOY_CLEVEL,
-            CrossfeedMode::Off => return,
-        };
-
-        let mut fc_lo = (level & 0xffff) as f64;
-        let mut lev_db = ((level & 0xffff0000) >> 16) as f64;
-
-        if !(300.0..=2000.0).contains(&fc_lo) || !(10.0..=150.0).contains(&lev_db) {
-            fc_lo = 700.0;
-            lev_db = 45.0;
-        }
-
-        lev_db /= 10.0; // dB
+        let fc_lo = (self.config.cutoff_hz as f64).clamp(300.0, 2000.0);
+        let lev_db = (self.config.feed_db as f64).clamp(1.0, 15.0);
 
         let gb_lo = lev_db * (-5.0 / 6.0) - 3.0;
         let gb_hi = lev_db / 6.0 - 3.0;

@@ -24,6 +24,8 @@ export 'src/api/recording.dart';
 export 'src/api/silence_skip_config.dart';
 export 'src/api/spatial.dart';
 export 'src/api/visualizer_data.dart';
+export 'src/crossfeed.dart';
 export 'src/equalizer.dart';
+export 'src/infinite_mix.dart';
 export 'src/loader/custom_byte_provider.dart';
 export 'src/reverb.dart';

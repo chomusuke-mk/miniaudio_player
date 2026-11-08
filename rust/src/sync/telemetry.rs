@@ -9,6 +9,7 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
@@ -189,7 +190,7 @@ pub enum TelemetryEvent {
     ReplayGain(ReplayGainConfig),
     Balance(f32),
     Mono(bool),
-    Crossfeed(i32),
+    Crossfeed(CrossfeedConfig),
     Spatializer(SpatializerData),
     Reverb(ReverbConfig),
     Limiter(bool),
@@ -273,7 +274,7 @@ impl TelemetryEvent {
             Self::Mono(m) => MapEventData {
                 mono_enabled: i32::from(*m),
             },
-            Self::Crossfeed(c) => MapEventData { crossfeed_mode: *c },
+            Self::Crossfeed(c) => MapEventData { crossfeed: *c },
             Self::Spatializer(sp) => MapEventData { spatializer: *sp },
             Self::Reverb(rv) => MapEventData { reverb: *rv },
             Self::Limiter(l) => MapEventData {
@@ -321,7 +322,7 @@ impl TelemetryEvent {
                 EventType::ReplayGain => Self::ReplayGain(data.replay_gain),
                 EventType::Balance => Self::Balance(data.balance),
                 EventType::Mono => Self::Mono(data.mono_enabled != 0),
-                EventType::Crossfeed => Self::Crossfeed(data.crossfeed_mode),
+                EventType::Crossfeed => Self::Crossfeed(data.crossfeed),
                 EventType::Spatializer => Self::Spatializer(data.spatializer),
                 EventType::Reverb => Self::Reverb(data.reverb),
                 EventType::Limiter => Self::Limiter(data.limiter_enabled != 0),
@@ -379,8 +380,8 @@ pub union MapEventData {
     pub balance: f32,
     /// 1 if mono downmixing is enabled, 0 otherwise.
     pub mono_enabled: i32,
-    /// Crossfeed filter mode code.
-    pub crossfeed_mode: i32,
+    /// Crossfeed filter configuration.
+    pub crossfeed: CrossfeedConfig,
     /// Spatializer configuration.
     pub spatializer: SpatializerData,
     /// Reverb configuration.

@@ -16,9 +16,6 @@ abstract class CustomByteProvider {
   /// Whether random-access seeking is supported.
   bool get isSeekable;
 
-  /// Reads initial probe bytes (e.g. headers, format detection bytes).
-  Future<Uint8List> readInitialBytes();
-
   /// Asynchronously fetches [length] bytes starting from [offset].
   Future<Uint8List> readBytes(int offset, int length);
 

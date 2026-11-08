@@ -25,7 +25,7 @@ pub use analysis::{
 pub use biquad::BiquadDf2t;
 pub use chain::DspChain;
 pub use channel_matrix::ChannelMatrix;
-pub use crossfeed::{Bs2bCrossfeed, CrossfeedMode};
+pub use crossfeed::{Bs2bCrossfeed, CrossfeedConfig};
 pub use ducking::AutoDucker;
 pub use equalizer::{Equalizer, EqualizerParams, ReplayGainConfig};
 pub use limiter::SoftLimiter;

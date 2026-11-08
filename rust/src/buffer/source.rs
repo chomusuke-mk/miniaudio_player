@@ -412,23 +412,13 @@ impl CustomDartByteSource {
         stream_id: u32,
         total_size: Option<u64>,
         seekable: bool,
-        initial_data: Vec<u8>,
         request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
     ) -> (Self, CustomByteSourceHandle) {
-        let initial_len = initial_data.len();
-        let initial_eof = total_size
-            .map(|tot| initial_len as u64 >= tot)
-            .unwrap_or(false);
-
         let shared = Arc::new((
             Mutex::new(CustomSharedState {
                 pending_request_id: 0,
-                received_data: if !initial_data.is_empty() {
-                    Some(Ok(initial_data))
-                } else {
-                    None
-                },
-                is_eof: initial_eof,
+                received_data: None,
+                is_eof: false,
                 aborted: false,
             }),
             Condvar::new(),

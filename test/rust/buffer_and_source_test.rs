@@ -260,13 +260,23 @@ fn test_tripartite_and_custom_dart_byte_sources() {
         42,
         Some(1000),
         true,
-        b"INITIAL_BYTES".to_vec(),
         request_sender,
     );
+
+    let handle_clone = handle.clone();
+    let rx_clone = rx;
+    let dart_thread_1 = thread::spawn(move || {
+        let req = rx_clone.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(req.stream_id, 42);
+        assert_eq!(req.offset, 0);
+        handle_clone.supply_bytes(req.request_id, b"INITIAL_BYTES".to_vec(), false);
+        rx_clone
+    });
 
     let mut init_out = [0u8; 13];
     assert_eq!(custom_src.read(&mut init_out).unwrap(), 13);
     assert_eq!(&init_out, b"INITIAL_BYTES");
+    let rx = dart_thread_1.join().unwrap();
 
     custom_src.seek(SeekFrom::Start(500)).unwrap();
     let handle_clone = handle.clone();

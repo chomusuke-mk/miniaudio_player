@@ -24,11 +24,24 @@ void main() {
       expect(activeRg.peak, equals(0.95));
     });
 
-    test('CrossfeedMode enum has valid values', () {
-      expect(CrossfeedMode.values.length, equals(3));
-      expect(CrossfeedMode.off.index, equals(0));
-      expect(CrossfeedMode.moffatBauer.index, equals(1));
-      expect(CrossfeedMode.chuMoy.index, equals(2));
+    test('Crossfeed model initializes defaults, presets and copyWith', () {
+      const defaultCf = Crossfeed();
+      expect(defaultCf.enabled, isFalse);
+      expect(defaultCf.cutoffHz, equals(700.0));
+      expect(defaultCf.feedDb, equals(4.5));
+
+      expect(Crossfeed.off.enabled, isFalse);
+      expect(Crossfeed.moffatBauer.enabled, isTrue);
+      expect(Crossfeed.moffatBauer.cutoffHz, equals(700.0));
+      expect(Crossfeed.moffatBauer.feedDb, equals(4.5));
+      expect(Crossfeed.chuMoy.enabled, isTrue);
+      expect(Crossfeed.chuMoy.cutoffHz, equals(700.0));
+      expect(Crossfeed.chuMoy.feedDb, equals(6.0));
+
+      final custom = defaultCf.copyWith(enabled: true, cutoffHz: 800.0, feedDb: 5.0);
+      expect(custom.enabled, isTrue);
+      expect(custom.cutoffHz, equals(800.0));
+      expect(custom.feedDb, equals(5.0));
     });
 
     test('Reverb model initializes defaults, presets and copyWith', () {
@@ -57,6 +70,23 @@ void main() {
       expect(modified.wet, equals(0.55));
       expect(modified.damping, equals(0.2));
       expect(modified.roomSize, equals(Reverb.concertHall.roomSize));
+    });
+
+    test('Equalizer model initializes defaults, presets and enabled state', () {
+      const defaultEq = Equalizer();
+      expect(defaultEq.enabled, isTrue);
+
+      expect(Equalizer.off.enabled, isFalse);
+      expect(Equalizer.flat.enabled, isTrue);
+      expect(Equalizer.rock.enabled, isTrue);
+      expect(Equalizer.pop.enabled, isTrue);
+      expect(Equalizer.jazz.enabled, isTrue);
+      expect(Equalizer.classical.enabled, isTrue);
+      expect(Equalizer.bassBoost.enabled, isTrue);
+
+      final custom = defaultEq.copyWith(enabled: false, hz31: 3.0);
+      expect(custom.enabled, isFalse);
+      expect(custom.hz31, equals(3.0));
     });
   });
 
@@ -129,16 +159,16 @@ void main() {
     });
 
     test('Crossfeed mode updates state and native bs2b filter', () async {
-      expect(player.state.crossfeed, equals(CrossfeedMode.off));
+      expect(player.state.crossfeed, equals(Crossfeed.off));
 
-      await player.action.setCrossfeed(CrossfeedMode.moffatBauer);
-      expect(player.state.crossfeed, equals(CrossfeedMode.moffatBauer));
+      await player.action.setCrossfeed(Crossfeed.moffatBauer);
+      expect(player.state.crossfeed, equals(Crossfeed.moffatBauer));
 
-      await player.action.setCrossfeed(CrossfeedMode.chuMoy);
-      expect(player.state.crossfeed, equals(CrossfeedMode.chuMoy));
+      await player.action.setCrossfeed(Crossfeed.chuMoy);
+      expect(player.state.crossfeed, equals(Crossfeed.chuMoy));
 
-      await player.action.setCrossfeed(CrossfeedMode.off);
-      expect(player.state.crossfeed, equals(CrossfeedMode.off));
+      await player.action.setCrossfeed(Crossfeed.off);
+      expect(player.state.crossfeed, equals(Crossfeed.off));
     });
 
     test('Spatializer updates state and width factor', () async {
@@ -189,7 +219,7 @@ void main() {
       await player.action.setReplayGain(const ReplayGainConfig(gainDb: -10.0, peak: 0.95));
       await player.action.setPreamp(1.0);
       await player.action.setBalance(-0.2);
-      await player.action.setCrossfeed(CrossfeedMode.moffatBauer);
+      await player.action.setCrossfeed(Crossfeed.moffatBauer);
       await player.action.setReverb(Reverb.concertHall);
       await player.action.setLimiter(true);
 
@@ -210,7 +240,7 @@ void main() {
       double? streamPreamp;
       double? streamBalance;
       bool? streamMono;
-      CrossfeedMode? streamCrossfeed;
+      Crossfeed? streamCrossfeed;
       bool? streamSpatializerEnabled;
       double? streamSpatializerWidth;
       bool? streamLimiter;
@@ -232,7 +262,7 @@ void main() {
       await player.action.setPreamp(2.5);
       await player.action.setBalance(0.4);
       await player.action.setMono(true);
-      await player.action.setCrossfeed(CrossfeedMode.chuMoy);
+      await player.action.setCrossfeed(Crossfeed.chuMoy);
       await player.action.setSpatializer(enabled: true, width: 1.5);
       await player.action.setLimiter(false);
       await player.action.setReverb(Reverb.cathedral);
@@ -244,7 +274,7 @@ void main() {
       expect(streamPreamp, closeTo(2.5, 0.001));
       expect(streamBalance, closeTo(0.4, 0.001));
       expect(streamMono, isTrue);
-      expect(streamCrossfeed, equals(CrossfeedMode.chuMoy));
+      expect(streamCrossfeed, equals(Crossfeed.chuMoy));
       expect(streamSpatializerEnabled, isTrue);
       expect(streamSpatializerWidth, closeTo(1.5, 0.001));
       expect(streamLimiter, isFalse);

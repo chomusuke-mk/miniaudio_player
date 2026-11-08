@@ -420,7 +420,7 @@ void main() {
       await engine.action.setPreamp(2.5);
       await engine.action.setBalance(-0.3);
       await engine.action.setMono(true);
-      await engine.action.setCrossfeed(CrossfeedMode.moffatBauer);
+      await engine.action.setCrossfeed(Crossfeed.moffatBauer);
       await engine.action.setLimiter(false);
       await engine.action.setSpatializer(enabled: true, width: 1.5);
 
@@ -429,7 +429,7 @@ void main() {
       expect(engine.state.preamp, closeTo(2.5, 1e-4));
       expect(engine.state.balance, closeTo(-0.3, 1e-4));
       expect(engine.state.mono, isTrue);
-      expect(engine.state.crossfeed, equals(CrossfeedMode.moffatBauer));
+      expect(engine.state.crossfeed, equals(Crossfeed.moffatBauer));
       expect(engine.state.limiterEnabled, isFalse);
       expect(engine.state.spatializerEnabled, isTrue);
       expect(engine.state.spatializerWidth, closeTo(1.5, 1e-4));
@@ -445,7 +445,7 @@ void main() {
       expect(engine.state.preamp, closeTo(2.5, 1e-4));
       expect(engine.state.balance, closeTo(-0.3, 1e-4));
       expect(engine.state.mono, isTrue);
-      expect(engine.state.crossfeed, equals(CrossfeedMode.moffatBauer));
+      expect(engine.state.crossfeed, equals(Crossfeed.moffatBauer));
       expect(engine.state.limiterEnabled, isFalse);
       expect(engine.state.spatializerEnabled, isTrue);
       expect(engine.state.spatializerWidth, closeTo(1.5, 1e-4));

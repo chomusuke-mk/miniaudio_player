@@ -125,12 +125,17 @@ void main() {
       expect(engine.state.currentIndex, equals(0));
     });
 
-    test('Infinite Mix emits needMoreTracks when remaining tracks < 2', () async {
-      final receivedEvents = <NeedMoreTracksEvent>[];
-      final sub = engine.stream.needMoreTracks.listen(receivedEvents.add);
-
-      await engine.action.setInfiniteMix(true);
+    test('Infinite Mix automatically replenishes queue when requested by Rust', () async {
+      var providerCalledCount = 0;
+      engine.action.setInfiniteMixProvider((count) async {
+        providerCalledCount++;
+        return [AudioSource(trackB.path, data: 'Appended Track')];
+      });
+      await engine.action.setInfiniteMix(
+        const InfiniteMixConfig(enabled: true, remainingTracksThreshold: 2),
+      );
       expect(engine.state.infiniteMixEnabled, isTrue);
+      expect(engine.state.infiniteMix.enabled, isTrue);
 
       // Set queue with only 1 track
       await engine.action.setQueue([
@@ -139,22 +144,12 @@ void main() {
 
       await engine.action.play();
 
-      // Wait for monitor thread tick to observe queue and emit event
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // Wait for Rust telemetry monitor thread tick to observe queue depth and request replenishment
+      await Future<void>.delayed(const Duration(milliseconds: 300));
 
-      expect(receivedEvents, isNotEmpty);
-      expect(receivedEvents.first.remainingTracks, equals(0));
-
-      // In response, dynamically append next track
-      await engine.action.append([
-        AudioSource(trackB.path, data: 'Appended Track'),
-      ]);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-
+      expect(providerCalledCount, greaterThanOrEqualTo(1));
       expect(engine.state.queue.length, equals(2));
       expect(engine.state.queue[1].data, equals('Appended Track'));
-
-      await sub.cancel();
     });
 
     test('setShuffle(true) shuffles queue via SliceRandom and restores original order on setShuffle(false)', () async {

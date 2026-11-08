@@ -120,6 +120,7 @@ pub struct RustEqualizerParams {
 impl From<RustEqualizerParams> for crate::dsp::equalizer::EqualizerParams {
     fn from(params: RustEqualizerParams) -> Self {
         Self {
+            enabled: params.enabled,
             hz31: params.gains.first().copied().unwrap_or(0.0),
             hz63: params.gains.get(1).copied().unwrap_or(0.0),
             hz125: params.gains.get(2).copied().unwrap_or(0.0),
@@ -138,7 +139,7 @@ impl From<crate::dsp::equalizer::EqualizerParams> for RustEqualizerParams {
     fn from(eq: crate::dsp::equalizer::EqualizerParams) -> Self {
         Self {
             gains: eq.as_array().to_vec(),
-            enabled: true,
+            enabled: eq.enabled,
         }
     }
 }
@@ -248,6 +249,46 @@ impl From<RustSilenceConfig> for crate::dsp::silence::SilenceConfig {
             padding_ms: config.padding_ms,
         }
     }
+}
+
+/// Configuration settings for the Bauer Stereophonic-to-Binaural (BS2B) crossfeed filter.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RustCrossfeedConfig {
+    /// Whether crossfeed processing is actively applied.
+    pub enabled: bool,
+    /// Lowpass cutoff frequency in Hertz (typically 300 to 2000 Hz, default 700 Hz).
+    pub cutoff_hz: f32,
+    /// Crossfeed attenuation / feed level in decibels (typically 1.0 to 15.0 dB, default 4.5 dB).
+    pub feed_db: f32,
+}
+
+impl From<crate::dsp::crossfeed::CrossfeedConfig> for RustCrossfeedConfig {
+    fn from(c: crate::dsp::crossfeed::CrossfeedConfig) -> Self {
+        Self {
+            enabled: c.enabled,
+            cutoff_hz: c.cutoff_hz,
+            feed_db: c.feed_db,
+        }
+    }
+}
+
+impl From<RustCrossfeedConfig> for crate::dsp::crossfeed::CrossfeedConfig {
+    fn from(c: RustCrossfeedConfig) -> Self {
+        Self {
+            enabled: c.enabled,
+            cutoff_hz: c.cutoff_hz,
+            feed_db: c.feed_db,
+        }
+    }
+}
+
+/// Configuration settings for continuous auto-refill Infinite Mix queue replenishment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RustInfiniteMixConfig {
+    /// Whether continuous auto-refill infinite mix mode is enabled.
+    pub enabled: bool,
+    /// Threshold of remaining tracks ahead in queue before requesting replenishment.
+    pub remaining_tracks_threshold: u32,
 }
 
 /// Instantaneous FFT spectrum and stereo amplitude metrics for UI visualizers.
@@ -1036,8 +1077,8 @@ pub enum RustPlayerEvent {
     ReplayGainMode(u32),
     /// Default ReplayGain fallback adjustment in dB.
     DefaultReplayGain(f32),
-    /// Bauer binaural crossfeed mode code.
-    Crossfeed(i32),
+    /// Bauer binaural crossfeed configuration.
+    Crossfeed(RustCrossfeedConfig),
     /// 3D stereo widening spatializer state.
     Spatializer {
         /// Whether spatializer is enabled.
@@ -1083,6 +1124,8 @@ pub enum RustPlayerEvent {
     LoopMode(i32),
     /// Whether playlist shuffle is enabled.
     IsShuffled(bool),
+    /// Continuous auto-refill Infinite Mix configuration.
+    InfiniteMix(RustInfiniteMixConfig),
     /// Whether auto-pause on device change is enabled.
     PauseOnDeviceChange(bool),
     /// Whether microphone capture is enabled.
@@ -1097,6 +1140,13 @@ pub enum RustPlayerEvent {
     InputDevices(Vec<RustAudioDevice>),
     /// Request for Dart to read custom stream bytes.
     DartReadRequest(RustDartReadRequest),
+    /// Request for Dart to replenish queue for infinite mix.
+    NeedMoreTracks {
+        /// ID of the current playing track.
+        current_track_id: i64,
+        /// Remaining number of tracks ahead in the playlist queue.
+        remaining_tracks: u32,
+    },
     /// Active audio output destinations in the multi-sink matrix.
     Outputs(Vec<RustAudioOutput>),
     /// Error notification with message and code.

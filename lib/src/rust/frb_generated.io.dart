@@ -98,6 +98,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustCrossfadeConfig dco_decode_box_autoadd_rust_crossfade_config(dynamic raw);
 
   @protected
+  RustCrossfeedConfig dco_decode_box_autoadd_rust_crossfeed_config(dynamic raw);
+
+  @protected
   RustDartReadRequest dco_decode_box_autoadd_rust_dart_read_request(
       dynamic raw);
 
@@ -109,6 +112,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(dynamic raw);
+
+  @protected
+  RustInfiniteMixConfig dco_decode_box_autoadd_rust_infinite_mix_config(
+      dynamic raw);
 
   @protected
   RustPlayerConfig dco_decode_box_autoadd_rust_player_config(dynamic raw);
@@ -262,6 +269,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustCrossfadeConfig dco_decode_rust_crossfade_config(dynamic raw);
 
   @protected
+  RustCrossfeedConfig dco_decode_rust_crossfeed_config(dynamic raw);
+
+  @protected
   RustCueConfig dco_decode_rust_cue_config(dynamic raw);
 
   @protected
@@ -281,6 +291,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustHttpHeader dco_decode_rust_http_header(dynamic raw);
+
+  @protected
+  RustInfiniteMixConfig dco_decode_rust_infinite_mix_config(dynamic raw);
 
   @protected
   RustPlayerConfig dco_decode_rust_player_config(dynamic raw);
@@ -417,6 +430,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustCrossfeedConfig sse_decode_box_autoadd_rust_crossfeed_config(
+      SseDeserializer deserializer);
+
+  @protected
   RustDartReadRequest sse_decode_box_autoadd_rust_dart_read_request(
       SseDeserializer deserializer);
 
@@ -430,6 +447,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustEqualizerParams sse_decode_box_autoadd_rust_equalizer_params(
+      SseDeserializer deserializer);
+
+  @protected
+  RustInfiniteMixConfig sse_decode_box_autoadd_rust_infinite_mix_config(
       SseDeserializer deserializer);
 
   @protected
@@ -602,6 +623,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustCrossfeedConfig sse_decode_rust_crossfeed_config(
+      SseDeserializer deserializer);
+
+  @protected
   RustCueConfig sse_decode_rust_cue_config(SseDeserializer deserializer);
 
   @protected
@@ -625,6 +650,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustHttpHeader sse_decode_rust_http_header(SseDeserializer deserializer);
+
+  @protected
+  RustInfiniteMixConfig sse_decode_rust_infinite_mix_config(
+      SseDeserializer deserializer);
 
   @protected
   RustPlayerConfig sse_decode_rust_player_config(SseDeserializer deserializer);
@@ -772,6 +801,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustCrossfadeConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_crossfeed_config(
+      RustCrossfeedConfig self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_dart_read_request(
       RustDartReadRequest self, SseSerializer serializer);
 
@@ -786,6 +819,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_rust_equalizer_params(
       RustEqualizerParams self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_infinite_mix_config(
+      RustInfiniteMixConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_player_config(
@@ -966,6 +1003,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustCrossfadeConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_crossfeed_config(
+      RustCrossfeedConfig self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_cue_config(RustCueConfig self, SseSerializer serializer);
 
   @protected
@@ -991,6 +1032,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_http_header(
       RustHttpHeader self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_infinite_mix_config(
+      RustInfiniteMixConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_player_config(

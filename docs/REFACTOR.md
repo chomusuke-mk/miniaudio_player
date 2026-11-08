@@ -430,3 +430,24 @@ Future<void> setReplayGain(
 2. Run `flutter_rust_bridge_codegen generate`.
 3. Update unit and integration tests in `test/`.
 4. Run `dart analyze lib test` and `flutter test`.
+
+---
+
+## 10. Autonomous Rust-Driven Infinite Mix & Zero-InitialBytes Custom Streams
+
+### 10.1. Rust-Authoritative Infinite Mix (`NeedMoreTracks`)
+- **Eliminated**: `needMoreTracksController`, `Stream<NeedMoreTracksEvent> get needMoreTracks`, and `checkInfiniteMix()`.
+- **Rust Engine Queue Depth Monitoring**: In `map-telemetry-monitor`, Rust continuously evaluates `remaining < threshold` while the engine is actively playing.
+- **Event Flow**:
+  - Rust emits `RustPlayerEvent::NeedMoreTracks { current_track_id, remaining_tracks }` via the telemetry event channel (deduplicated per track using `last_notified_infinite_mix_id`).
+  - Dart handles `RustPlayerEvent_NeedMoreTracks` in `_onRustPlayerEvent` and executes `_onNeedMoreTracks(currentTrackId, remainingTracks)`.
+  - When `infiniteMixProvider` is configured, Dart calls `provider(count)` and dynamically appends the resulting tracks via `action.append(more)`.
+
+### 10.2. Total Elimination of `readInitialBytes`
+- `CustomByteProvider` in Dart no longer requires `Future<Uint8List> readInitialBytes()`.
+- `CustomDartByteSource` in Rust operates purely on-demand via `readRange(offset, length)`.
+- Queueing of `AudioSource(customProvider)` is 100% synchronous ($\mathcal{O}(1)$), requiring no initial payload from Dart upfront.
+
+### 10.3. Atomic Queue & Current Index Telemetry
+- `RustPlayerEvent::Queue` now atomically provides both `{ queue: Vec<i64>, current_index: i32 }`.
+- Eliminates race conditions between queue updates and active playback index synchronization in Dart.

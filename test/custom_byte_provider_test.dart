@@ -20,11 +20,6 @@ class MockCustomByteProvider implements CustomByteProvider {
   bool get isSeekable => true;
 
   @override
-  Future<Uint8List> readInitialBytes() async {
-    return _fileBytes.sublist(0, min(8192, _fileBytes.length));
-  }
-
-  @override
   Future<Uint8List> readBytes(int offset, int length) async {
     requestedOffsets.add(offset);
     if (offset >= _fileBytes.length) return Uint8List(0);

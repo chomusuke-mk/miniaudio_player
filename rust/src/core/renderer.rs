@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::core::dual_source::{STATE_BUFFERING, STATE_COMPLETED, STATE_PLAYING};
 use crate::dsp::chain::DspChain;
-use crate::dsp::crossfeed::CrossfeedMode;
+use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::sonic::SonicStream;
@@ -30,7 +30,7 @@ pub enum DspCommand {
     SetBalance(f32),
     SetMono(bool),
     SetSpatializer { enabled: bool, width: f32 },
-    SetCrossfeed(CrossfeedMode),
+    SetCrossfeed(CrossfeedConfig),
     SetReverb(ReverbConfig),
     SetLimiter(bool),
     SetVisualizerEnabled(bool),
@@ -142,7 +142,7 @@ impl AudioRenderer {
             DspCommand::SetSpatializer { enabled, width } => {
                 self.dsp.set_spatializer(enabled, width)
             }
-            DspCommand::SetCrossfeed(mode) => self.dsp.set_crossfeed(mode),
+            DspCommand::SetCrossfeed(cfg) => self.dsp.set_crossfeed(cfg),
             DspCommand::SetReverb(cfg) => self.dsp.set_reverb(cfg),
             DspCommand::SetLimiter(en) => self.dsp.set_limiter_enabled(en),
             DspCommand::SetVisualizerEnabled(en) => self.dsp.set_visualizer_enabled(en),

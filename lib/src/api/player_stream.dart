@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../crossfeed.dart';
 import '../equalizer.dart';
+import '../infinite_mix.dart';
 import '../reverb.dart';
 import 'audio_device.dart';
 import 'audio_source.dart';
@@ -9,7 +11,6 @@ import 'buffer.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'loop_mode.dart';
-import 'need_more_tracks_event.dart';
 import 'player_exception.dart';
 import 'player_models.dart';
 import 'player_state.dart' show EnginePhase, PlaybackState;
@@ -91,8 +92,8 @@ class PlayerStream<T> {
       StreamController<ReplayGainMode>.broadcast();
   final StreamController<double> defaultReplayGainController =
       StreamController<double>.broadcast();
-  final StreamController<CrossfeedMode> crossfeedController =
-      StreamController<CrossfeedMode>.broadcast();
+  final StreamController<Crossfeed> crossfeedController =
+      StreamController<Crossfeed>.broadcast();
   final StreamController<bool> spatializerEnabledController =
       StreamController<bool>.broadcast();
   final StreamController<double> spatializerWidthController =
@@ -111,6 +112,8 @@ class PlayerStream<T> {
       StreamController<LoopMode>.broadcast();
   final StreamController<bool> isShuffledController =
       StreamController<bool>.broadcast();
+  final StreamController<InfiniteMixConfig> infiniteMixController =
+      StreamController<InfiniteMixConfig>.broadcast();
   final StreamController<bool> infiniteMixEnabledController =
       StreamController<bool>.broadcast();
   final StreamController<bool> isCrossfadingController =
@@ -143,8 +146,6 @@ class PlayerStream<T> {
       StreamController<List<String>>.broadcast();
   final StreamController<MiniaudioPlayerException> errorsController =
       StreamController<MiniaudioPlayerException>.broadcast();
-  final StreamController<NeedMoreTracksEvent> needMoreTracksController =
-      StreamController<NeedMoreTracksEvent>.broadcast();
 
   /// Creates a [PlayerStream] container with broadcast stream controllers.
   PlayerStream();
@@ -283,8 +284,8 @@ class PlayerStream<T> {
   /// Broadcast stream emitting default fallback ReplayGain in dB.
   Stream<double> get defaultReplayGain => defaultReplayGainController.stream;
 
-  /// Broadcast stream emitting Bauer stereophonic-to-binaural crossfeed mode updates.
-  Stream<CrossfeedMode> get crossfeed => crossfeedController.stream;
+  /// Broadcast stream emitting Bauer stereophonic-to-binaural crossfeed configuration updates.
+  Stream<Crossfeed> get crossfeed => crossfeedController.stream;
 
   /// Broadcast stream emitting whether stereo widening spatialization is enabled.
   Stream<bool> get spatializerEnabled => spatializerEnabledController.stream;
@@ -313,6 +314,9 @@ class PlayerStream<T> {
 
   /// Broadcast stream emitting whether playlist shuffle mode is active.
   Stream<bool> get isShuffled => isShuffledController.stream;
+
+  /// Broadcast stream emitting Infinite Mix dynamic queue replenishment configuration updates.
+  Stream<InfiniteMixConfig> get infiniteMix => infiniteMixController.stream;
 
   /// Broadcast stream emitting whether Infinite Mix dynamic queue replenishment is active.
   Stream<bool> get infiniteMixEnabled => infiniteMixEnabledController.stream;
@@ -363,10 +367,6 @@ class PlayerStream<T> {
 
   /// Broadcast stream emitting player exceptions and native errors.
   Stream<MiniaudioPlayerException> get errors => errorsController.stream;
-
-  /// Broadcast stream emitting events when Infinite Mix approaches the queue end.
-  Stream<NeedMoreTracksEvent> get needMoreTracks =>
-      needMoreTracksController.stream;
 
   /// Closes all internal broadcast stream controllers.
   Future<void> dispose() async {
@@ -419,6 +419,7 @@ class PlayerStream<T> {
       currentItemController.close(),
       loopModeController.close(),
       isShuffledController.close(),
+      infiniteMixController.close(),
       infiniteMixEnabledController.close(),
       isCrossfadingController.close(),
       crossfadeConfigController.close(),
@@ -432,7 +433,6 @@ class PlayerStream<T> {
       micRmsLevelController.close(),
       voiceCompletedController.close(),
       errorsController.close(),
-      needMoreTracksController.close(),
     ]);
   }
 }

@@ -6,7 +6,7 @@ use common::SignalGenerator;
 use miniaudio_player::dsp::biquad::BiquadDf2t;
 use miniaudio_player::dsp::chain::DspChain;
 use miniaudio_player::dsp::channel_matrix::ChannelMatrix;
-use miniaudio_player::dsp::crossfeed::{Bs2bCrossfeed, CrossfeedMode};
+use miniaudio_player::dsp::crossfeed::{Bs2bCrossfeed, CrossfeedConfig};
 use miniaudio_player::dsp::ducking::AutoDucker;
 use miniaudio_player::dsp::equalizer::Equalizer;
 use miniaudio_player::dsp::limiter::SoftLimiter;
@@ -59,7 +59,7 @@ fn test_equalizer_stages_and_crossfeed_reverb_limiter() {
     assert!((test_frame[0] - test_frame[1]).abs() < 0.05);
 
     // Crossfeed crosstalk
-    let mut cf = Bs2bCrossfeed::new(44100, CrossfeedMode::MoffatBauer);
+    let mut cf = Bs2bCrossfeed::new(44100, CrossfeedConfig::MOFFAT_BAUER);
     let mut stereo = vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0];
     cf.process_frames(&mut stereo, 2);
     let right_energy: f32 = stereo

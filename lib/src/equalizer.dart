@@ -3,6 +3,9 @@
 /// Follows the ISO 266 standard preferred 1/1 octave band center frequencies:
 /// 31 Hz, 63 Hz, 125 Hz, 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz, 8 kHz, 16 kHz.
 class Equalizer {
+  /// Whether the equalizer DSP stage is actively applied.
+  final bool enabled;
+
   /// The gain for the 31 Hz band in decibels (dB).
   final double hz31;
 
@@ -35,6 +38,7 @@ class Equalizer {
 
   /// Creates an immutable [Equalizer] with optional band gains in dB (defaults to `0.0` dB).
   const Equalizer({
+    this.enabled = true,
     this.hz31 = 0.0,
     this.hz63 = 0.0,
     this.hz125 = 0.0,
@@ -87,7 +91,7 @@ class Equalizer {
         );
 
   /// Factory constructor to create an [Equalizer] from an ordered 10-element list.
-  factory Equalizer.fromList(List<double> gains) {
+  factory Equalizer.fromList(List<double> gains, {bool enabled = true}) {
     if (gains.length < 10) {
       throw ArgumentError.value(
         gains.length,
@@ -96,6 +100,7 @@ class Equalizer {
       );
     }
     return Equalizer(
+      enabled: enabled,
       hz31: gains[0],
       hz63: gains[1],
       hz125: gains[2],
@@ -109,11 +114,15 @@ class Equalizer {
     );
   }
 
+  /// Completely disabled/bypassed equalizer stage.
+  static const Equalizer off = Equalizer(enabled: false);
+
   /// Flat frequency response (all bands at 0.0 dB).
-  static const Equalizer flat = Equalizer();
+  static const Equalizer flat = Equalizer(enabled: true);
 
   /// Rock preset: boosted bass and treble with recessed mid-range.
   static const Equalizer rock = Equalizer(
+    enabled: true,
     hz31: 4.5,
     hz63: 3.5,
     hz125: 2.0,
@@ -128,6 +137,7 @@ class Equalizer {
 
   /// Pop preset: enhanced mid-bass and vocal range.
   static const Equalizer pop = Equalizer(
+    enabled: true,
     hz31: -1.5,
     hz63: -0.5,
     hz125: 1.5,
@@ -142,6 +152,7 @@ class Equalizer {
 
   /// Jazz preset: smooth warmth for acoustic instruments.
   static const Equalizer jazz = Equalizer(
+    enabled: true,
     hz31: 3.5,
     hz63: 2.5,
     hz125: 1.0,
@@ -156,6 +167,7 @@ class Equalizer {
 
   /// Classical preset: dynamic balance with subdued harsh mids for orchestra.
   static const Equalizer classical = Equalizer(
+    enabled: true,
     hz31: 4.0,
     hz63: 3.0,
     hz125: 2.0,
@@ -170,6 +182,7 @@ class Equalizer {
 
   /// Bass boost preset: elevated low-end frequencies.
   static const Equalizer bassBoost = Equalizer(
+    enabled: true,
     hz31: 7.0,
     hz63: 6.0,
     hz125: 5.0,
@@ -184,6 +197,7 @@ class Equalizer {
 
   /// Returns a copy of this [Equalizer] with modified band values.
   Equalizer copyWith({
+    bool? enabled,
     double? hz31,
     double? hz63,
     double? hz125,
@@ -196,6 +210,7 @@ class Equalizer {
     double? hz16k,
   }) {
     return Equalizer(
+      enabled: enabled ?? this.enabled,
       hz31: hz31 ?? this.hz31,
       hz63: hz63 ?? this.hz63,
       hz125: hz125 ?? this.hz125,
@@ -225,7 +240,7 @@ class Equalizer {
     }
     final bands = List<double>.from(toList());
     bands[index] = clampGain(gainDb);
-    return Equalizer.fromList(bands);
+    return Equalizer.fromList(bands, enabled: enabled);
   }
 
   /// Converts this [Equalizer] to an ordered 10-element list of band gains in dB.
@@ -238,6 +253,7 @@ class Equalizer {
       identical(this, other) ||
       other is Equalizer &&
           runtimeType == other.runtimeType &&
+          enabled == other.enabled &&
           hz31 == other.hz31 &&
           hz63 == other.hz63 &&
           hz125 == other.hz125 &&
@@ -251,6 +267,7 @@ class Equalizer {
 
   @override
   int get hashCode => Object.hash(
+        enabled,
         hz31,
         hz63,
         hz125,
@@ -265,7 +282,7 @@ class Equalizer {
 
   @override
   String toString() {
-    return 'Equalizer(31Hz: ${hz31}dB, 63Hz: ${hz63}dB, 125Hz: ${hz125}dB, '
+    return 'Equalizer(enabled: $enabled, 31Hz: ${hz31}dB, 63Hz: ${hz63}dB, 125Hz: ${hz125}dB, '
         '250Hz: ${hz250}dB, 500Hz: ${hz500}dB, 1kHz: ${hz1k}dB, 2kHz: ${hz2k}dB, '
         '4kHz: ${hz4k}dB, 8kHz: ${hz8k}dB, 16kHz: ${hz16k}dB)';
   }

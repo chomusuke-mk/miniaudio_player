@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import '../crossfeed.dart';
 import '../equalizer.dart';
+import '../infinite_mix.dart';
 import '../loader/custom_byte_provider.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
@@ -17,7 +19,6 @@ import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'logger.dart';
 import 'loop_mode.dart';
-import 'need_more_tracks_event.dart';
 import 'player_action.dart';
 import 'player_exception.dart';
 import 'player_models.dart';
@@ -375,9 +376,6 @@ class MiniaudioPlayer<T> {
   /// The active [CustomByteProvider] instances keyed by stream ID.
   final Map<int, CustomByteProvider> customProviders = {};
 
-  /// The remaining track threshold at which Infinite Mix replenishment triggers.
-  int infiniteMixThreshold = 2;
-
   /// The callback supplying more tracks when Infinite Mix triggers.
   InfiniteMixProvider<T>? infiniteMixProvider;
 
@@ -502,9 +500,6 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_IsPlaying(:final field0):
         state.isPlaying = field0;
         stream.playingController.add(field0);
-        if (field0) {
-          checkInfiniteMix();
-        }
       case rust_types.RustPlayerEvent_IsBuffering(:final field0):
         state.isBuffering = field0;
         stream.bufferingController.add(field0);
@@ -550,7 +545,10 @@ class MiniaudioPlayer<T> {
         state.mono = field0;
         stream.monoController.add(field0);
       case rust_types.RustPlayerEvent_Equalizer(:final field0):
-        final eq = Equalizer.fromList(field0.gains.toList());
+        final eq = Equalizer.fromList(
+          field0.gains.toList(),
+          enabled: field0.enabled,
+        );
         state.equalizer = eq;
         stream.equalizerController.add(eq);
       case rust_types.RustPlayerEvent_Reverb(:final field0):
@@ -571,11 +569,13 @@ class MiniaudioPlayer<T> {
         state.preamp = field0;
         stream.preampController.add(field0);
       case rust_types.RustPlayerEvent_Crossfeed(:final field0):
-        final cm = (field0 >= 0 && field0 < CrossfeedMode.values.length)
-            ? CrossfeedMode.values[field0]
-            : CrossfeedMode.off;
-        state.crossfeed = cm;
-        stream.crossfeedController.add(cm);
+        final cf = Crossfeed(
+          enabled: field0.enabled,
+          cutoffHz: field0.cutoffHz,
+          feedDb: field0.feedDb,
+        );
+        state.crossfeed = cf;
+        stream.crossfeedController.add(cf);
       case rust_types.RustPlayerEvent_Spatializer(:final enabled, :final width):
         state.spatializerEnabled = enabled;
         state.spatializerWidth = width;
@@ -637,6 +637,14 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_IsShuffled(:final field0):
         state.isShuffled = field0;
         stream.isShuffledController.add(field0);
+      case rust_types.RustPlayerEvent_InfiniteMix(:final field0):
+        final im = InfiniteMixConfig(
+          enabled: field0.enabled,
+          remainingTracksThreshold: field0.remainingTracksThreshold,
+        );
+        state.infiniteMix = im;
+        stream.infiniteMixController.add(im);
+        stream.infiniteMixEnabledController.add(im.enabled);
       case rust_types.RustPlayerEvent_MicrophoneEnabled(:final field0):
         state.isMicrophoneEnabled = field0;
         stream.isMicrophoneEnabledController.add(field0);
@@ -746,7 +754,6 @@ class MiniaudioPlayer<T> {
             : null;
         final curSource = state.currentItem;
         stream.currentItemController.add(curSource);
-        checkInfiniteMix();
       case rust_types.RustPlayerEvent_Queue(:final queue, :final currentIndex):
         final reconciled = <AudioSource<T>>[];
         for (var i = 0; i < queue.length; i++) {
@@ -765,9 +772,13 @@ class MiniaudioPlayer<T> {
         stream.currentIndexController.add(idx);
         stream.queueController.add(state.queue);
         stream.currentItemController.add(state.currentItem);
-        checkInfiniteMix();
       case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
         _onDartReadRequest(field0);
+      case rust_types.RustPlayerEvent_NeedMoreTracks(
+          :final currentTrackId,
+          :final remainingTracks,
+        ):
+        _onNeedMoreTracks(currentTrackId.toInt(), remainingTracks);
       case rust_types.RustPlayerEvent_Error(:final message, :final code):
         stream.errorsController
             .add(MiniaudioPlayerException(message, errorCode: code));
@@ -801,29 +812,17 @@ class MiniaudioPlayer<T> {
     }
   }
 
-  /// Evaluates queue depth and triggers Infinite Mix replenishment if approaching the end of the queue.
-  void checkInfiniteMix() async {
-    if (!state.infiniteMixEnabled || !state.isPlaying) return;
-    final curIdx = state.currentIndex ?? 0;
-    final remaining = state.queue.length - 1 - (curIdx >= 0 ? curIdx : 0);
-    if (remaining < infiniteMixThreshold &&
-        !stream.needMoreTracksController.isClosed) {
-      stream.needMoreTracksController.add(
-        NeedMoreTracksEvent(
-          currentTrackId: curIdx >= 0 ? curIdx : 0,
-          remainingTracks: remaining < 0 ? 0 : remaining,
-        ),
-      );
-      if (infiniteMixProvider != null) {
-        try {
-          final more = await infiniteMixProvider!(
-            (infiniteMixThreshold - remaining).clamp(1, 10),
-          );
-          if (more.isNotEmpty && !_isDisposed) {
-            action.append(more);
-          }
-        } catch (_) {}
-      }
+  /// Handles native Infinite Mix queue replenishment requests.
+  void _onNeedMoreTracks(int currentTrackId, int remainingTracks) async {
+    if (infiniteMixProvider != null) {
+      try {
+        final threshold = state.infiniteMix.remainingTracksThreshold;
+        final countToFetch = (threshold - remainingTracks).clamp(1, 10);
+        final more = await infiniteMixProvider!(countToFetch);
+        if (more.isNotEmpty && !_isDisposed) {
+          action.append(more);
+        }
+      } catch (_) {}
     }
   }
 

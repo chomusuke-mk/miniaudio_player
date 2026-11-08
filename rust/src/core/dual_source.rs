@@ -3,7 +3,7 @@
 use std::ffi::{c_char, c_void};
 use std::fs::File;
 use std::io::{Cursor, Read};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
@@ -15,7 +15,7 @@ use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, TripartiteBuff
 use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{BoundaryInfo, ContainerFormat, FormatSniffer, SymphoniaEngine};
 use crate::dsp::channel_matrix::ChannelMatrix;
-use crate::dsp::crossfeed::CrossfeedMode;
+use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::resampler::RubatoResampler;
 use crate::dsp::reverb::ReverbConfig;
@@ -122,8 +122,8 @@ pub struct MiniaudioPlayerStatus {
     pub balance: f32,
     /// Non-zero if stereo downmix to mono is active.
     pub mono_enabled: i32,
-    /// Bauer binaural crossfeed mode code.
-    pub crossfeed_mode: i32,
+    /// Bauer binaural crossfeed settings.
+    pub crossfeed: CrossfeedConfig,
     /// Non-zero if 3D stereo widening spatializer is enabled.
     pub spatializer_enabled: i32,
     /// 3D stereo widening factor.
@@ -1320,7 +1320,7 @@ pub struct StreamingDeck {
     /// 3D stereo widening spatializer flag.
     pub spatializer_enabled: Arc<AtomicBool>,
     pub spatializer_width: Arc<AtomicU32>,
-    pub crossfeed_mode: Arc<AtomicI32>,
+    pub crossfeed_config: Arc<RwLock<CrossfeedConfig>>,
     pub reverb_config: Arc<RwLock<ReverbConfig>>,
     pub limiter_enabled: Arc<AtomicBool>,
 
@@ -1449,7 +1449,7 @@ impl StreamingDeck {
         let mono_enabled = Arc::new(AtomicBool::new(false));
         let spatializer_enabled = Arc::new(AtomicBool::new(false));
         let spatializer_width = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-        let crossfeed_mode = Arc::new(AtomicI32::new(0));
+        let crossfeed_config = Arc::new(RwLock::new(CrossfeedConfig::default()));
         let reverb_config = Arc::new(RwLock::new(ReverbConfig::default()));
         let limiter_enabled = Arc::new(AtomicBool::new(true));
 
@@ -1593,7 +1593,7 @@ impl StreamingDeck {
             mono_enabled,
             spatializer_enabled,
             spatializer_width,
-            crossfeed_mode,
+            crossfeed_config,
             reverb_config,
             limiter_enabled,
             engine,
@@ -2282,30 +2282,18 @@ impl StreamingDeck {
         handle: CustomByteSourceHandle,
         total_size: Option<u64>,
         is_seekable: bool,
-        initial_bytes: &[u8],
     ) -> i32 {
         let _ = self.begin_open();
         crate::map_log!(
             3,
-            "open_custom_source: total_size={:?}, is_seekable={}, initial_bytes={}",
+            "open_custom_source: total_size={:?}, is_seekable={}",
             total_size,
-            is_seekable,
-            initial_bytes.len()
+            is_seekable
         );
-
-        let hint = if !initial_bytes.is_empty() {
-            let (_status, boundary) = FormatSniffer::detect_head_boundary(
-                initial_bytes,
-                total_size.map(|s| s as i64).unwrap_or(-1),
-            );
-            boundary.container.hint_extension()
-        } else {
-            None
-        };
 
         *self.custom_source_handle.write().unwrap() = Some(handle);
 
-        let eng = match SymphoniaEngine::new(source, hint) {
+        let eng = match SymphoniaEngine::new(source, None) {
             Ok(e) => e,
             Err(e) => {
                 crate::map_log!(1, "open_custom_source failed: SymphoniaEngine::new failed: {:?}", e);
@@ -2314,7 +2302,7 @@ impl StreamingDeck {
             }
         };
 
-        self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), initial_bytes);
+        self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), &[]);
         crate::map_log!(3, "open_custom_source successfully opened");
         MAP_SUCCESS
     }
@@ -3112,19 +3100,20 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn set_crossfeed(&mut self, mode: i32) -> i32 {
-        crate::map_log!(4, "set_crossfeed(mode={})", mode);
-        let cf_mode = match mode {
-            1 => CrossfeedMode::MoffatBauer,
-            2 => CrossfeedMode::ChuMoy,
-            _ => CrossfeedMode::Off,
-        };
-        self.crossfeed_mode.store(mode, Ordering::Relaxed);
-        self.send_dsp_command(DspCommand::SetCrossfeed(cf_mode));
+    pub fn set_crossfeed(&mut self, config: CrossfeedConfig) -> i32 {
+        crate::map_log!(
+            4,
+            "set_crossfeed(enabled={}, cutoff={}, feed={})",
+            config.enabled,
+            config.cutoff_hz,
+            config.feed_db
+        );
+        *self.crossfeed_config.write().unwrap() = config;
+        self.send_dsp_command(DspCommand::SetCrossfeed(config));
         self.telemetry.post_event(
             EventType::Crossfeed,
             MapEventData {
-                crossfeed_mode: mode,
+                crossfeed: config,
             },
         );
         MAP_SUCCESS
@@ -3282,7 +3271,7 @@ impl StreamingDeck {
         out.replay_gain = *self.replay_gain.read().unwrap();
         out.balance = f32::from_bits(self.balance.load(Ordering::Relaxed));
         out.mono_enabled = self.mono_enabled.load(Ordering::Relaxed) as i32;
-        out.crossfeed_mode = self.crossfeed_mode.load(Ordering::Relaxed);
+        out.crossfeed = *self.crossfeed_config.read().unwrap();
         out.spatializer_enabled = self.spatializer_enabled.load(Ordering::Relaxed) as i32;
         out.spatializer_width = f32::from_bits(self.spatializer_width.load(Ordering::Relaxed));
         out.reverb = *self.reverb_config.read().unwrap();
@@ -3446,7 +3435,6 @@ pub type CustomSourceFactory = Arc<
     dyn Fn(
             u32,
             Option<u64>,
-            Vec<u8>,
         ) -> (
             crate::buffer::CustomDartByteSource,
             crate::buffer::CustomByteSourceHandle,
@@ -3502,6 +3490,10 @@ pub struct DualSource {
     pub shuffle_enabled: Arc<AtomicBool>,
     /// Whether continuous auto-refill infinite mix mode is enabled.
     pub infinite_mix_enabled: Arc<AtomicBool>,
+    /// Threshold of remaining tracks ahead before requesting replenishment.
+    pub infinite_mix_threshold: Arc<AtomicUsize>,
+    /// Last track ID for which replenishment was requested (-1 if none/reset).
+    pub last_notified_infinite_mix_id: Arc<AtomicI64>,
 
     /// Duration in milliseconds for automatic end-of-track crossfades.
     pub auto_crossfade_duration_ms: Arc<AtomicU64>,
@@ -3544,6 +3536,8 @@ impl DualSource {
             loop_mode: Arc::new(AtomicI32::new(0)),
             shuffle_enabled: Arc::new(AtomicBool::new(false)),
             infinite_mix_enabled: Arc::new(AtomicBool::new(false)),
+            infinite_mix_threshold: Arc::new(AtomicUsize::new(2)),
+            last_notified_infinite_mix_id: Arc::new(AtomicI64::new(-1)),
             auto_crossfade_duration_ms: Arc::new(AtomicU64::new(5000)),
             manual_crossfade_duration_ms: Arc::new(AtomicU64::new(500)),
             crossfade_curve: Arc::new(AtomicI32::new(0)),
@@ -3618,10 +3612,9 @@ impl DualSource {
                 let s_id = if parsed_id > 0 { parsed_id } else { item.id as u32 };
                 (s_id, None)
             };
-            let init_bytes = item.data_bytes.clone().unwrap_or_default();
             if let Some(factory) = custom_factory {
-                let (source, handle) = factory(stream_id, total_size, init_bytes.clone());
-                return deck.open_custom_source(source, handle, total_size, true, &init_bytes);
+                let (source, handle) = factory(stream_id, total_size);
+                return deck.open_custom_source(source, handle, total_size, true);
             }
             return MAP_ERROR_UNSUPPORTED;
         }
@@ -3649,6 +3642,7 @@ impl DualSource {
         *self.queue.write().unwrap() = items;
 
         self.current_index.store(-1, Ordering::Release);
+        self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
         self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
     }
 
@@ -3892,6 +3886,7 @@ impl DualSource {
     }
 
     pub fn clear_items(&mut self, keep_current: bool) {
+        self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
         self.canonical_queue.write().unwrap().clear();
         self.original_indices.write().unwrap().clear();
         let mut q = self.queue.write().unwrap();

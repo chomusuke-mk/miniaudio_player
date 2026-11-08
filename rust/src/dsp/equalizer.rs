@@ -33,10 +33,12 @@ pub(crate) fn compute_smoothing_factor(sample_rate: u32) -> f32 {
     }
 }
 
-/// 10-band graphic equalizer gains in decibels (-24.0 dB to +24.0 dB).
+/// 10-band graphic equalizer gains in decibels (-24.0 dB to +24.0 dB) with stage bypass control.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EqualizerParams {
+    /// Whether the equalizer DSP stage is actively applied.
+    pub enabled: bool,
     /// Gain for 31 Hz band (sub-bass low-shelf).
     pub hz31: f32,
     /// Gain for 63 Hz band (bass peaking).
@@ -69,10 +71,11 @@ impl EqualizerParams {
         ]
     }
 
-    /// Creates an `EqualizerParams` instance from an array of 10 band gains.
+    /// Creates an `EqualizerParams` instance from an array of 10 band gains (enabled by default).
     #[inline]
     pub const fn from_array(arr: &[f32; EQ_BAND_COUNT]) -> Self {
         Self {
+            enabled: true,
             hz31: arr[0],
             hz63: arr[1],
             hz125: arr[2],
@@ -200,6 +203,7 @@ impl PreampStage {
 
 /// Stage 2: 10-Band ISO 266 Biquad Filter Bank.
 pub struct Iso10BandStage {
+    pub enabled: bool,
     sample_rate: u32,
     band_gains: [f32; EQ_BAND_COUNT],
     filters: Vec<[BiquadDf2t; EQ_BAND_COUNT]>,
@@ -209,6 +213,7 @@ impl Iso10BandStage {
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let ch = channels.max(1);
         let mut stage = Self {
+            enabled: false,
             sample_rate,
             band_gains: [0.0; EQ_BAND_COUNT],
             filters: vec![[BiquadDf2t::identity(); EQ_BAND_COUNT]; ch],
@@ -232,6 +237,7 @@ impl Iso10BandStage {
     }
 
     pub fn set_all(&mut self, params: &EqualizerParams) {
+        self.enabled = params.enabled;
         let arr = params.as_array();
         for (i, &g) in arr.iter().enumerate() {
             self.band_gains[i] = g.clamp(-24.0, 24.0);
@@ -241,7 +247,19 @@ impl Iso10BandStage {
 
     #[inline]
     pub fn params(&self) -> EqualizerParams {
-        EqualizerParams::from_array(&self.band_gains)
+        EqualizerParams {
+            enabled: self.enabled,
+            hz31: self.band_gains[0],
+            hz63: self.band_gains[1],
+            hz125: self.band_gains[2],
+            hz250: self.band_gains[3],
+            hz500: self.band_gains[4],
+            hz1k: self.band_gains[5],
+            hz2k: self.band_gains[6],
+            hz4k: self.band_gains[7],
+            hz8k: self.band_gains[8],
+            hz16k: self.band_gains[9],
+        }
     }
 
     fn update_band(&mut self, band_idx: usize) {
@@ -270,7 +288,7 @@ impl Iso10BandStage {
 
     #[inline]
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
-        if samples.is_empty() || channels == 0 || channels > self.filters.len() {
+        if !self.enabled || samples.is_empty() || channels == 0 || channels > self.filters.len() {
             return;
         }
         for frame in samples.chunks_exact_mut(channels) {

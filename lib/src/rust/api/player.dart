@@ -197,8 +197,8 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Configures automatic and manual crossfade durations and curve formulas.
   void setCrossfade({required RustCrossfadeConfig config});
 
-  /// Sets the Bauer binaural headphone crossfeed mode (0: off, 1: 44.1kHz, 2: 48kHz, 3: high).
-  void setCrossfeed({required int mode});
+  /// Sets the Bauer binaural headphone crossfeed configuration.
+  void setCrossfeed({required RustCrossfeedConfig config});
 
   /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
   void setDefaultReplayGain({required double gainDb, required double peak});
@@ -228,8 +228,11 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Declaratively registers the catalog of sound effects with the autonomous RAM engine.
   Future<void> setEffects({required List<RustAudioEffect> effects});
 
-  /// Updates 10-band graphic equalizer band gain levels.
+  /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
   void setEqualizer({required RustEqualizerParams params});
+
+  /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
+  void setInfiniteMix({required RustInfiniteMixConfig config});
 
   /// Enables or disables the output brickwall peak limiter.
   void setLimiter({required bool enabled});

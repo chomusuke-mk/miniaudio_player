@@ -98,6 +98,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_RecordingState value)? recordingState,
     TResult Function(RustPlayerEvent_LoopMode value)? loopMode,
     TResult Function(RustPlayerEvent_IsShuffled value)? isShuffled,
+    TResult Function(RustPlayerEvent_InfiniteMix value)? infiniteMix,
     TResult Function(RustPlayerEvent_PauseOnDeviceChange value)?
         pauseOnDeviceChange,
     TResult Function(RustPlayerEvent_MicrophoneEnabled value)?
@@ -108,6 +109,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
+    TResult Function(RustPlayerEvent_NeedMoreTracks value)? needMoreTracks,
     TResult Function(RustPlayerEvent_Outputs value)? outputs,
     TResult Function(RustPlayerEvent_Error value)? error,
     required TResult orElse(),
@@ -202,6 +204,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loopMode(_that);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
         return isShuffled(_that);
+      case RustPlayerEvent_InfiniteMix() when infiniteMix != null:
+        return infiniteMix(_that);
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that);
@@ -218,6 +222,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
+      case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that);
       case RustPlayerEvent_Outputs() when outputs != null:
         return outputs(_that);
       case RustPlayerEvent_Error() when error != null:
@@ -299,6 +305,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         recordingState,
     required TResult Function(RustPlayerEvent_LoopMode value) loopMode,
     required TResult Function(RustPlayerEvent_IsShuffled value) isShuffled,
+    required TResult Function(RustPlayerEvent_InfiniteMix value) infiniteMix,
     required TResult Function(RustPlayerEvent_PauseOnDeviceChange value)
         pauseOnDeviceChange,
     required TResult Function(RustPlayerEvent_MicrophoneEnabled value)
@@ -311,6 +318,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_InputDevices value) inputDevices,
     required TResult Function(RustPlayerEvent_DartReadRequest value)
         dartReadRequest,
+    required TResult Function(RustPlayerEvent_NeedMoreTracks value)
+        needMoreTracks,
     required TResult Function(RustPlayerEvent_Outputs value) outputs,
     required TResult Function(RustPlayerEvent_Error value) error,
   }) {
@@ -404,6 +413,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loopMode(_that);
       case RustPlayerEvent_IsShuffled():
         return isShuffled(_that);
+      case RustPlayerEvent_InfiniteMix():
+        return infiniteMix(_that);
       case RustPlayerEvent_PauseOnDeviceChange():
         return pauseOnDeviceChange(_that);
       case RustPlayerEvent_MicrophoneEnabled():
@@ -418,6 +429,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that);
+      case RustPlayerEvent_NeedMoreTracks():
+        return needMoreTracks(_that);
       case RustPlayerEvent_Outputs():
         return outputs(_that);
       case RustPlayerEvent_Error():
@@ -485,6 +498,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_RecordingState value)? recordingState,
     TResult? Function(RustPlayerEvent_LoopMode value)? loopMode,
     TResult? Function(RustPlayerEvent_IsShuffled value)? isShuffled,
+    TResult? Function(RustPlayerEvent_InfiniteMix value)? infiniteMix,
     TResult? Function(RustPlayerEvent_PauseOnDeviceChange value)?
         pauseOnDeviceChange,
     TResult? Function(RustPlayerEvent_MicrophoneEnabled value)?
@@ -495,6 +509,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult? Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult? Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
+    TResult? Function(RustPlayerEvent_NeedMoreTracks value)? needMoreTracks,
     TResult? Function(RustPlayerEvent_Outputs value)? outputs,
     TResult? Function(RustPlayerEvent_Error value)? error,
   }) {
@@ -588,6 +603,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loopMode(_that);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
         return isShuffled(_that);
+      case RustPlayerEvent_InfiniteMix() when infiniteMix != null:
+        return infiniteMix(_that);
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that);
@@ -604,6 +621,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
+      case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that);
       case RustPlayerEvent_Outputs() when outputs != null:
         return outputs(_that);
       case RustPlayerEvent_Error() when error != null:
@@ -655,7 +674,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustReplayGainConfig field0)? replayGain,
     TResult Function(int field0)? replayGainMode,
     TResult Function(double field0)? defaultReplayGain,
-    TResult Function(int field0)? crossfeed,
+    TResult Function(RustCrossfeedConfig field0)? crossfeed,
     TResult Function(bool enabled, double width)? spatializer,
     TResult Function(RustReverbParams field0)? reverb,
     TResult Function(bool field0)? limiter,
@@ -671,6 +690,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(bool isRecording, int source)? recordingState,
     TResult Function(int field0)? loopMode,
     TResult Function(bool field0)? isShuffled,
+    TResult Function(RustInfiniteMixConfig field0)? infiniteMix,
     TResult Function(bool field0)? pauseOnDeviceChange,
     TResult Function(bool field0)? microphoneEnabled,
     TResult Function(double field0)? micVolume,
@@ -678,6 +698,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(List<RustAudioDevice> field0)? outputDevices,
     TResult Function(List<RustAudioDevice> field0)? inputDevices,
     TResult Function(RustDartReadRequest field0)? dartReadRequest,
+    TResult Function(PlatformInt64 currentTrackId, int remainingTracks)?
+        needMoreTracks,
     TResult Function(List<RustAudioOutput> field0)? outputs,
     TResult Function(String message, int code)? error,
     required TResult orElse(),
@@ -772,6 +794,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loopMode(_that.field0);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
         return isShuffled(_that.field0);
+      case RustPlayerEvent_InfiniteMix() when infiniteMix != null:
+        return infiniteMix(_that.field0);
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that.field0);
@@ -788,6 +812,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustPlayerEvent_Outputs() when outputs != null:
         return outputs(_that.field0);
       case RustPlayerEvent_Error() when error != null:
@@ -840,7 +866,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustReplayGainConfig field0) replayGain,
     required TResult Function(int field0) replayGainMode,
     required TResult Function(double field0) defaultReplayGain,
-    required TResult Function(int field0) crossfeed,
+    required TResult Function(RustCrossfeedConfig field0) crossfeed,
     required TResult Function(bool enabled, double width) spatializer,
     required TResult Function(RustReverbParams field0) reverb,
     required TResult Function(bool field0) limiter,
@@ -857,6 +883,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(bool isRecording, int source) recordingState,
     required TResult Function(int field0) loopMode,
     required TResult Function(bool field0) isShuffled,
+    required TResult Function(RustInfiniteMixConfig field0) infiniteMix,
     required TResult Function(bool field0) pauseOnDeviceChange,
     required TResult Function(bool field0) microphoneEnabled,
     required TResult Function(double field0) micVolume,
@@ -864,6 +891,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(List<RustAudioDevice> field0) outputDevices,
     required TResult Function(List<RustAudioDevice> field0) inputDevices,
     required TResult Function(RustDartReadRequest field0) dartReadRequest,
+    required TResult Function(PlatformInt64 currentTrackId, int remainingTracks)
+        needMoreTracks,
     required TResult Function(List<RustAudioOutput> field0) outputs,
     required TResult Function(String message, int code) error,
   }) {
@@ -957,6 +986,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loopMode(_that.field0);
       case RustPlayerEvent_IsShuffled():
         return isShuffled(_that.field0);
+      case RustPlayerEvent_InfiniteMix():
+        return infiniteMix(_that.field0);
       case RustPlayerEvent_PauseOnDeviceChange():
         return pauseOnDeviceChange(_that.field0);
       case RustPlayerEvent_MicrophoneEnabled():
@@ -971,6 +1002,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_NeedMoreTracks():
+        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustPlayerEvent_Outputs():
         return outputs(_that.field0);
       case RustPlayerEvent_Error():
@@ -1020,7 +1053,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustReplayGainConfig field0)? replayGain,
     TResult? Function(int field0)? replayGainMode,
     TResult? Function(double field0)? defaultReplayGain,
-    TResult? Function(int field0)? crossfeed,
+    TResult? Function(RustCrossfeedConfig field0)? crossfeed,
     TResult? Function(bool enabled, double width)? spatializer,
     TResult? Function(RustReverbParams field0)? reverb,
     TResult? Function(bool field0)? limiter,
@@ -1036,6 +1069,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(bool isRecording, int source)? recordingState,
     TResult? Function(int field0)? loopMode,
     TResult? Function(bool field0)? isShuffled,
+    TResult? Function(RustInfiniteMixConfig field0)? infiniteMix,
     TResult? Function(bool field0)? pauseOnDeviceChange,
     TResult? Function(bool field0)? microphoneEnabled,
     TResult? Function(double field0)? micVolume,
@@ -1043,6 +1077,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(List<RustAudioDevice> field0)? outputDevices,
     TResult? Function(List<RustAudioDevice> field0)? inputDevices,
     TResult? Function(RustDartReadRequest field0)? dartReadRequest,
+    TResult? Function(PlatformInt64 currentTrackId, int remainingTracks)?
+        needMoreTracks,
     TResult? Function(List<RustAudioOutput> field0)? outputs,
     TResult? Function(String message, int code)? error,
   }) {
@@ -1136,6 +1172,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loopMode(_that.field0);
       case RustPlayerEvent_IsShuffled() when isShuffled != null:
         return isShuffled(_that.field0);
+      case RustPlayerEvent_InfiniteMix() when infiniteMix != null:
+        return infiniteMix(_that.field0);
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that.field0);
@@ -1152,6 +1190,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
+        return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustPlayerEvent_Outputs() when outputs != null:
         return outputs(_that.field0);
       case RustPlayerEvent_Error() when error != null:
@@ -3070,7 +3110,7 @@ class _$RustPlayerEvent_DefaultReplayGainCopyWithImpl<$Res>
 class RustPlayerEvent_Crossfeed extends RustPlayerEvent {
   const RustPlayerEvent_Crossfeed(this.field0) : super._();
 
-  final int field0;
+  final RustCrossfeedConfig field0;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -3106,7 +3146,7 @@ abstract mixin class $RustPlayerEvent_CrossfeedCopyWith<$Res>
           $Res Function(RustPlayerEvent_Crossfeed) _then) =
       _$RustPlayerEvent_CrossfeedCopyWithImpl;
   @useResult
-  $Res call({int field0});
+  $Res call({RustCrossfeedConfig field0});
 }
 
 /// @nodoc
@@ -3127,7 +3167,7 @@ class _$RustPlayerEvent_CrossfeedCopyWithImpl<$Res>
       null == field0
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
+              as RustCrossfeedConfig,
     ));
   }
 }
@@ -4198,6 +4238,74 @@ class _$RustPlayerEvent_IsShuffledCopyWithImpl<$Res>
 
 /// @nodoc
 
+class RustPlayerEvent_InfiniteMix extends RustPlayerEvent {
+  const RustPlayerEvent_InfiniteMix(this.field0) : super._();
+
+  final RustInfiniteMixConfig field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_InfiniteMixCopyWith<RustPlayerEvent_InfiniteMix>
+      get copyWith => _$RustPlayerEvent_InfiniteMixCopyWithImpl<
+          RustPlayerEvent_InfiniteMix>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_InfiniteMix &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.infiniteMix(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_InfiniteMixCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_InfiniteMixCopyWith(
+          RustPlayerEvent_InfiniteMix value,
+          $Res Function(RustPlayerEvent_InfiniteMix) _then) =
+      _$RustPlayerEvent_InfiniteMixCopyWithImpl;
+  @useResult
+  $Res call({RustInfiniteMixConfig field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_InfiniteMixCopyWithImpl<$Res>
+    implements $RustPlayerEvent_InfiniteMixCopyWith<$Res> {
+  _$RustPlayerEvent_InfiniteMixCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_InfiniteMix _self;
+  final $Res Function(RustPlayerEvent_InfiniteMix) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_InfiniteMix(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustInfiniteMixConfig,
+    ));
+  }
+}
+
+/// @nodoc
+
 class RustPlayerEvent_PauseOnDeviceChange extends RustPlayerEvent {
   const RustPlayerEvent_PauseOnDeviceChange(this.field0) : super._();
 
@@ -4685,6 +4793,88 @@ class _$RustPlayerEvent_DartReadRequestCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as RustDartReadRequest,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_NeedMoreTracks extends RustPlayerEvent {
+  const RustPlayerEvent_NeedMoreTracks(
+      {required this.currentTrackId, required this.remainingTracks})
+      : super._();
+
+  /// ID of the current playing track.
+  final PlatformInt64 currentTrackId;
+
+  /// Remaining number of tracks ahead in the playlist queue.
+  final int remainingTracks;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_NeedMoreTracksCopyWith<RustPlayerEvent_NeedMoreTracks>
+      get copyWith => _$RustPlayerEvent_NeedMoreTracksCopyWithImpl<
+          RustPlayerEvent_NeedMoreTracks>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_NeedMoreTracks &&
+            (identical(other.currentTrackId, currentTrackId) ||
+                other.currentTrackId == currentTrackId) &&
+            (identical(other.remainingTracks, remainingTracks) ||
+                other.remainingTracks == remainingTracks));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, currentTrackId, remainingTracks);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.needMoreTracks(currentTrackId: $currentTrackId, remainingTracks: $remainingTracks)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_NeedMoreTracksCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_NeedMoreTracksCopyWith(
+          RustPlayerEvent_NeedMoreTracks value,
+          $Res Function(RustPlayerEvent_NeedMoreTracks) _then) =
+      _$RustPlayerEvent_NeedMoreTracksCopyWithImpl;
+  @useResult
+  $Res call({PlatformInt64 currentTrackId, int remainingTracks});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_NeedMoreTracksCopyWithImpl<$Res>
+    implements $RustPlayerEvent_NeedMoreTracksCopyWith<$Res> {
+  _$RustPlayerEvent_NeedMoreTracksCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_NeedMoreTracks _self;
+  final $Res Function(RustPlayerEvent_NeedMoreTracks) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? currentTrackId = null,
+    Object? remainingTracks = null,
+  }) {
+    return _then(RustPlayerEvent_NeedMoreTracks(
+      currentTrackId: null == currentTrackId
+          ? _self.currentTrackId
+          : currentTrackId // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64,
+      remainingTracks: null == remainingTracks
+          ? _self.remainingTracks
+          : remainingTracks // ignore: cast_nullable_to_non_nullable
+              as int,
     ));
   }
 }

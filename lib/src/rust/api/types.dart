@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustAudioInput`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Offline acoustic analysis results containing loudness, waveform, and format properties.
 class RustAudioAnalysisResult {
@@ -344,6 +344,39 @@ class RustCrossfadeConfig {
           curve == other.curve;
 }
 
+/// Configuration settings for the Bauer Stereophonic-to-Binaural (BS2B) crossfeed filter.
+class RustCrossfeedConfig {
+  /// Whether crossfeed processing is actively applied.
+  final bool enabled;
+
+  /// Lowpass cutoff frequency in Hertz (typically 300 to 2000 Hz, default 700 Hz).
+  final double cutoffHz;
+
+  /// Crossfeed attenuation / feed level in decibels (typically 1.0 to 15.0 dB, default 4.5 dB).
+  final double feedDb;
+
+  const RustCrossfeedConfig({
+    required this.enabled,
+    required this.cutoffHz,
+    required this.feedDb,
+  });
+
+  static Future<RustCrossfeedConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustCrossfeedConfigDefault();
+
+  @override
+  int get hashCode => enabled.hashCode ^ cutoffHz.hashCode ^ feedDb.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustCrossfeedConfig &&
+          runtimeType == other.runtimeType &&
+          enabled == other.enabled &&
+          cutoffHz == other.cutoffHz &&
+          feedDb == other.feedDb;
+}
+
 /// Cue channel preview configuration for DJ workflows.
 class RustCueConfig {
   /// Whether cue monitoring is active.
@@ -620,6 +653,34 @@ class RustHttpHeader {
           value == other.value;
 }
 
+/// Configuration settings for continuous auto-refill Infinite Mix queue replenishment.
+class RustInfiniteMixConfig {
+  /// Whether continuous auto-refill infinite mix mode is enabled.
+  final bool enabled;
+
+  /// Threshold of remaining tracks ahead in queue before requesting replenishment.
+  final int remainingTracksThreshold;
+
+  const RustInfiniteMixConfig({
+    required this.enabled,
+    required this.remainingTracksThreshold,
+  });
+
+  static Future<RustInfiniteMixConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustInfiniteMixConfigDefault();
+
+  @override
+  int get hashCode => enabled.hashCode ^ remainingTracksThreshold.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustInfiniteMixConfig &&
+          runtimeType == other.runtimeType &&
+          enabled == other.enabled &&
+          remainingTracksThreshold == other.remainingTracksThreshold;
+}
+
 /// Initialization configuration for the audio player and backend engine.
 class RustPlayerConfig {
   /// Render buffer chunk size in frames.
@@ -822,9 +883,9 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     double field0,
   ) = RustPlayerEvent_DefaultReplayGain;
 
-  /// Bauer binaural crossfeed mode code.
+  /// Bauer binaural crossfeed configuration.
   const factory RustPlayerEvent.crossfeed(
-    int field0,
+    RustCrossfeedConfig field0,
   ) = RustPlayerEvent_Crossfeed;
 
   /// 3D stereo widening spatializer state.
@@ -914,6 +975,11 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     bool field0,
   ) = RustPlayerEvent_IsShuffled;
 
+  /// Continuous auto-refill Infinite Mix configuration.
+  const factory RustPlayerEvent.infiniteMix(
+    RustInfiniteMixConfig field0,
+  ) = RustPlayerEvent_InfiniteMix;
+
   /// Whether auto-pause on device change is enabled.
   const factory RustPlayerEvent.pauseOnDeviceChange(
     bool field0,
@@ -948,6 +1014,15 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.dartReadRequest(
     RustDartReadRequest field0,
   ) = RustPlayerEvent_DartReadRequest;
+
+  /// Request for Dart to replenish queue for infinite mix.
+  const factory RustPlayerEvent.needMoreTracks({
+    /// ID of the current playing track.
+    required PlatformInt64 currentTrackId,
+
+    /// Remaining number of tracks ahead in the playlist queue.
+    required int remainingTracks,
+  }) = RustPlayerEvent_NeedMoreTracks;
 
   /// Active audio output destinations in the multi-sink matrix.
   const factory RustPlayerEvent.outputs(

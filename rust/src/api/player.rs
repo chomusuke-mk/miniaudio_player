@@ -578,6 +578,38 @@ impl RustMiniaudioPlayer {
                         }
                     }
 
+                    // Check infinite mix queue replenishment
+                    if ply.music_manager.inner.infinite_mix_enabled.load(Ordering::Relaxed) {
+                        let cur_phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
+                        let active_deck = ply.music_manager.active_deck_ref();
+                        let deck_state = active_deck.state.load(Ordering::Relaxed);
+                        let is_playing = deck_state == crate::core::dual_source::STATE_PLAYING
+                            && cur_phase != crate::core::dual_source::ENGINE_PHASE_COMPLETED
+                            && cur_phase != crate::core::dual_source::ENGINE_PHASE_IDLE
+                            && cur_phase != crate::core::dual_source::ENGINE_PHASE_DISPOSED;
+
+                        if is_playing {
+                            let current_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
+                            let q = ply.music_manager.inner.queue.read().unwrap();
+                            let q_len = q.len();
+                            if current_idx >= 0 && (current_idx as usize) < q_len {
+                                let current_id = q[current_idx as usize].id;
+                                let remaining = (q_len - 1).saturating_sub(current_idx as usize);
+                                let threshold = ply.music_manager.inner.infinite_mix_threshold.load(Ordering::Relaxed);
+                                if remaining < threshold {
+                                    let last_id = ply.music_manager.inner.last_notified_infinite_mix_id.load(Ordering::Relaxed);
+                                    if last_id != current_id {
+                                        ply.music_manager.inner.last_notified_infinite_mix_id.store(current_id, Ordering::Release);
+                                        worker_reporter.emit(RustPlayerEvent::NeedMoreTracks {
+                                            current_track_id: current_id,
+                                            remaining_tracks: remaining as u32,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Check completed voice pool effects & reactive eviction (Trigger 2)
                     if let Ok(mut vp) = ply.effects_manager.pool.try_lock() {
                         let mut any_completed = false;
@@ -918,7 +950,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let reporter_clone = self.reporter.clone();
         let handle_arc = self.custom_handle.clone();
         let custom_factory = Arc::new(
-            move |stream_id: u32, total_size: Option<u64>, initial_bytes: Vec<u8>| {
+            move |stream_id: u32, total_size: Option<u64>| {
                 let rc = reporter_clone.clone();
                 let req_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
                     rc.emit(RustPlayerEvent::DartReadRequest(req.into()));
@@ -927,7 +959,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
                     stream_id,
                     total_size,
                     true,
-                    initial_bytes,
                     req_sender,
                 );
                 if let Ok(mut g) = handle_arc.lock() {
@@ -1123,6 +1154,19 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         }
     }
 
+    /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_infinite_mix(&self, config: RustInfiniteMixConfig) {
+        let ply = self.inner.lock().unwrap();
+        ply.music_manager.inner.infinite_mix_enabled.store(config.enabled, Ordering::Release);
+        ply.music_manager.inner.infinite_mix_threshold.store(config.remaining_tracks_threshold as usize, Ordering::Release);
+        if config.enabled {
+            ply.music_manager.inner.last_notified_infinite_mix_id.store(-1, Ordering::Release);
+        }
+        drop(ply);
+        self.emit_event(RustPlayerEvent::InfiniteMix(config));
+    }
+
     /// Configures automatic and manual crossfade durations and curve formulas.
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_crossfade(&self, config: RustCrossfadeConfig) {
@@ -1204,15 +1248,17 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         }
     }
 
-    /// Sets the Bauer binaural headphone crossfeed mode (0: off, 1: 44.1kHz, 2: 48kHz, 3: high).
+    /// Sets the Bauer binaural headphone crossfeed configuration.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_crossfeed(&self, mode: i32) {
+    pub fn set_crossfeed(&self, config: RustCrossfeedConfig) {
         let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_manager.inner.deck_a.crossfeed_mode.load(std::sync::atomic::Ordering::Relaxed);
-        if prev != mode {
-            ply.music_manager.inner.deck_a.set_crossfeed(mode);
-            ply.music_manager.inner.deck_b.set_crossfeed(mode);
-            self.emit_event(RustPlayerEvent::Crossfeed(mode));
+        let core_cfg: crate::dsp::crossfeed::CrossfeedConfig = config.into();
+        let prev = *ply.music_manager.inner.deck_a.crossfeed_config.read().unwrap();
+        if prev != core_cfg {
+            ply.music_manager.inner.deck_a.set_crossfeed(core_cfg);
+            ply.music_manager.inner.deck_b.set_crossfeed(core_cfg);
+            drop(ply);
+            self.emit_event(RustPlayerEvent::Crossfeed(config));
         }
     }
 
@@ -1345,12 +1391,15 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         Ok(())
     }
 
-    /// Updates 10-band graphic equalizer band gain levels.
+    /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_equalizer(&self, params: RustEqualizerParams) -> Result<(), String> {
         let eq = EqualizerParams::from(params.clone());
         let mut ply = self.inner.lock().unwrap();
         ply.music_dsp.set_equalizer(&eq);
+        ply.music_manager.inner.deck_a.set_equalizer(&eq);
+        ply.music_manager.inner.deck_b.set_equalizer(&eq);
+        drop(ply);
         self.emit_event(RustPlayerEvent::Equalizer(params));
         Ok(())
     }

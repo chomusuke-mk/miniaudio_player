@@ -1,15 +1,3 @@
-/// Operational modes for Bauer stereophonic-to-binaural (bs2b) crossfeed.
-enum CrossfeedMode {
-  /// Crossfeed processing disabled.
-  off,
-
-  /// Default Moffat-Bauer standard crossfeed (700 Hz cut-off, 4.5 dB feed).
-  moffatBauer,
-
-  /// Suttle Chu Moy crossfeed curve (700 Hz cut-off, 6.0 dB feed).
-  chuMoy,
-}
-
 /// Operational modes for ReplayGain / EBU R128 loudness processing in the engine.
 enum ReplayGainMode {
   /// Volume normalization is disabled (unity gain 0.0 dB).

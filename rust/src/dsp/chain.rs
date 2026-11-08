@@ -1,6 +1,6 @@
 //! Integrated DSP Processing Pipeline (`Preamp` -> `10-Band EQ` -> `Stereo Imaging` -> `BS2B` -> `Reverb` -> `Master Volume` -> `Limiter` -> `Visualizer`).
 
-use super::crossfeed::{Bs2bCrossfeed, CrossfeedMode};
+use super::crossfeed::{Bs2bCrossfeed, CrossfeedConfig};
 use super::equalizer::{compute_smoothing_factor, Equalizer, EqualizerParams, ReplayGainConfig};
 use super::limiter::SoftLimiter;
 use super::reverb::{Freeverb, ReverbConfig};
@@ -82,7 +82,7 @@ impl DspChain {
 
         Self {
             eq: Equalizer::new(ch, sr),
-            crossfeed: Bs2bCrossfeed::new(sr, CrossfeedMode::Off),
+            crossfeed: Bs2bCrossfeed::new(sr, CrossfeedConfig::default()),
             reverb: Freeverb::new(sr),
             volume_stage: MasterVolumeStage::new(sr),
             limiter: SoftLimiter::new(true),
@@ -158,10 +158,10 @@ impl DspChain {
         self.eq.set_spatializer(enabled, width);
     }
 
-    /// Sets the Bauer binaural crossfeed mode.
+    /// Configures the Bauer binaural crossfeed filter.
     #[inline]
-    pub fn set_crossfeed(&mut self, mode: CrossfeedMode) {
-        self.crossfeed.set_mode(mode);
+    pub fn set_crossfeed(&mut self, config: CrossfeedConfig) {
+        self.crossfeed.set_config(config);
     }
 
     /// Updates Freeverb studio reverberation acoustic parameters.
