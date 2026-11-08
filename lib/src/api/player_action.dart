@@ -572,10 +572,6 @@ class PlayerAction<T> {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Toggles automatic ReplayGain loudness normalization.
-  Future<void> setVolumeNormalization(bool enabled) =>
-      setReplayGainMode(enabled ? ReplayGainMode.track : ReplayGainMode.disabled);
-
   /// Configures resilience behavior when audio playback devices change.
   Future<void> setPauseOnDeviceChange(bool enabled) async {
     _player._ensureNotDisposed();

@@ -281,7 +281,7 @@ void main() {
       expect(engine.state.volume, closeTo(0.85, 1e-4));
     });
 
-    test('setVolumeNormalization(false) clears ReplayGain, true restores it', () async {
+    test('setReplayGainMode(disabled) clears ReplayGain, track restores it', () async {
       await engine.action.setQueue([
         AudioSource<String>(
           localWavFile1.path,
@@ -293,13 +293,13 @@ void main() {
       expect(engine.state.volumeNormalization, isTrue);
       expect(engine.state.replayGain.gainDb, closeTo(-4.5, 1e-2));
 
-      // Disable volume normalization
-      await engine.action.setVolumeNormalization(false);
+      // Disable volume normalization via ReplayGainMode
+      await engine.action.setReplayGainMode(ReplayGainMode.disabled);
       expect(engine.state.volumeNormalization, isFalse);
       expect(engine.state.replayGain.gainDb, closeTo(0.0, 1e-2));
 
-      // Re-enable volume normalization
-      await engine.action.setVolumeNormalization(true);
+      // Re-enable volume normalization via ReplayGainMode
+      await engine.action.setReplayGainMode(ReplayGainMode.track);
       expect(engine.state.volumeNormalization, isTrue);
       expect(engine.state.replayGain.gainDb, closeTo(-4.5, 1e-2));
     });
