@@ -231,11 +231,6 @@ class PlayerState<T> {
   /// NOTE: This lists external OS hardware devices, NOT the player's active inputs.
   List<AudioDevice> get globalInputDevices => _globalInputDevices;
 
-  AudioDevice? _activeInputDevice;
-
-  /// The currently selected audio input device.
-  AudioDevice? get activeInputDevice => _activeInputDevice;
-
   bool _skipSilence = false;
 
   /// Whether silence skipping is actively enabled.

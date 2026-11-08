@@ -830,7 +830,7 @@ class MiniaudioPlayer<T> {
   }
 
   /// Verifies that this player instance has not been disposed, throwing [StateError] otherwise.
-  void ensureNotDisposed() {
+  void _ensureNotDisposed() {
     if (_isDisposed) {
       throw StateError('MiniaudioPlayer instance has been disposed');
     }

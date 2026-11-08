@@ -16,6 +16,7 @@ void main() async {
     defaultAudioDevice: AudioDevice.auto,
   );
   final player = MiniaudioPlayer();
+  final voice = player.action.playEffect("shotgun.wav");
   
   runApp(const MiniaudioPlayerExampleApp());
 }
