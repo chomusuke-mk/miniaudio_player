@@ -48,7 +48,8 @@ void main() {
   group('Local Files Matrix Playback & Seeking (setQueue + play)', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+    setUp(() => player = MiniaudioPlayer(
+        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
@@ -95,7 +96,8 @@ void main() {
   group('Local In-Memory Buffer Matrix', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+    setUp(() => player = MiniaudioPlayer(
+        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
@@ -135,7 +137,8 @@ void main() {
   group('Local Asset Playback Matrix', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+    setUp(() => player = MiniaudioPlayer(
+        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     const representativeFormats = [
@@ -177,7 +180,8 @@ void main() {
   group('Polymorphic Local Source Types (AudioSource & File)', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+    setUp(() => player = MiniaudioPlayer(
+        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     test('4.1: AudioSource with file path plays local file', () async {
@@ -228,7 +232,8 @@ void main() {
     late File corruptFile;
 
     setUp(() async {
-      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+      player = MiniaudioPlayer(
+          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
       corruptFile = File('${Directory.systemTemp.path}/temp_corrupt_test_file.mp3');
       // Create artificial garbage file
       await corruptFile.writeAsBytes(List<int>.generate(2048, (i) => (i * 7 + 13) % 256));
@@ -270,7 +275,8 @@ void main() {
   group('Unsupported Local Format Clean Failure', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+    setUp(() => player = MiniaudioPlayer(
+        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     test('6.1: Playing unsupported format throws MiniaudioPlayerException gracefully', () async {
@@ -304,7 +310,8 @@ void main() {
   group('Chaotic Local Controls Sequence', () {
     late MiniaudioPlayer player;
 
-    setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+    setUp(() => player = MiniaudioPlayer(
+        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     test('7.1: Comprehensive chaotic commands loop with detailed trace validation', () async {

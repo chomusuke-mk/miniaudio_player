@@ -157,7 +157,7 @@ void main() {
     expect(file.existsSync(), isTrue);
     final bytes = await file.readAsBytes();
 
-    final player = MiniaudioPlayer(source: [AudioSource(bytes)]);
+    final player = MiniaudioPlayer(queue: [AudioSource(bytes)]);
     try {
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
@@ -202,7 +202,8 @@ void main() {
     final bytes1 = await file1.readAsBytes();
     final bytes2 = await file2.readAsBytes();
 
-    final player = MiniaudioPlayer(source: [AudioSource(Uint8List.fromList(bytes1))]);
+    final player =
+        MiniaudioPlayer(queue: [AudioSource(Uint8List.fromList(bytes1))]);
     try {
       // 1. Play track 1
       await player.action.play();

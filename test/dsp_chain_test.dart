@@ -96,7 +96,7 @@ void main() {
 
     setUp(() async {
       testWavFile = File('test/fixtures/salida.wav');
-      player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)]);
+      player = MiniaudioPlayer(queue: [AudioSource(testWavFile.path)]);
     });
 
     tearDown(() async {

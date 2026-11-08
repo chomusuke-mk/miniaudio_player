@@ -864,23 +864,19 @@ class PlayerAction<T> {
   /// Adds an audio input source to this player instance.
   Future<void> addInput(AudioInput input) async {
     _player._ensureNotDisposed();
-    if (input is MicrophoneAudioInput) {
-      await enableMicrophone(
-        deviceId: input.deviceId,
-        volume: input.volume,
-        ducking: input.ducking,
-        monitorDirect: input.monitorDirect,
-        monitorVolume: input.monitorVolume,
-      );
-    }
+    await enableMicrophone(
+      deviceId: input.deviceId,
+      volume: input.volume,
+      ducking: input.ducking,
+      monitorDirect: input.monitorDirect,
+      monitorVolume: input.monitorVolume,
+    );
   }
 
   /// Removes an audio input source from this player instance.
   Future<void> removeInput(AudioInput input) async {
     _player._ensureNotDisposed();
-    if (input is MicrophoneAudioInput) {
-      await disableMicrophone();
-    }
+    await disableMicrophone();
   }
 
   /// Sets the active inputs for this player instance, replacing any existing ones.
@@ -922,7 +918,7 @@ class PlayerAction<T> {
       monitorDirect: monitorDirect,
       monitorVolume: monitorVolume.toDouble(),
     );
-    final input = AudioInput.microphone(
+    final input = AudioInput(
       deviceId: deviceId,
       volume: volume,
       ducking: ducking,
@@ -939,8 +935,7 @@ class PlayerAction<T> {
   Future<void> disableMicrophone() async {
     _player._ensureNotDisposed();
     _rust.disableMicrophone();
-    final next = Set<AudioInput>.of(_player.state.inputs)
-      ..removeWhere((i) => i is MicrophoneAudioInput);
+    final next = Set<AudioInput>.of(_player.state.inputs)..clear();
     _player.state._inputs = next;
     _player.stream._inputsController.add(next);
     await Future<void>.delayed(Duration.zero);

@@ -103,7 +103,7 @@ void main() {
       };
 
       final player = MiniaudioPlayer(
-        source: [AudioSource('test/fixtures/salida.wav')],
+        queue: [AudioSource('test/fixtures/salida.wav')],
       );
 
       expect(

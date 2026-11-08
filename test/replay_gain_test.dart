@@ -196,7 +196,7 @@ void main() {
       expect(source.replayGainDb, equals(-6.5));
       expect(source.replayPeak, equals(0.95));
 
-      final player = MiniaudioPlayer(source: [source]);
+      final player = MiniaudioPlayer(queue: [source]);
       try {
         final stopwatch = Stopwatch()..start();
         while (player.state.replayGain.gainDb == 0.0 && stopwatch.elapsedMilliseconds < 1000) {

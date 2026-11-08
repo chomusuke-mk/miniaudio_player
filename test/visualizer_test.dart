@@ -53,7 +53,7 @@ void main() {
     final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
 
     test('Visualizer is inactive by default and can be manually enabled/disabled', () async {
-      final player = MiniaudioPlayer(source: [dummySource]);
+      final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
       expect(player.state.visualizerEnabled, isFalse);
@@ -67,7 +67,7 @@ void main() {
     });
 
     test('Listening to player.stream.visualizer does NOT auto-enable visualizer; requires action.setVisualizerEnabled(true)', () async {
-      final player = MiniaudioPlayer(source: [dummySource]);
+      final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
       expect(player.state.visualizerEnabled, isFalse);
@@ -91,7 +91,7 @@ void main() {
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue, reason: 'salida.mp3 test asset must exist');
 
-      final player = MiniaudioPlayer(source: [AudioSource(mp3.path)]);
+      final player = MiniaudioPlayer(queue: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
 
       await player.action.setVisualizerEnabled(true);
@@ -132,7 +132,7 @@ void main() {
     });
 
     test('setVisualizerEnabled controls visualizer DSP and emits empty visualizer when disabled', () async {
-      final player = MiniaudioPlayer(source: [dummySource]);
+      final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
       expect(player.state.visualizerEnabled, isFalse);
@@ -159,7 +159,7 @@ void main() {
     });
 
     test('stream.visualizerEnabled emits boolean transitions on action calls', () async {
-      final player = MiniaudioPlayer(source: [dummySource]);
+      final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
       final enabledStates = <bool>[];
@@ -178,7 +178,7 @@ void main() {
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue);
 
-      final player = MiniaudioPlayer(source: [AudioSource(mp3.path)]);
+      final player = MiniaudioPlayer(queue: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
 
       await player.action.setVisualizerEnabled(true);
@@ -206,7 +206,7 @@ void main() {
     });
 
     test('visualizerEnabled broadcast stream and state snapshot maintain parity', () async {
-      final player = MiniaudioPlayer(source: [dummySource]);
+      final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
       final enabledStates = <bool>[];

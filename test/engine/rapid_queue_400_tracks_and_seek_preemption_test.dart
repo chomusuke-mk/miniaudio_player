@@ -40,7 +40,8 @@ void main() {
     });
 
     test('Rapid consecutive seeks preempt previous in-flight seeks without delay', () async {
-      final player = MiniaudioPlayer(source: [AudioSource('test/fixtures/salida.wav')]);
+      final player =
+          MiniaudioPlayer(queue: [AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();
 
       final stopwatch = Stopwatch()..start();

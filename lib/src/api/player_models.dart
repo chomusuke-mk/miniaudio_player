@@ -105,22 +105,8 @@ class AudioOutput {
       'AudioOutput(deviceId: $deviceId, exclusiveMode: $exclusiveMode, source: $source)';
 }
 
-/// Sealed hierarchy representing audio input sources.
-sealed class AudioInput {
-  const AudioInput();
-
-  /// Hardware microphone capture input.
-  const factory AudioInput.microphone({
-    String? deviceId,
-    double volume,
-    DuckingConfig? ducking,
-    bool monitorDirect,
-    double monitorVolume,
-  }) = MicrophoneAudioInput;
-}
-
-/// Hardware microphone input node configuration.
-class MicrophoneAudioInput extends AudioInput {
+/// Hardware microphone capture input node configuration.
+class AudioInput {
   /// The optional hardware microphone device ID (`null` for system default).
   final String? deviceId;
 
@@ -136,8 +122,8 @@ class MicrophoneAudioInput extends AudioInput {
   /// The volume level for direct voice monitoring (`>= 0.0`).
   final double monitorVolume;
 
-  /// Creates a [MicrophoneAudioInput] capture node configuration.
-  const MicrophoneAudioInput({
+  /// Creates an [AudioInput] capture node configuration.
+  const AudioInput({
     this.deviceId,
     this.volume = 1.0,
     this.ducking,
@@ -148,7 +134,7 @@ class MicrophoneAudioInput extends AudioInput {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is MicrophoneAudioInput &&
+      other is AudioInput &&
           deviceId == other.deviceId &&
           volume == other.volume &&
           ducking == other.ducking &&
@@ -156,12 +142,17 @@ class MicrophoneAudioInput extends AudioInput {
           monitorVolume == other.monitorVolume;
 
   @override
-  int get hashCode =>
-      deviceId.hashCode ^
-      volume.hashCode ^
-      ducking.hashCode ^
-      monitorDirect.hashCode ^
-      monitorVolume.hashCode;
+  int get hashCode => Object.hash(
+        deviceId,
+        volume,
+        ducking,
+        monitorDirect,
+        monitorVolume,
+      );
+
+  @override
+  String toString() =>
+      'AudioInput(deviceId: $deviceId, volume: $volume, ducking: $ducking, monitorDirect: $monitorDirect, monitorVolume: $monitorVolume)';
 }
 
 /// Descriptor of an audio effect registered in the player's sound effects catalog.

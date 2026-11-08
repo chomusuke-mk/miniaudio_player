@@ -65,7 +65,8 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+      player = MiniaudioPlayer(
+          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -195,7 +196,8 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() {
-      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+      player = MiniaudioPlayer(
+          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -293,7 +295,8 @@ void main() {
     });
 
     setUp(() {
-      player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+      player = MiniaudioPlayer(
+          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {

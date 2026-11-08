@@ -121,6 +121,33 @@ void main() {
       await Future.wait([sub1.cancel(), sub2.cancel()]);
     });
 
+    test('AudioInput direct instantiation, routing and state updates', () async {
+      expect(engine.state.inputs, isEmpty);
+
+      const micInput = AudioInput(
+        volume: 0.75,
+        ducking: DuckingConfig(enabled: true, duckingDb: -12.0),
+        monitorDirect: false,
+      );
+
+      await engine.action.addInput(micInput);
+      expect(engine.state.inputs, contains(micInput));
+      expect(engine.state.isMicrophoneEnabled, isTrue);
+      expect(engine.state.micVolume, closeTo(0.75, 0.001));
+
+      await engine.action.removeInput(micInput);
+      expect(engine.state.inputs, isEmpty);
+      expect(engine.state.isMicrophoneEnabled, isFalse);
+
+      await engine.action.setInputs({micInput});
+      expect(engine.state.inputs, contains(micInput));
+      expect(engine.state.isMicrophoneEnabled, isTrue);
+
+      await engine.action.clearInputs();
+      expect(engine.state.inputs, isEmpty);
+      expect(engine.state.isMicrophoneEnabled, isFalse);
+    });
+
     test('Selective AudioOutputSource configuration and output routing', () async {
       const headphoneOutput = AudioOutput(
         deviceId: 'headphone_device',

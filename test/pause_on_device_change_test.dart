@@ -68,17 +68,17 @@ void main() {
     final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
 
     test('pauseOnDeviceChange defaults to false', () {
-      player = MiniaudioPlayer(source: [dummySource]);
+      player = MiniaudioPlayer(queue: [dummySource]);
       expect(player.state.pauseOnDeviceChange, isFalse);
     });
 
     test('pauseOnDeviceChange constructor option sets initial state', () {
-      player = MiniaudioPlayer(source: [dummySource], pauseOnDeviceChange: true);
+      player = MiniaudioPlayer(queue: [dummySource], pauseOnDeviceChange: true);
       expect(player.state.pauseOnDeviceChange, isTrue);
     });
 
     test('action.setPauseOnDeviceChange updates state and emits to stream', () async {
-      player = MiniaudioPlayer(source: [dummySource], pauseOnDeviceChange: false);
+      player = MiniaudioPlayer(queue: [dummySource], pauseOnDeviceChange: false);
       expect(player.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -199,7 +199,8 @@ void main() {
     });
 
     test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {
-      final player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
+      final player = MiniaudioPlayer(
+          queue: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
       try {
         await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));

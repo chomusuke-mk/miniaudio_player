@@ -396,13 +396,13 @@ class MiniaudioPlayer<T> {
   // Constructors
   // =========================================================================
 
-  /// Primary canonical constructor. Accepts optional initial [source] playlist,
+  /// Primary canonical constructor. Accepts optional initial [queue] playlist,
   /// RAM [effects], multi-matrix [outputs], capture [inputs], and [config].
   ///
   /// The optional [effectMemoryLimitMb] parameter overrides `config.effectMemoryLimitMb`
   /// when provided.
   MiniaudioPlayer({
-    List<AudioSource<T>> source = const [],
+    List<AudioSource<T>> queue = const [],
     List<AudioEffect> effects = const [],
     Set<AudioOutput>? outputs,
     Set<AudioInput> inputs = const {},
@@ -475,8 +475,8 @@ class MiniaudioPlayer<T> {
     if (crossfadeConfig != null) {
       action.setCrossfade(crossfadeConfig);
     }
-    if (source.isNotEmpty) {
-      action.setQueue(source);
+    if (queue.isNotEmpty) {
+      action.setQueue(queue);
     }
   }
 
