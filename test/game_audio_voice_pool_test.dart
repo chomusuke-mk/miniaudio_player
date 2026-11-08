@@ -168,6 +168,69 @@ void main() {
       );
     });
 
+    test('Playing an effect 10 times concurrently produces 10 unique Voice handles and modulating/stopping one does not affect others', () async {
+      final multiPlayer = MiniaudioPlayer(
+        config: const PlayerConfig(
+          sampleRate: 44100,
+          channels: 2,
+          bufferSizeFrames: 512,
+          maxVoices: 16,
+        ),
+      );
+
+      try {
+        await multiPlayer.action.setEffects([
+          AudioEffect(
+            id: 'laser_multi',
+            source: AudioSource(Uint8List.fromList(wavBytes)),
+            maxPolyphony: 16,
+          ),
+        ]);
+
+        final voices = <Voice>[];
+        for (var i = 0; i < 10; i++) {
+          final voice = await multiPlayer.action.playEffect(
+            'laser_multi',
+            volume: 0.8,
+            looping: true,
+          );
+          voices.add(voice);
+        }
+
+        // Verify all 10 voices are unique instances with unique integer IDs
+        final voiceIds = voices.map((v) => v.id).toSet();
+        expect(voiceIds.length, equals(10));
+        for (final voice in voices) {
+          expect(voice.id, isA<int>());
+          expect(voice.id, greaterThan(0));
+        }
+
+        expect(multiPlayer.state.activeVoicesCount, equals(10));
+
+        // Modulate only the 5th voice handle
+        final targetVoice = voices[4];
+        await targetVoice.setVolume(0.2);
+        await targetVoice.setPitch(1.5);
+        await targetVoice.setBalance(-0.8);
+
+        // Active voices must still be 10 because targetVoice was only modulated, not stopped
+        expect(multiPlayer.state.activeVoicesCount, equals(10));
+
+        // Stop only targetVoice
+        await targetVoice.stop();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        // Exactly 9 voices must remain active
+        expect(multiPlayer.state.activeVoicesCount, equals(9));
+
+        // Clean up remaining voices
+        await multiPlayer.action.stopAllEffects();
+        expect(multiPlayer.state.activeVoicesCount, equals(0));
+      } finally {
+        await multiPlayer.dispose();
+      }
+    });
+
     test('Disposes cleanly and rejects subsequent operations', () async {
       await player.dispose();
 

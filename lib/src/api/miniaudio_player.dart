@@ -29,6 +29,7 @@ import 'visualizer_data.dart';
 part 'player_action.dart';
 part 'player_state.dart';
 part 'player_stream.dart';
+part 'voice.dart';
 
 /// Ensures native Rust library is initialized before calling static methods.
 Future<void> ensureRustInitialized() async {

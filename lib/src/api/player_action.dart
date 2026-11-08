@@ -708,12 +708,13 @@ class PlayerAction<T> {
     _player.state._loadedEffectIds =
         List.unmodifiable(_rust.getLoadedEffectIds());
     _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
+    _player.state._activeVoicesCount = _rust.getActiveVoicesCount().toInt();
     return Voice(voiceId, this);
   }
 
   /// Stops an active polyphonic voice with a linear fade-out.
-  Future<void> stopVoice(
-    VoiceId voiceId, {
+  Future<void> _stopVoice(
+    int voiceId, {
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
     _player._ensureNotDisposed();
@@ -721,6 +722,7 @@ class PlayerAction<T> {
       voiceId: voiceId,
       fadeOutMs: BigInt.from(fadeOut.inMilliseconds),
     );
+    _player.state._activeVoicesCount = _rust.getActiveVoicesCount().toInt();
   }
 
   /// Stops all currently rendering polyphonic effect voices.
@@ -729,10 +731,11 @@ class PlayerAction<T> {
   }) async {
     _player._ensureNotDisposed();
     _rust.stopAllEffects(fadeOutMs: BigInt.from(fadeOut.inMilliseconds));
+    _player.state._activeVoicesCount = _rust.getActiveVoicesCount().toInt();
   }
 
   /// Modulates the volume of an active polyphonic voice in real time (`>= 0.0`).
-  Future<void> setVoiceVolume(VoiceId voiceId, double volume) async {
+  Future<void> _setVoiceVolume(int voiceId, double volume) async {
     _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(volume, 'volume', 'Voice volume must be >= 0.0');
@@ -741,7 +744,7 @@ class PlayerAction<T> {
   }
 
   /// Modulates the pitch of an active polyphonic voice in real time (`> 0.0`).
-  Future<void> setVoicePitch(VoiceId voiceId, double pitch) async {
+  Future<void> _setVoicePitch(int voiceId, double pitch) async {
     _player._ensureNotDisposed();
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Voice pitch must be > 0.0');
@@ -750,14 +753,14 @@ class PlayerAction<T> {
   }
 
   /// Modulates the stereo balance of an active polyphonic voice (`-1.0` to `1.0`).
-  Future<void> setVoiceBalance(VoiceId voiceId, double balance) async {
+  Future<void> _setVoiceBalance(int voiceId, double balance) async {
     _player._ensureNotDisposed();
     _rust.setEffectBalance(voiceId: voiceId, balance: balance.toDouble());
   }
 
   /// Updates the 3D position and velocity of an active polyphonic voice.
-  Future<void> setVoiceEmitter(
-    VoiceId voiceId,
+  Future<void> _setVoiceEmitter(
+    int voiceId,
     SpatialEmitter emitter,
   ) async {
     _player._ensureNotDisposed();

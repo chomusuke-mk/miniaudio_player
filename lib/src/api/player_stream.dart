@@ -119,8 +119,8 @@ class PlayerStream<T> {
       StreamController<bool>.broadcast();
   final StreamController<double> _micRmsLevelController =
       StreamController<double>.broadcast();
-  final StreamController<VoiceId> _voiceCompletedController =
-      StreamController<VoiceId>.broadcast();
+  final StreamController<int> _voiceCompletedController =
+      StreamController<int>.broadcast();
   final StreamController<int> _activeVoicesCountController =
       StreamController<int>.broadcast();
   final StreamController<int> _allocatedRamBytesController =
@@ -337,7 +337,7 @@ class PlayerStream<T> {
   Stream<double> get micRmsLevel => _micRmsLevelController.stream;
 
   /// Broadcast stream emitting voice completion events for polyphonic effects.
-  Stream<VoiceId> get voiceCompleted => _voiceCompletedController.stream;
+  Stream<int> get voiceCompleted => _voiceCompletedController.stream;
 
   /// Broadcast stream emitting the number of active polyphonic effect voices.
   Stream<int> get activeVoicesCount => _activeVoicesCountController.stream;
