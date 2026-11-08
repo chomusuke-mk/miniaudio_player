@@ -101,9 +101,11 @@ enum MiniaudioLogLevel {
   /// Logs maximum trace-level diagnostics (`5`).
   verbose(5);
 
+  /// Raw native log level integer value.
   final int value;
   const MiniaudioLogLevel(this.value);
 
+  /// Resolves a [MiniaudioLogLevel] from its raw integer [value].
   static MiniaudioLogLevel fromValue(int value) {
     for (final level in MiniaudioLogLevel.values) {
       if (level.value == value) return level;
@@ -115,16 +117,10 @@ enum MiniaudioLogLevel {
 /// Resolves the user-facing display name for the system default audio device.
 typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
 
-/// Optional resolver for loading Flutter bundle assets.
-typedef AssetBytesLoader = Future<Uint8List> Function(String assetKey);
-
 /// Global configuration parameters for [MiniaudioPlayer] instances.
 class MiniaudioPlayerGlobalConfig {
   /// The optional global log callback for intercepting or redirecting diagnostic messages.
   static MiniaudioLogCallback? onLog;
-
-  /// The optional global asset loader for resolving Flutter asset bundles.
-  static AssetBytesLoader? assetLoader;
 
   /// The default buffer frame size for newly created player instances.
   int defaultBufferSize;
@@ -179,7 +175,6 @@ class MiniaudioPlayerGlobalConfig {
   /// Resets all global configuration parameters to their clean default values.
   void reset() {
     onLog = null;
-    assetLoader = null;
     defaultBufferSize = 0;
     logLevel = MiniaudioLogLevel.none;
     defaultAudioDevice = AudioDevice.auto;
@@ -263,7 +258,16 @@ class MiniaudioPlayer<T> {
   // Acoustic Analysis
   // =========================================================================
 
-  /// Performs offline acoustic analysis of an audio file on a background worker thread.
+  /// Performs offline acoustic analysis of an audio file at [filePath] on a background worker thread.
+  ///
+  /// Parameters:
+  /// - [filePath]: Absolute or relative path to the local audio file to analyze.
+  /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
+  ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
+  /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
+  ///   [waveformPoints] for rendering seekbars and waveform visualizations.
+  /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
+  /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
   static Future<AudioAnalysisResult> analyzeAudio(
     String filePath, {
     bool replayGain = true,
@@ -287,7 +291,16 @@ class MiniaudioPlayer<T> {
     }
   }
 
-  /// Performs synchronous offline acoustic analysis of an audio file.
+  /// Performs synchronous offline acoustic analysis of an audio file at [filePath].
+  ///
+  /// Parameters:
+  /// - [filePath]: Absolute or relative path to the local audio file to analyze.
+  /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
+  ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
+  /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
+  ///   [waveformPoints] for rendering seekbars and waveform visualizations.
+  /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
+  /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
   static AudioAnalysisResult analyzeAudioSync(
     String filePath, {
     bool replayGain = true,
@@ -310,7 +323,16 @@ class MiniaudioPlayer<T> {
     }
   }
 
-  /// Performs offline acoustic analysis of in-memory audio bytes on a background worker thread.
+  /// Performs offline acoustic analysis of in-memory audio [bytes] on a background worker thread.
+  ///
+  /// Parameters:
+  /// - [bytes]: Raw encoded audio file bytes (e.g. WAV, FLAC, MP3, OGG, M4A) in memory.
+  /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
+  ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
+  /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
+  ///   [waveformPoints] for rendering seekbars and waveform visualizations.
+  /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
+  /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
   static Future<AudioAnalysisResult> analyzeAudioMemory(
     Uint8List bytes, {
     bool replayGain = true,
@@ -347,34 +369,23 @@ class MiniaudioPlayer<T> {
 
   late final rust.RustMiniaudioPlayer _rustPlayer;
 
-  /// The underlying native Rust player bridge handle.
-  rust.RustMiniaudioPlayer get rustPlayer => _rustPlayer;
-
   StreamSubscription<rust_types.RustPlayerEvent>? _eventSub;
   bool _isDisposed = false;
 
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
 
-  /// The local shadow copy of the active playlist queue.
-  List<AudioSource<T>> shadowQueue = [];
-
   /// The monotonic counter allocating unique identifiers for queued sources.
   int nextSourceId = 1;
 
-  /// The lookup registry mapping unique IDs to their [AudioSource] instances.
+  /// The lookup registry mapping unique monotonic track IDs to their [AudioSource] instances.
   final Map<int, AudioSource<T>> sourceRegistry = {};
 
   /// The active [CustomByteProvider] instances keyed by stream ID.
   final Map<int, CustomByteProvider> customProviders = {};
 
-  final Set<AudioOutput> _activeOutputs = {const AudioOutput.speaker()};
-
-  /// The set of active [AudioOutput] destinations configured on this player.
-  Set<AudioOutput> get activeOutputsSet => _activeOutputs;
-
-  /// Whether Infinite Mix dynamic queue replenishment is active.
-  bool infiniteMixEnabled = false;
+  /// The remaining track threshold at which Infinite Mix replenishment triggers.
+  int infiniteMixThreshold = 2;
 
   /// The callback supplying more tracks when Infinite Mix triggers.
   InfiniteMixProvider<T>? infiniteMixProvider;
@@ -394,12 +405,16 @@ class MiniaudioPlayer<T> {
 
   /// Primary canonical constructor. Accepts optional initial [source] playlist,
   /// RAM [effects], multi-matrix [outputs], capture [inputs], and [config].
+  ///
+  /// The optional [effectMemoryLimitMb] parameter overrides `config.effectMemoryLimitMb`
+  /// when provided.
   MiniaudioPlayer({
     List<AudioSource<T>> source = const [],
     List<AudioEffect> effects = const [],
     Set<AudioOutput>? outputs,
     Set<AudioInput> inputs = const {},
     PlayerConfig config = const PlayerConfig(),
+    int? effectMemoryLimitMb,
     int? bufferSize,
     AudioDevice? defaultAudioDevice,
     bool pauseOnDeviceChange = false,
@@ -413,7 +428,6 @@ class MiniaudioPlayer<T> {
       );
     }
     MapLogger.info('Initializing MiniaudioPlayer');
-    action = PlayerAction<T>(this);
     stream = PlayerStream<T>();
     state = PlayerState<T>(this);
 
@@ -421,11 +435,18 @@ class MiniaudioPlayer<T> {
     state.audioDevice = defaultAudioDevice ?? _globalConfig.defaultAudioDevice;
     state.pauseOnDeviceChange = pauseOnDeviceChange;
 
+    final int? resolvedMaxRamBytes = effectMemoryLimitMb != null
+        ? effectMemoryLimitMb * 1024 * 1024
+        : config.resolvedMaxRamBytes;
+    state.maxRamBytes = resolvedMaxRamBytes;
+
     _rustPlayer = rust.RustMiniaudioPlayer(
       config: rust_types.RustPlayerConfig(
         bufferSizeFrames: state.bufferSize > 0 ? state.bufferSize : 1024,
         maxVoices: config.maxVoices,
-        maxRamBytes: BigInt.from(config.maxRamBytes),
+        maxRamBytes: resolvedMaxRamBytes != null
+            ? BigInt.from(resolvedMaxRamBytes)
+            : null,
         pauseOnDeviceChange: pauseOnDeviceChange,
         bufferLocalDurationMs:
             BigInt.from(_globalConfig.bufferLocalDuration.inMilliseconds),
@@ -438,16 +459,15 @@ class MiniaudioPlayer<T> {
       playbackDeviceId: state.audioDevice.isAuto ? null : state.audioDevice.id,
     );
 
+    action = PlayerAction<T>(this, _rustPlayer);
+
     _eventSub = _rustPlayer.subscribeEvents().listen(_onRustEvent);
 
     final resolvedOutputs = outputs ?? {const AudioOutput.speaker()};
-    _activeOutputs
-      ..clear()
-      ..addAll(resolvedOutputs);
-    state.outputs = Set.of(_activeOutputs);
+    state.outputs = Set.unmodifiable(resolvedOutputs);
 
     if (effects.isNotEmpty) {
-      action.preloadEffects(effects);
+      action.setEffects(effects);
     }
     if (outputs != null &&
         !(outputs.length == 1 &&
@@ -464,7 +484,7 @@ class MiniaudioPlayer<T> {
       action.setCrossfade(crossfadeConfig);
     }
     if (source.isNotEmpty) {
-      action.open(source, autoPlay: false);
+      action.setQueue(source);
     }
   }
 
@@ -513,8 +533,6 @@ class MiniaudioPlayer<T> {
         stream.positionController.add(pos);
       case rust_types.RustPlayerEvent_Duration(:final field0):
         final durMs = field0.toInt();
-        // durMs <= 0 represents an uninitialized track or a live / unbounded stream.
-        // durMs > 0 represents a finite track (even very short ones like 15ms-100ms sound effects).
         final dur = durMs > 0 ? Duration(milliseconds: durMs) : null;
         state.duration = dur;
         stream.durationController.add(dur);
@@ -714,41 +732,26 @@ class MiniaudioPlayer<T> {
         state.audioDevice = dev;
         stream.audioDeviceController.add(dev);
       case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
-        state.currentIndex = field0;
-        stream.currentIndexController.add(field0);
+        final idx = field0 >= 0 ? field0 : null;
+        state.currentIndex = idx;
+        stream.currentIndexController.add(idx);
         final curSource = state.currentItem;
         stream.currentItemController.add(curSource);
+        if (idx != null) {
+          action.applyCurrentTrackReplayGain();
+        }
         checkInfiniteMix();
       case rust_types.RustPlayerEvent_Queue(:final field0):
         final reconciled = <AudioSource<T>>[];
         for (var i = 0; i < field0.length; i++) {
-          final rs = field0[i];
-          final match = sourceRegistry[rs.id] ??
-              shadowQueue.cast<AudioSource<T>?>().firstWhere(
-                    (s) => s != null && s.id != null && s.id == rs.id,
-                    orElse: () =>
-                        shadowQueue.cast<AudioSource<T>?>().firstWhere(
-                              (s) =>
-                                  s != null &&
-                                  ((s is UriAudioSource &&
-                                          (s as UriAudioSource).sourceString ==
-                                              rs.source) ||
-                                      s.sourceKey == rs.source),
-                              orElse: () => null,
-                            ),
-                  );
+          final id = field0[i].toInt();
+          final match = sourceRegistry[id];
           if (match != null) {
-            sourceRegistry[rs.id] = match;
             reconciled.add(match);
-          } else {
-            final fallback = AudioSource<T>(rs.source, id: rs.id);
-            sourceRegistry[rs.id] = fallback;
-            reconciled.add(fallback);
           }
         }
-        state.queue = reconciled;
-        shadowQueue = List.of(reconciled);
-        stream.queueController.add(reconciled);
+        state.queue = List.unmodifiable(reconciled);
+        stream.queueController.add(state.queue);
         stream.currentItemController.add(state.currentItem);
         checkInfiniteMix();
       case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
@@ -788,10 +791,11 @@ class MiniaudioPlayer<T> {
 
   /// Evaluates queue depth and triggers Infinite Mix replenishment if approaching the end of the queue.
   void checkInfiniteMix() async {
-    if (!infiniteMixEnabled || !state.isPlaying) return;
-    final curIdx = state.currentIndex;
-    final remaining = shadowQueue.length - 1 - (curIdx >= 0 ? curIdx : 0);
-    if (remaining < 2 && !stream.needMoreTracksController.isClosed) {
+    if (!state.infiniteMixEnabled || !state.isPlaying) return;
+    final curIdx = state.currentIndex ?? 0;
+    final remaining = state.queue.length - 1 - (curIdx >= 0 ? curIdx : 0);
+    if (remaining < infiniteMixThreshold &&
+        !stream.needMoreTracksController.isClosed) {
       stream.needMoreTracksController.add(
         NeedMoreTracksEvent(
           currentTrackId: curIdx >= 0 ? curIdx : 0,
@@ -801,7 +805,7 @@ class MiniaudioPlayer<T> {
       if (infiniteMixProvider != null) {
         try {
           final more = await infiniteMixProvider!(
-            (2 - remaining).clamp(1, 10),
+            (infiniteMixThreshold - remaining).clamp(1, 10),
           );
           if (more.isNotEmpty && !_isDisposed) {
             action.append(more);

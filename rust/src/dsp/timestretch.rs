@@ -44,14 +44,18 @@ impl TimeStretchProcessor {
         self.pitch
     }
 
-    /// Sets playback speed multiplier (0.05 to 4.0).
+    /// Sets playback speed multiplier (> 0.0).
     pub fn set_speed(&mut self, speed: f32) {
-        self.speed = speed.clamp(0.05, 4.0);
+        if speed > 0.0 && speed.is_finite() {
+            self.speed = speed;
+        }
     }
 
-    /// Sets pitch multiplier (0.25 to 4.0, or -24 to +24 semitones).
+    /// Sets pitch multiplier (> 0.0).
     pub fn set_pitch(&mut self, pitch: f32) {
-        self.pitch = pitch.clamp(0.25, 4.0);
+        if pitch > 0.0 && pitch.is_finite() {
+            self.pitch = pitch;
+        }
     }
 
     /// Process a slice of interleaved PCM audio frames with the current speed and pitch.
@@ -89,13 +93,10 @@ pub fn timestretch_audio(
 
     let ch = channels.clamp(1, 2);
     let sr = sample_rate.clamp(32000, 192000);
-    let clamped_speed = (speed as f64).clamp(0.05, 4.0);
-    let clamped_pitch = (pitch as f64).clamp(0.25, 4.0);
-
-    let tempo = TempoRate::new(clamped_speed)
-        .map_err(|e| format!("Invalid tempo rate {}: {:?}", clamped_speed, e))?;
-    let pitch_ratio = PitchRatio::new(clamped_pitch)
-        .map_err(|e| format!("Invalid pitch ratio {}: {:?}", clamped_pitch, e))?;
+    let tempo = TempoRate::new(speed as f64)
+        .map_err(|e| format!("Invalid tempo rate {}: {:?}", speed, e))?;
+    let pitch_ratio = PitchRatio::new(pitch as f64)
+        .map_err(|e| format!("Invalid pitch ratio {}: {:?}", pitch, e))?;
 
     let config = SessionConfig {
         source_sample_rate: sr,

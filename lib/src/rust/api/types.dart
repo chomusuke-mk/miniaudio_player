@@ -9,22 +9,48 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `RustAudioEffect`, `RustAudioInput`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `RustAudioInput`, `RustEngineEvent`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
+/// Offline acoustic analysis results containing loudness, waveform, and format properties.
 class RustAudioAnalysisResult {
+  /// Total track duration in milliseconds.
   final PlatformInt64 durationMs;
+
+  /// Audio sample rate in Hz.
   final int sampleRate;
+
+  /// Audio channel count.
   final int channels;
+
+  /// Average bitrate in bits per second.
   final int bitrate;
+
+  /// Absolute true peak sample amplitude.
   final double peakAmplitude;
+
+  /// RMS energy amplitude.
   final double rmsAmplitude;
+
+  /// Whether ReplayGain analysis was performed and populated.
   final bool hasReplayGain;
+
+  /// Integrated loudness in LUFS according to ITU-R BS.1770-4.
   final double integratedLufs;
+
+  /// Recommended volume normalization adjustment in decibels.
   final double replayGainDb;
+
+  /// Whether waveform points were computed.
   final bool hasWaveform;
+
+  /// Spectral centroid metric in Hz.
   final double spectralCentroid;
+
+  /// Spectral energy band values.
   final Float32List frequencyBands;
+
+  /// Normalized amplitude envelope points for waveform display.
   final Float32List waveformPeaks;
 
   const RustAudioAnalysisResult({
@@ -82,11 +108,21 @@ class RustAudioAnalysisResult {
           waveformPeaks == other.waveformPeaks;
 }
 
+/// Hardware or virtual audio endpoint detected by the operating system.
 class RustAudioDevice {
+  /// Unique device identifier.
   final String id;
+
+  /// Underlying physical endpoint identifier in the operating system.
   final String effectiveId;
+
+  /// Human-readable device display name.
   final String name;
+
+  /// Whether this device is the system default.
   final bool isDefault;
+
+  /// Whether this device represents the automatic system default route.
   final bool isAuto;
 
   const RustAudioDevice({
@@ -120,33 +156,98 @@ class RustAudioDevice {
           isAuto == other.isAuto;
 }
 
+/// Sound effect asset registration descriptor.
+class RustAudioEffect {
+  /// Unique identifier for the sound effect.
+  final String id;
+
+  /// Audio source holding URI or raw decoded data.
+  final RustAudioSource source;
+
+  /// Maximum polyphony instances for this specific effect.
+  final int maxPolyphony;
+
+  /// Whether the decoded sample buffer is pinned in RAM.
+  final bool pinned;
+
+  const RustAudioEffect({
+    required this.id,
+    required this.source,
+    required this.maxPolyphony,
+    required this.pinned,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ source.hashCode ^ maxPolyphony.hashCode ^ pinned.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioEffect &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          source == other.source &&
+          maxPolyphony == other.maxPolyphony &&
+          pinned == other.pinned;
+}
+
 @freezed
 sealed class RustAudioOutput with _$RustAudioOutput {
   const RustAudioOutput._();
 
+  /// Default system speaker output.
   const factory RustAudioOutput.speaker({
+    /// Whether exclusive hardware access mode is requested.
     required bool exclusiveMode,
   }) = RustAudioOutput_Speaker;
+
+  /// Explicit audio output device selected by identifier.
   const factory RustAudioOutput.device({
+    /// Unique device identifier.
     required String deviceId,
+
+    /// Whether exclusive hardware access mode is requested.
     required bool exclusiveMode,
   }) = RustAudioOutput_Device;
+
+  /// Dedicated headphone cue channel output.
   const factory RustAudioOutput.cue({
+    /// Target device identifier.
     required String deviceId,
+
+    /// Cue source channel code.
     required int source,
   }) = RustAudioOutput_Cue;
+
+  /// File sink capturing rendered master audio to disk.
   const factory RustAudioOutput.file({
+    /// Target file system path.
     required String path,
+
+    /// WAV file format code (0: Pcm16, 1: Float32).
     required int format,
   }) = RustAudioOutput_File;
 }
 
+/// Representation of an audio track queued for playback.
 class RustAudioSource {
+  /// Monotonically increasing queue entry identifier.
   final PlatformInt64 id;
+
+  /// File path, HTTP URL, or stream URI.
   final String source;
+
+  /// Optional HTTP headers for network requests.
   final List<RustHttpHeader>? headers;
+
+  /// Optional in-memory raw audio bytes.
   final Uint8List? dataBytes;
+
+  /// Track-specific ReplayGain adjustment in dB.
   final double? replayGainDb;
+
+  /// Track-specific true peak amplitude.
   final double? replayPeak;
 
   const RustAudioSource({
@@ -183,9 +284,15 @@ class RustAudioSource {
           replayPeak == other.replayPeak;
 }
 
+/// Continuous prefetch buffer telemetry metrics.
 class RustBuffer {
+  /// Earliest timestamp cached in RAM in milliseconds.
   final PlatformInt64 startMs;
+
+  /// Furthest timestamp preloaded in RAM in milliseconds.
   final PlatformInt64 endMs;
+
+  /// Whether the decoder is currently stalled waiting for network or I/O chunks.
   final bool isBuffering;
 
   const RustBuffer({
@@ -210,9 +317,15 @@ class RustBuffer {
           isBuffering == other.isBuffering;
 }
 
+/// Configuration governing crossfade transition durations and gain curves.
 class RustCrossfadeConfig {
+  /// Overlap duration for automatic end-of-track transitions in milliseconds.
   final BigInt autoDurationMs;
+
+  /// Overlap duration for manual track skips in milliseconds.
   final BigInt manualDurationMs;
+
+  /// Gain curve interpolation formula (0: equal power, 1: linear).
   final int curve;
 
   const RustCrossfadeConfig({
@@ -238,10 +351,18 @@ class RustCrossfadeConfig {
           curve == other.curve;
 }
 
+/// Cue channel preview configuration for DJ workflows.
 class RustCueConfig {
+  /// Whether cue monitoring is active.
   final bool enabled;
+
+  /// Target audio output device ID for the cue feed.
   final String? deviceId;
+
+  /// Cue monitoring volume level.
   final double volume;
+
+  /// Cue source selection (0: Deck A, 1: Deck B, 2: Master).
   final int mode;
 
   const RustCueConfig({
@@ -269,10 +390,18 @@ class RustCueConfig {
           mode == other.mode;
 }
 
+/// Asynchronous read request dispatched from Rust to a Dart `CustomByteProvider`.
 class RustDartReadRequest {
+  /// Stream identifier matching the requested custom source.
   final int streamId;
+
+  /// Unique monotonically increasing request sequence number.
   final BigInt requestId;
+
+  /// Starting byte offset in the source.
   final BigInt offset;
+
+  /// Number of bytes requested.
   final int length;
 
   const RustDartReadRequest({
@@ -300,9 +429,15 @@ class RustDartReadRequest {
           length == other.length;
 }
 
+/// Distance attenuation model for 3D positional audio emitters.
 enum RustDistanceModel {
+  /// Realistic inverse distance rolloff according to the inverse-square law.
   inverse,
+
+  /// Linear distance attenuation down to silence at maximum distance.
   linear,
+
+  /// Exponential distance attenuation for rapid volume falloff.
   exponential,
   ;
 
@@ -310,12 +445,24 @@ enum RustDistanceModel {
       RustLib.instance.api.crateApiTypesRustDistanceModelDefault();
 }
 
+/// Dynamic sidechain ducking configuration parameters.
 class RustDuckingConfig {
+  /// Whether automatic ducking is enabled.
   final bool enabled;
+
+  /// Attenuation gain in decibels applied to background music when ducking triggers.
   final double duckingDb;
+
+  /// Threshold in decibels above which input signal triggers ducking.
   final double thresholdDb;
+
+  /// Attack ramp time in milliseconds.
   final double attackMs;
+
+  /// Hold time in milliseconds before release commences.
   final double holdMs;
+
+  /// Release ramp time in milliseconds back to unity gain.
   final double releaseMs;
 
   const RustDuckingConfig({
@@ -352,15 +499,33 @@ class RustDuckingConfig {
           releaseMs == other.releaseMs;
 }
 
+/// Playback properties when triggering an individual sound effect instance.
 class RustEffectConfig {
+  /// Instance playback volume.
   final double volume;
+
+  /// Stereo panning balance (-1.0 to +1.0).
   final double balance;
+
+  /// Pitch shift multiplier.
   final double pitch;
+
+  /// Playback rate multiplier.
   final double rate;
+
+  /// Whether the sound effect loops seamlessly until explicitly stopped.
   final bool looping;
+
+  /// Voice priority level for voice-stealing arbitration.
   final int priority;
+
+  /// Random pitch jitter variance.
   final double pitchJitter;
+
+  /// Random volume jitter variance.
   final double volumeJitter;
+
+  /// Optional 3D spatial emitter parameters.
   final RustSpatialEmitter? spatial;
 
   const RustEffectConfig({
@@ -406,8 +571,12 @@ class RustEffectConfig {
           spatial == other.spatial;
 }
 
+/// Parameters configuring the 10-band ISO peaking equalizer.
 class RustEqualizerParams {
+  /// Gain adjustments in decibels across the 10 ISO standard center frequencies.
   final Float32List gains;
+
+  /// Whether the equalizer DSP stage is actively applied.
   final bool enabled;
 
   const RustEqualizerParams({
@@ -430,8 +599,12 @@ class RustEqualizerParams {
           enabled == other.enabled;
 }
 
+/// HTTP header key-value pair for network requests.
 class RustHttpHeader {
+  /// Header field name.
   final String key;
+
+  /// Header field value.
   final String value;
 
   const RustHttpHeader({
@@ -454,18 +627,30 @@ class RustHttpHeader {
           value == other.value;
 }
 
+/// Initialization configuration for the audio player and backend engine.
 class RustPlayerConfig {
+  /// Render buffer chunk size in frames.
   final int bufferSizeFrames;
+
+  /// Maximum concurrent sound effect voices allowed.
   final int maxVoices;
-  final BigInt maxRamBytes;
+
+  /// Optional maximum RAM budget in bytes allocated for decoded sound effect samples (`None` = unlimited).
+  final BigInt? maxRamBytes;
+
+  /// Whether playback pauses automatically on audio device change or disconnection.
   final bool pauseOnDeviceChange;
+
+  /// Ring buffer capacity for local file streaming in milliseconds.
   final BigInt bufferLocalDurationMs;
+
+  /// Ring buffer capacity for network HTTP streaming in milliseconds.
   final BigInt bufferNetworkDurationMs;
 
   const RustPlayerConfig({
     required this.bufferSizeFrames,
     required this.maxVoices,
-    required this.maxRamBytes,
+    this.maxRamBytes,
     required this.pauseOnDeviceChange,
     required this.bufferLocalDurationMs,
     required this.bufferNetworkDurationMs,
@@ -500,179 +685,315 @@ class RustPlayerConfig {
 sealed class RustPlayerEvent with _$RustPlayerEvent {
   const RustPlayerEvent._();
 
+  /// Playback state transition code.
   const factory RustPlayerEvent.playbackState(
     int field0,
   ) = RustPlayerEvent_PlaybackState;
+
+  /// State machine integer code.
   const factory RustPlayerEvent.state(
     int field0,
   ) = RustPlayerEvent_State;
+
+  /// Elapsed track position in milliseconds.
   const factory RustPlayerEvent.position(
     PlatformInt64 field0,
   ) = RustPlayerEvent_Position;
+
+  /// Total track duration in milliseconds.
   const factory RustPlayerEvent.duration(
     PlatformInt64 field0,
   ) = RustPlayerEvent_Duration;
+
+  /// Whether audio is actively playing.
   const factory RustPlayerEvent.isPlaying(
     bool field0,
   ) = RustPlayerEvent_IsPlaying;
+
+  /// Whether player is buffering data.
   const factory RustPlayerEvent.isBuffering(
     bool field0,
   ) = RustPlayerEvent_IsBuffering;
+
+  /// Whether track has finished playback.
   const factory RustPlayerEvent.isCompleted(
     bool field0,
   ) = RustPlayerEvent_IsCompleted;
+
+  /// Tripartite ring buffer telemetry metrics.
   const factory RustPlayerEvent.buffer(
     RustBuffer field0,
   ) = RustPlayerEvent_Buffer;
+
+  /// Playlist queue track IDs in active playback order.
   const factory RustPlayerEvent.queue(
-    List<RustAudioSource> field0,
+    Int64List field0,
   ) = RustPlayerEvent_Queue;
+
+  /// Active playlist queue index (-1 when none/uninitialized).
   const factory RustPlayerEvent.currentIndex(
     int field0,
   ) = RustPlayerEvent_CurrentIndex;
+
+  /// Whether an overlap crossfade transition is active.
   const factory RustPlayerEvent.isCrossfading(
     bool field0,
   ) = RustPlayerEvent_IsCrossfading;
+
+  /// Crossfade durations and interpolation curve configuration.
   const factory RustPlayerEvent.crossfadeConfig(
     RustCrossfadeConfig field0,
   ) = RustPlayerEvent_CrossfadeConfig;
+
+  /// Instantaneous visualizer FFT and loudness data.
   const factory RustPlayerEvent.visualizer(
     RustVisualizerData field0,
   ) = RustPlayerEvent_Visualizer;
+
+  /// Whether visualizer analysis is active.
   const factory RustPlayerEvent.visualizerEnabled(
     bool field0,
   ) = RustPlayerEvent_VisualizerEnabled;
+
+  /// Master volume level.
   const factory RustPlayerEvent.volume(
     double field0,
   ) = RustPlayerEvent_Volume;
+
+  /// Playback speed rate multiplier.
   const factory RustPlayerEvent.rate(
     double field0,
   ) = RustPlayerEvent_Rate;
+
+  /// Playback pitch shift multiplier.
   const factory RustPlayerEvent.pitch(
     double field0,
   ) = RustPlayerEvent_Pitch;
+
+  /// Stereo balance pan (-1.0 to +1.0).
   const factory RustPlayerEvent.balance(
     double field0,
   ) = RustPlayerEvent_Balance;
+
+  /// Downmix stereo to mono.
   const factory RustPlayerEvent.mono(
     bool field0,
   ) = RustPlayerEvent_Mono;
+
+  /// Stream nominal bitrate in bps.
   const factory RustPlayerEvent.bitrate(
     int field0,
   ) = RustPlayerEvent_Bitrate;
+
+  /// Audio buffer frame size.
   const factory RustPlayerEvent.bufferSize(
     int field0,
   ) = RustPlayerEvent_BufferSize;
+
+  /// Silence detection configuration.
   const factory RustPlayerEvent.silenceConfig(
     RustSilenceConfig field0,
   ) = RustPlayerEvent_SilenceConfig;
+
+  /// Cumulative silence skipped in milliseconds.
   const factory RustPlayerEvent.silenceSaved(
     PlatformInt64 field0,
   ) = RustPlayerEvent_SilenceSaved;
+
+  /// Equalizer 10-band gain parameters.
   const factory RustPlayerEvent.equalizer(
     RustEqualizerParams field0,
   ) = RustPlayerEvent_Equalizer;
+
+  /// Equalizer preamp gain in dB.
   const factory RustPlayerEvent.preamp(
     double field0,
   ) = RustPlayerEvent_Preamp;
+
+  /// Active ReplayGain loudness normalization settings.
   const factory RustPlayerEvent.replayGain(
     RustReplayGainConfig field0,
   ) = RustPlayerEvent_ReplayGain;
+
+  /// Bauer binaural crossfeed mode code.
   const factory RustPlayerEvent.crossfeed(
     int field0,
   ) = RustPlayerEvent_Crossfeed;
+
+  /// 3D stereo widening spatializer state.
   const factory RustPlayerEvent.spatializer({
+    /// Whether spatializer is enabled.
     required bool enabled,
+
+    /// Stereo widening factor.
     required double width,
   }) = RustPlayerEvent_Spatializer;
+
+  /// Algorithmic studio reverberation settings.
   const factory RustPlayerEvent.reverb(
     RustReverbParams field0,
   ) = RustPlayerEvent_Reverb;
+
+  /// Brickwall peak limiter state.
   const factory RustPlayerEvent.limiter(
     bool field0,
   ) = RustPlayerEvent_Limiter;
+
+  /// Whether file recording is currently running.
   const factory RustPlayerEvent.isRecording(
     bool field0,
   ) = RustPlayerEvent_IsRecording;
+
+  /// Cumulative recorded duration in milliseconds.
   const factory RustPlayerEvent.recordedDuration(
     BigInt field0,
   ) = RustPlayerEvent_RecordedDuration;
+
+  /// Whether dynamic ducking is attenuating background music.
   const factory RustPlayerEvent.isDuckingActive(
     bool field0,
   ) = RustPlayerEvent_IsDuckingActive;
+
+  /// Live microphone input RMS loudness level.
   const factory RustPlayerEvent.micRmsLevel(
     double field0,
   ) = RustPlayerEvent_MicRmsLevel;
+
+  /// Voice completion notification with voice ID.
   const factory RustPlayerEvent.voiceCompleted(
     int field0,
   ) = RustPlayerEvent_VoiceCompleted;
+
+  /// Notification of registered sound effect assets and total RAM bytes allocated.
   const factory RustPlayerEvent.loadedEffects({
+    /// Identifiers of loaded sound effects.
     required List<String> ids,
+
+    /// Total RAM bytes occupied by decoded effect samples.
     required BigInt allocatedBytes,
   }) = RustPlayerEvent_LoadedEffects;
+
+  /// Number of concurrent active sound effect voices.
   const factory RustPlayerEvent.activeVoices(
     int field0,
   ) = RustPlayerEvent_ActiveVoices;
+
+  /// Raw ICY/ID3 metadata stream payload.
   const factory RustPlayerEvent.metaBytes(
     Uint8List field0,
   ) = RustPlayerEvent_MetaBytes;
+
+  /// Whether metadata stream reception is enabled.
   const factory RustPlayerEvent.metaBytesEnabled(
     bool field0,
   ) = RustPlayerEvent_MetaBytesEnabled;
+
+  /// Cue monitoring volume level.
   const factory RustPlayerEvent.cueVolume(
     double field0,
   ) = RustPlayerEvent_CueVolume;
+
+  /// Cue monitoring source channel code.
   const factory RustPlayerEvent.cueSource(
     int field0,
   ) = RustPlayerEvent_CueSource;
+
+  /// Active loop mode policy (0: off, 1: one, 2: all).
   const factory RustPlayerEvent.loopMode(
     int field0,
   ) = RustPlayerEvent_LoopMode;
+
+  /// Whether playlist shuffle is enabled.
   const factory RustPlayerEvent.isShuffled(
     bool field0,
   ) = RustPlayerEvent_IsShuffled;
+
+  /// Whether auto-pause on device change is enabled.
   const factory RustPlayerEvent.pauseOnDeviceChange(
     bool field0,
   ) = RustPlayerEvent_PauseOnDeviceChange;
+
+  /// Whether microphone capture is enabled.
   const factory RustPlayerEvent.microphoneEnabled(
     bool field0,
   ) = RustPlayerEvent_MicrophoneEnabled;
+
+  /// Microphone input volume level.
   const factory RustPlayerEvent.micVolume(
     double field0,
   ) = RustPlayerEvent_MicVolume;
+
+  /// Whether direct microphone monitoring is active.
   const factory RustPlayerEvent.directMonitoringEnabled(
     bool field0,
   ) = RustPlayerEvent_DirectMonitoringEnabled;
+
+  /// List of available audio output devices.
   const factory RustPlayerEvent.outputDevices(
     List<RustAudioDevice> field0,
   ) = RustPlayerEvent_OutputDevices;
+
+  /// List of available audio input devices.
   const factory RustPlayerEvent.inputDevices(
     List<RustAudioDevice> field0,
   ) = RustPlayerEvent_InputDevices;
+
+  /// Request for Dart to read custom stream bytes.
   const factory RustPlayerEvent.dartReadRequest(
     RustDartReadRequest field0,
   ) = RustPlayerEvent_DartReadRequest;
+
+  /// Active audio output device.
   const factory RustPlayerEvent.device(
     RustAudioDevice field0,
   ) = RustPlayerEvent_Device;
+
+  /// Error notification with message and code.
   const factory RustPlayerEvent.error({
+    /// Detailed human-readable error description.
     required String message,
+
+    /// Numeric error categorization code.
     required int code,
   }) = RustPlayerEvent_Error;
 }
 
+/// Synchronous snapshot of playback telemetry metrics.
 class RustPlayerStatus {
+  /// Playback elapsed position in milliseconds.
   final PlatformInt64 positionMs;
+
+  /// Total duration in milliseconds, or -1 if live or unbounded.
   final PlatformInt64 durationMs;
+
+  /// Playback state integer code.
   final int state;
+
+  /// Whether audio is actively rendering.
   final bool isPlaying;
+
+  /// Whether the engine is buffering.
   final bool isBuffering;
+
+  /// Whether playback of the track has completed.
   final bool isCompleted;
+
+  /// Master volume level.
   final double volume;
+
+  /// Playback speed rate multiplier.
   final double rate;
+
+  /// Pitch shift multiplier.
   final double pitch;
+
+  /// Stream nominal bitrate in bits per second.
   final int bitrate;
+
+  /// Stream sample rate in Hz.
   final int sampleRate;
+
+  /// Number of output channels.
   final int channels;
 
   const RustPlayerStatus({
@@ -727,10 +1048,18 @@ class RustPlayerStatus {
           channels == other.channels;
 }
 
+/// Finalized summary metrics of a completed audio recording.
 class RustRecordingResult {
+  /// File path where recorded audio was stored.
   final String path;
+
+  /// Total duration of recorded audio in milliseconds.
   final BigInt durationMs;
+
+  /// Total bytes written to disk.
   final BigInt bytesWritten;
+
+  /// Total PCM audio samples captured.
   final BigInt sampleCount;
 
   const RustRecordingResult({
@@ -758,10 +1087,18 @@ class RustRecordingResult {
           sampleCount == other.sampleCount;
 }
 
+/// Configuration governing ReplayGain track loudness normalization.
 class RustReplayGainConfig {
+  /// Gain adjustment in decibels relative to target LUFS.
   final double gainDb;
+
+  /// Absolute true peak amplitude.
   final double peak;
+
+  /// Whether clipping prevention is active to prevent exceeding digital full scale.
   final bool preventClipping;
+
+  /// Whether ReplayGain is actively applied.
   final bool enabled;
 
   const RustReplayGainConfig({
@@ -792,13 +1129,27 @@ class RustReplayGainConfig {
           enabled == other.enabled;
 }
 
+/// Parameters configuring algorithmic studio reverberation.
 class RustReverbParams {
+  /// Normalized room size determining decay time (0.0 to 1.0).
   final double roomSize;
+
+  /// High-frequency absorption and damping (0.0 to 1.0).
   final double damping;
+
+  /// Wet reverberant signal mix level (0.0 to 2.0).
   final double wet;
+
+  /// Dry unprocessed signal mix level (0.0 to 2.0).
   final double dry;
+
+  /// Stereo width and spread of reflections (0.0 to 1.0).
   final double width;
+
+  /// Acoustic mode selector.
   final double mode;
+
+  /// Whether the reverb effect is actively processing audio.
   final bool enabled;
 
   const RustReverbParams({
@@ -838,11 +1189,21 @@ class RustReverbParams {
           enabled == other.enabled;
 }
 
+/// Configuration settings for dynamic silence detection and skipping.
 class RustSilenceConfig {
+  /// Operational mode (0: disabled, 1: trimEdges, 2: continuous, 3: all).
   final int mode;
+
+  /// Silence detection threshold in decibels full scale (dBFS).
   final double thresholdDb;
+
+  /// Minimum continuous duration in milliseconds before silence skipping triggers.
   final int minSilenceDurationMs;
+
+  /// Margin padding in milliseconds preserved before and after non-silent audio.
   final int paddingMs;
+
+  /// Whether silence detection is enabled.
   final bool enabled;
 
   const RustSilenceConfig({
@@ -876,11 +1237,21 @@ class RustSilenceConfig {
           enabled == other.enabled;
 }
 
+/// Metadata and specifications of a decoded audio sample held in memory.
 class RustSoundBufferInfo {
+  /// Unique integer buffer identifier.
   final BigInt id;
+
+  /// Audio sample rate in Hz.
   final int sampleRate;
+
+  /// Number of audio channels.
   final int channels;
+
+  /// Duration of audio in milliseconds.
   final PlatformInt64 durationMs;
+
+  /// Total audio frame count.
   final BigInt frameCount;
 
   const RustSoundBufferInfo({
@@ -914,17 +1285,39 @@ class RustSoundBufferInfo {
           frameCount == other.frameCount;
 }
 
+/// Emitter parameters for 3D positional audio sources.
 class RustSpatialEmitter {
+  /// World position coordinates of the emitter.
   final RustVector3 position;
+
+  /// Velocity vector for Doppler pitch shift calculations.
   final RustVector3 velocity;
+
+  /// Directional vector if emitting sound in a directional cone.
   final RustVector3? direction;
+
+  /// Minimum distance where volume attenuation begins.
   final double minDistance;
+
+  /// Maximum distance beyond which sound ceases or stays constant.
   final double maxDistance;
+
+  /// Attenuation rolloff rate multiplier.
   final double rolloffFactor;
+
+  /// Doppler pitch frequency shift multiplier.
   final double dopplerFactor;
+
+  /// Inner cone angle in radians where sound plays at full gain.
   final double innerAngleRad;
+
+  /// Outer cone angle in radians where sound drops to outer gain.
   final double outerAngleRad;
+
+  /// Attenuation gain applied outside the outer directional cone.
   final double outerGain;
+
+  /// Mathematical distance attenuation curve model.
   final RustDistanceModel distanceModel;
 
   const RustSpatialEmitter({
@@ -976,10 +1369,18 @@ class RustSpatialEmitter {
           distanceModel == other.distanceModel;
 }
 
+/// Listener orientation and position in 3D virtual acoustic space.
 class RustSpatialListener {
+  /// World position coordinates of the listener.
   final RustVector3 position;
+
+  /// Linear velocity vector for Doppler effect calculation.
   final RustVector3 velocity;
+
+  /// Forward orientation direction vector.
   final RustVector3 forward;
+
+  /// Upward orientation direction vector.
   final RustVector3 up;
 
   const RustSpatialListener({
@@ -1007,9 +1408,15 @@ class RustSpatialListener {
           up == other.up;
 }
 
+/// Three-dimensional Cartesian coordinate vector used in 3D spatial audio calculations.
 class RustVector3 {
+  /// X axis position (left / right).
   final double x;
+
+  /// Y axis position (up / down).
   final double y;
+
+  /// Z axis position (forward / backward).
   final double z;
 
   const RustVector3({
@@ -1034,11 +1441,21 @@ class RustVector3 {
           z == other.z;
 }
 
+/// Instantaneous FFT spectrum and stereo amplitude metrics for UI visualizers.
 class RustVisualizerData {
+  /// Normalized frequency band intensities (0.0 to 1.0).
   final Float32List bands;
+
+  /// Global root-mean-square (RMS) energy level (0.0 to 1.0).
   final double rms;
+
+  /// Instantaneous peak sample amplitude (0.0 to 1.0).
   final double peak;
+
+  /// Left channel energy level (0.0 to 1.0).
   final double left;
+
+  /// Right channel energy level (0.0 to 1.0).
   final double right;
 
   const RustVisualizerData({
@@ -1072,10 +1489,18 @@ class RustVisualizerData {
           right == other.right;
 }
 
+/// Policy governing which active voice to terminate when polyphony limits are reached.
 enum RustVoiceStealingPolicy {
+  /// Steal voice with the lowest numerical priority level.
   lowestPriority,
+
+  /// Steal voice that has been playing the longest.
   oldest,
+
+  /// Steal voice with the lowest computed audible amplitude.
   quietest,
+
+  /// Steal voice located farthest from the 3D listener.
   farthest,
   ;
 
@@ -1083,8 +1508,12 @@ enum RustVoiceStealingPolicy {
       RustLib.instance.api.crateApiTypesRustVoiceStealingPolicyDefault();
 }
 
+/// Format and sample bit depth for captured audio recordings.
 enum RustWavFormat {
+  /// 16-bit signed integer linear PCM.
   pcm16,
+
+  /// 32-bit floating point linear PCM.
   float32,
   ;
 

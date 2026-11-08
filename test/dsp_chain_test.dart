@@ -80,7 +80,6 @@ void main() {
     setUp(() async {
       testWavFile = File('test/fixtures/salida.wav');
       player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)]);
-      await player.action.waitUntilOpen();
     });
 
     tearDown(() async {
@@ -198,7 +197,7 @@ void main() {
     });
 
     test('Playback with full DSP chain enabled streams smoothly without crashing', () async {
-      await player.action.open([AudioSource(testWavFile.path)]);
+      await player.action.setQueue([AudioSource(testWavFile.path)]);
 
       // Configure complete DSP chain including Reverb
       await player.action.setReplayGain(gainDb: -10.0, peak: 0.95);
@@ -210,14 +209,14 @@ void main() {
 
       // Playback
       await player.action.play();
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
       // Allow 200ms of audio streaming through all DSP nodes
       await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       await player.action.pause();
-      expect(player.state.playing, isFalse);
+      expect(player.state.isPlaying, isFalse);
     });
 
     test('DSP actions emit directly on their respective streams', () async {
@@ -271,7 +270,7 @@ void main() {
     });
 
     test('DSP actions do NOT flood unrelated streams', () async {
-      await player.action.open([AudioSource(testWavFile.path)]);
+      await player.action.setQueue([AudioSource(testWavFile.path)]);
 
       int positionEvents = 0;
       int playingEvents = 0;

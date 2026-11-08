@@ -198,20 +198,19 @@ void main() {
 
       final player = MiniaudioPlayer(source: [source]);
       try {
-        await player.action.waitUntilOpen();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(player.state.replayGain.enabled, isTrue);
         expect(player.state.replayGain.gainDb, closeTo(-6.5, 1e-4));
         expect(player.state.replayGain.peak, closeTo(0.95, 1e-4));
 
-        // Opening another source with new replay gain applies it
+        // Queueing another source with new replay gain applies it
         final source2 = AudioSource(
           wav.path,
           replayGainDb: -3.0,
           replayPeak: 0.8,
         );
-        await player.action.open([source2]);
-        await player.action.waitUntilOpen();
+        await player.action.setQueue([source2]);
 
         expect(player.state.replayGain.enabled, isTrue);
         expect(player.state.replayGain.gainDb, closeTo(-3.0, 1e-4));

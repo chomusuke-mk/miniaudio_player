@@ -21,7 +21,8 @@ void main() {
         ),
       );
 
-      await engine.action.open(items, startIndex: 0);
+      await engine.action.setQueue(items);
+      await engine.action.play(position: 0);
       expect(engine.state.currentIndex, 0);
 
       // Perform 50 rapid sequential next() calls

@@ -45,7 +45,7 @@ void main() {
   // =========================================================================
   // Group 1: Local Files Matrix (Direct Filesystem Playback & Accurate Seeking)
   // =========================================================================
-  group('Local Files Matrix Playback & Seeking (openFile)', () {
+  group('Local Files Matrix Playback & Seeking (setQueue + play)', () {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
@@ -53,19 +53,18 @@ void main() {
 
     for (final file in supportedFiles) {
       final fileName = file.uri.pathSegments.last;
-      test('1.openFile: $fileName', () async {
-        // 1. openFile
-        await player.action.open([AudioSource(file.path)]);
+      test('1.setQueue: $fileName', () async {
+        // 1. setQueue & play
+        await player.action.setQueue([AudioSource(file.path)]);
+        await player.action.play();
         final duration = player.state.duration;
         expect(duration?.inMilliseconds, greaterThan(0),
             reason: '$fileName duration should be greater than 0');
 
-        // 2. play
-        await player.action.play();
-        for (var i = 0; i < 40 && !player.state.playing; i++) {
+        for (var i = 0; i < 40 && !player.state.isPlaying; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 25));
         }
-        expect(player.state.playing, isTrue,
+        expect(player.state.isPlaying, isTrue,
             reason: '$fileName should be playing');
         expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(0),
             reason: '$fileName position should be non-negative');
@@ -81,19 +80,19 @@ void main() {
         }
         // 4. pause
         await player.action.pause();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
 
         // 5. stop
         await player.action.stop();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
       }, timeout: const Timeout(Duration(seconds: 15)));
     }
   });
 
   // =========================================================================
-  // Group 2: Direct In-Memory Buffer Matrix (openMemory)
+  // Group 2: Direct In-Memory Buffer Matrix
   // =========================================================================
-  group('Local In-Memory Buffer Matrix (openMemory)', () {
+  group('Local In-Memory Buffer Matrix', () {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
@@ -101,17 +100,17 @@ void main() {
 
     for (final file in supportedFiles) {
       final fileName = file.uri.pathSegments.last;
-      test('2.openMemory: $fileName', () async {
+      test('2.memory: $fileName', () async {
         final bytes = await file.readAsBytes();
 
-        await player.action.open([AudioSource(bytes)]);
+        await player.action.setQueue([AudioSource(bytes)]);
+        await player.action.play();
         final duration = player.state.duration;
         expect(duration?.inMilliseconds, greaterThan(0),
             reason: '$fileName in-memory duration should be > 0');
 
-        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
-        expect(player.state.playing, isTrue,
+        expect(player.state.isPlaying, isTrue,
             reason: '$fileName in-memory should be playing');
 
         // Seek validation in memory
@@ -125,15 +124,15 @@ void main() {
         }
 
         await player.action.stop();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
       }, timeout: const Timeout(Duration(seconds: 15)));
     }
   });
 
   // =========================================================================
-  // Group 3: Asset Playback Matrix (openAsset & AudioSource.asset)
+  // Group 3: Asset Playback Matrix
   // =========================================================================
-  group('Local Asset Playback Matrix (openAsset)', () {
+  group('Local Asset Playback Matrix', () {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
@@ -157,17 +156,17 @@ void main() {
       );
       final fileName = match.uri.pathSegments.last;
 
-      test('3.openAsset: $fileName ($fmt)', () async {
+      test('3.asset: $fileName ($fmt)', () async {
         final assetKey = 'test/fixtures/$fileName';
-        await player.action.open([AudioSource(assetKey)]);
+        await player.action.setQueue([AudioSource(assetKey)]);
+        await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
 
-        await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
 
         await player.action.stop();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
       }, timeout: const Timeout(Duration(seconds: 15)));
     }
   });
@@ -181,42 +180,42 @@ void main() {
     setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
-    test('4.1: AudioSource.file opens and plays local file', () async {
+    test('4.1: AudioSource with file path plays local file', () async {
       final file = File('test/fixtures/salida.mp3');
-      await player.action.open([AudioSource(file.path)]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
+      await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
 
-    test('4.2: AudioSource.uri with file:// URI opens and plays local file', () async {
+    test('4.2: AudioSource with file:// URI plays local file', () async {
       final file = File('test/fixtures/salida.wav');
-      await player.action.open([AudioSource(file.absolute.uri)]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
+      await player.action.setQueue([AudioSource(file.absolute.uri)]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
 
-    test('4.3: Direct File instance passed to player.action.open()', () async {
+    test('4.3: File path passed to player.action.setQueue()', () async {
       final file = File('test/fixtures/salida.flac');
-      await player.action.open([AudioSource(file.path)]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
+      await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
 
-    test('4.4: Raw path String passed to player.action.open()', () async {
-      await player.action.open([AudioSource('test/fixtures/salida_aac.m4a')]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
+    test('4.4: Raw path String passed to player.action.setQueue()', () async {
+      await player.action.setQueue([AudioSource('test/fixtures/salida_aac.m4a')]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
   });
@@ -242,24 +241,25 @@ void main() {
       }
     });
 
-    test('5.1: Corrupt local file throws controlled exception without breaking player', () async {
-      // 1. Attempt to open corrupt local file
+    test('5.1: Corrupt local file throws controlled exception on play() without breaking player', () async {
+      // 1. Set queue with corrupt local file and attempt to play
+      await player.action.setQueue([AudioSource(corruptFile.path)]);
       await expectLater(
-        player.action.open([AudioSource(corruptFile.path)]),
+        player.action.play(),
         throwsA(isA<MiniaudioPlayerException>()),
       );
 
       // 2. Player control methods remain safe
       await player.action.pause();
       await player.action.stop();
-      expect(player.state.playing, isFalse);
+      expect(player.state.isPlaying, isFalse);
 
-      // 3. Immediately recover by opening valid local file
-      await player.action.open([AudioSource('test/fixtures/salida.mp3')]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
+      // 3. Immediately recover by queueing and playing valid local file
+      await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
   });
@@ -273,21 +273,22 @@ void main() {
     setUp(() => player = MiniaudioPlayer(source: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
-    test('6.1: Opening unsupported format throws MiniaudioPlayerException gracefully', () async {
+    test('6.1: Playing unsupported format throws MiniaudioPlayerException gracefully', () async {
       final dummyFile = File('${Directory.systemTemp.path}/unsupported.xyz');
       await dummyFile.writeAsString('not a real audio stream');
       try {
+        await player.action.setQueue([AudioSource(dummyFile.path)]);
         await expectLater(
-          player.action.open([AudioSource(dummyFile.path)]),
+          player.action.play(),
           throwsA(isA<MiniaudioPlayerException>()),
         );
 
         // Player must be immediately reusable
-        await player.action.open([AudioSource('test/fixtures/salida_alac.m4a')]);
-        expect(player.state.duration?.inMilliseconds, greaterThan(0));
+        await player.action.setQueue([AudioSource('test/fixtures/salida_alac.m4a')]);
         await player.action.play();
+        expect(player.state.duration?.inMilliseconds, greaterThan(0));
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
         await player.action.stop();
       } finally {
         if (dummyFile.existsSync()) {
@@ -314,13 +315,13 @@ void main() {
         const trackB = 'test/fixtures/salida_aac.m4a';
         const trackC = 'test/fixtures/salida_alac.m4a';
 
-        // Step 1: Open track A and play
-        trace.log('Step 1: openFile(trackA)');
-        await player.action.open([AudioSource(trackA)]);
+        // Step 1: Set queue track A and play
+        trace.log('Step 1: setQueue(trackA)');
+        await player.action.setQueue([AudioSource(trackA)]);
         trace.log('Step 1.1: play()');
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
         trace.log('Step 1.2: state verified playing', {'position': player.state.position.inMilliseconds});
 
         // Step 2: Seek forward while playing
@@ -333,7 +334,7 @@ void main() {
         // Step 3: Pause while playing
         trace.log('Step 3: pause()');
         await player.action.pause();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
         trace.log('Step 3.1: paused verified');
 
         // Step 4: Seek near end while paused
@@ -345,27 +346,27 @@ void main() {
         trace.log('Step 5: play() until completion');
         await player.action.play();
         int waitMs = 0;
-        while (!player.state.completed && waitMs < 3000) {
+        while (!player.state.isCompleted && waitMs < 3000) {
           await Future<void>.delayed(const Duration(milliseconds: 100));
           waitMs += 100;
         }
-        expect(player.state.completed, isTrue);
+        expect(player.state.isCompleted, isTrue);
         trace.log('Step 5.1: completed verified');
 
         // Step 6: Replay from completion auto-rewinds
         trace.log('Step 6: play() from completed state');
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(player.state.playing, isTrue);
-        expect(player.state.completed, isFalse);
+        expect(player.state.isPlaying, isTrue);
+        expect(player.state.isCompleted, isFalse);
         trace.log('Step 6.1: auto-rewind replay verified', {'position': player.state.position.inMilliseconds});
 
         // Step 7: Switch in flight to M4A (AAC) track B
         trace.log('Step 7: switch to track B (M4A AAC)');
-        await player.action.open([AudioSource(trackB)]);
+        await player.action.setQueue([AudioSource(trackB)]);
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
         trace.log('Step 7.1: track B playing verified', {'duration': player.state.duration?.inMilliseconds});
 
@@ -378,16 +379,16 @@ void main() {
 
         // Step 9: Switch in flight to M4A (ALAC) track C
         trace.log('Step 9: switch to track C (M4A ALAC)');
-        await player.action.open([AudioSource(trackC)]);
+        await player.action.setQueue([AudioSource(trackC)]);
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
         trace.log('Step 9.1: track C playing verified', {'duration': player.state.duration?.inMilliseconds});
 
         // Step 10: Final clean stop
         trace.log('Step 10: stop()');
         await player.action.stop();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
         trace.log('Step 10.1: clean stop verified');
       } catch (e) {
         trace.dump();

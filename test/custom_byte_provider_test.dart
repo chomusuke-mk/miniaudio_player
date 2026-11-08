@@ -50,9 +50,9 @@ void main() {
 
     final player = MiniaudioPlayer();
     final provider = MockCustomByteProvider(bytes, streamId: 202);
-    final source = AudioSource.custom(provider);
+    final source = AudioSource(provider);
 
-    await player.action.open([source]);
+    await player.action.setQueue([source]);
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     await player.action.play();

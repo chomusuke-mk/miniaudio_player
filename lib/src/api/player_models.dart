@@ -2,11 +2,55 @@ import '../equalizer.dart';
 import '../reverb.dart';
 import 'audio_source.dart';
 import 'crossfade_config.dart';
+import 'player_action.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
 import 'spatial.dart';
 
 /// Unique identifier for an active polyphonic RAM voice.
 typedef VoiceId = int;
+
+/// Handle to a live, running polyphonic sound effect voice rendered in the native voice pool.
+///
+/// Returned by `player.action.playEffect(...)` to modulate continuous or looping sound
+/// effects in real time (e.g. moving vehicles, engine loops, ambient 3D emitters) without
+/// restarting playback.
+class Voice {
+  /// The unique identifier of this active polyphonic voice (`> 0` when active).
+  final VoiceId id;
+
+  final PlayerAction<dynamic> _action;
+
+  /// Creates a [Voice] handle bound to [id] and [_action].
+  const Voice(this.id, this._action);
+
+  /// Modulates the linear volume of this active voice in real time (`>= 0.0`).
+  Future<void> setVolume(double volume) => _action.setVoiceVolume(id, volume);
+
+  /// Modulates the pitch multiplier of this active voice in real time (`> 0.0`).
+  Future<void> setPitch(double pitch) => _action.setVoicePitch(id, pitch);
+
+  /// Modulates the stereo balance of this active voice in real time (`-1.0` to `1.0`).
+  Future<void> setBalance(double balance) =>
+      _action.setVoiceBalance(id, balance);
+
+  /// Updates the 3D spatial position and velocity of this active voice in real time.
+  Future<void> setEmitter(SpatialEmitter emitter) =>
+      _action.setVoiceEmitter(id, emitter);
+
+  /// Stops this active voice with a linear [fadeOut] ramp.
+  Future<void> stop({Duration fadeOut = const Duration(milliseconds: 5)}) =>
+      _action.stopVoice(id, fadeOut: fadeOut);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) || (other is Voice && id == other.id);
+
+  @override
+  int get hashCode => id.hashCode;
+
+  @override
+  String toString() => 'Voice($id)';
+}
 
 /// Formats supported for real-time audio file recording sinks.
 enum AudioFileFormat {
@@ -19,6 +63,7 @@ enum AudioFileFormat {
   /// FLAC lossless compressed audio stream.
   flac;
 
+  /// Converts this [AudioFileFormat] to its corresponding native [WavFormat].
   WavFormat toWavFormat() {
     switch (this) {
       case AudioFileFormat.wav:
@@ -40,9 +85,11 @@ enum CueSource {
   /// Full composite Master mix.
   masterMix(2);
 
+  /// Raw native enum value.
   final int value;
   const CueSource(this.value);
 
+  /// Resolves a [CueSource] from its raw integer [val].
   static CueSource fromValue(int val) {
     switch (val) {
       case 0:
@@ -176,7 +223,7 @@ class MicrophoneAudioInput extends AudioInput {
   /// The optional hardware microphone device ID (`null` for system default).
   final String? deviceId;
 
-  /// The capture input gain/volume (`0.0` to `2.0`).
+  /// The capture input gain/volume (`>= 0.0`).
   final double volume;
 
   /// Optional sidechain ducking configuration.
@@ -185,7 +232,7 @@ class MicrophoneAudioInput extends AudioInput {
   /// Whether low-latency direct pass-through monitoring to the master output is enabled.
   final bool monitorDirect;
 
-  /// The volume level for direct voice monitoring.
+  /// The volume level for direct voice monitoring (`>= 0.0`).
   final double monitorVolume;
 
   /// Creates a [MicrophoneAudioInput] capture node configuration.
@@ -216,18 +263,18 @@ class MicrophoneAudioInput extends AudioInput {
       monitorVolume.hashCode;
 }
 
-/// Descriptor of an audio effect preloaded in memory for polyphonic playback.
+/// Descriptor of an audio effect registered in the player's sound effects catalog.
 class AudioEffect {
   /// The unique string identifier for this effect.
   final String id;
 
-  /// The audio source to be decoded and loaded into RAM.
+  /// The audio source to be decoded on demand into RAM.
   final AudioSource source;
 
   /// The maximum number of simultaneous voices allowed for this effect.
   final int maxPolyphony;
 
-  /// Whether this effect is pinned to prevent LRU cache eviction under memory pressure.
+  /// Whether this effect is pinned to prevent cache eviction under memory pressure.
   final bool pinned;
 
   /// Creates an [AudioEffect] descriptor.
@@ -250,9 +297,11 @@ enum DspRouting {
   /// Bypasses all DSP (dry output directly to mixer).
   bypass(2);
 
+  /// Raw native enum value.
   final int value;
   const DspRouting(this.value);
 
+  /// Resolves a [DspRouting] from its raw integer [val].
   static DspRouting fromValue(int val) {
     switch (val) {
       case 0:
@@ -280,9 +329,11 @@ enum VoiceStealingPolicy {
   /// Steal the voice located furthest away from listener.
   farthest(3);
 
+  /// Raw native enum value.
   final int value;
   const VoiceStealingPolicy(this.value);
 
+  /// Resolves a [VoiceStealingPolicy] from its raw integer [val].
   static VoiceStealingPolicy fromValue(int val) {
     switch (val) {
       case 0:
@@ -300,16 +351,16 @@ enum VoiceStealingPolicy {
 
 /// Configuration applied when triggering a polyphonic audio effect voice.
 class EffectConfig {
-  /// The volume attenuation factor (`0.0` to `2.0`).
+  /// The volume gain multiplier (`>= 0.0`).
   final double volume;
 
   /// The stereo balance panning (`-1.0` full left to `1.0` full right).
   final double balance;
 
-  /// The pitch shift multiplier (`0.5` to `2.0`).
+  /// The pitch shift multiplier (`> 0.0`).
   final double pitch;
 
-  /// The playback playback speed rate multiplier (`0.5` to `2.0`).
+  /// The playback speed rate multiplier (`> 0.0`).
   final double rate;
 
   /// Whether the voice should loop continuously until explicitly stopped.
@@ -402,7 +453,7 @@ class EffectConfig {
   }
 }
 
-/// Configuration parameters governing [MiniaudioPlayer] behavior.
+/// Configuration parameters governing `MiniaudioPlayer` behavior.
 class PlayerConfig {
   /// The audio hardware output sample rate in Hz (e.g. 44100, 48000).
   final int sampleRate;
@@ -416,8 +467,29 @@ class PlayerConfig {
   /// The maximum number of concurrent polyphonic effect voices.
   final int maxVoices;
 
-  /// The maximum memory budget in bytes allocated for RAM sound effects.
-  final int maxRamBytes;
+  /// Maximum memory budget in megabytes (MB) allocated for decoded RAM sound effects.
+  ///
+  /// Defaults to `50` (50 MB).
+  ///
+  /// > [!CAUTION]
+  /// > **[DANGEROUS: UNLIMITED MEMORY]**: Setting `effectMemoryLimitMb: null` disables all RAM eviction.
+  /// > Sound effects will accumulate in memory indefinitely without safety boundaries. Use only in
+  /// > strictly controlled environments with finite, small audio assets.
+  final int? effectMemoryLimitMb;
+
+  /// Optional exact byte-granularity override for the RAM sound effects memory budget.
+  ///
+  /// When non-null, takes precedence over [effectMemoryLimitMb].
+  final int? maxRamBytes;
+
+  /// Resolves the effective RAM budget in bytes (`null` for unlimited memory).
+  int? get resolvedMaxRamBytes {
+    if (maxRamBytes != null) return maxRamBytes;
+    if (effectMemoryLimitMb != null) {
+      return effectMemoryLimitMb! * 1024 * 1024;
+    }
+    return null;
+  }
 
   /// The voice stealing policy when max voices are saturated.
   final VoiceStealingPolicy voiceStealingPolicy;
@@ -446,7 +518,8 @@ class PlayerConfig {
     this.channels = 2,
     this.bufferSizeFrames = 1024,
     this.maxVoices = 64,
-    this.maxRamBytes = 64 * 1024 * 1024, // 64 MB
+    this.effectMemoryLimitMb = 50,
+    this.maxRamBytes,
     this.voiceStealingPolicy = VoiceStealingPolicy.lowestPriority,
     this.autoPlay = false,
     this.pauseOnDeviceChange = false,

@@ -33,12 +33,11 @@ void main() {
       final misnamed = File('${tempDir.path}/track_actually_mp3.wav');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open([AudioSource(misnamed.path)]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
-
+      await player.action.setQueue([AudioSource(misnamed.path)]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 150));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
     });
@@ -50,12 +49,11 @@ void main() {
       final extensionless = File('${tempDir.path}/audio_stream_payload');
       extensionless.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open([AudioSource(extensionless.path)]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
-
+      await player.action.setQueue([AudioSource(extensionless.path)]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 150));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
     });
@@ -67,12 +65,11 @@ void main() {
       final misnamed = File('${tempDir.path}/opaque_blob.bin');
       misnamed.writeAsBytesSync(srcFile.readAsBytesSync());
 
-      await player.action.open([AudioSource(misnamed.path)]);
-      expect(player.state.duration?.inMilliseconds, greaterThan(0));
-
+      await player.action.setQueue([AudioSource(misnamed.path)]);
       await player.action.play();
+      expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 150));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
     });
@@ -123,7 +120,7 @@ void main() {
       final file = File('test/fixtures/salida.mp3');
       if (!file.existsSync()) return;
 
-      await player.action.open([AudioSource(file.path)]);
+      await player.action.setQueue([AudioSource(file.path)]);
 
       expect(player.state.sampleRate, greaterThan(0));
       expect(player.state.channels, greaterThan(0));

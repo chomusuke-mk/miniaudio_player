@@ -43,7 +43,7 @@ void main() {
       final recordFile = File('${tempDir.path}/live_rec.wav');
 
       try {
-        await engine.action.open([
+        await engine.action.setQueue([
           AudioSource(trackA.path, data: 'Track A'),
         ]);
 

@@ -111,11 +111,11 @@ void main() {
         isTrue,
       );
 
-      await player.action.open([
+      await player.action.setQueue([
         AudioSource('test/fixtures/salida.wav'),
       ]);
       expect(
-        messages.any((m) => m.contains('open() requested for source')),
+        messages.any((m) => m.contains('setQueue() requested')),
         isTrue,
       );
 
@@ -127,7 +127,7 @@ void main() {
 
       await player.action.play();
       expect(
-        messages.any((m) => m.contains('play() requested')),
+        messages.any((m) => m.contains('play(')),
         isTrue,
       );
 
@@ -158,14 +158,14 @@ void main() {
         isTrue,
       );
 
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource<int>(
           'test/fixtures/salida.wav',
           data: 1,
         ),
       ]);
       expect(
-        messages.any((m) => m.contains('open() requested for source:')),
+        messages.any((m) => m.contains('setQueue() requested')),
         isTrue,
       );
 

@@ -36,13 +36,25 @@ enum PlaybackState {
   /// An unrecoverable decoding, I/O, or native engine error occurred.
   error;
 
-  /// Convenience boolean predicates
+  /// Whether the playback state is [PlaybackState.stopped].
   bool get isStopped => this == PlaybackState.stopped;
+
+  /// Whether the playback state is [PlaybackState.opening].
   bool get isOpening => this == PlaybackState.opening;
+
+  /// Whether the playback state is [PlaybackState.playing].
   bool get isPlaying => this == PlaybackState.playing;
+
+  /// Whether the playback state is [PlaybackState.paused].
   bool get isPaused => this == PlaybackState.paused;
+
+  /// Whether the playback state is [PlaybackState.completed].
   bool get isCompleted => this == PlaybackState.completed;
+
+  /// Whether the playback state is [PlaybackState.buffering].
   bool get isBuffering => this == PlaybackState.buffering;
+
+  /// Whether the playback state is [PlaybackState.error].
   bool get isError => this == PlaybackState.error;
 }
 
@@ -123,24 +135,6 @@ class PlayerState<T> {
   /// Whether playback is currently paused.
   bool isPaused = false;
 
-  /// Whether the audio player is actively rendering frames (convenience alias for [isPlaying]).
-  bool get playing => isPlaying;
-
-  /// Whether playback is currently stalled (convenience alias for [isBuffering]).
-  bool get buffering => isBuffering;
-
-  /// Whether playback has finished (convenience alias for [isCompleted]).
-  bool get completed => isCompleted;
-
-  /// Whether an audio track is opening (convenience alias for [isOpening]).
-  bool get opening => isOpening;
-
-  /// Whether playback is currently stopped.
-  bool get isStopped => playbackState == PlaybackState.stopped;
-
-  /// Whether the player is currently in an error state.
-  bool get isError => playbackState == PlaybackState.error;
-
   /// The continuous prefetch buffer range and stall status.
   Buffer buffer = const Buffer();
 
@@ -156,13 +150,13 @@ class PlayerState<T> {
   /// Defaults to `false`. Can be toggled using `player.action.setMetaBytesEnabled(bool)`.
   bool metaBytesEnabled = false;
 
-  /// The global master playback volume (`0.0` to `2.0`).
+  /// The global master playback volume (`>= 0.0`, where `1.0` is unity gain).
   double volume = 1.0;
 
-  /// The playback speed rate multiplier (`0.5` to `2.0`).
+  /// The playback speed rate multiplier (`> 0.0`, where `1.0` is normal speed).
   double rate = 1.0;
 
-  /// The playback pitch shift multiplier (`0.5` to `2.0`).
+  /// The playback pitch shift multiplier (`> 0.0`, where `1.0` is normal pitch).
   double pitch = 1.0;
 
   /// The stereo balance panning (`-1.0` full left to `1.0` full right).
@@ -171,20 +165,11 @@ class PlayerState<T> {
   /// Whether stereo channels are downmixed to monophonic audio.
   bool mono = false;
 
-  /// Whether stereo channels are downmixed to monophonic audio (convenience alias for [mono]).
-  bool get isMono => mono;
-
   /// The audio buffer size in frames.
   int bufferSize = 1024;
 
-  /// The audio buffer size in frames (convenience alias for [bufferSize]).
-  int get bufferSizeFrames => bufferSize;
-
   /// The average audio stream bitrate in bits per second.
   int audioBitrate = 0;
-
-  /// The average audio stream bitrate in bits per second (convenience alias for [audioBitrate]).
-  int get bitrate => audioBitrate;
 
   /// The native output audio sample rate in Hz.
   int sampleRate = 44100;
@@ -238,9 +223,6 @@ class PlayerState<T> {
   /// The master pre-amplification gain in decibels.
   double preamp = 0.0;
 
-  /// The master pre-amplification gain in decibels (convenience alias for [preamp]).
-  double get preampDb => preamp;
-
   /// The active ReplayGain track normalization settings.
   ReplayGainConfig replayGain = const ReplayGainConfig();
 
@@ -271,17 +253,15 @@ class PlayerState<T> {
   /// Whether the master true-peak brickwall limiter is active.
   bool limiterEnabled = true;
 
-  /// Whether the master true-peak brickwall limiter is active (convenience alias for [limiterEnabled]).
-  bool get isLimiterEnabled => limiterEnabled;
-
   /// Whether playback pauses when the output hardware device changes.
   bool pauseOnDeviceChange = false;
 
   /// The list of audio sources currently loaded in the playlist queue.
   List<AudioSource<T>> queue = const [];
 
-  /// The zero-based index of the currently active track in [queue], or `-1` if empty.
-  int currentIndex = -1;
+  /// The zero-based index of the currently active track in [queue], or `null`
+  /// when no queue is loaded or before `play(...)` is invoked for the first time.
+  int? currentIndex;
 
   /// The playlist repeat and looping policy.
   LoopMode loopMode = LoopMode.off;
@@ -289,11 +269,8 @@ class PlayerState<T> {
   /// Whether playlist shuffle mode is active.
   bool isShuffled = false;
 
-  /// Whether playlist shuffle mode is active (convenience alias for [isShuffled]).
-  bool get shuffle => isShuffled;
-
   /// Whether Infinite Mix dynamic queue replenishment is enabled.
-  bool get infiniteMixEnabled => _player.infiniteMixEnabled;
+  bool infiniteMixEnabled = false;
 
   /// Whether an automatic or manual crossfade transition is currently in progress.
   bool isCrossfading = false;
@@ -304,13 +281,14 @@ class PlayerState<T> {
   /// The number of polyphonic sound effect voices currently rendering.
   int activeVoicesCount = 0;
 
-  /// The total memory in bytes currently consumed by preloaded sound effects.
+  /// The total memory in bytes currently consumed by decoded sound effects in RAM.
   int allocatedRamBytes = 0;
 
-  /// The maximum memory budget in bytes allocated for RAM sound effects.
-  int maxRamBytes = 64 * 1024 * 1024;
+  /// The maximum memory budget in bytes allocated for RAM sound effects,
+  /// or `null` if unlimited.
+  int? maxRamBytes = 50 * 1024 * 1024;
 
-  /// The list of string identifiers for effects currently preloaded in RAM.
+  /// The list of string identifiers for effects currently decoded in RAM.
   List<String> loadedEffectIds = const [];
 
   /// Set of active output destinations configured on this player instance
@@ -331,7 +309,7 @@ class PlayerState<T> {
   /// The elapsed duration of the active live recording.
   Duration recordedDuration = Duration.zero;
 
-  /// The headphone volume for the secondary DJ cue output (`0.0` to `2.0`).
+  /// The headphone volume for the secondary DJ cue output (`>= 0.0`).
   double cueVolume = 1.0;
 
   /// The source routing for the secondary DJ cue output.
@@ -340,7 +318,7 @@ class PlayerState<T> {
   /// Whether hardware microphone capture is active.
   bool isMicrophoneEnabled = false;
 
-  /// The input capture gain of the microphone (`0.0` to `2.0`).
+  /// The input capture gain of the microphone (`>= 0.0`).
   double micVolume = 1.0;
 
   /// Whether music auto-ducking is currently active due to detected speech.
@@ -353,18 +331,17 @@ class PlayerState<T> {
   double micRmsLevel = -100.0;
 
   /// Whether there is a subsequent track available in the playlist.
-  bool get hasNext => currentIndex >= 0 && currentIndex < queue.length - 1;
+  bool get hasNext => currentIndex != null && currentIndex! < queue.length - 1;
 
   /// Whether there is a preceding track available in the playlist.
-  bool get hasPrevious => currentIndex > 0;
+  bool get hasPrevious => currentIndex != null && currentIndex! > 0;
 
-  /// The [AudioSource] currently loaded at [currentIndex], or `null` if empty.
+  /// The [AudioSource] currently loaded at [currentIndex], or `null` if no track is active.
   AudioSource<T>? get currentItem =>
-      (currentIndex >= 0 && currentIndex < queue.length) ? queue[currentIndex] : null;
+      (currentIndex != null && currentIndex! >= 0 && currentIndex! < queue.length)
+          ? queue[currentIndex!]
+          : null;
 
   /// The optional caller-supplied domain object attached to the current track.
   T? get currentData => currentItem?.data;
-
-  /// The byte size of preloaded metadata bytes.
-  int get pinnedHeadSize => metaBytes?.length ?? 0;
 }

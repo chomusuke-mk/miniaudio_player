@@ -804,8 +804,8 @@ pub struct RustPlayerConfig {
     pub buffer_size_frames: u32,
     /// Maximum concurrent sound effect voices allowed.
     pub max_voices: u32,
-    /// Maximum RAM budget in bytes allocated for decoded sound effect samples.
-    pub max_ram_bytes: usize,
+    /// Optional maximum RAM budget in bytes allocated for decoded sound effect samples (`None` = unlimited).
+    pub max_ram_bytes: Option<usize>,
     /// Whether playback pauses automatically on audio device change or disconnection.
     pub pause_on_device_change: bool,
     /// Ring buffer capacity for local file streaming in milliseconds.
@@ -819,7 +819,7 @@ impl Default for RustPlayerConfig {
         Self {
             buffer_size_frames: 1024,
             max_voices: 64,
-            max_ram_bytes: 64 * 1024 * 1024,
+            max_ram_bytes: Some(50 * 1024 * 1024),
             pause_on_device_change: true,
             buffer_local_duration_ms: 30000,
             buffer_network_duration_ms: 30000,
@@ -884,6 +884,17 @@ pub struct RustAudioEffect {
     pub max_polyphony: u32,
     /// Whether the decoded sample buffer is pinned in RAM.
     pub pinned: bool,
+}
+
+impl From<RustAudioEffect> for crate::core::voice_pool::EffectCatalogItem {
+    fn from(e: RustAudioEffect) -> Self {
+        Self {
+            id: e.id,
+            source: e.source.into(),
+            max_polyphony: e.max_polyphony as usize,
+            pinned: e.pinned,
+        }
+    }
 }
 
 /// Playback properties when triggering an individual sound effect instance.
@@ -970,9 +981,9 @@ pub enum RustPlayerEvent {
     IsCompleted(bool),
     /// Tripartite ring buffer telemetry metrics.
     Buffer(RustBuffer),
-    /// Playlist queue contents.
-    Queue(Vec<RustAudioSource>),
-    /// Active playlist queue index.
+    /// Playlist queue track IDs in active playback order.
+    Queue(Vec<i64>),
+    /// Active playlist queue index (-1 when none/uninitialized).
     CurrentIndex(i32),
     /// Whether an overlap crossfade transition is active.
     IsCrossfading(bool),

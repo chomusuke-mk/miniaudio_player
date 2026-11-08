@@ -105,9 +105,10 @@ void main() {
 
     test('Test 1.1: Giant Cover Art (> 256 KB) in MP3 & .metaBytes synthesis', () async {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
-      await player.action.open([AudioSource(url)]);
+      await player.action.setQueue([AudioSource(url)]);
+      await player.action.play();
 
-      expect(player.state.opening, isFalse);
+      expect(player.state.isOpening, isFalse);
 
       // Check metaBytes immediately after opening
       final meta = player.state.metaBytes;
@@ -121,14 +122,13 @@ void main() {
       final metaLatin1 = latin1.decode(meta.sublist(0, 100));
       expect(metaLatin1.contains('APIC'), isTrue, reason: 'metaBytes must contain APIC picture frame');
 
-      // Play audio and verify playback proceeds from pure audio ring
-      await player.action.play();
+      // Verify playback proceeds from pure audio ring
       int elapsed = 0;
       while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsed += 50;
       }
-      expect(player.state.playing, isTrue, reason: 'Playback must be active');
+      expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
       expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Audio frames must decode cleanly');
 
       // Seek to Duration.zero: must hit Pinned Head cache with 0 range requests
@@ -145,7 +145,8 @@ void main() {
 
     test('Test 1.2: Giant Picture Block (> 256 KB) in FLAC & .metaBytes synthesis', () async {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.flac';
-      await player.action.open([AudioSource(url)]);
+      await player.action.setQueue([AudioSource(url)]);
+      await player.action.play();
 
       final meta = player.state.metaBytes;
       expect(meta, isNotNull, reason: 'metaBytes must not be null for FLAC track');
@@ -155,14 +156,13 @@ void main() {
       final signature = ascii.decode(meta.sublist(0, 4));
       expect(signature, equals('fLaC'), reason: 'metaBytes must begin with fLaC signature');
 
-      // Play audio and verify playback proceeds
-      await player.action.play();
+      // Verify playback proceeds
       int elapsed = 0;
       while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsed += 50;
       }
-      expect(player.state.playing, isTrue, reason: 'Playback must be active');
+      expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
       expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Audio frames must decode cleanly');
 
       await player.action.stop();
@@ -170,7 +170,8 @@ void main() {
 
     test('Test 2: EOF Chirp Prevention (Tail Protection against fake 0xFF 0xFB syncwords)', () async {
       final url = 'http://127.0.0.1:$serverPort/music/eof_chirp.mp3';
-      await player.action.open([AudioSource(url)]);
+      await player.action.setQueue([AudioSource(url)]);
+      await player.action.play();
 
       // Verify metaBytes has tail tags synthesized
       final meta = player.state.metaBytes;
@@ -178,8 +179,6 @@ void main() {
       final metaLatin1 = latin1.decode(meta!);
       expect(metaLatin1.contains('APETAGEX') || metaLatin1.contains('TAG'), isTrue,
           reason: 'metaBytes should contain trailing APEv2 or ID3v1 tags');
-
-      await player.action.play();
 
       // Seek near end of track to test EOF boundary
       final duration = player.state.duration ?? Duration.zero;
@@ -191,11 +190,11 @@ void main() {
 
       // Wait for completion (EOF)
       int waitMs = 0;
-      while (!player.state.completed && waitMs < 6000) {
+      while (!player.state.isCompleted && waitMs < 6000) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         waitMs += 100;
       }
-      expect(player.state.completed, isTrue,
+      expect(player.state.isCompleted, isTrue,
           reason: 'Track must reach completion cleanly without decoding fake syncwords');
 
       await player.action.stop();
@@ -203,7 +202,8 @@ void main() {
 
     test('Test 3: Non-Fast-Start MP4 / M4A Probing & .metaBytes Synthesis', () async {
       final url = 'http://127.0.0.1:$serverPort/music/non_faststart.m4a';
-      await player.action.open([AudioSource(url)]);
+      await player.action.setQueue([AudioSource(url)]);
+      await player.action.play();
 
       // Verify track opens and duration is determined
       expect(player.state.duration, isNotNull);
@@ -224,14 +224,13 @@ void main() {
       final moovCheck = latin1.decode(meta);
       expect(moovCheck.contains('moov'), isTrue, reason: 'Must contain full moov atom from tail');
 
-      // Play audio and verify playback works
-      await player.action.play();
+      // Verify playback works
       int elapsed = 0;
       while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsed += 50;
       }
-      expect(player.state.playing, isTrue, reason: 'Non-faststart MP4 must play cleanly');
+      expect(player.state.isPlaying, isTrue, reason: 'Non-faststart MP4 must play cleanly');
       expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Position must advance');
 
       await player.action.stop();
@@ -239,7 +238,8 @@ void main() {
 
     test('Test 4: WAV with Trailing Chunks Post-Data (LIST/INFO)', () async {
       final url = 'http://127.0.0.1:$serverPort/music/trailing_chunks.wav';
-      await player.action.open([AudioSource(url)]);
+      await player.action.setQueue([AudioSource(url)]);
+      await player.action.play();
 
       final meta = player.state.metaBytes;
       expect(meta, isNotNull, reason: 'metaBytes must not be null for WAV with metadata');
@@ -260,14 +260,13 @@ void main() {
       final dataSize = byteData.getUint32(dataIdx + 4, Endian.little);
       expect(dataSize, equals(0), reason: 'Synthesized WAV metaBytes must patch data chunk size to 0');
 
-      // Play audio and verify completion
-      await player.action.play();
+      // Verify playback and completion
       int elapsed = 0;
       while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsed += 50;
       }
-      expect(player.state.playing, isTrue, reason: 'Playback must be active');
+      expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
       expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Audio frames must decode cleanly');
 
       await player.action.stop();
@@ -283,7 +282,7 @@ void main() {
         }
       });
 
-      await player.action.open([AudioSource(url)]);
+      await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
       // Wait for at least 2 ICY metadata blocks to be demuxed from the audio stream and synthesized
@@ -325,7 +324,7 @@ void main() {
       final currentMetaStr = utf8.decode(currentStateMeta, allowMalformed: true);
       expect(currentMetaStr.contains('TIT2'), isTrue);
 
-      expect(player.state.playing, isTrue, reason: 'Stream must remain playing without decoder errors');
+      expect(player.state.isPlaying, isTrue, reason: 'Stream must remain playing without decoder errors');
 
       await player.action.stop();
     });
@@ -342,7 +341,7 @@ void main() {
       });
 
       final url = 'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
-      await engine.action.open([AudioSource(Uri.parse(url))]);
+      await engine.action.setQueue([AudioSource(Uri.parse(url))]);
       await engine.action.play();
 
       int waitMs = 0;
@@ -379,17 +378,15 @@ void main() {
       await smallBufferPlayer.action.setMetaBytesEnabled(true);
       final url = 'http://127.0.0.1:$serverPort/music/head_3mb_tail_25kb.mp3';
 
-      await smallBufferPlayer.action.open([AudioSource(url)]);
+      await smallBufferPlayer.action.setQueue([AudioSource(url)]);
+      await smallBufferPlayer.action.play();
 
-      // Verify Head is not truncated to 256 KB, but retains all ~3 MB of metadata
-      final pinnedHeadBytes = smallBufferPlayer.state.pinnedHeadSize;
-      expect(pinnedHeadBytes, greaterThan(3 * 1000 * 1000),
-          reason: 'Head must retain full 3 MB of metadata without truncation to 256 KB');
-
-      // Verify metaBytes has full metadata (> 3 MB)
+      // Verify metaBytes has full metadata (> 3 MB) without truncation to 256 KB
       final meta = smallBufferPlayer.state.metaBytes;
       expect(meta, isNotNull);
-      expect(meta!.length, greaterThanOrEqualTo(3 * 1024 * 1024),
+      expect(meta!.length, greaterThan(3 * 1000 * 1000),
+          reason: 'Head must retain full 3 MB of metadata without truncation to 256 KB');
+      expect(meta.length, greaterThanOrEqualTo(3 * 1024 * 1024),
           reason: '.metaBytes must contain the entire 3 MB metadata');
 
       // Verify start of meta is ID3
@@ -399,7 +396,6 @@ void main() {
       final tailTag = meta.sublist(meta.length - 128, meta.length - 125);
       expect(utf8.decode(tailTag), equals('TAG'));
 
-      await smallBufferPlayer.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 500));
       expect(smallBufferPlayer.state.position.inMilliseconds, greaterThan(0));
 
@@ -410,7 +406,7 @@ void main() {
       await smallBufferPlayer.dispose();
     });
 
-    test('Test 8: Metadata Lifecycle: open() & dispose() reset, stop() preserves', () async {
+    test('Test 8: Metadata Lifecycle: play() & dispose() reset, stop() preserves', () async {
       final lifecyclePlayer = MiniaudioPlayer();
       await lifecyclePlayer.action.setMetaBytesEnabled(true);
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
@@ -420,8 +416,9 @@ void main() {
         metaEmissions.add(m);
       });
 
-      // 1. Open track with metadata
-      await lifecyclePlayer.action.open([AudioSource(url)]);
+      // 1. Play track with metadata
+      await lifecyclePlayer.action.setQueue([AudioSource(url)]);
+      await lifecyclePlayer.action.play();
       expect(lifecyclePlayer.state.metaBytes, isNotNull,
           reason: 'Opened track must have non-null metaBytes');
 
@@ -431,11 +428,12 @@ void main() {
           reason: 'stop() must preserve metadata for fast replay');
 
       // 3. Open second track -> opening MUST reset metadata to null during loading
-      final openFuture = lifecyclePlayer.action.open([AudioSource('http://127.0.0.1:$serverPort/music/trailing_chunks.wav')]);
+      await lifecyclePlayer.action.setQueue([AudioSource('http://127.0.0.1:$serverPort/music/trailing_chunks.wav')]);
+      final playFuture = lifecyclePlayer.action.play();
       // During opening phase or stream, null was emitted
-      await openFuture;
+      await playFuture;
       expect(metaEmissions.any((m) => m == null), isTrue,
-          reason: 'open() must emit null to reset metadata from previous track');
+          reason: 'play() on new track must emit null to reset metadata from previous track');
 
       // 4. Dispose player -> metadata MUST be cleaned to null
       await lifecyclePlayer.dispose();

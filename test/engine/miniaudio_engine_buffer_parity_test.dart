@@ -23,20 +23,21 @@ void main() {
 
     test('EngineState reflects initial idle state correctly', () {
       final state = engine.state;
-      expect(state.buffering, isFalse);
+      expect(state.isBuffering, isFalse);
       expect(state.buffer, const Buffer());
       expect(state.bufferSize, 0);
 
       // Active deck properties
       expect(state.sampleRate, anyOf(0, 44100, 48000));
       expect(state.channels, anyOf(0, 1, 2));
-      expect(state.bitrate, 0);
+      expect(state.audioBitrate, 0);
       expect(state.playbackState, PlaybackState.stopped);
       expect(state.isPaused, isFalse);
-      expect(state.isStopped, isTrue);
-      expect(state.isError, isFalse);
+      expect(state.playbackState.isStopped, isTrue);
+      expect(state.playbackState.isError, isFalse);
       expect(state.skipSilence, isFalse);
       expect(state.preamp, 0.0);
+      expect(state.currentIndex, isNull);
     });
 
     test('action.setBufferSize updates bufferSize in state', () async {

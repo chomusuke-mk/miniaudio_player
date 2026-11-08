@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -59,7 +60,7 @@ void main() {
       final s1 = AudioSource('test/fixtures/salida.mp3', data: 'Track 1');
       final s2 = AudioSource('test/fixtures/salida.wav', data: 'Track 2');
 
-      await player.action.open([s1, s2]);
+      await player.action.setQueue([s1, s2]);
 
       expect(player.state.queue.length, equals(2));
       final id1 = player.state.queue[0].id!;
@@ -89,7 +90,7 @@ void main() {
       final s2 = AudioSource('test/fixtures/salida.wav', data: 'T2');
       final s3 = AudioSource('test/fixtures/salida.flac', data: 'T3');
 
-      await player.action.open([s1, s2, s3]);
+      await player.action.setQueue([s1, s2, s3]);
       final id1 = player.state.queue[0].id!;
       final id2 = player.state.queue[1].id!;
       final id3 = player.state.queue[2].id!;
@@ -107,23 +108,26 @@ void main() {
       expect(player.state.queue[2].data, equals('T2'));
     });
 
-    test('MemoryAudioSource transfers bytes to Rust and frees Dart RAM in queue', () async {
+    test('Unified AudioSource transfers bytes to Rust and frees Dart RAM in queue', () async {
       final wavBytes = await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
       expect(wavBytes.isNotEmpty, isTrue);
 
-      final memSource = AudioSource(wavBytes, data: 'Memory Song');
-      await player.action.open([memSource]);
+      final memSource = AudioSource(Uint8List.fromList(wavBytes), data: 'Memory Song');
+      expect(memSource.isMemory, isTrue);
+      expect(memSource.bytes, isNotNull);
+
+      await player.action.setQueue([memSource]);
 
       expect(player.state.queue.length, equals(1));
       final queued = player.state.queue[0];
       expect(queued.data, equals('Memory Song'));
-      expect(queued is MemoryAudioSource, isTrue);
+      expect(queued.isMemory, isTrue);
       // Queued descriptor drops Dart-side byte buffer to avoid duplicating memory
-      expect((queued as MemoryAudioSource).bytes.isEmpty, isTrue);
+      expect(queued.bytes, isNull);
     });
   });
 
-  group('RAM Sound Effects Managed Solely By Rust', () {
+  group('Autonomous Memory-Budgeted Sound Effects Subsystem', () {
     late MiniaudioPlayer player;
 
     setUp(() {
@@ -141,26 +145,70 @@ void main() {
       await player.dispose();
     });
 
-    test('Rust decodes AudioSource directly and reports real allocated RAM bytes', () async {
+    test('Rust decodes AudioSource directly on setEffects/playEffect and reports real allocated RAM bytes', () async {
       final file = File('test/fixtures/test_24bit_stereo.wav');
       expect(file.existsSync(), isTrue);
 
-      // Load via File path AudioSource directly without pre-reading bytes in Dart
-      await player.action.loadEffect(
+      await player.action.setEffects([
         AudioEffect(
           id: 'sfx_file',
           source: AudioSource(file.path),
           maxPolyphony: 4,
         ),
-      );
+      ]);
 
+      final voice = await player.action.playEffect('sfx_file');
+      expect(voice.id, greaterThan(0));
       expect(player.state.loadedEffectIds, contains('sfx_file'));
       expect(player.state.allocatedRamBytes, greaterThan(0));
+      await voice.stop(fadeOut: Duration.zero);
 
-      // Unload and verify metrics reset from Rust
-      await player.action.unloadEffect('sfx_file');
+      // Replace with empty catalog and verify metrics reset from Rust
+      await player.action.setEffects(const []);
       expect(player.state.loadedEffectIds, isNot(contains('sfx_file')));
       expect(player.state.allocatedRamBytes, equals(0));
+    });
+
+    test('Memory effects are immune to eviction while file effects evict by multi-factor score', () async {
+      final file = File('test/fixtures/tripartite/eof_chirp.mp3');
+      final memBytes = await file.readAsBytes();
+
+      // Configure tight budget (only enough for ~2 effects)
+      final budgetedPlayer = MiniaudioPlayer(
+        config: const PlayerConfig(
+          maxVoices: 8,
+          maxRamBytes: 150 * 1024,
+        ),
+      );
+      addTearDown(() => budgetedPlayer.dispose());
+
+      await budgetedPlayer.action.setEffects([
+        AudioEffect(
+          id: 'mem_immune',
+          source: AudioSource(Uint8List.fromList(memBytes)),
+        ),
+        AudioEffect(
+          id: 'file_frequent',
+          source: AudioSource(file.path),
+        ),
+        AudioEffect(
+          id: 'file_rare',
+          source: AudioSource(file.path),
+        ),
+      ]);
+
+      // Trigger file_frequent multiple times so its frequency score is high
+      for (var i = 0; i < 5; i++) {
+        final v = await budgetedPlayer.action.playEffect('file_frequent');
+        await v.stop(fadeOut: Duration.zero);
+      }
+
+      // Trigger file_rare once
+      final vRare = await budgetedPlayer.action.playEffect('file_rare');
+      await vRare.stop(fadeOut: Duration.zero);
+
+      // Memory effect is ALWAYS retained in loadedEffectIds
+      expect(budgetedPlayer.state.loadedEffectIds, contains('mem_immune'));
     });
   });
 }

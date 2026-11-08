@@ -30,30 +30,30 @@ void main() {
       await player.dispose();
     });
 
-    test('Loads sound effect into RAM and unloads successfully', () async {
-      await player.action.loadEffect(
+    test('Registers sound effects catalog via setEffects and replaces catalog cleanly', () async {
+      await player.action.setEffects([
         AudioEffect(
           id: 'test_sound',
-          source: AudioSource(wavBytes),
+          source: AudioSource(Uint8List.fromList(wavBytes)),
           maxPolyphony: 8,
         ),
-      );
+      ]);
 
       expect(player.state.loadedEffectIds, contains('test_sound'));
       expect(player.state.allocatedRamBytes, greaterThan(0));
 
-      await player.action.unloadEffect('test_sound');
+      await player.action.setEffects(const []);
       expect(player.state.loadedEffectIds, isNot(contains('test_sound')));
     });
 
-    test('Plays sounds concurrently within voice pool capacity', () async {
-      await player.action.loadEffect(
+    test('Plays sounds concurrently within voice pool capacity and returns Voice handles', () async {
+      await player.action.setEffects([
         AudioEffect(
           id: 'laser',
-          source: AudioSource(wavBytes),
+          source: AudioSource(Uint8List.fromList(wavBytes)),
           maxPolyphony: 8,
         ),
-      );
+      ]);
 
       final v1 = await player.action.playEffect(
         'laser',
@@ -74,9 +74,9 @@ void main() {
         config: const EffectConfig(priority: 200),
       );
 
-      expect(v1, greaterThan(0));
-      expect(v2, greaterThan(0));
-      expect(v3, greaterThan(0));
+      expect(v1.id, greaterThan(0));
+      expect(v2.id, greaterThan(0));
+      expect(v3.id, greaterThan(0));
       expect(v1 != v2 && v2 != v3, isTrue);
 
       await player.action.stopAllEffects();
@@ -84,12 +84,12 @@ void main() {
     });
 
     test('Plays one-shot sound with pitch and volume jitter', () async {
-      await player.action.loadEffect(
+      await player.action.setEffects([
         AudioEffect(
           id: 'hit',
-          source: AudioSource(wavBytes),
+          source: AudioSource(Uint8List.fromList(wavBytes)),
         ),
-      );
+      ]);
 
       final v1 = await player.action.playEffect(
         'hit',
@@ -99,7 +99,7 @@ void main() {
         volumeJitter: 0.05,
         config: const EffectConfig(priority: 128),
       );
-      expect(v1, greaterThan(0));
+      expect(v1.id, greaterThan(0));
 
       final v2 = await player.action.playEffect(
         'hit',
@@ -109,35 +109,34 @@ void main() {
         volumeJitter: 0.1,
         config: const EffectConfig(priority: 128),
       );
-      expect(v2, greaterThan(0));
+      expect(v2.id, greaterThan(0));
     });
 
-    test('Plays synchronized stem layers (vertical layering)', () async {
-      await player.action.loadEffect(
-        AudioEffect(id: 'stemA', source: AudioSource(wavBytes)),
-      );
-      await player.action.loadEffect(
-        AudioEffect(id: 'stemB', source: AudioSource(wavBytes)),
-      );
+    test('Plays synchronized stem layers and modulates live Voice handles', () async {
+      await player.action.setEffects([
+        AudioEffect(id: 'stemA', source: AudioSource(Uint8List.fromList(wavBytes))),
+        AudioEffect(id: 'stemB', source: AudioSource(Uint8List.fromList(wavBytes))),
+      ]);
 
       final vA = await player.action.playEffect('stemA', volume: 0.7, looping: true);
       final vB = await player.action.playEffect('stemB', volume: 0.4, looping: true);
 
-      expect(vA, greaterThan(0));
-      expect(vB, greaterThan(0));
+      expect(vA.id, greaterThan(0));
+      expect(vB.id, greaterThan(0));
 
-      // Modulate individual stem volume dynamically
-      expect(() => player.action.setEffectVolume(vA, 0.2), returnsNormally);
-      expect(() => player.action.setEffectPitch(vB, 1.05), returnsNormally);
+      // Modulate individual stem voices dynamically via Voice handle
+      await vA.setVolume(0.2);
+      await vB.setPitch(1.05);
+      await vA.setBalance(-0.5);
 
-      await player.action.stopEffect(vA);
-      await player.action.stopEffect(vB);
+      await vA.stop();
+      await vB.stop();
     });
 
     test('Integrates 3D spatial listener and voice emitters with Doppler', () async {
-      await player.action.loadEffect(
-        AudioEffect(id: 'spatial_hit', source: AudioSource(wavBytes)),
-      );
+      await player.action.setEffects([
+        AudioEffect(id: 'spatial_hit', source: AudioSource(Uint8List.fromList(wavBytes))),
+      ]);
 
       await player.action.setListener(const SpatialListener(
         position: Vector3(0.0, 1.7, 0.0),
@@ -155,17 +154,16 @@ void main() {
         dopplerFactor: 1.0,
       );
 
-      final voiceId = await player.action.playEffect(
+      final voice = await player.action.playEffect(
         'spatial_hit',
         volume: 1.0,
         pitch: 1.0,
-        spatial: emitter,
+        emitter: emitter,
       );
-      expect(voiceId, greaterThan(0));
+      expect(voice.id, greaterThan(0));
 
-      // Update voice emitter dynamically in 3D space
-      await player.action.setEffectEmitter(
-        voiceId,
+      // Update voice emitter dynamically in 3D space via Voice handle
+      await voice.setEmitter(
         emitter.copyWith(position: const Vector3(0.0, 1.7, 5.0)),
       );
     });
@@ -174,7 +172,9 @@ void main() {
       await player.dispose();
 
       expect(
-        () => player.action.loadEffect(AudioEffect(id: 'x', source: AudioSource(wavBytes))),
+        () => player.action.setEffects([
+          AudioEffect(id: 'x', source: AudioSource(Uint8List.fromList(wavBytes))),
+        ]),
         throwsStateError,
       );
       expect(() => player.action.playEffect('x'), throwsStateError);

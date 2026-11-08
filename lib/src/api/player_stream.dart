@@ -101,13 +101,15 @@ class PlayerStream<T> {
       StreamController<bool>.broadcast();
   final StreamController<List<AudioSource<T>>> queueController =
       StreamController<List<AudioSource<T>>>.broadcast();
-  final StreamController<int> currentIndexController =
-      StreamController<int>.broadcast();
+  final StreamController<int?> currentIndexController =
+      StreamController<int?>.broadcast();
   final StreamController<AudioSource<T>?> currentItemController =
       StreamController<AudioSource<T>?>.broadcast();
   final StreamController<LoopMode> loopModeController =
       StreamController<LoopMode>.broadcast();
   final StreamController<bool> isShuffledController =
+      StreamController<bool>.broadcast();
+  final StreamController<bool> infiniteMixEnabledController =
       StreamController<bool>.broadcast();
   final StreamController<bool> isCrossfadingController =
       StreamController<bool>.broadcast();
@@ -156,17 +158,26 @@ class PlayerStream<T> {
   /// Broadcast stream emitting whether audio frames are actively rendering.
   Stream<bool> get playing => playingController.stream;
 
-  /// Broadcast stream emitting whether audio frames are actively rendering (convenience alias for [playing]).
+  /// Broadcast stream emitting whether audio frames are actively rendering.
   Stream<bool> get isPlaying => playingController.stream;
 
   /// Broadcast stream emitting whether playback is stalled waiting for data.
   Stream<bool> get buffering => bufferingController.stream;
 
+  /// Broadcast stream emitting whether playback is stalled waiting for data.
+  Stream<bool> get isBuffering => bufferingController.stream;
+
   /// Broadcast stream emitting whether track playback has completed.
   Stream<bool> get completed => completedController.stream;
 
+  /// Broadcast stream emitting whether track playback has completed.
+  Stream<bool> get isCompleted => completedController.stream;
+
   /// Broadcast stream emitting whether a track is currently opening or resolving.
   Stream<bool> get opening => openingController.stream;
+
+  /// Broadcast stream emitting whether a track is currently opening or resolving.
+  Stream<bool> get isOpening => openingController.stream;
 
   /// Broadcast stream emitting high-level playback state changes.
   Stream<PlaybackState> get playbackState => playbackStateController.stream;
@@ -195,13 +206,13 @@ class PlayerStream<T> {
   /// Reactive broadcast stream emitting the channel count (e.g. 1 for mono, 2 for stereo) of the active playback.
   Stream<int> get channels => channelsController.stream;
 
-  /// Broadcast stream emitting master volume updates (`0.0` to `2.0`).
+  /// Broadcast stream emitting master volume updates (`>= 0.0`).
   Stream<double> get volume => volumeController.stream;
 
-  /// Broadcast stream emitting playback rate multiplier updates (`0.5` to `2.0`).
+  /// Broadcast stream emitting playback rate multiplier updates (`> 0.0`).
   Stream<double> get rate => rateController.stream;
 
-  /// Broadcast stream emitting pitch shift multiplier updates (`0.5` to `2.0`).
+  /// Broadcast stream emitting pitch shift multiplier updates (`> 0.0`).
   Stream<double> get pitch => pitchController.stream;
 
   /// Broadcast stream emitting stereo balance panning updates (`-1.0` to `1.0`).
@@ -216,7 +227,7 @@ class PlayerStream<T> {
   /// Broadcast stream emitting audio stream bitrate updates in bits per second.
   Stream<int> get bitrate => audioBitrateController.stream;
 
-  /// Broadcast stream emitting audio stream bitrate updates in bits per second (alias for [bitrate]).
+  /// Broadcast stream emitting audio stream bitrate updates in bits per second.
   Stream<int> get audioBitrate => audioBitrateController.stream;
 
   /// Broadcast stream emitting 10-band equalizer configuration updates.
@@ -287,8 +298,9 @@ class PlayerStream<T> {
   /// Broadcast stream emitting the playlist queue of audio sources.
   Stream<List<AudioSource<T>>> get queue => queueController.stream;
 
-  /// Broadcast stream emitting the index of the currently playing track in [queue].
-  Stream<int> get currentIndex => currentIndexController.stream;
+  /// Broadcast stream emitting the index of the currently playing track in [queue],
+  /// or `null` if no track is active.
+  Stream<int?> get currentIndex => currentIndexController.stream;
 
   /// Broadcast stream emitting the currently active [AudioSource], or `null` if empty.
   Stream<AudioSource<T>?> get currentItem => currentItemController.stream;
@@ -298,6 +310,9 @@ class PlayerStream<T> {
 
   /// Broadcast stream emitting whether playlist shuffle mode is active.
   Stream<bool> get isShuffled => isShuffledController.stream;
+
+  /// Broadcast stream emitting whether Infinite Mix dynamic queue replenishment is active.
+  Stream<bool> get infiniteMixEnabled => infiniteMixEnabledController.stream;
 
   /// Broadcast stream emitting whether an automatic or manual crossfade transition is currently in progress.
   Stream<bool> get isCrossfading => isCrossfadingController.stream;
@@ -402,6 +417,7 @@ class PlayerStream<T> {
       currentItemController.close(),
       loopModeController.close(),
       isShuffledController.close(),
+      infiniteMixEnabledController.close(),
       isCrossfadingController.close(),
       crossfadeConfigController.close(),
       isRecordingController.close(),

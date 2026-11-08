@@ -5,8 +5,45 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
+use crate::core::dual_source::{resolve_local_source_path, strip_file_prefix, AudioSourceCore};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 pub use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoiceStealingPolicy};
+
+/// Source backing classification used by the multi-factor RAM eviction algorithm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectSourceType {
+    /// In-memory bytes (`MemoryAudioSource`): immune to eviction (`SourceWeight = inf`).
+    Memory,
+    /// Network HTTP/HTTPS URI: high cost to re-fetch (`SourceWeight = 5.0`).
+    Network,
+    /// Local file path: fast to re-read from disk (`SourceWeight = 1.0`).
+    LocalFile,
+}
+
+impl EffectSourceType {
+    /// Returns the source weight multiplier for the multi-factor retention score formula.
+    #[inline]
+    pub fn source_weight(self) -> f64 {
+        match self {
+            EffectSourceType::Memory => f64::INFINITY,
+            EffectSourceType::Network => 5.0,
+            EffectSourceType::LocalFile => 1.0,
+        }
+    }
+}
+
+/// Declarative sound effect descriptor passed to [`VoicePool::set_effects`].
+#[derive(Debug, Clone)]
+pub struct EffectCatalogItem {
+    /// Unique identifier for the sound effect.
+    pub id: String,
+    /// Underlying audio source descriptor (memory bytes, local file path, or network URL).
+    pub source: AudioSourceCore,
+    /// Maximum concurrent voices allowed for this specific effect.
+    pub max_polyphony: usize,
+    /// Whether this effect is pinned in RAM and exempt from automatic eviction.
+    pub pinned: bool,
+}
 
 /// Maximum concurrent polyphonic voices rendered by the pool.
 pub const MAX_VOICES: usize = 64;
@@ -73,12 +110,42 @@ impl Default for EffectConfig {
 
 pub struct RegisteredEffect {
     pub id: String,
-    pub buffer: SoundBuffer,
+    pub source: AudioSourceCore,
+    pub source_type: EffectSourceType,
+    pub buffer: Option<SoundBuffer>,
     pub max_polyphony: usize,
     pub pinned: bool,
     pub byte_size: usize,
+    pub trigger_count: u64,
     pub last_used: Instant,
     pub active_voices: usize,
+}
+
+impl RegisteredEffect {
+    /// Returns whether this effect's decoded PCM buffer can be evicted from RAM.
+    ///
+    /// Memory-backed effects (`EffectSourceType::Memory`), pinned effects, and effects
+    /// with active playing voices are strictly immune to eviction.
+    #[inline]
+    pub fn is_evictable(&self) -> bool {
+        self.buffer.is_some()
+            && !self.pinned
+            && self.source_type != EffectSourceType::Memory
+            && self.active_voices == 0
+    }
+
+    /// Computes the multi-factor retention score:
+    /// `Score = SourceWeight * (1 + TriggerFrequency) * (1 / (1 + dt_seconds))`
+    #[inline]
+    pub fn retention_score(&self, now: Instant) -> f64 {
+        if self.source_type == EffectSourceType::Memory || self.pinned {
+            return f64::INFINITY;
+        }
+        let weight = self.source_type.source_weight();
+        let freq = self.trigger_count as f64;
+        let dt_seconds = now.saturating_duration_since(self.last_used).as_secs_f64();
+        weight * (1.0 + freq) * (1.0 / (1.0 + dt_seconds))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -132,9 +199,47 @@ pub fn apply_jitter(base: f32, jitter_amount: f32, seed: u32, salt: u32) -> f32 
     }
 }
 
+/// Decodes an [`AudioSourceCore`] into a PCM [`SoundBuffer`].
+pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundBuffer, String> {
+    if let Some(ref bytes) = source.data_bytes {
+        if !bytes.is_empty() {
+            return SoundBuffer::decode_from_bytes(bytes)
+                .map_err(|e| format!("Decoding memory effect '{}' failed: {}", id, e));
+        }
+    }
+
+    let trimmed = source.source.trim();
+    #[cfg(not(target_arch = "wasm32"))]
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let mut req = ureq::get(trimmed);
+        if let Some(ref hdrs) = source.headers {
+            for h in hdrs {
+                req = req.set(&h.key, &h.value);
+            }
+        }
+        let resp = req
+            .call()
+            .map_err(|e| format!("Failed to fetch network effect '{}' ({}): {}", id, trimmed, e))?;
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        resp.into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("Failed to read network effect '{}' bytes: {}", id, e))?;
+        return SoundBuffer::decode_from_bytes(&bytes)
+            .map_err(|e| format!("Decoding network effect '{}' failed: {}", id, e));
+    }
+
+    let stripped = strip_file_prefix(trimmed);
+    let path = resolve_local_source_path(&stripped);
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read effect file '{}' for '{}': {}", path, id, e))?;
+    SoundBuffer::decode_from_bytes(&bytes)
+        .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+}
+
 pub struct VoicePool {
     pub max_voices: usize,
-    pub max_ram_bytes: usize,
+    pub max_ram_bytes: Option<usize>,
     pub allocated_ram_bytes: usize,
     pub registered_effects: Vec<RegisteredEffect>,
     pub id_to_index: HashMap<String, usize>,
@@ -156,7 +261,7 @@ unsafe impl Sync for VoicePool {}
 impl VoicePool {
     pub fn new(
         max_voices: usize,
-        max_ram_bytes: usize,
+        max_ram_bytes: Option<usize>,
         sample_rate: u32,
         channels: usize,
     ) -> Self {
@@ -180,8 +285,13 @@ impl VoicePool {
         }
     }
 
+    /// Returns the IDs of all effects whose decoded PCM buffers are currently resident in RAM.
     pub fn loaded_effect_ids(&self) -> Vec<String> {
-        self.registered_effects.iter().map(|e| e.id.clone()).collect()
+        self.registered_effects
+            .iter()
+            .filter(|e| e.buffer.is_some())
+            .map(|e| e.id.clone())
+            .collect()
     }
 
     pub fn active_voices_count(&self) -> usize {
@@ -200,137 +310,228 @@ impl VoicePool {
         self.speed_of_sound = speed_of_sound;
     }
 
-    pub fn load_effect(
-        &mut self,
-        id: String,
-        buffer: SoundBuffer,
-        max_polyphony: usize,
-        pinned: bool,
-    ) -> Result<(), String> {
-        let byte_size = buffer.samples.len() * 4;
-
-        // If effect already exists, update buffer
-        if let Some(&idx) = self.id_to_index.get(&id) {
-            let old_size = self.registered_effects[idx].byte_size;
-            if self.allocated_ram_bytes - old_size + byte_size > self.max_ram_bytes {
-                self.evict_lru_until(self.max_ram_bytes.saturating_sub(byte_size))?;
+    /// Declaratively synchronizes the catalog of sound effects.
+    ///
+    /// Memory-backed effects are decoded immediately into PCM (freeing compressed bytes)
+    /// and are immune to eviction. File and network effects are registered in the catalog
+    /// and decoded on demand when triggered via [`VoicePool::play_effect`].
+    pub fn set_effects(&mut self, effects: Vec<EffectCatalogItem>) -> Result<(), String> {
+        // Stop all active voices before restructuring catalog indices
+        for v in self.voices[..self.max_voices].iter_mut() {
+            if v.active {
+                v.active = false;
+                let _ = self.completed_voices_producer.push(v.voice_id);
             }
-            self.allocated_ram_bytes = self.allocated_ram_bytes - old_size + byte_size;
-            self.registered_effects[idx].buffer = buffer;
-            self.registered_effects[idx].max_polyphony = max_polyphony;
-            self.registered_effects[idx].pinned = pinned;
-            self.registered_effects[idx].byte_size = byte_size;
-            self.registered_effects[idx].last_used = Instant::now();
-            return Ok(());
         }
 
-        if self.allocated_ram_bytes + byte_size > self.max_ram_bytes {
-            self.evict_lru_until(self.max_ram_bytes.saturating_sub(byte_size))?;
+        let mut old_map: HashMap<String, RegisteredEffect> = self
+            .registered_effects
+            .drain(..)
+            .map(|mut e| {
+                e.active_voices = 0;
+                (e.id.clone(), e)
+            })
+            .collect();
+        self.id_to_index.clear();
+        self.allocated_ram_bytes = 0;
+
+        for mut item in effects {
+            let is_memory = item
+                .source
+                .data_bytes
+                .as_ref()
+                .is_some_and(|b| !b.is_empty());
+            let trimmed = item.source.source.trim();
+            let source_type = if is_memory {
+                EffectSourceType::Memory
+            } else if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                EffectSourceType::Network
+            } else {
+                EffectSourceType::LocalFile
+            };
+
+            let reg = if source_type == EffectSourceType::Memory {
+                let buf = decode_effect_source(&item.id, &item.source)?;
+                let byte_size = buf.samples.len() * 4;
+                // Free compressed raw bytes once decoded into PCM
+                item.source.data_bytes = None;
+                self.allocated_ram_bytes += byte_size;
+                RegisteredEffect {
+                    id: item.id,
+                    source: item.source,
+                    source_type,
+                    buffer: Some(buf),
+                    max_polyphony: item.max_polyphony.max(1),
+                    pinned: item.pinned,
+                    byte_size,
+                    trigger_count: 0,
+                    last_used: Instant::now(),
+                    active_voices: 0,
+                }
+            } else if let Some(mut existing) = old_map.remove(&item.id) {
+                if existing.source.source == item.source.source && existing.buffer.is_some() {
+                    self.allocated_ram_bytes += existing.byte_size;
+                    existing.max_polyphony = item.max_polyphony.max(1);
+                    existing.pinned = item.pinned;
+                    existing.source = item.source;
+                    existing
+                } else {
+                    RegisteredEffect {
+                        id: item.id,
+                        source: item.source,
+                        source_type,
+                        buffer: None,
+                        max_polyphony: item.max_polyphony.max(1),
+                        pinned: item.pinned,
+                        byte_size: 0,
+                        trigger_count: 0,
+                        last_used: Instant::now(),
+                        active_voices: 0,
+                    }
+                }
+            } else {
+                RegisteredEffect {
+                    id: item.id,
+                    source: item.source,
+                    source_type,
+                    buffer: None,
+                    max_polyphony: item.max_polyphony.max(1),
+                    pinned: item.pinned,
+                    byte_size: 0,
+                    trigger_count: 0,
+                    last_used: Instant::now(),
+                    active_voices: 0,
+                }
+            };
+
+            let idx = self.registered_effects.len();
+            self.id_to_index.insert(reg.id.clone(), idx);
+            self.registered_effects.push(reg);
         }
 
-        let idx = self.registered_effects.len();
-        self.id_to_index.insert(id.clone(), idx);
-        self.registered_effects.push(RegisteredEffect {
-            id,
-            buffer,
-            max_polyphony,
-            pinned,
-            byte_size,
-            last_used: Instant::now(),
-            active_voices: 0,
-        });
-        self.allocated_ram_bytes += byte_size;
+        let _ = self.evict_if_over_budget(None);
         Ok(())
     }
 
-    fn evict_lru_until(&mut self, target_bytes: usize) -> Result<(), String> {
+    /// Evicts inactive, unpinned, non-memory effects with the lowest multi-factor retention
+    /// score until `allocated_ram_bytes <= target_bytes` or no evictable candidates remain.
+    ///
+    /// Returns `true` if at least one effect buffer was evicted.
+    pub fn evict_lowest_scoring_until(
+        &mut self,
+        target_bytes: usize,
+        exclude_idx: Option<usize>,
+    ) -> bool {
+        let mut evicted_any = false;
+        let now = Instant::now();
+
         while self.allocated_ram_bytes > target_bytes {
-            // Find unpinned candidate with 0 active voices and oldest last_used
             let mut candidate_idx: Option<usize> = None;
-            let mut oldest_time = Instant::now();
+            let mut lowest_score = f64::INFINITY;
 
             for (idx, effect) in self.registered_effects.iter().enumerate() {
-                if !effect.pinned && effect.active_voices == 0 {
-                    if candidate_idx.is_none() || effect.last_used < oldest_time {
-                        oldest_time = effect.last_used;
+                if Some(idx) == exclude_idx {
+                    continue;
+                }
+                if effect.is_evictable() {
+                    let score = effect.retention_score(now);
+                    if candidate_idx.is_none() || score < lowest_score {
+                        lowest_score = score;
                         candidate_idx = Some(idx);
                     }
                 }
             }
 
             if let Some(evict_idx) = candidate_idx {
-                let evicted = self.registered_effects.remove(evict_idx);
-                self.allocated_ram_bytes = self.allocated_ram_bytes.saturating_sub(evicted.byte_size);
-                self.rebuild_id_index();
+                let eff = &mut self.registered_effects[evict_idx];
+                self.allocated_ram_bytes = self.allocated_ram_bytes.saturating_sub(eff.byte_size);
+                eff.buffer = None;
+                eff.byte_size = 0;
+                evicted_any = true;
             } else {
-                return Err(format!(
-                    "RAM budget of {} bytes exceeded. Cannot evict active or pinned effects.",
-                    self.max_ram_bytes
-                ));
+                // All remaining loaded effects are either active, pinned, or memory-backed.
+                // Temporarily permit the allocation without dropping audio; eviction will
+                // run again on VoiceCompleted.
+                break;
             }
         }
-        Ok(())
+
+        evicted_any
     }
 
-    fn rebuild_id_index(&mut self) {
-        self.id_to_index.clear();
-        for (idx, effect) in self.registered_effects.iter().enumerate() {
-            self.id_to_index.insert(effect.id.clone(), idx);
-        }
-        // Update voice effect_idx references
-        for v in self.voices.iter_mut() {
-            if v.active && v.effect_idx >= self.registered_effects.len() {
-                v.active = false;
+    /// Checks if `allocated_ram_bytes` exceeds `max_ram_bytes` and purges lowest-scoring
+    /// inactive effects if needed. Returns `true` if any effect was evicted.
+    pub fn evict_if_over_budget(&mut self, exclude_idx: Option<usize>) -> bool {
+        if let Some(limit) = self.max_ram_bytes {
+            if self.allocated_ram_bytes > limit {
+                return self.evict_lowest_scoring_until(limit, exclude_idx);
             }
         }
+        false
     }
 
-    pub fn unload_effect(&mut self, id: &str) -> bool {
-        if let Some(&idx) = self.id_to_index.get(id) {
-            // Stop active voices using this effect with quick fadeout
-            for v in self.voices.iter_mut() {
-                if v.active && v.effect_idx == idx {
-                    v.stopping = true;
-                    v.fade_samples_remaining = (self.sample_rate as usize * 5) / 1000;
-                    v.total_fade_samples = v.fade_samples_remaining.max(1);
-                }
-            }
-            let evicted = self.registered_effects.remove(idx);
-            self.allocated_ram_bytes = self.allocated_ram_bytes.saturating_sub(evicted.byte_size);
-            self.rebuild_id_index();
-            true
-        } else {
-            false
-        }
+    /// Reactive Trigger 2: Invoked when an active voice finishes playing and frees its slot.
+    /// Immediately purges lowest-scoring inactive effects if `allocated_ram_bytes > max_ram_bytes`.
+    pub fn on_voice_completed(&mut self) -> bool {
+        self.evict_if_over_budget(None)
     }
 
-    pub fn play_effect(
+    /// Ensures the effect at `effect_idx` has its decoded PCM buffer loaded in RAM,
+    /// performing reactive eviction before loading if necessary.
+    pub fn ensure_effect_loaded(
         &mut self,
-        id: &str,
+        effect_idx: usize,
+        decoded_buffer: SoundBuffer,
+    ) -> bool {
+        let byte_size = decoded_buffer.samples.len() * 4;
+        if let Some(limit) = self.max_ram_bytes {
+            if self.allocated_ram_bytes + byte_size > limit {
+                self.evict_lowest_scoring_until(limit.saturating_sub(byte_size), Some(effect_idx));
+            }
+        }
+        let eff = &mut self.registered_effects[effect_idx];
+        if let Some(old_buf) = eff.buffer.replace(decoded_buffer) {
+            self.allocated_ram_bytes = self
+                .allocated_ram_bytes
+                .saturating_sub(old_buf.samples.len() * 4);
+        }
+        eff.byte_size = byte_size;
+        self.allocated_ram_bytes += byte_size;
+        true
+    }
+
+    pub fn play_loaded_effect(
+        &mut self,
+        effect_idx: usize,
         dsp_routing: DspRouting,
         config: EffectConfig,
     ) -> Result<u32, String> {
-        let effect_idx = match self.id_to_index.get(id) {
-            Some(&idx) => idx,
-            None => {
-                return Err(format!("AudioEffectNotFound: Effect '{}' not registered in RAM", id));
-            }
-        };
+        if effect_idx >= self.registered_effects.len()
+            || self.registered_effects[effect_idx].buffer.is_none()
+        {
+            return Err("Effect buffer is not loaded".to_string());
+        }
 
         // Check per-effect polyphony limit
-        let effect = &mut self.registered_effects[effect_idx];
-        if effect.active_voices >= effect.max_polyphony {
-            // Steal within this effect's voices
+        if self.registered_effects[effect_idx].active_voices
+            >= self.registered_effects[effect_idx].max_polyphony
+        {
             self.steal_voice_for_effect(effect_idx);
         }
 
         let voice_slot = self.find_free_voice_slot();
         let voice_id = self.next_voice_id.fetch_add(1, Ordering::Relaxed);
 
-        let final_pitch = apply_jitter(config.pitch * config.rate, config.pitch_jitter, voice_id, 0x1234);
+        let final_pitch = apply_jitter(
+            config.pitch * config.rate,
+            config.pitch_jitter,
+            voice_id,
+            0x1234,
+        );
         let final_volume = apply_jitter(config.volume, config.volume_jitter, voice_id, 0x5678);
 
         let effect = &mut self.registered_effects[effect_idx];
+        effect.trigger_count += 1;
         effect.last_used = Instant::now();
         effect.active_voices += 1;
 
@@ -339,8 +540,8 @@ impl VoicePool {
             active: true,
             effect_idx,
             cursor_frame: 0.0,
-            volume: final_volume.clamp(0.0, 4.0),
-            pitch: final_pitch.clamp(0.05, 16.0),
+            volume: final_volume.max(0.0),
+            pitch: final_pitch.max(0.001),
             balance: config.balance.clamp(-1.0, 1.0),
             priority: config.priority,
             looping: config.looping,
@@ -353,6 +554,34 @@ impl VoicePool {
         };
 
         Ok(voice_id)
+    }
+
+    pub fn play_effect(
+        &mut self,
+        id: &str,
+        dsp_routing: DspRouting,
+        config: EffectConfig,
+    ) -> Result<(u32, bool), String> {
+        let effect_idx = match self.id_to_index.get(id) {
+            Some(&idx) => idx,
+            None => {
+                return Err(format!(
+                    "AudioEffectNotFound: Effect '{}' not registered in catalog",
+                    id
+                ));
+            }
+        };
+
+        let mut ram_changed = false;
+        if self.registered_effects[effect_idx].buffer.is_none() {
+            let src = self.registered_effects[effect_idx].source.clone();
+            let buf = decode_effect_source(id, &src)?;
+            self.ensure_effect_loaded(effect_idx, buf);
+            ram_changed = true;
+        }
+
+        let voice_id = self.play_loaded_effect(effect_idx, dsp_routing, config)?;
+        Ok((voice_id, ram_changed))
     }
 
     fn find_free_voice_slot(&mut self) -> usize {
@@ -448,6 +677,7 @@ impl VoicePool {
             if effect_idx < self.registered_effects.len() {
                 self.registered_effects[effect_idx].active_voices =
                     self.registered_effects[effect_idx].active_voices.saturating_sub(1);
+                self.registered_effects[effect_idx].last_used = Instant::now();
             }
             let _ = self.completed_voices_producer.push(v.voice_id);
             v.active = false;
@@ -455,6 +685,7 @@ impl VoicePool {
     }
 
     pub fn stop_voice(&mut self, voice_id: u32, fade_out_samples: usize) {
+        let mut stopped_immediate = false;
         for v in self.voices[..self.max_voices].iter_mut() {
             if v.active && v.voice_id == voice_id {
                 if fade_out_samples == 0 {
@@ -462,9 +693,11 @@ impl VoicePool {
                     if effect_idx < self.registered_effects.len() {
                         self.registered_effects[effect_idx].active_voices =
                             self.registered_effects[effect_idx].active_voices.saturating_sub(1);
+                        self.registered_effects[effect_idx].last_used = Instant::now();
                     }
                     v.active = false;
                     let _ = self.completed_voices_producer.push(voice_id);
+                    stopped_immediate = true;
                 } else {
                     v.stopping = true;
                     v.fade_samples_remaining = fade_out_samples;
@@ -473,9 +706,13 @@ impl VoicePool {
                 break;
             }
         }
+        if stopped_immediate {
+            let _ = self.on_voice_completed();
+        }
     }
 
     pub fn stop_all(&mut self, fade_out_samples: usize) {
+        let mut stopped_immediate = false;
         for v in self.voices[..self.max_voices].iter_mut() {
             if v.active {
                 if fade_out_samples == 0 {
@@ -483,9 +720,11 @@ impl VoicePool {
                     if effect_idx < self.registered_effects.len() {
                         self.registered_effects[effect_idx].active_voices =
                             self.registered_effects[effect_idx].active_voices.saturating_sub(1);
+                        self.registered_effects[effect_idx].last_used = Instant::now();
                     }
                     v.active = false;
                     let _ = self.completed_voices_producer.push(v.voice_id);
+                    stopped_immediate = true;
                 } else {
                     v.stopping = true;
                     v.fade_samples_remaining = fade_out_samples;
@@ -493,21 +732,30 @@ impl VoicePool {
                 }
             }
         }
+        if stopped_immediate {
+            let _ = self.on_voice_completed();
+        }
     }
 
     pub fn set_voice_volume(&mut self, voice_id: u32, volume: f32) {
+        if !volume.is_finite() {
+            return;
+        }
         for v in self.voices[..self.max_voices].iter_mut() {
             if v.active && v.voice_id == voice_id {
-                v.volume = volume.clamp(0.0, 4.0);
+                v.volume = volume.max(0.0);
                 break;
             }
         }
     }
 
     pub fn set_voice_pitch(&mut self, voice_id: u32, pitch: f32) {
+        if !pitch.is_finite() || pitch <= 0.0 {
+            return;
+        }
         for v in self.voices[..self.max_voices].iter_mut() {
             if v.active && v.voice_id == voice_id {
-                v.pitch = pitch.clamp(0.05, 16.0);
+                v.pitch = pitch;
                 break;
             }
         }
@@ -555,7 +803,10 @@ impl VoicePool {
                 continue;
             }
 
-            let buf = &self.registered_effects[v.effect_idx].buffer;
+            let Some(ref buf) = self.registered_effects[v.effect_idx].buffer else {
+                v.active = false;
+                continue;
+            };
             let total_frames = buf.frame_count();
             if total_frames == 0 {
                 v.active = false;
@@ -582,6 +833,7 @@ impl VoicePool {
                 DspRouting::Bypass => &mut *bypass_buf,
             };
 
+            let mut completed_in_render = false;
             for k in 0..frame_count {
                 let f0 = v.cursor_frame.floor() as usize;
                 let f1 = f0 + 1;
@@ -592,6 +844,7 @@ impl VoicePool {
                         v.cursor_frame %= total_frames as f64;
                     } else {
                         v.active = false;
+                        completed_in_render = true;
                         let _ = self.completed_voices_producer.push(v.voice_id);
                         break;
                     }
@@ -613,6 +866,7 @@ impl VoicePool {
                 let fade_gain = if v.stopping {
                     if v.fade_samples_remaining == 0 {
                         v.active = false;
+                        completed_in_render = true;
                         let _ = self.completed_voices_producer.push(v.voice_id);
                         break;
                     }
@@ -636,6 +890,13 @@ impl VoicePool {
 
                 v.cursor_frame += step;
                 v.age_frames += 1;
+            }
+
+            if completed_in_render {
+                let effect_idx = v.effect_idx;
+                self.registered_effects[effect_idx].active_voices =
+                    self.registered_effects[effect_idx].active_voices.saturating_sub(1);
+                self.registered_effects[effect_idx].last_used = Instant::now();
             }
         }
     }

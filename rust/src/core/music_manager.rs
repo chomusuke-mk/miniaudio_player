@@ -50,8 +50,8 @@ impl MusicManager {
     // =========================================================================
 
     #[inline]
-    pub fn open(&mut self, queue: Vec<AudioSourceCore>, start_index: usize, auto_play: bool) -> Result<(), String> {
-        self.inner.open_queue(queue, start_index, auto_play)
+    pub fn set_queue(&mut self, queue: Vec<AudioSourceCore>) {
+        self.inner.set_queue(queue);
     }
 
     #[inline]
@@ -100,18 +100,14 @@ impl MusicManager {
     }
 
     #[inline]
-    pub fn skip_to_index(&mut self, index: usize, crossfade_ms: Option<u64>) -> Result<(), String> {
-        self.inner.skip_to_index(index, crossfade_ms)
-    }
-
-    #[inline]
-    pub fn play(&mut self) -> Result<(), String> {
-        let res = self.inner.play();
-        if res == 0 {
-            Ok(())
-        } else {
-            Err(format!("Play failed: code {}", res))
-        }
+    pub fn play(
+        &mut self,
+        id: Option<i64>,
+        position: Option<usize>,
+        shuffled: Option<bool>,
+        seek_ms: Option<i64>,
+    ) -> Result<(), String> {
+        self.inner.play(id, position, shuffled, seek_ms)
     }
 
     #[inline]

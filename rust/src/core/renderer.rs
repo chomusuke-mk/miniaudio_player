@@ -200,9 +200,9 @@ impl AudioRenderer {
         spatial_doppler: f32,
     ) -> (usize, i64) {
         let cur_rate =
-            (f32::from_bits(self.rate.load(Ordering::Relaxed)) * spatial_doppler).clamp(0.1, 4.0);
+            (f32::from_bits(self.rate.load(Ordering::Relaxed)) * spatial_doppler).max(0.001);
         let cur_pitch =
-            (f32::from_bits(self.pitch.load(Ordering::Relaxed)) * spatial_doppler).clamp(0.1, 4.0);
+            (f32::from_bits(self.pitch.load(Ordering::Relaxed)) * spatial_doppler).max(0.001);
         let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;
 
         if !is_stretched {
@@ -289,7 +289,7 @@ impl AudioRenderer {
         spatial_pan: f32,
     ) {
         let base_vol = f32::from_bits(self.volume.load(Ordering::Relaxed));
-        let vol = (base_vol * spatial_gain).clamp(0.0, 2.0);
+        let vol = (base_vol * spatial_gain).max(0.0);
         self.dsp.set_volume(vol);
         if self.spatial.is_enabled() {
             self.dsp.set_balance(spatial_pan);

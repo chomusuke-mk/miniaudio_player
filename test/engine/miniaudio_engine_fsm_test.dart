@@ -47,13 +47,13 @@ void main() {
     test(
       'next() -> previous() within 100ms cancels crossfade, steps back to track 1, and leaves exactly one active deck',
       () async {
-        await engine.action.open([
+        await engine.action.setQueue([
           AudioSource(track1File.path, data: 'Track 1'),
           AudioSource(track2File.path, data: 'Track 2'),
         ]);
 
         await engine.action.play();
-        expect(engine.state.playing, isTrue);
+        expect(engine.state.isPlaying, isTrue);
         expect(engine.state.currentIndex, equals(0));
 
         // Let track 1 play for 1.5 seconds
@@ -74,14 +74,14 @@ void main() {
         // After previous settles:
         expect(engine.state.currentIndex, equals(0));
         expect(engine.state.currentItem?.data, equals('Track 1'));
-        expect(engine.state.playing, isTrue);
+        expect(engine.state.isPlaying, isTrue);
 
         // Allow any active transition to fully settle
         await Future<void>.delayed(const Duration(milliseconds: 2200));
 
         // Final Invariant Validation:
-        // - Exactly one deck active (state.playing == true, volume == masterVolume)
-        expect(engine.state.playing, isTrue);
+        // - Exactly one deck active (state.isPlaying == true, volume == masterVolume)
+        expect(engine.state.isPlaying, isTrue);
         expect(engine.state.volume, closeTo(1.0, 1e-4));
         expect(engine.state.phase, equals(EnginePhase.playing));
       },
@@ -111,13 +111,13 @@ void main() {
     test(
       'Case A: previous() during autoCrossfading aborts tentative crossfade and seeks to 0:00 because pos > 3s',
       () async {
-        await engine.action.open([
+        await engine.action.setQueue([
           AudioSource(track1File.path, data: 'Track 1'),
           AudioSource(track2File.path, data: 'Track 2'),
         ]);
 
         await engine.action.play();
-        for (int i = 0; i < 50 && (!engine.state.playing || engine.state.duration == Duration.zero); i++) {
+        for (int i = 0; i < 50 && (!engine.state.isPlaying || engine.state.duration == Duration.zero); i++) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
 
@@ -146,13 +146,13 @@ void main() {
     test(
       'Case B: next() during autoCrossfading promotes tentative fade into manualCrossfading without reopening Track 2',
       () async {
-        await engine.action.open([
+        await engine.action.setQueue([
           AudioSource(track1File.path, data: 'Track 1'),
           AudioSource(track2File.path, data: 'Track 2'),
         ]);
 
         await engine.action.play();
-        for (int i = 0; i < 50 && (!engine.state.playing || engine.state.duration == Duration.zero); i++) {
+        for (int i = 0; i < 50 && (!engine.state.isPlaying || engine.state.duration == Duration.zero); i++) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
         // Seek into auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
@@ -181,7 +181,7 @@ void main() {
 
         expect(engine.state.phase, equals(EnginePhase.playing));
         expect(engine.state.currentIndex, equals(1));
-        expect(engine.state.playing, isTrue);
+        expect(engine.state.isPlaying, isTrue);
       },
     );
   });
@@ -206,7 +206,7 @@ void main() {
     });
 
     test('burst of 5 un-awaited next() executes in FIFO order with zero zombie players', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
         AudioSource(track2File.path, data: 'Track 2'),
         AudioSource(track3File.path, data: 'Track 3'),
@@ -236,7 +236,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
       }
 
-      expect(engine.state.playing, isTrue);
+      expect(engine.state.isPlaying, isTrue);
       expect(engine.state.phase, equals(EnginePhase.playing));
       expect(engine.state.volume, closeTo(1.0, 1e-4));
     });
@@ -262,13 +262,13 @@ void main() {
     });
 
     test('seek() during autoCrossfading aborts auto crossfade and seeks on outgoing track', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
         AudioSource(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
-      for (int i = 0; i < 50 && (!engine.state.playing || engine.state.duration == Duration.zero); i++) {
+      for (int i = 0; i < 50 && (!engine.state.isPlaying || engine.state.duration == Duration.zero); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
       // Enter auto crossfade window
@@ -289,7 +289,7 @@ void main() {
     });
 
     test('seek() during manualCrossfading settles on incoming track and seeks there', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
         AudioSource(track2File.path, data: 'Track 2'),
       ]);
@@ -333,15 +333,15 @@ void main() {
       final completedEvents = <bool>[];
       engine.stream.completed.listen(completedEvents.add);
 
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
       ]);
 
       await engine.action.play();
-      for (int i = 0; i < 50 && (!engine.state.playing || engine.state.duration == Duration.zero); i++) {
+      for (int i = 0; i < 50 && (!engine.state.isPlaying || engine.state.duration == Duration.zero); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
-      expect(engine.state.playing, isTrue);
+      expect(engine.state.isPlaying, isTrue);
 
       // Seek near EOF to trigger natural track completion
       await engine.action.seek(const Duration(milliseconds: 9900));
@@ -349,21 +349,20 @@ void main() {
       // Wait for playback to hit EOF
       for (int i = 0; i < 50; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        if (engine.state.completed) break;
+        if (engine.state.isCompleted) break;
       }
 
-
       expect(engine.state.phase, equals(EnginePhase.completed));
-      expect(engine.state.completed, isTrue);
-      expect(engine.state.playing, isFalse);
+      expect(engine.state.isCompleted, isTrue);
+      expect(engine.state.isPlaying, isFalse);
       expect(completedEvents.contains(true), isTrue);
 
       // Calling play() from completed restarts queue from index 0
       await engine.action.play();
       expect(engine.state.phase, equals(EnginePhase.playing));
-      expect(engine.state.playing, isTrue);
+      expect(engine.state.isPlaying, isTrue);
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.completed, isFalse);
+      expect(engine.state.isCompleted, isFalse);
     });
   });
 
@@ -382,7 +381,7 @@ void main() {
         crossfadeConfig: const CrossfadeConfig.off(),
       );
 
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
         AudioSource(track2File.path, data: 'Track 2'),
       ]);
@@ -395,7 +394,7 @@ void main() {
       // Go back to track 1
       await engine.action.previous();
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.playing, isTrue);
+      expect(engine.state.isPlaying, isTrue);
 
       // Let track play for ~500ms then seek to 2 seconds
       await Future<void>.delayed(const Duration(milliseconds: 500));
@@ -409,7 +408,7 @@ void main() {
       // Let playback run for 1 second; verify track 1 is still playing (no premature next())
       await Future<void>.delayed(const Duration(seconds: 1));
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.playing, isTrue);
+      expect(engine.state.isPlaying, isTrue);
       expect(engine.state.position.inMilliseconds, greaterThanOrEqualTo(2500));
     });
 
@@ -421,13 +420,13 @@ void main() {
         ),
       );
 
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
         AudioSource(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
-      for (int i = 0; i < 50 && (!engine.state.playing || engine.state.duration == Duration.zero); i++) {
+      for (int i = 0; i < 50 && (!engine.state.isPlaying || engine.state.duration == Duration.zero); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
 
@@ -466,13 +465,13 @@ void main() {
         ),
       );
 
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
         AudioSource(track2File.path, data: 'Track 2'),
       ]);
 
       await engine.action.play();
-      for (int i = 0; i < 50 && (!engine.state.playing || engine.state.duration == Duration.zero); i++) {
+      for (int i = 0; i < 50 && (!engine.state.isPlaying || engine.state.duration == Duration.zero); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
 

@@ -6,7 +6,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::core::voice_pool::{DspRouting, EffectConfig, SoundBuffer, VoicePool};
+use crate::core::voice_pool::{
+    decode_effect_source, DspRouting, EffectCatalogItem, EffectConfig, VoicePool,
+};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener};
 
 /// Domain manager for polyphonic RAM sound effects, 3D spatial audio, and voice pooling.
@@ -22,8 +24,13 @@ pub struct EffectsManager {
 }
 
 impl EffectsManager {
-    /// Creates a new `EffectsManager` with voice capacity and memory budget limits.
-    pub fn new(max_voices: usize, max_ram_bytes: usize, sample_rate: u32, channels: usize) -> Self {
+    /// Creates a new `EffectsManager` with voice capacity and optional memory budget limits.
+    pub fn new(
+        max_voices: usize,
+        max_ram_bytes: Option<usize>,
+        sample_rate: u32,
+        channels: usize,
+    ) -> Self {
         let pool = Arc::new(Mutex::new(VoicePool::new(
             max_voices,
             max_ram_bytes,
@@ -44,18 +51,59 @@ impl EffectsManager {
     // =========================================================================
 
     #[inline]
-    pub fn load_effect(&self, id: String, buffer: SoundBuffer, max_polyphony: usize, pinned: bool) -> Result<(), String> {
-        self.pool.lock().unwrap().load_effect(id, buffer, max_polyphony, pinned)
+    pub fn set_effects(&self, effects: Vec<EffectCatalogItem>) -> Result<(), String> {
+        self.pool.lock().unwrap().set_effects(effects)
     }
 
     #[inline]
-    pub fn unload_effect(&self, id: &str) -> bool {
-        self.pool.lock().unwrap().unload_effect(id)
+    pub fn play_effect(
+        &self,
+        id: &str,
+        routing: DspRouting,
+        config: EffectConfig,
+    ) -> Result<(u32, bool), String> {
+        let need_decode = {
+            let pool = self.pool.lock().unwrap();
+            let effect_idx = match pool.id_to_index.get(id) {
+                Some(&idx) => idx,
+                None => {
+                    return Err(format!(
+                        "AudioEffectNotFound: Effect '{}' not registered in catalog",
+                        id
+                    ));
+                }
+            };
+            if pool.registered_effects[effect_idx].buffer.is_none() {
+                Some((effect_idx, pool.registered_effects[effect_idx].source.clone()))
+            } else {
+                None
+            }
+        };
+
+        let mut ram_changed = false;
+        if let Some((effect_idx, src)) = need_decode {
+            let decoded = decode_effect_source(id, &src)?;
+            let mut pool = self.pool.lock().unwrap();
+            if effect_idx < pool.registered_effects.len()
+                && pool.registered_effects[effect_idx].id == id
+            {
+                pool.ensure_effect_loaded(effect_idx, decoded);
+                ram_changed = true;
+            }
+        }
+
+        let mut pool = self.pool.lock().unwrap();
+        let effect_idx = *pool
+            .id_to_index
+            .get(id)
+            .ok_or_else(|| format!("AudioEffectNotFound: Effect '{}' not registered", id))?;
+        let voice_id = pool.play_loaded_effect(effect_idx, routing, config)?;
+        Ok((voice_id, ram_changed))
     }
 
     #[inline]
-    pub fn play_effect(&self, id: &str, routing: DspRouting, config: EffectConfig) -> Result<u32, String> {
-        self.pool.lock().unwrap().play_effect(id, routing, config)
+    pub fn on_voice_completed(&self) -> bool {
+        self.pool.lock().unwrap().on_voice_completed()
     }
 
     #[inline]
@@ -159,7 +207,7 @@ impl EffectsManager {
     #[inline]
     pub fn loaded_effect_ids(&self) -> Vec<String> {
         if let Ok(pool) = self.pool.try_lock() {
-            pool.registered_effects.iter().map(|e| e.id.clone()).collect()
+            pool.loaded_effect_ids()
         } else {
             Vec::new()
         }

@@ -37,8 +37,8 @@ void main() {
       }
     });
 
-    test('open() populates Rust queue and Dart shadow map', () async {
-      await engine.action.open([
+    test('setQueue() populates Rust queue with currentIndex == null until play()', () async {
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Alpha'),
         AudioSource(trackB.path, data: 'Beta'),
       ]);
@@ -46,15 +46,20 @@ void main() {
       expect(engine.state.queue.length, equals(2));
       expect(engine.state.queue[0].data, equals('Alpha'));
       expect(engine.state.queue[1].data, equals('Beta'));
+      expect(engine.state.currentIndex, isNull);
+      expect(engine.state.currentItem, isNull);
+
+      await engine.action.play();
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.currentItem?.data, equals('Alpha'));
     });
 
     test('append() and insertNext() mutate queue in Rust reactively', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Alpha'),
         AudioSource(trackB.path, data: 'Beta'),
       ]);
+      await engine.action.play();
 
       // insertNext adds Gamma immediately after index 0 (at index 1)
       await engine.action.insertNext(
@@ -78,7 +83,7 @@ void main() {
     });
 
     test('removeAt() and reorder() maintain index and metadata consistency', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Alpha'),
         AudioSource(trackB.path, data: 'Beta'),
         AudioSource(trackC.path, data: 'Gamma'),
@@ -103,10 +108,11 @@ void main() {
     });
 
     test('clearQueue(keepCurrent: true) retains active item at index 0', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Alpha'),
         AudioSource(trackB.path, data: 'Beta'),
-      ], startIndex: 1);
+      ]);
+      await engine.action.play(position: 1);
 
       expect(engine.state.currentIndex, equals(1));
       expect(engine.state.currentItem?.data, equals('Beta'));
@@ -126,8 +132,8 @@ void main() {
       await engine.action.setInfiniteMix(true);
       expect(engine.state.infiniteMixEnabled, isTrue);
 
-      // Open queue with only 1 track
-      await engine.action.open([
+      // Set queue with only 1 track
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Single Track'),
       ]);
 
@@ -152,7 +158,7 @@ void main() {
     });
 
     test('setShuffle(true) shuffles queue via SliceRandom and restores original order on setShuffle(false)', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Track 1'),
         AudioSource(trackB.path, data: 'Track 2'),
         AudioSource(trackC.path, data: 'Track 3'),
@@ -164,7 +170,7 @@ void main() {
       // Activate shuffle
       await engine.action.setShuffle(true);
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(engine.state.shuffle, isTrue);
+      expect(engine.state.isShuffled, isTrue);
 
       final shuffledData = engine.state.queue.map((e) => e.data).toList();
       // Contains all 4 items
@@ -174,7 +180,7 @@ void main() {
       // Deactivate shuffle -> restores original order
       await engine.action.setShuffle(false);
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(engine.state.shuffle, isFalse);
+      expect(engine.state.isShuffled, isFalse);
 
       expect(
         engine.state.queue.map((e) => e.data).toList(),
@@ -182,18 +188,41 @@ void main() {
       );
     });
 
+    test('First play with position and shuffled: true pins target track to index 0', () async {
+      final s1 = AudioSource(trackA.path, data: 'Track 1');
+      final s2 = AudioSource(trackB.path, data: 'Track 2');
+      final s3 = AudioSource(trackC.path, data: 'Track 3');
+      final s4 = AudioSource(trackD.path, data: 'Track 4');
+
+      await engine.action.setQueue([s1, s2, s3, s4]);
+      expect(engine.state.currentIndex, isNull);
+
+      await engine.action.play(position: 2, shuffled: true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(engine.state.isShuffled, isTrue);
+      expect(engine.state.currentIndex, equals(0));
+      expect(engine.state.currentItem?.data, equals('Track 3'));
+      expect(engine.state.queue[0].data, equals('Track 3'));
+      expect(
+        engine.state.queue.map((e) => e.data).toList(),
+        containsAll(['Track 1', 'Track 2', 'Track 3', 'Track 4']),
+      );
+    });
+
     test('Fine-grained streams: engine.stream.queue does not emit on index navigation', () async {
       final queueEvents = <List<AudioSource<String>>>[];
-      final indexEvents = <int>[];
+      final indexEvents = <int?>[];
 
       final queueSub = engine.stream.queue.listen(queueEvents.add);
       final indexSub = engine.stream.currentIndex.listen(indexEvents.add);
 
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Track 1'),
         AudioSource(trackB.path, data: 'Track 2'),
         AudioSource(trackC.path, data: 'Track 3'),
       ]);
+      await engine.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       final initialQueueEmissions = queueEvents.length;
@@ -215,12 +244,12 @@ void main() {
           reason: 'engine.stream.queue must not emit when moving to previous track');
       expect(indexEvents.last, equals(0));
 
-      // Navigate via skipToIndex() -> must emit currentIndex, NOT queue
-      await engine.action.skipToIndex(2);
+      // Navigate via play(position: 2) -> must emit currentIndex, NOT queue
+      await engine.action.play(position: 2);
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(queueEvents.length, equals(initialQueueEmissions),
-          reason: 'engine.stream.queue must not emit when skipping to index');
+          reason: 'engine.stream.queue must not emit when switching track position');
       expect(indexEvents.last, equals(2));
 
       // Append -> queue mutated, so engine.stream.queue MUST emit
@@ -237,10 +266,11 @@ void main() {
     });
 
     test('LoopMode.one preserves current track repeating rather than advancing', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Track 1'),
         AudioSource(trackB.path, data: 'Track 2'),
       ]);
+      await engine.action.play();
 
       await engine.action.setLoopMode(LoopMode.one);
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -252,7 +282,7 @@ void main() {
     });
 
     test('Toggling shuffle during active crossfade preserves track consistency and aborts cleanly', () async {
-      await engine.action.open([
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Track 1'),
         AudioSource(trackB.path, data: 'Track 2'),
         AudioSource(trackC.path, data: 'Track 3'),
@@ -271,15 +301,16 @@ void main() {
 
       // Ensure active index is within valid range and matches current track in shuffled queue
       final currentIdx = engine.state.currentIndex;
+      expect(currentIdx, isNotNull);
       expect(currentIdx, greaterThanOrEqualTo(0));
       expect(currentIdx, lessThan(engine.state.queue.length));
       final currentItem = engine.state.currentItem;
       expect(currentItem, isNotNull);
-      expect(engine.state.queue[currentIdx].data, equals(currentItem?.data));
+      expect(engine.state.queue[currentIdx!].data, equals(currentItem?.data));
     });
 
-    test('Rapid skipToIndex calls do not hang or deadlock engine', () async {
-      await engine.action.open([
+    test('Rapid play(position: ...) calls do not hang or deadlock engine', () async {
+      await engine.action.setQueue([
         AudioSource(trackA.path, data: 'Track 1'),
         AudioSource(trackB.path, data: 'Track 2'),
         AudioSource(trackC.path, data: 'Track 3'),
@@ -288,14 +319,15 @@ void main() {
 
       await engine.action.play();
 
-      // Fire 5 rapid skips back-to-back
+      // Fire 5 rapid track switches back-to-back
       for (int i = 0; i < 5; i++) {
         final target = (i + 1) % 4;
-        await engine.action.skipToIndex(target);
+        await engine.action.play(position: target);
       }
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
       final finalIdx = engine.state.currentIndex;
+      expect(finalIdx, isNotNull);
       expect(finalIdx, greaterThanOrEqualTo(0));
       expect(finalIdx, lessThan(4));
       expect(engine.isDisposed, isFalse);

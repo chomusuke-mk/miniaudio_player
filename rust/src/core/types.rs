@@ -40,17 +40,16 @@ impl Default for SampleRate {
     }
 }
 
-/// Validated audio volume multiplier constrained to `[0.0, 2.0]`.
+/// Validated audio volume multiplier constrained to `>= 0.0`.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Volume(f32);
 
 impl Volume {
     pub const SILENCE: Self = Self(0.0);
     pub const UNITY: Self = Self(1.0);
-    pub const MAX: Self = Self(2.0);
 
     pub fn new(vol: f32) -> Result<Self, PlayerError> {
-        if !vol.is_finite() || vol < 0.0 || vol > 2.0 {
+        if !vol.is_finite() || vol < 0.0 {
             return Err(PlayerError::InvalidArgs);
         }
         Ok(Self(vol))
@@ -59,8 +58,6 @@ impl Volume {
     pub fn clamp(vol: f32) -> Self {
         if !vol.is_finite() || vol < 0.0 {
             Self::SILENCE
-        } else if vol > 2.0 {
-            Self::MAX
         } else {
             Self(vol)
         }

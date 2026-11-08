@@ -36,7 +36,7 @@ fn test_domain_types_and_typestate_transitions() {
     assert!(Volume::new(1.0).is_ok());
     assert_eq!(Volume::new(-0.1), Err(PlayerError::InvalidArgs));
     assert_eq!(Volume::new(f32::NAN), Err(PlayerError::InvalidArgs));
-    assert_eq!(Volume::clamp(3.5).get(), 2.0);
+    assert_eq!(Volume::clamp(3.5).get(), 3.5);
 
     let unity = Volume::new(1.0).unwrap();
     let zero_db = Decibels::from_linear(unity);
@@ -196,5 +196,65 @@ fn test_player_coordinator_lifecycle_on_manifest_fixtures() {
             player.pause();
             player.stop();
         }
+    }
+}
+
+#[test]
+fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
+    use miniaudio_player::core::dual_source::{
+        AudioSourceCore, DualSource, ENGINE_PHASE_AUTO_CROSSFADING,
+    };
+
+    if let Ok(mut dual) = DualSource::new(48000, 2, 1024) {
+        let wav_path = FixtureResolver::resolve_str("salida.wav");
+        let items = vec![
+            AudioSourceCore {
+                id: 101,
+                source: wav_path.clone(),
+                headers: None,
+                data_bytes: None,
+                replay_gain_db: None,
+                replay_peak: None,
+            },
+            AudioSourceCore {
+                id: 102,
+                source: wav_path.clone(),
+                headers: None,
+                data_bytes: None,
+                replay_gain_db: None,
+                replay_peak: None,
+            },
+            AudioSourceCore {
+                id: 103,
+                source: wav_path,
+                headers: None,
+                data_bytes: None,
+                replay_gain_db: None,
+                replay_peak: None,
+            },
+        ];
+
+        dual.set_queue(items);
+        // Before play(), current_index is -1 (null on Dart side)
+        assert_eq!(dual.current_index.load(Ordering::SeqCst), -1);
+        let q_ids: Vec<i64> = dual.queue.read().unwrap().iter().map(|i| i.id).collect();
+        assert_eq!(q_ids, vec![101, 102, 103]);
+
+        // Universal play by id = 102
+        assert!(dual.play(Some(102), None, None, Some(500)).is_ok());
+        assert_eq!(dual.current_index.load(Ordering::SeqCst), 1);
+
+        // Simulate active auto-crossfade targeting id 103, then mutate queue to remove index 2 (id 103)
+        dual.crossfade_target_id.store(103, Ordering::SeqCst);
+        dual.crossfade.begin(0, 1, 48000, 0);
+        dual.phase
+            .store(ENGINE_PHASE_AUTO_CROSSFADING, Ordering::SeqCst);
+        assert!(dual.remove_item_at(2).is_some());
+        // Removing target track must abort active crossfade and reset crossfade_target_id
+        assert!(!dual.crossfade.is_active.load(Ordering::SeqCst));
+        assert_eq!(dual.crossfade_target_id.load(Ordering::SeqCst), -1);
+
+        dual.deck_a.stop();
+        dual.deck_b.stop();
     }
 }

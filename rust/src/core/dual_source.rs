@@ -2951,20 +2951,24 @@ impl StreamingDeck {
     }
 
     pub fn set_rate(&mut self, rate: f32) -> i32 {
-        let r = rate.clamp(0.25, 4.0);
-        crate::map_log!(4, "set_rate(rate={})", r);
-        self.rate.store(r.to_bits(), Ordering::Relaxed);
+        if !rate.is_finite() || rate <= 0.0 {
+            return MAP_ERROR_INVALID_ARGS;
+        }
+        crate::map_log!(4, "set_rate(rate={})", rate);
+        self.rate.store(rate.to_bits(), Ordering::Relaxed);
         self.telemetry
-            .post_event(EventType::Rate, MapEventData { rate: r });
+            .post_event(EventType::Rate, MapEventData { rate });
         MAP_SUCCESS
     }
 
     pub fn set_pitch(&mut self, pitch: f32) -> i32 {
-        let p = pitch.clamp(0.5, 2.0);
-        crate::map_log!(4, "set_pitch(pitch={})", p);
-        self.pitch.store(p.to_bits(), Ordering::Relaxed);
+        if !pitch.is_finite() || pitch <= 0.0 {
+            return MAP_ERROR_INVALID_ARGS;
+        }
+        crate::map_log!(4, "set_pitch(pitch={})", pitch);
+        self.pitch.store(pitch.to_bits(), Ordering::Relaxed);
         self.telemetry
-            .post_event(EventType::Pitch, MapEventData { pitch: p });
+            .post_event(EventType::Pitch, MapEventData { pitch });
         MAP_SUCCESS
     }
 
@@ -3502,8 +3506,8 @@ pub struct DualSource {
     pub manual_crossfade_duration_ms: Arc<AtomicU64>,
     /// Gain curve formula for crossfades (0: EqualPower, 1: Linear).
     pub crossfade_curve: Arc<AtomicI32>,
-    /// Target queue index for pending auto-crossfade.
-    pub auto_crossfade_target_index: Arc<AtomicI64>,
+    /// Monotonic track ID of the target track in an active crossfade (-1 when none).
+    pub crossfade_target_id: Arc<AtomicI64>,
 
     pub sample_rate: u32,
     pub channels: u32,
@@ -3533,14 +3537,14 @@ impl DualSource {
             queue: Arc::new(RwLock::new(Vec::new())),
             canonical_queue: Arc::new(RwLock::new(Vec::new())),
             original_indices: Arc::new(RwLock::new(Vec::new())),
-            current_index: Arc::new(AtomicI64::new(0)),
+            current_index: Arc::new(AtomicI64::new(-1)),
             loop_mode: Arc::new(AtomicI32::new(0)),
             shuffle_enabled: Arc::new(AtomicBool::new(false)),
             infinite_mix_enabled: Arc::new(AtomicBool::new(false)),
             auto_crossfade_duration_ms: Arc::new(AtomicU64::new(5000)),
             manual_crossfade_duration_ms: Arc::new(AtomicU64::new(500)),
             crossfade_curve: Arc::new(AtomicI32::new(0)),
-            auto_crossfade_target_index: Arc::new(AtomicI64::new(-1)),
+            crossfade_target_id: Arc::new(AtomicI64::new(-1)),
             sample_rate: sr,
             channels: ch,
             period_size: period,
@@ -3626,13 +3630,14 @@ impl DualSource {
         }
     }
 
-    pub fn open_queue(
-        &mut self,
-        items: Vec<AudioSourceCore>,
-        start_index: usize,
-        auto_play: bool,
-    ) -> Result<(), String> {
+    /// Replaces the entire playback queue with `items` without starting playback.
+    ///
+    /// Resets `current_index` to `-1` (`null` in Dart), aborts any active crossfade,
+    /// and stops both decks.
+    pub fn set_queue(&mut self, items: Vec<AudioSourceCore>) {
         self.crossfade.abort();
+        self.crossfade_target_id.store(-1, Ordering::Release);
+        self.crossfade_completed_flag.store(false, Ordering::Release);
         self.deck_a.stop();
         self.deck_b.stop();
 
@@ -3640,50 +3645,58 @@ impl DualSource {
         *self.original_indices.write().unwrap() = (0..items.len()).collect();
         *self.queue.write().unwrap() = items;
 
-        if self.shuffle_enabled.load(Ordering::Relaxed) {
-            self.apply_shuffle(start_index);
+        self.current_index.store(-1, Ordering::Release);
+        self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+    }
+
+    /// Resolves the expected upcoming track ID based on the current active queue and loop mode.
+    pub fn expected_next_track_id(&self) -> Option<i64> {
+        let q = self.queue.read().unwrap();
+        if q.is_empty() {
+            return None;
+        }
+        let cur = self.current_index.load(Ordering::Relaxed);
+        if cur < 0 {
+            return None;
+        }
+        let next_idx = (cur as usize) + 1;
+        let loop_mode = self.loop_mode.load(Ordering::Relaxed);
+        if next_idx < q.len() {
+            Some(q[next_idx].id)
+        } else if loop_mode == 2 {
+            Some(q[0].id)
         } else {
-            self.current_index.store(start_index as i64, Ordering::Release);
+            None
         }
+    }
 
-        let q_guard = self.queue.read().unwrap();
-        if q_guard.is_empty() {
-            self.current_index.store(-1, Ordering::Release);
-            return Ok(());
+    /// Verifies that any in-flight crossfade still targets the expected track ID.
+    /// If a queue mutation invalidated the target track ID, aborts the crossfade immediately.
+    pub fn verify_or_abort_crossfade(&mut self) {
+        if !self.crossfade.is_active.load(Ordering::Relaxed) {
+            return;
         }
-
-        let cur_idx = self.current_index.load(Ordering::Relaxed) as usize;
-        let start_item = q_guard[cur_idx].clone();
-        drop(q_guard);
-
-        let active_deck = self.active_deck.load(Ordering::Relaxed);
-        let active_slot = if active_deck == 0 {
-            &mut self.deck_a
-        } else {
-            &mut self.deck_b
-        };
-
-        let res = Self::open_deck_source(active_slot, &start_item, self.custom_source_factory.as_ref());
-        if res != 0 {
-            return Err(format!("Failed to open track: error {}", res));
+        let target_id = self.crossfade_target_id.load(Ordering::Relaxed);
+        if target_id < 0 {
+            self.abort_active_crossfade();
+            return;
         }
-
-        if let Some(gain) = start_item.replay_gain_db {
-            let peak = start_item.replay_peak.unwrap_or(1.0);
-            active_slot.set_replay_gain(gain, peak, 1);
-        } else {
-            active_slot.clear_replay_gain();
+        let phase = self.phase.load(Ordering::Relaxed);
+        if phase == ENGINE_PHASE_AUTO_CROSSFADING {
+            if self.expected_next_track_id() != Some(target_id) {
+                self.abort_active_crossfade();
+            }
+        } else if phase == ENGINE_PHASE_MANUAL_CROSSFADING {
+            let cur = self.current_index.load(Ordering::Relaxed);
+            let cur_id = if cur >= 0 {
+                self.queue.read().unwrap().get(cur as usize).map(|it| it.id)
+            } else {
+                None
+            };
+            if cur_id != Some(target_id) {
+                self.abort_active_crossfade();
+            }
         }
-
-        if auto_play {
-            active_slot.play();
-            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
-        } else {
-            self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
-        }
-
-        self.preload_standby_deck();
-        Ok(())
     }
 
     pub fn preload_standby_deck(&mut self) {
@@ -3748,15 +3761,23 @@ impl DualSource {
         drop(q);
         drop(orig_idx);
         drop(can);
+        self.verify_or_abort_crossfade();
         self.preload_standby_deck();
     }
 
     pub fn insert_next_item(&mut self, item: AudioSourceCore) {
+        {
+            let mut can = self.canonical_queue.write().unwrap();
+            can.push(item.clone());
+            let n = can.len();
+            *self.original_indices.write().unwrap() = (0..n).collect();
+        }
         let mut q = self.queue.write().unwrap();
         let cur = self.current_index.load(Ordering::Relaxed);
         let insert_idx = ((cur + 1).max(0) as usize).min(q.len());
         q.insert(insert_idx, item);
         drop(q);
+        self.verify_or_abort_crossfade();
         self.preload_standby_deck();
     }
 
@@ -3773,31 +3794,39 @@ impl DualSource {
             *self.original_indices.write().unwrap() = (0..n).collect();
         }
         let cur = self.current_index.load(Ordering::Relaxed);
-        if (index as i64) < cur {
-            self.current_index.store(cur - 1, Ordering::Release);
-        } else if (index as i64) == cur {
-            if q.is_empty() {
-                self.current_index.store(-1, Ordering::Release);
-                self.deck_a.stop();
-                self.deck_b.stop();
-            } else {
-                let new_idx = if cur >= q.len() as i64 {
-                    (q.len() - 1) as i64
+        if cur >= 0 {
+            if (index as i64) < cur {
+                self.current_index.store(cur - 1, Ordering::Release);
+            } else if (index as i64) == cur {
+                if q.is_empty() {
+                    self.current_index.store(-1, Ordering::Release);
+                    drop(q);
+                    self.abort_active_crossfade();
+                    self.deck_a.stop();
+                    self.deck_b.stop();
+                    self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+                    return Some(removed);
                 } else {
-                    cur
-                };
-                self.current_index.store(new_idx, Ordering::Release);
-                let next_item = q[new_idx as usize].clone();
-                drop(q);
-                let factory = self.custom_source_factory.clone();
-                let active = self.active_deck_mut();
-                Self::open_deck_source(active, &next_item, factory.as_ref());
-                active.play();
-                self.preload_standby_deck();
-                return Some(removed);
+                    let new_idx = if cur >= q.len() as i64 {
+                        (q.len() - 1) as i64
+                    } else {
+                        cur
+                    };
+                    self.current_index.store(new_idx, Ordering::Release);
+                    let next_item = q[new_idx as usize].clone();
+                    drop(q);
+                    self.abort_active_crossfade();
+                    let factory = self.custom_source_factory.clone();
+                    let active = self.active_deck_mut();
+                    Self::open_deck_source(active, &next_item, factory.as_ref());
+                    active.play();
+                    self.preload_standby_deck();
+                    return Some(removed);
+                }
             }
         }
         drop(q);
+        self.verify_or_abort_crossfade();
         self.preload_standby_deck();
         Some(removed)
     }
@@ -3810,8 +3839,8 @@ impl DualSource {
         let item = q.remove(from);
         q.insert(to, item);
         let cur = self.current_index.load(Ordering::Relaxed);
-        let cur_u = cur as usize;
         if cur >= 0 {
+            let cur_u = cur as usize;
             if cur_u == from {
                 self.current_index.store(to as i64, Ordering::Release);
             } else if from < cur_u && to >= cur_u {
@@ -3821,6 +3850,7 @@ impl DualSource {
             }
         }
         drop(q);
+        self.verify_or_abort_crossfade();
         self.preload_standby_deck();
         true
     }
@@ -3853,6 +3883,7 @@ impl DualSource {
             }
         }
         drop(q);
+        self.verify_or_abort_crossfade();
         self.preload_standby_deck();
         true
     }
@@ -3869,20 +3900,28 @@ impl DualSource {
             self.canonical_queue.write().unwrap().push(current_item);
             self.original_indices.write().unwrap().push(0);
             self.current_index.store(0, Ordering::Release);
+            drop(q);
+            self.verify_or_abort_crossfade();
+            self.preload_standby_deck();
         } else {
             q.clear();
+            drop(q);
             self.current_index.store(-1, Ordering::Release);
+            self.abort_active_crossfade();
             self.deck_a.stop();
             self.deck_b.stop();
+            self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
         }
     }
 
     pub fn next(&mut self, manual_crossfade_ms: Option<u64>) -> Result<(), String> {
         let cur_phase = self.phase.load(Ordering::Relaxed);
         if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
-            let auto_target = self.auto_crossfade_target_index.load(Ordering::Relaxed);
-            if auto_target >= 0 {
-                self.current_index.store(auto_target, Ordering::Release);
+            let target_id = self.crossfade_target_id.load(Ordering::Relaxed);
+            if target_id >= 0 {
+                if let Some(idx) = self.queue.read().unwrap().iter().position(|it| it.id == target_id) {
+                    self.current_index.store(idx as i64, Ordering::Release);
+                }
             }
             let manual_ms = manual_crossfade_ms.unwrap_or_else(|| {
                 self.manual_crossfade_duration_ms.load(Ordering::Relaxed)
@@ -3914,7 +3953,7 @@ impl DualSource {
             return Ok(());
         };
         drop(q);
-        self.skip_to_index(target_idx as usize, manual_crossfade_ms)
+        self.transition_to_index(target_idx as usize, manual_crossfade_ms, None, false)
     }
 
     pub fn previous(&mut self) -> Result<(), String> {
@@ -3946,13 +3985,16 @@ impl DualSource {
             0
         };
         drop(q);
-        self.skip_to_index(target_idx as usize, None)
+        self.transition_to_index(target_idx as usize, None, None, false)
     }
 
-    pub fn skip_to_index(
+    /// Internal deck transition helper used by `play`, `next`, and `previous`.
+    pub fn transition_to_index(
         &mut self,
         index: usize,
         manual_crossfade_ms: Option<u64>,
+        seek_ms: Option<i64>,
+        force_play: bool,
     ) -> Result<(), String> {
         if self.crossfade.is_active.load(Ordering::Relaxed) {
             self.abort_active_crossfade();
@@ -3964,7 +4006,7 @@ impl DualSource {
         let item = q[index].clone();
         drop(q);
 
-        self.auto_crossfade_target_index.store(-1, Ordering::Release);
+        self.crossfade_target_id.store(-1, Ordering::Release);
         self.crossfade_completed_flag.store(false, Ordering::Release);
 
         let active_deck = self.active_deck.load(Ordering::Relaxed);
@@ -3992,6 +4034,12 @@ impl DualSource {
             to_slot.clear_replay_gain();
         }
 
+        if let Some(ms) = seek_ms {
+            if ms > 0 {
+                to_slot.seek(ms);
+            }
+        }
+
         if !was_playing {
             let from_slot = if active_deck == 0 {
                 &mut self.deck_a
@@ -4001,7 +4049,17 @@ impl DualSource {
             from_slot.stop();
             self.active_deck.store(to_deck, Ordering::Release);
             self.current_index.store(index as i64, Ordering::Release);
-            self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+            if force_play {
+                let to_slot = if to_deck == 0 {
+                    &mut self.deck_a
+                } else {
+                    &mut self.deck_b
+                };
+                to_slot.play();
+                self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+            } else {
+                self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+            }
             self.preload_standby_deck();
             return Ok(());
         }
@@ -4016,6 +4074,7 @@ impl DualSource {
             let sr = self.sample_rate;
             let total_frames = (xfade_ms as u64 * sr as u64) / 1000;
             let curve = self.crossfade_curve.load(Ordering::Relaxed);
+            self.crossfade_target_id.store(item.id, Ordering::Release);
             self.crossfade.begin(active_deck, to_deck, total_frames, curve);
             self.current_index.store(index as i64, Ordering::Release);
             self.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
@@ -4037,6 +4096,7 @@ impl DualSource {
 
     pub fn set_loop_mode(&mut self, mode: i32) {
         self.loop_mode.store(mode.clamp(0, 2), Ordering::Release);
+        self.verify_or_abort_crossfade();
         self.preload_standby_deck();
     }
 
@@ -4048,35 +4108,36 @@ impl DualSource {
         self.shuffle_enabled.store(enabled, Ordering::Release);
 
         let cur = self.current_index.load(Ordering::Relaxed);
-        if enabled {
-            self.apply_shuffle(cur.max(0) as usize);
-        } else {
-            self.restore_canonical_order(cur.max(0) as usize);
+        if cur >= 0 {
+            if enabled {
+                self.apply_shuffle(cur as usize);
+            } else {
+                self.restore_canonical_order(cur as usize);
+            }
+            self.verify_or_abort_crossfade();
+            self.preload_standby_deck();
         }
-        self.preload_standby_deck();
     }
 
     fn apply_shuffle(&mut self, current_idx: usize) {
         let mut q = self.queue.write().unwrap();
-        if q.len() <= 1 {
+        if q.is_empty() {
+            self.current_index.store(-1, Ordering::Release);
             return;
         }
-
-        let cur_item = if current_idx < q.len() {
-            Some(q[current_idx].clone())
-        } else {
-            None
-        };
-
-        use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
-        q.shuffle(&mut rng);
-
-        if let Some(item) = cur_item {
-            if let Some(new_pos) = q.iter().position(|it| it.id == item.id) {
-                q.swap(0, new_pos);
-                self.current_index.store(0, Ordering::Release);
+        if current_idx < q.len() {
+            q.swap(0, current_idx);
+            self.current_index.store(0, Ordering::Release);
+            if q.len() > 2 {
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                q[1..].shuffle(&mut rng);
             }
+        } else {
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            q.shuffle(&mut rng);
+            self.current_index.store(0, Ordering::Release);
         }
     }
 
@@ -4102,7 +4163,7 @@ impl DualSource {
 
     pub fn abort_active_crossfade(&mut self) {
         let phase = self.phase.load(Ordering::Relaxed);
-        self.auto_crossfade_target_index.store(-1, Ordering::Release);
+        self.crossfade_target_id.store(-1, Ordering::Release);
         if phase == ENGINE_PHASE_AUTO_CROSSFADING {
             self.crossfade.abort();
             self.standby_deck_mut().stop();
@@ -4118,19 +4179,196 @@ impl DualSource {
         }
     }
 
-    pub fn play(&mut self) -> i32 {
-        let cur_phase = self.phase.load(Ordering::Relaxed);
-        if cur_phase == ENGINE_PHASE_COMPLETED {
-            let q_len = self.queue.read().unwrap().len();
-            if q_len > 0 {
-                let _ = self.skip_to_index(0, None);
+    /// Universal playback command supporting initial start, resumption, track selection
+    /// by ID or position, shuffle toggling, and immediate seeking.
+    pub fn play(
+        &mut self,
+        id: Option<i64>,
+        position: Option<usize>,
+        shuffled: Option<bool>,
+        seek_ms: Option<i64>,
+    ) -> Result<(), String> {
+        let cur = self.current_index.load(Ordering::Relaxed);
+
+        // Case 1: First Playback Execution (current_index < 0)
+        if cur < 0 {
+            let can = self.canonical_queue.read().unwrap().clone();
+            if can.is_empty() {
+                if id.is_some() || position.is_some() {
+                    return Err("Cannot play specific track: queue is empty".to_string());
+                }
+                return Ok(());
             }
-        }
-        let res = self.active_deck_mut().play();
-        if res == 0 {
+
+            let effective_shuffled = if let Some(shuf) = shuffled {
+                self.shuffle_enabled.store(shuf, Ordering::Release);
+                shuf
+            } else {
+                self.shuffle_enabled.load(Ordering::Relaxed)
+            };
+
+            let target_canon_idx: Option<usize> = if let Some(target_id) = id {
+                let idx = can
+                    .iter()
+                    .position(|it| it.id == target_id)
+                    .ok_or_else(|| format!("Track id {} not found in queue", target_id))?;
+                Some(idx)
+            } else if let Some(pos) = position {
+                if pos >= can.len() {
+                    return Err(format!(
+                        "Position {} out of bounds (queue size {})",
+                        pos,
+                        can.len()
+                    ));
+                }
+                Some(pos)
+            } else {
+                None
+            };
+
+            if effective_shuffled {
+                let mut q = can;
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                if let Some(canon_idx) = target_canon_idx {
+                    q.swap(0, canon_idx);
+                    if q.len() > 2 {
+                        q[1..].shuffle(&mut rng);
+                    }
+                } else {
+                    q.shuffle(&mut rng);
+                }
+                *self.queue.write().unwrap() = q;
+                self.current_index.store(0, Ordering::Release);
+            } else {
+                *self.queue.write().unwrap() = can;
+                let start_idx = target_canon_idx.unwrap_or(0);
+                self.current_index.store(start_idx as i64, Ordering::Release);
+            }
+
+            let start_idx = self.current_index.load(Ordering::Relaxed) as usize;
+            let start_item = self.queue.read().unwrap()[start_idx].clone();
+
+            self.crossfade.abort();
+            self.crossfade_target_id.store(-1, Ordering::Release);
+            self.crossfade_completed_flag.store(false, Ordering::Release);
+
+            let active_deck = self.active_deck.load(Ordering::Relaxed);
+            let active_slot = if active_deck == 0 {
+                &mut self.deck_a
+            } else {
+                &mut self.deck_b
+            };
+
+            let res = Self::open_deck_source(
+                active_slot,
+                &start_item,
+                self.custom_source_factory.as_ref(),
+            );
+            if res != 0 {
+                return Err(format!("Failed to open track: error {}", res));
+            }
+
+            if let Some(gain) = start_item.replay_gain_db {
+                let peak = start_item.replay_peak.unwrap_or(1.0);
+                active_slot.set_replay_gain(gain, peak, 1);
+            } else {
+                active_slot.clear_replay_gain();
+            }
+
+            if let Some(ms) = seek_ms {
+                if ms > 0 {
+                    active_slot.seek(ms);
+                }
+            }
+
+            let play_res = active_slot.play();
+            if play_res != 0 {
+                return Err(format!("Play failed: error {}", play_res));
+            }
             self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+            self.preload_standby_deck();
+            return Ok(());
         }
-        res
+
+        // Case 2: Subsequent play() Calls (Queue Already Active, current_index >= 0)
+        if id.is_none() && position.is_none() {
+            if let Some(shuf) = shuffled {
+                self.set_shuffle(shuf);
+            }
+            let cur_phase = self.phase.load(Ordering::Relaxed);
+            if cur_phase == ENGINE_PHASE_COMPLETED {
+                let q_len = self.queue.read().unwrap().len();
+                if q_len > 0 {
+                    return self.transition_to_index(0, None, seek_ms, true);
+                }
+                return Ok(());
+            }
+            if let Some(ms) = seek_ms {
+                self.seek(ms);
+            }
+            let res = self.active_deck_mut().play();
+            if res == 0 {
+                self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+                Ok(())
+            } else {
+                Err(format!("Play failed: code {}", res))
+            }
+        } else {
+            // Target track specified by id (takes precedence) or position (in active queue)
+            let target_track_id = if let Some(target_id) = id {
+                let exists = self
+                    .queue
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .any(|it| it.id == target_id);
+                if !exists {
+                    return Err(format!("Track id {} not found in queue", target_id));
+                }
+                target_id
+            } else if let Some(pos) = position {
+                let q = self.queue.read().unwrap();
+                if pos >= q.len() {
+                    return Err(format!(
+                        "Position {} out of bounds (queue size {})",
+                        pos,
+                        q.len()
+                    ));
+                }
+                q[pos].id
+            } else {
+                unreachable!()
+            };
+
+            if let Some(shuf) = shuffled {
+                self.shuffle_enabled.store(shuf, Ordering::Release);
+                if shuf {
+                    let mut q = self.queue.write().unwrap();
+                    if let Some(pos) = q.iter().position(|it| it.id == target_track_id) {
+                        q.swap(0, pos);
+                        if q.len() > 2 {
+                            use rand::seq::SliceRandom;
+                            let mut rng = rand::thread_rng();
+                            q[1..].shuffle(&mut rng);
+                        }
+                    }
+                } else {
+                    let can = self.canonical_queue.read().unwrap().clone();
+                    *self.queue.write().unwrap() = can;
+                }
+            }
+
+            let target_idx = self
+                .queue
+                .read()
+                .unwrap()
+                .iter()
+                .position(|it| it.id == target_track_id)
+                .ok_or_else(|| format!("Track id {} not found in queue", target_track_id))?;
+
+            self.transition_to_index(target_idx, None, seek_ms, true)
+        }
     }
 
     pub fn pause(&mut self) {

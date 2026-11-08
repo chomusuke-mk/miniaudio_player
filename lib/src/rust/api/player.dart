@@ -10,9 +10,11 @@ import 'types.dart';
 // These functions are ignored because they are not marked as `pub`: `emit_event`, `emit_queue`, `sync_deck_replay_gain`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
 
+/// Sets the global native diagnostic logging verbosity level.
 void setLogLevel({required int level}) =>
     RustLib.instance.api.crateApiPlayerSetLogLevel(level: level);
 
+/// Asynchronously analyzes acoustic and loudness properties of an audio file on disk.
 Future<RustAudioAnalysisResult> analyzeAudioFile(
         {required String path,
         required bool replayGain,
@@ -26,6 +28,7 @@ Future<RustAudioAnalysisResult> analyzeAudioFile(
         waveformPoints: waveformPoints,
         targetLufs: targetLufs);
 
+/// Synchronously analyzes acoustic and loudness properties of an audio file on disk.
 RustAudioAnalysisResult analyzeAudioFileSync(
         {required String path,
         required bool replayGain,
@@ -39,6 +42,7 @@ RustAudioAnalysisResult analyzeAudioFileSync(
         waveformPoints: waveformPoints,
         targetLufs: targetLufs);
 
+/// Asynchronously analyzes acoustic and loudness properties of an in-memory audio buffer.
 Future<RustAudioAnalysisResult> analyzeAudioMemory(
         {required List<int> data,
         String? hintExtension,
@@ -56,32 +60,43 @@ Future<RustAudioAnalysisResult> analyzeAudioMemory(
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<EventReporter>>
 abstract class EventReporter implements RustOpaqueInterface {
+  /// Detaches the active stream sink.
   Future<void> clearSink();
 
+  /// Emits an event to Dart if it passes the deduplication filter.
   Future<void> emit({required RustPlayerEvent event});
 
   // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
+  /// Creates a new empty `EventReporter` instance.
   static Future<EventReporter> newInstance() =>
       RustLib.instance.api.crateApiPlayerEventReporterNew();
 
+  /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events.
   Stream<RustPlayerEvent> setSink();
 }
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>>
 abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
+  /// Adds or routes an audio output destination to the output matrix.
   void addOutput({required RustAudioOutput output});
 
+  /// Appends a batch of audio sources to the end of the playlist queue.
   void append({required List<RustAudioSource> sources});
 
+  /// Clears pending tracks from the queue, optionally preserving the currently active track.
   void clearQueue({required bool keepCurrent});
 
+  /// Configures the complete set of audio output destinations.
   Future<void> configureOutputs({required List<RustAudioOutput> outputs});
 
+  /// Stops and closes the active microphone capture device.
   void disableMicrophone();
 
+  /// Releases all native audio devices, worker threads, DSP chains, and memory.
   @override
   void dispose();
 
+  /// Initializes and opens the microphone capture stream with ducking and monitoring options.
   Future<void> enableMicrophone(
       {String? deviceId,
       required double volume,
@@ -89,32 +104,35 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
       required bool monitorDirect,
       required double monitorVolume});
 
+  /// Returns the current number of concurrently playing sound effect voices.
   int getActiveVoicesCount();
 
+  /// Returns the total RAM bytes occupied by decoded sound effect buffers.
   BigInt getAllocatedRamBytes();
 
+  /// Asynchronously enumerates connected microphone capture devices.
   static Future<List<RustAudioDevice>> getInputDevices() =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerGetInputDevices();
 
+  /// Synchronously scans and enumerates connected microphone capture devices.
   static List<RustAudioDevice> getInputDevicesSync() => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerGetInputDevicesSync();
 
+  /// Returns the list of currently loaded sound effect IDs in RAM.
   List<String> getLoadedEffectIds();
 
+  /// Asynchronously enumerates connected playback output audio devices.
   static Future<List<RustAudioDevice>> getOutputDevices() =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerGetOutputDevices();
 
+  /// Synchronously scans and enumerates connected playback output audio devices.
   static List<RustAudioDevice> getOutputDevicesSync() => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync();
 
+  /// Inserts an audio source directly after the currently playing track.
   void insertNext({required RustAudioSource source});
 
-  Future<void> loadEffect(
-      {required String id,
-      required RustAudioSource source,
-      required BigInt maxPolyphony,
-      required bool pinned});
-
+  /// Initializes and boots the native miniaudio engine, DSP pipeline, and mixer.
   factory RustMiniaudioPlayer(
           {required RustPlayerConfig config,
           required int sampleRate,
@@ -128,136 +146,218 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
           periodSize: periodSize,
           playbackDeviceId: playbackDeviceId);
 
+  /// Skips to the next track in the queue, optionally overriding crossfade duration.
   Future<void> next({BigInt? crossfadeDurationMs});
 
-  Future<void> open(
-      {required List<RustAudioSource> queue,
-      required BigInt startIndex,
-      required bool autoPlay});
-
+  /// Pauses playback on the active audio deck without releasing resources.
   void pause();
 
-  void play();
+  /// Universal playback command: starts, resumes, or switches tracks by ID or position,
+  /// optionally applying shuffle and/or seeking to an initial offset.
+  Future<void> play(
+      {PlatformInt64? id,
+      BigInt? position,
+      bool? shuffled,
+      PlatformInt64? seekMs});
 
+  /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
+  /// returning the assigned voice ID.
   int playEffect(
       {required String id,
       required int dspRouting,
       required RustEffectConfig config});
 
+  /// Rewinds or skips to the previous track in the queue.
   Future<void> previous();
 
+  /// Removes an audio source at the specified index from the playlist queue.
   bool removeAt({required BigInt index});
 
+  /// Removes an audio output destination from the output matrix.
   void removeOutput({required RustAudioOutput output});
 
+  /// Reorders a track within the queue from `old_index` to `new_index`.
   bool reorder({required BigInt oldIndex, required BigInt newIndex});
 
+  /// Reorders the playlist queue to match the specified list of track IDs.
   bool reorderByIds({required Int64List ids});
 
+  /// Responds to a pending custom stream byte read request from Dart.
   void respondDartReadRequest(
       {required BigInt requestId,
       required List<int> bytes,
       required bool isEof});
 
+  /// Seeks to the specified position in milliseconds within the current track.
   void seek({required PlatformInt64 positionMs});
 
+  /// Sets the stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
   void setBalance({required double balance});
 
+  /// Adjusts the audio stream buffer frame size.
   void setBufferSize({required int bufferSizeFrames});
 
+  /// Configures automatic and manual crossfade durations and curve formulas.
   void setCrossfade({required RustCrossfadeConfig config});
 
+  /// Sets the Bauer binaural headphone crossfeed mode (0: off, 1: 44.1kHz, 2: 48kHz, 3: high).
   void setCrossfeed({required int mode});
 
+  /// Selects the audio source routed to the auxiliary DJ cue monitoring channel.
   void setCueSource({required int source});
 
+  /// Sets the volume of the auxiliary DJ cue headphone channel.
   void setCueVolume({required double volume});
 
+  /// Enables or disables direct microphone monitoring to the main speaker output.
   void setDirectMonitoring({required bool enabled, required double volume});
 
+  /// Configures global Doppler factor and medium speed of sound in meters per second.
   void setDopplerParameters(
       {required double factor, required double speedOfSound});
 
+  /// Updates dynamic ducking parameters for attenuating music during microphone speech.
   void setDucking({required RustDuckingConfig config});
 
+  /// Adjusts stereo pan balance of an active sound effect voice.
   void setEffectBalance({required int voiceId, required double balance});
 
+  /// Updates the 3D spatial emitter parameters for an active sound effect voice.
   void setEffectEmitter({required int voiceId, RustSpatialEmitter? emitter});
 
+  /// Modulates the pitch multiplier of an active sound effect voice.
   void setEffectPitch({required int voiceId, required double pitch});
 
+  /// Modulates the volume of an active sound effect voice.
   void setEffectVolume({required int voiceId, required double volume});
 
+  /// Declaratively registers the catalog of sound effects with the autonomous RAM engine.
+  Future<void> setEffects({required List<RustAudioEffect> effects});
+
+  /// Updates 10-band graphic equalizer band gain levels.
   void setEqualizer({required RustEqualizerParams params});
 
+  /// Enables or disables the output brickwall peak limiter.
   void setLimiter({required bool enabled});
 
+  /// Updates the global 3D audio listener position, velocity, and orientation vectors.
   void setListener({required RustSpatialListener listener});
 
+  /// Sets the queue loop policy (0: off, 1: one, 2: all).
   void setLoopMode({required int mode});
 
+  /// Enables or disables forwarding of raw ICY/ID3 metadata byte payloads.
   void setMetabytesEnabled({required bool enabled});
 
+  /// Sets the microphone input gain volume multiplier.
   void setMicrophoneVolume({required double volume});
 
+  /// Toggles mono downmixing of multi-channel audio.
   void setMono({required bool enabled});
 
+  /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
   void setPauseOnDeviceChange({required bool enabled});
 
+  /// Sets the pitch shift frequency multiplier independently of playback speed.
   void setPitch({required double pitch});
 
+  /// Sets the equalizer pre-amplification gain in decibels.
   void setPreamp({required double preampDb});
 
+  /// Replaces the entire playback queue with `queue` without starting playback.
+  Future<void> setQueue({required List<RustAudioSource> queue});
+
+  /// Sets the playback speed multiplier with automatic pitch compensation.
   void setRate({required double rate});
 
+  /// Applies ReplayGain loudness normalization settings.
   void setReplayGain({required RustReplayGainConfig config});
 
+  /// Updates studio reverberation acoustic parameters.
   void setReverb({required RustReverbParams params});
 
+  /// Enables or disables playlist shuffle mode.
   void setShuffle({required bool enabled});
 
+  /// Configures automatic silence skipping and trimming parameters.
   void setSkipSilence({required RustSilenceConfig config});
 
+  /// Enables or disables 3D stereo widening spatializer with width multiplier.
   void setSpatializer({required bool enabled, required double width});
 
+  /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
   void setVisualizerEnabled({required bool enabled});
 
+  /// Sets the master output volume level (0.0 to 1.0+).
   void setVolume({required double volume});
 
-  Future<void> skipToIndex(
-      {required BigInt index, BigInt? crossfadeDurationMs});
-
+  /// Begins recording rendered master output to a WAV file at `path`.
   Future<void> startRecording({required String path, required int format});
 
+  /// Stops playback and resets elapsed position to the beginning.
   void stop();
 
+  /// Stops all actively playing sound effect voices with an optional fade-out ramp in milliseconds.
   void stopAllEffects({required BigInt fadeOutMs});
 
+  /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.
   void stopEffect({required int voiceId, required BigInt fadeOutMs});
 
+  /// Stops active file recording and returns the finalization metrics.
   Future<RustRecordingResult> stopRecording();
 
+  /// Subscribes a Dart StreamSink to real-time engine events and telemetry updates.
   Stream<RustPlayerEvent> subscribeEvents();
-
-  bool unloadEffect({required String id});
 }
 
+/// Internal telemetry deduplication filter preventing flooding of the Flutter Rust Bridge channel.
 class TelemetryFilter {
+  /// Cached playback state code.
   final int? state;
+
+  /// Cached engine phase code.
   final int? phase;
+
+  /// Cached track position in milliseconds.
   final PlatformInt64 pos;
+
+  /// Cached track duration in milliseconds.
   final PlatformInt64? dur;
+
+  /// Cached active queue index.
   final int? index;
+
+  /// Cached stream bitrate in bps.
   final int? bitrate;
+
+  /// Cached buffer end boundary in milliseconds.
   final PlatformInt64? bufferedEnd;
+
+  /// Cached buffering status flag.
   final bool? isBuffering;
+
+  /// Cached crossfading status flag.
   final bool? isXfading;
+
+  /// Cached recording status flag.
   final bool? isRecording;
+
+  /// Cached ducking active flag.
   final bool? isDucking;
+
+  /// Cached playing status flag.
   final bool? isPlaying;
+
+  /// Cached completion flag.
   final bool? isCompleted;
+
+  /// Cached ReplayGain settings tuple (gain bits, peak bits, enabled).
   final (int, int, bool)? replayGain;
+
+  /// Cached raw ICY/ID3 metadata byte sequence.
   final Uint8List? metaBytes;
+
+  /// Cached count of concurrent active sound effect voices.
   final int? activeVoices;
 
   const TelemetryFilter({

@@ -165,7 +165,7 @@ impl OutputMatrix {
     }
 
     pub fn set_cue_volume(&self, volume: f32) {
-        self.cue_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Release);
+        self.cue_volume.store(volume.max(0.0).to_bits(), Ordering::Release);
     }
 
     pub fn enable_cue(&mut self, device_id: Option<&str>) -> Result<(), String> {

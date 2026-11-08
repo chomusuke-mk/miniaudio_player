@@ -62,12 +62,10 @@ void main() {
       final streamUrl = 'http://127.0.0.1:$serverPort/arbitrary-channel?token=secret123';
       final player = MiniaudioPlayer(source: [AudioSource(streamUrl)]);
       try {
-        await player.action.waitUntilOpen();
-
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 600));
 
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
         await player.action.stop();
       } finally {
         await player.dispose();
@@ -78,13 +76,12 @@ void main() {
       final streamUrl = 'http://127.0.0.1:$serverPort/salida.m3u8';
       final player = MiniaudioPlayer(source: [AudioSource(streamUrl)]);
       try {
-        await player.action.waitUntilOpen();
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 600));
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
 
         await player.action.stop();
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
       } finally {
         await player.dispose();
       }

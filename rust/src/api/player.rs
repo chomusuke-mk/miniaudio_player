@@ -17,7 +17,7 @@ use crate::core::dual_source::AudioSourceCore;
 use crate::core::miniaudio_player::MiniaudioPlayer;
 use crate::core::output_matrix::CueSource;
 use crate::core::recording::WavFormat;
-use crate::core::voice_pool::{DspRouting, EffectConfig, SoundBuffer};
+use crate::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
 use crate::dsp::analysis::{
     analyze_file as dsp_analyze_file, analyze_media_source as dsp_analyze_media_source,
     AudioAnalysisConfig, MAP_ANALYSIS_FLAG_REPLAY_GAIN, MAP_ANALYSIS_FLAG_WAVEFORM,
@@ -72,7 +72,7 @@ impl Default for TelemetryFilter {
             phase: Some(0),
             pos: 0,
             dur: None,
-            index: None,
+            index: Some(-1),
             bitrate: None,
             buffered_end: None,
             is_buffering: Some(false),
@@ -309,7 +309,7 @@ impl RustMiniaudioPlayer {
             period_size,
             playback_device_id,
             config.max_voices as usize,
-            config.max_ram_bytes as usize,
+            config.max_ram_bytes,
             Some(device_trigger.clone()),
         )?;
         player.output_manager.set_pause_on_device_change(config.pause_on_device_change);
@@ -402,9 +402,19 @@ impl RustMiniaudioPlayer {
                         };
                         from_slot.stop();
 
-                        let auto_target = ply.music_manager.inner.auto_crossfade_target_index.swap(-1, Ordering::AcqRel);
-                        if auto_target >= 0 {
-                            ply.music_manager.inner.current_index.store(auto_target, Ordering::Release);
+                        let target_id = ply.music_manager.inner.crossfade_target_id.swap(-1, Ordering::AcqRel);
+                        if target_id >= 0 {
+                            if let Some(new_idx) = ply
+                                .music_manager
+                                .inner
+                                .queue
+                                .read()
+                                .unwrap()
+                                .iter()
+                                .position(|it| it.id == target_id)
+                            {
+                                ply.music_manager.inner.current_index.store(new_idx as i64, Ordering::Release);
+                            }
                         }
 
                         ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_PLAYING, Ordering::Release);
@@ -421,6 +431,7 @@ impl RustMiniaudioPlayer {
                     let current_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
 
                     let can_trigger = !is_xfading
+                        && current_idx >= 0
                         && cur_phase != crate::core::dual_source::ENGINE_PHASE_COMPLETED
                         && cur_phase != crate::core::dual_source::ENGINE_PHASE_IDLE
                         && cur_phase != crate::core::dual_source::ENGINE_PHASE_DISPOSED;
@@ -479,7 +490,7 @@ impl RustMiniaudioPlayer {
                                             let xfade_frames = (eff_ms * sr as u64) / 1000;
                                             let curve = ply.music_manager.inner.crossfade_curve.load(Ordering::Relaxed);
                                             ply.music_manager.inner.crossfade.begin(active_id, to_deck, xfade_frames, curve);
-                                            ply.music_manager.inner.auto_crossfade_target_index.store(next_idx as i64, Ordering::Release);
+                                            ply.music_manager.inner.crossfade_target_id.store(item.id, Ordering::Release);
                                             ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_AUTO_CROSSFADING, Ordering::Release);
                                         } else {
                                             let from_slot = if active_id == 0 {
@@ -503,10 +514,20 @@ impl RustMiniaudioPlayer {
                         }
                     }
 
-                    // Check completed voice pool effects
+                    // Check completed voice pool effects & reactive eviction (Trigger 2)
                     if let Ok(mut vp) = ply.effects_manager.pool.try_lock() {
+                        let mut any_completed = false;
                         while let Ok(v_id) = vp.completed_voices_consumer.pop() {
+                            any_completed = true;
                             worker_reporter.emit(RustPlayerEvent::VoiceCompleted(v_id));
+                        }
+                        if any_completed && vp.on_voice_completed() {
+                            let ids = vp.loaded_effect_ids();
+                            let allocated_bytes = vp.allocated_ram_bytes;
+                            worker_reporter.emit(RustPlayerEvent::LoadedEffects {
+                                ids,
+                                allocated_bytes,
+                            });
                         }
                     }
 
@@ -625,8 +646,15 @@ impl RustMiniaudioPlayer {
 
     fn emit_queue(&self) {
         if let Ok(ply) = self.inner.lock() {
-            let q: Vec<RustAudioSource> = ply.music_manager.inner.queue.read().unwrap()
-                .iter().map(RustAudioSource::from).collect();
+            let q: Vec<i64> = ply
+                .music_manager
+                .inner
+                .queue
+                .read()
+                .unwrap()
+                .iter()
+                .map(|it| it.id)
+                .collect();
             self.emit_event(RustPlayerEvent::Queue(q));
         }
     }
@@ -635,22 +663,80 @@ impl RustMiniaudioPlayer {
     // Transport & Playback Methods
     // =========================================================================
 
-    /// Starts or resumes playback on the active audio deck.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn play(&self) -> Result<(), String> {
+    /// Universal playback command: starts, resumes, or switches tracks by ID or position,
+    /// optionally applying shuffle and/or seeking to an initial offset.
+    pub fn play(
+        &self,
+        id: Option<i64>,
+        position: Option<usize>,
+        shuffled: Option<bool>,
+        seek_ms: Option<i64>,
+    ) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
-        let res = ply.music_manager.play()?;
+        let prev_ids: Vec<i64> = ply
+            .music_manager
+            .inner
+            .queue
+            .read()
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        ply.music_manager.play(id, position, shuffled, seek_ms)?;
+        let new_ids: Vec<i64> = ply
+            .music_manager
+            .inner
+            .queue
+            .read()
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+        let queue_changed = prev_ids != new_ids;
         let cur_idx = ply.music_manager.current_index();
+        let is_shuffled = ply.music_manager.is_shuffled();
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        let active_deck = ply.music_manager.active_deck_ref();
+        let state = active_deck.state.load(Ordering::Relaxed);
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
+        let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
+        let initial_dur = active_deck.duration_ms.load(Ordering::Relaxed);
+        let initial_bitrate = active_deck.bitrate.load(Ordering::Relaxed);
+        let initial_meta = active_deck.get_meta_bytes();
+        let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
+        let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
+        if cur_idx >= 0 {
+            Self::sync_deck_replay_gain(&mut ply, cur_idx as usize);
+        }
         drop(ply);
+        if queue_changed {
+            self.emit_queue();
+        }
+        self.emit_event(RustPlayerEvent::IsShuffled(is_shuffled));
         self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
         self.emit_event(RustPlayerEvent::IsCompleted(false));
+        if self.metabytes_enabled.load(Ordering::Relaxed) {
+            self.emit_event(RustPlayerEvent::MetaBytes(Vec::new()));
+            if let Some(mb) = initial_meta {
+                self.emit_event(RustPlayerEvent::MetaBytes(mb));
+            }
+        }
+        self.emit_event(RustPlayerEvent::Position(initial_pos));
+        self.emit_event(RustPlayerEvent::Duration(initial_dur));
+        if initial_bitrate > 0 {
+            self.emit_event(RustPlayerEvent::Bitrate(initial_bitrate));
+        }
+        if has_br {
+            self.emit_event(RustPlayerEvent::Buffer(RustBuffer {
+                start_ms: initial_br.start_ms,
+                end_ms: initial_br.end_ms,
+                is_buffering: initial_br.is_buffering != 0,
+            }));
+        }
         self.emit_event(RustPlayerEvent::PlaybackState(state));
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
-        Ok(res)
+        Ok(())
     }
 
     /// Pauses playback on the active audio deck without releasing resources.
@@ -732,80 +818,48 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     // Queue Management Methods
     // =========================================================================
 
-    /// Initializes and opens the player playlist with audio sources, optionally auto-playing.
-    pub fn open(
-        &self,
-        queue: Vec<RustAudioSource>,
-        start_index: usize,
-        auto_play: bool,
-    ) -> Result<(), String> {
+    /// Replaces the entire playback queue with `queue` without starting playback.
+    pub fn set_queue(&self, queue: Vec<RustAudioSource>) -> Result<(), String> {
         let core_queue: Vec<AudioSourceCore> = queue.into_iter().map(Into::into).collect();
         let reporter_clone = self.reporter.clone();
         let handle_arc = self.custom_handle.clone();
-        let custom_factory = Arc::new(move |stream_id: u32, total_size: Option<u64>, initial_bytes: Vec<u8>| {
-            let rc = reporter_clone.clone();
-            let req_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
-                rc.emit(RustPlayerEvent::DartReadRequest(req.into()));
-            });
-            let (src, h) = crate::buffer::CustomDartByteSource::new(
-                stream_id,
-                total_size,
-                true,
-                initial_bytes,
-                req_sender,
-            );
-            if let Ok(mut g) = handle_arc.lock() {
-                *g = Some(h.clone());
-            }
-            (src, h)
-        });
+        let custom_factory = Arc::new(
+            move |stream_id: u32, total_size: Option<u64>, initial_bytes: Vec<u8>| {
+                let rc = reporter_clone.clone();
+                let req_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
+                    rc.emit(RustPlayerEvent::DartReadRequest(req.into()));
+                });
+                let (src, h) = crate::buffer::CustomDartByteSource::new(
+                    stream_id,
+                    total_size,
+                    true,
+                    initial_bytes,
+                    req_sender,
+                );
+                if let Ok(mut g) = handle_arc.lock() {
+                    *g = Some(h.clone());
+                }
+                (src, h)
+            },
+        );
         let mut ply = self.inner.lock().unwrap();
         ply.music_manager.set_custom_source_factory(custom_factory);
-        let res = ply.music_manager.open(core_queue, start_index, auto_play);
-        let active_deck = ply.music_manager.active_deck_ref();
-        let initial_state = active_deck.state.load(std::sync::atomic::Ordering::Relaxed);
-        let initial_phase = ply.music_manager.inner.phase.load(std::sync::atomic::Ordering::Relaxed);
-        let initial_pos = active_deck.position_ms.load(std::sync::atomic::Ordering::Relaxed);
-        let initial_dur = active_deck.duration_ms.load(std::sync::atomic::Ordering::Relaxed);
-        let initial_bitrate = active_deck.bitrate.load(std::sync::atomic::Ordering::Relaxed);
-        let initial_meta = active_deck.get_meta_bytes();
-        let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
-        let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
+        ply.music_manager.set_queue(core_queue);
+        ply.music_dsp
+            .set_replay_gain(crate::dsp::equalizer::ReplayGainConfig::default());
         if let Ok(mut f) = self.reporter.filter.lock() {
             *f = TelemetryFilter::default();
         }
-        Self::sync_deck_replay_gain(&mut ply, start_index);
         drop(ply);
         self.emit_queue();
-        self.emit_event(RustPlayerEvent::CurrentIndex(start_index as i32));
+        self.emit_event(RustPlayerEvent::CurrentIndex(-1));
+        self.emit_event(RustPlayerEvent::IsPlaying(false));
         self.emit_event(RustPlayerEvent::IsCompleted(false));
-        if self.metabytes_enabled.load(std::sync::atomic::Ordering::Relaxed) {
-            self.emit_event(RustPlayerEvent::MetaBytes(Vec::new()));
-            if let Some(mb) = initial_meta {
-                self.emit_event(RustPlayerEvent::MetaBytes(mb));
-            }
-        }
-        if initial_pos > 0 {
-            self.emit_event(RustPlayerEvent::Position(initial_pos));
-        }
-        self.emit_event(RustPlayerEvent::Duration(initial_dur));
-        if initial_bitrate > 0 {
-            self.emit_event(RustPlayerEvent::Bitrate(initial_bitrate));
-        }
-        if has_br {
-            self.emit_event(RustPlayerEvent::Buffer(RustBuffer {
-                start_ms: initial_br.start_ms,
-                end_ms: initial_br.end_ms,
-                is_buffering: initial_br.is_buffering != 0,
-            }));
-        }
-        if initial_state != 0 {
-            self.emit_event(RustPlayerEvent::PlaybackState(initial_state));
-        }
-        if initial_phase != 0 {
-            self.emit_event(RustPlayerEvent::State(initial_phase));
-        }
-        res
+        self.emit_event(RustPlayerEvent::Position(0));
+        self.emit_event(RustPlayerEvent::Duration(0));
+        self.emit_event(RustPlayerEvent::PlaybackState(0));
+        self.emit_event(RustPlayerEvent::State(0));
+        Ok(())
     }
 
     /// Appends a batch of audio sources to the end of the playlist queue.
@@ -826,9 +880,15 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Removes an audio source at the specified index from the playlist queue.
     #[flutter_rust_bridge::frb(sync)]
     pub fn remove_at(&self, index: usize) -> bool {
-        let res = self.inner.lock().unwrap().music_manager.remove_at(index).is_some();
+        let (res, idx) = {
+            let mut ply = self.inner.lock().unwrap();
+            let r = ply.music_manager.remove_at(index).is_some();
+            let i = ply.music_manager.current_index();
+            (r, i)
+        };
         if res {
             self.emit_queue();
+            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         }
         res
     }
@@ -836,9 +896,15 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Reorders a track within the queue from `old_index` to `new_index`.
     #[flutter_rust_bridge::frb(sync)]
     pub fn reorder(&self, old_index: usize, new_index: usize) -> bool {
-        let res = self.inner.lock().unwrap().music_manager.reorder(old_index, new_index);
+        let (res, idx) = {
+            let mut ply = self.inner.lock().unwrap();
+            let r = ply.music_manager.reorder(old_index, new_index);
+            let i = ply.music_manager.current_index();
+            (r, i)
+        };
         if res {
             self.emit_queue();
+            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         }
         res
     }
@@ -846,9 +912,15 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Reorders the playlist queue to match the specified list of track IDs.
     #[flutter_rust_bridge::frb(sync)]
     pub fn reorder_by_ids(&self, ids: Vec<i64>) -> bool {
-        let res = self.inner.lock().unwrap().music_manager.reorder_by_ids(&ids);
+        let (res, idx) = {
+            let mut ply = self.inner.lock().unwrap();
+            let r = ply.music_manager.reorder_by_ids(&ids);
+            let i = ply.music_manager.current_index();
+            (r, i)
+        };
         if res {
             self.emit_queue();
+            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         }
         res
     }
@@ -856,8 +928,13 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Clears pending tracks from the queue, optionally preserving the currently active track.
     #[flutter_rust_bridge::frb(sync)]
     pub fn clear_queue(&self, keep_current: bool) {
-        self.inner.lock().unwrap().music_manager.clear_queue(keep_current);
+        let idx = {
+            let mut ply = self.inner.lock().unwrap();
+            ply.music_manager.clear_queue(keep_current);
+            ply.music_manager.current_index()
+        };
         self.emit_queue();
+        self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
     }
 
     /// Skips to the next track in the queue, optionally overriding crossfade duration.
@@ -902,30 +979,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         Ok(())
     }
 
-    /// Skips directly to the track at the specified index, optionally applying a crossfade.
-    pub fn skip_to_index(
-        &self,
-        index: usize,
-        crossfade_duration_ms: Option<u64>,
-    ) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_manager.skip_to_index(index, crossfade_duration_ms)?;
-        let idx = ply.music_manager.current_index();
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
-        let is_playing = state == crate::core::dual_source::STATE_PLAYING;
-        if idx >= 0 {
-            Self::sync_deck_replay_gain(&mut ply, idx as usize);
-        }
-        drop(ply);
-        self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
-        self.emit_event(RustPlayerEvent::State(phase));
-        self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
-        Ok(())
-    }
-
     /// Sets the queue loop policy (0: off, 1: one, 2: all).
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_loop_mode(&self, mode: i32) {
@@ -940,11 +993,20 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Enables or disables playlist shuffle mode.
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_shuffle(&self, enabled: bool) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_manager.is_shuffled();
-        if prev != enabled {
-            ply.music_manager.set_shuffle(enabled);
+        let changed_idx = {
+            let mut ply = self.inner.lock().unwrap();
+            let prev = ply.music_manager.is_shuffled();
+            if prev != enabled {
+                ply.music_manager.set_shuffle(enabled);
+                Some(ply.music_manager.current_index())
+            } else {
+                None
+            }
+        };
+        if let Some(idx) = changed_idx {
+            self.emit_queue();
             self.emit_event(RustPlayerEvent::IsShuffled(enabled));
+            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         }
     }
 
@@ -1164,33 +1226,11 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     // RAM Sound Effects Methods
     // =========================================================================
 
-    /// Decodes an audio sample into memory and registers it as a reusable sound effect.
-    pub fn load_effect(
-        &self,
-        id: String,
-        source: RustAudioSource,
-        max_polyphony: usize,
-        pinned: bool,
-    ) -> Result<(), String> {
-        let sound_buffer = match source.data_bytes {
-            Some(bytes) if !bytes.is_empty() => SoundBuffer::decode_from_bytes(&bytes)
-                .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))?,
-            _ => {
-                let path = crate::core::dual_source::strip_file_prefix(&source.source);
-                let path = crate::core::dual_source::resolve_local_source_path(&path);
-                let bytes = std::fs::read(&path)
-                    .map_err(|e| format!("Failed to read effect file '{}': {}", path, e))?;
-                SoundBuffer::decode_from_bytes(&bytes)
-                    .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))?
-            }
-        };
+    /// Declaratively registers the catalog of sound effects with the autonomous RAM engine.
+    pub fn set_effects(&self, effects: Vec<RustAudioEffect>) -> Result<(), String> {
+        let catalog: Vec<EffectCatalogItem> = effects.into_iter().map(Into::into).collect();
         let ply = self.inner.lock().unwrap();
-        ply.effects_manager.load_effect(
-            id,
-            sound_buffer,
-            max_polyphony,
-            pinned,
-        )?;
+        ply.effects_manager.set_effects(catalog)?;
         let loaded_ids = ply.effects_manager.loaded_effect_ids();
         let ram_bytes = ply.effects_manager.allocated_ram_bytes();
         drop(ply);
@@ -1201,24 +1241,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         Ok(())
     }
 
-    /// Unloads a sound effect from memory by ID.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn unload_effect(&self, id: String) -> bool {
-        let ply = self.inner.lock().unwrap();
-        let res = ply.effects_manager.unload_effect(&id);
-        if res {
-            let loaded_ids = ply.effects_manager.loaded_effect_ids();
-            let ram_bytes = ply.effects_manager.allocated_ram_bytes();
-            drop(ply);
-            self.emit_event(RustPlayerEvent::LoadedEffects {
-                ids: loaded_ids,
-                allocated_bytes: ram_bytes,
-            });
-        }
-        res
-    }
-
-    /// Returns the list of registered sound effect IDs.
+    /// Returns the list of currently loaded sound effect IDs in RAM.
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_loaded_effect_ids(&self) -> Vec<String> {
         self.inner.lock().unwrap().effects_manager.loaded_effect_ids()
@@ -1236,7 +1259,8 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         self.inner.lock().unwrap().effects_manager.active_voices_count()
     }
 
-    /// Triggers playback of a loaded sound effect, returning an assigned voice ID.
+    /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
+    /// returning the assigned voice ID.
     #[flutter_rust_bridge::frb(sync)]
     pub fn play_effect(
         &self,
@@ -1250,7 +1274,28 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             _ => DspRouting::Inherit,
         };
         let core_config = EffectConfig::from(config);
-        self.inner.lock().unwrap().effects_manager.play_effect(&id, routing, core_config)
+        let (voice_id, ram_changed, loaded_ids, ram_bytes) = {
+            let ply = self.inner.lock().unwrap();
+            let (vid, changed) = ply.effects_manager.play_effect(&id, routing, core_config)?;
+            let ids = if changed {
+                ply.effects_manager.loaded_effect_ids()
+            } else {
+                Vec::new()
+            };
+            let bytes = if changed {
+                ply.effects_manager.allocated_ram_bytes()
+            } else {
+                0
+            };
+            (vid, changed, ids, bytes)
+        };
+        if ram_changed {
+            self.emit_event(RustPlayerEvent::LoadedEffects {
+                ids: loaded_ids,
+                allocated_bytes: ram_bytes,
+            });
+        }
+        Ok(voice_id)
     }
 
     /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.

@@ -152,9 +152,22 @@ class ReplayGainResult {
     required this.lufs,
   });
 
-  /// Recommended linear volume multiplier ready to be passed to `player.action.setVolume()`.
+  /// Computes the linear amplitude multiplier corresponding to [gainDb] (`10^(gainDb / 20)`).
   ///
-  /// Converts [gainDb] from logarithmic decibels to linear amplitude scale: `10^(gainDb / 20)`.
+  /// > [!IMPORTANT]
+  /// > Instead of overwriting the user's master volume via `player.action.setVolume(...)`,
+  /// > the **canonical and recommended approach** for loudness normalization is to pass
+  /// > [gainDb] and [peak] directly to the `AudioSource`:
+  /// > ```dart
+  /// > AudioSource(
+  /// >   filePath,
+  /// >   replayGainDb: result.replayGain?.gainDb,
+  /// >   replayPeak: result.replayGain?.peak,
+  /// > )
+  /// > ```
+  /// > The native Rust DSP pipeline (`ReplayGainStage`) automatically applies track loudness
+  /// > normalization in 32-bit floating-point PCM before master limiting, preserving gapless
+  /// > transitions, crossfades, and independent user master volume controls.
   ///
   /// If [preventClipping] is `true` (the default), this scales down the gain to `1.0 / peak`
   /// if the boosted peak would otherwise exceed `1.0` (0 dBFS), preventing harsh digital clipping.

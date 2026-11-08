@@ -201,22 +201,20 @@ void main() {
     test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {
       final player = MiniaudioPlayer(source: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
       try {
-        await player.action.waitUntilOpen();
-        expect(player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
-
         await player.action.play();
-        for (int i = 0; i < 20 && !player.state.playing; i++) {
+        expect(player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
+        for (int i = 0; i < 20 && !player.state.isPlaying; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
 
         await Future.delayed(const Duration(milliseconds: 100));
 
         await player.action.pause();
-        for (int i = 0; i < 20 && player.state.playing; i++) {
+        for (int i = 0; i < 20 && player.state.isPlaying; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
-        expect(player.state.playing, isFalse);
+        expect(player.state.isPlaying, isFalse);
 
         // Seek while paused (calls streamSeek and duration/position getters)
         await player.action.seek(const Duration(milliseconds: 2500));
@@ -224,10 +222,10 @@ void main() {
 
         // Resume play after seek
         await player.action.play();
-        for (int i = 0; i < 20 && !player.state.playing; i++) {
+        for (int i = 0; i < 20 && !player.state.isPlaying; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
-        expect(player.state.playing, isTrue);
+        expect(player.state.isPlaying, isTrue);
 
         await Future.delayed(const Duration(milliseconds: 150));
         expect(player.state.position.inMilliseconds, greaterThan(2500));
@@ -241,10 +239,9 @@ void main() {
     test('MiniaudioPlayer with pauseOnDeviceChange handles seek and resume properly', () async {
       final engine = MiniaudioPlayer(pauseOnDeviceChange: true);
       try {
-        await engine.action.open([AudioSource(testWavFile.path)]);
-        expect(engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
-
+        await engine.action.setQueue([AudioSource(testWavFile.path)]);
         await engine.action.play();
+        expect(engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
         expect(engine.state.phase, equals(EnginePhase.playing));
 
         await Future.delayed(const Duration(milliseconds: 100));

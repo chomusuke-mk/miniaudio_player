@@ -203,7 +203,7 @@ impl MiniaudioPlayer {
         period_size: u32,
         playback_device_id: Option<String>,
         max_voices: usize,
-        max_ram_bytes: usize,
+        max_ram_bytes: Option<usize>,
         device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
     ) -> Result<Box<Self>, String> {
         let sr = if sample_rate > 0 { sample_rate } else { 44100 };

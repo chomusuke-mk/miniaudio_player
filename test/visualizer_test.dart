@@ -103,13 +103,12 @@ void main() {
       });
       addTearDown(() => sub.cancel());
 
-      await player.action.waitUntilOpen();
       await player.action.play();
 
       // Allow audio to stream and compute multiple buffer frames
       await Future<void>.delayed(const Duration(milliseconds: 350));
 
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
       expect(emittedData, isNotEmpty);
 
       // Check that during active music playback, RMS and bands are active
@@ -190,7 +189,6 @@ void main() {
       });
       addTearDown(() => sub.cancel());
 
-      await player.action.waitUntilOpen();
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));
 

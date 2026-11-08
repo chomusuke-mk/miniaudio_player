@@ -248,6 +248,7 @@ extension RustAudioOutputPatterns on RustAudioOutput {
 class RustAudioOutput_Speaker extends RustAudioOutput {
   const RustAudioOutput_Speaker({required this.exclusiveMode}) : super._();
 
+  /// Whether exclusive hardware access mode is requested.
   final bool exclusiveMode;
 
   /// Create a copy of RustAudioOutput
@@ -318,7 +319,10 @@ class RustAudioOutput_Device extends RustAudioOutput {
       {required this.deviceId, required this.exclusiveMode})
       : super._();
 
+  /// Unique device identifier.
   final String deviceId;
+
+  /// Whether exclusive hardware access mode is requested.
   final bool exclusiveMode;
 
   /// Create a copy of RustAudioOutput
@@ -395,7 +399,10 @@ class RustAudioOutput_Cue extends RustAudioOutput {
   const RustAudioOutput_Cue({required this.deviceId, required this.source})
       : super._();
 
+  /// Target device identifier.
   final String deviceId;
+
+  /// Cue source channel code.
   final int source;
 
   /// Create a copy of RustAudioOutput
@@ -470,7 +477,10 @@ class RustAudioOutput_File extends RustAudioOutput {
   const RustAudioOutput_File({required this.path, required this.format})
       : super._();
 
+  /// Target file system path.
   final String path;
+
+  /// WAV file format code (0: Pcm16, 1: Float32).
   final int format;
 
   /// Create a copy of RustAudioOutput
@@ -1147,7 +1157,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(bool field0)? isBuffering,
     TResult Function(bool field0)? isCompleted,
     TResult Function(RustBuffer field0)? buffer,
-    TResult Function(List<RustAudioSource> field0)? queue,
+    TResult Function(Int64List field0)? queue,
     TResult Function(int field0)? currentIndex,
     TResult Function(bool field0)? isCrossfading,
     TResult Function(RustCrossfadeConfig field0)? crossfadeConfig,
@@ -1329,7 +1339,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(bool field0) isBuffering,
     required TResult Function(bool field0) isCompleted,
     required TResult Function(RustBuffer field0) buffer,
-    required TResult Function(List<RustAudioSource> field0) queue,
+    required TResult Function(Int64List field0) queue,
     required TResult Function(int field0) currentIndex,
     required TResult Function(bool field0) isCrossfading,
     required TResult Function(RustCrossfadeConfig field0) crossfadeConfig,
@@ -1506,7 +1516,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(bool field0)? isBuffering,
     TResult? Function(bool field0)? isCompleted,
     TResult? Function(RustBuffer field0)? buffer,
-    TResult? Function(List<RustAudioSource> field0)? queue,
+    TResult? Function(Int64List field0)? queue,
     TResult? Function(int field0)? currentIndex,
     TResult? Function(bool field0)? isCrossfading,
     TResult? Function(RustCrossfadeConfig field0)? crossfadeConfig,
@@ -2207,16 +2217,9 @@ class _$RustPlayerEvent_BufferCopyWithImpl<$Res>
 /// @nodoc
 
 class RustPlayerEvent_Queue extends RustPlayerEvent {
-  const RustPlayerEvent_Queue(List<RustAudioSource> field0)
-      : _field0 = field0,
-        super._();
+  const RustPlayerEvent_Queue(this.field0) : super._();
 
-  final List<RustAudioSource> _field0;
-  List<RustAudioSource> get field0 {
-    if (_field0 is EqualUnmodifiableListView) return _field0;
-    // ignore: implicit_dynamic_type
-    return EqualUnmodifiableListView(_field0);
-  }
+  final Int64List field0;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -2231,13 +2234,13 @@ class RustPlayerEvent_Queue extends RustPlayerEvent {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is RustPlayerEvent_Queue &&
-            const DeepCollectionEquality().equals(other.field0, _field0));
+            const DeepCollectionEquality().equals(other.field0, field0));
   }
 
   @override
   int get hashCode {
     return Object.hash(
-        runtimeType, const DeepCollectionEquality().hash(_field0));
+        runtimeType, const DeepCollectionEquality().hash(field0));
   }
 
   @override
@@ -2253,7 +2256,7 @@ abstract mixin class $RustPlayerEvent_QueueCopyWith<$Res>
           $Res Function(RustPlayerEvent_Queue) _then) =
       _$RustPlayerEvent_QueueCopyWithImpl;
   @useResult
-  $Res call({List<RustAudioSource> field0});
+  $Res call({Int64List field0});
 }
 
 /// @nodoc
@@ -2272,9 +2275,9 @@ class _$RustPlayerEvent_QueueCopyWithImpl<$Res>
   }) {
     return _then(RustPlayerEvent_Queue(
       null == field0
-          ? _self._field0
+          ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
-              as List<RustAudioSource>,
+              as Int64List,
     ));
   }
 }
@@ -3501,7 +3504,10 @@ class RustPlayerEvent_Spatializer extends RustPlayerEvent {
       {required this.enabled, required this.width})
       : super._();
 
+  /// Whether spatializer is enabled.
   final bool enabled;
+
+  /// Stereo widening factor.
   final double width;
 
   /// Create a copy of RustPlayerEvent
@@ -4053,13 +4059,17 @@ class RustPlayerEvent_LoadedEffects extends RustPlayerEvent {
       : _ids = ids,
         super._();
 
+  /// Identifiers of loaded sound effects.
   final List<String> _ids;
+
+  /// Identifiers of loaded sound effects.
   List<String> get ids {
     if (_ids is EqualUnmodifiableListView) return _ids;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_ids);
   }
 
+  /// Total RAM bytes occupied by decoded effect samples.
   final BigInt allocatedBytes;
 
   /// Create a copy of RustPlayerEvent
@@ -5170,7 +5180,10 @@ class RustPlayerEvent_Error extends RustPlayerEvent {
   const RustPlayerEvent_Error({required this.message, required this.code})
       : super._();
 
+  /// Detailed human-readable error description.
   final String message;
+
+  /// Numeric error categorization code.
   final int code;
 
   /// Create a copy of RustPlayerEvent

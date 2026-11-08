@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -158,11 +159,9 @@ void main() {
 
     final player = MiniaudioPlayer(source: [AudioSource(bytes)]);
     try {
-      await player.action.waitUntilOpen();
-      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
-
       await player.action.play();
-      expect(player.state.playing, isTrue);
+      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
+      expect(player.state.isPlaying, isTrue);
 
       await player.action.seek(const Duration(milliseconds: 2000));
       expect(player.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
@@ -176,7 +175,7 @@ void main() {
       // Wait a moment while playing and verify it advances smoothly without jumping to end
       await Future<void>.delayed(const Duration(milliseconds: 500));
       expect(player.state.position.inMilliseconds, inInclusiveRange(200, 1000));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
       // Seek to 3.5 seconds during active playback
       await player.action.seek(const Duration(milliseconds: 3500));
@@ -185,10 +184,10 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       // Must NOT jump to EOF (10031ms)
       expect(player.state.position.inMilliseconds, inInclusiveRange(3800, 4500));
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
       await player.action.pause();
-      expect(player.state.playing, isFalse);
+      expect(player.state.isPlaying, isFalse);
     } finally {
       await player.dispose();
     }
@@ -203,22 +202,22 @@ void main() {
     final bytes1 = await file1.readAsBytes();
     final bytes2 = await file2.readAsBytes();
 
-    final player = MiniaudioPlayer(source: [AudioSource(bytes1)]);
+    final player = MiniaudioPlayer(source: [AudioSource(Uint8List.fromList(bytes1))]);
     try {
-      // 1. Open track 1
-      await player.action.waitUntilOpen();
+      // 1. Play track 1
+      await player.action.play();
       expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
-      await player.action.play();
-      expect(player.state.playing, isTrue);
+      expect(player.state.isPlaying, isTrue);
 
-      // 2. Switch directly to track 2 while playing (previously caused crash/segfault)
-      await player.action.open([AudioSource(bytes2)]);
-      expect(player.state.duration?.inMilliseconds, inInclusiveRange(65000, 72000));
+      // 2. Switch directly to track 2 while playing
+      await player.action.setQueue([AudioSource(Uint8List.fromList(bytes2))]);
       await player.action.play();
-      expect(player.state.playing, isTrue);
+      expect(player.state.duration?.inMilliseconds, inInclusiveRange(65000, 72000));
+      expect(player.state.isPlaying, isTrue);
 
       // 3. Switch back to track 1
-      await player.action.open([AudioSource(bytes1)]);
+      await player.action.setQueue([AudioSource(Uint8List.fromList(bytes1))]);
+      await player.action.play();
       expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
     } finally {
       await player.dispose();
@@ -233,7 +232,8 @@ void main() {
         replayGainDb: -3.5,
         replayPeak: 0.98,
       );
-      expect(rawSource, isA<UriAudioSource>());
+      expect(rawSource, isA<AudioSource>());
+      expect(rawSource.isFile, isTrue);
 
       // Specialize with specific type parameter AudioSource<Map<String, String>> via withData
       final dataMap = {'artist': 'Test Artist', 'track': 'Salida'};

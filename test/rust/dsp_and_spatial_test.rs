@@ -323,3 +323,85 @@ fn test_voice_pool_polyphony_and_listener_relative_farthest_stealing() {
     assert!((v.volume - 0.4).abs() < 0.01);
     assert!((v.pitch - 1.8).abs() < 0.01);
 }
+
+#[test]
+fn test_core_voice_pool_reactive_eviction_and_memory_immunity() {
+    use miniaudio_player::core::dual_source::AudioSourceCore;
+    use miniaudio_player::core::voice_pool::{
+        DspRouting, EffectCatalogItem, EffectConfig, VoicePool as CoreVoicePool,
+    };
+
+    let path = common::FixtureResolver::resolve_str("salida.wav");
+    let raw_bytes = std::fs::read(&path).unwrap();
+
+    // Tight budget (~1 MB) so only 1 decoded disk effect fits alongside the memory-backed effect
+    let mut pool = CoreVoicePool::new(8, Some(1024 * 1024), 48000, 2);
+
+    let catalog = vec![
+        EffectCatalogItem {
+            id: "mem_immune".to_string(),
+            source: AudioSourceCore {
+                id: 1,
+                source: String::new(),
+                headers: None,
+                data_bytes: Some(raw_bytes),
+                replay_gain_db: None,
+                replay_peak: None,
+            },
+            max_polyphony: 4,
+            pinned: false,
+        },
+        EffectCatalogItem {
+            id: "disk_a".to_string(),
+            source: AudioSourceCore {
+                id: 2,
+                source: path.clone(),
+                headers: None,
+                data_bytes: None,
+                replay_gain_db: None,
+                replay_peak: None,
+            },
+            max_polyphony: 4,
+            pinned: false,
+        },
+        EffectCatalogItem {
+            id: "disk_b".to_string(),
+            source: AudioSourceCore {
+                id: 3,
+                source: path,
+                headers: None,
+                data_bytes: None,
+                replay_gain_db: None,
+                replay_peak: None,
+            },
+            max_polyphony: 4,
+            pinned: false,
+        },
+    ];
+
+    pool.set_effects(catalog).unwrap();
+
+    // Memory-backed effect is decoded immediately and immune to eviction
+    assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
+    assert!(!pool.loaded_effect_ids().contains(&"disk_a".to_string()));
+
+    // Triggering disk_a loads it on demand; active voice protects it while playing
+    let (v_a, _) = pool
+        .play_effect("disk_a", DspRouting::Inherit, EffectConfig::default())
+        .unwrap();
+    assert!(pool.loaded_effect_ids().contains(&"disk_a".to_string()));
+    assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
+
+    // Triggering disk_b while disk_a is still active keeps both temporarily
+    let (_v_b, _) = pool
+        .play_effect("disk_b", DspRouting::Inherit, EffectConfig::default())
+        .unwrap();
+    assert!(pool.loaded_effect_ids().contains(&"disk_a".to_string()));
+    assert!(pool.loaded_effect_ids().contains(&"disk_b".to_string()));
+
+    // Stop voice A immediately (fade_out_samples = 0), which triggers reactive on_voice_completed
+    pool.stop_voice(v_a, 0);
+    // Reactive Trigger 2: on_voice_completed evicts now-inactive disk_a while preserving mem_immune!
+    assert!(!pool.loaded_effect_ids().contains(&"disk_a".to_string()));
+    assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
+}

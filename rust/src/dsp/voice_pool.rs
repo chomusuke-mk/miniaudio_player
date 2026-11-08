@@ -414,7 +414,9 @@ impl VoicePool {
             .iter_mut()
             .find(|v| v.id == voice_id && v.is_active())
         {
-            v.volume = volume.clamp(0.0, 2.0);
+            if volume.is_finite() {
+                v.volume = volume.max(0.0);
+            }
         }
     }
 
@@ -425,7 +427,9 @@ impl VoicePool {
             .iter_mut()
             .find(|v| v.id == voice_id && v.is_active())
         {
-            v.pitch = pitch.clamp(0.1, 4.0);
+            if pitch.is_finite() && pitch > 0.0 {
+                v.pitch = pitch;
+            }
         }
     }
 
@@ -519,8 +523,8 @@ impl VoicePool {
 
         self.play_sound(
             buffer,
-            eff_vol.clamp(0.0, 2.0),
-            eff_pitch.clamp(0.1, 4.0),
+            eff_vol.max(0.0),
+            eff_pitch.max(0.001),
             priority,
             false,
             emitter,

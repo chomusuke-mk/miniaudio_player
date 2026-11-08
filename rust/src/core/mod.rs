@@ -36,4 +36,7 @@ pub use renderer::{AudioRenderer, DspCommand};
 pub use simd_mixer::SimdMixer;
 pub use types::{Decibels, PlayerError, SampleRate, Volume};
 pub use typestate::{Active, Open, Paused, Player, Stopped, Uninitialized};
-pub use voice_pool::{DspRouting, EffectConfig, SoundBuffer, VoicePool, VoiceStealingPolicy};
+pub use voice_pool::{
+    DspRouting, EffectCatalogItem, EffectConfig, EffectSourceType, SoundBuffer, VoicePool,
+    VoiceStealingPolicy,
+};

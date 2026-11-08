@@ -148,6 +148,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
+  BigInt dco_decode_box_autoadd_usize(dynamic raw);
+
+  @protected
   double dco_decode_f_32(dynamic raw);
 
   @protected
@@ -176,6 +179,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<RustAudioDevice> dco_decode_list_rust_audio_device(dynamic raw);
+
+  @protected
+  List<RustAudioEffect> dco_decode_list_rust_audio_effect(dynamic raw);
 
   @protected
   List<RustAudioOutput> dco_decode_list_rust_audio_output(dynamic raw);
@@ -223,6 +229,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
+  BigInt? dco_decode_opt_box_autoadd_usize(dynamic raw);
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -236,6 +245,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustAudioDevice dco_decode_rust_audio_device(dynamic raw);
+
+  @protected
+  RustAudioEffect dco_decode_rust_audio_effect(dynamic raw);
 
   @protected
   RustAudioOutput dco_decode_rust_audio_output(dynamic raw);
@@ -467,6 +479,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  BigInt sse_decode_box_autoadd_usize(SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
@@ -495,6 +510,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<RustAudioDevice> sse_decode_list_rust_audio_device(
+      SseDeserializer deserializer);
+
+  @protected
+  List<RustAudioEffect> sse_decode_list_rust_audio_effect(
       SseDeserializer deserializer);
 
   @protected
@@ -547,6 +566,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  BigInt? sse_decode_opt_box_autoadd_usize(SseDeserializer deserializer);
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -563,6 +585,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustAudioDevice sse_decode_rust_audio_device(SseDeserializer deserializer);
+
+  @protected
+  RustAudioEffect sse_decode_rust_audio_effect(SseDeserializer deserializer);
 
   @protected
   RustAudioOutput sse_decode_rust_audio_output(SseDeserializer deserializer);
@@ -810,6 +835,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_usize(BigInt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
@@ -842,6 +870,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_rust_audio_device(
       List<RustAudioDevice> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_rust_audio_effect(
+      List<RustAudioEffect> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_rust_audio_output(
@@ -894,6 +926,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_usize(BigInt? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
       Uint8List? self, SseSerializer serializer);
 
@@ -912,6 +947,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_audio_effect(
+      RustAudioEffect self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_audio_output(
