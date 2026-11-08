@@ -1,26 +1,4 @@
-import 'dart:async';
-import 'dart:typed_data' hide Int64List;
-
-import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
-    show Int64List;
-
-import '../crossfeed.dart';
-import '../equalizer.dart';
-import '../infinite_mix.dart';
-import '../reverb.dart';
-import '../rust/api/player.dart' as rust;
-import '../rust/api/types.dart' as rust_types;
-import 'audio_source.dart';
-import 'crossfade_config.dart';
-import 'dsp_config.dart';
-import 'logger.dart';
-import 'loop_mode.dart';
-import 'miniaudio_player.dart';
-import 'player_exception.dart';
-import 'player_models.dart';
-import 'recording.dart' show DuckingConfig;
-import 'silence_skip_config.dart';
-import 'spatial.dart';
+part of 'miniaudio_player.dart';
 
 /// Action interface executing asynchronous playback, queue, effects, and DSP controls.
 ///
@@ -82,7 +60,7 @@ class PlayerAction<T> {
       _prepareSource(
     AudioSource<T> s,
   ) {
-    final uniqueId = s.id ?? _player.nextSourceId++;
+    final uniqueId = s.id ?? _player._nextSourceId++;
     s.attachEngineId(uniqueId);
 
     final rustSource = _toRustSource(s, uniqueId);
@@ -92,13 +70,13 @@ class PlayerAction<T> {
       s.clearBytes();
     } else if (s.customProvider != null) {
       final provider = s.customProvider!;
-      _player.customProviders[uniqueId] = provider;
+      _player._customProviders[uniqueId] = provider;
       if (provider.streamId != 0) {
-        _player.customProviders[provider.streamId] = provider;
+        _player._customProviders[provider.streamId] = provider;
       }
     }
 
-    _player.sourceRegistry[uniqueId] = s;
+    _player._sourceRegistry[uniqueId] = s;
     return (s, rustSource);
   }
 
@@ -133,7 +111,7 @@ class PlayerAction<T> {
     Duration? seek,
   }) =>
       _serialize(() async {
-        _player.ensureNotDisposed();
+        _player._ensureNotDisposed();
         if (position != null && position < 0) {
           throw RangeError.value(
             position,
@@ -163,7 +141,7 @@ class PlayerAction<T> {
 
   /// Pauses audio playback at current position.
   Future<void> pause() => _serialize(() async {
-        _player.ensureNotDisposed();
+        _player._ensureNotDisposed();
         MapLogger.info('pause() requested');
         _rust.pause();
         await Future<void>.delayed(Duration.zero);
@@ -171,7 +149,7 @@ class PlayerAction<T> {
 
   /// Stops playback and rewinds position to zero.
   Future<void> stop() => _serialize(() async {
-        _player.ensureNotDisposed();
+        _player._ensureNotDisposed();
         MapLogger.info('stop() requested');
         _rust.stop();
         await Future<void>.delayed(Duration.zero);
@@ -179,7 +157,7 @@ class PlayerAction<T> {
 
   /// Seeks to specified position in the currently playing track.
   Future<void> seek(Duration position) => _serialize(() async {
-        _player.ensureNotDisposed();
+        _player._ensureNotDisposed();
         final targetPosition =
             position < Duration.zero ? Duration.zero : position;
         MapLogger.info('seek() requested -> ${targetPosition.inMilliseconds}ms');
@@ -196,11 +174,11 @@ class PlayerAction<T> {
   /// Resets `state.currentIndex` to `null` until [play] is invoked.
   Future<void> setQueue(List<AudioSource<T>> sources) {
     return _serialize(() async {
-      _player.ensureNotDisposed();
+      _player._ensureNotDisposed();
       MapLogger.info('setQueue() requested with ${sources.length} items');
 
-      _player.sourceRegistry.clear();
-      _player.customProviders.clear();
+      _player._sourceRegistry.clear();
+      _player._customProviders.clear();
 
       final normalized = <AudioSource<T>>[];
       final rustSources = <rust_types.RustAudioSource>[];
@@ -210,8 +188,8 @@ class PlayerAction<T> {
         rustSources.add(rustSource);
       }
 
-      _player.state.queue = List.unmodifiable(normalized);
-      _player.state.currentIndex = null;
+      _player.state._queue = List.unmodifiable(normalized);
+      _player.state._currentIndex = null;
 
       try {
         await _rust.setQueue(queue: rustSources);
@@ -226,7 +204,7 @@ class PlayerAction<T> {
 
   /// Appends tracks to the end of the current playlist queue.
   Future<void> append(List<AudioSource<T>> sources) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (sources.isEmpty) return;
 
     final normalized = <AudioSource<T>>[];
@@ -236,7 +214,7 @@ class PlayerAction<T> {
       normalized.add(retained);
       rustSources.add(rustSource);
     }
-    _player.state.queue = List.unmodifiable([
+    _player.state._queue = List.unmodifiable([
       ..._player.state.queue,
       ...normalized,
     ]);
@@ -246,7 +224,7 @@ class PlayerAction<T> {
 
   /// Inserts a track immediately after the active playing track.
   Future<void> insertNext(AudioSource<T> source) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final (retained, rustSource) = _prepareSource(source);
     final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
     final curIdx = _player.state.currentIndex;
@@ -254,22 +232,22 @@ class PlayerAction<T> {
         ? curIdx + 1
         : currentQueue.length;
     currentQueue.insert(insertIdx, retained);
-    _player.state.queue = List.unmodifiable(currentQueue);
+    _player.state._queue = List.unmodifiable(currentQueue);
     _rust.insertNext(source: rustSource);
     await Future<void>.delayed(Duration.zero);
   }
 
   /// Removes a track at [index] from the playlist queue.
   Future<void> removeAt(int index) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
     if (index >= 0 && index < currentQueue.length) {
       final removed = currentQueue.removeAt(index);
       if (removed.id != null) {
-        _player.sourceRegistry.remove(removed.id);
-        _player.customProviders.remove(removed.id);
+        _player._sourceRegistry.remove(removed.id);
+        _player._customProviders.remove(removed.id);
       }
-      _player.state.queue = List.unmodifiable(currentQueue);
+      _player.state._queue = List.unmodifiable(currentQueue);
       _rust.removeAt(index: BigInt.from(index));
       await Future<void>.delayed(Duration.zero);
     }
@@ -277,7 +255,7 @@ class PlayerAction<T> {
 
   /// Reorders a track from [oldIndex] to [newIndex] within the queue.
   Future<void> reorder(int oldIndex, int newIndex) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
     if (oldIndex >= 0 &&
         oldIndex < currentQueue.length &&
@@ -285,7 +263,7 @@ class PlayerAction<T> {
         newIndex < currentQueue.length) {
       final item = currentQueue.removeAt(oldIndex);
       currentQueue.insert(newIndex, item);
-      _player.state.queue = List.unmodifiable(currentQueue);
+      _player.state._queue = List.unmodifiable(currentQueue);
       final ids = currentQueue.map((s) => s.id ?? 0).toList();
       _rust.reorderByIds(ids: Int64List.fromList(ids));
       await Future<void>.delayed(Duration.zero);
@@ -294,14 +272,14 @@ class PlayerAction<T> {
 
   /// Reorders the playlist queue using an ordered list of unique track [ids].
   Future<void> reorderByIds(List<int> ids) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final reordered = <AudioSource<T>>[];
     for (final id in ids) {
-      final s = _player.sourceRegistry[id];
+      final s = _player._sourceRegistry[id];
       if (s != null) reordered.add(s);
     }
     if (reordered.length == _player.state.queue.length) {
-      _player.state.queue = List.unmodifiable(reordered);
+      _player.state._queue = List.unmodifiable(reordered);
     }
     _rust.reorderByIds(ids: Int64List.fromList(ids));
     await Future<void>.delayed(Duration.zero);
@@ -309,7 +287,7 @@ class PlayerAction<T> {
 
   /// Clears the playlist queue. If [keepCurrent] is true, retains the playing track.
   Future<void> clearQueue({bool keepCurrent = false}) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final curIdx = _player.state.currentIndex;
     if (keepCurrent &&
         _player.state.queue.isNotEmpty &&
@@ -317,16 +295,16 @@ class PlayerAction<T> {
         curIdx >= 0 &&
         curIdx < _player.state.queue.length) {
       final cur = _player.state.queue[curIdx];
-      _player.state.queue = List.unmodifiable([cur]);
-      _player.state.currentIndex = 0;
+      _player.state._queue = List.unmodifiable([cur]);
+      _player.state._currentIndex = 0;
       final curId = cur.id;
-      _player.sourceRegistry.removeWhere((id, _) => id != curId);
-      _player.customProviders.removeWhere((id, _) => id != curId);
+      _player._sourceRegistry.removeWhere((id, _) => id != curId);
+      _player._customProviders.removeWhere((id, _) => id != curId);
     } else {
-      _player.state.queue = const [];
-      _player.state.currentIndex = null;
-      _player.sourceRegistry.clear();
-      _player.customProviders.clear();
+      _player.state._queue = const [];
+      _player.state._currentIndex = null;
+      _player._sourceRegistry.clear();
+      _player._customProviders.clear();
     }
     _rust.clearQueue(keepCurrent: keepCurrent);
     await Future<void>.delayed(Duration.zero);
@@ -334,7 +312,7 @@ class PlayerAction<T> {
 
   /// Advances to the next track in the playlist queue.
   Future<void> next({Duration? crossfadeDuration}) => _serialize(() async {
-        _player.ensureNotDisposed();
+        _player._ensureNotDisposed();
         await _rust.next(
           crossfadeDurationMs: crossfadeDuration != null
               ? BigInt.from(crossfadeDuration.inMilliseconds)
@@ -345,21 +323,21 @@ class PlayerAction<T> {
 
   /// Skips back to the previous track, or start of current track if > 3s played.
   Future<void> previous() => _serialize(() async {
-        _player.ensureNotDisposed();
+        _player._ensureNotDisposed();
         await _rust.previous();
         await Future<void>.delayed(Duration.zero);
       });
 
   /// Configures playlist repeat mode ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
   Future<void> setLoopMode(LoopMode mode) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setLoopMode(mode: mode.index);
     await Future<void>.delayed(Duration.zero);
   }
 
   /// Enables or disables non-destructive shuffle on the playlist queue.
   Future<void> setShuffle(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setShuffle(enabled: enabled);
     await Future<void>.delayed(Duration.zero);
   }
@@ -368,12 +346,12 @@ class PlayerAction<T> {
   ///
   /// Pass `null` to remove the active provider.
   void setInfiniteMixProvider(InfiniteMixProvider<T>? provider) {
-    _player.infiniteMixProvider = provider;
+    _player._infiniteMixProvider = provider;
   }
 
   /// Configures infinite queue replenishment when playback approaches the end of the queue.
   Future<void> setInfiniteMix(InfiniteMixConfig config) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setInfiniteMix(
       config: rust_types.RustInfiniteMixConfig(
         enabled: config.enabled,
@@ -385,7 +363,7 @@ class PlayerAction<T> {
 
   /// Configures crossfade duration and curve between queue tracks.
   Future<void> setCrossfade(CrossfadeConfig config) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setCrossfade(
       config: rust_types.RustCrossfadeConfig(
         autoDurationMs: BigInt.from(
@@ -409,7 +387,7 @@ class PlayerAction<T> {
 
   /// Modulates master audio volume (`>= 0.0`, unconstrained upper limit).
   Future<void> setVolume(double volume) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(volume, 'volume', 'Volume must be >= 0.0');
     }
@@ -420,7 +398,7 @@ class PlayerAction<T> {
 
   /// Modulates playback rate multiplier preserving pitch (`> 0.0`).
   Future<void> setRate(double rate) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (rate.isNaN || rate.isInfinite || rate <= 0.0) {
       throw ArgumentError.value(rate, 'rate', 'Rate must be > 0.0');
     }
@@ -430,7 +408,7 @@ class PlayerAction<T> {
 
   /// Modulates musical pitch multiplier (`> 0.0`).
   Future<void> setPitch(double pitch) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Pitch must be > 0.0');
     }
@@ -440,21 +418,21 @@ class PlayerAction<T> {
 
   /// Sets stereo balance / pan (`-1.0` left to `+1.0` right).
   Future<void> setBalance(double balance) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setBalance(balance: balance.toDouble());
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Toggles monophonic downmixing of stereo channels.
   Future<void> setMono(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setMono(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Applies 10-band ISO peaking equalizer configuration.
   Future<void> setEqualizer(Equalizer equalizer) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setEqualizer(
       params: rust_types.RustEqualizerParams(
         gains: Float32List.fromList(equalizer.toList()),
@@ -466,7 +444,7 @@ class PlayerAction<T> {
 
   /// Configures algorithmic studio reverberation.
   Future<void> setReverb(Reverb reverb) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setReverb(
       params: rust_types.RustReverbParams(
         roomSize: reverb.roomSize,
@@ -483,7 +461,7 @@ class PlayerAction<T> {
 
   /// Toggles master True-Peak brickwall limiter protector.
   Future<void> setLimiter(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setLimiter(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
@@ -493,7 +471,7 @@ class PlayerAction<T> {
   /// For events to be emitted across `PlayerStream.visualizer`, this must be set to `true`.
   /// Defaults to `false`.
   Future<void> setVisualizerEnabled(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setVisualizerEnabled(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
@@ -505,14 +483,14 @@ class PlayerAction<T> {
   ///
   /// Defaults to `false` to avoid saturating the event bus.
   Future<void> setMetaBytesEnabled(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setMetabytesEnabled(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures intelligent silence detection and skipping.
   Future<void> setSilenceConfig(SilenceSkipConfig config) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setSilenceConfig(
       config: rust_types.RustSilenceConfig(
         thresholdDb: config.thresholdDb,
@@ -534,7 +512,7 @@ class PlayerAction<T> {
     int? id,
     int? position,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     return _serialize(() async {
       _rust.setReplayGain(
         config: config != null
@@ -552,14 +530,14 @@ class PlayerAction<T> {
 
   /// Sets preamplifier gain in decibels.
   Future<void> setPreamp(double preampDb) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setPreamp(preampDb: preampDb.toDouble());
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures Bauer stereophonic-to-binaural (BS2B) crossfeed filtering.
   Future<void> setCrossfeed(Crossfeed crossfeed) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setCrossfeed(
       config: rust_types.RustCrossfeedConfig(
         enabled: crossfeed.enabled,
@@ -575,21 +553,21 @@ class PlayerAction<T> {
     required bool enabled,
     double width = 1.0,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setSpatializer(enabled: enabled, width: width.toDouble());
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Sets default ReplayGain fallback adjustment in dB and peak.
   Future<void> setDefaultReplayGain(double gainDb, {double peak = 1.0}) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setDefaultReplayGain(gainDb: gainDb, peak: peak);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Sets ReplayGain calculation mode.
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setReplayGainMode(mode: mode.index);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
@@ -600,14 +578,14 @@ class PlayerAction<T> {
 
   /// Configures resilience behavior when audio playback devices change.
   Future<void> setPauseOnDeviceChange(bool enabled) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setPauseOnDeviceChange(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Updates playback buffer period size.
   Future<void> setBufferSize(int size) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (size < 0) {
       throw ArgumentError.value(
         size,
@@ -616,7 +594,7 @@ class PlayerAction<T> {
       );
     }
     _rust.setBufferSize(bufferSizeFrames: size);
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   // =========================================================================
@@ -630,7 +608,7 @@ class PlayerAction<T> {
   /// File and network effects are decoded into RAM within the configured memory budget
   /// and managed autonomously by Rust's multi-factor eviction scorer.
   Future<void> setEffects(List<AudioEffect> effects) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final rustEffects = <rust_types.RustAudioEffect>[];
     for (final effect in effects) {
       final rustSource = _toRustSource(effect.source, 0);
@@ -647,9 +625,9 @@ class PlayerAction<T> {
       );
     }
     await _rust.setEffects(effects: rustEffects);
-    _player.state.loadedEffectIds =
+    _player.state._loadedEffectIds =
         List.unmodifiable(_rust.getLoadedEffectIds());
-    _player.state.allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
+    _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
@@ -671,7 +649,7 @@ class PlayerAction<T> {
     bool? looping,
     int? priority,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final effectiveConfig = config.copyWith(
       volume: volume,
       pitch: pitch,
@@ -727,9 +705,9 @@ class PlayerAction<T> {
             : null,
       ),
     );
-    _player.state.loadedEffectIds =
+    _player.state._loadedEffectIds =
         List.unmodifiable(_rust.getLoadedEffectIds());
-    _player.state.allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
+    _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
     return Voice(voiceId, this);
   }
 
@@ -738,7 +716,7 @@ class PlayerAction<T> {
     VoiceId voiceId, {
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.stopEffect(
       voiceId: voiceId,
       fadeOutMs: BigInt.from(fadeOut.inMilliseconds),
@@ -749,13 +727,13 @@ class PlayerAction<T> {
   Future<void> stopAllEffects({
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.stopAllEffects(fadeOutMs: BigInt.from(fadeOut.inMilliseconds));
   }
 
   /// Modulates the volume of an active polyphonic voice in real time (`>= 0.0`).
   Future<void> setVoiceVolume(VoiceId voiceId, double volume) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(volume, 'volume', 'Voice volume must be >= 0.0');
     }
@@ -764,7 +742,7 @@ class PlayerAction<T> {
 
   /// Modulates the pitch of an active polyphonic voice in real time (`> 0.0`).
   Future<void> setVoicePitch(VoiceId voiceId, double pitch) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Voice pitch must be > 0.0');
     }
@@ -773,7 +751,7 @@ class PlayerAction<T> {
 
   /// Modulates the stereo balance of an active polyphonic voice (`-1.0` to `1.0`).
   Future<void> setVoiceBalance(VoiceId voiceId, double balance) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setEffectBalance(voiceId: voiceId, balance: balance.toDouble());
   }
 
@@ -782,7 +760,7 @@ class PlayerAction<T> {
     VoiceId voiceId,
     SpatialEmitter emitter,
   ) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setEffectEmitter(
       voiceId: voiceId,
       emitter: _toRustEmitter(emitter),
@@ -791,7 +769,7 @@ class PlayerAction<T> {
 
   /// Updates the 3D spatial position, orientation, and velocity of the global listener.
   Future<void> setListener(SpatialListener listener) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setListener(listener: _toRustListener(listener));
   }
 
@@ -800,7 +778,7 @@ class PlayerAction<T> {
     double factor = 1.0,
     double speedOfSound = 343.3,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setDopplerParameters(
       factor: factor,
       speedOfSound: speedOfSound,
@@ -813,7 +791,7 @@ class PlayerAction<T> {
 
   /// Sets the active outputs for this player instance, replacing any existing ones.
   Future<void> setOutputs(Set<AudioOutput> outputs) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final rustOutputs = outputs.map((out) {
       return rust_types.RustAudioOutput(
         deviceId: out.deviceId,
@@ -826,7 +804,7 @@ class PlayerAction<T> {
 
   /// Adds an output destination to this player's active outputs.
   Future<void> addOutput(AudioOutput output) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.addOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
@@ -838,7 +816,7 @@ class PlayerAction<T> {
 
   /// Removes an output destination from this player's active outputs.
   Future<void> removeOutput(AudioOutput output) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.removeOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
@@ -854,7 +832,7 @@ class PlayerAction<T> {
     AudioFileFormat format = AudioFileFormat.wav,
     AudioOutputSource source = AudioOutputSource.all,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     await _rust.startRecording(
       path: path,
       format: format.index,
@@ -865,7 +843,7 @@ class PlayerAction<T> {
 
   /// Stops live disk recording and returns an immutable [RecordingResult].
   Future<RecordingResult> stopRecording() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     final res = await _rust.stopRecording();
     await Future<void>.delayed(Duration.zero);
     return RecordingResult(
@@ -882,7 +860,7 @@ class PlayerAction<T> {
 
   /// Adds an audio input source to this player instance.
   Future<void> addInput(AudioInput input) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (input is MicrophoneAudioInput) {
       await enableMicrophone(
         deviceId: input.deviceId,
@@ -896,7 +874,7 @@ class PlayerAction<T> {
 
   /// Removes an audio input source from this player instance.
   Future<void> removeInput(AudioInput input) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (input is MicrophoneAudioInput) {
       await disableMicrophone();
     }
@@ -904,7 +882,7 @@ class PlayerAction<T> {
 
   /// Sets the active inputs for this player instance, replacing any existing ones.
   Future<void> setInputs(Set<AudioInput> inputs) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     await clearInputs();
     for (final inp in inputs) {
       await addInput(inp);
@@ -913,7 +891,7 @@ class PlayerAction<T> {
 
   /// Clears all active audio input sources from this player instance.
   Future<void> clearInputs() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     await disableMicrophone();
   }
 
@@ -925,7 +903,7 @@ class PlayerAction<T> {
     bool monitorDirect = false,
     double monitorVolume = 1.0,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(
         volume,
@@ -949,25 +927,25 @@ class PlayerAction<T> {
       monitorVolume: monitorVolume,
     );
     final next = Set<AudioInput>.of(_player.state.inputs)..add(input);
-    _player.state.inputs = next;
-    _player.stream.inputsController.add(next);
+    _player.state._inputs = next;
+    _player.stream._inputsController.add(next);
     await Future<void>.delayed(Duration.zero);
   }
 
   /// Disables and frees hardware microphone capture.
   Future<void> disableMicrophone() async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.disableMicrophone();
     final next = Set<AudioInput>.of(_player.state.inputs)
       ..removeWhere((i) => i is MicrophoneAudioInput);
-    _player.state.inputs = next;
-    _player.stream.inputsController.add(next);
+    _player.state._inputs = next;
+    _player.stream._inputsController.add(next);
     await Future<void>.delayed(Duration.zero);
   }
 
   /// Sets microphone input capture volume (`>= 0.0`).
   Future<void> setMicrophoneVolume(double volume) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(
         volume,
@@ -981,7 +959,7 @@ class PlayerAction<T> {
 
   /// Configures microphone Auto-Ducking sidechain compressor.
   Future<void> setDucking(DuckingConfig config) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setDucking(config: config.toRust());
     await Future<void>.delayed(Duration.zero);
   }
@@ -991,7 +969,7 @@ class PlayerAction<T> {
     required bool enabled,
     double volume = 1.0,
   }) async {
-    _player.ensureNotDisposed();
+    _player._ensureNotDisposed();
     _rust.setDirectMonitoring(
       enabled: enabled,
       volume: volume.toDouble(),

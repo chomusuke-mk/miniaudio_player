@@ -18,8 +18,6 @@ export 'src/api/miniaudio_player.dart';
 export 'src/api/need_more_tracks_event.dart';
 export 'src/api/player_exception.dart';
 export 'src/api/player_models.dart';
-export 'src/api/player_state.dart';
-export 'src/api/player_stream.dart';
 export 'src/api/recording.dart';
 export 'src/api/silence_skip_config.dart';
 export 'src/api/spatial.dart';

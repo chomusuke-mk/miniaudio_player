@@ -15,5 +15,7 @@ void main() async {
     logLevel: MiniaudioLogLevel.verbose,
     defaultAudioDevice: AudioDevice.auto,
   );
+  final player = MiniaudioPlayer();
+  
   runApp(const MiniaudioPlayerExampleApp());
 }

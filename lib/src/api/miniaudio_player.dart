@@ -19,13 +19,16 @@ import 'crossfade_config.dart';
 import 'dsp_config.dart';
 import 'logger.dart';
 import 'loop_mode.dart';
-import 'player_action.dart';
 import 'player_exception.dart';
 import 'player_models.dart';
-import 'player_state.dart';
-import 'player_stream.dart';
+import 'recording.dart' show DuckingConfig;
 import 'silence_skip_config.dart';
+import 'spatial.dart';
 import 'visualizer_data.dart';
+
+part 'player_action.dart';
+part 'player_state.dart';
+part 'player_stream.dart';
 
 /// Ensures native Rust library is initialized before calling static methods.
 Future<void> ensureRustInitialized() async {
@@ -368,16 +371,16 @@ class MiniaudioPlayer<T> {
   bool get isDisposed => _isDisposed;
 
   /// The monotonic counter allocating unique identifiers for queued sources.
-  int nextSourceId = 1;
+  int _nextSourceId = 1;
 
   /// The lookup registry mapping unique monotonic track IDs to their [AudioSource] instances.
-  final Map<int, AudioSource<T>> sourceRegistry = {};
+  final Map<int, AudioSource<T>> _sourceRegistry = {};
 
   /// The active [CustomByteProvider] instances keyed by stream ID.
-  final Map<int, CustomByteProvider> customProviders = {};
+  final Map<int, CustomByteProvider> _customProviders = {};
 
   /// The callback supplying more tracks when Infinite Mix triggers.
-  InfiniteMixProvider<T>? infiniteMixProvider;
+  InfiniteMixProvider<T>? _infiniteMixProvider;
 
   /// Action namespace executing asynchronous imperative playback and DSP controls.
   late final PlayerAction<T> action;
@@ -419,13 +422,13 @@ class MiniaudioPlayer<T> {
     stream = PlayerStream<T>();
     state = PlayerState<T>(this);
 
-    state.bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
-    state.pauseOnDeviceChange = pauseOnDeviceChange;
+    state._bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
+    state._pauseOnDeviceChange = pauseOnDeviceChange;
 
     final int? resolvedMaxRamBytes = effectMemoryLimitMb != null
         ? effectMemoryLimitMb * 1024 * 1024
         : config.resolvedMaxRamBytes;
-    state.maxRamBytes = resolvedMaxRamBytes;
+    state._maxRamBytes = resolvedMaxRamBytes;
 
     final resolvedOutputs = outputs ?? {const AudioOutput()};
     final rustOutputs = resolvedOutputs
@@ -493,64 +496,64 @@ class MiniaudioPlayer<T> {
           6 => PlaybackState.opening,
           _ => PlaybackState.stopped,
         };
-        state.playbackState = val;
-        state.isPaused = val == PlaybackState.paused;
-        state.isOpening = val == PlaybackState.opening;
-        stream.playbackStateController.add(val);
+        state._playbackState = val;
+        state._isPaused = val == PlaybackState.paused;
+        state._isOpening = val == PlaybackState.opening;
+        stream._playbackStateController.add(val);
       case rust_types.RustPlayerEvent_IsPlaying(:final field0):
-        state.isPlaying = field0;
-        stream.playingController.add(field0);
+        state._isPlaying = field0;
+        stream._playingController.add(field0);
       case rust_types.RustPlayerEvent_IsBuffering(:final field0):
-        state.isBuffering = field0;
-        stream.bufferingController.add(field0);
+        state._isBuffering = field0;
+        stream._bufferingController.add(field0);
       case rust_types.RustPlayerEvent_IsCompleted(:final field0):
-        state.isCompleted = field0;
-        stream.completedController.add(field0);
+        state._isCompleted = field0;
+        stream._completedController.add(field0);
       case rust_types.RustPlayerEvent_State(:final field0):
         final p = (field0 >= 0 && field0 < EnginePhase.values.length)
             ? EnginePhase.values[field0]
             : EnginePhase.idle;
-        state.phase = p;
-        stream.phaseController.add(p);
+        state._phase = p;
+        stream._phaseController.add(p);
       case rust_types.RustPlayerEvent_Position(:final field0):
         final pos = Duration(milliseconds: field0.toInt());
-        state.position = pos;
-        stream.positionController.add(pos);
+        state._position = pos;
+        stream._positionController.add(pos);
       case rust_types.RustPlayerEvent_Duration(:final field0):
         final durMs = field0.toInt();
         final dur = durMs > 0 ? Duration(milliseconds: durMs) : null;
-        state.duration = dur;
-        stream.durationController.add(dur);
+        state._duration = dur;
+        stream._durationController.add(dur);
       case rust_types.RustPlayerEvent_Buffer(:final field0):
         final b = Buffer(
           start: Duration(milliseconds: field0.startMs.toInt()),
           end: Duration(milliseconds: field0.endMs.toInt()),
           isBuffering: field0.isBuffering,
         );
-        state.buffer = b;
-        stream.bufferController.add(b);
+        state._buffer = b;
+        stream._bufferController.add(b);
       case rust_types.RustPlayerEvent_Volume(:final field0):
-        state.volume = field0;
-        stream.volumeController.add(field0);
+        state._volume = field0;
+        stream._volumeController.add(field0);
       case rust_types.RustPlayerEvent_Rate(:final field0):
-        state.rate = field0;
-        stream.rateController.add(field0);
+        state._rate = field0;
+        stream._rateController.add(field0);
       case rust_types.RustPlayerEvent_Pitch(:final field0):
-        state.pitch = field0;
-        stream.pitchController.add(field0);
+        state._pitch = field0;
+        stream._pitchController.add(field0);
       case rust_types.RustPlayerEvent_Balance(:final field0):
-        state.balance = field0;
-        stream.balanceController.add(field0);
+        state._balance = field0;
+        stream._balanceController.add(field0);
       case rust_types.RustPlayerEvent_Mono(:final field0):
-        state.mono = field0;
-        stream.monoController.add(field0);
+        state._mono = field0;
+        stream._monoController.add(field0);
       case rust_types.RustPlayerEvent_Equalizer(:final field0):
         final eq = Equalizer.fromList(
           field0.gains.toList(),
           enabled: field0.enabled,
         );
-        state.equalizer = eq;
-        stream.equalizerController.add(eq);
+        state._equalizer = eq;
+        stream._equalizerController.add(eq);
       case rust_types.RustPlayerEvent_Reverb(:final field0):
         final rev = Reverb(
           roomSize: field0.roomSize,
@@ -560,34 +563,34 @@ class MiniaudioPlayer<T> {
           width: field0.width,
           enabled: field0.enabled,
         );
-        state.reverb = rev;
-        stream.reverbController.add(rev);
+        state._reverb = rev;
+        stream._reverbController.add(rev);
       case rust_types.RustPlayerEvent_Limiter(:final field0):
-        state.limiterEnabled = field0;
-        stream.limiterEnabledController.add(field0);
+        state._limiterEnabled = field0;
+        stream._limiterEnabledController.add(field0);
       case rust_types.RustPlayerEvent_Preamp(:final field0):
-        state.preamp = field0;
-        stream.preampController.add(field0);
+        state._preamp = field0;
+        stream._preampController.add(field0);
       case rust_types.RustPlayerEvent_Crossfeed(:final field0):
         final cf = Crossfeed(
           enabled: field0.enabled,
           cutoffHz: field0.cutoffHz,
           feedDb: field0.feedDb,
         );
-        state.crossfeed = cf;
-        stream.crossfeedController.add(cf);
+        state._crossfeed = cf;
+        stream._crossfeedController.add(cf);
       case rust_types.RustPlayerEvent_Spatializer(:final enabled, :final width):
-        state.spatializerEnabled = enabled;
-        state.spatializerWidth = width;
-        stream.spatializerEnabledController.add(enabled);
-        stream.spatializerWidthController.add(width);
+        state._spatializerEnabled = enabled;
+        state._spatializerWidth = width;
+        stream._spatializerEnabledController.add(enabled);
+        stream._spatializerWidthController.add(width);
       case rust_types.RustPlayerEvent_VisualizerEnabled(:final field0):
-        state.visualizerEnabled = field0;
+        state._visualizerEnabled = field0;
         if (!field0) {
-          state.visualizer = VisualizerData.empty();
-          stream.visualizerController.add(VisualizerData.empty());
+          state._visualizer = VisualizerData.empty();
+          stream._visualizerController.add(VisualizerData.empty());
         }
-        stream.visualizerEnabledController.add(field0);
+        stream._visualizerEnabledController.add(field0);
       case rust_types.RustPlayerEvent_Visualizer(:final field0):
         final vis = VisualizerData(
           bands: field0.bands.toList(),
@@ -596,19 +599,19 @@ class MiniaudioPlayer<T> {
           left: field0.left,
           right: field0.right,
         );
-        state.visualizer = vis;
-        stream.visualizerController.add(vis);
+        state._visualizer = vis;
+        stream._visualizerController.add(vis);
       case rust_types.RustPlayerEvent_OutputDevices(:final field0):
         final list = field0.map(_toAudioDevice).toList();
-        state.globalOutputDevices = list;
-        stream.globalOutputDevicesController.add(list);
+        state._globalOutputDevices = list;
+        stream._globalOutputDevicesController.add(list);
       case rust_types.RustPlayerEvent_InputDevices(:final field0):
         final list = field0.map(_toAudioDevice).toList();
-        state.globalInputDevices = list;
-        stream.globalInputDevicesController.add(list);
+        state._globalInputDevices = list;
+        stream._globalInputDevicesController.add(list);
       case rust_types.RustPlayerEvent_PauseOnDeviceChange(:final field0):
-        state.pauseOnDeviceChange = field0;
-        stream.pauseOnDeviceChangeController.add(field0);
+        state._pauseOnDeviceChange = field0;
+        stream._pauseOnDeviceChangeController.add(field0);
       case rust_types.RustPlayerEvent_Outputs(:final field0):
         final outs = field0
             .map((r) => AudioOutput(
@@ -617,46 +620,46 @@ class MiniaudioPlayer<T> {
                   source: AudioOutputSource.fromValue(r.source),
                 ))
             .toSet();
-        state.outputs = Set.unmodifiable(outs);
-        stream.outputsController.add(state.outputs);
+        state._outputs = Set.unmodifiable(outs);
+        stream._outputsController.add(state.outputs);
       case rust_types.RustPlayerEvent_RecordingState(
           :final isRecording,
           :final source,
         ):
-        state.isRecording = isRecording;
-        state.recordingSource =
+        state._isRecording = isRecording;
+        state._recordingSource =
             isRecording ? AudioOutputSource.fromValue(source) : null;
-        stream.isRecordingController.add(isRecording);
-        stream.recordingSourceController.add(state.recordingSource);
+        stream._isRecordingController.add(isRecording);
+        stream._recordingSourceController.add(state.recordingSource);
       case rust_types.RustPlayerEvent_LoopMode(:final field0):
         final lm = (field0 >= 0 && field0 < LoopMode.values.length)
             ? LoopMode.values[field0]
             : LoopMode.off;
-        state.loopMode = lm;
-        stream.loopModeController.add(lm);
+        state._loopMode = lm;
+        stream._loopModeController.add(lm);
       case rust_types.RustPlayerEvent_IsShuffled(:final field0):
-        state.isShuffled = field0;
-        stream.isShuffledController.add(field0);
+        state._isShuffled = field0;
+        stream._isShuffledController.add(field0);
       case rust_types.RustPlayerEvent_InfiniteMix(:final field0):
         final im = InfiniteMixConfig(
           enabled: field0.enabled,
           remainingTracksThreshold: field0.remainingTracksThreshold,
         );
-        state.infiniteMix = im;
-        stream.infiniteMixController.add(im);
-        stream.infiniteMixEnabledController.add(im.enabled);
+        state._infiniteMix = im;
+        stream._infiniteMixController.add(im);
+        stream._infiniteMixEnabledController.add(im.enabled);
       case rust_types.RustPlayerEvent_MicrophoneEnabled(:final field0):
-        state.isMicrophoneEnabled = field0;
-        stream.isMicrophoneEnabledController.add(field0);
+        state._isMicrophoneEnabled = field0;
+        stream._isMicrophoneEnabledController.add(field0);
       case rust_types.RustPlayerEvent_MicVolume(:final field0):
-        state.micVolume = field0;
-        stream.micVolumeController.add(field0);
+        state._micVolume = field0;
+        stream._micVolumeController.add(field0);
       case rust_types.RustPlayerEvent_DirectMonitoringEnabled(:final field0):
-        state.isDirectMonitoringEnabled = field0;
-        stream.isDirectMonitoringEnabledController.add(field0);
+        state._isDirectMonitoringEnabled = field0;
+        stream._isDirectMonitoringEnabledController.add(field0);
       case rust_types.RustPlayerEvent_IsCrossfading(:final field0):
-        state.isCrossfading = field0;
-        stream.isCrossfadingController.add(field0);
+        state._isCrossfading = field0;
+        stream._isCrossfadingController.add(field0);
       case rust_types.RustPlayerEvent_CrossfadeConfig(:final field0):
         final cfg = CrossfadeConfig(
           autoDuration: Duration(milliseconds: field0.autoDurationMs.toInt()),
@@ -666,45 +669,45 @@ class MiniaudioPlayer<T> {
               ? CrossfadeCurve.linear
               : CrossfadeCurve.equalPower,
         );
-        state.crossfadeConfig = cfg;
-        stream.crossfadeConfigController.add(cfg);
+        state._crossfadeConfig = cfg;
+        stream._crossfadeConfigController.add(cfg);
       case rust_types.RustPlayerEvent_IsRecording(:final field0):
-        state.isRecording = field0;
-        stream.isRecordingController.add(field0);
+        state._isRecording = field0;
+        stream._isRecordingController.add(field0);
       case rust_types.RustPlayerEvent_RecordedDuration(:final field0):
         final d = Duration(milliseconds: field0.toInt());
-        state.recordedDuration = d;
-        stream.recordedDurationController.add(d);
+        state._recordedDuration = d;
+        stream._recordedDurationController.add(d);
       case rust_types.RustPlayerEvent_IsDuckingActive(:final field0):
-        state.isDuckingActive = field0;
-        stream.isDuckingActiveController.add(field0);
+        state._isDuckingActive = field0;
+        stream._isDuckingActiveController.add(field0);
       case rust_types.RustPlayerEvent_MicRmsLevel(:final field0):
-        state.micRmsLevel = field0;
-        stream.micRmsLevelController.add(field0);
+        state._micRmsLevel = field0;
+        stream._micRmsLevelController.add(field0);
       case rust_types.RustPlayerEvent_VoiceCompleted(:final field0):
-        stream.voiceCompletedController.add(field0);
+        stream._voiceCompletedController.add(field0);
       case rust_types.RustPlayerEvent_LoadedEffects(
           :final ids,
           :final allocatedBytes
         ):
-        state.loadedEffectIds = List.unmodifiable(ids);
-        state.allocatedRamBytes = allocatedBytes.toInt();
-        stream.loadedEffectIdsController.add(state.loadedEffectIds);
-        stream.allocatedRamBytesController.add(state.allocatedRamBytes);
+        state._loadedEffectIds = List.unmodifiable(ids);
+        state._allocatedRamBytes = allocatedBytes.toInt();
+        stream._loadedEffectIdsController.add(state.loadedEffectIds);
+        stream._allocatedRamBytesController.add(state.allocatedRamBytes);
       case rust_types.RustPlayerEvent_ActiveVoices(:final field0):
-        state.activeVoicesCount = field0;
-        stream.activeVoicesCountController.add(field0);
+        state._activeVoicesCount = field0;
+        stream._activeVoicesCountController.add(field0);
       case rust_types.RustPlayerEvent_MetaBytes(:final field0):
         final mb = field0.isEmpty ? null : Uint8List.fromList(field0);
-        state.metaBytes = mb;
-        stream.metaBytesController.add(mb);
+        state._metaBytes = mb;
+        stream._metaBytesController.add(mb);
       case rust_types.RustPlayerEvent_MetaBytesEnabled(:final field0):
-        state.metaBytesEnabled = field0;
+        state._metaBytesEnabled = field0;
         if (!field0) {
-          state.metaBytes = null;
-          stream.metaBytesController.add(null);
+          state._metaBytes = null;
+          stream._metaBytesController.add(null);
         }
-        stream.metaBytesEnabledController.add(field0);
+        stream._metaBytesEnabledController.add(field0);
       case rust_types.RustPlayerEvent_SilenceConfig(:final field0):
         final sc = SilenceSkipConfig(
           enabled: field0.enabled,
@@ -714,64 +717,64 @@ class MiniaudioPlayer<T> {
           padding: Duration(milliseconds: field0.paddingMs),
           mode: SilenceSkipMode.fromValue(field0.mode),
         );
-        state.silenceConfig = sc;
-        state.skipSilence = field0.enabled;
-        state.silenceSkipMode = sc.mode;
-        stream.silenceConfigController.add(sc);
-        stream.skipSilenceController.add(field0.enabled);
+        state._silenceConfig = sc;
+        state._skipSilence = field0.enabled;
+        state._silenceSkipMode = sc.mode;
+        stream._silenceConfigController.add(sc);
+        stream._skipSilenceController.add(field0.enabled);
       case rust_types.RustPlayerEvent_SilenceSaved(:final field0):
         final d = Duration(milliseconds: field0.toInt());
-        state.silenceSavedDuration = d;
-        stream.silenceSavedDurationController.add(d);
+        state._silenceSavedDuration = d;
+        stream._silenceSavedDurationController.add(d);
       case rust_types.RustPlayerEvent_ReplayGain(:final field0):
         final rg = ReplayGainConfig(
           gainDb: field0.gainDb,
           peak: field0.peak,
         );
-        state.replayGain = rg;
-        stream.replayGainController.add(rg);
+        state._replayGain = rg;
+        stream._replayGainController.add(rg);
       case rust_types.RustPlayerEvent_ReplayGainMode(:final field0):
         final mode = (field0 >= 0 && field0 < ReplayGainMode.values.length)
             ? ReplayGainMode.values[field0]
             : ReplayGainMode.track;
-        state.replayGainMode = mode;
-        stream.replayGainModeController.add(mode);
+        state._replayGainMode = mode;
+        stream._replayGainModeController.add(mode);
       case rust_types.RustPlayerEvent_DefaultReplayGain(:final field0):
-        state.defaultReplayGain = field0;
-        stream.defaultReplayGainController.add(field0);
+        state._defaultReplayGain = field0;
+        stream._defaultReplayGainController.add(field0);
       case rust_types.RustPlayerEvent_BufferSize(:final field0):
-        state.bufferSize = field0;
-        stream.bufferSizeController.add(field0);
+        state._bufferSize = field0;
+        stream._bufferSizeController.add(field0);
       case rust_types.RustPlayerEvent_Bitrate(:final field0):
-        state.audioBitrate = field0;
-        stream.audioBitrateController.add(field0);
+        state._audioBitrate = field0;
+        stream._audioBitrateController.add(field0);
       case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
         final idx = field0 >= 0 ? field0 : null;
-        state.currentIndex = idx;
-        stream.currentIndexController.add(idx);
-        state.currentItem = idx != null && idx >= 0 && idx < state.queue.length
+        state._currentIndex = idx;
+        stream._currentIndexController.add(idx);
+        state._currentItem = idx != null && idx >= 0 && idx < state.queue.length
             ? state.queue[idx]
             : null;
         final curSource = state.currentItem;
-        stream.currentItemController.add(curSource);
+        stream._currentItemController.add(curSource);
       case rust_types.RustPlayerEvent_Queue(:final queue, :final currentIndex):
         final reconciled = <AudioSource<T>>[];
         for (var i = 0; i < queue.length; i++) {
           final id = queue[i].toInt();
-          final match = sourceRegistry[id];
+          final match = _sourceRegistry[id];
           if (match != null) {
             reconciled.add(match);
           }
         }
-        state.queue = List.unmodifiable(reconciled);
+        state._queue = List.unmodifiable(reconciled);
         final idx = currentIndex >= 0 && currentIndex < state.queue.length
             ? currentIndex
             : null;
-        state.currentIndex = idx;
-        state.currentItem = idx != null ? state.queue[idx] : null;
-        stream.currentIndexController.add(idx);
-        stream.queueController.add(state.queue);
-        stream.currentItemController.add(state.currentItem);
+        state._currentIndex = idx;
+        state._currentItem = idx != null ? state.queue[idx] : null;
+        stream._currentIndexController.add(idx);
+        stream._queueController.add(state.queue);
+        stream._currentItemController.add(state.currentItem);
       case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
         _onDartReadRequest(field0);
       case rust_types.RustPlayerEvent_NeedMoreTracks(
@@ -780,13 +783,13 @@ class MiniaudioPlayer<T> {
         ):
         _onNeedMoreTracks(currentTrackId.toInt(), remainingTracks);
       case rust_types.RustPlayerEvent_Error(:final message, :final code):
-        stream.errorsController
+        stream._errorsController
             .add(MiniaudioPlayerException(message, errorCode: code));
     }
   }
 
   void _onDartReadRequest(rust_types.RustDartReadRequest req) async {
-    final provider = customProviders[req.streamId];
+    final provider = _customProviders[req.streamId];
     if (provider != null) {
       try {
         final bytes = await provider.readBytes(req.offset.toInt(), req.length);
@@ -814,11 +817,11 @@ class MiniaudioPlayer<T> {
 
   /// Handles native Infinite Mix queue replenishment requests.
   void _onNeedMoreTracks(int currentTrackId, int remainingTracks) async {
-    if (infiniteMixProvider != null) {
+    if (_infiniteMixProvider != null) {
       try {
         final threshold = state.infiniteMix.remainingTracksThreshold;
         final countToFetch = (threshold - remainingTracks).clamp(1, 10);
-        final more = await infiniteMixProvider!(countToFetch);
+        final more = await _infiniteMixProvider!(countToFetch);
         if (more.isNotEmpty && !_isDisposed) {
           action.append(more);
         }
@@ -842,18 +845,18 @@ class MiniaudioPlayer<T> {
     if (_isDisposed) return;
     _isDisposed = true;
     MapLogger.info('Disposing MiniaudioPlayer instance');
-    state.metaBytes = null;
+    state._metaBytes = null;
     _eventSub?.cancel();
     _eventSub = null;
     try {
       _rustPlayer.dispose();
     } catch (_) {}
-    for (final p in customProviders.values) {
+    for (final p in _customProviders.values) {
       try {
         await p.close();
       } catch (_) {}
     }
-    customProviders.clear();
+    _customProviders.clear();
     await stream.dispose();
   }
 
