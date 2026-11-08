@@ -6,11 +6,11 @@
 use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::api::types::{AudioOutputSource, RustAudioOutput};
 use crate::bridge::ffi::{
-    map_device_create, map_device_destroy, map_device_set_device, map_device_start,
+    map_device_create, map_device_destroy, map_device_start,
     MapDeviceContext,
 };
 use crate::core::recording::{LiveRecorder, WavFormat};
@@ -18,12 +18,13 @@ use crate::core::renderer::PcmRendererHeader;
 use crate::dsp::visualizer::{Visualizer, VisualizerData};
 use crate::sync::seqlock::CachePaddedSeqlock;
 
-/// Real-time safe audio renderer reading from an SPSC ring buffer for a secondary device.
+/// Real-time safe audio renderer reading from an SPSC ring buffer for an active output device.
 #[repr(C)]
 pub struct OutputDeviceRenderer {
     pub header: PcmRendererHeader,
     pub consumer: rtrb::Consumer<f32>,
     pub channels: usize,
+    pub device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
 }
 
 unsafe impl Send for OutputDeviceRenderer {}
@@ -37,7 +38,21 @@ pub unsafe extern "C" fn output_device_render_trampoline(
     r.render_pcm(output, count);
 }
 
-pub unsafe extern "C" fn output_device_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
+pub unsafe extern "C" fn output_device_notif_trampoline(ptr: *mut c_void, notif: i32) {
+    if ptr.is_null() {
+        return;
+    }
+    let r = &mut *(ptr as *mut OutputDeviceRenderer);
+    if notif == 1 || notif == 2 {
+        if let Some(ref trig) = r.device_trigger {
+            let (lock, cvar) = &**trig;
+            if let Ok(mut flag) = lock.lock() {
+                *flag = true;
+                cvar.notify_one();
+            }
+        }
+    }
+}
 
 impl OutputDeviceRenderer {
     #[inline]
@@ -83,8 +98,10 @@ unsafe impl Sync for ActiveOutputDevice {}
 pub struct OutputManager {
     /// Declarative configurations of requested outputs.
     pub outputs: Vec<RustAudioOutput>,
-    /// Active secondary physical device instances (running their own miniaudio callbacks).
-    pub secondary_devices: Vec<ActiveOutputDevice>,
+    /// Active physical device instances (each running its own decoupled miniaudio callback).
+    pub active_devices: Vec<ActiveOutputDevice>,
+    /// Device change trigger notification primitive.
+    pub device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
 
     // =========================================================================
     // Recording Subsystem (first-class, with source selection)
@@ -116,10 +133,15 @@ impl Drop for OutputManager {
 
 impl OutputManager {
     /// Creates a new `OutputManager` for the specified sample rate and channel count.
-    pub fn new(sample_rate: u32, channels: usize) -> Self {
+    pub fn new(
+        sample_rate: u32,
+        channels: usize,
+        device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
+    ) -> Self {
         Self {
             outputs: Vec::new(),
-            secondary_devices: Vec::new(),
+            active_devices: Vec::new(),
+            device_trigger,
             live_recorder: None,
             record_producer: None,
             recording_source: AudioOutputSource::All,
@@ -139,37 +161,13 @@ impl OutputManager {
     // Symmetrical Output Hardware Management
     // =========================================================================
 
-    /// Updates the active outputs and reconfigures primary and secondary hardware audio routing.
-    pub fn set_outputs(
-        &mut self,
-        outputs: Vec<RustAudioOutput>,
-        primary_device_ctx: *mut MapDeviceContext,
-    ) -> Result<(), String> {
+    /// Updates the active outputs and synchronizes physical audio devices.
+    pub fn set_outputs(&mut self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         self.outputs = outputs;
 
-        // 1. Primary device routing (outputs[0], if any)
-        if let Some(first) = self.outputs.first() {
-            if let Some(ref dev_id) = first.device_id {
-                let c_dev = CString::new(dev_id.clone()).map_err(|e| e.to_string())?;
-                let r = unsafe { map_device_set_device(primary_device_ctx, c_dev.as_ptr()) };
-                if r != 0 {
-                    return Err(format!("Setting device failed with code {}", r));
-                }
-            } else {
-                let r = unsafe { map_device_set_device(primary_device_ctx, std::ptr::null()) };
-                if r != 0 {
-                    return Err(format!("Setting default device failed with code {}", r));
-                }
-            }
-        } else {
-            // outputs is empty {} -> no primary device
-            let _ = unsafe { map_device_set_device(primary_device_ctx, std::ptr::null()) };
-        }
-
-        // 2. Secondary devices routing (outputs[1..])
-        let secondary_configs: Vec<RustAudioOutput> = self.outputs.iter().skip(1).cloned().collect();
-        self.secondary_devices.retain_mut(|dev| {
-            let still_exists = secondary_configs.iter().any(|cfg| {
+        // 1. Evict active devices no longer present in outputs
+        self.active_devices.retain_mut(|dev| {
+            let still_exists = self.outputs.iter().any(|cfg| {
                 cfg.device_id == dev.device_id && cfg.source == (dev.source as i32)
             });
             if !still_exists {
@@ -183,9 +181,9 @@ impl OutputManager {
             }
         });
 
-        // Open new secondary devices requested in outputs[1..]
-        for cfg in &secondary_configs {
-            let already_open = self.secondary_devices.iter().any(|dev| {
+        // 2. Open newly requested devices
+        for cfg in &self.outputs {
+            let already_open = self.active_devices.iter().any(|dev| {
                 dev.device_id == cfg.device_id && (dev.source as i32) == cfg.source
             });
             if !already_open {
@@ -198,6 +196,7 @@ impl OutputManager {
                     },
                     consumer: cons,
                     channels: self.channels,
+                    device_trigger: self.device_trigger.clone(),
                 });
                 let renderer_ptr = Box::into_raw(renderer);
 
@@ -220,7 +219,7 @@ impl OutputManager {
                     unsafe {
                         map_device_start(ctx);
                     }
-                    self.secondary_devices.push(ActiveOutputDevice {
+                    self.active_devices.push(ActiveOutputDevice {
                         device_id: cfg.device_id.clone(),
                         source: AudioOutputSource::from(cfg.source),
                         exclusive_mode: cfg.exclusive_mode,
@@ -329,7 +328,6 @@ impl OutputManager {
         music_mix_buffer: &[f32],
         active_buffer: &[f32],
         standby_buffer: &[f32],
-        primary_hardware_out: *mut f32,
         frame_count: usize,
     ) {
         let sample_count = frame_count * self.channels;
@@ -343,37 +341,8 @@ impl OutputManager {
             }
         };
 
-        // 1. Primary physical hardware output
-        if !primary_hardware_out.is_null() && sample_count > 0 {
-            if let Some(first) = self.outputs.first() {
-                let src_slice = select_source(AudioOutputSource::from(first.source));
-                let valid = src_slice.len().min(sample_count);
-                if valid > 0 {
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(src_slice.as_ptr(), primary_hardware_out, valid);
-                        if valid < sample_count {
-                            std::slice::from_raw_parts_mut(
-                                primary_hardware_out.add(valid),
-                                sample_count - valid,
-                            )
-                            .fill(0.0);
-                        }
-                    }
-                } else {
-                    unsafe {
-                        std::slice::from_raw_parts_mut(primary_hardware_out, sample_count).fill(0.0);
-                    }
-                }
-            } else {
-                // outputs is empty {} -> fill with silence 0.0
-                unsafe {
-                    std::slice::from_raw_parts_mut(primary_hardware_out, sample_count).fill(0.0);
-                }
-            }
-        }
-
-        // 2. Secondary physical hardware outputs (each reads from its designated SPSC ring buffer)
-        for dev in &mut self.secondary_devices {
+        // 1. Symmetrical physical hardware outputs (each reads from its designated SPSC ring buffer)
+        for dev in &mut self.active_devices {
             let src_slice = select_source(dev.source);
             let valid = src_slice.len().min(sample_count);
             let to_write = dev.producer.slots().min(valid);
@@ -390,7 +359,7 @@ impl OutputManager {
             }
         }
 
-        // 3. Live File Recorder (independent lock-free SPSC capture)
+        // 2. Live File Recorder (independent lock-free SPSC capture)
         if self.is_recording.load(Ordering::Relaxed) {
             if let Some(ref mut prod) = self.record_producer {
                 let rec_slice = select_source(self.recording_source);
@@ -411,7 +380,7 @@ impl OutputManager {
             }
         }
 
-        // 4. Compute FFT Spectrum for visualizer
+        // 3. Compute FFT Spectrum for visualizer
         if self.visualizer_enabled.load(Ordering::Relaxed) {
             let valid = all_buffer.len().min(sample_count);
             self.visualizer.set_enabled(true);
@@ -423,7 +392,7 @@ impl OutputManager {
 
     pub fn dispose(&mut self) {
         let _ = self.stop_recording();
-        for dev in self.secondary_devices.drain(..) {
+        for dev in self.active_devices.drain(..) {
             unsafe {
                 map_device_destroy(dev.device_ctx);
                 drop(Box::from_raw(dev.renderer_ptr as *mut OutputDeviceRenderer));

@@ -26,7 +26,7 @@ pub use dual_source::{
 };
 pub use effects_manager::EffectsManager;
 pub use input_manager::InputManager;
-pub use miniaudio_player::{MiniaudioPlayer, MiniaudioPlayerRenderer};
+pub use miniaudio_player::MiniaudioPlayer;
 pub use music_manager::MusicManager;
 pub use output_manager::OutputManager;
 pub use recording::{LiveRecorder, WavFormat};

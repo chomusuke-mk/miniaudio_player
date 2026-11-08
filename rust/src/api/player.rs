@@ -6,7 +6,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::bridge::ffi::{
     map_device_enumerate_capture_devices, map_device_enumerate_devices, map_device_free_devices,
@@ -277,6 +277,7 @@ pub struct RustMiniaudioPlayer {
     _monitor_thread: Option<JoinHandle<()>>,
     device_trigger: Arc<(Mutex<bool>, Condvar)>,
     _watcher_thread: Option<JoinHandle<()>>,
+    _clock_thread: Option<JoinHandle<()>>,
     metabytes_enabled: Arc<AtomicBool>,
 }
 
@@ -309,7 +310,7 @@ impl RustMiniaudioPlayer {
             Some(device_trigger.clone()),
         )?;
         player.output_manager.set_pause_on_device_change(config.pause_on_device_change);
-        let _ = player.output_manager.set_outputs(initial_outputs.clone(), player.device_ctx);
+        let _ = player.output_manager.set_outputs(initial_outputs.clone());
 
         let inner = Arc::new(Mutex::new(player));
         let reporter = EventReporter::new();
@@ -384,8 +385,7 @@ impl RustMiniaudioPlayer {
 
                             // 3. If outputs mutated due to disconnection, update hardware and broadcast event
                             if outputs_mutated {
-                                let dev_ctx = ply.device_ctx;
-                                let _ = ply.output_manager.set_outputs(outputs.clone(), dev_ctx);
+                                let _ = ply.output_manager.set_outputs(outputs.clone());
                                 watcher_reporter.emit(RustPlayerEvent::Outputs(outputs));
                             }
 
@@ -666,6 +666,41 @@ impl RustMiniaudioPlayer {
             })
             .ok();
 
+        let clock_inner = inner.clone();
+        let clock_running = monitor_running.clone();
+        let clock_period = period_size;
+        let clock_sr = sample_rate;
+
+        let clock_thread = thread::Builder::new()
+            .name("map-engine-clock".to_string())
+            .spawn(move || {
+                let period_duration = Duration::from_nanos(
+                    (clock_period as u64 * 1_000_000_000) / clock_sr.max(1) as u64,
+                );
+                let mut next_tick = Instant::now();
+
+                while clock_running.load(Ordering::Relaxed) {
+                    if let Ok(mut ply) = clock_inner.lock() {
+                        let deck_state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+                        let is_rec = ply.output_manager.is_recording.load(Ordering::Relaxed);
+                        let has_voices = ply.effects_manager.active_voices_count() > 0;
+                        let is_active = deck_state == crate::core::dual_source::STATE_PLAYING || is_rec || has_voices;
+                        if is_active {
+                            ply.render_pcm(clock_period as usize);
+                        }
+                    }
+
+                    next_tick += period_duration;
+                    let now = Instant::now();
+                    if now < next_tick {
+                        thread::sleep(next_tick - now);
+                    } else {
+                        next_tick = now;
+                    }
+                }
+            })
+            .ok();
+
         Ok(RustMiniaudioPlayer {
             inner,
             reporter,
@@ -674,6 +709,7 @@ impl RustMiniaudioPlayer {
             _monitor_thread: monitor_thread,
             device_trigger,
             _watcher_thread: watcher_thread,
+            _clock_thread: clock_thread,
             metabytes_enabled,
         })
     }
@@ -814,6 +850,9 @@ impl RustMiniaudioPlayer {
     pub fn stop(&self) {
         let mut ply = self.inner.lock().unwrap();
         ply.music_manager.stop();
+        ply.output_manager
+            .visualizer_seqlock
+            .write(|d| *d = crate::dsp::visualizer::VisualizerData::default());
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
         drop(ply);
@@ -1418,8 +1457,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
-        let dev_ctx = ply.device_ctx;
-        ply.output_manager.set_outputs(outputs.clone(), dev_ctx)?;
+        ply.output_manager.set_outputs(outputs.clone())?;
         drop(ply);
 
         self.emit_event(RustPlayerEvent::Outputs(outputs));
@@ -1439,8 +1477,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let mut current = ply.output_manager.outputs.clone();
         if !current.contains(&output) {
             current.push(output);
-            let dev_ctx = ply.device_ctx;
-            ply.output_manager.set_outputs(current.clone(), dev_ctx)?;
+            ply.output_manager.set_outputs(current.clone())?;
             drop(ply);
 
             self.emit_event(RustPlayerEvent::Outputs(current));
@@ -1461,8 +1498,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let mut current = ply.output_manager.outputs.clone();
         if let Some(pos) = current.iter().position(|x| *x == output) {
             current.remove(pos);
-            let dev_ctx = ply.device_ctx;
-            ply.output_manager.set_outputs(current.clone(), dev_ctx)?;
+            ply.output_manager.set_outputs(current.clone())?;
             drop(ply);
 
             self.emit_event(RustPlayerEvent::Outputs(current));

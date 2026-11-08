@@ -8,147 +8,15 @@
 //! 5. `SimdMixer`: AVX2/NEON FMA vector summing.
 //! 6. `OutputManager`: Multi-destination output matrix (Master, CUE, WAV, FFT).
 
-use std::ffi::c_void;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 
-use crate::bridge::ffi::{
-    map_device_create, map_device_destroy, map_device_start, map_device_stop, MapDeviceContext,
-};
 use crate::core::dsp_processor::DspProcessor;
 use crate::core::effects_manager::EffectsManager;
 use crate::core::input_manager::InputManager;
 use crate::core::music_manager::MusicManager;
 use crate::core::output_manager::OutputManager;
-use crate::core::renderer::PcmRendererHeader;
 use crate::core::simd_mixer::SimdMixer;
 use crate::dsp::limiter::SoftLimiter;
-
-/// Real-time audio renderer executing on the OS audio callback thread.
-#[repr(C)]
-pub struct MiniaudioPlayerRenderer {
-    /// C-ABI callback function pointer header.
-    pub header: PcmRendererHeader,
-    /// Raw pointer to the owning [`MiniaudioPlayer`].
-    pub player_ptr: *mut MiniaudioPlayer,
-
-    // Real-Time Preallocated Scratch Buffers (O(1) L1 Cache)
-    /// Scratch buffer holding fused deck music.
-    pub scratch_music: Vec<f32>,
-    /// Scratch buffer holding effect voices for isolated DSP processing.
-    pub scratch_voice: Vec<f32>,
-    /// Master accumulation buffer before limiting.
-    pub super_flow: Vec<f32>,
-    /// Output sample rate in Hz.
-    pub sample_rate: u32,
-    /// Output audio channel count.
-    pub channels: usize,
-    /// Device change trigger notification synchronization primitive.
-    pub device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
-}
-
-unsafe impl Send for MiniaudioPlayerRenderer {}
-
-/// C trampoline forwarding audio frame rendering to [`MiniaudioPlayerRenderer::render_pcm`].
-pub unsafe extern "C" fn miniaudio_player_render_trampoline(
-    ptr: *mut c_void,
-    output: *mut f32,
-    count: usize,
-) {
-    let r = &mut *(ptr as *mut MiniaudioPlayerRenderer);
-    r.render_pcm(output, count);
-}
-
-/// C trampoline forwarding miniaudio hardware device events.
-pub unsafe extern "C" fn miniaudio_player_notif_trampoline(ptr: *mut c_void, notif: i32) {
-    if ptr.is_null() {
-        return;
-    }
-    let r = &mut *(ptr as *mut MiniaudioPlayerRenderer);
-    // Notification 1: stopped, Notification 2: rerouted
-    if notif == 1 || notif == 2 {
-        if !r.player_ptr.is_null() {
-            let ply = &mut *r.player_ptr;
-            if ply.output_manager.pause_on_device_change.load(Ordering::Relaxed) {
-                let deck = ply.music_manager.active_deck_ref();
-                if deck.state.load(Ordering::Relaxed) == crate::core::dual_source::STATE_PLAYING {
-                    let _ = ply.music_manager.pause();
-                    ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_PAUSED, Ordering::Release);
-                }
-            }
-        }
-        if let Some(ref trig) = r.device_trigger {
-            let (lock, cvar) = &**trig;
-            if let Ok(mut flag) = lock.lock() {
-                *flag = true;
-                cvar.notify_one();
-            }
-        }
-    }
-}
-
-impl MiniaudioPlayerRenderer {
-    pub fn render_pcm(&mut self, output: *mut f32, frame_count: usize) {
-        if self.player_ptr.is_null() {
-            return;
-        }
-        let ply = unsafe { &mut *self.player_ptr };
-        let sample_count = frame_count * self.channels;
-
-        if self.scratch_music.len() < sample_count {
-            self.scratch_music.resize(sample_count, 0.0);
-            self.scratch_voice.resize(sample_count, 0.0);
-            self.super_flow.resize(sample_count, 0.0);
-        }
-
-        self.super_flow[..sample_count].fill(0.0);
-
-        // 1. Render fused music from decks into scratch_music
-        ply.music_manager.render(frame_count, &mut self.scratch_music);
-
-        // 2. Render RAM effects with In-Place Buffer Reuse:
-        //    - DspRouting::Inherit voices mix directly into scratch_music.
-        //    - DspRouting::Bypass voices mix directly into super_flow.
-        //    - DspRouting::Isolate voices mix into effects_manager work_buffer.
-        ply.effects_manager.render_with_reuse(
-            &mut self.scratch_music,
-            &mut self.super_flow,
-            frame_count,
-        );
-
-        // 3. Process isolated SFX voices through their own DSP chain (if any)
-        let work_buf = ply.effects_manager.work_buffer(sample_count);
-        ply.isolate_dsp.process(work_buf);
-        ply.simd_mixer.accumulate(&mut self.super_flow, work_buf);
-
-        // 4. Process music DSP (ReplayGain, SkipSilence, Sonic, EQ, Reverb)
-        //    All DspRouting::Inherit voices are processed here together in ONE single pass O(1)!
-        ply.music_dsp.process(&mut self.scratch_music[..sample_count]);
-
-        // 5. Microphone capture, RMS level measurement, and Auto-Ducking
-        ply.input_manager.process(
-            &mut self.scratch_music[..sample_count],
-            &mut self.scratch_voice[..sample_count],
-        );
-
-        // 6. Accumulate processed music and voice monitoring into super_flow
-        ply.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_music[..sample_count]);
-        ply.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_voice[..sample_count]);
-
-        // 7. Master True-Peak Brickwall Limiter & Soft-Knee Saturation Headroom
-        ply.master_limiter.process_frames(&mut self.super_flow[..sample_count]);
-
-        // 8. Symmetrical Output Dispatch to all active sinks
-        ply.output_manager.dispatch(
-            &self.super_flow[..sample_count],
-            &self.scratch_music[..sample_count],
-            ply.music_manager.active_deck_buffer(),
-            ply.music_manager.standby_buffer(),
-            output,
-            frame_count,
-        );
-    }
-}
 
 /// Master Miniaudio Player Coordinator.
 pub struct MiniaudioPlayer {
@@ -161,8 +29,11 @@ pub struct MiniaudioPlayer {
     pub master_limiter: SoftLimiter,
     pub output_manager: OutputManager,
 
-    pub device_ctx: *mut MapDeviceContext,
-    pub renderer_ptr: *mut MiniaudioPlayerRenderer,
+    // Real-Time Preallocated Scratch Buffers (O(1) L1 Cache)
+    pub scratch_music: Vec<f32>,
+    pub scratch_voice: Vec<f32>,
+    pub super_flow: Vec<f32>,
+
     pub sample_rate: u32,
     pub channels: usize,
     pub period_size: u32,
@@ -179,22 +50,6 @@ impl Drop for MiniaudioPlayer {
 
 impl MiniaudioPlayer {
     pub fn dispose(&mut self) {
-        if !self.device_ctx.is_null() {
-            unsafe {
-                map_device_stop(self.device_ctx);
-                map_device_destroy(self.device_ctx);
-            }
-            self.device_ctx = std::ptr::null_mut();
-        }
-
-        if !self.renderer_ptr.is_null() {
-            unsafe {
-                (*self.renderer_ptr).player_ptr = std::ptr::null_mut();
-                drop(Box::from_raw(self.renderer_ptr));
-            }
-            self.renderer_ptr = std::ptr::null_mut();
-        }
-
         self.music_manager.dispose();
         self.output_manager.dispose();
     }
@@ -218,11 +73,11 @@ impl MiniaudioPlayer {
         let input_manager = InputManager::new(sr, ch);
         let simd_mixer = SimdMixer::new();
         let master_limiter = SoftLimiter::new(true);
-        let output_manager = OutputManager::new(sr, ch);
+        let output_manager = OutputManager::new(sr, ch, device_trigger);
 
         let max_samples = period as usize * ch * 2;
 
-        let mut player = Box::new(Self {
+        Ok(Box::new(Self {
             music_manager,
             music_dsp,
             effects_manager,
@@ -231,58 +86,67 @@ impl MiniaudioPlayer {
             simd_mixer,
             master_limiter,
             output_manager,
-            device_ctx: std::ptr::null_mut(),
-            renderer_ptr: std::ptr::null_mut(),
-            sample_rate: sr,
-            channels: ch,
-            period_size: period,
-        });
-
-        let player_raw = &mut *player as *mut MiniaudioPlayer;
-
-        let renderer = Box::new(MiniaudioPlayerRenderer {
-            header: PcmRendererHeader {
-                render_fn: miniaudio_player_render_trampoline,
-                notif_fn: miniaudio_player_notif_trampoline,
-            },
-            player_ptr: player_raw,
             scratch_music: vec![0.0; max_samples],
             scratch_voice: vec![0.0; max_samples],
             super_flow: vec![0.0; max_samples],
             sample_rate: sr,
             channels: ch,
-            device_trigger,
-        });
+            period_size: period,
+        }))
+    }
 
-        let renderer_ptr = Box::into_raw(renderer);
-        player.renderer_ptr = renderer_ptr;
+    /// Renders one period of PCM frames across all active decks, effects, and microphone DSP,
+    /// then dispatches symmetrically to all active outputs, disk recording, and visualizer.
+    pub fn render_pcm(&mut self, frame_count: usize) {
+        let sample_count = frame_count * self.channels;
 
-        let mut dev_res = 0;
-        let device_ctx = unsafe {
-            map_device_create(
-                sr,
-                ch as u32,
-                period,
-                std::ptr::null(),
-                renderer_ptr as *mut c_void,
-                &mut dev_res,
-            )
-        };
-
-        if device_ctx.is_null() || dev_res != 0 {
-            unsafe {
-                drop(Box::from_raw(renderer_ptr));
-            }
-            return Err(format!("Hardware device initialization failed: error {}", dev_res));
+        if self.scratch_music.len() < sample_count {
+            self.scratch_music.resize(sample_count, 0.0);
+            self.scratch_voice.resize(sample_count, 0.0);
+            self.super_flow.resize(sample_count, 0.0);
         }
 
-        player.device_ctx = device_ctx;
+        self.super_flow[..sample_count].fill(0.0);
 
-        unsafe {
-            map_device_start(device_ctx);
-        }
+        // 1. Render fused music from decks into scratch_music
+        self.music_manager.render(frame_count, &mut self.scratch_music);
 
-        Ok(player)
+        // 2. Render RAM effects with In-Place Buffer Reuse
+        self.effects_manager.render_with_reuse(
+            &mut self.scratch_music,
+            &mut self.super_flow,
+            frame_count,
+        );
+
+        // 3. Process isolated SFX voices through their own DSP chain (if any)
+        let work_buf = self.effects_manager.work_buffer(sample_count);
+        self.isolate_dsp.process(work_buf);
+        self.simd_mixer.accumulate(&mut self.super_flow, work_buf);
+
+        // 4. Process music DSP (ReplayGain, SkipSilence, Sonic, EQ, Reverb)
+        self.music_dsp.process(&mut self.scratch_music[..sample_count]);
+
+        // 5. Microphone capture, RMS level measurement, and Auto-Ducking
+        self.input_manager.process(
+            &mut self.scratch_music[..sample_count],
+            &mut self.scratch_voice[..sample_count],
+        );
+
+        // 6. Accumulate processed music and voice monitoring into super_flow
+        self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_music[..sample_count]);
+        self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_voice[..sample_count]);
+
+        // 7. Master True-Peak Brickwall Limiter & Soft-Knee Saturation Headroom
+        self.master_limiter.process_frames(&mut self.super_flow[..sample_count]);
+
+        // 8. Symmetrical Output Dispatch to all active sinks
+        self.output_manager.dispatch(
+            &self.super_flow[..sample_count],
+            &self.scratch_music[..sample_count],
+            self.music_manager.active_deck_buffer(),
+            self.music_manager.standby_buffer(),
+            frame_count,
+        );
     }
 
     // =========================================================================
