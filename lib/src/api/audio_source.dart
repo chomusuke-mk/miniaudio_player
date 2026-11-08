@@ -1,9 +1,4 @@
-import 'dart:typed_data';
-
-import 'package:freezed_annotation/freezed_annotation.dart' show internal;
-
-import '../loader/custom_byte_provider.dart';
-import '../rust/api/types.dart' as rust_types;
+part of 'miniaudio_player.dart';
 
 /// Callback signature for supplying additional items when Infinite Mix reaches
 /// the end of the active queue in `LoopMode.off`.
@@ -22,7 +17,7 @@ typedef InfiniteMixProvider<T> = Future<List<AudioSource<T>>> Function(
 ///   or tokenized storage).
 ///
 /// Once in-memory [bytes] are transferred across the FFI bridge to the native Rust
-/// engine, Dart clears its local byte buffer reference via [clearBytes] so the Dart GC
+/// engine, Dart clears its local byte buffer reference via [_clearBytes] so the Dart GC
 /// can immediately reclaim heap memory while retaining the lightweight track metadata.
 class AudioSource<T> {
   int? _id;
@@ -35,11 +30,15 @@ class AudioSource<T> {
   /// Preserved by reference without cloning.
   final T? data;
 
+  double? _replayGainDb;
+
   /// Optional ReplayGain track loudness gain in decibels (e.g. `-6.5`).
-  final double? replayGainDb;
+  double? get replayGainDb => _replayGainDb;
+
+  double? _replayPeak;
 
   /// Optional ReplayGain linear peak amplitude (`1.0` = `0 dBFS`).
-  final double? replayPeak;
+  double? get replayPeak => _replayPeak;
 
   /// Local file path or remote network/HLS URI string, or `null` for memory/custom sources.
   final String? uri;
@@ -83,33 +82,27 @@ class AudioSource<T> {
     this.headers,
     this.customProvider,
     this.data,
-    this.replayGainDb,
-    this.replayPeak,
+    double? replayGainDb,
+    double? replayPeak,
     int? internalId,
     required bool isMemory,
     required int initialByteLength,
     required String sourceKey,
     required bool hasValidSource,
   })  : _id = internalId,
+        _replayGainDb = replayGainDb,
+        _replayPeak = replayPeak,
         _bytes = bytes,
         _isMemory = isMemory,
         _initialByteLength = initialByteLength,
         _sourceKey = sourceKey,
         _hasValidSource = hasValidSource;
 
-  /// > [!WARNING]
-  /// > Internal engine method. Application developers must NEVER invoke this directly.
-  /// > Track identifiers are assigned monotonically by the engine coordinator.
-  @internal
-  void attachEngineId(int newId) {
+  void _attachEngineId(int newId) {
     _id ??= newId;
   }
 
-  /// > [!WARNING]
-  /// > Internal engine method. Releases the Dart-side [Uint8List] byte reference once
-  /// > ownership has been transferred to native Rust memory.
-  @internal
-  void clearBytes() {
+  void _clearBytes() {
     _bytes = null;
   }
 

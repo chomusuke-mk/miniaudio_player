@@ -120,6 +120,37 @@ void main() {
       expect(player.state.replayGain.gainDb, closeTo(0.0, 0.01));
     });
 
+    test('setReplayGain updates targeted AudioSource by id, position and current track', () async {
+      final track1 = AudioSource('test/fixtures/salida.wav', id: 101, replayGainDb: -2.0, replayPeak: 0.9);
+      final track2 = AudioSource('test/fixtures/salida.wav', id: 102, replayGainDb: -4.0, replayPeak: 0.8);
+      await player.action.setQueue([track1, track2]);
+      await player.action.play();
+
+      expect(track1.replayGainDb, closeTo(-2.0, 0.01));
+      expect(track2.replayGainDb, closeTo(-4.0, 0.01));
+
+      // Update track1 by id
+      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -7.5, peak: 0.95), id: 101);
+      expect(track1.replayGainDb, closeTo(-7.5, 0.01));
+      expect(track1.replayPeak, closeTo(0.95, 0.01));
+      expect(track2.replayGainDb, closeTo(-4.0, 0.01));
+
+      // Update track2 by position
+      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -6.0, peak: 0.85), position: 1);
+      expect(track2.replayGainDb, closeTo(-6.0, 0.01));
+      expect(track2.replayPeak, closeTo(0.85, 0.01));
+
+      // Update current track (which is track1 at index 0) without specifying id or position
+      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -8.0, peak: 0.99));
+      expect(track1.replayGainDb, closeTo(-8.0, 0.01));
+      expect(track1.replayPeak, closeTo(0.99, 0.01));
+
+      // Clear track1 by id
+      await player.action.setReplayGain(null, id: 101);
+      expect(track1.replayGainDb, isNull);
+      expect(track1.replayPeak, isNull);
+    });
+
     test('Preamp control updates state and native engine independently', () async {
       expect(player.state.preamp, equals(0.0));
 

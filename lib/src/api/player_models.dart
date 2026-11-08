@@ -1,7 +1,7 @@
 import '../equalizer.dart';
 import '../reverb.dart';
-import 'audio_source.dart';
 import 'crossfade_config.dart';
+import 'miniaudio_player.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
 import 'spatial.dart';
 

@@ -13,7 +13,6 @@ import '../rust/api/types.dart' as rust_types;
 import '../rust/frb_generated.dart';
 import 'audio_analysis_result.dart';
 import 'audio_device.dart';
-import 'audio_source.dart';
 import 'buffer.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
@@ -26,6 +25,7 @@ import 'silence_skip_config.dart';
 import 'spatial.dart';
 import 'visualizer_data.dart';
 
+part 'audio_source.dart';
 part 'player_action.dart';
 part 'player_state.dart';
 part 'player_stream.dart';

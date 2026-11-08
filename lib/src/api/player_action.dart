@@ -61,13 +61,13 @@ class PlayerAction<T> {
     AudioSource<T> s,
   ) {
     final uniqueId = s.id ?? _player._nextSourceId++;
-    s.attachEngineId(uniqueId);
+    s._attachEngineId(uniqueId);
 
     final rustSource = _toRustSource(s, uniqueId);
 
     if (s.isMemory) {
       // Transfer byte payload ownership exclusively to Rust and release Dart heap buffer.
-      s.clearBytes();
+      s._clearBytes();
     } else if (s.customProvider != null) {
       final provider = s.customProvider!;
       _player._customProviders[uniqueId] = provider;
@@ -524,6 +524,32 @@ class PlayerAction<T> {
         id: id,
         position: position != null ? BigInt.from(position) : null,
       );
+
+      // Synchronize ReplayGain metadata on the targeted AudioSource
+      AudioSource<dynamic>? target;
+      if (id != null) {
+        target = _player._sourceRegistry[id];
+        if (target == null) {
+          for (final item in _player.state.queue) {
+            if (item.id == id) {
+              target = item;
+              break;
+            }
+          }
+        }
+      } else if (position != null) {
+        if (position >= 0 && position < _player.state.queue.length) {
+          target = _player.state.queue[position];
+        }
+      } else {
+        target = _player.state.currentItem;
+      }
+
+      if (target != null) {
+        target._replayGainDb = config?.gainDb;
+        target._replayPeak = config?.peak;
+      }
+
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
   }
@@ -609,7 +635,7 @@ class PlayerAction<T> {
     for (final effect in effects) {
       final rustSource = _toRustSource(effect.source, 0);
       if (effect.source.isMemory) {
-        effect.source.clearBytes();
+        effect.source._clearBytes();
       }
       rustEffects.add(
         rust_types.RustAudioEffect(
