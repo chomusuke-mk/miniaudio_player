@@ -200,6 +200,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Sets the Bauer binaural headphone crossfeed mode (0: off, 1: 44.1kHz, 2: 48kHz, 3: high).
   void setCrossfeed({required int mode});
 
+  /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
+  void setDefaultReplayGain({required double gainDb, required double peak});
+
   /// Enables or disables direct microphone monitoring to the main speaker output.
   void setDirectMonitoring({required bool enabled, required double volume});
 
@@ -265,7 +268,12 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   void setRate({required double rate});
 
   /// Applies ReplayGain loudness normalization settings.
-  void setReplayGain({required RustReplayGainConfig config});
+  /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
+  void setReplayGain(
+      {RustReplayGainConfig? config, PlatformInt64? id, BigInt? position});
+
+  /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
+  void setReplayGainMode({required int mode});
 
   /// Updates studio reverberation acoustic parameters.
   void setReverb({required RustReverbParams params});
@@ -274,7 +282,7 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   void setShuffle({required bool enabled});
 
   /// Configures automatic silence skipping and trimming parameters.
-  void setSkipSilence({required RustSilenceConfig config});
+  void setSilenceConfig({required RustSilenceConfig config});
 
   /// Enables or disables 3D stereo widening spatializer with width multiplier.
   void setSpatializer({required bool enabled, required double width});
@@ -346,8 +354,8 @@ class TelemetryFilter {
   /// Cached completion flag.
   final bool? isCompleted;
 
-  /// Cached ReplayGain settings tuple (gain bits, peak bits, enabled).
-  final (int, int, bool)? replayGain;
+  /// Cached ReplayGain settings tuple (gain bits, peak bits).
+  final (int, int)? replayGain;
 
   /// Cached raw ICY/ID3 metadata byte sequence.
   final Uint8List? metaBytes;

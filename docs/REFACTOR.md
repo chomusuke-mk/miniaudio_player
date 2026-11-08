@@ -1,251 +1,432 @@
-# Architecture Specification: Zero-Primary Symmetrical Output Architecture & Independent Engine Clock
+# Architecture Specification: Symmetrical Engine Core, Dynamic Silence Skipping & Per-Track ReplayGain SSOT
 
-> **Status:** Planned / Pending Implementation Approval  
-> **Scope:** Full-stack elimination of the "Primary Output" asymmetry, transition to 100% symmetrical output sinks, dedicated internal high-resolution engine clock (Heartbeat), and multi-rate/drift handling.  
-> **Backward Compatibility:** Zero legacy shims, zero aliases, full compliance with SSOT (`Set<AudioOutput>`).
-
----
-
-## 1. Executive Summary & Problem Statement
-
-### 1.1. The Legacy "Primary Device" Flaw
-In the original architecture inherited from single-device playback:
-1. `MiniaudioPlayer` maintained a dedicated hardware context `ply.device_ctx` (`map_device_create`) opened directly against the operating system.
-2. In `OutputManager`:
-   - `outputs[0]` was treated as the privileged "Primary Output", copied directly via raw memory pointers (`std::ptr::copy_nonoverlapping`) into DMA hardware memory.
-   - `outputs[1..N]` were treated as "Secondary Outputs", decoupled via SPSC ring buffers (`rtrb`).
-3. **Flaws introduced by this asymmetry**:
-   - **Forced Silence on Hardware**: When `outputs: {}` (pure recording or headless mode), `ply.device_ctx` had to remain open against the physical soundcard, filling its buffer with `0.0f32` (IEEE-754 silence) solely to keep the driver's interrupt callback ticking to advance the player's clock.
-   - **Fragile Clock Anchoring**: If the physical soundcard holding `outputs[0]` disconnected, the engine's clock stopped completely.
-   - **Code Duplication**: Mutating `outputs` required two completely different code paths (re-pointing `outputs[0]` via `map_device_set_device` vs allocating/destroying `ActiveOutputDevice` for `outputs[1..N]`).
-
-### 1.2. The New Architecture: Zero-Primary & Dedicated Engine Clock
-1. **Zero Primary Output**: No device is primary. Every physical device in `outputs` is an identical `ActiveOutputDevice`.
-2. **Zero Devices when `outputs: {}`**: When `outputs` is empty, **zero** `ma_device` instances are opened in the OS. The soundcard is not touched, no driver is initialized, and no silence is pumped to speakers.
-3. **Independent Real-Time Clock (Heartbeat Thread)**: A dedicated high-resolution timer thread drives `render_pcm` at the exact mathematical sample rate.
-4. **Independent SPSC Ring Buffers**: Each active output device has its own decoupled lock-free SPSC buffer, reading at its own native hardware cadence.
+> **Status:** Architecture Approved / Pending Implementation Approval  
+> **Scope:**
+> 1. Complete elimination of upfront `initialBytes` from Queue operations (`setQueue`, `append`, `insertNext`).
+> 2. Proactive Deck-Driven Pre-buffering (Next Track Standby Deck for Gapless & Crossfade).
+> 3. Unified Single-Pass Chunk Read: Header extraction + immediate circular ring buffer injection.
+> 4. High-Speed Concurrency & Instant Cancellation Engine (Zero-Debounce 400 Rapid `next()` stress resiliency).
+> 5. Asynchronous Crossfade & Buffering State Semantics (Manual slow-network crossfade vs automatic gapless).
+> 6. Asynchronous parallel metadata extraction (`metaBytes`) decoupled from real-time audio decoding.
+> 7. In-Memory Parsed Codec Structures (`Map<i64, TrackHeaderContext>`) replacing raw Head/Tail buffers.
+> 8. Scalability analysis: 1000 web elements in queue (0 sockets, 0 I/O on enqueue, $\mathcal{O}(1)$ performance).
+> 9. Silence detection & skipping unification (`SilenceSkipConfig.enabled` & unified `setSilenceConfig`).
+> 10. Per-track ReplayGain 100% managed by Rust (SSOT, track-level targeting, mode-driven).
+> 11. Zero-Primary Symmetrical Outputs & Dedicated Engine Clock (Implemented & Verified: 48/48 Rust, 253/253 Dart).
 
 ---
 
-## 2. Multi-Rate & Velocity Handling: Different Speeds Across Outputs
+## 1. Deep Analysis: Why `AudioSource.network` vs `file` vs `customProvider` had different flows
 
-How does the engine handle outputs demanding data at different speeds?
+### 1.1. The Root Cause of the Discrepancy
+Why did `AudioSource.network` seem not to require `initialBytes` while `customProvider` and `file` did?
 
-### 2.1. Scenario A: Different Hardware Sample Rates (e.g., 48 kHz vs 96 kHz)
-When Output 1 runs at 48,000 samples/sec and Output 2 runs at 96,000 samples/sec (literally $2\times$ the data consumption rate per second):
-- **Wall-Clock Musical Time**: Both outputs must play the song at normal speed ($1.0\times$ tempo). 1 second of music = 1 second of wall-clock time on both speakers.
-- **Sample Generation vs Consumption**:
-  - The engine's mixer and DSP pipeline renders at a master internal sample rate $F_{s,\text{engine}}$ (e.g. 48,000 Hz).
-  - Every 1024 frames rendered equals $\Delta t = \frac{1024}{48000} \approx 21.33\text{ ms}$.
-  - During that same 21.33 ms, Output 2 (96 kHz) requires $2048$ frames.
-- **Solution: Per-Device Resampler**:
-  - Each `ActiveOutputDevice` negotiates its own target rate with miniaudio.
-  - Miniaudio's internal `ma_resampler` (or Rust `rubato`) converts the engine's native 48 kHz frames into 96 kHz frames in the device's playback thread.
-  - SPSC ring buffer sizes are scaled proportionally to the device's sample rate:
-    $$\text{Capacity}_{\text{device}} = F_{s,\text{device}} \times \text{channels} \times \text{TargetBufferSeconds}$$
+| Source Type | Flow in Dart | Flow in Rust | Why did this difference exist? |
+| :--- | :--- | :--- | :--- |
+| **`AudioSource.network`** | Passes only the URL `String` across FFI. Zero I/O in Dart. | Receives URL string. Does **zero** I/O on `set_queue`. Only when Deck A or Deck B plays, Rust calls `prefetch_initial_stream_bytes` natively. | Dart doesn't own network sockets; Rust opens them natively on demand. |
+| **`AudioSource.file`** | Passes only the file path `String` across FFI. Zero I/O in Dart. | Receives path string. Does **zero** I/O on `set_queue`. When Deck A or Deck B plays, Rust opens `File::open` and reads 8 KB synchronously in $< 0.1\text{ ms}$. | Local filesystem access is native to Rust and ultra-fast. |
+| **`AudioSource(customProvider)`** | **(Old Flawed Flow)**: Dart awaited `readInitialBytes()` for **every** element in `setQueue` before sending `dataBytes` across FFI. | Expected `dataBytes` to be already populated in `RustAudioSource`. | `CustomByteProvider` lives in the Dart isolate. To avoid async blocking inside Rust's synchronous decode loop, Dart was pre-fetching bytes upfront at queue time. |
 
-### 2.2. Scenario B: Different Callback Period Sizes & Cadences (e.g., 256 vs 2048 frames)
-Even at the same sample rate (48 kHz), different OS soundcards and drivers request samples in different chunk sizes:
-- Device 1 (Low-latency USB interface): requests 256 frames every 5.33 ms.
-- Device 2 (Bluetooth / HDMI / Network): requests 2048 frames every 42.66 ms.
-- **Solution: Asynchronous SPSC Ring Buffers (`rtrb`)**:
-  - The producer (Heartbeat thread) writes chunks of 1024 frames into each device's producer.
-  - Device 1 reads in small frequent bursts of 256 frames.
-  - Device 2 reads in larger, less frequent bursts of 2048 frames.
-  - Because SPSC ring buffers are completely independent, Device 1 and Device 2 never block each other.
-
-### 2.3. Scenario C: Hardware Physical Clock Drift
-Two separate physical soundcards have independent quartz crystal oscillators. Even if both are set to 48,000 Hz, one might run at 48,001.2 Hz and the other at 47,998.7 Hz. Over 30 minutes, this would cause buffer overflow or underrun.
-- **Solution: Elastic Ring Buffer with Watermark Drift Compensation**:
-  - Each `ActiveOutputDevice` monitors its buffer fill level:
-    $$\text{Watermark} = \frac{\text{Available Frames in Ring Buffer}}{\text{Capacity}}$$
-  - **Nominal Target**: Watermark around 50%.
-  - If a device runs too fast (watermark drops below 25%): the device's callback inserts a micro-interpolated duplicate sample every few seconds (completely sub-audible).
-  - If a device runs too slow (watermark exceeds 75%): the device's callback drops 1 sample every few seconds.
-
-### 2.4. Scenario D: Different Musical Speeds (Deck A at 1.0x, Deck B Cueing at 2.0x)
-If a DJ wants to listen to the master mix on speakers at $1.0\times$ while cueing the standby track on headphones at $2.0\times$:
-- Deck A renders into `active_buffer` at $1.0\times$.
-- Deck B renders into `standby_buffer` with its own independent Sonic rate multiplier ($2.0\times$).
-- Output 1 routes `source: AudioOutputSource.all` (master at $1.0\times$).
-- Output 2 routes `source: AudioOutputSource.standbyTrack` (cueing at $2.0\times$).
-- Each stream maintains its own independent playback position and speed.
+### 1.2. The Flaw with the Old `customProvider` Approach
+Attempting to pre-read `initialBytes` during `setQueue` or `append` violates the principle of separation of concerns:
+1. **Queueing is metadata registration ($\mathcal{O}(1)$)**, NOT stream decoding.
+2. If 1,000 tracks with `CustomByteProvider` are added to a queue, triggering 1,000 reads upfront locks the UI, exhausts file descriptors / HTTP sockets, and consumes massive RAM for songs that may never be played.
+3. **Unification**: In the new architecture, **zero sources (neither network, nor file, nor customProvider) perform I/O during queue registration**.
 
 ---
 
-## 3. High-Level Architecture
+## 2. The Unified Proactive Buffering Engine (Zero Upfront InitialBytes)
+
+We unify all three sources (`network`, `file`, `customProvider`) under a single, proactive, high-efficiency architecture:
 
 ```mermaid
 graph TD
-    subgraph ClockSubsystem["Engine Clock Subsystem (Heartbeat)"]
-        ClockThread["Real-Time Heartbeat Thread (Instant + Sleep)"]
-        ClockThread -->|"Tick (every ~21.33 ms)"| RenderPcm["render_pcm(1024 frames)"]
+    subgraph QueueRegistration["1. Queue Registration (O(1) - Zero I/O)"]
+        UI["UI / Application"] -->|"setQueue([1000 items])"| DartQueue["Dart Queue Registry (O(1))"]
+        DartQueue -->|"set_queue(Vec<RustAudioSource>)"| RustQueueCore["Rust Queue: Vec<AudioSourceCore> (No I/O)"]
     end
 
-    subgraph AudioEngine["Audio Pipeline Core"]
-        RenderPcm --> Decks["Music Decks (A & B)"]
-        Decks --> StandbyBuf["standby_buffer (f32)"]
-        Decks --> ActiveBuf["active_buffer (f32)"]
-        Decks --> Crossfade["Crossfade Mixer"] --> MusicDSP["Music DSP (EQ, Reverb, Sonic)"] --> MusicMixBuf["music_mix_buffer (f32)"]
+    subgraph ProactiveDecks["2. Proactive Deck Buffering (Autonomous)"]
+        DeckA["Deck A (Currently Playing Track N)"]
+        DeckB["Deck B (Standby Pre-load Track N+1)"]
+        RustQueueCore -.->|"On Play Track N"| DeckA
+        DeckA -->|"Auto-triggers Standby on Track N+1"| DeckB
+    end
+
+    subgraph UnifiedChunk["3. Single-Pass Unified Chunk Pipeline"]
+        DeckB -->|"Fetch Chunk (e.g. 128 KB)"| ChunkReader["Unified Chunk Reader"]
+        ChunkReader -->|"1. Extract Header & Codec Params"| HeaderParser["Header & Boundary Sniffer"]
+        HeaderParser -->|"Store Parsed Metadata"| ContextMap["Map<TrackId, TrackHeaderContext> (< 1 KB RAM)"]
         
-        MusicMixBuf --> MasterMixer["Master SimdMixer"]
-        SFX["Polyphonic SFX Voices"] --> MasterMixer
-        Mic["Microphone / Ducking"] --> MasterMixer
-        MasterMixer --> Limiter["True-Peak Brickwall Limiter"] --> AllBuf["all_buffer (f32)"]
-    end
-
-    subgraph OutputManager["OutputManager (100% Symmetrical Sinks)"]
-        AllBuf --> OutRouter{"Source Router"}
-        MusicMixBuf --> OutRouter
-        ActiveBuf --> OutRouter
-        StandbyBuf --> OutRouter
-
-        OutRouter -- "source: all" --> Dev1Ring["SPSC RingBuffer 1"] --> Dev1["ma_device (Parlantes USB)"]
-        OutRouter -- "source: standbyTrack" --> Dev2Ring["SPSC RingBuffer 2"] --> Dev2["ma_device (Auriculares DJ)"]
-        OutRouter -- "source: musicMix" --> Dev3Ring["SPSC RingBuffer 3"] --> Dev3["ma_device (Monitores)"]
-        OutRouter -- "recording_source" --> RecRing["SPSC RingBuffer Rec"] --> LiveRec["LiveRecorder (WAV a Disco)"]
-        AllBuf --> Visualizer["FFT Spectrum Visualizer"]
+        ChunkReader -->|"2. Leftover Payload Bytes"| AudioFilter{"Belongs to Audio Start?"}
+        AudioFilter -- Yes --> CircularRing["Direct into Circular Audio Ring Buffer"]
+        
+        ChunkReader -->|"3. If metaBytes enabled"| AsyncMeta["Async Parallel Metadata Task"]
+        AsyncMeta -->|"Emit ID3 / Album Art"| DartMetaEvent["RustPlayerEvent::MetaBytes"]
     end
 ```
 
 ---
 
-## 4. Sequence Diagrams
+## 3. High-Speed Concurrency & Instant Cancellation Engine (Zero-Debounce 400 Rapid `next()` Resiliency)
 
-### 4.1. Headless / Pure Recording Lifecycle (`outputs: {}`)
+### 3.1. The Concurrency Problem: Rapid Switching Across Alternating Sources
+Consider a brutal real-world stress test:
+- The user taps `next()` 400 times in 2 seconds, rapidly cycling through alternating local files, high-bitrate remote HTTP streams, and custom DRM providers.
+- **Why naive players break or freeze**:
+  - In traditional engines, each `next()` triggers a background thread that connects to an HTTP socket or opens a file.
+  - Spawning 400 threads or socket connections rapidly leads to:
+    1. OS thread pool explosion.
+    2. Socket exhaustion (`EMFILE: Too many open files`).
+    3. Severe UI and audio stutter as obsolete threads consume CPU trying to parse files that were skipped milliseconds ago.
+  - Attempting to mask this with UI "debouncers" (e.g. delaying 300 ms before acting) degrades responsiveness and feels sluggish to the user.
+
+### 3.2. The Zero-Debounce Solution: Monotonic Epoch Generation + Hard Socket Kill
+
+The engine implements immediate, deterministic cancellation in $\mathcal{O}(1)$ time with **zero debounce timers**:
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant UI as Dart Application
-    participant Action as PlayerAction
-    participant Rust as RustMiniaudioPlayer
-    participant Clock as Engine Heartbeat Thread
-    participant OutMgr as OutputManager
-    participant Disk as LiveRecorder (Disk Writer Thread)
-    participant OS as OS Audio Subsystem (ALSA/WASAPI)
+    participant Core as MiniaudioPlayer Core
+    participant Deck as Target Deck (A or B)
+    participant Net as HTTP Socket / Worker Thread
+    participant FFI as Dart CustomByteProvider
 
-    Note over UI,OS: 1. Instantiation with outputs: {}
-    UI->>Action: MiniaudioPlayer(outputs: {})
-    Action->>Rust: RustMiniaudioPlayer::new(initial_outputs: [])
-    Rust->>OutMgr: set_outputs([])
-    Note over OutMgr,OS: Zero ma_device created! OS audio hardware is NEVER opened.
-    Rust->>Clock: Start Heartbeat Thread (Interval ~21.33 ms)
-    
-    Note over UI,OS: 2. Start Recording
-    UI->>Action: action.startRecording('/music/mix.wav', source: musicMix)
-    Action->>Rust: start_recording(..., source: 1)
-    Rust->>OutMgr: start_recording(...)
-    
-    Note over Clock,Disk: 3. Real-Time Processing Loop
-    loop Every ~21.33 ms
-        Clock->>Rust: render_pcm(1024 frames)
-        Rust->>OutMgr: dispatch(all, musicMix, active, standby)
-        Note over OutMgr: outputs list is empty -> Zero hardware writes!
-        OutMgr->>Disk: Push 1024 frames from musicMix to Recorder SPSC RingBuffer
-        Disk->>Disk: Write WAV PCM frames to disk
-    end
+    Note over UI,FFI: User calls next() on Track 1, then immediately next() to Track 2 ... Track 400
+    UI->>Core: next() -> Track 2
+    Core->>Deck: deck.epoch.fetch_add(1) [Epoch = 2]
+    Deck->>Net: Abort flag set + shutdown(Both) on active TCP socket
+    Note over Net: In-flight HTTP request for Track 1 is killed instantly (< 0.1 ms)!
+
+    UI->>Core: next() -> Track 3
+    Core->>Deck: deck.epoch.fetch_add(1) [Epoch = 3]
+    Note over Deck,Net: Track 2 connection killed before DNS completes!
+
+    Note over UI,FFI: Fast forward to Track 400...
+    UI->>Core: next() -> Track 400
+    Core->>Deck: deck.epoch.fetch_add(1) [Epoch = 400]
+    Deck->>Net: Open Track 400 socket with Epoch = 400
+    Note over Net,Deck: Only Track 400 executes; all 399 prior operations cleanly vanished!
 ```
 
-### 4.2. Symmetrical Dynamic Device Add / Remove
+#### Deterministic Cancellation Mechanics:
+1. **Monotonic Epoch Counter (`AtomicU64`)**:
+   - Each `StreamingDeck` maintains an atomic `epoch: AtomicU64`.
+   - Every invocation of `open_source`, `next()`, `previous()`, or `play(idx)` executes:
+     ```rust
+     let current_epoch = deck.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+     ```
+   - All worker threads, network read loops, and decoders check `deck.epoch.load(Ordering::Relaxed) == my_epoch`. If not equal, they exit immediately.
+2. **Hard Socket Abort via TCP Shutdown**:
+   - Instead of waiting for an HTTP read loop to time out (which could take 5–10 seconds), an atomic cancellation token holds a weak reference or handle to the active TCP stream.
+   - When aborted, the engine calls `socket.shutdown(Shutdown::Both)`.
+   - Any blocking OS `recv()` or `read()` in the worker thread returns `Err(ConnectionAborted)` **in 0 milliseconds**, instantly freeing the thread.
+3. **Dart FFI Request Invalidation (`requestId`)**:
+   - For `CustomDartByteSource`, every request emitted to Dart carries a monotonic `request_id: u64`.
+   - If superseded, `shared.pending_request_id` is updated. When Dart returns bytes over FFI for an obsolete `request_id`, Rust immediately discards the vector without locking or waking the decoder.
+4. **Instant Crossfade Retargeting**:
+   - If a crossfade was fading out towards an obsolete track that was immediately skipped, `crossfade.abort()` halts the pending transition and retargets the crossfade to the final destination track without piling up phantom audio voices.
+
+---
+
+## 4. Asynchronous Crossfade with Buffering State Semantics
+
+How does the engine handle crossfade transitions when the target track experiences network latency?
+
+### 4.1. The Challenge Scenario
+- **Given**:
+  - Track 1 is playing on Deck A.
+  - User triggers `next()` or `play(Track 4)` with a **2-second crossfade**.
+  - Track 4 is a remote web stream that takes **3 seconds to connect and buffer** its initial audio packets.
+
+### 4.2. Concrete Execution Timeline
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant UI as Dart Application
-    participant Action as PlayerAction
-    participant Rust as RustMiniaudioPlayer
-    participant OutMgr as OutputManager
-    participant OS as OS Audio Driver
-    participant Event as RustPlayerEvent Stream
+    participant UI as Dart Application (UI)
+    participant Core as Audio Engine Core
+    participant DeckA as Deck A (Track 1 - Outgoing)
+    participant DeckB as Deck B (Track 4 - Incoming)
+    participant Out as Master Symmetrical Output
 
-    Note over UI,Event: 1. Add Device dynamically
-    UI->>Action: action.addOutput(AudioOutput(deviceId: 'dac_usb', source: all))
-    Action->>Rust: _rust.addOutput(...)
-    Rust->>OutMgr: add_output(...)
-    OutMgr->>OutMgr: Allocate SPSC RingBuffer (Capacity = 48000 * 2 * 0.25)
-    OutMgr->>OS: map_device_create('dac_usb', callback_trampoline)
-    OutMgr->>OS: map_device_start(ctx)
-    Rust->>Event: emit(RustPlayerEvent::Outputs(active_outputs))
-    Event->>UI: stream.outputs emits updated Set
+    Note over UI,Out: t = 0.0s: User triggers next() with 2.0s crossfade
+    UI->>Core: next(crossfade: 2000ms)
+    Core->>UI: emit(CurrentIndex(4))
+    Core->>UI: emit(PlaybackState.buffering)
+    Note over UI: UI displays Track 4 with Buffering Spinner!
+    
+    Core->>DeckA: Start fade-out (Gain 1.0 -> 0.0 over 2.0s)
+    Core->>DeckB: Start async network connect & buffer (Track 4)
+    
+    Note over Core,Out: t = 0.0s to 2.0s: Track 1 smoothly fades out
+    loop Every 21.33 ms
+        DeckA->>Out: Renders PCM * Gain_A (fading out)
+        DeckB-->>Out: Zero samples rendered (Buffering in background)
+    end
 
-    Note over UI,Event: 2. Remove Device dynamically
-    UI->>Action: action.removeOutput(AudioOutput(deviceId: 'dac_usb'))
-    Action->>Rust: _rust.removeOutput(...)
-    Rust->>OutMgr: remove_output(...)
-    OutMgr->>OS: map_device_destroy(ctx)
-    OutMgr->>OutMgr: Drop SPSC RingBuffer
-    Rust->>Event: emit(RustPlayerEvent::Outputs(remaining_outputs))
-    Event->>UI: stream.outputs emits updated Set
+    Note over Core,Out: t = 2.0s: Crossfade duration has fully elapsed!
+    Core->>DeckA: Deck A volume reached 0.0 -> Stop Deck A
+    Note over Out: Audio output is now silence (Deck A stopped, Deck B still buffering)
+
+    Note over Core,Out: t = 3.0s: Track 4 finishes buffering initial chunk!
+    DeckB->>Core: Initial buffer ready (Ring buffer populated)
+    Core->>UI: emit(PlaybackState.playing)
+    Note over UI: Spinner disappears, UI shows Playing!
+    Core->>DeckB: Play at full volume (Gain = 1.0, crossfade elapsed)
+    DeckB->>Out: Stream Track 4 PCM at 1.0 volume!
 ```
 
----
+### 4.3. Mathematical Gain Envelope & Partial Overlap
+What happens if Track 4 finishes buffering **before** the 2-second crossfade expires (e.g. Track 4 is ready at $t = 1.0\text{ s}$)?
+- The engine's crossfade progress is tracked against real wall-clock time:
+  $$\text{Progress}(t) = \min\left(1.0, \frac{t}{\text{CrossfadeDuration}}\right)$$
+- At $t = 1.0\text{ s}$ (progress = 50%):
+  - Track 1 is at gain $0.5$.
+  - Track 4 begins rendering audio immediately at gain $0.5$, seamlessly blending in and ramping up to $1.0$ over the remaining 1.0 second.
+  - Zero clicks, zero volume jumps, continuous logarithmic/equal-power curve.
 
-## 5. Technical Specification & Implementation Plan
+### 4.4. Crucial Distinction: Manual Skip vs Automatic Gapless Transition
 
-### 5.1. Rust Core Engine Updates
-
-#### 5.1.1. Heartbeat Clock Thread (`rust/src/core/clock.rs`)
-A new dedicated module `EngineClock`:
-- Spawns a high-priority background thread: `map-engine-clock`.
-- Maintains an atomic boolean `running`.
-- Loop timing:
-  ```rust
-  let period_duration = Duration::from_secs_f64(frame_count as f64 / sample_rate as f64);
-  let mut next_tick = Instant::now();
-  while running.load(Ordering::Relaxed) {
-      next_tick += period_duration;
-      // 1. Render PCM frames
-      renderer.render_pcm(frame_count);
-      // 2. High-precision sleep to next_tick
-      let now = Instant::now();
-      if now < next_tick {
-          std::thread::sleep(next_tick - now);
-      } else {
-          // Compensate for scheduler latency if overrun
-          next_tick = now;
-      }
-  }
-  ```
-
-#### 5.1.2. `OutputManager` Refactoring (`rust/src/core/output_manager.rs`)
-- Remove `primary_device_ctx: *mut MapDeviceContext` argument from `set_outputs`.
-- Replace distinction between `outputs[0]` and `secondary_devices` with a single collection:
-  ```rust
-  pub struct OutputManager {
-      pub outputs: Vec<RustAudioOutput>,
-      pub active_devices: Vec<ActiveOutputDevice>,
-      pub live_recorder: Option<LiveRecorder>,
-      pub record_producer: Option<rtrb::Producer<f32>>,
-      ...
-  }
-  ```
-- In `dispatch`:
-  - No `primary_hardware_out: *mut f32` parameter.
-  - Symmetrical loop over all `active_devices`:
-    ```rust
-    for dev in &mut self.active_devices {
-        let src_slice = select_source(dev.source);
-        let _ = dev.producer.write_chunk_uncommitted(src_slice);
-    }
-    ```
-
-#### 5.1.3. C Bridge (`rust/src/c/bridge.c`)
-- Remove global single `MapDeviceContext` inside `MiniaudioPlayer`.
-- All `MapDeviceContext` instances are created dynamically inside `ActiveOutputDevice` on demand.
+| Transition Type | Deck B Status | Playback State Reported to UI | User Experience |
+| :--- | :--- | :--- | :--- |
+| **Manual User Skip (`next()`, `play(id)`)** | Not pre-buffered yet; connecting over network. | **`PlaybackState.buffering`** while connecting $\rightarrow$ switches to **`PlaybackState.playing`** when first audio frames are ready. | UI immediately updates track title and shows buffering indicator. Outgoing track fades out smoothly. |
+| **Automatic Natural End-of-Track Transition** | **Already 100% pre-buffered in RAM** by proactive Standby Deck while Track $N$ was playing. | **`PlaybackState.playing` continuously**. Never enters buffering! | Pure, uninterrupted seamless gapless crossfade. Zero wait, zero spinner. |
 
 ---
 
-## 6. Verification & Test Plan
+## 5. In-Memory Parsed Codec Context (`Map<i64, TrackHeaderContext>`) vs Raw Buffers
 
-1. **Unit Tests (Rust)**:
-   - Verify `EngineClock` maintains exact frame count over 10 seconds ($\pm 0.01\%$).
-   - Verify `outputs: {}` opens zero hardware handles.
-   - Verify multiple devices with different buffer sizes run without blocking.
-2. **Integration Tests (Dart)**:
-   - Verify `MiniaudioPlayer(outputs: {})` records WAV to disk with exact RIFF headers and audible content.
-   - Verify dynamic `setOutputs` with 0, 1, and 2 devices updates `stream.outputs` cleanly.
-3. **Static Analysis**:
-   - `cargo check --manifest-path rust/Cargo.toml`
-   - `dart analyze lib test --fatal-infos`
-   - `cargo test` and `flutter test`.
+### 5.1. Can Symphonia operate using a Parsed Struct instead of Raw Head Arrays?
+**Yes!** Let's examine Symphonia's internal decoding mechanics:
+1. Symphonia's format readers parse the raw container header into:
+   - `CodecParameters` (codec type, sample rate, channels, bit depth, extradata).
+   - `SeekIndex` (table mapping timestamp to seekable stream offsets).
+   - `Track` definitions.
+2. Once instantiated, the decoder (`Decoder::decode(&Packet)`) **never reads the raw header bytes again**. It strictly consumes audio packets (`reader.next_packet()`) from the audio payload.
+3. In the legacy `TripartiteBuffer`:
+   - A `head` segment allocated `256 KB` of raw bytes.
+   - For 10 active or cached streams, this consumed $2.5\text{ MB}$ of raw buffers just holding duplicate headers.
+4. **The New Solution: `TrackHeaderContext`**:
+   ```rust
+   pub struct TrackHeaderContext {
+       pub format_hint: Option<String>,
+       pub sample_rate: u32,
+       pub channels: u32,
+       pub duration_ms: Option<u64>,
+       pub audio_start_offset: u64,
+       pub codec_params: symphonia::core::codecs::CodecParameters,
+       pub seek_index: Option<symphonia::core::formats::SeekIndex>,
+   }
+   ```
+   - Size in RAM: **$< 1\text{ KB}$ per track** ($250\times$ less memory than raw buffers).
+   - Maintained in an active map: `HashMap<i64, Arc<TrackHeaderContext>>`.
+   - The playback stream uses a pure, efficient circular ring buffer (`RingSegment`) starting at `audio_start_offset`.
+
+### 5.2. Handling the "Tail" in MP4 Files
+- In unoptimized MP4 files (non-faststart), the `moov` atom (metadata and seek index) is stored at the end of the file.
+- If the source is seekable (local file or HTTP server supporting HTTP Range headers):
+  1. The engine reads the last 64 KB of the file.
+  2. Parses the `moov` atom into the `TrackHeaderContext`.
+  3. **Discards the raw tail bytes immediately**.
+  4. The decoder now has the seek table and can stream `mdat` directly into the circular ring buffer.
+
+---
+
+## 6. Scalability Analysis: 1,000 Web Elements in Queue
+
+### 6.1. Comparison of Enqueue Strategies
+
+| Metric / Behavior | Sequential `for (...) await` | Naive `Future.wait` (1000 items) | **New Proactive Lazy Engine** |
+| :--- | :--- | :--- | :--- |
+| **Enqueue Latency** | $1000 \times 150\text{ ms} = 150\text{ s}$ (Freeze) | $\sim 5\text{ s} - 15\text{ s}$ (Heavy spike) | **$< 5\text{ ms}$ ($\mathcal{O}(1)$ Descriptor registration)** |
+| **OS Sockets Open** | 1 sequential socket (Slow) | Up to 1000 concurrent sockets | **Zero sockets during enqueue** (Max 2 during playback) |
+| **Risk of OS `EMFILE`** | Low | **Critical Risk** (`Too many open files`) | **Zero Risk** |
+| **Server Rate-Limit (429)** | Medium | **Critical Risk** (DDoS trigger) | **Zero Risk** |
+| **RAM Consumed** | Up to 64 MB raw buffers | Up to 128 MB simultaneous buffers | **$< 200\text{ KB}$ (Descriptores de texto)** |
+| **UI / Event Loop Jitter** | UI frozen for minutes | Severe microtask contention | **Silky smooth 60/120 FPS** |
+
+---
+
+## 7. Unified Silence Skipping Architecture
+
+### 7.1. Model Definition: `SilenceSkipConfig`
+Silence detection and skipping is treated as a unified, first-class DSP effect with an explicit `enabled` property, matching `Reverb` and `Equalizer`:
+
+```dart
+class SilenceSkipConfig {
+  /// Whether dynamic silence skipping is actively processing audio.
+  final bool enabled;
+
+  /// Operational policy when enabled (trimEdges, continuous, all).
+  final SilenceSkipMode mode;
+
+  /// Silence detection threshold in dBFS (default -45.0 dBFS).
+  final double thresholdDb;
+
+  /// Minimum continuous silence before skipping triggers (default 300 ms).
+  final Duration minSilenceDuration;
+
+  /// Safety margin preserved before and after speech/audio (default 50 ms).
+  final Duration padding;
+
+  const SilenceSkipConfig({
+    this.enabled = false,
+    this.mode = SilenceSkipMode.continuous,
+    this.thresholdDb = -45.0,
+    this.minSilenceDuration = const Duration(milliseconds: 300),
+    this.padding = const Duration(milliseconds: 50),
+  });
+
+  static const SilenceSkipConfig off = SilenceSkipConfig(enabled: false);
+
+  const SilenceSkipConfig.continuous({
+    double thresholdDb = -45.0,
+    Duration minSilenceDuration = const Duration(milliseconds: 300),
+    Duration padding = const Duration(milliseconds: 50),
+  }) : this(
+         enabled: true,
+         mode: SilenceSkipMode.continuous,
+         thresholdDb: thresholdDb,
+         minSilenceDuration: minSilenceDuration,
+         padding: padding,
+       );
+
+  const SilenceSkipConfig.trimEdges({
+    double thresholdDb = -45.0,
+    Duration minSilenceDuration = const Duration(milliseconds: 300),
+    Duration padding = const Duration(milliseconds: 50),
+  }) : this(
+         enabled: true,
+         mode: SilenceSkipMode.trimEdges,
+         thresholdDb: thresholdDb,
+         minSilenceDuration: minSilenceDuration,
+         padding: padding,
+       );
+
+  const SilenceSkipConfig.all({
+    double thresholdDb = -45.0,
+    Duration minSilenceDuration = const Duration(milliseconds: 300),
+    Duration padding = const Duration(milliseconds: 50),
+  }) : this(
+         enabled: true,
+         mode: SilenceSkipMode.all,
+         thresholdDb: thresholdDb,
+         minSilenceDuration: minSilenceDuration,
+         padding: padding,
+       );
+}
+```
+
+### 7.2. Action Unification
+- **In Dart**: A single clean method in `PlayerAction`:
+  ```dart
+  Future<void> setSilenceConfig(SilenceSkipConfig config);
+  ```
+  *(Legacy `setSkipSilence(dynamic)` is deleted).*
+- **In Rust**:
+  ```rust
+  pub fn set_silence_config(&self, config: RustSilenceConfig) -> Result<(), String>;
+  ```
+  When `enabled == false`, the native DSP bypasses silence detection and skipping entirely.
+
+---
+
+## 8. Per-Track ReplayGain 100% Managed by Rust (SSOT)
+
+### 8.1. Architectural Rationale
+- ReplayGain metadata is a property of each track in the queue (`AudioSourceCore`).
+- Rust is the single source of truth (SSOT). Rust autonomously applies ReplayGain on track changes, seeks, mode switches, and queue modifications.
+- Dart never performs manual calculations or calls `applyCurrentTrackReplayGain()`.
+
+### 8.2. Simplified `ReplayGainConfig`
+```dart
+class ReplayGainConfig {
+  /// Track gain adjustment in decibels relative to target LUFS (e.g. -6.5 dB).
+  final double gainDb;
+
+  /// True peak amplitude of the track (1.0 represents 0 dBFS).
+  final double peak;
+
+  const ReplayGainConfig({
+    required this.gainDb,
+    this.peak = 1.0,
+  });
+}
+```
+In Rust:
+```rust
+pub struct RustReplayGainConfig {
+    pub gain_db: f32,
+    pub peak: f32,
+}
+```
+
+### 8.3. Operating Modes (`ReplayGainMode`)
+- `disabled`: Unity gain ($0.0\text{ dB}$). DSP disabled.
+- `track`: Uses each track's individual `ReplayGainConfig`. Falls back to `defaultReplayGain` if missing.
+- `forced`: Forces all tracks to use `defaultReplayGain`.
+
+### 8.4. Method Signature in `PlayerAction`
+```dart
+Future<void> setReplayGain(
+  ReplayGainConfig? config, {
+  int? id,
+  int? position,
+});
+```
+- Targets `id` $\rightarrow$ `position` $\rightarrow$ `current`.
+- Passing `null` removes/clears the configuration for that item.
+- If the item is currently playing, Rust updates the DSP immediately.
+
+### 8.5. Eliminated vs Retained APIs
+- **Deleted**:
+  - `setForcedReplayGain(double?)`
+  - `applyCurrentTrackReplayGain()`
+  - `clearReplayGain()`
+  - `PlayerState.forcedReplayGain`
+  - `setSkipSilence(dynamic)`
+- **Retained & Upgraded**:
+  - `setDefaultReplayGain(double gainDb, {double peak = 1.0})`
+  - `setReplayGainMode(ReplayGainMode mode)`
+  - `setReplayGain(ReplayGainConfig? config, {int? id, int? position})`
+  - `setSilenceConfig(SilenceSkipConfig config)`
+
+---
+
+## 9. Implementation Step-by-Step Plan
+
+### Phase 1: Proactive Zero-I/O Queue, Instant Cancellation & SilenceSkip
+1. **Dart**:
+   - In `PlayerAction`: Eliminate `readInitialBytes` calls during `setQueue`, `append`, `insertNext`. Queueing is 100% synchronous descriptor creation ($\mathcal{O}(1)$).
+   - Update `SilenceSkipConfig`: add `enabled`, update constructors, remove `setSkipSilence`.
+   - Update `setSilenceConfig(SilenceSkipConfig config)`.
+2. **Rust**:
+   - Integrate monotonic `epoch: AtomicU64` and hard TCP abort tokens (`socket.shutdown`) for instant cancellation of superseded streams (tested under 400 rapid skips).
+   - Implement asynchronous crossfade gain computation decoupling from buffering state.
+   - Update `RustSilenceConfig` and `dsp::silence::SilenceConfig` with `enabled: bool`.
+   - Update `set_silence_config`.
+
+### Phase 2: Per-Track ReplayGain 100% SSOT in Rust
+1. **Rust Core**:
+   - Simplify `RustReplayGainConfig` (`gain_db`, `peak`).
+   - Store `default_replay_gain: (f32, f32)` and `replay_gain_mode: u32`.
+   - Implement `recalculate_and_apply_replay_gain(&mut self)` to update DSP.
+   - Implement `set_replay_gain(&self, config: Option<RustReplayGainConfig>, id: Option<i64>, position: Option<usize>)`.
+   - Implement `set_replay_gain_mode(&self, mode: u32)`.
+   - Implement `set_default_replay_gain(&self, gain_db: f32, peak: f32)`.
+   - Hook into track transitions (`sync_deck_replay_gain`).
+2. **Dart API**:
+   - Update `ReplayGainConfig` (only `gainDb`, `peak`).
+   - Remove `forcedReplayGain` from `PlayerState`.
+   - Remove `setForcedReplayGain`, `applyCurrentTrackReplayGain`, `clearReplayGain`.
+   - Update `setReplayGain`, `setReplayGainMode`, `setDefaultReplayGain`.
+   - Remove manual event listeners calling `applyCurrentTrackReplayGain()`.
+
+### Phase 3: Verification & Test Suite
+1. Run `cargo check` and `cargo test` in `rust/`.
+2. Run `flutter_rust_bridge_codegen generate`.
+3. Update unit and integration tests in `test/`.
+4. Run `dart analyze lib test` and `flutter test`.

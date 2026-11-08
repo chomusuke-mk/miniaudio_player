@@ -150,10 +150,6 @@ pub struct RustReplayGainConfig {
     pub gain_db: f32,
     /// Absolute true peak amplitude.
     pub peak: f32,
-    /// Whether clipping prevention is active to prevent exceeding digital full scale.
-    pub prevent_clipping: bool,
-    /// Whether ReplayGain is actively applied.
-    pub enabled: bool,
 }
 
 impl From<crate::dsp::equalizer::ReplayGainConfig> for RustReplayGainConfig {
@@ -161,8 +157,17 @@ impl From<crate::dsp::equalizer::ReplayGainConfig> for RustReplayGainConfig {
         Self {
             gain_db: rg.gain_db,
             peak: rg.peak,
-            prevent_clipping: rg.prevent_clipping != 0,
-            enabled: rg.enabled != 0,
+        }
+    }
+}
+
+impl From<RustReplayGainConfig> for crate::dsp::equalizer::ReplayGainConfig {
+    fn from(c: RustReplayGainConfig) -> Self {
+        Self {
+            gain_db: c.gain_db,
+            peak: c.peak,
+            prevent_clipping: 1,
+            enabled: 1,
         }
     }
 }
@@ -222,7 +227,7 @@ impl From<crate::dsp::silence::SilenceConfig> for RustSilenceConfig {
             threshold_db: sc.threshold_db,
             min_silence_duration_ms: sc.min_silence_duration_ms,
             padding_ms: sc.padding_ms,
-            enabled: sc.mode != crate::dsp::silence::SilenceMode::Disabled,
+            enabled: sc.enabled,
         }
     }
 }
@@ -236,6 +241,7 @@ impl From<RustSilenceConfig> for crate::dsp::silence::SilenceConfig {
             _ => crate::dsp::silence::SilenceMode::Disabled,
         };
         Self {
+            enabled: config.enabled,
             mode,
             threshold_db: config.threshold_db,
             min_silence_duration_ms: config.min_silence_duration_ms,
@@ -985,8 +991,13 @@ pub enum RustPlayerEvent {
     IsCompleted(bool),
     /// Tripartite ring buffer telemetry metrics.
     Buffer(RustBuffer),
-    /// Playlist queue track IDs in active playback order.
-    Queue(Vec<i64>),
+    /// Playlist queue track IDs in active playback order and current queue index.
+    Queue {
+        /// Active queue track IDs.
+        queue: Vec<i64>,
+        /// Active queue index (-1 if none or uninitialized).
+        current_index: i32,
+    },
     /// Active playlist queue index (-1 when none/uninitialized).
     CurrentIndex(i32),
     /// Whether an overlap crossfade transition is active.
@@ -1021,6 +1032,10 @@ pub enum RustPlayerEvent {
     Preamp(f32),
     /// Active ReplayGain loudness normalization settings.
     ReplayGain(RustReplayGainConfig),
+    /// Active ReplayGain operating mode (0: disabled, 1: track, 2: forced).
+    ReplayGainMode(u32),
+    /// Default ReplayGain fallback adjustment in dB.
+    DefaultReplayGain(f32),
     /// Bauer binaural crossfeed mode code.
     Crossfeed(i32),
     /// 3D stereo widening spatializer state.

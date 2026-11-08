@@ -47,26 +47,10 @@ class PlayerAction<T> {
     return completer.future;
   }
 
-  bool _volumeNormalization = true;
-  double _defaultReplayGain = 0.0;
-  double? _forcedReplayGain;
-  ReplayGainMode _replayGainMode = ReplayGainMode.track;
-
-  double? _effectiveReplayGain(AudioSource<dynamic> source) {
-    if (!_volumeNormalization) return null;
-    if (_replayGainMode == ReplayGainMode.forced && _forcedReplayGain != null) {
-      return _forcedReplayGain;
-    }
-    return source.replayGainDb ??
-        (_defaultReplayGain != 0.0 ? _defaultReplayGain : null);
-  }
-
   rust_types.RustAudioSource _toRustSource(
     AudioSource<dynamic> s,
-    int id, [
-    Uint8List? initBytes,
-  ]) {
-    final gain = _effectiveReplayGain(s);
+    int id,
+  ) {
     if (s.customProvider != null) {
       final provider = s.customProvider!;
       final streamId = provider.streamId != 0 ? provider.streamId : id;
@@ -76,8 +60,8 @@ class PlayerAction<T> {
       return rust_types.RustAudioSource(
         id: id,
         source: url,
-        dataBytes: initBytes,
-        replayGainDb: gain,
+        dataBytes: null,
+        replayGainDb: s.replayGainDb,
         replayPeak: s.replayPeak,
       );
     }
@@ -87,20 +71,19 @@ class PlayerAction<T> {
       source: raw.source,
       headers: raw.headers,
       dataBytes: raw.dataBytes,
-      replayGainDb: gain,
+      replayGainDb: s.replayGainDb,
       replayPeak: raw.replayPeak,
     );
   }
 
   (AudioSource<T> retained, rust_types.RustAudioSource rustSource)
       _prepareSource(
-    AudioSource<T> s, [
-    Uint8List? customInitBytes,
-  ]) {
+    AudioSource<T> s,
+  ) {
     final uniqueId = s.id ?? _player.nextSourceId++;
     s.attachEngineId(uniqueId);
 
-    final rustSource = _toRustSource(s, uniqueId, customInitBytes);
+    final rustSource = _toRustSource(s, uniqueId);
 
     if (s.isMemory) {
       // Transfer byte payload ownership exclusively to Rust and release Dart heap buffer.
@@ -173,7 +156,6 @@ class PlayerAction<T> {
           if (e is MiniaudioPlayerException) rethrow;
           throw MiniaudioPlayerException.fromRustError(e);
         }
-        await applyCurrentTrackReplayGain();
         _player.checkInfiniteMix();
         await Future<void>.delayed(const Duration(milliseconds: 10));
       });
@@ -222,12 +204,7 @@ class PlayerAction<T> {
       final normalized = <AudioSource<T>>[];
       final rustSources = <rust_types.RustAudioSource>[];
       for (var i = 0; i < sources.length; i++) {
-        final s = sources[i];
-        Uint8List? initBytes;
-        if (s.customProvider != null) {
-          initBytes = await s.customProvider!.readInitialBytes();
-        }
-        final (retained, rustSource) = _prepareSource(s, initBytes);
+        final (retained, rustSource) = _prepareSource(sources[i]);
         normalized.add(retained);
         rustSources.add(rustSource);
       }
@@ -242,7 +219,6 @@ class PlayerAction<T> {
         throw MiniaudioPlayerException.fromRustError(e);
       }
 
-      await applyCurrentTrackReplayGain();
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
   }
@@ -255,11 +231,7 @@ class PlayerAction<T> {
     final normalized = <AudioSource<T>>[];
     final rustSources = <rust_types.RustAudioSource>[];
     for (final s in sources) {
-      Uint8List? initBytes;
-      if (s.customProvider != null) {
-        initBytes = await s.customProvider!.readInitialBytes();
-      }
-      final (retained, rustSource) = _prepareSource(s, initBytes);
+      final (retained, rustSource) = _prepareSource(s);
       normalized.add(retained);
       rustSources.add(rustSource);
     }
@@ -274,11 +246,7 @@ class PlayerAction<T> {
   /// Inserts a track immediately after the active playing track.
   Future<void> insertNext(AudioSource<T> source) async {
     _player.ensureNotDisposed();
-    Uint8List? initBytes;
-    if (source.customProvider != null) {
-      initBytes = await source.customProvider!.readInitialBytes();
-    }
-    final (retained, rustSource) = _prepareSource(source, initBytes);
+    final (retained, rustSource) = _prepareSource(source);
     final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
     final curIdx = _player.state.currentIndex;
     final insertIdx = (curIdx != null && curIdx >= 0 && curIdx < currentQueue.length)
@@ -371,7 +339,6 @@ class PlayerAction<T> {
               ? BigInt.from(crossfadeDuration.inMilliseconds)
               : null,
         );
-        await applyCurrentTrackReplayGain();
         _player.checkInfiniteMix();
         await Future<void>.delayed(Duration.zero);
       });
@@ -380,7 +347,6 @@ class PlayerAction<T> {
   Future<void> previous() => _serialize(() async {
         _player.ensureNotDisposed();
         await _rust.previous();
-        await applyCurrentTrackReplayGain();
         _player.checkInfiniteMix();
         await Future<void>.delayed(Duration.zero);
       });
@@ -545,68 +511,43 @@ class PlayerAction<T> {
   }
 
   /// Configures intelligent silence detection and skipping.
-  Future<void> setSkipSilence(dynamic configOrEnabled) async {
+  Future<void> setSilenceConfig(SilenceSkipConfig config) async {
     _player.ensureNotDisposed();
-    final SilenceSkipConfig config;
-    if (configOrEnabled is bool) {
-      config = configOrEnabled
-          ? const SilenceSkipConfig.continuous()
-          : const SilenceSkipConfig(mode: SilenceSkipMode.disabled);
-    } else if (configOrEnabled is SilenceSkipConfig) {
-      config = configOrEnabled;
-    } else {
-      throw ArgumentError(
-        'Expected bool or SilenceSkipConfig, got $configOrEnabled',
-      );
-    }
-
-    _rust.setSkipSilence(
+    _rust.setSilenceConfig(
       config: rust_types.RustSilenceConfig(
         thresholdDb: config.thresholdDb,
         minSilenceDurationMs: config.minSilenceDuration.inMilliseconds,
         paddingMs: config.padding.inMilliseconds,
-        enabled: config.mode != SilenceSkipMode.disabled,
+        enabled: config.enabled,
         mode: config.mode.value,
       ),
     );
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Sets detailed silence skipping configuration.
-  Future<void> setSilenceConfig(SilenceSkipConfig config) =>
-      setSkipSilence(config);
-
-  /// Configures ReplayGain / EBU R128 track loudness normalization.
-  Future<void> setReplayGain({
-    ReplayGainConfig? config,
-    double? gainDb,
-    double? peak,
-    bool preventClipping = true,
-    bool enabled = true,
-    bool force = false,
+  /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
+  ///
+  /// Targets the item with [id] or at [position]. If neither is given, targets the currently playing track.
+  /// If [config] is `null`, any track-specific ReplayGain configuration is removed.
+  Future<void> setReplayGain(
+    ReplayGainConfig? config, {
+    int? id,
+    int? position,
   }) async {
     _player.ensureNotDisposed();
     return _serialize(() async {
-      final effEnabled = config?.enabled ?? enabled;
-      final effGain = config?.gainDb ?? gainDb ?? 0.0;
-      final effPeak = config?.peak ?? peak ?? 0.0;
-      final effPrevent = config?.preventClipping ?? preventClipping;
       _rust.setReplayGain(
-        config: rust_types.RustReplayGainConfig(
-          gainDb: effGain,
-          peak: effPeak,
-          preventClipping: effPrevent,
-          enabled: effEnabled,
-        ),
+        config: config != null
+            ? rust_types.RustReplayGainConfig(
+                gainDb: config.gainDb,
+                peak: config.peak,
+              )
+            : null,
+        id: id,
+        position: position != null ? BigInt.from(position) : null,
       );
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
-  }
-
-  /// Clears active ReplayGain track normalization.
-  Future<void> clearReplayGain() async {
-    _player.ensureNotDisposed();
-    await setReplayGain(enabled: false);
   }
 
   /// Sets preamplifier gain in decibels.
@@ -633,79 +574,23 @@ class PlayerAction<T> {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Sets default ReplayGain fallback.
-  Future<void> setDefaultReplayGain(double gainDb) async {
+  /// Sets default ReplayGain fallback adjustment in dB and peak.
+  Future<void> setDefaultReplayGain(double gainDb, {double peak = 1.0}) async {
     _player.ensureNotDisposed();
-    _defaultReplayGain = gainDb;
-    _player.state.defaultReplayGain = gainDb;
-    await applyCurrentTrackReplayGain();
-  }
-
-  /// Sets forced ReplayGain override.
-  Future<void> setForcedReplayGain(double? gainDb) async {
-    _player.ensureNotDisposed();
-    _forcedReplayGain = gainDb;
-    _replayGainMode =
-        gainDb != null ? ReplayGainMode.forced : ReplayGainMode.track;
-    _player.state.forcedReplayGain = gainDb ?? 0.0;
-    _player.state.replayGainMode = _replayGainMode;
-    await applyCurrentTrackReplayGain();
+    _rust.setDefaultReplayGain(gainDb: gainDb, peak: peak);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Sets ReplayGain calculation mode.
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
     _player.ensureNotDisposed();
-    _replayGainMode = mode;
-    _player.state.replayGainMode = mode;
-    await applyCurrentTrackReplayGain();
+    _rust.setReplayGainMode(mode: mode.index);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Toggles automatic ReplayGain loudness normalization.
-  Future<void> setVolumeNormalization(bool enabled) async {
-    _player.ensureNotDisposed();
-    _volumeNormalization = enabled;
-    _player.state.volumeNormalization = enabled;
-    await applyCurrentTrackReplayGain();
-  }
-
-  /// Applies ReplayGain settings for the currently active track (or initial queued track).
-  Future<void> applyCurrentTrackReplayGain() async {
-    if (!_volumeNormalization) {
-      _rust.setReplayGain(
-        config: const rust_types.RustReplayGainConfig(
-          gainDb: 0.0,
-          peak: 1.0,
-          preventClipping: true,
-          enabled: false,
-        ),
-      );
-      await Future<void>.delayed(Duration.zero);
-      return;
-    }
-    double effectiveGain = 0.0;
-    double effectivePeak = 1.0;
-    if (_replayGainMode == ReplayGainMode.forced && _forcedReplayGain != null) {
-      effectiveGain = _forcedReplayGain!;
-    } else {
-      final curItem = _player.state.currentItem ??
-          (_player.state.queue.isNotEmpty ? _player.state.queue.first : null);
-      if (curItem?.replayGainDb != null) {
-        effectiveGain = curItem!.replayGainDb!;
-        effectivePeak = curItem.replayPeak ?? 1.0;
-      } else {
-        effectiveGain = _defaultReplayGain;
-      }
-    }
-    _rust.setReplayGain(
-      config: rust_types.RustReplayGainConfig(
-        gainDb: effectiveGain,
-        peak: effectivePeak,
-        preventClipping: true,
-        enabled: effectiveGain != 0.0,
-      ),
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  }
+  Future<void> setVolumeNormalization(bool enabled) =>
+      setReplayGainMode(enabled ? ReplayGainMode.track : ReplayGainMode.disabled);
 
   /// Configures resilience behavior when audio playback devices change.
   Future<void> setPauseOnDeviceChange(bool enabled) async {

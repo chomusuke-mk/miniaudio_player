@@ -380,6 +380,14 @@ impl CustomByteSourceHandle {
             cvar.notify_all();
         }
     }
+
+    /// Aborts any pending read operation immediately.
+    pub fn abort(&self) {
+        let (lock, cvar) = &*self.shared;
+        let mut guard = lock.lock().unwrap();
+        guard.received_data = Some(Err("Aborted".to_string()));
+        cvar.notify_all();
+    }
 }
 
 /// Asynchronous Pull-with-Prefetch byte source interfacing with Dart DRM or custom decoders.

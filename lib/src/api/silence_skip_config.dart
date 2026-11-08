@@ -33,6 +33,9 @@ enum SilenceSkipMode {
 
 /// Configuration settings for dynamic silence detection and skipping.
 class SilenceSkipConfig {
+  /// Whether dynamic silence skipping is actively processing audio.
+  final bool enabled;
+
   /// The operational mode of the silence detector.
   final SilenceSkipMode mode;
 
@@ -55,11 +58,16 @@ class SilenceSkipConfig {
 
   /// Creates a [SilenceSkipConfig] with optional settings.
   const SilenceSkipConfig({
+    this.enabled = false,
     this.mode = SilenceSkipMode.disabled,
     this.thresholdDb = -45.0,
     this.minSilenceDuration = const Duration(milliseconds: 300),
     this.padding = const Duration(milliseconds: 50),
   });
+
+  /// Convenience constructor for disabled silence skipping.
+  const SilenceSkipConfig.off()
+      : this(enabled: false, mode: SilenceSkipMode.disabled);
 
   /// Convenience constructor for edge trimming only (music / gapless).
   const SilenceSkipConfig.trimEdges({
@@ -67,6 +75,7 @@ class SilenceSkipConfig {
     Duration minSilenceDuration = const Duration(milliseconds: 300),
     Duration padding = const Duration(milliseconds: 50),
   }) : this(
+          enabled: true,
           mode: SilenceSkipMode.trimEdges,
           thresholdDb: thresholdDb,
           minSilenceDuration: minSilenceDuration,
@@ -79,6 +88,7 @@ class SilenceSkipConfig {
     Duration minSilenceDuration = const Duration(milliseconds: 300),
     Duration padding = const Duration(milliseconds: 50),
   }) : this(
+          enabled: true,
           mode: SilenceSkipMode.continuous,
           thresholdDb: thresholdDb,
           minSilenceDuration: minSilenceDuration,
@@ -91,6 +101,7 @@ class SilenceSkipConfig {
     Duration minSilenceDuration = const Duration(milliseconds: 300),
     Duration padding = const Duration(milliseconds: 50),
   }) : this(
+          enabled: true,
           mode: SilenceSkipMode.all,
           thresholdDb: thresholdDb,
           minSilenceDuration: minSilenceDuration,
@@ -99,12 +110,14 @@ class SilenceSkipConfig {
 
   /// Creates a copy with the given fields replaced.
   SilenceSkipConfig copyWith({
+    bool? enabled,
     SilenceSkipMode? mode,
     double? thresholdDb,
     Duration? minSilenceDuration,
     Duration? padding,
   }) {
     return SilenceSkipConfig(
+      enabled: enabled ?? this.enabled,
       mode: mode ?? this.mode,
       thresholdDb: thresholdDb ?? this.thresholdDb,
       minSilenceDuration: minSilenceDuration ?? this.minSilenceDuration,
@@ -114,12 +127,14 @@ class SilenceSkipConfig {
 
   /// Creates a [SilenceSkipConfig] from raw fields.
   factory SilenceSkipConfig.fromRaw({
+    bool enabled = true,
     required int mode,
     required double thresholdDb,
     required int minSilenceDurationMs,
     required int paddingMs,
   }) {
     return SilenceSkipConfig(
+      enabled: enabled,
       mode: SilenceSkipMode.fromValue(mode),
       thresholdDb: thresholdDb,
       minSilenceDuration: Duration(milliseconds: minSilenceDurationMs),
@@ -135,6 +150,7 @@ class SilenceSkipConfig {
     final maxPad = minMs ~/ 2;
     final padMs = padding.inMilliseconds.clamp(0, maxPad);
     return SilenceSkipConfig(
+      enabled: enabled,
       mode: mode,
       thresholdDb: clampedThreshold,
       minSilenceDuration: Duration(milliseconds: minMs),
@@ -147,6 +163,7 @@ class SilenceSkipConfig {
       identical(this, other) ||
       other is SilenceSkipConfig &&
           runtimeType == other.runtimeType &&
+          enabled == other.enabled &&
           mode == other.mode &&
           thresholdDb == other.thresholdDb &&
           minSilenceDuration == other.minSilenceDuration &&
@@ -154,9 +171,9 @@ class SilenceSkipConfig {
 
   @override
   int get hashCode =>
-      Object.hash(mode, thresholdDb, minSilenceDuration, padding);
+      Object.hash(enabled, mode, thresholdDb, minSilenceDuration, padding);
 
   @override
   String toString() =>
-      'SilenceSkipConfig(mode: $mode, thresholdDb: ${thresholdDb}dB, minSilenceDuration: ${minSilenceDuration.inMilliseconds}ms, padding: ${padding.inMilliseconds}ms)';
+      'SilenceSkipConfig(enabled: $enabled, mode: $mode, thresholdDb: ${thresholdDb}dB, minSilenceDuration: ${minSilenceDuration.inMilliseconds}ms, padding: ${padding.inMilliseconds}ms)';
 }

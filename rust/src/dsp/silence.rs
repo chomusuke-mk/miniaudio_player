@@ -24,6 +24,8 @@ impl Default for SilenceMode {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SilenceConfig {
+    /// Whether dynamic silence skipping is enabled.
+    pub enabled: bool,
     /// Operational mode policy (`SilenceMode`).
     pub mode: SilenceMode,
     /// Silence detection threshold in decibels full scale (e.g. -45.0 dBFS).
@@ -37,6 +39,7 @@ pub struct SilenceConfig {
 impl Default for SilenceConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             mode: SilenceMode::Disabled,
             threshold_db: -45.0,
             min_silence_duration_ms: 300,
@@ -111,9 +114,12 @@ impl SilenceDetector {
     /// Reconfigures silence detection thresholds, mode, and padding durations.
     pub fn set_config(&mut self, config: SilenceConfig) {
         let prev_mode = self.config.mode;
+        let prev_enabled = self.config.enabled;
         self.config = config;
         self.update_params();
-        if prev_mode != config.mode
+        if !config.enabled {
+            self.reset(true);
+        } else if (!prev_enabled || prev_mode != config.mode)
             && matches!(config.mode, SilenceMode::TrimEdges | SilenceMode::All)
             && self.silence_saved_frames == 0
         {
@@ -201,7 +207,7 @@ impl SilenceDetector {
         let input_frames = input.len() / self.channels;
         let output_frames_cap = output.len() / self.channels;
 
-        if self.config.mode == SilenceMode::Disabled || input.is_empty() {
+        if !self.config.enabled || self.config.mode == SilenceMode::Disabled || input.is_empty() {
             let to_copy = input_frames.min(output_frames_cap);
             let samples = to_copy * self.channels;
             output[..samples].copy_from_slice(&input[..samples]);

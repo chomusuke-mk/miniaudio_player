@@ -199,11 +199,11 @@ void main() {
       final player = MiniaudioPlayer(source: [source]);
       try {
         final stopwatch = Stopwatch()..start();
-        while (!player.state.replayGain.enabled && stopwatch.elapsedMilliseconds < 1000) {
+        while (player.state.replayGain.gainDb == 0.0 && stopwatch.elapsedMilliseconds < 1000) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
 
-        expect(player.state.replayGain.enabled, isTrue);
+        expect(player.state.replayGainMode, equals(ReplayGainMode.track));
         expect(player.state.replayGain.gainDb, closeTo(-6.5, 1e-4));
         expect(player.state.replayGain.peak, closeTo(0.95, 1e-4));
 
@@ -215,13 +215,12 @@ void main() {
         );
         await player.action.setQueue([source2]);
 
-        expect(player.state.replayGain.enabled, isTrue);
         expect(player.state.replayGain.gainDb, closeTo(-3.0, 1e-4));
         expect(player.state.replayGain.peak, closeTo(0.8, 1e-4));
 
-        // Clearing replay gain returns to disabled
-        await player.action.clearReplayGain();
-        expect(player.state.replayGain.enabled, isFalse);
+        // Clearing replay gain by passing null resets it to default fallback
+        await player.action.setReplayGain(null);
+        expect(player.state.replayGain.gainDb, closeTo(0.0, 1e-4));
       } finally {
         await player.dispose();
       }

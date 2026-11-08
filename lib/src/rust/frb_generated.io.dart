@@ -83,7 +83,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
-  (int, int, bool) dco_decode_box_autoadd_record_u_32_u_32_bool(dynamic raw);
+  (int, int) dco_decode_box_autoadd_record_u_32_u_32(dynamic raw);
 
   @protected
   RustAudioOutput dco_decode_box_autoadd_rust_audio_output(dynamic raw);
@@ -205,11 +205,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
-  (int, int, bool)? dco_decode_opt_box_autoadd_record_u_32_u_32_bool(
-      dynamic raw);
+  (int, int)? dco_decode_opt_box_autoadd_record_u_32_u_32(dynamic raw);
 
   @protected
   RustDuckingConfig? dco_decode_opt_box_autoadd_rust_ducking_config(
+      dynamic raw);
+
+  @protected
+  RustReplayGainConfig? dco_decode_opt_box_autoadd_rust_replay_gain_config(
       dynamic raw);
 
   @protected
@@ -235,7 +238,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustHttpHeader>? dco_decode_opt_list_rust_http_header(dynamic raw);
 
   @protected
-  (int, int, bool) dco_decode_record_u_32_u_32_bool(dynamic raw);
+  (int, int) dco_decode_record_u_32_u_32(dynamic raw);
 
   @protected
   RustAudioAnalysisResult dco_decode_rust_audio_analysis_result(dynamic raw);
@@ -395,7 +398,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
-  (int, int, bool) sse_decode_box_autoadd_record_u_32_u_32_bool(
+  (int, int) sse_decode_box_autoadd_record_u_32_u_32(
       SseDeserializer deserializer);
 
   @protected
@@ -537,11 +540,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
-  (int, int, bool)? sse_decode_opt_box_autoadd_record_u_32_u_32_bool(
+  (int, int)? sse_decode_opt_box_autoadd_record_u_32_u_32(
       SseDeserializer deserializer);
 
   @protected
   RustDuckingConfig? sse_decode_opt_box_autoadd_rust_ducking_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustReplayGainConfig? sse_decode_opt_box_autoadd_rust_replay_gain_config(
       SseDeserializer deserializer);
 
   @protected
@@ -569,8 +576,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (int, int, bool) sse_decode_record_u_32_u_32_bool(
-      SseDeserializer deserializer);
+  (int, int) sse_decode_record_u_32_u_32(SseDeserializer deserializer);
 
   @protected
   RustAudioAnalysisResult sse_decode_rust_audio_analysis_result(
@@ -746,8 +752,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PlatformInt64 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_record_u_32_u_32_bool(
-      (int, int, bool) self, SseSerializer serializer);
+  void sse_encode_box_autoadd_record_u_32_u_32(
+      (int, int) self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_audio_output(
@@ -893,12 +899,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PlatformInt64? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_record_u_32_u_32_bool(
-      (int, int, bool)? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_record_u_32_u_32(
+      (int, int)? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_rust_ducking_config(
       RustDuckingConfig? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_replay_gain_config(
+      RustReplayGainConfig? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_rust_spatial_emitter(
@@ -926,8 +936,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustHttpHeader>? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_u_32_u_32_bool(
-      (int, int, bool) self, SseSerializer serializer);
+  void sse_encode_record_u_32_u_32((int, int) self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_audio_analysis_result(

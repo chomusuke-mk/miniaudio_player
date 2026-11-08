@@ -221,19 +221,16 @@ class PlayerState<T> {
   double preamp = 0.0;
 
   /// The active ReplayGain track normalization settings.
-  ReplayGainConfig replayGain = const ReplayGainConfig();
-
-  /// Whether automatic volume normalization is enabled.
-  bool volumeNormalization = true;
+  ReplayGainConfig replayGain = const ReplayGainConfig(gainDb: 0.0);
 
   /// The default fallback ReplayGain adjustment in dB.
   double defaultReplayGain = 0.0;
 
-  /// The uniform forced ReplayGain adjustment in dB.
-  double forcedReplayGain = 0.0;
-
   /// The current ReplayGain operating mode.
   ReplayGainMode replayGainMode = ReplayGainMode.track;
+
+  /// Whether automatic volume normalization is enabled.
+  bool get volumeNormalization => replayGainMode != ReplayGainMode.disabled;
 
   /// The active Bauer stereophonic-to-binaural crossfeed mode.
   CrossfeedMode crossfeed = CrossfeedMode.off;
@@ -331,10 +328,7 @@ class PlayerState<T> {
   bool get hasPrevious => currentIndex != null && currentIndex! > 0;
 
   /// The [AudioSource] currently loaded at [currentIndex], or `null` if no track is active.
-  AudioSource<T>? get currentItem =>
-      (currentIndex != null && currentIndex! >= 0 && currentIndex! < queue.length)
-          ? queue[currentIndex!]
-          : null;
+  AudioSource<T>? currentItem;
 
   /// The optional caller-supplied domain object attached to the current track.
   T? get currentData => currentItem?.data;

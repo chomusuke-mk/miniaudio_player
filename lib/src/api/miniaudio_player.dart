@@ -699,6 +699,7 @@ class MiniaudioPlayer<T> {
         stream.metaBytesEnabledController.add(field0);
       case rust_types.RustPlayerEvent_SilenceConfig(:final field0):
         final sc = SilenceSkipConfig(
+          enabled: field0.enabled,
           thresholdDb: field0.thresholdDb,
           minSilenceDuration:
               Duration(milliseconds: field0.minSilenceDurationMs),
@@ -718,11 +719,18 @@ class MiniaudioPlayer<T> {
         final rg = ReplayGainConfig(
           gainDb: field0.gainDb,
           peak: field0.peak,
-          preventClipping: field0.preventClipping,
-          enabled: field0.enabled,
         );
         state.replayGain = rg;
         stream.replayGainController.add(rg);
+      case rust_types.RustPlayerEvent_ReplayGainMode(:final field0):
+        final mode = (field0 >= 0 && field0 < ReplayGainMode.values.length)
+            ? ReplayGainMode.values[field0]
+            : ReplayGainMode.track;
+        state.replayGainMode = mode;
+        stream.replayGainModeController.add(mode);
+      case rust_types.RustPlayerEvent_DefaultReplayGain(:final field0):
+        state.defaultReplayGain = field0;
+        stream.defaultReplayGainController.add(field0);
       case rust_types.RustPlayerEvent_BufferSize(:final field0):
         state.bufferSize = field0;
         stream.bufferSizeController.add(field0);
@@ -733,22 +741,28 @@ class MiniaudioPlayer<T> {
         final idx = field0 >= 0 ? field0 : null;
         state.currentIndex = idx;
         stream.currentIndexController.add(idx);
+        state.currentItem = idx != null && idx >= 0 && idx < state.queue.length
+            ? state.queue[idx]
+            : null;
         final curSource = state.currentItem;
         stream.currentItemController.add(curSource);
-        if (idx != null) {
-          action.applyCurrentTrackReplayGain();
-        }
         checkInfiniteMix();
-      case rust_types.RustPlayerEvent_Queue(:final field0):
+      case rust_types.RustPlayerEvent_Queue(:final queue, :final currentIndex):
         final reconciled = <AudioSource<T>>[];
-        for (var i = 0; i < field0.length; i++) {
-          final id = field0[i].toInt();
+        for (var i = 0; i < queue.length; i++) {
+          final id = queue[i].toInt();
           final match = sourceRegistry[id];
           if (match != null) {
             reconciled.add(match);
           }
         }
         state.queue = List.unmodifiable(reconciled);
+        final idx = currentIndex >= 0 && currentIndex < state.queue.length
+            ? currentIndex
+            : null;
+        state.currentIndex = idx;
+        state.currentItem = idx != null ? state.queue[idx] : null;
+        stream.currentIndexController.add(idx);
         stream.queueController.add(state.queue);
         stream.currentItemController.add(state.currentItem);
         checkInfiniteMix();

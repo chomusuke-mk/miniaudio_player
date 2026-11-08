@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustAudioInput`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Offline acoustic analysis results containing loudness, waveform, and format properties.
 class RustAudioAnalysisResult {
@@ -718,10 +718,14 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     RustBuffer field0,
   ) = RustPlayerEvent_Buffer;
 
-  /// Playlist queue track IDs in active playback order.
-  const factory RustPlayerEvent.queue(
-    Int64List field0,
-  ) = RustPlayerEvent_Queue;
+  /// Playlist queue track IDs in active playback order and current queue index.
+  const factory RustPlayerEvent.queue({
+    /// Active queue track IDs.
+    required Int64List queue,
+
+    /// Active queue index (-1 if none or uninitialized).
+    required int currentIndex,
+  }) = RustPlayerEvent_Queue;
 
   /// Active playlist queue index (-1 when none/uninitialized).
   const factory RustPlayerEvent.currentIndex(
@@ -807,6 +811,16 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.replayGain(
     RustReplayGainConfig field0,
   ) = RustPlayerEvent_ReplayGain;
+
+  /// Active ReplayGain operating mode (0: disabled, 1: track, 2: forced).
+  const factory RustPlayerEvent.replayGainMode(
+    int field0,
+  ) = RustPlayerEvent_ReplayGainMode;
+
+  /// Default ReplayGain fallback adjustment in dB.
+  const factory RustPlayerEvent.defaultReplayGain(
+    double field0,
+  ) = RustPlayerEvent_DefaultReplayGain;
 
   /// Bauer binaural crossfeed mode code.
   const factory RustPlayerEvent.crossfeed(
@@ -1087,28 +1101,16 @@ class RustReplayGainConfig {
   /// Absolute true peak amplitude.
   final double peak;
 
-  /// Whether clipping prevention is active to prevent exceeding digital full scale.
-  final bool preventClipping;
-
-  /// Whether ReplayGain is actively applied.
-  final bool enabled;
-
   const RustReplayGainConfig({
     required this.gainDb,
     required this.peak,
-    required this.preventClipping,
-    required this.enabled,
   });
 
   static Future<RustReplayGainConfig> default_() =>
       RustLib.instance.api.crateApiTypesRustReplayGainConfigDefault();
 
   @override
-  int get hashCode =>
-      gainDb.hashCode ^
-      peak.hashCode ^
-      preventClipping.hashCode ^
-      enabled.hashCode;
+  int get hashCode => gainDb.hashCode ^ peak.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1116,9 +1118,7 @@ class RustReplayGainConfig {
       other is RustReplayGainConfig &&
           runtimeType == other.runtimeType &&
           gainDb == other.gainDb &&
-          peak == other.peak &&
-          preventClipping == other.preventClipping &&
-          enabled == other.enabled;
+          peak == other.peak;
 }
 
 /// Parameters configuring algorithmic studio reverberation.

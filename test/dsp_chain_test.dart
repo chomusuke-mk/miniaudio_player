@@ -11,30 +11,17 @@ void main() {
   });
 
   group('DSP Data Models', () {
-    test('ReplayGainConfig initializes defaults and computes effectiveGainDb', () {
+    test('ReplayGainConfig initializes defaults', () {
       const defaultRg = ReplayGainConfig();
-      expect(defaultRg.enabled, isFalse);
       expect(defaultRg.gainDb, equals(0.0));
-      expect(defaultRg.peak, equals(0.0));
-      expect(defaultRg.preventClipping, isTrue);
-      expect(defaultRg.effectiveGainDb, equals(0.0));
+      expect(defaultRg.peak, equals(1.0));
 
       const activeRg = ReplayGainConfig(
         gainDb: -8.5,
         peak: 0.95,
-        preventClipping: true,
-        enabled: true,
       );
-      expect(activeRg.enabled, isTrue);
       expect(activeRg.gainDb, equals(-8.5));
       expect(activeRg.peak, equals(0.95));
-      expect(activeRg.effectiveGainDb, equals(-8.5));
-
-      const disabledRg = ReplayGainConfig(
-        gainDb: -8.5,
-        enabled: false,
-      );
-      expect(disabledRg.effectiveGainDb, equals(0.0));
     });
 
     test('CrossfeedMode enum has valid values', () {
@@ -87,21 +74,20 @@ void main() {
     });
 
     test('ReplayGain controls update state and native engine', () async {
-      expect(player.state.replayGain.enabled, isFalse);
+      expect(player.state.replayGain.gainDb, equals(0.0));
 
       await player.action.setReplayGain(
-        gainDb: -12.5,
-        peak: 0.98,
-        preventClipping: true,
+        const ReplayGainConfig(
+          gainDb: -12.5,
+          peak: 0.98,
+        ),
       );
 
-      expect(player.state.replayGain.enabled, isTrue);
       expect(player.state.replayGain.gainDb, closeTo(-12.5, 0.01));
       expect(player.state.replayGain.peak, closeTo(0.98, 0.01));
-      expect(player.state.replayGain.preventClipping, isTrue);
 
-      await player.action.clearReplayGain();
-      expect(player.state.replayGain.enabled, isFalse);
+      await player.action.setReplayGain(null);
+      expect(player.state.replayGain.gainDb, closeTo(0.0, 0.01));
     });
 
     test('Preamp control updates state and native engine independently', () async {
@@ -200,7 +186,7 @@ void main() {
       await player.action.setQueue([AudioSource(testWavFile.path)]);
 
       // Configure complete DSP chain including Reverb
-      await player.action.setReplayGain(gainDb: -10.0, peak: 0.95);
+      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -10.0, peak: 0.95));
       await player.action.setPreamp(1.0);
       await player.action.setBalance(-0.2);
       await player.action.setCrossfeed(CrossfeedMode.moffatBauer);
@@ -242,7 +228,7 @@ void main() {
         player.stream.reverb.listen((v) => streamReverb = v),
       ];
 
-      await player.action.setReplayGain(gainDb: -6.0, peak: 0.9);
+      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -6.0, peak: 0.9));
       await player.action.setPreamp(2.5);
       await player.action.setBalance(0.4);
       await player.action.setMono(true);

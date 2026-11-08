@@ -350,17 +350,18 @@ void main() {
       expect(engine.state.replayGain.gainDb, closeTo(-3.0, 1e-2));
 
       // Force uniform gain
-      await engine.action.setForcedReplayGain(-7.5);
+      await engine.action.setDefaultReplayGain(-7.5);
+      await engine.action.setReplayGainMode(ReplayGainMode.forced);
       expect(engine.state.replayGainMode, equals(ReplayGainMode.forced));
-      expect(engine.state.forcedReplayGain, closeTo(-7.5, 1e-2));
+      expect(engine.state.defaultReplayGain, closeTo(-7.5, 1e-2));
       expect(engine.state.replayGain.gainDb, closeTo(-7.5, 1e-2));
 
       // Next track also uses forced gain
       await engine.action.next();
       expect(engine.state.replayGain.gainDb, closeTo(-7.5, 1e-2));
 
-      // Clearing forced gain returns to per-track metadata
-      await engine.action.setForcedReplayGain(null);
+      // Returning to track mode uses per-track metadata
+      await engine.action.setReplayGainMode(ReplayGainMode.track);
       expect(engine.state.replayGainMode, equals(ReplayGainMode.track));
       expect(engine.state.replayGain.gainDb, closeTo(-10.0, 1e-2));
     });
@@ -379,7 +380,7 @@ void main() {
       expect(engine.state.replayGain.gainDb, closeTo(-6.0, 1e-2));
 
       // Changing ReplayGain does NOT reset or touch preamp
-      await engine.action.setReplayGain(gainDb: -9.0, force: true);
+      await engine.action.setReplayGain(const ReplayGainConfig(gainDb: -9.0));
       expect(engine.state.replayGain.gainDb, closeTo(-9.0, 1e-2));
       expect(engine.state.preamp, closeTo(3.5, 1e-2));
 

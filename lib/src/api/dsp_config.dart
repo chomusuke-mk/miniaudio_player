@@ -23,30 +23,22 @@ enum ReplayGainMode {
   forced,
 }
 
-/// Immutable configuration of active ReplayGain / EBU R128 track normalization.
+/// Immutable configuration of track ReplayGain / EBU R128 loudness normalization metadata.
 class ReplayGainConfig {
-  /// The track gain in decibels relative to target LUFS (e.g. `-13.3`).
+  /// The track gain in decibels relative to target LUFS (e.g. `-6.5`).
   final double gainDb;
 
   /// The peak amplitude of the track (where `1.0` represents 0 dBFS).
   final double peak;
 
-  /// Whether clipping defense is active (capping linear factor to `1.0 / peak`).
-  final bool preventClipping;
-
-  /// Whether ReplayGain is actively applied or bypassed.
-  final bool enabled;
-
-  /// Creates a [ReplayGainConfig] with normalization settings.
+  /// Creates an immutable [ReplayGainConfig] with gain adjustment and peak amplitude.
   const ReplayGainConfig({
     this.gainDb = 0.0,
-    this.peak = 0.0,
-    this.preventClipping = true,
-    this.enabled = false,
+    this.peak = 1.0,
   });
 
-  /// The effective decibel gain applied if enabled (`gainDb` when active, `0.0` if bypassed).
-  double get effectiveGainDb => enabled ? gainDb : 0.0;
+  /// Default unity gain config (0.0 dB, 1.0 peak).
+  static const ReplayGainConfig unity = ReplayGainConfig(gainDb: 0.0, peak: 1.0);
 
   @override
   bool operator ==(Object other) =>
@@ -54,14 +46,11 @@ class ReplayGainConfig {
       other is ReplayGainConfig &&
           runtimeType == other.runtimeType &&
           gainDb == other.gainDb &&
-          peak == other.peak &&
-          preventClipping == other.preventClipping &&
-          enabled == other.enabled;
+          peak == other.peak;
 
   @override
-  int get hashCode => Object.hash(gainDb, peak, preventClipping, enabled);
+  int get hashCode => Object.hash(gainDb, peak);
 
   @override
-  String toString() =>
-      'ReplayGainConfig(enabled: $enabled, gainDb: $gainDb, peak: $peak, preventClipping: $preventClipping)';
+  String toString() => 'ReplayGainConfig(gainDb: ${gainDb}dB, peak: $peak)';
 }

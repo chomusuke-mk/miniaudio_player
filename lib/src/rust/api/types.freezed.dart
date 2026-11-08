@@ -79,6 +79,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_Equalizer value)? equalizer,
     TResult Function(RustPlayerEvent_Preamp value)? preamp,
     TResult Function(RustPlayerEvent_ReplayGain value)? replayGain,
+    TResult Function(RustPlayerEvent_ReplayGainMode value)? replayGainMode,
+    TResult Function(RustPlayerEvent_DefaultReplayGain value)?
+        defaultReplayGain,
     TResult Function(RustPlayerEvent_Crossfeed value)? crossfeed,
     TResult Function(RustPlayerEvent_Spatializer value)? spatializer,
     TResult Function(RustPlayerEvent_Reverb value)? reverb,
@@ -163,6 +166,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that);
+      case RustPlayerEvent_ReplayGainMode() when replayGainMode != null:
+        return replayGainMode(_that);
+      case RustPlayerEvent_DefaultReplayGain() when defaultReplayGain != null:
+        return defaultReplayGain(_that);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -266,6 +273,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_Equalizer value) equalizer,
     required TResult Function(RustPlayerEvent_Preamp value) preamp,
     required TResult Function(RustPlayerEvent_ReplayGain value) replayGain,
+    required TResult Function(RustPlayerEvent_ReplayGainMode value)
+        replayGainMode,
+    required TResult Function(RustPlayerEvent_DefaultReplayGain value)
+        defaultReplayGain,
     required TResult Function(RustPlayerEvent_Crossfeed value) crossfeed,
     required TResult Function(RustPlayerEvent_Spatializer value) spatializer,
     required TResult Function(RustPlayerEvent_Reverb value) reverb,
@@ -357,6 +368,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that);
       case RustPlayerEvent_ReplayGain():
         return replayGain(_that);
+      case RustPlayerEvent_ReplayGainMode():
+        return replayGainMode(_that);
+      case RustPlayerEvent_DefaultReplayGain():
+        return defaultReplayGain(_that);
       case RustPlayerEvent_Crossfeed():
         return crossfeed(_that);
       case RustPlayerEvent_Spatializer():
@@ -451,6 +466,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_Equalizer value)? equalizer,
     TResult? Function(RustPlayerEvent_Preamp value)? preamp,
     TResult? Function(RustPlayerEvent_ReplayGain value)? replayGain,
+    TResult? Function(RustPlayerEvent_ReplayGainMode value)? replayGainMode,
+    TResult? Function(RustPlayerEvent_DefaultReplayGain value)?
+        defaultReplayGain,
     TResult? Function(RustPlayerEvent_Crossfeed value)? crossfeed,
     TResult? Function(RustPlayerEvent_Spatializer value)? spatializer,
     TResult? Function(RustPlayerEvent_Reverb value)? reverb,
@@ -534,6 +552,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that);
+      case RustPlayerEvent_ReplayGainMode() when replayGainMode != null:
+        return replayGainMode(_that);
+      case RustPlayerEvent_DefaultReplayGain() when defaultReplayGain != null:
+        return defaultReplayGain(_that);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -613,7 +635,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(bool field0)? isBuffering,
     TResult Function(bool field0)? isCompleted,
     TResult Function(RustBuffer field0)? buffer,
-    TResult Function(Int64List field0)? queue,
+    TResult Function(Int64List queue, int currentIndex)? queue,
     TResult Function(int field0)? currentIndex,
     TResult Function(bool field0)? isCrossfading,
     TResult Function(RustCrossfadeConfig field0)? crossfadeConfig,
@@ -631,6 +653,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustEqualizerParams field0)? equalizer,
     TResult Function(double field0)? preamp,
     TResult Function(RustReplayGainConfig field0)? replayGain,
+    TResult Function(int field0)? replayGainMode,
+    TResult Function(double field0)? defaultReplayGain,
     TResult Function(int field0)? crossfeed,
     TResult Function(bool enabled, double width)? spatializer,
     TResult Function(RustReverbParams field0)? reverb,
@@ -677,7 +701,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_Buffer() when buffer != null:
         return buffer(_that.field0);
       case RustPlayerEvent_Queue() when queue != null:
-        return queue(_that.field0);
+        return queue(_that.queue, _that.currentIndex);
       case RustPlayerEvent_CurrentIndex() when currentIndex != null:
         return currentIndex(_that.field0);
       case RustPlayerEvent_IsCrossfading() when isCrossfading != null:
@@ -712,6 +736,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that.field0);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that.field0);
+      case RustPlayerEvent_ReplayGainMode() when replayGainMode != null:
+        return replayGainMode(_that.field0);
+      case RustPlayerEvent_DefaultReplayGain() when defaultReplayGain != null:
+        return defaultReplayGain(_that.field0);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that.field0);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -792,7 +820,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(bool field0) isBuffering,
     required TResult Function(bool field0) isCompleted,
     required TResult Function(RustBuffer field0) buffer,
-    required TResult Function(Int64List field0) queue,
+    required TResult Function(Int64List queue, int currentIndex) queue,
     required TResult Function(int field0) currentIndex,
     required TResult Function(bool field0) isCrossfading,
     required TResult Function(RustCrossfadeConfig field0) crossfadeConfig,
@@ -810,6 +838,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustEqualizerParams field0) equalizer,
     required TResult Function(double field0) preamp,
     required TResult Function(RustReplayGainConfig field0) replayGain,
+    required TResult Function(int field0) replayGainMode,
+    required TResult Function(double field0) defaultReplayGain,
     required TResult Function(int field0) crossfeed,
     required TResult Function(bool enabled, double width) spatializer,
     required TResult Function(RustReverbParams field0) reverb,
@@ -856,7 +886,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_Buffer():
         return buffer(_that.field0);
       case RustPlayerEvent_Queue():
-        return queue(_that.field0);
+        return queue(_that.queue, _that.currentIndex);
       case RustPlayerEvent_CurrentIndex():
         return currentIndex(_that.field0);
       case RustPlayerEvent_IsCrossfading():
@@ -891,6 +921,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that.field0);
       case RustPlayerEvent_ReplayGain():
         return replayGain(_that.field0);
+      case RustPlayerEvent_ReplayGainMode():
+        return replayGainMode(_that.field0);
+      case RustPlayerEvent_DefaultReplayGain():
+        return defaultReplayGain(_that.field0);
       case RustPlayerEvent_Crossfeed():
         return crossfeed(_that.field0);
       case RustPlayerEvent_Spatializer():
@@ -966,7 +1000,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(bool field0)? isBuffering,
     TResult? Function(bool field0)? isCompleted,
     TResult? Function(RustBuffer field0)? buffer,
-    TResult? Function(Int64List field0)? queue,
+    TResult? Function(Int64List queue, int currentIndex)? queue,
     TResult? Function(int field0)? currentIndex,
     TResult? Function(bool field0)? isCrossfading,
     TResult? Function(RustCrossfadeConfig field0)? crossfadeConfig,
@@ -984,6 +1018,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustEqualizerParams field0)? equalizer,
     TResult? Function(double field0)? preamp,
     TResult? Function(RustReplayGainConfig field0)? replayGain,
+    TResult? Function(int field0)? replayGainMode,
+    TResult? Function(double field0)? defaultReplayGain,
     TResult? Function(int field0)? crossfeed,
     TResult? Function(bool enabled, double width)? spatializer,
     TResult? Function(RustReverbParams field0)? reverb,
@@ -1029,7 +1065,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_Buffer() when buffer != null:
         return buffer(_that.field0);
       case RustPlayerEvent_Queue() when queue != null:
-        return queue(_that.field0);
+        return queue(_that.queue, _that.currentIndex);
       case RustPlayerEvent_CurrentIndex() when currentIndex != null:
         return currentIndex(_that.field0);
       case RustPlayerEvent_IsCrossfading() when isCrossfading != null:
@@ -1064,6 +1100,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return preamp(_that.field0);
       case RustPlayerEvent_ReplayGain() when replayGain != null:
         return replayGain(_that.field0);
+      case RustPlayerEvent_ReplayGainMode() when replayGainMode != null:
+        return replayGainMode(_that.field0);
+      case RustPlayerEvent_DefaultReplayGain() when defaultReplayGain != null:
+        return defaultReplayGain(_that.field0);
       case RustPlayerEvent_Crossfeed() when crossfeed != null:
         return crossfeed(_that.field0);
       case RustPlayerEvent_Spatializer() when spatializer != null:
@@ -1664,9 +1704,14 @@ class _$RustPlayerEvent_BufferCopyWithImpl<$Res>
 /// @nodoc
 
 class RustPlayerEvent_Queue extends RustPlayerEvent {
-  const RustPlayerEvent_Queue(this.field0) : super._();
+  const RustPlayerEvent_Queue({required this.queue, required this.currentIndex})
+      : super._();
 
-  final Int64List field0;
+  /// Active queue track IDs.
+  final Int64List queue;
+
+  /// Active queue index (-1 if none or uninitialized).
+  final int currentIndex;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -1681,18 +1726,20 @@ class RustPlayerEvent_Queue extends RustPlayerEvent {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is RustPlayerEvent_Queue &&
-            const DeepCollectionEquality().equals(other.field0, field0));
+            const DeepCollectionEquality().equals(other.queue, queue) &&
+            (identical(other.currentIndex, currentIndex) ||
+                other.currentIndex == currentIndex));
   }
 
   @override
   int get hashCode {
     return Object.hash(
-        runtimeType, const DeepCollectionEquality().hash(field0));
+        runtimeType, const DeepCollectionEquality().hash(queue), currentIndex);
   }
 
   @override
   String toString() {
-    return 'RustPlayerEvent.queue(field0: $field0)';
+    return 'RustPlayerEvent.queue(queue: $queue, currentIndex: $currentIndex)';
   }
 }
 
@@ -1703,7 +1750,7 @@ abstract mixin class $RustPlayerEvent_QueueCopyWith<$Res>
           $Res Function(RustPlayerEvent_Queue) _then) =
       _$RustPlayerEvent_QueueCopyWithImpl;
   @useResult
-  $Res call({Int64List field0});
+  $Res call({Int64List queue, int currentIndex});
 }
 
 /// @nodoc
@@ -1718,13 +1765,18 @@ class _$RustPlayerEvent_QueueCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   $Res call({
-    Object? field0 = null,
+    Object? queue = null,
+    Object? currentIndex = null,
   }) {
     return _then(RustPlayerEvent_Queue(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
+      queue: null == queue
+          ? _self.queue
+          : queue // ignore: cast_nullable_to_non_nullable
               as Int64List,
+      currentIndex: null == currentIndex
+          ? _self.currentIndex
+          : currentIndex // ignore: cast_nullable_to_non_nullable
+              as int,
     ));
   }
 }
@@ -2873,6 +2925,142 @@ class _$RustPlayerEvent_ReplayGainCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as RustReplayGainConfig,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_ReplayGainMode extends RustPlayerEvent {
+  const RustPlayerEvent_ReplayGainMode(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_ReplayGainModeCopyWith<RustPlayerEvent_ReplayGainMode>
+      get copyWith => _$RustPlayerEvent_ReplayGainModeCopyWithImpl<
+          RustPlayerEvent_ReplayGainMode>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_ReplayGainMode &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.replayGainMode(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_ReplayGainModeCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_ReplayGainModeCopyWith(
+          RustPlayerEvent_ReplayGainMode value,
+          $Res Function(RustPlayerEvent_ReplayGainMode) _then) =
+      _$RustPlayerEvent_ReplayGainModeCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_ReplayGainModeCopyWithImpl<$Res>
+    implements $RustPlayerEvent_ReplayGainModeCopyWith<$Res> {
+  _$RustPlayerEvent_ReplayGainModeCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_ReplayGainMode _self;
+  final $Res Function(RustPlayerEvent_ReplayGainMode) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_ReplayGainMode(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_DefaultReplayGain extends RustPlayerEvent {
+  const RustPlayerEvent_DefaultReplayGain(this.field0) : super._();
+
+  final double field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_DefaultReplayGainCopyWith<RustPlayerEvent_DefaultReplayGain>
+      get copyWith => _$RustPlayerEvent_DefaultReplayGainCopyWithImpl<
+          RustPlayerEvent_DefaultReplayGain>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_DefaultReplayGain &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.defaultReplayGain(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_DefaultReplayGainCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_DefaultReplayGainCopyWith(
+          RustPlayerEvent_DefaultReplayGain value,
+          $Res Function(RustPlayerEvent_DefaultReplayGain) _then) =
+      _$RustPlayerEvent_DefaultReplayGainCopyWithImpl;
+  @useResult
+  $Res call({double field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_DefaultReplayGainCopyWithImpl<$Res>
+    implements $RustPlayerEvent_DefaultReplayGainCopyWith<$Res> {
+  _$RustPlayerEvent_DefaultReplayGainCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_DefaultReplayGain _self;
+  final $Res Function(RustPlayerEvent_DefaultReplayGain) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_DefaultReplayGain(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as double,
     ));
   }
 }

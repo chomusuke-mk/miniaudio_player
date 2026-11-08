@@ -1751,6 +1751,9 @@ impl StreamingDeck {
             *guard = None;
         }
         self.stream_reinit_needed.store(false, Ordering::Release);
+        if let Some(ref handle) = *self.custom_source_handle.read().unwrap() {
+            handle.abort();
+        }
         *self.custom_source_handle.write().unwrap() = None;
         *self.engine.lock().unwrap() = None;
         self.decoder_eof.store(false, Ordering::Relaxed);

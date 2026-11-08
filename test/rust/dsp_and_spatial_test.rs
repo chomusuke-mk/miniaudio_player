@@ -100,6 +100,7 @@ fn test_equalizer_stages_and_crossfeed_reverb_limiter() {
 fn test_silence_detector_sonic_visualizer_and_dsp_chain() {
     let mut det = SilenceDetector::new(2, 44100);
     det.set_config(SilenceConfig {
+        enabled: true,
         mode: SilenceMode::Continuous,
         threshold_db: -40.0,
         min_silence_duration_ms: 100,

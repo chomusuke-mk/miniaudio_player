@@ -48,6 +48,7 @@ void main() {
     test('equality and hashCode work as expected', () {
       const config1 = SilenceSkipConfig.continuous(thresholdDb: -42.0);
       const config2 = SilenceSkipConfig(
+        enabled: true,
         mode: SilenceSkipMode.continuous,
         thresholdDb: -42.0,
       );
@@ -83,15 +84,15 @@ void main() {
       expect(player.state.silenceSavedDuration, equals(Duration.zero));
     });
 
-    test('setSkipSilence enables and disables silence skipping with reactive streams', () async {
+    test('setSilenceConfig enables and disables silence skipping with reactive streams', () async {
       final skipEvents = <bool>[];
       final sub = player.stream.skipSilence.listen(skipEvents.add);
 
-      await player.action.setSkipSilence(true);
+      await player.action.setSilenceConfig(const SilenceSkipConfig.continuous());
       expect(player.state.skipSilence, isTrue);
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.continuous));
 
-      await player.action.setSkipSilence(false);
+      await player.action.setSilenceConfig(const SilenceSkipConfig.off());
       expect(player.state.skipSilence, isFalse);
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.disabled));
 
@@ -149,13 +150,13 @@ void main() {
       await player.action.play();
 
       // Toggle silence skip ON while playing
-      await player.action.setSkipSilence(true);
+      await player.action.setSilenceConfig(const SilenceSkipConfig.continuous());
       expect(player.state.skipSilence, isTrue);
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       // Toggle silence skip OFF while playing
-      await player.action.setSkipSilence(false);
+      await player.action.setSilenceConfig(const SilenceSkipConfig.off());
       expect(player.state.skipSilence, isFalse);
 
       await player.action.stop();

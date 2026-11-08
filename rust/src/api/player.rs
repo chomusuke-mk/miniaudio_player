@@ -54,8 +54,8 @@ pub struct TelemetryFilter {
     pub is_playing: Option<bool>,
     /// Cached completion flag.
     pub is_completed: Option<bool>,
-    /// Cached ReplayGain settings tuple (gain bits, peak bits, enabled).
-    pub replay_gain: Option<(u32, u32, bool)>,
+    /// Cached ReplayGain settings tuple (gain bits, peak bits).
+    pub replay_gain: Option<(u32, u32)>,
     /// Cached raw ICY/ID3 metadata byte sequence.
     pub meta_bytes: Option<Vec<u8>>,
     /// Cached count of concurrent active sound effect voices.
@@ -192,7 +192,7 @@ impl EventReporter {
                 }
             }
             RustPlayerEvent::ReplayGain(rg) => {
-                let key = (rg.gain_db.to_bits(), rg.peak.to_bits(), rg.enabled);
+                let key = (rg.gain_db.to_bits(), rg.peak.to_bits());
                 if filter.replay_gain == Some(key) {
                     false
                 } else {
@@ -458,16 +458,21 @@ impl RustMiniaudioPlayer {
 
                         let target_id = ply.music_manager.inner.crossfade_target_id.swap(-1, Ordering::AcqRel);
                         if target_id >= 0 {
-                            if let Some(new_idx) = ply
+                            let new_idx_opt = ply
                                 .music_manager
                                 .inner
                                 .queue
                                 .read()
                                 .unwrap()
                                 .iter()
-                                .position(|it| it.id == target_id)
-                            {
+                                .position(|it| it.id == target_id);
+                            if let Some(new_idx) = new_idx_opt {
                                 ply.music_manager.inner.current_index.store(new_idx as i64, Ordering::Release);
+                                let (g, p) = ply.recalculate_and_apply_replay_gain();
+                                worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                                    gain_db: g,
+                                    peak: p,
+                                }));
                             }
                         }
 
@@ -555,6 +560,11 @@ impl RustMiniaudioPlayer {
                                             from_slot.stop();
                                             ply.music_manager.inner.active_deck.store(to_deck, Ordering::Release);
                                             ply.music_manager.inner.current_index.store(next_idx as i64, Ordering::Release);
+                                            let (g, p) = ply.recalculate_and_apply_replay_gain();
+                                            worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                                                gain_db: g,
+                                                peak: p,
+                                            }));
                                             ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_PLAYING, Ordering::Release);
                                         }
                                     }
@@ -654,8 +664,6 @@ impl RustMiniaudioPlayer {
                     worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
                         gain_db: rg.gain_db,
                         peak: rg.peak,
-                        prevent_clipping: rg.prevent_clipping != 0,
-                        enabled: rg.enabled != 0,
                     }));
                     if let Some(vis) = vis_data {
                         worker_reporter.emit(RustPlayerEvent::Visualizer(
@@ -748,7 +756,11 @@ impl RustMiniaudioPlayer {
                 .iter()
                 .map(|it| it.id)
                 .collect();
-            self.emit_event(RustPlayerEvent::Queue(q));
+            let cur_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed) as i32;
+            self.emit_event(RustPlayerEvent::Queue {
+                queue: q,
+                current_index: cur_idx,
+            });
         }
     }
 
@@ -798,10 +810,18 @@ impl RustMiniaudioPlayer {
         let initial_meta = active_deck.get_meta_bytes();
         let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
         let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
-        if cur_idx >= 0 {
-            Self::sync_deck_replay_gain(&mut ply, cur_idx as usize);
-        }
+        let rg = if cur_idx >= 0 {
+            Some(Self::sync_deck_replay_gain(&mut ply, cur_idx as usize))
+        } else {
+            None
+        };
         drop(ply);
+        if let Some((g, p)) = rg {
+            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: g,
+                peak: p,
+            }));
+        }
         if queue_changed {
             self.emit_queue();
         }
@@ -884,30 +904,8 @@ impl RustMiniaudioPlayer {
         Ok(res)
     }
 
-fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlayer, idx: usize) {
-    let rg_to_set = {
-        let q = ply.music_manager.inner.queue.read().unwrap();
-        if idx < q.len() {
-            if let Some(gain) = q[idx].replay_gain_db {
-                let peak = q[idx].replay_peak.unwrap_or(1.0);
-                Some((gain, peak))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
-    if let Some((gain, peak)) = rg_to_set {
-        ply.music_dsp.set_replay_gain(crate::dsp::equalizer::ReplayGainConfig {
-            enabled: 1,
-            gain_db: gain,
-            peak,
-            prevent_clipping: 1,
-        });
-    } else {
-        ply.music_dsp.set_replay_gain(crate::dsp::equalizer::ReplayGainConfig::default());
-    }
+fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlayer, _idx: usize) -> (f32, f32) {
+    ply.recalculate_and_apply_replay_gain()
 }
 
     // =========================================================================
@@ -941,13 +939,16 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let mut ply = self.inner.lock().unwrap();
         ply.music_manager.set_custom_source_factory(custom_factory);
         ply.music_manager.set_queue(core_queue);
-        ply.music_dsp
-            .set_replay_gain(crate::dsp::equalizer::ReplayGainConfig::default());
+        let (g, p) = ply.recalculate_and_apply_replay_gain();
         if let Ok(mut f) = self.reporter.filter.lock() {
             *f = TelemetryFilter::default();
         }
         drop(ply);
         self.emit_queue();
+        self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+            gain_db: g,
+            peak: p,
+        }));
         self.emit_event(RustPlayerEvent::CurrentIndex(-1));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
         self.emit_event(RustPlayerEvent::IsCompleted(false));
@@ -1041,10 +1042,18 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
-        if idx >= 0 {
-            Self::sync_deck_replay_gain(&mut ply, idx as usize);
-        }
+        let rg = if idx >= 0 {
+            Some(Self::sync_deck_replay_gain(&mut ply, idx as usize))
+        } else {
+            None
+        };
         drop(ply);
+        if let Some((g, p)) = rg {
+            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: g,
+                peak: p,
+            }));
+        }
         self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
@@ -1062,10 +1071,18 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let pos = ply.music_manager.active_deck_ref().position_ms.load(Ordering::Relaxed);
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
-        if idx >= 0 {
-            Self::sync_deck_replay_gain(&mut ply, idx as usize);
-        }
+        let rg = if idx >= 0 {
+            Some(Self::sync_deck_replay_gain(&mut ply, idx as usize))
+        } else {
+            None
+        };
         drop(ply);
+        if let Some((g, p)) = rg {
+            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: g,
+                peak: p,
+            }));
+        }
         self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         self.emit_event(RustPlayerEvent::Position(pos));
         self.emit_event(RustPlayerEvent::State(phase));
@@ -1214,23 +1231,112 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Applies ReplayGain loudness normalization settings.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_replay_gain(&self, config: RustReplayGainConfig) -> Result<(), String> {
+    /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_replay_gain(
+        &self,
+        config: Option<RustReplayGainConfig>,
+        id: Option<i64>,
+        position: Option<usize>,
+    ) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
-        let clipping = if config.prevent_clipping { 1 } else { 0 };
-        let rg = crate::dsp::equalizer::ReplayGainConfig {
-            enabled: if config.enabled { 1 } else { 0 },
-            gain_db: config.gain_db,
-            peak: config.peak,
-            prevent_clipping: clipping,
+        let target_idx = {
+            let q = ply.music_manager.inner.queue.read().unwrap();
+            if let Some(target_id) = id {
+                q.iter().position(|it| it.id == target_id)
+            } else if let Some(pos) = position {
+                if pos < q.len() {
+                    Some(pos)
+                } else {
+                    None
+                }
+            } else {
+                let cur = ply
+                    .music_manager
+                    .inner
+                    .current_index
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if cur >= 0 && (cur as usize) < q.len() {
+                    Some(cur as usize)
+                } else if !q.is_empty() {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
         };
-        ply.music_dsp.set_replay_gain(rg);
-        self.emit_event(RustPlayerEvent::ReplayGain(config));
+
+        if let Some(idx) = target_idx {
+            let (new_gain, new_peak) = match config {
+                Some(ref c) => (Some(c.gain_db), Some(c.peak)),
+                None => (None, None),
+            };
+            {
+                let mut q = ply.music_manager.inner.queue.write().unwrap();
+                if idx < q.len() {
+                    q[idx].replay_gain_db = new_gain;
+                    q[idx].replay_peak = new_peak;
+                }
+            }
+            {
+                let mut cq = ply.music_manager.inner.canonical_queue.write().unwrap();
+                if idx < cq.len() {
+                    cq[idx].replay_gain_db = new_gain;
+                    cq[idx].replay_peak = new_peak;
+                }
+            }
+            let cur = ply
+                .music_manager
+                .inner
+                .current_index
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let is_target_active = if cur >= 0 {
+                cur as usize == idx
+            } else {
+                idx == 0
+            };
+            if is_target_active {
+                let (g, p) = ply.recalculate_and_apply_replay_gain();
+                self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                    gain_db: g,
+                    peak: p,
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_replay_gain_mode(&self, mode: u32) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        ply.replay_gain_mode = mode;
+        let (g, p) = ply.recalculate_and_apply_replay_gain();
+        self.emit_event(RustPlayerEvent::ReplayGainMode(mode));
+        self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+            gain_db: g,
+            peak: p,
+        }));
+        Ok(())
+    }
+
+    /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_default_replay_gain(&self, gain_db: f32, peak: f32) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        ply.default_replay_gain = (gain_db, peak);
+        let (g, p) = ply.recalculate_and_apply_replay_gain();
+        self.emit_event(RustPlayerEvent::DefaultReplayGain(gain_db));
+        self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+            gain_db: g,
+            peak: p,
+        }));
         Ok(())
     }
 
     /// Configures automatic silence skipping and trimming parameters.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_skip_silence(&self, config: RustSilenceConfig) -> Result<(), String> {
+    pub fn set_silence_config(&self, config: RustSilenceConfig) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         let sc = SilenceConfig::from(config.clone());
         ply.music_manager.inner.deck_a.set_silence_config(&sc);

@@ -87,6 +87,10 @@ class PlayerStream<T> {
       StreamController<double>.broadcast();
   final StreamController<ReplayGainConfig> replayGainController =
       StreamController<ReplayGainConfig>.broadcast();
+  final StreamController<ReplayGainMode> replayGainModeController =
+      StreamController<ReplayGainMode>.broadcast();
+  final StreamController<double> defaultReplayGainController =
+      StreamController<double>.broadcast();
   final StreamController<CrossfeedMode> crossfeedController =
       StreamController<CrossfeedMode>.broadcast();
   final StreamController<bool> spatializerEnabledController =
@@ -273,6 +277,12 @@ class PlayerStream<T> {
   /// Broadcast stream emitting ReplayGain normalization updates.
   Stream<ReplayGainConfig> get replayGain => replayGainController.stream;
 
+  /// Broadcast stream emitting active ReplayGain operating mode.
+  Stream<ReplayGainMode> get replayGainMode => replayGainModeController.stream;
+
+  /// Broadcast stream emitting default fallback ReplayGain in dB.
+  Stream<double> get defaultReplayGain => defaultReplayGainController.stream;
+
   /// Broadcast stream emitting Bauer stereophonic-to-binaural crossfeed mode updates.
   Stream<CrossfeedMode> get crossfeed => crossfeedController.stream;
 
@@ -397,6 +407,8 @@ class PlayerStream<T> {
       visualizerEnabledController.close(),
       preampController.close(),
       replayGainController.close(),
+      replayGainModeController.close(),
+      defaultReplayGainController.close(),
       crossfeedController.close(),
       spatializerEnabledController.close(),
       spatializerWidthController.close(),

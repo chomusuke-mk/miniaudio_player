@@ -37,6 +37,9 @@ pub struct MiniaudioPlayer {
     pub sample_rate: u32,
     pub channels: usize,
     pub period_size: u32,
+
+    pub default_replay_gain: (f32, f32),
+    pub replay_gain_mode: u32,
 }
 
 unsafe impl Send for MiniaudioPlayer {}
@@ -92,7 +95,49 @@ impl MiniaudioPlayer {
             sample_rate: sr,
             channels: ch,
             period_size: period,
+            default_replay_gain: (0.0, 1.0),
+            replay_gain_mode: 1, // Track
         }))
+    }
+
+    /// Recalculates effective ReplayGain based on `replay_gain_mode`, queue item metadata,
+    /// and `default_replay_gain`, applying it directly to `music_dsp`.
+    pub fn recalculate_and_apply_replay_gain(&mut self) -> (f32, f32) {
+        use std::sync::atomic::Ordering;
+        let (eff_gain, eff_peak, eff_enabled) = match self.replay_gain_mode {
+            0 => (0.0, 1.0, 0), // Disabled
+            2 => (self.default_replay_gain.0, self.default_replay_gain.1, 1), // Forced
+            _ => { // Track
+                let q = self.music_manager.inner.queue.read().unwrap();
+                let cur = self.music_manager.inner.current_index.load(Ordering::Relaxed);
+                let idx = if cur >= 0 && (cur as usize) < q.len() {
+                    Some(cur as usize)
+                } else if !q.is_empty() {
+                    Some(0)
+                } else {
+                    None
+                };
+                if let Some(i) = idx {
+                    let item = &q[i];
+                    if let Some(gain) = item.replay_gain_db {
+                        (gain, item.replay_peak.unwrap_or(1.0), 1)
+                    } else {
+                        (self.default_replay_gain.0, self.default_replay_gain.1, if self.default_replay_gain.0 != 0.0 { 1 } else { 0 })
+                    }
+                } else {
+                    (self.default_replay_gain.0, self.default_replay_gain.1, if self.default_replay_gain.0 != 0.0 { 1 } else { 0 })
+                }
+            }
+        };
+
+        self.music_dsp.set_replay_gain(crate::dsp::equalizer::ReplayGainConfig {
+            enabled: eff_enabled,
+            gain_db: eff_gain,
+            peak: eff_peak,
+            prevent_clipping: 1,
+        });
+
+        (eff_gain, eff_peak)
     }
 
     /// Renders one period of PCM frames across all active decks, effects, and microphone DSP,
