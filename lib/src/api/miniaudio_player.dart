@@ -251,6 +251,58 @@ class MiniaudioPlayer<T> {
   static Future<void> ensureInitialized() async => ensureRustInitialized();
 
   // =========================================================================
+  // System Audio Device Discovery
+  // =========================================================================
+
+  /// Synchronously scans and enumerates connected playback output audio devices on the host OS.
+  ///
+  /// Returns a list containing at least [AudioDevice.auto] if enumeration fails or no devices exist.
+  static List<AudioDevice> getOutputDevicesSync() {
+    try {
+      final devs = rust.RustMiniaudioPlayer.getOutputDevicesSync();
+      return devs.map(_toAudioDevice).toList();
+    } catch (_) {
+      return const [AudioDevice.auto];
+    }
+  }
+
+  /// Asynchronously enumerates connected playback output audio devices on the host OS.
+  ///
+  /// Returns a list containing at least [AudioDevice.auto] if enumeration fails or no devices exist.
+  static Future<List<AudioDevice>> getOutputDevices() async {
+    try {
+      final devs = await rust.RustMiniaudioPlayer.getOutputDevices();
+      return devs.map(_toAudioDevice).toList();
+    } catch (_) {
+      return const [AudioDevice.auto];
+    }
+  }
+
+  /// Synchronously scans and enumerates connected microphone capture devices on the host OS.
+  ///
+  /// Returns a list containing at least [AudioDevice.auto] if enumeration fails or no devices exist.
+  static List<AudioDevice> getInputDevicesSync() {
+    try {
+      final devs = rust.RustMiniaudioPlayer.getInputDevicesSync();
+      return devs.map(_toAudioDevice).toList();
+    } catch (_) {
+      return const [AudioDevice.auto];
+    }
+  }
+
+  /// Asynchronously enumerates connected microphone capture devices on the host OS.
+  ///
+  /// Returns a list containing at least [AudioDevice.auto] if enumeration fails or no devices exist.
+  static Future<List<AudioDevice>> getInputDevices() async {
+    try {
+      final devs = await rust.RustMiniaudioPlayer.getInputDevices();
+      return devs.map(_toAudioDevice).toList();
+    } catch (_) {
+      return const [AudioDevice.auto];
+    }
+  }
+
+  // =========================================================================
   // Acoustic Analysis
   // =========================================================================
 
@@ -420,7 +472,7 @@ class MiniaudioPlayer<T> {
       );
     }
     MapLogger.info('Initializing MiniaudioPlayer');
-    stream = PlayerStream<T>();
+    stream = PlayerStream<T>(this);
     state = PlayerState<T>(this);
 
     state._bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
@@ -877,10 +929,11 @@ class MiniaudioPlayer<T> {
 
   // Model Mappers
   static AudioDevice _toAudioDevice(rust_types.RustAudioDevice dev) {
+    final isAuto = dev.isAuto || dev.id == 'AUTO' || dev.id == 'auto';
     return AudioDevice(
-      id: dev.id,
+      id: isAuto ? 'AUTO' : dev.id,
       name: dev.name,
-      isAuto: dev.isDefault,
+      isAuto: isAuto,
       effectiveId: dev.effectiveId,
     );
   }

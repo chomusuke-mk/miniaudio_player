@@ -73,8 +73,8 @@ enum AudioOutputSource {
 /// - [AudioOutputSource.activeTrack]: Active deck track only.
 /// - [AudioOutputSource.standbyTrack]: Standby deck track only (pre-listening / cueing).
 class AudioOutput {
-  /// The unique operating system device identifier, or null for the automatic default device.
-  final String? deviceId;
+  /// The operating system hardware device identifier, or 'AUTO' for system default.
+  final String deviceId;
 
   /// Whether exclusive hardware access mode should be requested (e.g. WASAPI exclusive).
   final bool exclusiveMode;
@@ -84,7 +84,7 @@ class AudioOutput {
 
   /// Creates a unified [AudioOutput] destination.
   const AudioOutput({
-    this.deviceId,
+    this.deviceId = 'AUTO',
     this.exclusiveMode = false,
     this.source = AudioOutputSource.all,
   });
@@ -169,10 +169,10 @@ class AudioInputConfig {
 
 /// Represents an active or requested hardware audio capture source.
 class AudioInput {
-  final String? _deviceId;
+  final String _deviceId;
 
-  /// The physical OS hardware audio capture device identifier (`null` or `'auto'` targets default).
-  String? get deviceId => _deviceId;
+  /// The physical OS hardware audio capture device identifier (`'AUTO'` targets default).
+  String get deviceId => _deviceId;
 
   final AudioInputConfig _config;
 
@@ -181,10 +181,10 @@ class AudioInput {
 
   /// Creates an [AudioInput] bound to a hardware endpoint and an [AudioInputConfig].
   AudioInput({
-    String? deviceId,
+    String deviceId = 'AUTO',
     AudioDevice? device,
     AudioInputConfig config = const AudioInputConfig(),
-  })  : _deviceId = deviceId ?? device?.id,
+  })  : _deviceId = device != null ? device.id : deviceId,
         _config = config;
 
   /// Creates a copy of this input with updated parameters.
@@ -194,7 +194,7 @@ class AudioInput {
     AudioInputConfig? config,
   }) {
     return AudioInput(
-      deviceId: deviceId ?? (device != null ? device.id : _deviceId),
+      deviceId: device != null ? device.id : (deviceId ?? _deviceId),
       config: config ?? _config,
     );
   }

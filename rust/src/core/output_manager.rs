@@ -83,7 +83,8 @@ impl OutputDeviceRenderer {
 
 /// Symmetrical active physical audio device managed by miniaudio.
 pub struct ActiveOutputDevice {
-    pub device_id: Option<String>,
+    pub device_id: String,
+    pub resolved_id: String,
     pub source: AudioOutputSource,
     pub exclusive_mode: bool,
     pub device_ctx: *mut MapDeviceContext,
@@ -161,15 +162,69 @@ impl OutputManager {
     // Symmetrical Output Hardware Management
     // =========================================================================
 
+    /// Resolves a requested device ID ("AUTO" or specific ID) to a physical OS device endpoint ID.
+    pub fn resolve_physical_output_id(device_id: &str) -> Option<String> {
+        if device_id == "AUTO" || device_id == "auto" || device_id.is_empty() {
+            let mut count = 0;
+            let mut ptr = std::ptr::null_mut();
+            let res = unsafe { crate::bridge::ffi::map_device_enumerate_devices(&mut ptr, &mut count) };
+            if res == 0 && !ptr.is_null() {
+                let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+                let mut found = None;
+                for d in slice {
+                    if d.is_default != 0 && d.is_auto == 0 {
+                        found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    for d in slice {
+                        if d.is_auto == 0 {
+                            found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
+                            break;
+                        }
+                    }
+                }
+                unsafe { crate::bridge::ffi::map_device_free_devices(ptr) };
+                return found;
+            }
+            None
+        } else {
+            Some(device_id.to_string())
+        }
+    }
+
     /// Updates the active outputs and synchronizes physical audio devices.
     pub fn set_outputs(&mut self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
+        self.set_outputs_with_resolved(outputs, None)
+    }
+
+    /// Updates active outputs with optional pre-resolved physical endpoint ID for 'AUTO'.
+    pub fn set_outputs_with_resolved(
+        &mut self,
+        outputs: Vec<RustAudioOutput>,
+        pre_resolved_auto_id: Option<String>,
+    ) -> Result<(), String> {
         self.outputs = outputs;
 
-        // 1. Evict active devices no longer present in outputs
+        let current_auto_def = pre_resolved_auto_id
+            .or_else(|| Self::resolve_physical_output_id("AUTO"));
+
+        // 1. Evict active devices no longer present in outputs or whose AUTO resolved ID changed
         self.active_devices.retain_mut(|dev| {
             let still_exists = self.outputs.iter().any(|cfg| {
-                cfg.device_id == dev.device_id && cfg.source == (dev.source as i32)
+                if cfg.device_id != dev.device_id || cfg.source != (dev.source as i32) {
+                    return false;
+                }
+                if cfg.device_id == "AUTO" {
+                    if let Some(ref def_id) = current_auto_def {
+                        return dev.resolved_id == *def_id;
+                    }
+                    return false;
+                }
+                true
             });
+
             if !still_exists {
                 unsafe {
                     map_device_destroy(dev.device_ctx);
@@ -183,9 +238,21 @@ impl OutputManager {
 
         // 2. Open newly requested devices
         for cfg in &self.outputs {
+            let target_resolved_id = if cfg.device_id == "AUTO" {
+                current_auto_def.clone()
+            } else {
+                Self::resolve_physical_output_id(&cfg.device_id)
+            };
+            let Some(target_resolved_id) = target_resolved_id else {
+                continue;
+            };
+
             let already_open = self.active_devices.iter().any(|dev| {
-                dev.device_id == cfg.device_id && (dev.source as i32) == cfg.source
+                dev.device_id == cfg.device_id
+                    && (dev.source as i32) == cfg.source
+                    && dev.resolved_id == target_resolved_id
             });
+
             if !already_open {
                 let buffer_capacity = self.sample_rate as usize * self.channels * 2;
                 let (prod, cons) = rtrb::RingBuffer::new(buffer_capacity);
@@ -200,7 +267,7 @@ impl OutputManager {
                 });
                 let renderer_ptr = Box::into_raw(renderer);
 
-                let dev_c = cfg.device_id.as_deref().and_then(|s| CString::new(s).ok());
+                let dev_c = CString::new(target_resolved_id.as_str()).ok();
                 let dev_ptr = dev_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
 
                 let mut dev_res = 0;
@@ -221,6 +288,7 @@ impl OutputManager {
                     }
                     self.active_devices.push(ActiveOutputDevice {
                         device_id: cfg.device_id.clone(),
+                        resolved_id: target_resolved_id,
                         source: AudioOutputSource::from(cfg.source),
                         exclusive_mode: cfg.exclusive_mode,
                         device_ctx: ctx,

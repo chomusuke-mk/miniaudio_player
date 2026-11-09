@@ -615,3 +615,103 @@ void map_device_free_devices(map_device_info_t *devices)
         free(devices);
     }
 }
+
+int32_t map_device_enumerate_all(map_all_devices_t *out_all)
+{
+    if (out_all == NULL)
+        return -2;
+    memset(out_all, 0, sizeof(map_all_devices_t));
+
+    ma_context context;
+    ma_result res = ma_context_init(NULL, 0, NULL, &context);
+    if (res != MA_SUCCESS)
+    {
+        return -4;
+    }
+
+    ma_device_info *pPlaybackInfos = NULL;
+    ma_uint32 playbackCount = 0;
+    ma_device_info *pCaptureInfos = NULL;
+    ma_uint32 captureCount = 0;
+
+    res = ma_context_get_devices(&context, &pPlaybackInfos, &playbackCount, &pCaptureInfos, &captureCount);
+    if (res != MA_SUCCESS)
+    {
+        ma_context_uninit(&context);
+        return -4;
+    }
+
+    if (playbackCount > 0)
+    {
+        map_device_info_t *p_devs = (map_device_info_t *)calloc(playbackCount, sizeof(map_device_info_t));
+        if (p_devs == NULL)
+        {
+            ma_context_uninit(&context);
+            return -3;
+        }
+
+        for (ma_uint32 i = 0; i < playbackCount; ++i)
+        {
+            strncpy(p_devs[i].name, pPlaybackInfos[i].name, sizeof(p_devs[i].name) - 1);
+            p_devs[i].name[sizeof(p_devs[i].name) - 1] = '\0';
+            map_device_id_to_string(&pPlaybackInfos[i].id, p_devs[i].id, sizeof(p_devs[i].id));
+            map_device_id_to_string(&pPlaybackInfos[i].id, p_devs[i].effective_id, sizeof(p_devs[i].effective_id));
+            p_devs[i].is_default = pPlaybackInfos[i].isDefault;
+            p_devs[i].is_auto = 0;
+        }
+
+        out_all->playback_devices = p_devs;
+        out_all->playback_count = playbackCount;
+    }
+
+    if (captureCount > 0)
+    {
+        map_device_info_t *c_devs = (map_device_info_t *)calloc(captureCount, sizeof(map_device_info_t));
+        if (c_devs == NULL)
+        {
+            if (out_all->playback_devices != NULL)
+            {
+                free(out_all->playback_devices);
+                out_all->playback_devices = NULL;
+                out_all->playback_count = 0;
+            }
+            ma_context_uninit(&context);
+            return -3;
+        }
+
+        for (ma_uint32 i = 0; i < captureCount; ++i)
+        {
+            strncpy(c_devs[i].name, pCaptureInfos[i].name, sizeof(c_devs[i].name) - 1);
+            c_devs[i].name[sizeof(c_devs[i].name) - 1] = '\0';
+            map_device_id_to_string(&pCaptureInfos[i].id, c_devs[i].id, sizeof(c_devs[i].id));
+            map_device_id_to_string(&pCaptureInfos[i].id, c_devs[i].effective_id, sizeof(c_devs[i].effective_id));
+            c_devs[i].is_default = pCaptureInfos[i].isDefault;
+            c_devs[i].is_auto = 0;
+        }
+
+        out_all->capture_devices = c_devs;
+        out_all->capture_count = captureCount;
+    }
+
+    ma_context_uninit(&context);
+    return 0;
+}
+
+void map_device_free_all(map_all_devices_t *all)
+{
+    if (all != NULL)
+    {
+        if (all->playback_devices != NULL)
+        {
+            free(all->playback_devices);
+            all->playback_devices = NULL;
+            all->playback_count = 0;
+        }
+        if (all->capture_devices != NULL)
+        {
+            free(all->capture_devices);
+            all->capture_devices = NULL;
+            all->capture_count = 0;
+        }
+    }
+}

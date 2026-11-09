@@ -901,8 +901,8 @@ impl From<i32> for AudioOutputSource {
 /// Audio hardware output endpoint configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RustAudioOutput {
-    /// Optional specific hardware device identifier. If None, targets default/auto endpoint.
-    pub device_id: Option<String>,
+    /// Hardware device identifier, or "AUTO" for the system default route.
+    pub device_id: String,
     /// Whether exclusive hardware access mode is requested.
     pub exclusive_mode: bool,
     /// Channel routing source (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
@@ -936,8 +936,8 @@ impl Default for RustAudioInputConfig {
 /// Audio input hardware endpoint configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustAudioInput {
-    /// Optional specific hardware device identifier. If None, targets default capture endpoint.
-    pub device_id: Option<String>,
+    /// Hardware device identifier, or "AUTO" for the system default capture route.
+    pub device_id: String,
     /// Real-time capture configuration parameters.
     pub config: RustAudioInputConfig,
 }

@@ -107,7 +107,7 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiPlayerRustMiniaudioPlayerConfigureInput(
       {required RustMiniaudioPlayer that,
-      String? deviceId,
+      required String deviceId,
       required RustAudioInputConfig config});
 
   void crateApiPlayerRustMiniaudioPlayerDispose(
@@ -662,14 +662,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   void crateApiPlayerRustMiniaudioPlayerConfigureInput(
       {required RustMiniaudioPlayer that,
-      String? deviceId,
+      required String deviceId,
       required RustAudioInputConfig config}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        sse_encode_opt_String(deviceId, serializer);
+        sse_encode_String(deviceId, serializer);
         sse_encode_box_autoadd_rust_audio_input_config(config, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
       },
@@ -3762,7 +3762,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 2)
       throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
     return RustAudioInput(
-      deviceId: dco_decode_opt_String(arr[0]),
+      deviceId: dco_decode_String(arr[0]),
       config: dco_decode_rust_audio_input_config(arr[1]),
     );
   }
@@ -3788,7 +3788,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 3)
       throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return RustAudioOutput(
-      deviceId: dco_decode_opt_String(arr[0]),
+      deviceId: dco_decode_String(arr[0]),
       exclusiveMode: dco_decode_bool(arr[1]),
       source: dco_decode_i_32(arr[2]),
     );
@@ -5086,7 +5086,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   RustAudioInput sse_decode_rust_audio_input(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_deviceId = sse_decode_opt_String(deserializer);
+    var var_deviceId = sse_decode_String(deserializer);
     var var_config = sse_decode_rust_audio_input_config(deserializer);
     return RustAudioInput(deviceId: var_deviceId, config: var_config);
   }
@@ -5110,7 +5110,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   RustAudioOutput sse_decode_rust_audio_output(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_deviceId = sse_decode_opt_String(deserializer);
+    var var_deviceId = sse_decode_String(deserializer);
     var var_exclusiveMode = sse_decode_bool(deserializer);
     var var_source = sse_decode_i_32(deserializer);
     return RustAudioOutput(
@@ -6375,7 +6375,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_rust_audio_input(
       RustAudioInput self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.deviceId, serializer);
+    sse_encode_String(self.deviceId, serializer);
     sse_encode_rust_audio_input_config(self.config, serializer);
   }
 
@@ -6393,7 +6393,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_rust_audio_output(
       RustAudioOutput self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_opt_String(self.deviceId, serializer);
+    sse_encode_String(self.deviceId, serializer);
     sse_encode_bool(self.exclusiveMode, serializer);
     sse_encode_i_32(self.source, serializer);
   }
@@ -6973,7 +6973,7 @@ class RustMiniaudioPlayerImpl extends RustOpaque
 
   /// Configures runtime parameters for an existing capture node without reopening hardware.
   void configureInput(
-          {String? deviceId, required RustAudioInputConfig config}) =>
+          {required String deviceId, required RustAudioInputConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerConfigureInput(
           that: this, deviceId: deviceId, config: config);
 

@@ -90,7 +90,8 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   void clearQueue({required bool keepCurrent});
 
   /// Configures runtime parameters for an existing capture node without reopening hardware.
-  void configureInput({String? deviceId, required RustAudioInputConfig config});
+  void configureInput(
+      {required String deviceId, required RustAudioInputConfig config});
 
   /// Releases all native audio devices, worker threads, DSP chains, and memory.
   @override

@@ -48,11 +48,11 @@ void main() {
   });
 
   test('AudioDevice.auto static constant has auto ID and isAuto true', () {
-    expect(AudioDevice.auto.id, equals('auto'));
+    expect(AudioDevice.auto.id, equals('AUTO'));
     expect(AudioDevice.auto.isAuto, isTrue);
     expect(AudioDevice.auto.effectiveId, isEmpty);
     expect(AudioDevice.auto.name, equals('SYSTEM DEFAULT'));
-    expect(AudioDevice.auto.toString(), contains('auto'));
+    expect(AudioDevice.auto.toString().toUpperCase(), contains('AUTO'));
   });
 
   test('AudioDevice displayName uses defaultDeviceDisplayNameResolver for auto devices', () {
@@ -150,6 +150,49 @@ void main() {
     final sub3 = stream.listen((_) {});
     await sub3.cancel();
     await player.dispose();
+  });
+
+  test('stream.globalOutputDevices and globalInputDevices immediately deliver current snapshot on subscription', () async {
+    final player = MiniaudioPlayer();
+
+    List<AudioDevice>? receivedOutputs;
+    final outSub = player.stream.globalOutputDevices.listen((devices) {
+      receivedOutputs = devices;
+    });
+
+    List<AudioDevice>? receivedInputs;
+    final inSub = player.stream.globalInputDevices.listen((devices) {
+      receivedInputs = devices;
+    });
+
+    // Pump microtasks for stream emission
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(receivedOutputs, isNotNull);
+    expect(receivedOutputs, isNotEmpty);
+
+    expect(receivedInputs, isNotNull);
+    expect(receivedInputs, isNotEmpty);
+
+    await outSub.cancel();
+    await inSub.cancel();
+    await player.dispose();
+  });
+
+  test('MiniaudioPlayer static device discovery methods return valid devices with fallback safety', () async {
+    final syncOut = MiniaudioPlayer.getOutputDevicesSync();
+    expect(syncOut, isNotEmpty);
+    expect(syncOut.first.name, isNotEmpty);
+
+    final asyncOut = await MiniaudioPlayer.getOutputDevices();
+    expect(asyncOut, isNotEmpty);
+    expect(asyncOut.first.name, isNotEmpty);
+
+    final syncIn = MiniaudioPlayer.getInputDevicesSync();
+    expect(syncIn, isNotEmpty);
+
+    final asyncIn = await MiniaudioPlayer.getInputDevices();
+    expect(asyncIn, isNotEmpty);
   });
 
   test('cbr_noxing.mp3 memory playback, seek and duration', () async {

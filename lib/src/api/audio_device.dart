@@ -29,7 +29,7 @@ class AudioDevice {
     bool isAuto = false,
     this.type,
   })  : _resolvedName = resolvedName,
-        _isAuto = isAuto || id == 'auto' || id == '';
+        _isAuto = isAuto || id == 'AUTO' || id == 'auto' || id == '';
 
   /// The hardware device name currently routed by the OS (when [isAuto] is true).
   String? get resolvedName => _resolvedName;
@@ -39,7 +39,7 @@ class AudioDevice {
 
   /// The automatic system-managed default output audio device template.
   static const AudioDevice auto = AudioDevice(
-    id: 'auto',
+    id: 'AUTO',
     effectiveId: '',
     name: 'SYSTEM DEFAULT',
     isAuto: true,
@@ -78,7 +78,7 @@ class AudioDevice {
   }
 
   @override
-  int get hashCode => isAuto ? 'auto'.hashCode : id.hashCode;
+  int get hashCode => isAuto ? 'AUTO'.hashCode : id.hashCode;
 
   @override
   String toString() =>

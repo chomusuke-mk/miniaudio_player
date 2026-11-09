@@ -124,8 +124,10 @@ class PlayerStream<T> {
   final StreamController<MiniaudioPlayerException> _errorsController =
       StreamController<MiniaudioPlayerException>.broadcast();
 
+  final MiniaudioPlayer<T>? _player;
+
   /// Creates a [PlayerStream] container with broadcast stream controllers.
-  PlayerStream();
+  PlayerStream([this._player]);
 
   /// Broadcast stream emitting the playback position within the active track.
   Stream<Duration> get position => _positionController.stream;
@@ -218,12 +220,37 @@ class PlayerStream<T> {
   Stream<Set<AudioInput>> get inputs => _inputsController.stream;
 
   /// Reactive broadcast stream emitting updates to the global system output devices list.
+  ///
+  /// Emits the current snapshot immediately on subscription, followed by all live hardware changes.
   Stream<List<AudioDevice>> get globalOutputDevices =>
-      _globalOutputDevicesController.stream;
+      _createImmediateReplayStream(
+        _globalOutputDevicesController.stream,
+        () => _player?.state.globalOutputDevices ?? const [AudioDevice.auto],
+      );
 
   /// Reactive broadcast stream emitting updates to the global system input devices list.
+  ///
+  /// Emits the current snapshot immediately on subscription, followed by all live hardware changes.
   Stream<List<AudioDevice>> get globalInputDevices =>
-      _globalInputDevicesController.stream;
+      _createImmediateReplayStream(
+        _globalInputDevicesController.stream,
+        () => _player?.state.globalInputDevices ?? const [AudioDevice.auto],
+      );
+
+  Stream<R> _createImmediateReplayStream<R>(
+    Stream<R> source,
+    R Function() currentGetter,
+  ) {
+    return Stream<R>.multi((controller) {
+      controller.add(currentGetter());
+      final sub = source.listen(
+        controller.add,
+        onError: controller.addError,
+        onDone: controller.close,
+      );
+      controller.onCancel = sub.cancel;
+    }, isBroadcast: true);
+  }
 
   /// Broadcast stream emitting whether playback automatically pauses on output device disconnect.
   Stream<bool> get pauseOnDeviceChange => _pauseOnDeviceChangeController.stream;

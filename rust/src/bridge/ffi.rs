@@ -49,6 +49,26 @@ pub struct MapDeviceInfo {
     pub is_auto: i32,
 }
 
+/// Consolidated device collection holding both playback and capture devices in a single pass.
+#[repr(C)]
+pub struct MapAllDevices {
+    pub playback_devices: *mut MapDeviceInfo,
+    pub playback_count: u32,
+    pub capture_devices: *mut MapDeviceInfo,
+    pub capture_count: u32,
+}
+
+impl Default for MapAllDevices {
+    fn default() -> Self {
+        Self {
+            playback_devices: std::ptr::null_mut(),
+            playback_count: 0,
+            capture_devices: std::ptr::null_mut(),
+            capture_count: 0,
+        }
+    }
+}
+
 impl Default for MapDeviceInfo {
     fn default() -> Self {
         Self {
@@ -113,6 +133,8 @@ extern "C" {
         out_count: *mut u32,
     ) -> i32;
     pub fn map_device_free_devices(devices: *mut MapDeviceInfo);
+    pub fn map_device_enumerate_all(out_all: *mut MapAllDevices) -> i32;
+    pub fn map_device_free_all(all: *mut MapAllDevices);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -407,6 +429,15 @@ mod wasm_device_bridge {
     }
 
     pub unsafe fn map_device_free_devices(_devices: *mut MapDeviceInfo) {}
+
+    pub unsafe extern "C" fn map_device_enumerate_all(out_all: *mut MapAllDevices) -> i32 {
+        if !out_all.is_null() {
+            *out_all = MapAllDevices::default();
+        }
+        MAP_SUCCESS
+    }
+
+    pub unsafe fn map_device_free_all(_all: *mut MapAllDevices) {}
 }
 
 #[cfg(target_arch = "wasm32")]

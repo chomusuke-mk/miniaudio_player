@@ -10,7 +10,7 @@ void main() {
 
   group('AudioDevice effectiveId and endpoint resolution', () {
     test('AudioDevice.auto has canonical auto id and empty effectiveId by default', () {
-      expect(AudioDevice.auto.id, equals('auto'));
+      expect(AudioDevice.auto.id, equals('AUTO'));
       expect(AudioDevice.auto.isAuto, isTrue);
       expect(AudioDevice.auto.effectiveId, isEmpty);
     });

@@ -194,14 +194,14 @@ class RustAudioEffect {
 
 /// Audio input hardware endpoint configuration.
 class RustAudioInput {
-  /// Optional specific hardware device identifier. If None, targets default capture endpoint.
-  final String? deviceId;
+  /// Hardware device identifier, or "AUTO" for the system default capture route.
+  final String deviceId;
 
   /// Real-time capture configuration parameters.
   final RustAudioInputConfig config;
 
   const RustAudioInput({
-    this.deviceId,
+    required this.deviceId,
     required this.config,
   });
 
@@ -261,8 +261,8 @@ class RustAudioInputConfig {
 
 /// Audio hardware output endpoint configuration.
 class RustAudioOutput {
-  /// Optional specific hardware device identifier. If None, targets default/auto endpoint.
-  final String? deviceId;
+  /// Hardware device identifier, or "AUTO" for the system default route.
+  final String deviceId;
 
   /// Whether exclusive hardware access mode is requested.
   final bool exclusiveMode;
@@ -271,7 +271,7 @@ class RustAudioOutput {
   final int source;
 
   const RustAudioOutput({
-    this.deviceId,
+    required this.deviceId,
     required this.exclusiveMode,
     required this.source,
   });

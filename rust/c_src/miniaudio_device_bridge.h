@@ -59,6 +59,17 @@ extern "C"
     int32_t map_device_enumerate_capture_devices(map_device_info_t **out_devices, uint32_t *out_count);
     void map_device_free_devices(map_device_info_t *devices);
 
+    typedef struct
+    {
+        map_device_info_t *playback_devices;
+        uint32_t playback_count;
+        map_device_info_t *capture_devices;
+        uint32_t capture_count;
+    } map_all_devices_t;
+
+    int32_t map_device_enumerate_all(map_all_devices_t *out_all);
+    void map_device_free_all(map_all_devices_t *all);
+
 #ifdef __cplusplus
 }
 #endif

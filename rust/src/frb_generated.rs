@@ -464,7 +464,7 @@ fn wire__crate__api__player__RustMiniaudioPlayer_configure_input_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
             >>::sse_decode(&mut deserializer);
-            let api_device_id = <Option<String>>::sse_decode(&mut deserializer);
+            let api_device_id = <String>::sse_decode(&mut deserializer);
             let api_config =
                 <crate::api::types::RustAudioInputConfig>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -5096,7 +5096,7 @@ impl SseDecode for crate::api::types::RustAudioEffect {
 impl SseDecode for crate::api::types::RustAudioInput {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_deviceId = <Option<String>>::sse_decode(deserializer);
+        let mut var_deviceId = <String>::sse_decode(deserializer);
         let mut var_config = <crate::api::types::RustAudioInputConfig>::sse_decode(deserializer);
         return crate::api::types::RustAudioInput {
             device_id: var_deviceId,
@@ -5125,7 +5125,7 @@ impl SseDecode for crate::api::types::RustAudioInputConfig {
 impl SseDecode for crate::api::types::RustAudioOutput {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_deviceId = <Option<String>>::sse_decode(deserializer);
+        let mut var_deviceId = <String>::sse_decode(deserializer);
         let mut var_exclusiveMode = <bool>::sse_decode(deserializer);
         let mut var_source = <i32>::sse_decode(deserializer);
         return crate::api::types::RustAudioOutput {
@@ -7816,7 +7816,7 @@ impl SseEncode for crate::api::types::RustAudioEffect {
 impl SseEncode for crate::api::types::RustAudioInput {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <Option<String>>::sse_encode(self.device_id, serializer);
+        <String>::sse_encode(self.device_id, serializer);
         <crate::api::types::RustAudioInputConfig>::sse_encode(self.config, serializer);
     }
 }
@@ -7834,7 +7834,7 @@ impl SseEncode for crate::api::types::RustAudioInputConfig {
 impl SseEncode for crate::api::types::RustAudioOutput {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <Option<String>>::sse_encode(self.device_id, serializer);
+        <String>::sse_encode(self.device_id, serializer);
         <bool>::sse_encode(self.exclusive_mode, serializer);
         <i32>::sse_encode(self.source, serializer);
     }

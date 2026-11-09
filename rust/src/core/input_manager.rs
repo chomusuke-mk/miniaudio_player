@@ -12,7 +12,8 @@ use crate::dsp::ducking::AutoDucker;
 
 /// Concrete active capture hardware node instance.
 pub struct ActiveInputNode {
-    pub device_id: Option<String>,
+    pub device_id: String,
+    pub resolved_id: String,
     pub config: RustAudioInputConfig,
     pub capture_node: Box<DeviceCaptureNode>,
     pub consumer: rtrb::Consumer<f32>,
@@ -44,11 +45,66 @@ impl InputManager {
     // Multi-Input Management Commands
     // =========================================================================
 
+    /// Resolves a requested device ID ("AUTO" or specific ID) to a physical OS capture device endpoint ID.
+    pub fn resolve_physical_input_id(device_id: &str) -> Option<String> {
+        if device_id == "AUTO" || device_id == "auto" || device_id.is_empty() {
+            let mut count = 0;
+            let mut ptr = std::ptr::null_mut();
+            let res = unsafe { crate::bridge::ffi::map_device_enumerate_capture_devices(&mut ptr, &mut count) };
+            if res == 0 && !ptr.is_null() {
+                let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+                let mut found = None;
+                for d in slice {
+                    if d.is_default != 0 && d.is_auto == 0 {
+                        found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    for d in slice {
+                        if d.is_auto == 0 {
+                            found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
+                            break;
+                        }
+                    }
+                }
+                unsafe { crate::bridge::ffi::map_device_free_devices(ptr) };
+                return found;
+            }
+            None
+        } else {
+            Some(device_id.to_string())
+        }
+    }
+
     /// Reconciles active capture nodes with the requested inputs set.
     pub fn set_inputs(&mut self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
-        // 1. Evict nodes not present in requested inputs
+        self.set_inputs_with_resolved(inputs, None)
+    }
+
+    /// Reconciles active capture nodes with the requested inputs set, using optional pre-resolved AUTO endpoint.
+    pub fn set_inputs_with_resolved(
+        &mut self,
+        inputs: Vec<RustAudioInput>,
+        pre_resolved_auto_id: Option<String>,
+    ) -> Result<(), String> {
+        let current_auto_def = pre_resolved_auto_id
+            .or_else(|| Self::resolve_physical_input_id("AUTO"));
+
+        // 1. Evict nodes not present in requested inputs, or whose AUTO resolved ID changed
         self.active_inputs.retain_mut(|node| {
-            let keep = inputs.iter().any(|inp| inp.device_id == node.device_id);
+            let keep = inputs.iter().any(|inp| {
+                if inp.device_id != node.device_id {
+                    return false;
+                }
+                if inp.device_id == "AUTO" {
+                    if let Some(ref def_id) = current_auto_def {
+                        return node.resolved_id == *def_id;
+                    }
+                    return false;
+                }
+                true
+            });
             if !keep {
                 let _ = node.capture_node.stop();
             }
@@ -57,10 +113,19 @@ impl InputManager {
 
         // 2. Update existing nodes and open new ones
         for inp in inputs {
+            let target_resolved_id = if inp.device_id == "AUTO" {
+                current_auto_def.clone()
+            } else {
+                Self::resolve_physical_input_id(&inp.device_id)
+            };
+            let Some(target_resolved_id) = target_resolved_id else {
+                continue;
+            };
+
             if let Some(node) = self
                 .active_inputs
                 .iter_mut()
-                .find(|n| n.device_id == inp.device_id)
+                .find(|n| n.device_id == inp.device_id && n.resolved_id == target_resolved_id)
             {
                 // Modulate runtime config without reopening hardware
                 node.config = inp.config.clone();
@@ -77,13 +142,8 @@ impl InputManager {
                     node.ducker.set_params(false, -14.0, -30.0, 30.0, 250.0, 400.0);
                 }
             } else {
-                // Add new hardware capture node
-                let c_dev = match inp.device_id.as_deref() {
-                    Some(s) if !s.is_empty() && s != "auto" => {
-                        Some(CString::new(s).map_err(|e| e.to_string())?)
-                    }
-                    _ => None,
-                };
+                // Add new hardware capture node bound to resolved physical endpoint
+                let c_dev = CString::new(target_resolved_id.as_str()).ok();
                 let c_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
 
                 let (capture_node, consumer) =
@@ -106,6 +166,7 @@ impl InputManager {
 
                 self.active_inputs.push(ActiveInputNode {
                     device_id: inp.device_id,
+                    resolved_id: target_resolved_id,
                     config: inp.config,
                     capture_node,
                     consumer,
@@ -126,17 +187,17 @@ impl InputManager {
             .any(|n| n.device_id == input.device_id)
         {
             return Err(format!(
-                "Input with device_id {:?} is already active",
+                "Input with device_id {} is already active",
                 input.device_id
             ));
         }
 
-        let c_dev = match input.device_id.as_deref() {
-            Some(s) if !s.is_empty() && s != "auto" => {
-                Some(CString::new(s).map_err(|e| e.to_string())?)
-            }
-            _ => None,
+        let target_resolved_id = match Self::resolve_physical_input_id(&input.device_id) {
+            Some(id) => id,
+            None => return Err(format!("Could not resolve input device {}", input.device_id)),
         };
+
+        let c_dev = CString::new(target_resolved_id.as_str()).ok();
         let c_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
 
         let (capture_node, consumer) = DeviceCaptureNode::new(self.sample_rate, 1, 512, c_ptr)
@@ -158,6 +219,7 @@ impl InputManager {
 
         self.active_inputs.push(ActiveInputNode {
             device_id: input.device_id,
+            resolved_id: target_resolved_id,
             config: input.config,
             capture_node,
             consumer,
@@ -169,7 +231,7 @@ impl InputManager {
     }
 
     /// Removes an audio input capture node by device identifier.
-    pub fn remove_input(&mut self, device_id: Option<String>) -> Result<(), String> {
+    pub fn remove_input(&mut self, device_id: String) -> Result<(), String> {
         if let Some(pos) = self
             .active_inputs
             .iter()
@@ -184,7 +246,7 @@ impl InputManager {
     /// Configures runtime parameters for an active capture node without reopening hardware.
     pub fn configure_input(
         &mut self,
-        device_id: Option<String>,
+        device_id: String,
         config: RustAudioInputConfig,
     ) -> Result<(), String> {
         if let Some(node) = self
@@ -208,7 +270,7 @@ impl InputManager {
             Ok(())
         } else {
             Err(format!(
-                "Input with device_id {:?} not found",
+                "Input with device_id {} not found",
                 device_id
             ))
         }

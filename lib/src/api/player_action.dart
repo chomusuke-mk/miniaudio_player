@@ -946,11 +946,11 @@ class PlayerAction<T> {
   /// Throws [StateError] if no active input exists for the target device.
   Future<void> configureInput(
     AudioInputConfig config, {
-    String? deviceId,
+    String deviceId = 'AUTO',
     AudioDevice? device,
   }) async {
     _player._ensureNotDisposed();
-    final targetId = deviceId ?? device?.id;
+    final targetId = device != null ? device.id : deviceId;
     if (!_player.state.inputs.any((i) => i.deviceId == targetId)) {
       throw StateError(
         'Cannot configure input: deviceId $targetId is not currently active.',
