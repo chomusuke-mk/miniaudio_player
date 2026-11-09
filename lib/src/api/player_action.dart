@@ -476,15 +476,15 @@ class PlayerAction<T> {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
-  /// Enables or disables raw metadata dispatch from the native audio engine.
+  /// Enables or disables metadata dispatch from the native audio engine.
   ///
-  /// When enabled, raw metadata bytes (e.g. ID3, Vorbis, ICY stream metadata) are emitted
-  /// across `PlayerStream.metaBytes` and stored in `PlayerState.metaBytes`.
+  /// When enabled, [AudioMetadata] events are emitted across `PlayerStream.metadata`
+  /// and stored in `PlayerState.metadata`.
   ///
   /// Defaults to `false` to avoid saturating the event bus.
-  Future<void> setMetaBytesEnabled(bool enabled) async {
+  Future<void> setMetadataEnabled(bool enabled) async {
     _player._ensureNotDisposed();
-    _rust.setMetabytesEnabled(enabled: enabled);
+    _rust.setMetadataEnabled(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 

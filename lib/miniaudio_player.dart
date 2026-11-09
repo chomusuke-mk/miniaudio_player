@@ -8,6 +8,8 @@ library;
 
 export 'src/api/audio_analysis_result.dart';
 export 'src/api/audio_device.dart';
+export 'src/api/audio_info.dart';
+export 'src/api/audio_metadata.dart';
 export 'src/api/buffer.dart';
 export 'src/api/crossfade_config.dart';
 export 'src/api/dsp_config.dart';

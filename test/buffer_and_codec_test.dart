@@ -124,8 +124,8 @@ void main() {
 
       await player.action.setQueue([AudioSource(file.path)]);
 
-      expect(player.state.sampleRate, greaterThan(0));
-      expect(player.state.channels, greaterThan(0));
+      expect(player.state.audioInfo?.sampleRate, greaterThan(0));
+      expect(player.state.audioInfo?.channels, greaterThan(0));
 
       await player.action.play();
       await Future<void>.delayed(const Duration(milliseconds: 200));

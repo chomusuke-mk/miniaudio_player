@@ -10,21 +10,66 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
-/// Offline acoustic analysis results containing loudness, waveform, and format properties.
+/// Configuration parameters for offline acoustic and metadata analysis.
+class RustAnalysisConfig {
+  /// Whether to calculate ITU-R BS.1770-4 loudness and ReplayGain.
+  final bool replayGain;
+
+  /// Whether to extract a normalized peak waveform envelope.
+  final bool waveform;
+
+  /// Whether to extract raw metadata bytes.
+  final bool metadata;
+
+  /// Number of normalized waveform buckets to compute.
+  final int waveformPoints;
+
+  /// Reference target loudness in LUFS (defaults to -18.0).
+  final double targetLufs;
+
+  /// Optional maximum duration in milliseconds to analyze (used for live/infinite streams).
+  final PlatformInt64? maxDurationMs;
+
+  const RustAnalysisConfig({
+    required this.replayGain,
+    required this.waveform,
+    required this.metadata,
+    required this.waveformPoints,
+    required this.targetLufs,
+    this.maxDurationMs,
+  });
+
+  static Future<RustAnalysisConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustAnalysisConfigDefault();
+
+  @override
+  int get hashCode =>
+      replayGain.hashCode ^
+      waveform.hashCode ^
+      metadata.hashCode ^
+      waveformPoints.hashCode ^
+      targetLufs.hashCode ^
+      maxDurationMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAnalysisConfig &&
+          runtimeType == other.runtimeType &&
+          replayGain == other.replayGain &&
+          waveform == other.waveform &&
+          metadata == other.metadata &&
+          waveformPoints == other.waveformPoints &&
+          targetLufs == other.targetLufs &&
+          maxDurationMs == other.maxDurationMs;
+}
+
+/// Offline acoustic analysis results containing format, loudness, waveform, and metadata.
 class RustAudioAnalysisResult {
-  /// Total track duration in milliseconds.
-  final PlatformInt64 durationMs;
-
-  /// Audio sample rate in Hz.
-  final int sampleRate;
-
-  /// Audio channel count.
-  final int channels;
-
-  /// Average bitrate in bits per second.
-  final int bitrate;
+  /// Format and audio technical characteristics (cost: 0).
+  final RustAudioInfo audioInfo;
 
   /// Absolute true peak sample amplitude.
   final double peakAmplitude;
@@ -53,11 +98,14 @@ class RustAudioAnalysisResult {
   /// Normalized amplitude envelope points for waveform display.
   final Float32List waveformPeaks;
 
+  /// Whether metadata bytes were extracted.
+  final bool hasMetadata;
+
+  /// Encapsulated metadata bytes.
+  final RustAudioMetadata? metadata;
+
   const RustAudioAnalysisResult({
-    required this.durationMs,
-    required this.sampleRate,
-    required this.channels,
-    required this.bitrate,
+    required this.audioInfo,
     required this.peakAmplitude,
     required this.rmsAmplitude,
     required this.hasReplayGain,
@@ -67,6 +115,8 @@ class RustAudioAnalysisResult {
     required this.spectralCentroid,
     required this.frequencyBands,
     required this.waveformPeaks,
+    required this.hasMetadata,
+    this.metadata,
   });
 
   static Future<RustAudioAnalysisResult> default_() =>
@@ -74,10 +124,7 @@ class RustAudioAnalysisResult {
 
   @override
   int get hashCode =>
-      durationMs.hashCode ^
-      sampleRate.hashCode ^
-      channels.hashCode ^
-      bitrate.hashCode ^
+      audioInfo.hashCode ^
       peakAmplitude.hashCode ^
       rmsAmplitude.hashCode ^
       hasReplayGain.hashCode ^
@@ -86,17 +133,16 @@ class RustAudioAnalysisResult {
       hasWaveform.hashCode ^
       spectralCentroid.hashCode ^
       frequencyBands.hashCode ^
-      waveformPeaks.hashCode;
+      waveformPeaks.hashCode ^
+      hasMetadata.hashCode ^
+      metadata.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is RustAudioAnalysisResult &&
           runtimeType == other.runtimeType &&
-          durationMs == other.durationMs &&
-          sampleRate == other.sampleRate &&
-          channels == other.channels &&
-          bitrate == other.bitrate &&
+          audioInfo == other.audioInfo &&
           peakAmplitude == other.peakAmplitude &&
           rmsAmplitude == other.rmsAmplitude &&
           hasReplayGain == other.hasReplayGain &&
@@ -105,7 +151,9 @@ class RustAudioAnalysisResult {
           hasWaveform == other.hasWaveform &&
           spectralCentroid == other.spectralCentroid &&
           frequencyBands == other.frequencyBands &&
-          waveformPeaks == other.waveformPeaks;
+          waveformPeaks == other.waveformPeaks &&
+          hasMetadata == other.hasMetadata &&
+          metadata == other.metadata;
 }
 
 /// Hardware or virtual audio endpoint detected by the operating system.
@@ -192,6 +240,54 @@ class RustAudioEffect {
           pinned == other.pinned;
 }
 
+/// Technical format and stream characteristics of an audio asset.
+class RustAudioInfo {
+  /// Total duration in milliseconds, or None if unknown / infinite livestream.
+  final PlatformInt64? durationMs;
+
+  /// Sample rate in Hz.
+  final int sampleRate;
+
+  /// Channel count.
+  final int channels;
+
+  /// Nominal bitrate in bps.
+  final int bitrate;
+
+  /// Container/codec format string (e.g. "mp3", "flac", "wav").
+  final String? format;
+
+  const RustAudioInfo({
+    this.durationMs,
+    required this.sampleRate,
+    required this.channels,
+    required this.bitrate,
+    this.format,
+  });
+
+  static Future<RustAudioInfo> default_() =>
+      RustLib.instance.api.crateApiTypesRustAudioInfoDefault();
+
+  @override
+  int get hashCode =>
+      durationMs.hashCode ^
+      sampleRate.hashCode ^
+      channels.hashCode ^
+      bitrate.hashCode ^
+      format.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioInfo &&
+          runtimeType == other.runtimeType &&
+          durationMs == other.durationMs &&
+          sampleRate == other.sampleRate &&
+          channels == other.channels &&
+          bitrate == other.bitrate &&
+          format == other.format;
+}
+
 /// Audio input hardware endpoint configuration.
 class RustAudioInput {
   /// Hardware device identifier, or "AUTO" for the system default capture route.
@@ -257,6 +353,29 @@ class RustAudioInputConfig {
           ducking == other.ducking &&
           monitorDirect == other.monitorDirect &&
           monitorVolume == other.monitorVolume;
+}
+
+/// Container encapsulating raw audio metadata bytes.
+class RustAudioMetadata {
+  /// Raw metadata bytes (ID3v2, Vorbis Comments, moov atom, etc.).
+  final Uint8List bytes;
+
+  const RustAudioMetadata({
+    required this.bytes,
+  });
+
+  static Future<RustAudioMetadata> default_() =>
+      RustLib.instance.api.crateApiTypesRustAudioMetadataDefault();
+
+  @override
+  int get hashCode => bytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioMetadata &&
+          runtimeType == other.runtimeType &&
+          bytes == other.bytes;
 }
 
 /// Audio hardware output endpoint configuration.
@@ -800,6 +919,11 @@ class RustPlayerConfig {
 sealed class RustPlayerEvent with _$RustPlayerEvent {
   const RustPlayerEvent._();
 
+  /// Technical format characteristics of the active audio track.
+  const factory RustPlayerEvent.audioInfo(
+    RustAudioInfo field0,
+  ) = RustPlayerEvent_AudioInfo;
+
   /// Playback state transition code.
   const factory RustPlayerEvent.playbackState(
     int field0,
@@ -814,11 +938,6 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.position(
     PlatformInt64 field0,
   ) = RustPlayerEvent_Position;
-
-  /// Total track duration in milliseconds.
-  const factory RustPlayerEvent.duration(
-    PlatformInt64 field0,
-  ) = RustPlayerEvent_Duration;
 
   /// Whether audio is actively playing.
   const factory RustPlayerEvent.isPlaying(
@@ -898,11 +1017,6 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.mono(
     bool field0,
   ) = RustPlayerEvent_Mono;
-
-  /// Stream nominal bitrate in bps.
-  const factory RustPlayerEvent.bitrate(
-    int field0,
-  ) = RustPlayerEvent_Bitrate;
 
   /// Audio buffer frame size.
   const factory RustPlayerEvent.bufferSize(
@@ -1007,15 +1121,15 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     int field0,
   ) = RustPlayerEvent_ActiveVoices;
 
-  /// Raw ICY/ID3 metadata stream payload.
-  const factory RustPlayerEvent.metaBytes(
-    Uint8List field0,
-  ) = RustPlayerEvent_MetaBytes;
+  /// Audio metadata stream payload.
+  const factory RustPlayerEvent.audioMetadata(
+    RustAudioMetadata field0,
+  ) = RustPlayerEvent_AudioMetadata;
 
   /// Whether metadata stream reception is enabled.
-  const factory RustPlayerEvent.metaBytesEnabled(
+  const factory RustPlayerEvent.metadataEnabled(
     bool field0,
-  ) = RustPlayerEvent_MetaBytesEnabled;
+  ) = RustPlayerEvent_MetadataEnabled;
 
   /// Live audio recording status and active source.
   const factory RustPlayerEvent.recordingState({

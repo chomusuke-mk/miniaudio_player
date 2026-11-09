@@ -28,9 +28,7 @@ void main() {
       expect(state.bufferSize, 0);
 
       // Active deck properties
-      expect(state.sampleRate, anyOf(0, 44100, 48000));
-      expect(state.channels, anyOf(0, 1, 2));
-      expect(state.audioBitrate, 0);
+      expect(state.audioInfo, isNull);
       expect(state.playbackState, PlaybackState.stopped);
       expect(state.isPaused, isFalse);
       expect(state.playbackState.isStopped, isTrue);

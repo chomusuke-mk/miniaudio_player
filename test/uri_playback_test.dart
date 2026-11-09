@@ -348,7 +348,7 @@ void main() {
 
       // CBR sniffer should resolve duration to ~10 seconds instead of defaulting to 0
       expect(player.state.duration?.inSeconds, inInclusiveRange(9, 11));
-      expect(player.state.audioBitrate, greaterThan(0));
+      expect(player.state.audioInfo?.bitrate, greaterThan(0));
 
       await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);

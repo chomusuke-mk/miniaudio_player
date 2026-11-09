@@ -14,49 +14,19 @@ import 'types.dart';
 void setLogLevel({required int level}) =>
     RustLib.instance.api.crateApiPlayerSetLogLevel(level: level);
 
-/// Asynchronously analyzes acoustic and loudness properties of an audio file on disk.
-Future<RustAudioAnalysisResult> analyzeAudioFile(
-        {required String path,
-        required bool replayGain,
-        required bool waveform,
-        required BigInt waveformPoints,
-        required double targetLufs}) =>
-    RustLib.instance.api.crateApiPlayerAnalyzeAudioFile(
-        path: path,
-        replayGain: replayGain,
-        waveform: waveform,
-        waveformPoints: waveformPoints,
-        targetLufs: targetLufs);
+/// Asynchronously analyzes acoustic, loudness, waveform, and metadata properties of any audio source.
+Future<RustAudioAnalysisResult> analyzeAudioSource(
+        {required RustAudioSource source,
+        required RustAnalysisConfig config}) =>
+    RustLib.instance.api
+        .crateApiPlayerAnalyzeAudioSource(source: source, config: config);
 
-/// Synchronously analyzes acoustic and loudness properties of an audio file on disk.
-RustAudioAnalysisResult analyzeAudioFileSync(
-        {required String path,
-        required bool replayGain,
-        required bool waveform,
-        required BigInt waveformPoints,
-        required double targetLufs}) =>
-    RustLib.instance.api.crateApiPlayerAnalyzeAudioFileSync(
-        path: path,
-        replayGain: replayGain,
-        waveform: waveform,
-        waveformPoints: waveformPoints,
-        targetLufs: targetLufs);
-
-/// Asynchronously analyzes acoustic and loudness properties of an in-memory audio buffer.
-Future<RustAudioAnalysisResult> analyzeAudioMemory(
-        {required List<int> data,
-        String? hintExtension,
-        required bool replayGain,
-        required bool waveform,
-        required BigInt waveformPoints,
-        required double targetLufs}) =>
-    RustLib.instance.api.crateApiPlayerAnalyzeAudioMemory(
-        data: data,
-        hintExtension: hintExtension,
-        replayGain: replayGain,
-        waveform: waveform,
-        waveformPoints: waveformPoints,
-        targetLufs: targetLufs);
+/// Synchronously analyzes acoustic, loudness, waveform, and metadata properties of a local audio source.
+RustAudioAnalysisResult analyzeAudioSourceSync(
+        {required RustAudioSource source,
+        required RustAnalysisConfig config}) =>
+    RustLib.instance.api
+        .crateApiPlayerAnalyzeAudioSourceSync(source: source, config: config);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<EventReporter>>
 abstract class EventReporter implements RustOpaqueInterface {
@@ -244,8 +214,8 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Sets the queue loop policy (0: off, 1: one, 2: all).
   void setLoopMode({required int mode});
 
-  /// Enables or disables forwarding of raw ICY/ID3 metadata byte payloads.
-  void setMetabytesEnabled({required bool enabled});
+  /// Enables or disables forwarding of audio metadata payloads.
+  void setMetadataEnabled({required bool enabled});
 
   /// Toggles mono downmixing of multi-channel audio.
   void setMono({required bool enabled});
@@ -325,14 +295,8 @@ class TelemetryFilter {
   /// Cached track position in milliseconds.
   final PlatformInt64 pos;
 
-  /// Cached track duration in milliseconds.
-  final PlatformInt64? dur;
-
   /// Cached active queue index.
   final int? index;
-
-  /// Cached stream bitrate in bps.
-  final int? bitrate;
 
   /// Cached buffer end boundary in milliseconds.
   final PlatformInt64? bufferedEnd;
@@ -358,8 +322,11 @@ class TelemetryFilter {
   /// Cached ReplayGain settings tuple (gain bits, peak bits).
   final (int, int)? replayGain;
 
-  /// Cached raw ICY/ID3 metadata byte sequence.
-  final Uint8List? metaBytes;
+  /// Cached audio metadata payload.
+  final RustAudioMetadata? metadata;
+
+  /// Cached technical audio format information.
+  final RustAudioInfo? audioInfo;
 
   /// Cached count of concurrent active sound effect voices.
   final int? activeVoices;
@@ -368,9 +335,7 @@ class TelemetryFilter {
     this.state,
     this.phase,
     required this.pos,
-    this.dur,
     this.index,
-    this.bitrate,
     this.bufferedEnd,
     this.isBuffering,
     this.isXfading,
@@ -379,7 +344,8 @@ class TelemetryFilter {
     this.isPlaying,
     this.isCompleted,
     this.replayGain,
-    this.metaBytes,
+    this.metadata,
+    this.audioInfo,
     this.activeVoices,
   });
 
@@ -391,9 +357,7 @@ class TelemetryFilter {
       state.hashCode ^
       phase.hashCode ^
       pos.hashCode ^
-      dur.hashCode ^
       index.hashCode ^
-      bitrate.hashCode ^
       bufferedEnd.hashCode ^
       isBuffering.hashCode ^
       isXfading.hashCode ^
@@ -402,7 +366,8 @@ class TelemetryFilter {
       isPlaying.hashCode ^
       isCompleted.hashCode ^
       replayGain.hashCode ^
-      metaBytes.hashCode ^
+      metadata.hashCode ^
+      audioInfo.hashCode ^
       activeVoices.hashCode;
 
   @override
@@ -413,9 +378,7 @@ class TelemetryFilter {
           state == other.state &&
           phase == other.phase &&
           pos == other.pos &&
-          dur == other.dur &&
           index == other.index &&
-          bitrate == other.bitrate &&
           bufferedEnd == other.bufferedEnd &&
           isBuffering == other.isBuffering &&
           isXfading == other.isXfading &&
@@ -424,6 +387,7 @@ class TelemetryFilter {
           isPlaying == other.isPlaying &&
           isCompleted == other.isCompleted &&
           replayGain == other.replayGain &&
-          metaBytes == other.metaBytes &&
+          metadata == other.metadata &&
+          audioInfo == other.audioInfo &&
           activeVoices == other.activeVoices;
 }

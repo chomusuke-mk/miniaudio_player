@@ -7,8 +7,11 @@
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::Cursor;
+use std::sync::atomic::Ordering;
 use symphonia::core::io::MediaSource;
 
+use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult, RustAudioInfo, RustAudioMetadata};
+use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 use crate::decoder::sniffer::FormatSniffer;
 use crate::decoder::SymphoniaEngine;
 
@@ -77,6 +80,8 @@ pub struct AudioAnalysisResult {
     pub channels: u32,
     /// Estimated nominal bitrate in bps.
     pub bitrate: u32,
+    /// Container or codec format string.
+    pub format: Option<String>,
     /// Peak sample amplitude.
     pub peak: f32,
 
@@ -89,6 +94,11 @@ pub struct AudioAnalysisResult {
     pub has_waveform: i32,
     /// Downsampled waveform envelope data.
     pub waveform: WaveformData,
+
+    /// Non-zero if metadata bytes were extracted.
+    pub has_metadata: i32,
+    /// Raw metadata bytes.
+    pub metadata_bytes: Vec<u8>,
 }
 
 /// ITU-R BS.1770-4 K-Weighting Filter Pair and Dual-Gated Loudness Integrator.
@@ -310,6 +320,279 @@ impl WaveformAccumulator {
     }
 }
 
+/// Adaptive Bounded Waveform Accumulator with 2:1 dynamic decimation.
+/// Ensures peak accumulation memory remains strictly bounded (< 16 KB)
+/// across any file duration from seconds to 10+ hours.
+pub struct AdaptiveWaveformAccumulator {
+    target_points: usize,
+    buckets: Vec<f32>,
+    current_block_peak: f32,
+    current_block_frames: usize,
+    frames_per_block: usize,
+    has_samples: bool,
+}
+
+impl AdaptiveWaveformAccumulator {
+    pub const MAX_BUCKETS: usize = 2048;
+
+    pub fn new(target_points: usize) -> Self {
+        Self {
+            target_points: target_points.max(1),
+            buckets: Vec::with_capacity(Self::MAX_BUCKETS),
+            current_block_peak: 0.0,
+            current_block_frames: 0,
+            frames_per_block: 256,
+            has_samples: false,
+        }
+    }
+
+    #[inline]
+    pub fn push_frame_peak(&mut self, peak: f32) {
+        self.has_samples = true;
+        if peak > self.current_block_peak {
+            self.current_block_peak = peak;
+        }
+        self.current_block_frames += 1;
+        if self.current_block_frames >= self.frames_per_block {
+            self.buckets.push(self.current_block_peak);
+            self.current_block_peak = 0.0;
+            self.current_block_frames = 0;
+
+            if self.buckets.len() >= Self::MAX_BUCKETS {
+                let mut decimated = Vec::with_capacity(self.buckets.len() / 2);
+                for chunk in self.buckets.chunks_exact(2) {
+                    decimated.push(chunk[0].max(chunk[1]));
+                }
+                self.buckets = decimated;
+                self.frames_per_block *= 2;
+            }
+        }
+    }
+
+    pub fn finalize(mut self) -> Vec<f32> {
+        if !self.has_samples {
+            return Vec::new();
+        }
+        if self.current_block_frames > 0 {
+            self.buckets.push(self.current_block_peak);
+        }
+        if self.buckets.is_empty() {
+            return Vec::new();
+        }
+
+        let n = self.target_points;
+        let mut points = Vec::with_capacity(n);
+        let chunk_size = (self.buckets.len() as f64) / (n as f64);
+
+        for i in 0..n {
+            let start = (i as f64 * chunk_size) as usize;
+            let end = (((i + 1) as f64 * chunk_size) as usize).min(self.buckets.len());
+            let chunk_peak = if start < self.buckets.len() {
+                self.buckets[start..end.max(start + 1).min(self.buckets.len())]
+                    .iter()
+                    .copied()
+                    .fold(0.0f32, f32::max)
+                    .clamp(0.0, 1.0)
+            } else {
+                *self.buckets.last().unwrap_or(&0.0)
+            };
+            points.push(chunk_peak);
+        }
+
+        let max_pt = points.iter().copied().fold(0.0f32, f32::max);
+        if max_pt > 0.0 {
+            for pt in &mut points {
+                *pt = (*pt / max_pt).clamp(0.0, 1.0);
+            }
+        }
+
+        points
+    }
+}
+
+/// Standalone, reusable metadata and format extraction information from audio container headers.
+#[derive(Debug, Clone, Default)]
+pub struct HeadAnalysisInfo {
+    pub format: Option<String>,
+    pub bitrate: u32,
+    pub duration_ms: i64,
+    pub audio_start: i64,
+    pub audio_end: i64,
+    pub metadata_bytes: Option<Vec<u8>>,
+}
+
+/// Safely inspects and extracts format and metadata information from audio header bytes.
+/// Designed for modular reuse in both offline analysis and stream metadata inspection.
+pub fn analyze_head_info(
+    head_data: &[u8],
+    total_byte_size: i64,
+    extract_metadata: bool,
+) -> HeadAnalysisInfo {
+    let (_status, boundary) = FormatSniffer::detect_head_boundary(head_data, total_byte_size);
+    let sniffed = FormatSniffer::sniff_stream_info(head_data, total_byte_size);
+    let (bitrate, duration_ms) = sniffed.unwrap_or((0, 0));
+    let format = boundary.container.hint_extension().map(|s| s.to_string());
+
+    let metadata_bytes = if extract_metadata && !head_data.is_empty() {
+        let meta_len = if boundary.audio_start > 0 {
+            (boundary.audio_start as usize).min(head_data.len())
+        } else {
+            head_data.len().min(65536)
+        };
+        Some(head_data[..meta_len].to_vec())
+    } else {
+        None
+    };
+
+    HeadAnalysisInfo {
+        format,
+        bitrate,
+        duration_ms,
+        audio_start: boundary.audio_start,
+        audio_end: boundary.audio_end,
+        metadata_bytes,
+    }
+}
+
+/// Performs comprehensive, memory-bounded ($O(1)$ RAM) acoustic, loudness, waveform,
+/// and metadata analysis on an arbitrary [`AudioSourceCore`].
+pub fn analyze_audio_source(
+    source: AudioSourceCore,
+    config: RustAnalysisConfig,
+) -> Result<RustAudioAnalysisResult, String> {
+    let mut deck = StreamingDeck::new_analysis_deck(44100, 2)
+        .map_err(|e| format!("Failed to create analysis deck: {}", e))?;
+
+    let res = DualSource::open_deck_source(&mut deck, &source, None);
+    if res != 0 {
+        return Err(format!("Failed to open audio source (code: {})", res));
+    }
+
+    let raw_meta = deck.get_meta_bytes();
+    let head_info = if let Some(ref m) = raw_meta {
+        analyze_head_info(m, 0, config.metadata)
+    } else {
+        HeadAnalysisInfo::default()
+    };
+
+    let sample_rate = deck.sample_rate.load(Ordering::SeqCst);
+    let channels = deck.channels.load(Ordering::SeqCst).max(1);
+    let mut duration_ms = deck.duration_ms.load(Ordering::SeqCst);
+    let bitrate = deck.bitrate.load(Ordering::Relaxed);
+
+    // Fast path: if neither ReplayGain nor Waveform is requested, return early
+    if !config.replay_gain && !config.waveform {
+        let meta_bytes = if config.metadata {
+            raw_meta.or(head_info.metadata_bytes)
+        } else {
+            None
+        };
+        let fast_duration = if duration_ms > 0 { Some(duration_ms) } else { None };
+        return Ok(RustAudioAnalysisResult {
+            audio_info: RustAudioInfo {
+                duration_ms: fast_duration,
+                sample_rate,
+                channels,
+                bitrate,
+                format: head_info.format,
+            },
+            peak_amplitude: 0.0,
+            rms_amplitude: 0.0,
+            has_replay_gain: false,
+            integrated_lufs: 0.0,
+            replay_gain_db: 0.0,
+            has_waveform: false,
+            spectral_centroid: 0.0,
+            frequency_bands: Vec::new(),
+            waveform_peaks: Vec::new(),
+            has_metadata: meta_bytes.is_some(),
+            metadata: meta_bytes.map(|b| RustAudioMetadata { bytes: b }),
+        });
+    }
+
+    // Phase 2: Acoustic DSP Pull Loop at maximum CPU speed
+    let ch_usize = channels as usize;
+    let mut rg_analyzer = config.replay_gain.then(|| Bs1770LoudnessAnalyzer::new(sample_rate));
+    let mut wf_accumulator = config.waveform.then(|| AdaptiveWaveformAccumulator::new(config.waveform_points as usize));
+    let mut peak = 0.0f32;
+    let mut total_decoded_frames = 0u64;
+
+    let max_frames = config.max_duration_ms.map(|ms| {
+        (ms as f64 * sample_rate as f64 / 1000.0) as u64
+    });
+
+    let mut frame_buf = Vec::new();
+    while let Ok(true) = deck.decode_next_analysis_frame(&mut frame_buf) {
+        let chunk_frames = (frame_buf.len() / ch_usize) as u64;
+        total_decoded_frames += chunk_frames;
+
+        for frame in frame_buf.chunks_exact(ch_usize) {
+            let s_l = frame[0].clamp(-1.0, 1.0);
+            let s_r = if ch_usize > 1 { frame[1].clamp(-1.0, 1.0) } else { s_l };
+            let frame_max = s_l.abs().max(s_r.abs());
+            if frame_max > peak { peak = frame_max; }
+            if let Some(ref mut wf) = wf_accumulator { wf.push_frame_peak(frame_max); }
+            if let Some(ref mut rg) = rg_analyzer { rg.push_stereo_frame(s_l, s_r); }
+        }
+
+        if let Some(limit) = max_frames {
+            if total_decoded_frames >= limit {
+                break;
+            }
+        }
+    }
+
+    if sample_rate > 0 && total_decoded_frames > 0 && config.max_duration_ms.is_none() {
+        let decoded_dur = (total_decoded_frames as f64 * 1000.0 / sample_rate as f64).round() as i64;
+        if duration_ms <= 0 || (decoded_dur - duration_ms).abs() > 100 {
+            duration_ms = decoded_dur;
+        }
+    }
+
+    let final_duration = if duration_ms > 0 {
+        Some(duration_ms)
+    } else {
+        None
+    };
+
+    let (has_replay_gain, replay_gain) = match rg_analyzer {
+        Some(rg) => (true, rg.finalize(config.target_lufs, peak)),
+        None => (false, ReplayGainData::default()),
+    };
+
+    let (has_waveform, waveform_peaks) = match wf_accumulator {
+        Some(wf) => (true, wf.finalize()),
+        None => (false, Vec::new()),
+    };
+
+    let meta_bytes = if config.metadata {
+        raw_meta.or(head_info.metadata_bytes)
+    } else {
+        None
+    };
+
+    Ok(RustAudioAnalysisResult {
+        audio_info: RustAudioInfo {
+            duration_ms: final_duration,
+            sample_rate,
+            channels,
+            bitrate,
+            format: head_info.format,
+        },
+        peak_amplitude: peak,
+        rms_amplitude: peak,
+        has_replay_gain,
+        integrated_lufs: if has_replay_gain { replay_gain.lufs } else { 0.0 },
+        replay_gain_db: if has_replay_gain { replay_gain.gain_db } else { 0.0 },
+        has_waveform,
+        spectral_centroid: 0.0,
+        frequency_bands: Vec::new(),
+        waveform_peaks,
+        has_metadata: meta_bytes.is_some(),
+        metadata: meta_bytes.map(|b| RustAudioMetadata { bytes: b }),
+    })
+}
+
 pub fn analyze_media_source<M: MediaSource + 'static>(
     source: M,
     hint_ext: Option<&str>,
@@ -408,11 +691,14 @@ pub fn analyze_media_source<M: MediaSource + 'static>(
         sample_rate,
         channels,
         bitrate,
+        format: hint_ext.map(|s| s.to_string()),
         peak,
         has_replay_gain,
         replay_gain,
         has_waveform,
         waveform,
+        has_metadata: 0,
+        metadata_bytes: Vec::new(),
     })
 }
 

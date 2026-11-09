@@ -366,17 +366,63 @@ impl From<crate::core::dual_source::MiniaudioPlayerStatus> for RustPlayerStatus 
     }
 }
 
-/// Offline acoustic analysis results containing loudness, waveform, and format properties.
+/// Technical format and stream characteristics of an audio asset.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustAudioInfo {
+    /// Total duration in milliseconds, or None if unknown / infinite livestream.
+    pub duration_ms: Option<i64>,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Channel count.
+    pub channels: u32,
+    /// Nominal bitrate in bps.
+    pub bitrate: u32,
+    /// Container/codec format string (e.g. "mp3", "flac", "wav").
+    pub format: Option<String>,
+}
+
+/// Container encapsulating raw audio metadata bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustAudioMetadata {
+    /// Raw metadata bytes (ID3v2, Vorbis Comments, moov atom, etc.).
+    pub bytes: Vec<u8>,
+}
+
+/// Configuration parameters for offline acoustic and metadata analysis.
+#[derive(Debug, Clone)]
+pub struct RustAnalysisConfig {
+    /// Whether to calculate ITU-R BS.1770-4 loudness and ReplayGain.
+    pub replay_gain: bool,
+    /// Whether to extract a normalized peak waveform envelope.
+    pub waveform: bool,
+    /// Whether to extract raw metadata bytes.
+    pub metadata: bool,
+    /// Number of normalized waveform buckets to compute.
+    pub waveform_points: u32,
+    /// Reference target loudness in LUFS (defaults to -18.0).
+    pub target_lufs: f32,
+    /// Optional maximum duration in milliseconds to analyze (used for live/infinite streams).
+    pub max_duration_ms: Option<i64>,
+}
+
+impl Default for RustAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            replay_gain: true,
+            waveform: true,
+            metadata: false,
+            waveform_points: 100,
+            target_lufs: -18.0,
+            max_duration_ms: None,
+        }
+    }
+}
+
+/// Offline acoustic analysis results containing format, loudness, waveform, and metadata.
 #[derive(Debug, Clone, Default)]
 pub struct RustAudioAnalysisResult {
-    /// Total track duration in milliseconds.
-    pub duration_ms: i64,
-    /// Audio sample rate in Hz.
-    pub sample_rate: u32,
-    /// Audio channel count.
-    pub channels: u32,
-    /// Average bitrate in bits per second.
-    pub bitrate: u32,
+    /// Format and audio technical characteristics (cost: 0).
+    pub audio_info: RustAudioInfo,
     /// Absolute true peak sample amplitude.
     pub peak_amplitude: f32,
     /// RMS energy amplitude.
@@ -395,22 +441,37 @@ pub struct RustAudioAnalysisResult {
     pub frequency_bands: Vec<f32>,
     /// Normalized amplitude envelope points for waveform display.
     pub waveform_peaks: Vec<f32>,
+    /// Whether metadata bytes were extracted.
+    pub has_metadata: bool,
+    /// Encapsulated metadata bytes.
+    pub metadata: Option<RustAudioMetadata>,
 }
 
 impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult {
     fn from(result: crate::dsp::analysis::AudioAnalysisResult) -> Self {
         let has_waveform = result.has_waveform != 0;
         let has_replay_gain = result.has_replay_gain != 0;
+        let has_metadata = result.has_metadata != 0;
         let waveform_peaks = if has_waveform {
             result.waveform.points
         } else {
             Vec::new()
         };
+        let metadata = if has_metadata && !result.metadata_bytes.is_empty() {
+            Some(RustAudioMetadata {
+                bytes: result.metadata_bytes,
+            })
+        } else {
+            None
+        };
         Self {
-            duration_ms: result.duration_ms,
-            sample_rate: result.sample_rate,
-            channels: result.channels,
-            bitrate: result.bitrate,
+            audio_info: RustAudioInfo {
+                duration_ms: (result.duration_ms > 0).then_some(result.duration_ms),
+                sample_rate: result.sample_rate,
+                channels: result.channels,
+                bitrate: result.bitrate,
+                format: result.format,
+            },
             peak_amplitude: result.peak,
             rms_amplitude: result.peak,
             has_replay_gain,
@@ -428,6 +489,8 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
             spectral_centroid: 0.0,
             frequency_bands: Vec::new(),
             waveform_peaks,
+            has_metadata,
+            metadata,
         }
     }
 }
@@ -571,8 +634,8 @@ pub enum RustEngineEvent {
     LoopMode(i32),
     /// Playlist shuffle state.
     Shuffle(bool),
-    /// ICY/ID3 raw metadata byte payload.
-    MetaBytes(Vec<u8>),
+    /// Audio metadata payload.
+    AudioMetadata(RustAudioMetadata),
     /// Unrecoverable playback or engine error.
     Error {
         /// Detailed human-readable error description.
@@ -1032,14 +1095,14 @@ pub struct RustRecordingResult {
 /// High-level event emitted over the Flutter Rust Bridge stream to Dart listeners.
 #[derive(Debug, Clone)]
 pub enum RustPlayerEvent {
+    /// Technical format characteristics of the active audio track.
+    AudioInfo(RustAudioInfo),
     /// Playback state transition code.
     PlaybackState(i32),
     /// State machine integer code.
     State(i32),
     /// Elapsed track position in milliseconds.
     Position(i64),
-    /// Total track duration in milliseconds.
-    Duration(i64),
     /// Whether audio is actively playing.
     IsPlaying(bool),
     /// Whether player is buffering data.
@@ -1075,8 +1138,6 @@ pub enum RustPlayerEvent {
     Balance(f32),
     /// Downmix stereo to mono.
     Mono(bool),
-    /// Stream nominal bitrate in bps.
-    Bitrate(u32),
     /// Audio buffer frame size.
     BufferSize(u32),
     /// Silence detection configuration.
@@ -1125,10 +1186,10 @@ pub enum RustPlayerEvent {
     },
     /// Number of concurrent active sound effect voices.
     ActiveVoices(u32),
-    /// Raw ICY/ID3 metadata stream payload.
-    MetaBytes(Vec<u8>),
+    /// Audio metadata stream payload.
+    AudioMetadata(RustAudioMetadata),
     /// Whether metadata stream reception is enabled.
-    MetaBytesEnabled(bool),
+    MetadataEnabled(bool),
     /// Live audio recording status and active source.
     RecordingState {
         /// Whether file recording is currently running.

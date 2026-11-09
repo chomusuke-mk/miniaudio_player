@@ -52,10 +52,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(RustPlayerEvent_AudioInfo value)? audioInfo,
     TResult Function(RustPlayerEvent_PlaybackState value)? playbackState,
     TResult Function(RustPlayerEvent_State value)? state,
     TResult Function(RustPlayerEvent_Position value)? position,
-    TResult Function(RustPlayerEvent_Duration value)? duration,
     TResult Function(RustPlayerEvent_IsPlaying value)? isPlaying,
     TResult Function(RustPlayerEvent_IsBuffering value)? isBuffering,
     TResult Function(RustPlayerEvent_IsCompleted value)? isCompleted,
@@ -72,7 +72,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_Pitch value)? pitch,
     TResult Function(RustPlayerEvent_Balance value)? balance,
     TResult Function(RustPlayerEvent_Mono value)? mono,
-    TResult Function(RustPlayerEvent_Bitrate value)? bitrate,
     TResult Function(RustPlayerEvent_BufferSize value)? bufferSize,
     TResult Function(RustPlayerEvent_SilenceConfig value)? silenceConfig,
     TResult Function(RustPlayerEvent_SilenceSaved value)? silenceSaved,
@@ -93,8 +92,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_VoiceCompleted value)? voiceCompleted,
     TResult Function(RustPlayerEvent_LoadedEffects value)? loadedEffects,
     TResult Function(RustPlayerEvent_ActiveVoices value)? activeVoices,
-    TResult Function(RustPlayerEvent_MetaBytes value)? metaBytes,
-    TResult Function(RustPlayerEvent_MetaBytesEnabled value)? metaBytesEnabled,
+    TResult Function(RustPlayerEvent_AudioMetadata value)? audioMetadata,
+    TResult Function(RustPlayerEvent_MetadataEnabled value)? metadataEnabled,
     TResult Function(RustPlayerEvent_RecordingState value)? recordingState,
     TResult Function(RustPlayerEvent_LoopMode value)? loopMode,
     TResult Function(RustPlayerEvent_IsShuffled value)? isShuffled,
@@ -112,14 +111,14 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_AudioInfo() when audioInfo != null:
+        return audioInfo(_that);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that);
       case RustPlayerEvent_State() when state != null:
         return state(_that);
       case RustPlayerEvent_Position() when position != null:
         return position(_that);
-      case RustPlayerEvent_Duration() when duration != null:
-        return duration(_that);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
@@ -150,8 +149,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return balance(_that);
       case RustPlayerEvent_Mono() when mono != null:
         return mono(_that);
-      case RustPlayerEvent_Bitrate() when bitrate != null:
-        return bitrate(_that);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
@@ -190,10 +187,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loadedEffects(_that);
       case RustPlayerEvent_ActiveVoices() when activeVoices != null:
         return activeVoices(_that);
-      case RustPlayerEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that);
-      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
-        return metaBytesEnabled(_that);
+      case RustPlayerEvent_AudioMetadata() when audioMetadata != null:
+        return audioMetadata(_that);
+      case RustPlayerEvent_MetadataEnabled() when metadataEnabled != null:
+        return metadataEnabled(_that);
       case RustPlayerEvent_RecordingState() when recordingState != null:
         return recordingState(_that);
       case RustPlayerEvent_LoopMode() when loopMode != null:
@@ -239,11 +236,11 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(RustPlayerEvent_AudioInfo value) audioInfo,
     required TResult Function(RustPlayerEvent_PlaybackState value)
         playbackState,
     required TResult Function(RustPlayerEvent_State value) state,
     required TResult Function(RustPlayerEvent_Position value) position,
-    required TResult Function(RustPlayerEvent_Duration value) duration,
     required TResult Function(RustPlayerEvent_IsPlaying value) isPlaying,
     required TResult Function(RustPlayerEvent_IsBuffering value) isBuffering,
     required TResult Function(RustPlayerEvent_IsCompleted value) isCompleted,
@@ -262,7 +259,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_Pitch value) pitch,
     required TResult Function(RustPlayerEvent_Balance value) balance,
     required TResult Function(RustPlayerEvent_Mono value) mono,
-    required TResult Function(RustPlayerEvent_Bitrate value) bitrate,
     required TResult Function(RustPlayerEvent_BufferSize value) bufferSize,
     required TResult Function(RustPlayerEvent_SilenceConfig value)
         silenceConfig,
@@ -289,9 +285,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_LoadedEffects value)
         loadedEffects,
     required TResult Function(RustPlayerEvent_ActiveVoices value) activeVoices,
-    required TResult Function(RustPlayerEvent_MetaBytes value) metaBytes,
-    required TResult Function(RustPlayerEvent_MetaBytesEnabled value)
-        metaBytesEnabled,
+    required TResult Function(RustPlayerEvent_AudioMetadata value)
+        audioMetadata,
+    required TResult Function(RustPlayerEvent_MetadataEnabled value)
+        metadataEnabled,
     required TResult Function(RustPlayerEvent_RecordingState value)
         recordingState,
     required TResult Function(RustPlayerEvent_LoopMode value) loopMode,
@@ -312,14 +309,14 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_AudioInfo():
+        return audioInfo(_that);
       case RustPlayerEvent_PlaybackState():
         return playbackState(_that);
       case RustPlayerEvent_State():
         return state(_that);
       case RustPlayerEvent_Position():
         return position(_that);
-      case RustPlayerEvent_Duration():
-        return duration(_that);
       case RustPlayerEvent_IsPlaying():
         return isPlaying(_that);
       case RustPlayerEvent_IsBuffering():
@@ -350,8 +347,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return balance(_that);
       case RustPlayerEvent_Mono():
         return mono(_that);
-      case RustPlayerEvent_Bitrate():
-        return bitrate(_that);
       case RustPlayerEvent_BufferSize():
         return bufferSize(_that);
       case RustPlayerEvent_SilenceConfig():
@@ -390,10 +385,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loadedEffects(_that);
       case RustPlayerEvent_ActiveVoices():
         return activeVoices(_that);
-      case RustPlayerEvent_MetaBytes():
-        return metaBytes(_that);
-      case RustPlayerEvent_MetaBytesEnabled():
-        return metaBytesEnabled(_that);
+      case RustPlayerEvent_AudioMetadata():
+        return audioMetadata(_that);
+      case RustPlayerEvent_MetadataEnabled():
+        return metadataEnabled(_that);
       case RustPlayerEvent_RecordingState():
         return recordingState(_that);
       case RustPlayerEvent_LoopMode():
@@ -435,10 +430,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(RustPlayerEvent_AudioInfo value)? audioInfo,
     TResult? Function(RustPlayerEvent_PlaybackState value)? playbackState,
     TResult? Function(RustPlayerEvent_State value)? state,
     TResult? Function(RustPlayerEvent_Position value)? position,
-    TResult? Function(RustPlayerEvent_Duration value)? duration,
     TResult? Function(RustPlayerEvent_IsPlaying value)? isPlaying,
     TResult? Function(RustPlayerEvent_IsBuffering value)? isBuffering,
     TResult? Function(RustPlayerEvent_IsCompleted value)? isCompleted,
@@ -455,7 +450,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_Pitch value)? pitch,
     TResult? Function(RustPlayerEvent_Balance value)? balance,
     TResult? Function(RustPlayerEvent_Mono value)? mono,
-    TResult? Function(RustPlayerEvent_Bitrate value)? bitrate,
     TResult? Function(RustPlayerEvent_BufferSize value)? bufferSize,
     TResult? Function(RustPlayerEvent_SilenceConfig value)? silenceConfig,
     TResult? Function(RustPlayerEvent_SilenceSaved value)? silenceSaved,
@@ -476,8 +470,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_VoiceCompleted value)? voiceCompleted,
     TResult? Function(RustPlayerEvent_LoadedEffects value)? loadedEffects,
     TResult? Function(RustPlayerEvent_ActiveVoices value)? activeVoices,
-    TResult? Function(RustPlayerEvent_MetaBytes value)? metaBytes,
-    TResult? Function(RustPlayerEvent_MetaBytesEnabled value)? metaBytesEnabled,
+    TResult? Function(RustPlayerEvent_AudioMetadata value)? audioMetadata,
+    TResult? Function(RustPlayerEvent_MetadataEnabled value)? metadataEnabled,
     TResult? Function(RustPlayerEvent_RecordingState value)? recordingState,
     TResult? Function(RustPlayerEvent_LoopMode value)? loopMode,
     TResult? Function(RustPlayerEvent_IsShuffled value)? isShuffled,
@@ -494,14 +488,14 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_AudioInfo() when audioInfo != null:
+        return audioInfo(_that);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that);
       case RustPlayerEvent_State() when state != null:
         return state(_that);
       case RustPlayerEvent_Position() when position != null:
         return position(_that);
-      case RustPlayerEvent_Duration() when duration != null:
-        return duration(_that);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
@@ -532,8 +526,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return balance(_that);
       case RustPlayerEvent_Mono() when mono != null:
         return mono(_that);
-      case RustPlayerEvent_Bitrate() when bitrate != null:
-        return bitrate(_that);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
@@ -572,10 +564,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loadedEffects(_that);
       case RustPlayerEvent_ActiveVoices() when activeVoices != null:
         return activeVoices(_that);
-      case RustPlayerEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that);
-      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
-        return metaBytesEnabled(_that);
+      case RustPlayerEvent_AudioMetadata() when audioMetadata != null:
+        return audioMetadata(_that);
+      case RustPlayerEvent_MetadataEnabled() when metadataEnabled != null:
+        return metadataEnabled(_that);
       case RustPlayerEvent_RecordingState() when recordingState != null:
         return recordingState(_that);
       case RustPlayerEvent_LoopMode() when loopMode != null:
@@ -620,10 +612,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(RustAudioInfo field0)? audioInfo,
     TResult Function(int field0)? playbackState,
     TResult Function(int field0)? state,
     TResult Function(PlatformInt64 field0)? position,
-    TResult Function(PlatformInt64 field0)? duration,
     TResult Function(bool field0)? isPlaying,
     TResult Function(bool field0)? isBuffering,
     TResult Function(bool field0)? isCompleted,
@@ -639,7 +631,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(double field0)? pitch,
     TResult Function(double field0)? balance,
     TResult Function(bool field0)? mono,
-    TResult Function(int field0)? bitrate,
     TResult Function(int field0)? bufferSize,
     TResult Function(RustSilenceConfig field0)? silenceConfig,
     TResult Function(PlatformInt64 field0)? silenceSaved,
@@ -659,8 +650,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(int field0)? voiceCompleted,
     TResult Function(List<String> ids, BigInt allocatedBytes)? loadedEffects,
     TResult Function(int field0)? activeVoices,
-    TResult Function(Uint8List field0)? metaBytes,
-    TResult Function(bool field0)? metaBytesEnabled,
+    TResult Function(RustAudioMetadata field0)? audioMetadata,
+    TResult Function(bool field0)? metadataEnabled,
     TResult Function(bool isRecording, int source)? recordingState,
     TResult Function(int field0)? loopMode,
     TResult Function(bool field0)? isShuffled,
@@ -678,14 +669,14 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_AudioInfo() when audioInfo != null:
+        return audioInfo(_that.field0);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that.field0);
       case RustPlayerEvent_State() when state != null:
         return state(_that.field0);
       case RustPlayerEvent_Position() when position != null:
         return position(_that.field0);
-      case RustPlayerEvent_Duration() when duration != null:
-        return duration(_that.field0);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that.field0);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
@@ -716,8 +707,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return balance(_that.field0);
       case RustPlayerEvent_Mono() when mono != null:
         return mono(_that.field0);
-      case RustPlayerEvent_Bitrate() when bitrate != null:
-        return bitrate(_that.field0);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that.field0);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
@@ -756,10 +745,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loadedEffects(_that.ids, _that.allocatedBytes);
       case RustPlayerEvent_ActiveVoices() when activeVoices != null:
         return activeVoices(_that.field0);
-      case RustPlayerEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that.field0);
-      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
-        return metaBytesEnabled(_that.field0);
+      case RustPlayerEvent_AudioMetadata() when audioMetadata != null:
+        return audioMetadata(_that.field0);
+      case RustPlayerEvent_MetadataEnabled() when metadataEnabled != null:
+        return metadataEnabled(_that.field0);
       case RustPlayerEvent_RecordingState() when recordingState != null:
         return recordingState(_that.isRecording, _that.source);
       case RustPlayerEvent_LoopMode() when loopMode != null:
@@ -805,10 +794,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(RustAudioInfo field0) audioInfo,
     required TResult Function(int field0) playbackState,
     required TResult Function(int field0) state,
     required TResult Function(PlatformInt64 field0) position,
-    required TResult Function(PlatformInt64 field0) duration,
     required TResult Function(bool field0) isPlaying,
     required TResult Function(bool field0) isBuffering,
     required TResult Function(bool field0) isCompleted,
@@ -824,7 +813,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(double field0) pitch,
     required TResult Function(double field0) balance,
     required TResult Function(bool field0) mono,
-    required TResult Function(int field0) bitrate,
     required TResult Function(int field0) bufferSize,
     required TResult Function(RustSilenceConfig field0) silenceConfig,
     required TResult Function(PlatformInt64 field0) silenceSaved,
@@ -845,8 +833,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(List<String> ids, BigInt allocatedBytes)
         loadedEffects,
     required TResult Function(int field0) activeVoices,
-    required TResult Function(Uint8List field0) metaBytes,
-    required TResult Function(bool field0) metaBytesEnabled,
+    required TResult Function(RustAudioMetadata field0) audioMetadata,
+    required TResult Function(bool field0) metadataEnabled,
     required TResult Function(bool isRecording, int source) recordingState,
     required TResult Function(int field0) loopMode,
     required TResult Function(bool field0) isShuffled,
@@ -863,14 +851,14 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_AudioInfo():
+        return audioInfo(_that.field0);
       case RustPlayerEvent_PlaybackState():
         return playbackState(_that.field0);
       case RustPlayerEvent_State():
         return state(_that.field0);
       case RustPlayerEvent_Position():
         return position(_that.field0);
-      case RustPlayerEvent_Duration():
-        return duration(_that.field0);
       case RustPlayerEvent_IsPlaying():
         return isPlaying(_that.field0);
       case RustPlayerEvent_IsBuffering():
@@ -901,8 +889,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return balance(_that.field0);
       case RustPlayerEvent_Mono():
         return mono(_that.field0);
-      case RustPlayerEvent_Bitrate():
-        return bitrate(_that.field0);
       case RustPlayerEvent_BufferSize():
         return bufferSize(_that.field0);
       case RustPlayerEvent_SilenceConfig():
@@ -941,10 +927,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loadedEffects(_that.ids, _that.allocatedBytes);
       case RustPlayerEvent_ActiveVoices():
         return activeVoices(_that.field0);
-      case RustPlayerEvent_MetaBytes():
-        return metaBytes(_that.field0);
-      case RustPlayerEvent_MetaBytesEnabled():
-        return metaBytesEnabled(_that.field0);
+      case RustPlayerEvent_AudioMetadata():
+        return audioMetadata(_that.field0);
+      case RustPlayerEvent_MetadataEnabled():
+        return metadataEnabled(_that.field0);
       case RustPlayerEvent_RecordingState():
         return recordingState(_that.isRecording, _that.source);
       case RustPlayerEvent_LoopMode():
@@ -986,10 +972,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(RustAudioInfo field0)? audioInfo,
     TResult? Function(int field0)? playbackState,
     TResult? Function(int field0)? state,
     TResult? Function(PlatformInt64 field0)? position,
-    TResult? Function(PlatformInt64 field0)? duration,
     TResult? Function(bool field0)? isPlaying,
     TResult? Function(bool field0)? isBuffering,
     TResult? Function(bool field0)? isCompleted,
@@ -1005,7 +991,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(double field0)? pitch,
     TResult? Function(double field0)? balance,
     TResult? Function(bool field0)? mono,
-    TResult? Function(int field0)? bitrate,
     TResult? Function(int field0)? bufferSize,
     TResult? Function(RustSilenceConfig field0)? silenceConfig,
     TResult? Function(PlatformInt64 field0)? silenceSaved,
@@ -1025,8 +1010,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(int field0)? voiceCompleted,
     TResult? Function(List<String> ids, BigInt allocatedBytes)? loadedEffects,
     TResult? Function(int field0)? activeVoices,
-    TResult? Function(Uint8List field0)? metaBytes,
-    TResult? Function(bool field0)? metaBytesEnabled,
+    TResult? Function(RustAudioMetadata field0)? audioMetadata,
+    TResult? Function(bool field0)? metadataEnabled,
     TResult? Function(bool isRecording, int source)? recordingState,
     TResult? Function(int field0)? loopMode,
     TResult? Function(bool field0)? isShuffled,
@@ -1043,14 +1028,14 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   }) {
     final _that = this;
     switch (_that) {
+      case RustPlayerEvent_AudioInfo() when audioInfo != null:
+        return audioInfo(_that.field0);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that.field0);
       case RustPlayerEvent_State() when state != null:
         return state(_that.field0);
       case RustPlayerEvent_Position() when position != null:
         return position(_that.field0);
-      case RustPlayerEvent_Duration() when duration != null:
-        return duration(_that.field0);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that.field0);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
@@ -1081,8 +1066,6 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return balance(_that.field0);
       case RustPlayerEvent_Mono() when mono != null:
         return mono(_that.field0);
-      case RustPlayerEvent_Bitrate() when bitrate != null:
-        return bitrate(_that.field0);
       case RustPlayerEvent_BufferSize() when bufferSize != null:
         return bufferSize(_that.field0);
       case RustPlayerEvent_SilenceConfig() when silenceConfig != null:
@@ -1121,10 +1104,10 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return loadedEffects(_that.ids, _that.allocatedBytes);
       case RustPlayerEvent_ActiveVoices() when activeVoices != null:
         return activeVoices(_that.field0);
-      case RustPlayerEvent_MetaBytes() when metaBytes != null:
-        return metaBytes(_that.field0);
-      case RustPlayerEvent_MetaBytesEnabled() when metaBytesEnabled != null:
-        return metaBytesEnabled(_that.field0);
+      case RustPlayerEvent_AudioMetadata() when audioMetadata != null:
+        return audioMetadata(_that.field0);
+      case RustPlayerEvent_MetadataEnabled() when metadataEnabled != null:
+        return metadataEnabled(_that.field0);
       case RustPlayerEvent_RecordingState() when recordingState != null:
         return recordingState(_that.isRecording, _that.source);
       case RustPlayerEvent_LoopMode() when loopMode != null:
@@ -1153,6 +1136,73 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case _:
         return null;
     }
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_AudioInfo extends RustPlayerEvent {
+  const RustPlayerEvent_AudioInfo(this.field0) : super._();
+
+  final RustAudioInfo field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_AudioInfoCopyWith<RustPlayerEvent_AudioInfo> get copyWith =>
+      _$RustPlayerEvent_AudioInfoCopyWithImpl<RustPlayerEvent_AudioInfo>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_AudioInfo &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.audioInfo(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_AudioInfoCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_AudioInfoCopyWith(RustPlayerEvent_AudioInfo value,
+          $Res Function(RustPlayerEvent_AudioInfo) _then) =
+      _$RustPlayerEvent_AudioInfoCopyWithImpl;
+  @useResult
+  $Res call({RustAudioInfo field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_AudioInfoCopyWithImpl<$Res>
+    implements $RustPlayerEvent_AudioInfoCopyWith<$Res> {
+  _$RustPlayerEvent_AudioInfoCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_AudioInfo _self;
+  final $Res Function(RustPlayerEvent_AudioInfo) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_AudioInfo(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustAudioInfo,
+    ));
   }
 }
 
@@ -1350,73 +1400,6 @@ class _$RustPlayerEvent_PositionCopyWithImpl<$Res>
     Object? field0 = null,
   }) {
     return _then(RustPlayerEvent_Position(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as PlatformInt64,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_Duration extends RustPlayerEvent {
-  const RustPlayerEvent_Duration(this.field0) : super._();
-
-  final PlatformInt64 field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_DurationCopyWith<RustPlayerEvent_Duration> get copyWith =>
-      _$RustPlayerEvent_DurationCopyWithImpl<RustPlayerEvent_Duration>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Duration &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.duration(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_DurationCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_DurationCopyWith(RustPlayerEvent_Duration value,
-          $Res Function(RustPlayerEvent_Duration) _then) =
-      _$RustPlayerEvent_DurationCopyWithImpl;
-  @useResult
-  $Res call({PlatformInt64 field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_DurationCopyWithImpl<$Res>
-    implements $RustPlayerEvent_DurationCopyWith<$Res> {
-  _$RustPlayerEvent_DurationCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_Duration _self;
-  final $Res Function(RustPlayerEvent_Duration) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_Duration(
       null == field0
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
@@ -2446,73 +2429,6 @@ class _$RustPlayerEvent_MonoCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_Bitrate extends RustPlayerEvent {
-  const RustPlayerEvent_Bitrate(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_BitrateCopyWith<RustPlayerEvent_Bitrate> get copyWith =>
-      _$RustPlayerEvent_BitrateCopyWithImpl<RustPlayerEvent_Bitrate>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_Bitrate &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.bitrate(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_BitrateCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_BitrateCopyWith(RustPlayerEvent_Bitrate value,
-          $Res Function(RustPlayerEvent_Bitrate) _then) =
-      _$RustPlayerEvent_BitrateCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_BitrateCopyWithImpl<$Res>
-    implements $RustPlayerEvent_BitrateCopyWith<$Res> {
-  _$RustPlayerEvent_BitrateCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_Bitrate _self;
-  final $Res Function(RustPlayerEvent_Bitrate) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_Bitrate(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
     ));
   }
 }
@@ -3840,92 +3756,24 @@ class _$RustPlayerEvent_ActiveVoicesCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustPlayerEvent_MetaBytes extends RustPlayerEvent {
-  const RustPlayerEvent_MetaBytes(this.field0) : super._();
+class RustPlayerEvent_AudioMetadata extends RustPlayerEvent {
+  const RustPlayerEvent_AudioMetadata(this.field0) : super._();
 
-  final Uint8List field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_MetaBytesCopyWith<RustPlayerEvent_MetaBytes> get copyWith =>
-      _$RustPlayerEvent_MetaBytesCopyWithImpl<RustPlayerEvent_MetaBytes>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_MetaBytes &&
-            const DeepCollectionEquality().equals(other.field0, field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(
-        runtimeType, const DeepCollectionEquality().hash(field0));
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.metaBytes(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_MetaBytesCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_MetaBytesCopyWith(RustPlayerEvent_MetaBytes value,
-          $Res Function(RustPlayerEvent_MetaBytes) _then) =
-      _$RustPlayerEvent_MetaBytesCopyWithImpl;
-  @useResult
-  $Res call({Uint8List field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_MetaBytesCopyWithImpl<$Res>
-    implements $RustPlayerEvent_MetaBytesCopyWith<$Res> {
-  _$RustPlayerEvent_MetaBytesCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_MetaBytes _self;
-  final $Res Function(RustPlayerEvent_MetaBytes) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_MetaBytes(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as Uint8List,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_MetaBytesEnabled extends RustPlayerEvent {
-  const RustPlayerEvent_MetaBytesEnabled(this.field0) : super._();
-
-  final bool field0;
+  final RustAudioMetadata field0;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $RustPlayerEvent_MetaBytesEnabledCopyWith<RustPlayerEvent_MetaBytesEnabled>
-      get copyWith => _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl<
-          RustPlayerEvent_MetaBytesEnabled>(this, _$identity);
+  $RustPlayerEvent_AudioMetadataCopyWith<RustPlayerEvent_AudioMetadata>
+      get copyWith => _$RustPlayerEvent_AudioMetadataCopyWithImpl<
+          RustPlayerEvent_AudioMetadata>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_MetaBytesEnabled &&
+            other is RustPlayerEvent_AudioMetadata &&
             (identical(other.field0, field0) || other.field0 == field0));
   }
 
@@ -3936,28 +3784,28 @@ class RustPlayerEvent_MetaBytesEnabled extends RustPlayerEvent {
 
   @override
   String toString() {
-    return 'RustPlayerEvent.metaBytesEnabled(field0: $field0)';
+    return 'RustPlayerEvent.audioMetadata(field0: $field0)';
   }
 }
 
 /// @nodoc
-abstract mixin class $RustPlayerEvent_MetaBytesEnabledCopyWith<$Res>
+abstract mixin class $RustPlayerEvent_AudioMetadataCopyWith<$Res>
     implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_MetaBytesEnabledCopyWith(
-          RustPlayerEvent_MetaBytesEnabled value,
-          $Res Function(RustPlayerEvent_MetaBytesEnabled) _then) =
-      _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl;
+  factory $RustPlayerEvent_AudioMetadataCopyWith(
+          RustPlayerEvent_AudioMetadata value,
+          $Res Function(RustPlayerEvent_AudioMetadata) _then) =
+      _$RustPlayerEvent_AudioMetadataCopyWithImpl;
   @useResult
-  $Res call({bool field0});
+  $Res call({RustAudioMetadata field0});
 }
 
 /// @nodoc
-class _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl<$Res>
-    implements $RustPlayerEvent_MetaBytesEnabledCopyWith<$Res> {
-  _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl(this._self, this._then);
+class _$RustPlayerEvent_AudioMetadataCopyWithImpl<$Res>
+    implements $RustPlayerEvent_AudioMetadataCopyWith<$Res> {
+  _$RustPlayerEvent_AudioMetadataCopyWithImpl(this._self, this._then);
 
-  final RustPlayerEvent_MetaBytesEnabled _self;
-  final $Res Function(RustPlayerEvent_MetaBytesEnabled) _then;
+  final RustPlayerEvent_AudioMetadata _self;
+  final $Res Function(RustPlayerEvent_AudioMetadata) _then;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -3965,7 +3813,75 @@ class _$RustPlayerEvent_MetaBytesEnabledCopyWithImpl<$Res>
   $Res call({
     Object? field0 = null,
   }) {
-    return _then(RustPlayerEvent_MetaBytesEnabled(
+    return _then(RustPlayerEvent_AudioMetadata(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustAudioMetadata,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_MetadataEnabled extends RustPlayerEvent {
+  const RustPlayerEvent_MetadataEnabled(this.field0) : super._();
+
+  final bool field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_MetadataEnabledCopyWith<RustPlayerEvent_MetadataEnabled>
+      get copyWith => _$RustPlayerEvent_MetadataEnabledCopyWithImpl<
+          RustPlayerEvent_MetadataEnabled>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_MetadataEnabled &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.metadataEnabled(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_MetadataEnabledCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_MetadataEnabledCopyWith(
+          RustPlayerEvent_MetadataEnabled value,
+          $Res Function(RustPlayerEvent_MetadataEnabled) _then) =
+      _$RustPlayerEvent_MetadataEnabledCopyWithImpl;
+  @useResult
+  $Res call({bool field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_MetadataEnabledCopyWithImpl<$Res>
+    implements $RustPlayerEvent_MetadataEnabledCopyWith<$Res> {
+  _$RustPlayerEvent_MetadataEnabledCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_MetadataEnabled _self;
+  final $Res Function(RustPlayerEvent_MetadataEnabled) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_MetadataEnabled(
       null == field0
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable

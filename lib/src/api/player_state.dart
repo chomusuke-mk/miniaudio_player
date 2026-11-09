@@ -93,17 +93,10 @@ class PlayerState<T> {
   /// The current playback elapsed position within the active track.
   Duration get position => _position;
 
-  Duration? _duration;
-
-  /// Total timeline duration of the currently active audio track.
+  /// Total timeline duration of the currently active audio track, or `null` if unknown (e.g. livestream).
   ///
-  /// This value is nullable (`Duration?`) by design:
-  /// - It is `null` when no track is loaded, or when the current audio source
-  ///   is a live broadcast, infinite/unbounded stream, internet radio, or HLS stream
-  ///   where the duration is undefined or continuous.
-  /// - It is a non-null [Duration] when playing finite audio files or finite network
-  ///   streams with a known end, including very short audio clips (e.g. 15ms-100ms sound effects).
-  Duration? get duration => _duration;
+  /// Convenience getter delegating directly to [audioInfo.duration].
+  Duration? get duration => _audioInfo?.duration;
 
   PlaybackState _playbackState = PlaybackState.stopped;
 
@@ -145,21 +138,23 @@ class PlayerState<T> {
   /// The continuous prefetch buffer range and stall status.
   Buffer get buffer => _buffer;
 
-  Uint8List? _metaBytes;
+  bool _metadataEnabled = false;
 
-  /// Raw metadata bytes extracted by the native audio engine (e.g. ID3, Vorbis, ICY stream metadata).
+  /// Whether the native engine is actively dispatching metadata.
   ///
-  /// `metaBytes` is only populated when [metaBytesEnabled] is `true`.
-  /// If [metaBytesEnabled] is `false`, this is always `null` to conserve bandwidth and prevent
-  /// event bus overhead.
-  Uint8List? get metaBytes => _metaBytes;
+  /// Defaults to `false`. Can be toggled using `player.action.setMetadataEnabled(bool)`.
+  bool get metadataEnabled => _metadataEnabled;
 
-  bool _metaBytesEnabled = false;
+  AudioMetadata? _metadata;
 
-  /// Whether the native engine is actively dispatching raw metadata bytes.
-  ///
-  /// Defaults to `false`. Can be toggled using `player.action.setMetaBytesEnabled(bool)`.
-  bool get metaBytesEnabled => _metaBytesEnabled;
+  /// Encapsulated metadata of the active track, or `null` if disabled or not yet received.
+  AudioMetadata? get metadata => _metadata;
+
+  AudioInfo? _audioInfo;
+
+  /// Technical audio characteristics of the active track (duration, sample rate, channels, bitrate, format),
+  /// or `null` if uninitialized.
+  AudioInfo? get audioInfo => _audioInfo;
 
   double _volume = 1.0;
 
@@ -190,23 +185,6 @@ class PlayerState<T> {
 
   /// The audio buffer size in frames.
   int get bufferSize => _bufferSize;
-
-  int _audioBitrate = 0;
-
-  /// The average audio stream bitrate in bits per second.
-  int get audioBitrate => _audioBitrate;
-
-  // ignore: prefer_final_fields
-  int _sampleRate = 44100;
-
-  /// The native output audio sample rate in Hz.
-  int get sampleRate => _sampleRate;
-
-  // ignore: prefer_final_fields
-  int _channels = 2;
-
-  /// The number of audio output channels.
-  int get channels => _channels;
 
   Equalizer _equalizer = Equalizer.off;
 

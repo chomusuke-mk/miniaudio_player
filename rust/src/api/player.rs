@@ -12,10 +12,6 @@ use crate::core::dual_source::AudioSourceCore;
 use crate::core::miniaudio_player::MiniaudioPlayer;
 use crate::core::recording::WavFormat;
 use crate::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
-use crate::dsp::analysis::{
-    analyze_file as dsp_analyze_file, analyze_media_source as dsp_analyze_media_source,
-    AudioAnalysisConfig, MAP_ANALYSIS_FLAG_REPLAY_GAIN, MAP_ANALYSIS_FLAG_WAVEFORM,
-};
 use crate::dsp::equalizer::EqualizerParams;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
@@ -31,12 +27,8 @@ pub struct TelemetryFilter {
     pub phase: Option<i32>,
     /// Cached track position in milliseconds.
     pub pos: i64,
-    /// Cached track duration in milliseconds.
-    pub dur: Option<i64>,
     /// Cached active queue index.
     pub index: Option<i32>,
-    /// Cached stream bitrate in bps.
-    pub bitrate: Option<u32>,
     /// Cached buffer end boundary in milliseconds.
     pub buffered_end: Option<i64>,
     /// Cached buffering status flag.
@@ -53,8 +45,10 @@ pub struct TelemetryFilter {
     pub is_completed: Option<bool>,
     /// Cached ReplayGain settings tuple (gain bits, peak bits).
     pub replay_gain: Option<(u32, u32)>,
-    /// Cached raw ICY/ID3 metadata byte sequence.
-    pub meta_bytes: Option<Vec<u8>>,
+    /// Cached audio metadata payload.
+    pub metadata: Option<RustAudioMetadata>,
+    /// Cached technical audio format information.
+    pub audio_info: Option<RustAudioInfo>,
     /// Cached count of concurrent active sound effect voices.
     pub active_voices: Option<u32>,
 }
@@ -65,9 +59,7 @@ impl Default for TelemetryFilter {
             state: Some(0),
             phase: Some(0),
             pos: 0,
-            dur: None,
             index: Some(-1),
-            bitrate: None,
             buffered_end: None,
             is_buffering: Some(false),
             is_xfading: Some(false),
@@ -76,7 +68,8 @@ impl Default for TelemetryFilter {
             is_playing: Some(false),
             is_completed: Some(false),
             replay_gain: None,
-            meta_bytes: None,
+            metadata: None,
+            audio_info: None,
             active_voices: None,
         }
     }
@@ -143,7 +136,8 @@ impl EventReporter {
                     false
                 } else {
                     filter.index = Some(*idx);
-                    filter.bitrate = None;
+                    filter.audio_info = None;
+                    filter.metadata = None;
                     filter.buffered_end = None;
                     true
                 }
@@ -197,22 +191,6 @@ impl EventReporter {
                     true
                 }
             }
-            RustPlayerEvent::Duration(d) => {
-                if filter.dur == Some(*d) {
-                    false
-                } else {
-                    filter.dur = Some(*d);
-                    true
-                }
-            }
-            RustPlayerEvent::Bitrate(b) => {
-                if filter.bitrate == Some(*b) || *b == 0 {
-                    false
-                } else {
-                    filter.bitrate = Some(*b);
-                    true
-                }
-            }
             RustPlayerEvent::Buffer(r) => {
                 if filter.buffered_end == Some(r.end_ms) && filter.is_buffering == Some(r.is_buffering) {
                     false
@@ -238,11 +216,19 @@ impl EventReporter {
                     true
                 }
             }
-            RustPlayerEvent::MetaBytes(b) => {
-                if filter.meta_bytes.as_ref() == Some(b) {
+            RustPlayerEvent::AudioInfo(info) => {
+                if filter.audio_info.as_ref() == Some(info) {
                     false
                 } else {
-                    filter.meta_bytes = Some(b.clone());
+                    filter.audio_info = Some(info.clone());
+                    true
+                }
+            }
+            RustPlayerEvent::AudioMetadata(m) => {
+                if filter.metadata.as_ref() == Some(m) {
+                    false
+                } else {
+                    filter.metadata = Some(m.clone());
                     true
                 }
             }
@@ -275,7 +261,7 @@ pub struct RustMiniaudioPlayer {
     device_trigger: Arc<(Mutex<bool>, Condvar)>,
     _watcher_thread: Option<JoinHandle<()>>,
     _clock_thread: Option<JoinHandle<()>>,
-    metabytes_enabled: Arc<AtomicBool>,
+    metadata_enabled: Arc<AtomicBool>,
 }
 
 unsafe impl Send for RustMiniaudioPlayer {}
@@ -314,7 +300,7 @@ impl RustMiniaudioPlayer {
         reporter.emit(RustPlayerEvent::Outputs(initial_outputs));
         let custom_handle = Arc::new(Mutex::new(None));
         let monitor_running = Arc::new(AtomicBool::new(true));
-        let metabytes_enabled = Arc::new(AtomicBool::new(false));
+        let metadata_enabled = Arc::new(AtomicBool::new(false));
 
         let watcher_trigger = device_trigger.clone();
         let watcher_running = monitor_running.clone();
@@ -471,7 +457,7 @@ impl RustMiniaudioPlayer {
         let worker_inner = inner.clone();
         let worker_reporter = reporter.clone();
         let worker_running = monitor_running.clone();
-        let meta_enabled = metabytes_enabled.clone();
+        let meta_enabled = metadata_enabled.clone();
 
         let monitor_thread = thread::Builder::new()
             .name("map-telemetry-monitor".to_string())
@@ -685,6 +671,9 @@ impl RustMiniaudioPlayer {
                     let pos = active_deck.position_ms.load(Ordering::Relaxed);
                     let dur = active_deck.duration_ms.load(Ordering::Relaxed);
                     let bitrate = active_deck.bitrate.load(Ordering::Relaxed);
+                    let sr = active_deck.sample_rate.load(Ordering::Relaxed);
+                    let ch = active_deck.channels.load(Ordering::Relaxed);
+                    let format = active_deck.format.read().ok().and_then(|f| f.clone());
                     let mut br = crate::bridge::ffi::MiniaudioBufferedRange::default();
                     let has_br = active_deck.get_buffered_range(&mut br) == 0;
                     let idx = ply.music_manager.current_index();
@@ -722,10 +711,16 @@ impl RustMiniaudioPlayer {
                     worker_reporter.emit(RustPlayerEvent::IsPlaying(is_playing));
                     worker_reporter.emit(RustPlayerEvent::IsCompleted(is_completed));
                     worker_reporter.emit(RustPlayerEvent::Position(pos));
-                    worker_reporter.emit(RustPlayerEvent::Duration(dur));
                     worker_reporter.emit(RustPlayerEvent::CurrentIndex(idx as i32));
-                    if bitrate > 0 {
-                        worker_reporter.emit(RustPlayerEvent::Bitrate(bitrate));
+                    if sr > 0 {
+                        let audio_info = RustAudioInfo {
+                            duration_ms: if dur > 0 { Some(dur) } else { None },
+                            sample_rate: sr,
+                            channels: ch.max(1),
+                            bitrate,
+                            format,
+                        };
+                        worker_reporter.emit(RustPlayerEvent::AudioInfo(audio_info));
                     }
                     worker_reporter.emit(RustPlayerEvent::ActiveVoices(active_voices));
                     if has_br {
@@ -742,7 +737,7 @@ impl RustMiniaudioPlayer {
                         worker_reporter.emit(RustPlayerEvent::MicRmsLevel(mic_rms));
                     }
                     if let Some(mb) = meta_to_send {
-                        worker_reporter.emit(RustPlayerEvent::MetaBytes(mb));
+                        worker_reporter.emit(RustPlayerEvent::AudioMetadata(RustAudioMetadata { bytes: mb }));
                     }
                     worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
                         gain_db: rg.gain_db,
@@ -802,7 +797,7 @@ impl RustMiniaudioPlayer {
             device_trigger,
             _watcher_thread: watcher_thread,
             _clock_thread: clock_thread,
-            metabytes_enabled,
+            metadata_enabled,
         })
     }
 
@@ -891,6 +886,9 @@ impl RustMiniaudioPlayer {
         let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
         let initial_dur = active_deck.duration_ms.load(Ordering::Relaxed);
         let initial_bitrate = active_deck.bitrate.load(Ordering::Relaxed);
+        let initial_sr = active_deck.sample_rate.load(Ordering::Relaxed);
+        let initial_ch = active_deck.channels.load(Ordering::Relaxed);
+        let initial_fmt = active_deck.format.read().ok().and_then(|f| f.clone());
         let initial_meta = active_deck.get_meta_bytes();
         let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
         let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
@@ -912,16 +910,21 @@ impl RustMiniaudioPlayer {
         self.emit_event(RustPlayerEvent::IsShuffled(is_shuffled));
         self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
         self.emit_event(RustPlayerEvent::IsCompleted(false));
-        if self.metabytes_enabled.load(Ordering::Relaxed) {
-            self.emit_event(RustPlayerEvent::MetaBytes(Vec::new()));
+        if self.metadata_enabled.load(Ordering::Relaxed) {
+            self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
             if let Some(mb) = initial_meta {
-                self.emit_event(RustPlayerEvent::MetaBytes(mb));
+                self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata { bytes: mb }));
             }
         }
         self.emit_event(RustPlayerEvent::Position(initial_pos));
-        self.emit_event(RustPlayerEvent::Duration(initial_dur));
-        if initial_bitrate > 0 {
-            self.emit_event(RustPlayerEvent::Bitrate(initial_bitrate));
+        if initial_sr > 0 {
+            self.emit_event(RustPlayerEvent::AudioInfo(RustAudioInfo {
+                duration_ms: if initial_dur > 0 { Some(initial_dur) } else { None },
+                sample_rate: initial_sr,
+                channels: initial_ch.max(1),
+                bitrate: initial_bitrate,
+                format: initial_fmt,
+            }));
         }
         if has_br {
             self.emit_event(RustPlayerEvent::Buffer(RustBuffer {
@@ -1036,7 +1039,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         self.emit_event(RustPlayerEvent::IsPlaying(false));
         self.emit_event(RustPlayerEvent::IsCompleted(false));
         self.emit_event(RustPlayerEvent::Position(0));
-        self.emit_event(RustPlayerEvent::Duration(0));
+        self.emit_event(RustPlayerEvent::AudioInfo(RustAudioInfo::default()));
         self.emit_event(RustPlayerEvent::PlaybackState(0));
         self.emit_event(RustPlayerEvent::State(0));
         Ok(())
@@ -1498,19 +1501,19 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         }
     }
 
-    /// Enables or disables forwarding of raw ICY/ID3 metadata byte payloads.
+    /// Enables or disables forwarding of audio metadata payloads.
     #[flutter_rust_bridge::frb(sync)]
-    pub fn set_metabytes_enabled(&self, enabled: bool) {
-        let prev = self.metabytes_enabled.swap(enabled, std::sync::atomic::Ordering::Relaxed);
+    pub fn set_metadata_enabled(&self, enabled: bool) {
+        let prev = self.metadata_enabled.swap(enabled, std::sync::atomic::Ordering::Relaxed);
         if prev != enabled {
-            self.emit_event(RustPlayerEvent::MetaBytesEnabled(enabled));
+            self.emit_event(RustPlayerEvent::MetadataEnabled(enabled));
             if enabled {
                 let ply = self.inner.lock().unwrap();
                 if let Some(mb) = ply.music_manager.active_deck_ref().get_meta_bytes() {
-                    self.emit_event(RustPlayerEvent::MetaBytes(mb));
+                    self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata { bytes: mb }));
                 }
             } else {
-                self.emit_event(RustPlayerEvent::MetaBytes(Vec::new()));
+                self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
             }
         }
     }
@@ -1931,70 +1934,19 @@ pub fn set_log_level(level: i32) {
     crate::LOG_LEVEL.store(level, Ordering::Relaxed);
 }
 
-/// Asynchronously analyzes acoustic and loudness properties of an audio file on disk.
-pub fn analyze_audio_file(
-    path: String,
-    replay_gain: bool,
-    waveform: bool,
-    waveform_points: usize,
-    target_lufs: f64,
+/// Asynchronously analyzes acoustic, loudness, waveform, and metadata properties of any audio source.
+pub fn analyze_audio_source(
+    source: RustAudioSource,
+    config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
-    let mut flags = 0;
-    if replay_gain {
-        flags |= MAP_ANALYSIS_FLAG_REPLAY_GAIN;
-    }
-    if waveform {
-        flags |= MAP_ANALYSIS_FLAG_WAVEFORM;
-    }
-
-    let config = AudioAnalysisConfig {
-        flags,
-        target_lufs: target_lufs as f32,
-        waveform_points: waveform_points as u32,
-    };
-
-    let res = dsp_analyze_file(&path, &config).map_err(|e| format!("Audio analysis failed: {}", e))?;
-    Ok(res.into())
+    crate::dsp::analysis::analyze_audio_source(source.into(), config)
 }
 
-/// Synchronously analyzes acoustic and loudness properties of an audio file on disk.
+/// Synchronously analyzes acoustic, loudness, waveform, and metadata properties of a local audio source.
 #[flutter_rust_bridge::frb(sync)]
-pub fn analyze_audio_file_sync(
-    path: String,
-    replay_gain: bool,
-    waveform: bool,
-    waveform_points: usize,
-    target_lufs: f64,
+pub fn analyze_audio_source_sync(
+    source: RustAudioSource,
+    config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
-    analyze_audio_file(path, replay_gain, waveform, waveform_points, target_lufs)
-}
-
-/// Asynchronously analyzes acoustic and loudness properties of an in-memory audio buffer.
-pub fn analyze_audio_memory(
-    data: Vec<u8>,
-    hint_extension: Option<String>,
-    replay_gain: bool,
-    waveform: bool,
-    waveform_points: usize,
-    target_lufs: f64,
-) -> Result<RustAudioAnalysisResult, String> {
-    let mut flags = 0;
-    if replay_gain {
-        flags |= MAP_ANALYSIS_FLAG_REPLAY_GAIN;
-    }
-    if waveform {
-        flags |= MAP_ANALYSIS_FLAG_WAVEFORM;
-    }
-
-    let config = AudioAnalysisConfig {
-        flags,
-        target_lufs: target_lufs as f32,
-        waveform_points: waveform_points as u32,
-    };
-
-    let data_len = data.len() as u64;
-    let source = crate::buffer::MemoryByteSource::new(data);
-    let res = dsp_analyze_media_source(source, hint_extension.as_deref(), &config, data_len)
-        .map_err(|e| format!("Audio analysis failed: {}", e))?;
-    Ok(res.into())
+    crate::dsp::analysis::analyze_audio_source(source.into(), config)
 }

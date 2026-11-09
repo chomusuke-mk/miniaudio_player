@@ -306,31 +306,50 @@ class MiniaudioPlayer<T> {
   // Acoustic Analysis
   // =========================================================================
 
-  /// Performs offline acoustic analysis of an audio file at [filePath] on a background worker thread.
+  /// Performs offline acoustic analysis of an [AudioSource] or source object on a background worker thread.
+  ///
+  /// Recycles native streaming decks with circular buffering so analyzing multi-hour
+  /// or infinite streams maintains strictly constant $O(1)$ memory usage.
+  ///
+  /// When `replayGain: false && waveform: false`, static header analysis resolves
+  /// near-instantaneously (< 1 ms) without decoding audio sample frames.
   ///
   /// Parameters:
-  /// - [filePath]: Absolute or relative path to the local audio file to analyze.
+  /// - [source]: An [AudioSource], local file path [String], remote URL [String] / [Uri],
+  ///   or in-memory audio bytes ([Uint8List] / `List<int>`).
   /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
   ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
   /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
   ///   [waveformPoints] for rendering seekbars and waveform visualizations.
+  /// - [metadata]: When `true` (defaults to `false`), extracts container/header metadata bytes
+  ///   into [AudioAnalysisResult.metadata].
   /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
   /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
+  /// - [maxAnalysisDuration]: Optional maximum duration to analyze (e.g. for live or unbounded streams).
   static Future<AudioAnalysisResult> analyzeAudio(
-    String filePath, {
+    Object source, {
     bool replayGain = true,
     bool waveform = true,
+    bool metadata = false,
     int waveformPoints = 100,
     double targetLufs = -18.0,
+    Duration? maxAnalysisDuration,
   }) async {
     await ensureRustInitialized();
+    final audioSource = source is AudioSource ? source : AudioSource(source);
+    final rustSource = audioSource.toRustSource();
+    final rustConfig = rust_types.RustAnalysisConfig(
+      replayGain: replayGain,
+      waveform: waveform,
+      metadata: metadata,
+      waveformPoints: waveformPoints > 0 ? waveformPoints : 100,
+      targetLufs: targetLufs,
+      maxDurationMs: maxAnalysisDuration?.inMilliseconds,
+    );
     try {
-      final res = await rust.analyzeAudioFile(
-        path: filePath,
-        replayGain: replayGain,
-        waveform: waveform,
-        waveformPoints: BigInt.from(waveformPoints),
-        targetLufs: targetLufs,
+      final res = await rust.analyzeAudioSource(
+        source: rustSource,
+        config: rustConfig,
       );
       return _toAnalysisResult(res);
     } catch (e) {
@@ -339,63 +358,50 @@ class MiniaudioPlayer<T> {
     }
   }
 
-  /// Performs synchronous offline acoustic analysis of an audio file at [filePath].
+  /// Performs synchronous offline acoustic analysis of a local file or in-memory audio [source].
+  ///
+  /// Network and streaming sources are not supported synchronously; use [analyzeAudio] instead.
   ///
   /// Parameters:
-  /// - [filePath]: Absolute or relative path to the local audio file to analyze.
+  /// - [source]: An [AudioSource], local file path [String], or in-memory audio bytes ([Uint8List]).
   /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
   ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
   /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
   ///   [waveformPoints] for rendering seekbars and waveform visualizations.
+  /// - [metadata]: When `true` (defaults to `false`), extracts container/header metadata bytes
+  ///   into [AudioAnalysisResult.metadata].
   /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
   /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
+  /// - [maxAnalysisDuration]: Optional maximum duration to analyze.
   static AudioAnalysisResult analyzeAudioSync(
-    String filePath, {
+    Object source, {
     bool replayGain = true,
     bool waveform = true,
+    bool metadata = false,
     int waveformPoints = 100,
     double targetLufs = -18.0,
+    Duration? maxAnalysisDuration,
   }) {
-    try {
-      final res = rust.analyzeAudioFileSync(
-        path: filePath,
-        replayGain: replayGain,
-        waveform: waveform,
-        waveformPoints: BigInt.from(waveformPoints),
-        targetLufs: targetLufs,
+    final audioSource = source is AudioSource ? source : AudioSource(source);
+    if (!audioSource.isFile && !audioSource.isMemory) {
+      throw const MiniaudioPlayerException(
+        'analyzeAudioSync only supports local file paths and in-memory byte sources. '
+        'For network or streaming sources, use the asynchronous analyzeAudio method.',
       );
-      return _toAnalysisResult(res);
-    } catch (e) {
-      if (e is MiniaudioPlayerException) rethrow;
-      throw MiniaudioPlayerException(e.toString());
     }
-  }
-
-  /// Performs offline acoustic analysis of in-memory audio [bytes] on a background worker thread.
-  ///
-  /// Parameters:
-  /// - [bytes]: Raw encoded audio file bytes (e.g. WAV, FLAC, MP3, OGG, M4A) in memory.
-  /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
-  ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
-  /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
-  ///   [waveformPoints] for rendering seekbars and waveform visualizations.
-  /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
-  /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
-  static Future<AudioAnalysisResult> analyzeAudioMemory(
-    Uint8List bytes, {
-    bool replayGain = true,
-    bool waveform = true,
-    int waveformPoints = 100,
-    double targetLufs = -18.0,
-  }) async {
-    await ensureRustInitialized();
+    final rustSource = audioSource.toRustSource();
+    final rustConfig = rust_types.RustAnalysisConfig(
+      replayGain: replayGain,
+      waveform: waveform,
+      metadata: metadata,
+      waveformPoints: waveformPoints > 0 ? waveformPoints : 100,
+      targetLufs: targetLufs,
+      maxDurationMs: maxAnalysisDuration?.inMilliseconds,
+    );
     try {
-      final res = await rust.analyzeAudioMemory(
-        data: bytes,
-        replayGain: replayGain,
-        waveform: waveform,
-        waveformPoints: BigInt.from(waveformPoints),
-        targetLufs: targetLufs,
+      final res = rust.analyzeAudioSourceSync(
+        source: rustSource,
+        config: rustConfig,
       );
       return _toAnalysisResult(res);
     } catch (e) {
@@ -571,11 +577,19 @@ class MiniaudioPlayer<T> {
         final pos = Duration(milliseconds: field0.toInt());
         state._position = pos;
         stream._positionController.add(pos);
-      case rust_types.RustPlayerEvent_Duration(:final field0):
-        final durMs = field0.toInt();
-        final dur = durMs > 0 ? Duration(milliseconds: durMs) : null;
-        state._duration = dur;
-        stream._durationController.add(dur);
+      case rust_types.RustPlayerEvent_AudioInfo(:final field0):
+        final durMs = field0.durationMs?.toInt();
+        final dur =
+            (durMs != null && durMs > 0) ? Duration(milliseconds: durMs) : null;
+        final info = AudioInfo(
+          duration: dur,
+          sampleRate: field0.sampleRate,
+          channels: field0.channels,
+          bitrate: field0.bitrate,
+          format: field0.format,
+        );
+        state._audioInfo = info;
+        stream._audioInfoController.add(info);
       case rust_types.RustPlayerEvent_Buffer(:final field0):
         final b = Buffer(
           start: Duration(milliseconds: field0.startMs.toInt()),
@@ -762,17 +776,17 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_ActiveVoices(:final field0):
         state._activeVoicesCount = field0;
         stream._activeVoicesCountController.add(field0);
-      case rust_types.RustPlayerEvent_MetaBytes(:final field0):
-        final mb = field0.isEmpty ? null : Uint8List.fromList(field0);
-        state._metaBytes = mb;
-        stream._metaBytesController.add(mb);
-      case rust_types.RustPlayerEvent_MetaBytesEnabled(:final field0):
-        state._metaBytesEnabled = field0;
+      case rust_types.RustPlayerEvent_AudioMetadata(:final field0):
+        final meta = field0.bytes.isEmpty ? null : AudioMetadata(bytes: field0.bytes);
+        state._metadata = meta;
+        stream._metadataController.add(meta);
+      case rust_types.RustPlayerEvent_MetadataEnabled(:final field0):
+        state._metadataEnabled = field0;
         if (!field0) {
-          state._metaBytes = null;
-          stream._metaBytesController.add(null);
+          state._metadata = null;
+          stream._metadataController.add(null);
         }
-        stream._metaBytesEnabledController.add(field0);
+        stream._metadataEnabledController.add(field0);
       case rust_types.RustPlayerEvent_SilenceConfig(:final field0):
         final sc = SilenceSkipConfig(
           enabled: field0.enabled,
@@ -810,9 +824,6 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_BufferSize(:final field0):
         state._bufferSize = field0;
         stream._bufferSizeController.add(field0);
-      case rust_types.RustPlayerEvent_Bitrate(:final field0):
-        state._audioBitrate = field0;
-        stream._audioBitrateController.add(field0);
       case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
         final idx = field0 >= 0 ? field0 : null;
         state._currentIndex = idx;
@@ -910,7 +921,8 @@ class MiniaudioPlayer<T> {
     if (_isDisposed) return;
     _isDisposed = true;
     MapLogger.info('Disposing MiniaudioPlayer instance');
-    state._metaBytes = null;
+    state._metadata = null;
+    state._audioInfo = null;
     _eventSub?.cancel();
     _eventSub = null;
     try {
@@ -951,14 +963,24 @@ class MiniaudioPlayer<T> {
             points: res.waveformPeaks.map((e) => e.toDouble()).toList(),
           )
         : null;
+    final md = res.hasMetadata && res.metadata != null
+        ? AudioMetadata(bytes: res.metadata!.bytes)
+        : null;
+    final info = AudioInfo(
+      duration: res.audioInfo.durationMs != null
+          ? Duration(milliseconds: res.audioInfo.durationMs!.toInt())
+          : null,
+      sampleRate: res.audioInfo.sampleRate,
+      channels: res.audioInfo.channels,
+      bitrate: res.audioInfo.bitrate,
+      format: res.audioInfo.format,
+    );
     return AudioAnalysisResult(
-      duration: Duration(milliseconds: res.durationMs.toInt()),
-      sampleRate: res.sampleRate,
-      channels: res.channels,
-      bitrate: res.bitrate,
+      audioInfo: info,
       peak: res.peakAmplitude,
       replayGain: rg,
       waveform: wf,
+      metadata: md,
     );
   }
 }

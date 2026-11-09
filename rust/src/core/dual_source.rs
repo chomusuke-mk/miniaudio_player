@@ -1277,6 +1277,10 @@ pub struct StreamingDeck {
     pub trip_buffer: Arc<RwLock<Option<TripartiteBuffer>>>,
     /// Audio boundary information discovered by format sniffing.
     pub boundary_info: Arc<RwLock<Option<BoundaryInfo>>>,
+    /// Header metadata bytes read from the audio source during initial probing.
+    pub head_bytes: Arc<RwLock<Vec<u8>>>,
+    /// Container/codec format string (e.g. "mp3", "flac", "wav").
+    pub format: Arc<RwLock<Option<String>>>,
     /// Optional handle for custom Dart byte stream data injection.
     pub custom_source_handle: Arc<RwLock<Option<CustomByteSourceHandle>>>,
 
@@ -1357,6 +1361,7 @@ impl StreamingDeck {
             on_completed,
             user_data,
             true,
+            true,
         )
     }
 
@@ -1373,7 +1378,37 @@ impl StreamingDeck {
             None,
             std::ptr::null_mut(),
             false,
+            true,
         )
+    }
+
+    /// Creates a headless deck without hardware audio output and without the real-time decoder loop,
+    /// ideal for unconstrained, maximum-speed offline CPU analysis.
+    pub fn new_analysis_deck(
+        target_sample_rate: u32,
+        target_channels: u32,
+    ) -> Result<Box<Self>, i32> {
+        Self::new_internal(
+            target_sample_rate,
+            target_channels,
+            1024,
+            std::ptr::null(),
+            None,
+            std::ptr::null_mut(),
+            false,
+            false,
+        )
+    }
+
+    /// Pulls the next decoded PCM frame batch from `SymphoniaEngine` at unconstrained CPU speed.
+    pub fn decode_next_analysis_frame(&mut self, out_buf: &mut Vec<f32>) -> Result<bool, String> {
+        let mut eng_lock = self.engine.lock().unwrap();
+        if let Some(ref mut eng) = *eng_lock {
+            eng.decode_next_frame(out_buf)
+                .map_err(|e| format!("Decode error: {}", e))
+        } else {
+            Ok(false)
+        }
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -1385,6 +1420,7 @@ impl StreamingDeck {
         on_completed: Option<CompletionCallback>,
         user_data: *mut c_void,
         with_device: bool,
+        run_decoder_loop: bool,
     ) -> Result<Box<Self>, i32> {
         let sr = if target_sample_rate > 0 {
             target_sample_rate
@@ -1418,6 +1454,8 @@ impl StreamingDeck {
         let is_stream = Arc::new(AtomicBool::new(false));
         let trip_buffer = Arc::new(RwLock::new(None));
         let boundary_info = Arc::new(RwLock::new(None));
+        let head_bytes = Arc::new(RwLock::new(Vec::new()));
+        let format = Arc::new(RwLock::new(None));
         let custom_source_handle = Arc::new(RwLock::new(None));
 
         let telemetry = Arc::new(TelemetryDispatcher::new(None, std::ptr::null_mut()));
@@ -1574,6 +1612,8 @@ impl StreamingDeck {
             is_stream,
             trip_buffer,
             boundary_info,
+            head_bytes,
+            format,
             custom_source_handle,
             telemetry,
             completion_cb,
@@ -1606,7 +1646,9 @@ impl StreamingDeck {
             decoder_thread: None,
         });
 
-        coordinator.start_decoder_loop();
+        if run_decoder_loop {
+            coordinator.start_decoder_loop();
+        }
         Ok(coordinator)
     }
 
@@ -2392,6 +2434,17 @@ impl StreamingDeck {
         };
 
         {
+            if let Ok(mut hb) = self.head_bytes.write() {
+                *hb = initial_data.to_vec();
+            }
+            if let Ok(mut fmt_guard) = self.format.write() {
+                *fmt_guard = if !initial_data.is_empty() {
+                    let (_status, boundary) = FormatSniffer::detect_head_boundary(initial_data, total_bytes as i64);
+                    boundary.container.hint_extension().map(|s| s.to_string())
+                } else {
+                    None
+                };
+            }
             let mut eng_lock = self.engine.lock().unwrap();
             *eng_lock = Some(eng);
             self.sample_rate.store(sr, Ordering::SeqCst);
@@ -2712,6 +2765,11 @@ impl StreamingDeck {
             let bytes = trip.get_meta_bytes();
             if !bytes.is_empty() {
                 return Some(bytes);
+            }
+        }
+        if let Ok(guard) = self.head_bytes.read() {
+            if !guard.is_empty() {
+                return Some(guard.clone());
             }
         }
         None

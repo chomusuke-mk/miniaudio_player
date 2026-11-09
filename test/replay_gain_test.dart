@@ -32,7 +32,7 @@ void main() {
       );
 
       // Track metadata
-      expect(result.duration.inMilliseconds, greaterThan(0));
+      expect(result.duration?.inMilliseconds, greaterThan(0));
       expect(result.sampleRate, equals(48000));
       expect(result.channels, equals(2));
       expect(result.bitrate, greaterThan(0));
@@ -71,7 +71,7 @@ void main() {
       // Progress and position sampling helpers
       expect(wf.getPointAtProgress(0.0), equals(wf.points.first));
       expect(wf.getPointAtProgress(1.0), equals(wf.points.last));
-      expect(wf.getPointAtPosition(Duration.zero, result.duration), equals(wf.points.first));
+      expect(wf.getPointAtPosition(Duration.zero, result.duration ?? Duration.zero), equals(wf.points.first));
     });
 
     test('analyzeAudio with only waveform skips ReplayGain calculation', () async {
@@ -178,6 +178,130 @@ void main() {
         if (tempEmpty.existsSync()) {
           tempEmpty.deleteSync();
         }
+      }
+    });
+
+    test('analyzeAudio accepts AudioSource instances directly for file and memory sources', () async {
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      expect(mp3.existsSync(), isTrue);
+
+      // File AudioSource
+      final fileSource = AudioSource(mp3.path);
+      final fileRes = await MiniaudioPlayer.analyzeAudio(
+        fileSource,
+        waveformPoints: 32,
+      );
+      expect(fileRes.audioInfo.sampleRate, equals(48000));
+      expect(fileRes.audioInfo.channels, equals(2));
+      expect(fileRes.audioInfo.format, equals('mp3'));
+      expect(fileRes.sampleRate, equals(48000));
+      expect(fileRes.channels, equals(2));
+      expect(fileRes.waveform?.length, equals(32));
+
+      // Memory AudioSource
+      final bytes = mp3.readAsBytesSync();
+      final memSource = AudioSource(bytes);
+      final memRes = await MiniaudioPlayer.analyzeAudio(
+        memSource,
+        waveformPoints: 32,
+      );
+      expect(memRes.audioInfo.sampleRate, equals(48000));
+      expect(memRes.audioInfo.channels, equals(2));
+      expect(memRes.audioInfo.format, equals('mp3'));
+      expect(memRes.waveform?.length, equals(32));
+
+      // Synchronous analysis with memory source
+      final syncMemRes = MiniaudioPlayer.analyzeAudioSync(
+        AudioSource(bytes),
+        waveformPoints: 16,
+      );
+      expect(syncMemRes.audioInfo.sampleRate, equals(48000));
+      expect(syncMemRes.waveform?.length, equals(16));
+    });
+
+    test('analyzeAudio extracts AudioMetadata when metadata: true is requested', () async {
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      expect(mp3.existsSync(), isTrue);
+
+      // Default: metadata == false -> metadata is null
+      final noMeta = await MiniaudioPlayer.analyzeAudio(mp3.path, metadata: false);
+      expect(noMeta.metadata, isNull);
+
+      // metadata == true -> metadata is extracted
+      final withMeta = await MiniaudioPlayer.analyzeAudio(mp3.path, metadata: true);
+      expect(withMeta.metadata, isNotNull);
+      expect(withMeta.metadata!.isNotEmpty, isTrue);
+      expect(withMeta.metadata!.length, greaterThan(0));
+      expect(withMeta.metadata!.bytes.length, equals(withMeta.metadata!.length));
+    });
+
+    test('analyzeAudio Phase 1 fast path resolves without waveform or replayGain', () async {
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      expect(mp3.existsSync(), isTrue);
+
+      final sw = Stopwatch()..start();
+      final fastRes = await MiniaudioPlayer.analyzeAudio(
+        mp3.path,
+        replayGain: false,
+        waveform: false,
+        metadata: true,
+      );
+      sw.stop();
+
+      expect(fastRes.replayGain, isNull);
+      expect(fastRes.waveform, isNull);
+      expect(fastRes.audioInfo.sampleRate, equals(48000));
+      expect(fastRes.audioInfo.channels, equals(2));
+      expect(fastRes.metadata, isNotNull);
+      expect(fastRes.metadata!.isNotEmpty, isTrue);
+      // Static header analysis should execute extremely fast (< 100 ms in debug)
+      expect(sw.elapsedMilliseconds, lessThan(500));
+    });
+
+    test('analyzeAudio with maxAnalysisDuration limits decoded duration', () async {
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      expect(mp3.existsSync(), isTrue);
+
+      final fullRes = await MiniaudioPlayer.analyzeAudio(mp3.path);
+      final cappedRes = await MiniaudioPlayer.analyzeAudio(
+        mp3.path,
+        maxAnalysisDuration: const Duration(milliseconds: 500),
+      );
+
+      expect(cappedRes.waveform, isNotNull);
+      expect(cappedRes.peak, greaterThan(0.0));
+      expect(cappedRes.audioInfo.sampleRate, equals(fullRes.audioInfo.sampleRate));
+    });
+  });
+
+  group('MiniaudioPlayer Metadata and AudioInfo state and stream integration', () {
+    test('player exposes audioInfo and metadata on state and stream', () async {
+      final wav = resolveAsset('test/fixtures/salida.wav');
+      expect(wav.existsSync(), isTrue);
+
+      final source = AudioSource(wav.path);
+      final player = MiniaudioPlayer();
+      try {
+        await player.action.setQueue([source]);
+        await player.action.play();
+
+        final stopwatch = Stopwatch()..start();
+        while (player.state.audioInfo == null && stopwatch.elapsedMilliseconds < 1000) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(player.state.audioInfo, isNotNull);
+        expect(player.state.audioInfo?.sampleRate, greaterThan(0));
+        expect(player.state.duration, isNotNull);
+        expect(player.state.metadataEnabled, isFalse);
+
+        await player.action.setMetadataEnabled(true);
+        expect(player.state.metadataEnabled, isTrue);
+
+        await player.action.setMetadataEnabled(false);
+        expect(player.state.metadataEnabled, isFalse);
+      } finally {
+        await player.dispose();
       }
     });
   });

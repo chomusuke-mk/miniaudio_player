@@ -36,7 +36,7 @@ flowchart TB
 
     subgraph FRB["Bridge Boundary (Flutter Rust Bridge v2)"]
         CommandChannel["Command Dispatch\n(Dart -> Rust)"]
-        EventChannel["StreamSink Event Pipeline\n(Rust -> Dart: Queue IDs, Telemetry)"]
+        EventChannel["StreamSink Event Pipeline\n(Rust -> Dart: Queue IDs, AudioInfo, AudioMetadata, Telemetry)"]
         RawByteBridge["CustomDartByteSource & FFI"]
     end
 
@@ -144,7 +144,13 @@ flowchart LR
 - **Unified Decoders, HLS & TripartiteBuffer**:
   - Powered by Symphonia with specialized decoders for Opus, FDK-AAC, Extended PCM, DSF (Direct Stream Digital), APE (Monkey's Audio), and WavPack.
   - Built-in M3U8 parser, AES-128 segment decryption, and MPEG-TS demuxer for HLS streams, alongside ICY metadata demuxing.
-  - `TripartiteBuffer` separates the **Pinned Head** (ID3v2/FLAC/MP4 header metadata), **Pure Audio Ring** (bounded circular audio frame cache), and **Tail Buffer** (ID3v1/APEv2/trailing chunks) to prevent EOF decoder chirps and synthesize `.metaBytes` containers.
+  - `TripartiteBuffer` separates the **Pinned Head** (ID3v2/FLAC/MP4 header metadata), **Pure Audio Ring** (bounded circular audio frame cache), and **Tail Buffer** (ID3v1/APEv2/trailing chunks) to prevent EOF decoder chirps and synthesize `AudioMetadata` containers without truncating giant cover art or tags.
+- **Consolidated Format & Metadata Telemetry (`AudioInfo` & `AudioMetadata`)**:
+  - Eliminates fragmented primitive streams and events (`duration`, `sampleRate`, `channels`, `bitrate`, `metaBytes`).
+  - Rust dispatches single consolidated events `RustPlayerEvent::AudioInfo(RustAudioInfo)` and `RustPlayerEvent::AudioMetadata(RustAudioMetadata)`.
+  - Dart exposes `state.audioInfo` and `stream.audioInfo`, with `state.duration` as a convenience getter delegating to `audioInfo?.duration`.
+  - Unknown/infinite live stream durations are cleanly represented as `duration: null` (`None` in Rust) without redundant `is_live` flags.
+  - Metadata dispatch is explicitly governed via `player.action.setMetadataEnabled(bool)` with zero aliases, mirrored across `state.metadataEnabled` / `stream.metadataEnabled` and `state.metadata` / `stream.metadata`.
 
 ### 4.2. Sound Effects Domain (`EffectsManager`, `VoicePool`, & `Voice`)
 - **Declarative Catalog (`setEffects`)**:
@@ -165,7 +171,7 @@ flowchart LR
 - **10-Band ISO 266 Equalizer**: Peaking and shelving biquad filters tuned to standard center frequencies (31 Hz to 16 kHz).
 - **Studio Algorithmic Reverb**: Freeverb-based network with 8 parallel comb filters and 4 cascaded allpass filters per channel.
 - **Sonic DSP**: High-quality pitch shifting and time stretching without formant corruption.
-- **ReplayGain & ITU-R BS.1770-4 / EBU R128**: Loudness normalization with peak clipping protection and single-pass offline acoustic analysis (`analyzeAudio`, `analyzeAudioSync`, `analyzeAudioMemory`).
+- **ReplayGain & ITU-R BS.1770-4 / EBU R128**: Loudness normalization with peak clipping protection and unified offline acoustic analysis via polymorphic `AudioSource` (`analyzeAudio` and `analyzeAudioSync`, with `analyzeAudioMemory` completely eliminated). Employs a sub-millisecond fast-path (<1 ms) when loudness and waveform decoding are disabled, returning instant `AudioInfo` and optional `AudioMetadata`.
 - **Skip Silence**: Dynamic threshold detection with edge trimming and continuous pause excision.
 
 ### 4.4. Input & Capture (`InputManager`)
@@ -208,9 +214,10 @@ flowchart LR
      - `Uint8List` / `List<int>` (in-memory audio bytes, automatically cleared on the Dart side once transferred to Rust), or
      - `CustomByteProvider` (custom pull-based byte stream for DRM, encrypted decryption, or tokenized storage).
    - No subclass hierarchy (`UriAudioSource`, `MemoryAudioSource`, `CustomAudioSource`, and `AudioSource.custom` are eliminated).
+   - Serves as the universal input representation across both the playback queue (`player.action.setQueue`) and offline acoustic/metadata analysis (`MiniaudioPlayer.analyzeAudio`).
 2. **Orthogonal Namespaces & Encapsulation**:
-   - `player.action`: Async imperative commands (`setQueue()`, `play()`, `pause()`, `seek()`, `setEffects()`, `playEffect()`). Holds a private reference to `_rustPlayer` directly, keeping `MiniaudioPlayer`'s FFI handle strictly private.
-   - `player.state`: Canonical synchronous snapshot (`isPlaying`, `isBuffering`, `isCompleted`, `isOpening`, `isPaused`, `currentIndex`, `infiniteMixEnabled`, `mono`, `bufferSize`, `audioBitrate`, `preamp`, `limiterEnabled`, `isShuffled`) with zero duplicate convenience aliases.
-   - `player.stream`: Fine-grained broadcast streams providing deduplicated reactive updates for UI components.
-3. **Clean Break Architecture**: Zero deprecated facades or legacy shims; deterministic method signatures throughout.
+   - `player.action`: Async imperative commands (`setQueue()`, `play()`, `pause()`, `seek()`, `setMetadataEnabled()`, `setEffects()`, `playEffect()`). Holds a private reference to `_rustPlayer` directly, keeping `MiniaudioPlayer`'s FFI handle strictly private.
+   - `player.state`: Canonical synchronous snapshot (`isPlaying`, `isBuffering`, `isCompleted`, `isOpening`, `isPaused`, `currentIndex`, `infiniteMixEnabled`, `mono`, `bufferSize`, `audioInfo`, `duration`, `metadataEnabled`, `metadata`, `preamp`, `limiterEnabled`, `isShuffled`) with zero duplicate convenience aliases. Primitive format fields (`sampleRate`, `channels`, `audioBitrate`) are consolidated into `audioInfo`.
+   - `player.stream`: Fine-grained broadcast streams providing deduplicated reactive updates for UI components (`stream.audioInfo`, `stream.metadata`, `stream.metadataEnabled`, `stream.playbackState`, etc.).
+3. **Clean Break Architecture**: Zero deprecated facades, zero legacy shims, and zero duplicate convenience aliases; deterministic method signatures throughout.
 4. **Effective Dart Documentation**: 100% English API documentation following official Dart guidelines.

@@ -7,8 +7,8 @@ part of 'miniaudio_player.dart';
 class PlayerStream<T> {
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
-  final StreamController<Duration?> _durationController =
-      StreamController<Duration?>.broadcast();
+  final StreamController<AudioInfo?> _audioInfoController =
+      StreamController<AudioInfo?>.broadcast();
   final StreamController<bool> _playingController =
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
@@ -23,14 +23,10 @@ class PlayerStream<T> {
       StreamController<EnginePhase>.broadcast();
   final StreamController<Buffer> _bufferController =
       StreamController<Buffer>.broadcast();
-  final StreamController<Uint8List?> _metaBytesController =
-      StreamController<Uint8List?>.broadcast();
-  final StreamController<bool> _metaBytesEnabledController =
+  final StreamController<AudioMetadata?> _metadataController =
+      StreamController<AudioMetadata?>.broadcast();
+  final StreamController<bool> _metadataEnabledController =
       StreamController<bool>.broadcast();
-  final StreamController<int> _sampleRateController =
-      StreamController<int>.broadcast();
-  final StreamController<int> _channelsController =
-      StreamController<int>.broadcast();
   final StreamController<double> _volumeController =
       StreamController<double>.broadcast();
   final StreamController<double> _rateController =
@@ -42,8 +38,6 @@ class PlayerStream<T> {
   final StreamController<bool> _monoController =
       StreamController<bool>.broadcast();
   final StreamController<int> _bufferSizeController =
-      StreamController<int>.broadcast();
-  final StreamController<int> _audioBitrateController =
       StreamController<int>.broadcast();
   final StreamController<Equalizer> _equalizerController =
       StreamController<Equalizer>.broadcast();
@@ -132,9 +126,6 @@ class PlayerStream<T> {
   /// Broadcast stream emitting the playback position within the active track.
   Stream<Duration> get position => _positionController.stream;
 
-  /// Broadcast stream emitting the duration of the active track, or `null` if live or unbounded.
-  Stream<Duration?> get duration => _durationController.stream;
-
   /// Broadcast stream emitting whether audio frames are actively rendering.
   Stream<bool> get playing => _playingController.stream;
 
@@ -168,23 +159,15 @@ class PlayerStream<T> {
   /// Broadcast stream emitting audio prefetch buffer metrics.
   Stream<Buffer> get buffer => _bufferController.stream;
 
-  /// Reactive broadcast stream emitting raw metadata bytes extracted by the native audio engine
-  /// (e.g. ID3, Vorbis, ICY stream metadata).
-  ///
-  /// Note: In Dart, this stream is always open and ready for listeners, but events are ONLY
-  /// emitted through this stream when [metaBytesEnabled] is set to `true`
-  /// (via `player.action.setMetaBytesEnabled(true)`).
-  /// By default, [metaBytesEnabled] is `false` to avoid saturating the event bus.
-  Stream<Uint8List?> get metaBytes => _metaBytesController.stream;
-
   /// Reactive broadcast stream emitting updates whenever metadata dispatch is enabled or disabled.
-  Stream<bool> get metaBytesEnabled => _metaBytesEnabledController.stream;
+  Stream<bool> get metadataEnabled => _metadataEnabledController.stream;
 
-  /// Reactive broadcast stream emitting the native sample rate (Hz) of the active playback.
-  Stream<int> get sampleRate => _sampleRateController.stream;
+  /// Reactive broadcast stream emitting encapsulated [AudioMetadata] when [metadataEnabled] is `true`.
+  Stream<AudioMetadata?> get metadata => _metadataController.stream;
 
-  /// Reactive broadcast stream emitting the channel count (e.g. 1 for mono, 2 for stereo) of the active playback.
-  Stream<int> get channels => _channelsController.stream;
+  /// Reactive broadcast stream emitting technical audio format characteristics
+  /// (duration, sample rate, channels, nominal bitrate, and format).
+  Stream<AudioInfo?> get audioInfo => _audioInfoController.stream;
 
   /// Broadcast stream emitting master volume updates (`>= 0.0`).
   Stream<double> get volume => _volumeController.stream;
@@ -203,12 +186,6 @@ class PlayerStream<T> {
 
   /// Broadcast stream emitting audio buffer frame size updates.
   Stream<int> get bufferSize => _bufferSizeController.stream;
-
-  /// Broadcast stream emitting audio stream bitrate updates in bits per second.
-  Stream<int> get bitrate => _audioBitrateController.stream;
-
-  /// Broadcast stream emitting audio stream bitrate updates in bits per second.
-  Stream<int> get audioBitrate => _audioBitrateController.stream;
 
   /// Broadcast stream emitting 10-band equalizer configuration updates.
   Stream<Equalizer> get equalizer => _equalizerController.stream;
@@ -366,7 +343,6 @@ class PlayerStream<T> {
   Future<void> dispose() async {
     await Future.wait([
       _positionController.close(),
-      _durationController.close(),
       _playingController.close(),
       _bufferingController.close(),
       _completedController.close(),
@@ -377,17 +353,15 @@ class PlayerStream<T> {
       _activeVoicesCountController.close(),
       _allocatedRamBytesController.close(),
       _loadedEffectIdsController.close(),
-      _metaBytesController.close(),
-      _metaBytesEnabledController.close(),
-      _sampleRateController.close(),
-      _channelsController.close(),
+      _audioInfoController.close(),
+      _metadataController.close(),
+      _metadataEnabledController.close(),
       _volumeController.close(),
       _rateController.close(),
       _pitchController.close(),
       _balanceController.close(),
       _monoController.close(),
       _bufferSizeController.close(),
-      _audioBitrateController.close(),
       _equalizerController.close(),
       _outputsController.close(),
       _inputsController.close(),

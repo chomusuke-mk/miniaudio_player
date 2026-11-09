@@ -1,25 +1,26 @@
 import 'dart:math' as math;
 
-/// Complete result of analyzing an audio track's acoustic and DSP properties.
+import 'audio_info.dart';
+import 'audio_metadata.dart';
+
+export 'audio_info.dart';
+export 'audio_metadata.dart';
+
+/// Complete result of analyzing an audio track's acoustic, format, and DSP properties.
 ///
-/// Contains fundamental track information (duration, sample rate, channels,
-/// nominal bitrate, and true peak sample amplitude) as well as optional specialized
-/// analysis modules: [replayGain] and [waveform].
+/// Contains fundamental format information in [audioInfo] (duration, sample rate, channels,
+/// nominal bitrate, and container format) as well as optional specialized modules:
+/// - [peak]: Absolute true sample peak across the entire track.
+/// - [replayGain]: ITU-R BS.1770-4 / EBU R128 loudness metrics (or `null` if disabled).
+/// - [waveform]: Normalized amplitude envelope points (or `null` if disabled).
+/// - [metadata]: Raw metadata bytes container (or `null` if disabled).
 ///
-/// To conserve processing time and CPU resources, modules that were disabled
-/// during analysis (e.g. `replayGain: false` or `waveform: false`) will be `null`.
+/// Convenience getters ([duration], [sampleRate], [channels], [bitrate], [format]) forward
+/// directly to [audioInfo] for backwards compatibility.
 class AudioAnalysisResult {
-  /// Total duration of the audio track.
-  final Duration duration;
-
-  /// Native audio sample rate in Hz (e.g. 44100, 48000).
-  final int sampleRate;
-
-  /// Number of audio channels (e.g. 1 for Mono, 2 for Stereo).
-  final int channels;
-
-  /// Average nominal bitrate of the file in bits per second (bps).
-  final int bitrate;
+  /// Core technical audio properties (sample rate, channels, bitrate, duration, format).
+  /// Always extracted at zero computational cost.
+  final AudioInfo audioInfo;
 
   /// Absolute true sample peak across the entire track (where `1.0` represents 0 dBFS / digital full scale).
   final double peak;
@@ -32,15 +33,31 @@ class AudioAnalysisResult {
   /// or `null` if Waveform extraction was disabled (`waveform: false`).
   final WaveformResult? waveform;
 
+  /// Encapsulated metadata bytes, or `null` if metadata extraction was disabled (`metadata: false`).
+  final AudioMetadata? metadata;
+
+  /// Total duration of the audio track, or `null` if unknown (e.g. infinite livestream).
+  Duration? get duration => audioInfo.duration;
+
+  /// Native audio sample rate in Hz (e.g. 44100, 48000).
+  int get sampleRate => audioInfo.sampleRate;
+
+  /// Number of audio channels (e.g. 1 for Mono, 2 for Stereo).
+  int get channels => audioInfo.channels;
+
+  /// Average nominal bitrate of the file in bits per second (bps).
+  int get bitrate => audioInfo.bitrate;
+
+  /// Container or codec format identifier (e.g. "mp3", "flac", "wav").
+  String? get format => audioInfo.format;
+
   /// Creates an [AudioAnalysisResult] with acoustic metrics.
   const AudioAnalysisResult({
-    required this.duration,
-    required this.sampleRate,
-    required this.channels,
-    required this.bitrate,
+    required this.audioInfo,
     required this.peak,
     this.replayGain,
     this.waveform,
+    this.metadata,
   });
 
   @override
@@ -48,30 +65,25 @@ class AudioAnalysisResult {
       identical(this, other) ||
       other is AudioAnalysisResult &&
           runtimeType == other.runtimeType &&
-          duration == other.duration &&
-          sampleRate == other.sampleRate &&
-          channels == other.channels &&
-          bitrate == other.bitrate &&
+          audioInfo == other.audioInfo &&
           peak == other.peak &&
           replayGain == other.replayGain &&
-          waveform == other.waveform;
+          waveform == other.waveform &&
+          metadata == other.metadata;
 
   @override
   int get hashCode => Object.hash(
-        duration,
-        sampleRate,
-        channels,
-        bitrate,
+        audioInfo,
         peak,
         replayGain,
         waveform,
+        metadata,
       );
 
   @override
   String toString() =>
-      'AudioAnalysisResult(duration: $duration, sampleRate: $sampleRate Hz, channels: $channels, '
-      'bitrate: ${bitrate ~/ 1000} kbps, peak: ${peak.toStringAsFixed(4)}, '
-      'replayGain: $replayGain, waveform: $waveform)';
+      'AudioAnalysisResult(audioInfo: $audioInfo, peak: ${peak.toStringAsFixed(4)}, '
+      'replayGain: $replayGain, waveform: $waveform, metadata: $metadata)';
 }
 
 /// Representation of a track's normalized amplitude waveform points.
