@@ -36,5 +36,3 @@ migrate_working_dir/
 /test/fixtures/*
 !/test/fixtures/MANIFEST.md
 /docs/*
-/docs/ARCHITECTURE.md
-/docs/REFACTOR.md

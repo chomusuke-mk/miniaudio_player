@@ -68,7 +68,7 @@ lofty = "0.25.4"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 symphonia-adapter-libopus = "0.3"
 symphonia-adapter-fdk-aac = "0.2"
-ureq = { version = "2.10", features = ["tls"] }
+ureq = { version = "2.10", default-features = false, features = ["tls"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
@@ -100,11 +100,11 @@ debug-assertions = true
 overflow-checks = true
 
 [profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 4
+opt-level = "s"
+lto = true
+codegen-units = 1
 strip = true
-panic = "unwind"
+panic = "abort"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-mutable-globals", "--enable-nontrapping-float-to-int", "--enable-sign-ext"]

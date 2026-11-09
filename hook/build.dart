@@ -47,7 +47,7 @@ void main(List<String> args) async {
       final res = Process.runSync(
         cargoExe,
         buildArgs,
-        workingDirectory: input.packageRoot.toFilePath(),
+        workingDirectory: rustDir.path,
         environment: cargoEnv,
       );
 

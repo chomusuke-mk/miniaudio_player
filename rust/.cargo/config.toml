@@ -3,6 +3,7 @@ rustflags = [
     "-C", "link-arg=-Wl,--gc-sections",
     "-C", "link-arg=-Wl,--as-needed",
     "-C", "link-arg=-Wl,-O1",
+    "-C", "force-unwind-tables=no",
 ]
 
 [env]
