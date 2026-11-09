@@ -45,14 +45,14 @@ class PlaybackEngineCard extends StatelessWidget {
             initialData: engine.state.currentItem,
             builder: (context, currentSnap) {
               final activeTrack = currentSnap.data?.data ?? track;
-              return StreamBuilder<int>(
-                stream: engine.stream.bitrate,
-                initialData: engine.state.bitrate,
+              return StreamBuilder<AudioInfo?>(
+                stream: engine.stream.audioInfo,
+                initialData: engine.state.audioInfo,
                 builder: (context, snapshot) {
                   return StudioBadge(
                     label: TrackFormatInfo.deduceFormatBadge(
                       activeTrack,
-                      bitrate: snapshot.data ?? 0,
+                      bitrate: snapshot.data?.bitrate ?? 0,
                     ),
                     color: StudioColors.accentAmber,
                   );
@@ -114,9 +114,11 @@ class PlaybackEngineCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 6),
-                        StudioBadge(
-                          label: activeTrack?.resourceBadge ?? 'EMPTY',
-                          color: activeTrack?.iconColor ?? StudioColors.accentCyan,
+                        Flexible(
+                          child: StudioBadge(
+                            label: activeTrack?.resourceBadge ?? 'EMPTY',
+                            color: activeTrack?.iconColor ?? StudioColors.accentCyan,
+                          ),
                         ),
                       ],
                     ),
@@ -141,12 +143,9 @@ class PlaybackEngineCard extends StatelessWidget {
                     initialData: engine.state.buffer,
                     builder: (context, bufSnap) {
                       final buf = bufSnap.data ?? engine.state.buffer;
-                      final isLocal = track?.source is MemoryAudioSource ||
-                          (track?.source is UriAudioSource &&
-                              !(track!.source as UriAudioSource)
-                                  .sourceString
-                                  .toLowerCase()
-                                  .startsWith('http'));
+                      final isLocal = track?.source.isMemory == true ||
+                          (track?.source.uri != null &&
+                              !track!.source.uri!.toLowerCase().startsWith('http'));
                       final bufferedProgress = isLocal
                           ? 1.0
                           : (dur != null && dur.inMilliseconds > 0
@@ -259,25 +258,29 @@ class PlaybackEngineCard extends StatelessWidget {
                                       : StudioColors.accentCyan,
                                 ),
                                 const SizedBox(width: 5),
-                                Text(
-                                  'Buffer: ${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}',
-                                  style: const TextStyle(
-                                    fontSize: 9.5,
-                                    fontFamily: 'monospace',
-                                    color: StudioColors.textPrimary,
+                                Expanded(
+                                  child: Text(
+                                    'Buffer: ${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}',
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      fontFamily: 'monospace',
+                                      color: StudioColors.textPrimary,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                const Spacer(),
-                                if (buf.isBuffering)
-                                  const StudioBadge(
-                                    label: 'BUFFERING',
-                                    color: StudioColors.accentAmber,
-                                  )
-                                else
-                                  StudioBadge(
-                                    label: '${_formatDuration(buf.end - buf.start)} cached',
-                                    color: StudioColors.accentEmerald,
-                                  ),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: buf.isBuffering
+                                      ? const StudioBadge(
+                                          label: 'BUFFERING',
+                                          color: StudioColors.accentAmber,
+                                        )
+                                      : StudioBadge(
+                                          label: '${_formatDuration(buf.end - buf.start)} cached',
+                                          color: StudioColors.accentEmerald,
+                                        ),
+                                ),
                               ],
                             ),
                           ),
@@ -470,107 +473,71 @@ class PlaybackEngineCard extends StatelessWidget {
               ),
               const SizedBox(height: 10),
 
-              // 4. Hardware Routing: Buffer Size & Audio Output Device
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final stackHardware = constraints.maxWidth < 360;
-                  final bufferDropdown = DropdownButtonFormField<int>(
-                    initialValue: controller.selectedBufferSize,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Hardware Buffer',
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              // =============================================================
+              // NEW: Mini Recording Menu directly below Transport Controls
+              // =============================================================
+              _buildRecordingMenu(context),
+
+              const SizedBox(height: 10),
+
+              // 4. Hardware Buffer Configuration
+              DropdownButtonFormField<int>(
+                initialValue: controller.selectedBufferSize,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Hardware Buffer Period',
+                  prefixIcon: Icon(Icons.memory, size: 16),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 0,
+                    child: Text(
+                      'Auto (Miniaudio Engine Default)',
+                      style: TextStyle(fontSize: 10.5),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 0,
-                        child: Text(
-                          'Auto (Miniaudio Engine Default)',
-                          style: TextStyle(fontSize: 10.5),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 256,
-                        child: Text(
-                          '256 frames (~5.8ms @ 44.1kHz)',
-                          style: TextStyle(fontSize: 10.5),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 512,
-                        child: Text(
-                          '512 frames (~11.6ms @ 44.1kHz)',
-                          style: TextStyle(fontSize: 10.5),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 1024,
-                        child: Text(
-                          '1024 frames (~23.2ms @ 44.1kHz)',
-                          style: TextStyle(fontSize: 10.5),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 2048,
-                        child: Text(
-                          '2048 frames (~46.4ms @ 44.1kHz)',
-                          style: TextStyle(fontSize: 10.5),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                    onChanged: (size) {
-                      if (size != null) controller.setBufferSize(size);
-                    },
-                  );
-
-                  final deviceDropdown = DropdownButtonFormField<AudioDevice>(
-                    initialValue: controller.selectedDevice,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Output Device',
-                      prefixIcon: Icon(Icons.headphones, size: 16),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
+                  DropdownMenuItem(
+                    value: 256,
+                    child: Text(
+                      '256 frames (~5.8ms @ 44.1kHz)',
+                      style: TextStyle(fontSize: 10.5),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    items: controller.audioDevices.map((dev) {
-                      return DropdownMenuItem<AudioDevice>(
-                        value: dev,
-                        child: Text(
-                          dev.name,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 10.5),
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (dev) {
-                      if (dev != null) controller.setDevice(dev);
-                    },
-                  );
-
-                  if (stackHardware) {
-                    return Column(
-                      children: [
-                        bufferDropdown,
-                        const SizedBox(height: 8),
-                        deviceDropdown,
-                      ],
-                    );
-                  }
-
-                  return Row(
-                    children: [
-                      Expanded(child: bufferDropdown),
-                      const SizedBox(width: 8),
-                      Expanded(child: deviceDropdown),
-                    ],
-                  );
+                  ),
+                  DropdownMenuItem(
+                    value: 512,
+                    child: Text(
+                      '512 frames (~11.6ms @ 44.1kHz)',
+                      style: TextStyle(fontSize: 10.5),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 1024,
+                    child: Text(
+                      '1024 frames (~23.2ms @ 44.1kHz)',
+                      style: TextStyle(fontSize: 10.5),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 2048,
+                    child: Text(
+                      '2048 frames (~46.4ms @ 44.1kHz)',
+                      style: TextStyle(fontSize: 10.5),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+                onChanged: (size) {
+                  if (size != null) controller.setBufferSize(size);
                 },
               ),
               const SizedBox(height: 10),
+
+              // 5. Native Pause on Device Disconnect Toggle
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
@@ -648,6 +615,8 @@ class PlaybackEngineCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
+
+              // 6. Dynamic Metadata Event Dispatch Toggle
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
@@ -667,14 +636,14 @@ class PlaybackEngineCard extends StatelessWidget {
                               Icon(
                                 Icons.tag,
                                 size: 14,
-                                color: controller.metaBytesEnabled
+                                color: controller.metadataEnabled
                                     ? StudioColors.accentAmber
                                     : StudioColors.textMuted,
                               ),
                               const SizedBox(width: 6),
                               const Expanded(
                                 child: Text(
-                                  'MetaBytes Stream Event Bus',
+                                  'Dynamic Metadata Event Stream',
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w600,
@@ -687,9 +656,9 @@ class PlaybackEngineCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            controller.metaBytesEnabled
-                                ? 'Active: Rust streams raw metadata bytes (${controller.metaBytesPacketCount} pkts, ${controller.lastMetaBytes?.length ?? 0} B)'
-                                : 'Disabled by default: 0 channel saturation until activated',
+                            controller.metadataEnabled
+                                ? 'Active: Rust streams live ID3v2/FLAC/Vorbis metadata events'
+                                : 'Disabled: zero channel bus saturation until activated',
                             style: const TextStyle(
                               fontSize: 9.5,
                               color: StudioColors.textMuted,
@@ -704,20 +673,20 @@ class PlaybackEngineCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          controller.metaBytesEnabled ? 'ON' : 'OFF',
+                          controller.metadataEnabled ? 'ON' : 'OFF',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: controller.metaBytesEnabled
+                            color: controller.metadataEnabled
                                 ? StudioColors.accentAmber
                                 : StudioColors.textMuted,
                           ),
                         ),
                         const SizedBox(width: 4),
                         Switch(
-                          value: controller.metaBytesEnabled,
+                          value: controller.metadataEnabled,
                           activeThumbColor: StudioColors.accentAmber,
-                          onChanged: (val) => controller.setMetaBytesEnabled(val),
+                          onChanged: (val) => controller.setMetadataEnabled(val),
                         ),
                       ],
                     ),
@@ -728,6 +697,220 @@ class PlaybackEngineCard extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  /// Small recording control bar directly below transport controls
+  Widget _buildRecordingMenu(BuildContext context) {
+    final isRec = controller.isRecording;
+    final dur = controller.recordedDuration;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C101C),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isRec ? StudioColors.accentRose : StudioColors.cardBorder,
+          width: isRec ? 1.4 : 1.0,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.fiber_manual_record,
+                size: 14,
+                color: isRec ? StudioColors.accentRose : StudioColors.textMuted,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  isRec ? 'RECORDING IN PROGRESS' : 'LIVE DISK RECORDER',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                    color: isRec ? StudioColors.accentRose : StudioColors.accentCyan,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (isRec) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: StudioColors.accentRose.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: StudioColors.accentRose, width: 0.8),
+                  ),
+                  child: Text(
+                    _formatDuration(dur),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'monospace',
+                      color: StudioColors.accentRose,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              // Record/Stop Action Button
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: isRec
+                      ? StudioColors.accentRose
+                      : const Color(0xFF1E283E),
+                  foregroundColor: isRec ? Colors.white : StudioColors.accentRose,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    side: BorderSide(
+                      color: isRec ? StudioColors.accentRose : StudioColors.cardBorder,
+                    ),
+                  ),
+                ),
+                icon: Icon(
+                  isRec ? Icons.stop : Icons.fiber_manual_record,
+                  size: 16,
+                  color: isRec ? Colors.white : StudioColors.accentRose,
+                ),
+                label: Text(
+                  isRec ? 'STOP' : 'RECORD',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+                onPressed: () async {
+                  if (isRec) {
+                    final res = await controller.stopRecording();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: const Color(0xFF0E172A),
+                          content: Text(
+                            'Recorded ${_formatDuration(res.duration)} (${(res.bytesWritten / 1024).round()} KB) to ${res.path.split("/").last}',
+                            style: const TextStyle(color: StudioColors.accentEmerald),
+                          ),
+                          duration: const Duration(seconds: 4),
+                        ),
+                      );
+                    }
+                  } else {
+                    await controller.startRecording();
+                  }
+                },
+              ),
+
+              // Format selector
+              if (!isRec)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF070B14),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: StudioColors.cardBorder),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<AudioFileFormat>(
+                      value: controller.recordingFormat,
+                      isDense: true,
+                      icon: const Icon(Icons.arrow_drop_down, size: 16),
+                      dropdownColor: const Color(0xFF0E172A),
+                      items: AudioFileFormat.values.map((f) {
+                        return DropdownMenuItem(
+                          value: f,
+                          child: Text(
+                            f.name.toUpperCase(),
+                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (fmt) {
+                        if (fmt != null) controller.setRecordingFormat(fmt);
+                      },
+                    ),
+                  ),
+                ),
+
+              // Source selector
+              if (!isRec)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF070B14),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: StudioColors.cardBorder),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<AudioOutputSource>(
+                      value: controller.recordingSource,
+                      isDense: true,
+                      icon: const Icon(Icons.arrow_drop_down, size: 16),
+                      dropdownColor: const Color(0xFF0E172A),
+                      items: const [
+                        DropdownMenuItem(
+                          value: AudioOutputSource.all,
+                          child: Text(
+                            'All Mix',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.musicMix,
+                          child: Text(
+                            'Music',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.activeTrack,
+                          child: Text(
+                            'Active',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.standbyTrack,
+                          child: Text(
+                            'Cue',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                      onChanged: (src) {
+                        if (src != null) controller.setRecordingSource(src);
+                      },
+                    ),
+                  ),
+                ),
+
+              if (controller.lastRecordingResult != null && !isRec)
+                Flexible(
+                  child: Text(
+                    'Last: ${controller.lastRecordingResult!.path.split("/").last} (${_formatDuration(controller.lastRecordingResult!.duration)})',
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      color: StudioColors.textMuted,
+                      fontFamily: 'monospace',
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

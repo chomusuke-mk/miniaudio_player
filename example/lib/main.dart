@@ -13,10 +13,7 @@ void main() async {
   MiniaudioPlayer.config(
     defaultBufferSize: 0,
     logLevel: MiniaudioLogLevel.verbose,
-    defaultAudioDevice: AudioDevice.auto,
   );
-  final player = MiniaudioPlayer();
-  final voice = player.action.playEffect("shotgun.wav");
   
   runApp(const MiniaudioPlayerExampleApp());
 }

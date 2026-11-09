@@ -35,18 +35,19 @@ class AudioAnalyzerController extends ChangeNotifier {
     _currentTrackId = track?.id;
     _error = null;
 
-    if (track == null || !track.canAnalyze) {
-      engine.action.clearReplayGain();
+    if (track == null) {
+      engine.action.setReplayGain(null);
     } else if (_replayGainActive) {
       final curRes = result;
       if (curRes?.replayGain != null) {
         engine.action.setReplayGain(
-          gainDb: curRes!.replayGain!.gainDb,
-          peak: curRes.replayGain!.peak,
-          preventClipping: _preventClipping,
+          ReplayGainConfig(
+            gainDb: curRes!.replayGain!.gainDb,
+            peak: curRes.replayGain!.peak,
+          ),
         );
       } else {
-        engine.action.clearReplayGain();
+        engine.action.setReplayGain(null);
       }
     }
     notifyListeners();
@@ -57,9 +58,10 @@ class AudioAnalyzerController extends ChangeNotifier {
     final curRes = result;
     if (_replayGainActive && curRes?.replayGain != null) {
       engine.action.setReplayGain(
-        gainDb: curRes!.replayGain!.gainDb,
-        peak: curRes.replayGain!.peak,
-        preventClipping: _preventClipping,
+        ReplayGainConfig(
+          gainDb: curRes!.replayGain!.gainDb,
+          peak: curRes.replayGain!.peak,
+        ),
       );
     }
     notifyListeners();
@@ -70,26 +72,28 @@ class AudioAnalyzerController extends ChangeNotifier {
     final curRes = result;
     if (val && curRes?.replayGain != null) {
       engine.action.setReplayGain(
-        gainDb: curRes!.replayGain!.gainDb,
-        peak: curRes.replayGain!.peak,
-        preventClipping: _preventClipping,
+        ReplayGainConfig(
+          gainDb: curRes!.replayGain!.gainDb,
+          peak: curRes.replayGain!.peak,
+        ),
       );
     } else {
-      engine.action.clearReplayGain();
+      engine.action.setReplayGain(null);
     }
     notifyListeners();
   }
 
-  Future<void> analyze(AudioTrack track) async {
-    if (_isAnalyzing) return;
-    _currentTrackId = track.id;
-
-    if (!track.canAnalyze) {
-      _error = 'Format ${track.displayType} does not support offline analysis.';
-      notifyListeners();
-      return;
+  /// Analyzes all tracks in [tracks] sequentially to populate metadata, waveform, and ReplayGain.
+  Future<void> analyzeAll(List<AudioTrack> tracks) async {
+    for (final track in tracks) {
+      if (!_resultsByTrack.containsKey(track.id)) {
+        await analyze(track);
+      }
     }
+  }
 
+  Future<void> analyze(AudioTrack track) async {
+    _currentTrackId = track.id;
     _isAnalyzing = true;
     _error = null;
     notifyListeners();
@@ -97,44 +101,67 @@ class AudioAnalyzerController extends ChangeNotifier {
     try {
       AudioAnalysisResult? res;
 
-      if (track.source is MemoryAudioSource) {
-        final bytes = (track.source as MemoryAudioSource).bytes;
-        res = await MiniaudioPlayer.analyzeAudioMemory(
-          bytes,
+      if (track.source.isMemory && track.source.bytes != null) {
+        res = await MiniaudioPlayer.analyzeAudio(
+          track.source.bytes!,
           waveform: true,
           replayGain: true,
+          metadata: true,
           waveformPoints: 72,
         );
-      } else if (!kIsWeb && track.source is UriAudioSource) {
-        final s = (track.source as UriAudioSource).sourceString;
+      } else if (track.source.uri != null) {
+        final s = track.source.uri!;
         if (s.startsWith('asset://') || s.startsWith('asset:') || s.startsWith('assets/')) {
           final assetPath = s.startsWith('asset://')
               ? s.substring('asset://'.length)
               : s.startsWith('asset:')
                   ? s.substring('asset:'.length)
                   : s;
-          final byteData = await rootBundle.load(assetPath);
-          final bytes = byteData.buffer.asUint8List(
-            byteData.offsetInBytes,
-            byteData.lengthInBytes,
-          );
-          res = await MiniaudioPlayer.analyzeAudioMemory(
-            bytes,
-            waveform: true,
-            replayGain: true,
-            waveformPoints: 72,
-          );
-        } else {
-          final filePath = s.startsWith('file://') ? Uri.parse(s).toFilePath() : s;
-          if (File(filePath).existsSync()) {
+          try {
+            final byteData = await rootBundle.load(assetPath);
+            final bytes = byteData.buffer.asUint8List(
+              byteData.offsetInBytes,
+              byteData.lengthInBytes,
+            );
             res = await MiniaudioPlayer.analyzeAudio(
-              filePath,
+              bytes,
               waveform: true,
               replayGain: true,
+              metadata: true,
               waveformPoints: 72,
             );
+          } catch (_) {
+            if (!kIsWeb && File(assetPath).existsSync()) {
+              res = await MiniaudioPlayer.analyzeAudio(
+                assetPath,
+                waveform: true,
+                replayGain: true,
+                metadata: true,
+                waveformPoints: 72,
+              );
+            }
           }
+        } else {
+          final filePath = (!kIsWeb && s.startsWith('file://'))
+              ? Uri.parse(s).toFilePath()
+              : s;
+          res = await MiniaudioPlayer.analyzeAudio(
+            filePath,
+            waveform: true,
+            replayGain: true,
+            metadata: true,
+            waveformPoints: 72,
+          );
         }
+      } else {
+        // Fallback to analyzing source directly
+        res = await MiniaudioPlayer.analyzeAudio(
+          track.source,
+          waveform: true,
+          replayGain: true,
+          metadata: true,
+          waveformPoints: 72,
+        );
       }
 
       if (res != null) {

@@ -2,18 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
-import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Example App Modernization & Bugfixes Suite', () {
     testWidgets(
-      'Material 3 Dropdown Migration: All selectors use DropdownButtonFormField',
+      'Material 3 Dropdown Migration: Selectors use DropdownButtonFormField and routing uses HardwareRoutingCard',
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -21,36 +20,8 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
-
-        // Find all DropdownButtonFormField widgets (Buffer, Device, Crossfeed, SilenceSkip)
-        final dropdownFormFields = find.byWidgetPredicate(
-          (w) => w.runtimeType.toString().startsWith('DropdownButtonFormField'),
-        );
-        expect(
-          dropdownFormFields,
-          findsNWidgets(4),
-          reason: 'All 4 hardware & DSP selectors must use Material 3 DropdownButtonFormField',
-        );
-
-        // Verify that every underlying DropdownButton is hosted within a DropdownButtonFormField
-        final dropdownButtons = find.byWidgetPredicate(
-          (w) => w.runtimeType.toString().startsWith('DropdownButton<'),
-        );
-        expect(dropdownButtons, findsNWidgets(4));
-
-        for (final element in dropdownButtons.evaluate()) {
-          expect(
-            find.ancestor(
-              of: find.byWidget(element.widget),
-              matching: find.byWidgetPredicate(
-                (w) => w.runtimeType.toString().startsWith('DropdownButtonFormField'),
-              ),
-            ),
-            findsOneWidget,
-            reason: 'Every selector must be wrapped in a Material 3 DropdownButtonFormField',
-          );
-        }
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         // Verify specific form fields exist
         expect(
@@ -62,11 +33,16 @@ void main() {
         );
         expect(
           find.byWidgetPredicate(
-            (w) => w is DropdownButtonFormField<AudioDevice>,
+            (w) => w is DropdownButtonFormField<SilenceSkipMode>,
           ),
           findsOneWidget,
-          reason: 'Device selector must be a DropdownButtonFormField<AudioDevice>',
+          reason: 'Silence skip selector must be a DropdownButtonFormField<SilenceSkipMode>',
         );
+
+        // Hardware I/O is decoupled to HardwareRoutingCard
+        expect(find.text('AUDIO HARDWARE ROUTING MATRIX'), findsOneWidget);
+        // Crossfeed presets are decoupled to CrossfeedCard ChoiceChips
+        expect(find.text('BAUER BS2B BINAURAL CROSSFEED'), findsOneWidget);
       },
     );
 
@@ -75,7 +51,7 @@ void main() {
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -83,11 +59,16 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         // Ensure "Set Volume Slider" is never present
         expect(find.textContaining('Set Volume Slider'), findsNothing);
-        expect(find.byType(ActionChip), findsNothing);
+        final dspCard = find.ancestor(
+          of: find.text('DYNAMIC DSP & SPATIAL MASTERING'),
+          matching: find.byType(Card),
+        );
+        expect(find.descendant(of: dspCard, matching: find.byType(ActionChip)), findsNothing);
       },
     );
 
@@ -96,7 +77,7 @@ void main() {
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -104,7 +85,8 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         final scrollable = find.byType(Scrollable).first;
 
@@ -119,7 +101,7 @@ void main() {
         final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
         expect(rockChipFinder, findsOneWidget);
         await tester.tap(rockChipFinder);
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
 
         final rockChip = tester.widget<ChoiceChip>(rockChipFinder);
         expect(rockChip.selected, isTrue);
@@ -131,7 +113,7 @@ void main() {
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -139,7 +121,8 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         // Scroll to Skip Silence card
         final skipSilenceTitle = find.text('Smart Silence Skipping');
@@ -194,7 +177,7 @@ void main() {
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -202,7 +185,8 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         expect(find.text('Real-Time Reactive Visualizer'), findsOneWidget);
 
@@ -221,7 +205,7 @@ void main() {
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -229,38 +213,48 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         // Verify title exists
         expect(find.text('Pause on Device Change'), findsOneWidget);
 
-        // Find Switch within PlaybackEngineCard
+        final scrollable = find.byType(Scrollable).first;
+
+        // Find Switch for Pause on Device Change
+        final pauseRow = find.ancestor(
+          of: find.text('Pause on Device Change'),
+          matching: find.byType(Container),
+        ).first;
         final switchFinder = find.descendant(
-          of: find.byType(PlaybackEngineCard),
+          of: pauseRow,
           matching: find.byType(Switch),
         );
         expect(switchFinder, findsOneWidget);
+        await tester.scrollUntilVisible(switchFinder, 100, scrollable: scrollable);
 
         // Initial state is false (OFF)
         Switch pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isFalse);
-        expect(find.text('OFF'), findsWidgets);
+        expect(find.descendant(of: pauseRow, matching: find.text('OFF')), findsOneWidget);
 
         // Tap the switch to enable
         await tester.tap(switchFinder);
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isTrue);
-        expect(find.text('ON'), findsWidgets);
+        expect(find.descendant(of: pauseRow, matching: find.text('ON')), findsOneWidget);
 
         // Tap the switch again to disable
         await tester.tap(switchFinder);
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isFalse);
-        expect(find.text('OFF'), findsWidgets);
+        expect(find.descendant(of: pauseRow, matching: find.text('OFF')), findsOneWidget);
       },
     );
   });

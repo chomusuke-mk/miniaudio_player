@@ -43,22 +43,28 @@ class RamSoundEffectsCard extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildMetric(
-                      label: 'RUST ALLOCATED RAM',
-                      value: '$ramKb KB',
-                      color: StudioColors.accentEmerald,
+                    Expanded(
+                      child: _buildMetric(
+                        label: 'RAM USAGE',
+                        value: '$ramKb KB',
+                        color: StudioColors.accentEmerald,
+                      ),
                     ),
                     Container(width: 1, height: 26, color: StudioColors.cardBorder),
-                    _buildMetric(
-                      label: 'ACTIVE VOICES',
-                      value: '$voices',
-                      color: voices > 0 ? StudioColors.accentCyan : StudioColors.textSecondary,
+                    Expanded(
+                      child: _buildMetric(
+                        label: 'VOICES',
+                        value: '$voices',
+                        color: voices > 0 ? StudioColors.accentCyan : StudioColors.textSecondary,
+                      ),
                     ),
                     Container(width: 1, height: 26, color: StudioColors.cardBorder),
-                    _buildMetric(
-                      label: 'LOADED SFX',
-                      value: '${loadedIds.length}',
-                      color: loadedIds.isNotEmpty ? StudioColors.accentPurple : StudioColors.textMuted,
+                    Expanded(
+                      child: _buildMetric(
+                        label: 'SFX LOADED',
+                        value: '${loadedIds.length}',
+                        color: loadedIds.isNotEmpty ? StudioColors.accentPurple : StudioColors.textMuted,
+                      ),
                     ),
                   ],
                 ),
@@ -177,6 +183,8 @@ class RamSoundEffectsCard extends StatelessWidget {
             color: StudioColors.textMuted,
             letterSpacing: 0.5,
           ),
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
         ),
       ],
     );

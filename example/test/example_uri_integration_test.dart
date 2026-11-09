@@ -35,7 +35,8 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Verify that PlaylistQueueCard renders the queue
       expect(find.byType(PlaylistQueueCard), findsOneWidget);
@@ -46,24 +47,23 @@ void main() {
 
       // Verify asset URI track presence
       final assetTrack = tracks.firstWhere((t) => t.resourceBadge == 'ASSET');
-      expect(assetTrack.source, isA<UriAudioSource>());
-      expect((assetTrack.source as UriAudioSource).sourceString, startsWith('asset:'));
+      expect(assetTrack.source.uri, startsWith('asset:'));
       expect(assetTrack.resourceBadge, equals('ASSET'));
 
       // Verify remote MP3 track
       final networkTrack = tracks.firstWhere((t) => t.resourceBadge == 'NETWORK' && !t.isLive);
-      expect(networkTrack.source, isA<UriAudioSource>());
-      expect((networkTrack.source as UriAudioSource).sourceString, startsWith('https:'));
+      expect(networkTrack.source.isNetwork, isTrue);
+      expect(networkTrack.source.uri, startsWith('https:'));
       expect(networkTrack.resourceBadge, equals('NETWORK'));
 
       // Verify live stream track
       final liveTrack = tracks.firstWhere((t) => t.isLive);
-      expect(liveTrack.source, isA<UriAudioSource>());
+      expect(liveTrack.source.uri, startsWith('icy:'));
       expect(liveTrack.resourceBadge, equals('LIVE STREAM'));
 
       // Verify data: RFC 2397 URI synth track
       final synthTrack = tracks.firstWhere((t) => t.isGenerated);
-      expect(synthTrack.source, isA<MemoryAudioSource>());
+      expect(synthTrack.source.isMemory, isTrue);
       expect(synthTrack.resourceBadge, equals('DATA URI'));
 
       // Verify badges are rendered in the UI
@@ -72,28 +72,27 @@ void main() {
 
     test('AudioSource polymorphically builds first-class sources for all schemes and bytes', () {
       final assetSource = AudioSource('asset://assets/music/salida.mp3');
-      expect(assetSource, isA<UriAudioSource>());
-      expect((assetSource as UriAudioSource).sourceString, equals('asset://assets/music/salida.mp3'));
+      expect(assetSource.uri, equals('asset://assets/music/salida.mp3'));
 
       final httpSource = AudioSource(
         'https://example.com/audio.mp3',
         headers: {'Authorization': 'Bearer token'},
       );
-      expect(httpSource, isA<UriAudioSource>());
-      expect((httpSource as UriAudioSource).sourceString, equals('https://example.com/audio.mp3'));
+      expect(httpSource.isNetwork, isTrue);
+      expect(httpSource.uri, equals('https://example.com/audio.mp3'));
       expect(httpSource.headers?['Authorization'], equals('Bearer token'));
 
       final dataBytes = base64Encode([0, 1, 2, 3]);
       final dataSource = AudioSource('data:audio/wav;base64,$dataBytes');
-      expect(dataSource, isA<MemoryAudioSource>());
-      expect((dataSource as MemoryAudioSource).bytes, equals([0, 1, 2, 3]));
+      expect(dataSource.isMemory, isTrue);
+      expect(dataSource.bytes, equals([0, 1, 2, 3]));
 
       final memorySource = AudioSource(Uint8List.fromList([4, 5, 6]));
-      expect(memorySource, isA<MemoryAudioSource>());
-      expect((memorySource as MemoryAudioSource).bytes, equals([4, 5, 6]));
+      expect(memorySource.isMemory, isTrue);
+      expect(memorySource.bytes, equals([4, 5, 6]));
 
-      final customSource = AudioSource.custom(_MockCustomByteProvider());
-      expect(customSource, isA<CustomAudioSource>());
+      final customSource = AudioSource(_MockCustomByteProvider());
+      expect(customSource.isCustom, isTrue);
     });
   });
 }

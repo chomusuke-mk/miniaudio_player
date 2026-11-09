@@ -49,7 +49,8 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         // 3. Confirm that the application reached mounted ready state
         expect(

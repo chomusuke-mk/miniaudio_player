@@ -22,8 +22,7 @@ class AudioTrack {
     this.replayPeak,
   });
 
-  String get _sourceString =>
-      source is UriAudioSource ? (source as UriAudioSource).sourceString : '';
+  String get _sourceString => source.uri ?? '';
 
   bool get _isNetwork {
     final s = _sourceString.toLowerCase();
@@ -35,15 +34,12 @@ class AudioTrack {
     return _isNetwork && (s.contains('/live') || s.contains('.m3u8') || s.contains('icecast'));
   }
 
-  bool get canAnalyze {
-    if (isLive || _isNetwork) return false;
-    return source is MemoryAudioSource || source is UriAudioSource;
-  }
+  bool get canAnalyze => true;
 
   String get resourceBadge {
     if (isGenerated) return 'DATA URI';
-    if (source is CustomAudioSource) return 'CUSTOM';
-    if (source is MemoryAudioSource) return 'MEMORY';
+    if (source.isCustom) return 'CUSTOM';
+    if (source.isMemory) return 'MEMORY';
     if (isLive) return 'LIVE STREAM';
     if (_isNetwork) return 'NETWORK';
     if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) return 'ASSET';
@@ -52,8 +48,8 @@ class AudioTrack {
 
   String get displayType {
     if (isGenerated) return 'data: URI';
-    if (source is CustomAudioSource) return 'CustomProvider';
-    if (source is MemoryAudioSource) return 'RAM Memory';
+    if (source.isCustom) return 'CustomProvider';
+    if (source.isMemory) return 'RAM Memory';
     if (isLive) return 'icy:// (Live)';
     if (_isNetwork) return 'https://';
     if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) return 'asset://';
@@ -62,10 +58,10 @@ class AudioTrack {
 
   IconData get icon {
     if (isGenerated) return Icons.graphic_eq;
-    if (source is CustomAudioSource) return Icons.alt_route;
+    if (source.isCustom) return Icons.alt_route;
     if (isLive) return Icons.radio;
     if (_isNetwork) return Icons.cloud_outlined;
-    if (source is MemoryAudioSource) return Icons.memory;
+    if (source.isMemory) return Icons.memory;
     if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) {
       return Icons.audiotrack;
     }
@@ -74,10 +70,10 @@ class AudioTrack {
 
   Color get iconColor {
     if (isGenerated) return Colors.amberAccent;
-    if (source is CustomAudioSource) return Colors.orangeAccent;
+    if (source.isCustom) return Colors.orangeAccent;
     if (isLive) return Colors.redAccent;
     if (_isNetwork) return Colors.lightBlueAccent;
-    if (source is MemoryAudioSource) return Colors.purpleAccent;
+    if (source.isMemory) return Colors.purpleAccent;
     if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) {
       return Colors.tealAccent;
     }
@@ -96,10 +92,7 @@ class AudioTrack {
 abstract final class TrackFormatInfo {
   static String deduceFormatBadge(AudioTrack? track, {int sampleRate = 0, int channels = 0, int bitrate = 0}) {
     if (track == null) return 'AUDIO ENGINE';
-    final name = (track.source is UriAudioSource
-            ? (track.source as UriAudioSource).sourceString
-            : track.title)
-        .toLowerCase();
+    final name = (track.source.uri ?? track.title).toLowerCase();
 
     if (name.endsWith('.flac')) {
       final rateStr = sampleRate > 0 ? '${(sampleRate / 1000).toStringAsFixed(0)}kHz' : '96kHz';

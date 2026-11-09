@@ -1,14 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import '../models/audio_track.dart';
 import '../models/mock_data.dart';
 
-/// Studio Master Console Engine Controller powered directly by [MiniaudioEngine].
+/// Studio Master Console Engine Controller powered directly by [MiniaudioPlayer].
 ///
 /// Manages dual-deck audio threads, automated crossfades, reorderable playlist queue,
-/// DSP effects (Equalizer, Reverb, Limiter, Silence Skipping, Crossfeed), and hardware routing.
+/// DSP effects (Equalizer, Reverb, Limiter, Silence Skipping, Crossfeed), multi-output matrix,
+/// multi-capture input routing with ducking, and live recording.
 class AudioEngineController extends ChangeNotifier {
   final MiniaudioPlayer<AudioTrack> engine = MiniaudioPlayer<AudioTrack>(
     crossfadeConfig: CrossfadeConfig(
@@ -69,10 +71,9 @@ class AudioEngineController extends ChangeNotifier {
   bool get replayGainEnabled => engine.state.volumeNormalization;
   ReplayGainMode get replayGainMode => engine.state.replayGainMode;
   double get defaultReplayGain => engine.state.defaultReplayGain;
-  double? get forcedReplayGain => engine.state.forcedReplayGain;
 
-  Future<void> setReplayGainEnabled(bool enabled) async {
-    await engine.action.setVolumeNormalization(enabled);
+  Future<void> setReplayGainMode(ReplayGainMode mode) async {
+    await engine.action.setReplayGainMode(mode);
     notifyListeners();
   }
 
@@ -81,15 +82,11 @@ class AudioEngineController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setForcedReplayGain(double? gainDb) async {
-    await engine.action.setForcedReplayGain(gainDb);
-    notifyListeners();
-  }
-
   String _selectedPreset = 'flat';
   String _selectedReverbPreset = 'Off';
 
   List<AudioDevice> _audioDevices = [AudioDevice.auto];
+  List<AudioDevice> _inputDevices = [];
   final List<StreamSubscription<dynamic>> _subscriptions = [];
 
   bool get isReady => _isReady;
@@ -108,13 +105,13 @@ class AudioEngineController extends ChangeNotifier {
   List<AudioTrack> get availableTracks {
     final queue = engine.state.queue;
     if (queue.isNotEmpty) {
-      return queue.map((i) => i.data!).toList();
+      return queue.where((i) => i.data != null).map((i) => i.data!).toList();
     }
     return _cachedTracks;
   }
 
   CrossfadeConfig get crossfadeConfig => engine.state.crossfadeConfig;
-  bool get isShuffle => engine.state.shuffle;
+  bool get isShuffle => engine.state.isShuffled;
   bool get isLoop => engine.state.loopMode != LoopMode.off;
   LoopMode get loopMode => engine.state.loopMode;
 
@@ -131,20 +128,26 @@ class AudioEngineController extends ChangeNotifier {
   double get reverbWetDry => engine.state.reverb.wet;
   bool get reverbEnabled => engine.state.reverb.enabled;
 
-  CrossfeedMode get crossfeedMode => engine.state.crossfeed;
+  Crossfeed get crossfeed => engine.state.crossfeed;
   double? _spatializerWidthOverride;
   double get spatializerWidth => _spatializerWidthOverride ?? engine.state.spatializerWidth;
+  bool get spatializerEnabled => engine.state.spatializerEnabled;
 
   double? _stereoBalanceOverride;
   double get stereoBalance => _stereoBalanceOverride ?? engine.state.balance;
 
-  bool get monoDownmix => engine.state.mono;
-  bool get limiterEnabled => engine.state.limiterEnabled;
+  bool? _monoOverride;
+  bool get monoDownmix => _monoOverride ?? engine.state.mono;
+
+  bool? _limiterOverride;
+  bool get limiterEnabled => _limiterOverride ?? engine.state.limiterEnabled;
 
   SilenceSkipMode _silenceMode = SilenceSkipMode.all;
+  bool? _silenceEnabledOverride;
 
   bool get silenceEnabled =>
-      engine.state.silenceConfig.mode != SilenceSkipMode.disabled;
+      _silenceEnabledOverride ??
+      (engine.state.silenceConfig.mode != SilenceSkipMode.disabled);
   SilenceSkipMode get silenceMode =>
       engine.state.silenceConfig.mode != SilenceSkipMode.disabled
           ? engine.state.silenceConfig.mode
@@ -154,14 +157,15 @@ class AudioEngineController extends ChangeNotifier {
       engine.state.silenceConfig.minSilenceDuration.inMilliseconds;
   int get silencePaddingMs =>
       engine.state.silenceConfig.padding.inMilliseconds;
+  Duration get silenceSavedDuration => engine.state.silenceSavedDuration;
 
-  bool get visualizerEnabled => engine.state.visualizerEnabled;
+  bool? _visualizerEnabledOverride;
+  bool get visualizerEnabled =>
+      _visualizerEnabledOverride ?? engine.state.visualizerEnabled;
 
-  bool get metaBytesEnabled => engine.state.metaBytesEnabled;
-  Uint8List? _lastMetaBytes;
-  Uint8List? get lastMetaBytes => _lastMetaBytes;
-  int _metaBytesPacketCount = 0;
-  int get metaBytesPacketCount => _metaBytesPacketCount;
+  bool? _metadataEnabledOverride;
+  bool get metadataEnabled =>
+      _metadataEnabledOverride ?? engine.state.metadataEnabled;
 
   int get allocatedRamBytes => engine.state.allocatedRamBytes;
   List<String> get loadedEffectIds => engine.state.loadedEffectIds;
@@ -176,30 +180,87 @@ class AudioEngineController extends ChangeNotifier {
   double? _pitchOverride;
   double get pitch => _pitchOverride ?? engine.state.pitch;
   int get selectedBufferSize => engine.state.bufferSize;
+
+  // --- Output and Input Routing Matrix ---
   List<AudioDevice> get audioDevices => _audioDevices;
-  AudioDevice get selectedDevice => engine.state.audioDevice;
-  bool get pauseOnDeviceChange => engine.state.pauseOnDeviceChange;
+  List<AudioDevice> get inputDevices => _inputDevices;
+  Set<AudioOutput> get outputs => engine.state.outputs;
+  Set<AudioInput> get inputs => engine.state.inputs;
+  final Map<String, AudioInputConfig> _inputConfigs = {};
+
+  AudioInputConfig getInputConfig(String deviceId) =>
+      _inputConfigs[deviceId] ?? const AudioInputConfig();
+
+  bool? _pauseOnDeviceChangeOverride;
+  bool get pauseOnDeviceChange =>
+      _pauseOnDeviceChangeOverride ?? engine.state.pauseOnDeviceChange;
+
+  // --- Live Recording State ---
+  bool get isRecording => engine.state.isRecording;
+  Duration get recordedDuration => engine.state.recordedDuration;
+  AudioFileFormat _recordingFormat = AudioFileFormat.wav;
+  AudioFileFormat get recordingFormat => _recordingFormat;
+  AudioOutputSource _recordingSource = AudioOutputSource.all;
+  AudioOutputSource get recordingSource => _recordingSource;
+  RecordingResult? _lastRecordingResult;
+  RecordingResult? get lastRecordingResult => _lastRecordingResult;
+
+  void setRecordingFormat(AudioFileFormat fmt) {
+    _recordingFormat = fmt;
+    notifyListeners();
+  }
+
+  void setRecordingSource(AudioOutputSource src) {
+    _recordingSource = src;
+    notifyListeners();
+  }
+
+  Future<void> startRecording({String? customPath}) async {
+    final String tempDir = !kIsWeb ? Directory.systemTemp.path : '/tmp';
+    final String path = customPath ??
+        '$tempDir/studio_recording_${DateTime.now().millisecondsSinceEpoch}.${_recordingFormat.name}';
+    await engine.action.startRecording(
+      path,
+      format: _recordingFormat,
+      source: _recordingSource,
+    );
+    notifyListeners();
+  }
+
+  Future<RecordingResult> stopRecording() async {
+    final res = await engine.action.stopRecording();
+    _lastRecordingResult = res;
+    notifyListeners();
+    return res;
+  }
 
   Future<void> init() async {
     _cachedTracks = await MockData.loadTracks();
 
     try {
-      final devs = engine.state.globalOutputDevices;
-      if (devs.isNotEmpty) _audioDevices = devs;
+      final outDevs = engine.state.globalOutputDevices;
+      if (outDevs.isNotEmpty) _audioDevices = outDevs;
+      final inDevs = engine.state.globalInputDevices;
+      if (inDevs.isNotEmpty) _inputDevices = inDevs;
     } catch (_) {}
+
+    _bindSubscriptions();
+
+    _isReady = true;
+    notifyListeners();
 
     if (_cachedTracks.isNotEmpty) {
       final items = _cachedTracks
           .map((t) => t.source.withData<AudioTrack>(t))
           .toList();
       try {
-        await engine.action.open(items, startIndex: 0);
-      } catch (e) {
-        debugPrint('Initial queue open skipped in test/headless environment: $e');
-      }
+        await engine.action.setQueue(items);
+      } catch (_) {}
     }
 
     try {
+      await engine.action.setMetadataEnabled(true);
+      await engine.action.setVisualizerEnabled(true);
       await engine.action.setLimiter(true);
       await engine.action.setReverb(Reverb.off);
       await engine.action.setCrossfade(
@@ -211,15 +272,8 @@ class AudioEngineController extends ChangeNotifier {
       );
     } catch (_) {}
 
-    try {
-      await loadSampleEffects();
-    } catch (e) {
-      debugPrint('Failed to load sample sound effects: $e');
-    }
-
-    _bindSubscriptions();
-
-    _isReady = true;
+    // Load sample effects in the background so the console can mount immediately
+    unawaited(loadSampleEffects());
     notifyListeners();
   }
 
@@ -241,13 +295,31 @@ class AudioEngineController extends ChangeNotifier {
       notifyListeners();
     }));
     _subscriptions.add(engine.stream.spatializerEnabled.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.visualizerEnabled.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.metaBytesEnabled.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.metaBytes.listen((bytes) {
-      _lastMetaBytes = bytes;
-      _metaBytesPacketCount++;
+    _subscriptions.add(engine.stream.visualizerEnabled.listen((_) {
+      _visualizerEnabledOverride = null;
       notifyListeners();
     }));
+    _subscriptions.add(engine.stream.metadataEnabled.listen((_) {
+      _metadataEnabledOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.pauseOnDeviceChange.listen((_) {
+      _pauseOnDeviceChangeOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.silenceConfig.listen((_) {
+      _silenceEnabledOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.mono.listen((_) {
+      _monoOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.limiterEnabled.listen((_) {
+      _limiterOverride = null;
+      notifyListeners();
+    }));
+    _subscriptions.add(engine.stream.metadata.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.buffer.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.allocatedRamBytes.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.loadedEffectIds.listen((_) => notifyListeners()));
@@ -277,7 +349,17 @@ class AudioEngineController extends ChangeNotifier {
       notifyListeners();
     }));
     _subscriptions.add(engine.stream.replayGain.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.audioDevice.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.replayGainMode.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.crossfeed.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.limiterEnabled.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.silenceConfig.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.silenceSavedDuration.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.outputs.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.inputs.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.isRecording.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.recordedDuration.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.isDuckingActive.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.micRmsLevel.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.pauseOnDeviceChange.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.globalOutputDevices.listen((list) {
       if (list.isNotEmpty) {
@@ -285,6 +367,61 @@ class AudioEngineController extends ChangeNotifier {
         notifyListeners();
       }
     }));
+    _subscriptions.add(engine.stream.globalInputDevices.listen((list) {
+      if (list.isNotEmpty) {
+        _inputDevices = list;
+        notifyListeners();
+      }
+    }));
+  }
+
+  // --- Multi-Destination Output Management ---
+  Future<void> toggleOutput(AudioDevice device, {AudioOutputSource source = AudioOutputSource.all}) async {
+    final curOutputs = Set<AudioOutput>.of(engine.state.outputs);
+    final exists = curOutputs.any((o) => o.deviceId == device.id);
+    if (exists) {
+      curOutputs.removeWhere((o) => o.deviceId == device.id);
+      if (curOutputs.isEmpty) {
+        curOutputs.add(const AudioOutput());
+      }
+    } else {
+      curOutputs.add(AudioOutput(deviceId: device.id, source: source));
+    }
+    await engine.action.setOutputs(curOutputs);
+    notifyListeners();
+  }
+
+  Future<void> setOutputSource(String deviceId, AudioOutputSource source) async {
+    final curOutputs = engine.state.outputs.map((o) {
+      if (o.deviceId == deviceId) {
+        return AudioOutput(deviceId: o.deviceId, source: source);
+      }
+      return o;
+    }).toSet();
+    await engine.action.setOutputs(curOutputs);
+    notifyListeners();
+  }
+
+  // --- Multi-Capture Input Routing Management ---
+  Future<void> toggleInput(AudioDevice device) async {
+    final curInputs = Set<AudioInput>.of(engine.state.inputs);
+    final exists = curInputs.any((i) => i.deviceId == device.id);
+    if (exists) {
+      curInputs.removeWhere((i) => i.deviceId == device.id);
+    } else {
+      final config = getInputConfig(device.id);
+      curInputs.add(AudioInput(deviceId: device.id, config: config));
+    }
+    await engine.action.setInputs(curInputs);
+    notifyListeners();
+  }
+
+  Future<void> configureInputDevice(String deviceId, AudioInputConfig config) async {
+    _inputConfigs[deviceId] = config;
+    if (engine.state.inputs.any((i) => i.deviceId == deviceId)) {
+      await engine.action.configureInput(config, deviceId: deviceId);
+    }
+    notifyListeners();
   }
 
   // --- Equalizer ---
@@ -390,7 +527,7 @@ class AudioEngineController extends ChangeNotifier {
       final queue = engine.state.queue;
       final idx = queue.indexWhere((item) => item.data?.id == track.id);
       if (idx != -1) {
-        await engine.action.skipToIndex(idx);
+        await engine.action.play(position: idx);
       } else {
         final item = track.source.withData<AudioTrack>(track);
         await engine.action.insertNext(item);
@@ -411,8 +548,7 @@ class AudioEngineController extends ChangeNotifier {
     _cachedTracks = [..._cachedTracks, track];
     final item = track.source.withData<AudioTrack>(track);
     await engine.action.append([item]);
-    await engine.action.skipToIndex(engine.state.queue.length - 1);
-    await engine.action.play();
+    await engine.action.play(position: engine.state.queue.length - 1);
     notifyListeners();
   }
 
@@ -422,7 +558,7 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   Future<void> toggleShuffle() async {
-    await engine.action.setShuffle(!engine.state.shuffle);
+    await engine.action.setShuffle(!engine.state.isShuffled);
     notifyListeners();
   }
 
@@ -430,8 +566,8 @@ class AudioEngineController extends ChangeNotifier {
     final nextMode = engine.state.loopMode == LoopMode.off
         ? LoopMode.all
         : engine.state.loopMode == LoopMode.all
-        ? LoopMode.one
-        : LoopMode.off;
+            ? LoopMode.one
+            : LoopMode.off;
     await engine.action.setLoopMode(nextMode);
     notifyListeners();
   }
@@ -472,16 +608,40 @@ class AudioEngineController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- Crossfeed, Spatializer, Balance, Limiter ---
-  Future<void> setCrossfeedMode(CrossfeedMode mode) async {
-    await engine.action.setCrossfeed(mode);
+  // --- Crossfeed Controls ---
+  Future<void> setCrossfeed(Crossfeed cf) async {
+    await engine.action.setCrossfeed(cf);
+    notifyListeners();
+  }
+
+  Future<void> toggleCrossfeed(bool enabled) async {
+    await setCrossfeed(engine.state.crossfeed.copyWith(enabled: enabled));
+  }
+
+  Future<void> setCrossfeedCutoff(double cutoffHz) async {
+    await setCrossfeed(engine.state.crossfeed.copyWith(cutoffHz: cutoffHz));
+  }
+
+  Future<void> setCrossfeedFeed(double feedDb) async {
+    await setCrossfeed(engine.state.crossfeed.copyWith(feedDb: feedDb));
+  }
+
+  // --- Spatializer, Balance, Mono, Limiter ---
+  Future<void> setSpatializerEnabled(bool enabled) async {
+    await engine.action.setSpatializer(
+      enabled: enabled,
+      width: spatializerWidth,
+    );
     notifyListeners();
   }
 
   Future<void> setSpatializerWidth(double width) async {
     _spatializerWidthOverride = width;
     notifyListeners();
-    await engine.action.setSpatializer(enabled: true, width: width);
+    await engine.action.setSpatializer(
+      enabled: spatializerEnabled,
+      width: width,
+    );
   }
 
   Future<void> setStereoBalance(double balance) async {
@@ -491,41 +651,50 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   Future<void> setMonoDownmix(bool enabled) async {
-    await engine.action.setMono(enabled);
+    _monoOverride = enabled;
     notifyListeners();
+    await engine.action.setMono(enabled);
   }
 
   Future<void> setLimiterEnabled(bool enabled) async {
-    await engine.action.setLimiter(enabled);
+    _limiterOverride = enabled;
     notifyListeners();
+    await engine.action.setLimiter(enabled);
   }
 
   // --- Silence Skipping ---
   Future<void> setSilenceSkipEnabled(bool enabled) async {
-    final modeToApply = enabled ? _silenceMode : SilenceSkipMode.disabled;
-    await engine.action.setSkipSilence(
-      engine.state.silenceConfig.copyWith(mode: modeToApply),
-    );
+    _silenceEnabledOverride = enabled;
     notifyListeners();
+    final modeToApply = enabled ? _silenceMode : SilenceSkipMode.disabled;
+    await engine.action.setSilenceConfig(
+      engine.state.silenceConfig.copyWith(
+        enabled: enabled,
+        mode: modeToApply,
+      ),
+    );
   }
 
   Future<void> setSilenceMode(SilenceSkipMode mode) async {
     _silenceMode = mode;
-    await engine.action.setSkipSilence(
-      engine.state.silenceConfig.copyWith(mode: mode),
+    await engine.action.setSilenceConfig(
+      engine.state.silenceConfig.copyWith(
+        enabled: mode != SilenceSkipMode.disabled,
+        mode: mode,
+      ),
     );
     notifyListeners();
   }
 
   Future<void> setSilenceThresholdDb(double thresholdDb) async {
-    await engine.action.setSkipSilence(
+    await engine.action.setSilenceConfig(
       engine.state.silenceConfig.copyWith(thresholdDb: thresholdDb),
     );
     notifyListeners();
   }
 
   Future<void> setMinSilenceDurationMs(int durationMs) async {
-    await engine.action.setSkipSilence(
+    await engine.action.setSilenceConfig(
       engine.state.silenceConfig.copyWith(
         minSilenceDuration: Duration(milliseconds: durationMs),
       ),
@@ -534,7 +703,7 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   Future<void> setSilencePaddingMs(int paddingMs) async {
-    await engine.action.setSkipSilence(
+    await engine.action.setSilenceConfig(
       engine.state.silenceConfig.copyWith(
         padding: Duration(milliseconds: paddingMs),
       ),
@@ -544,13 +713,15 @@ class AudioEngineController extends ChangeNotifier {
 
   // --- Visualizer & Metadata Event Stream Switches ---
   Future<void> setVisualizerEnabled(bool enabled) async {
-    await engine.action.setVisualizerEnabled(enabled);
+    _visualizerEnabledOverride = enabled;
     notifyListeners();
+    await engine.action.setVisualizerEnabled(enabled);
   }
 
-  Future<void> setMetaBytesEnabled(bool enabled) async {
-    await engine.action.setMetaBytesEnabled(enabled);
+  Future<void> setMetadataEnabled(bool enabled) async {
+    _metadataEnabledOverride = enabled;
     notifyListeners();
+    await engine.action.setMetadataEnabled(enabled);
   }
 
   // --- Native RAM Sound Effects (Voices & Memory HUD) ---
@@ -559,31 +730,31 @@ class AudioEngineController extends ChangeNotifier {
     final laserBytes = MockData.generateSineWaveBytes(frequency: 880, durationSeconds: 0.20);
     final chimeBytes = MockData.generateSineWaveBytes(frequency: 1320, durationSeconds: 0.35);
 
-    await engine.action.loadEffect(
-      AudioEffect(
-        id: 'sfx_beep',
-        source: AudioSource(beepBytes),
-        maxPolyphony: 8,
-      ),
-    );
-    await engine.action.loadEffect(
-      AudioEffect(
-        id: 'sfx_laser',
-        source: AudioSource(laserBytes),
-        maxPolyphony: 8,
-      ),
-    );
-    await engine.action.loadEffect(
-      AudioEffect(
-        id: 'sfx_chime',
-        source: AudioSource(chimeBytes),
-        maxPolyphony: 8,
-      ),
-    );
-    notifyListeners();
+    try {
+      await engine.action.setEffects([
+        AudioEffect(
+          id: 'sfx_beep',
+          source: AudioSource(beepBytes),
+          maxPolyphony: 8,
+        ),
+        AudioEffect(
+          id: 'sfx_laser',
+          source: AudioSource(laserBytes),
+          maxPolyphony: 8,
+        ),
+        AudioEffect(
+          id: 'sfx_chime',
+          source: AudioSource(chimeBytes),
+          maxPolyphony: 8,
+        ),
+      ]);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to load sample sound effects: $e');
+    }
   }
 
-  Future<int?> playSampleEffect(
+  Future<Voice?> playSampleEffect(
     String id, {
     double volume = 1.0,
     double pitch = 1.0,
@@ -591,15 +762,8 @@ class AudioEngineController extends ChangeNotifier {
     return await engine.action.playEffect(id, volume: volume, pitch: pitch);
   }
 
-  Future<void> unloadEffect(String id) async {
-    await engine.action.unloadEffect(id);
-    notifyListeners();
-  }
-
   Future<void> unloadAllEffects() async {
-    for (final id in List<String>.from(engine.state.loadedEffectIds)) {
-      await engine.action.unloadEffect(id);
-    }
+    await engine.action.setEffects([]);
     notifyListeners();
   }
 
@@ -646,14 +810,10 @@ class AudioEngineController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setDevice(AudioDevice dev) async {
-    await engine.action.setDevice(dev);
-    notifyListeners();
-  }
-
   Future<void> setPauseOnDeviceChange(bool enabled) async {
-    engine.action.setPauseOnDeviceChange(enabled);
+    _pauseOnDeviceChangeOverride = enabled;
     notifyListeners();
+    await engine.action.setPauseOnDeviceChange(enabled);
   }
 
   @override

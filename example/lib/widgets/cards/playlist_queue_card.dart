@@ -1,25 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
 import '../common/add_source_dialog.dart';
 import '../common/compact_slider_overlay.dart';
+import '../common/metadata_inspector_modal.dart';
 import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
 
 class PlaylistQueueCard extends StatelessWidget {
   final AudioEngineController controller;
+  final AudioAnalyzerController? analyzerController;
 
-  const PlaylistQueueCard({super.key, required this.controller});
+  const PlaylistQueueCard({
+    super.key,
+    required this.controller,
+    this.analyzerController,
+  });
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: Listenable.merge([
+        controller,
+        ?analyzerController,
+      ]),
       builder: (context, _) {
         final tracks = controller.availableTracks;
         final xfade = controller.crossfadeConfig;
+
+        // Auto-analyze all tracks in queue if not already analyzed
+        if (analyzerController != null && tracks.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            analyzerController!.analyzeAll(tracks);
+          });
+        }
 
         return StudioCard(
           icon: Icons.queue_music,
@@ -57,7 +74,12 @@ class PlaylistQueueCard extends StatelessWidget {
                   showDialog(
                     context: context,
                     builder: (_) => AddSourceDialog(
-                      onTrackAdded: controller.addTrack,
+                      onTrackAdded: (t) async {
+                        await controller.addTrack(t);
+                        if (analyzerController != null) {
+                          analyzerController!.analyze(t);
+                        }
+                      },
                     ),
                   );
                 },
@@ -146,9 +168,9 @@ class PlaylistQueueCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
 
-              // Reorderable Playlist List with Scroll
+              // Reorderable Playlist List with Thumbnails, Analyzed Metadata, and Inspector Modal
               Container(
-                height: 220,
+                height: 240,
                 decoration: BoxDecoration(
                   color: const Color(0xFF070B14),
                   borderRadius: BorderRadius.circular(6),
@@ -172,7 +194,7 @@ class PlaylistQueueCard extends StatelessWidget {
                       );
                     }
 
-                    return StreamBuilder<int>(
+                    return StreamBuilder<int?>(
                       stream: controller.engine.stream.currentIndex,
                       initialData: controller.engine.state.currentIndex,
                       builder: (context, idxSnap) {
@@ -189,10 +211,20 @@ class PlaylistQueueCard extends StatelessWidget {
                             onReorderItem: controller.reorderTrack,
                             itemBuilder: (context, index) {
                               final track = tracks[index];
-                              final isPlayingThis = index == currentIdx;
+                              final isPlayingThis = currentIdx != null && index == currentIdx;
                               final itemKey = queue.isNotEmpty && index < queue.length
                                   ? 'q_${queue[index].id ?? index}_${track.id}'
                                   : 'track_${track.id}_$index';
+
+                              final analysis = analyzerController?.getResultForTrack(track);
+                              final frontCover = analysis?.metadata?.frontCover;
+                              final displayTitle = analysis?.metadata?.title != null &&
+                                      analysis!.metadata!.title!.isNotEmpty
+                                  ? analysis.metadata!.title!
+                                  : track.title;
+                              final displayArtist = analysis?.metadata?.artist ??
+                                  track.artist ??
+                                  'Audio Track';
 
                               return Padding(
                                 key: ValueKey(itemKey),
@@ -213,12 +245,14 @@ class PlaylistQueueCard extends StatelessWidget {
                                       width: isPlayingThis ? 1.2 : 0.8,
                                     ),
                                   ),
-                                  child: ListTile(
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: ListTile(
                                     dense: true,
                                     visualDensity: VisualDensity.compact,
                                     contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 8,
-                                      vertical: 0,
+                                      vertical: 2,
                                     ),
                                     leading: Row(
                                       mainAxisSize: MainAxisSize.min,
@@ -234,7 +268,7 @@ class PlaylistQueueCard extends StatelessWidget {
                                               ),
                                               child: Icon(
                                                 Icons.drag_indicator,
-                                                size: 18,
+                                                size: 16,
                                                 color: StudioColors.textMuted,
                                               ),
                                             ),
@@ -252,19 +286,45 @@ class PlaylistQueueCard extends StatelessWidget {
                                           ),
                                         ),
                                         const SizedBox(width: 6),
-                                        Icon(
-                                          isPlayingThis
-                                              ? Icons.equalizer
-                                              : track.icon,
-                                          size: 18,
-                                          color: isPlayingThis
-                                              ? StudioColors.accentCyan
-                                              : track.iconColor,
+
+                                        // Thumbnail / Embedded Artwork or Fallback Icon
+                                        Container(
+                                          width: 32,
+                                          height: 32,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF080D1A),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(
+                                              color: isPlayingThis
+                                                  ? StudioColors.accentCyan.withValues(alpha: 0.5)
+                                                  : StudioColors.cardBorder,
+                                              width: 0.8,
+                                            ),
+                                          ),
+                                          child: frontCover != null && frontCover.bytes.isNotEmpty
+                                              ? ClipRRect(
+                                                  borderRadius: BorderRadius.circular(3),
+                                                  child: Image.memory(
+                                                    frontCover.bytes,
+                                                    width: 32,
+                                                    height: 32,
+                                                    fit: BoxFit.cover,
+                                                  ),
+                                                )
+                                              : Icon(
+                                                  isPlayingThis
+                                                      ? Icons.equalizer
+                                                      : track.icon,
+                                                  size: 16,
+                                                  color: isPlayingThis
+                                                      ? StudioColors.accentCyan
+                                                      : track.iconColor,
+                                                ),
                                         ),
                                       ],
                                     ),
                                     title: Text(
-                                      track.title,
+                                      displayTitle,
                                       style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: isPlayingThis
@@ -278,7 +338,7 @@ class PlaylistQueueCard extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     subtitle: Text(
-                                      track.artist ?? 'Audio Track',
+                                      '$displayArtist • ${track.displayType}',
                                       style: const TextStyle(
                                         fontSize: 9,
                                         color: StudioColors.textSecondary,
@@ -290,6 +350,36 @@ class PlaylistQueueCard extends StatelessWidget {
                                       crossAxisAlignment: WrapCrossAlignment.center,
                                       spacing: 4,
                                       children: [
+                                        // Button on current playing item to open Metadata Inspector Modal
+                                        if (isPlayingThis)
+                                          SizedBox(
+                                            width: 26,
+                                            height: 26,
+                                            child: IconButton.filledTonal(
+                                              icon: const Icon(Icons.info_outline, size: 15),
+                                              tooltip: 'Inspect Metadata (Static vs Dynamic)',
+                                              visualDensity: VisualDensity.compact,
+                                              style: IconButton.styleFrom(
+                                                backgroundColor: StudioColors.accentCyan.withValues(alpha: 0.15),
+                                                foregroundColor: StudioColors.accentCyan,
+                                                padding: EdgeInsets.zero,
+                                              ),
+                                              onPressed: () {
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (_) => MetadataInspectorModal(
+                                                    track: track,
+                                                    staticMetadata: analysis?.metadata,
+                                                    dynamicMetadata: controller.engine.state.metadata,
+                                                    staticAudioInfo: analysis?.audioInfo,
+                                                    dynamicAudioInfo: controller.engine.state.audioInfo,
+                                                    staticReplayGain: analysis?.replayGain,
+                                                    dynamicReplayGain: controller.engine.state.replayGain,
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
                                         if (queue.isNotEmpty &&
                                             index < queue.length &&
                                             queue[index].id != null)
@@ -304,9 +394,9 @@ class PlaylistQueueCard extends StatelessWidget {
                                       ],
                                     ),
                                     onTap: () async {
-                                      await controller.engine.action.skipToIndex(index);
-                                      await controller.engine.action.play();
+                                      await controller.engine.action.play(position: index);
                                     },
+                                  ),
                                   ),
                                 ),
                               );

@@ -43,7 +43,7 @@ void main() {
             tester.view.resetPhysicalSize();
             tester.view.resetDevicePixelRatio();
             await tester.pumpWidget(const SizedBox());
-            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
           });
 
           // 1. Initial pump
@@ -54,7 +54,8 @@ void main() {
           await tester.runAsync(() async {
             await Future.delayed(const Duration(seconds: 2));
           });
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 100));
 
           // 3. Verify mounted UI title
           expect(
@@ -127,7 +128,7 @@ void main() {
             tester.view.resetPhysicalSize();
             tester.view.resetDevicePixelRatio();
             await tester.pumpWidget(const SizedBox());
-            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
           });
 
           await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -136,7 +137,8 @@ void main() {
           await tester.runAsync(() async {
             await Future.delayed(const Duration(seconds: 2));
           });
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 100));
 
           expect(find.text('miniaudio_player'), findsOneWidget);
 
@@ -165,7 +167,7 @@ void main() {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
         await tester.pumpWidget(const SizedBox());
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
       });
 
       await tester.pumpWidget(
@@ -182,7 +184,8 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('miniaudio_player'), findsOneWidget);
 

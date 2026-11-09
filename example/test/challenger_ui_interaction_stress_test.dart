@@ -58,7 +58,7 @@ void main() {
               tester.view.resetPhysicalSize();
               tester.view.resetDevicePixelRatio();
               await tester.pumpWidget(const SizedBox());
-              await tester.pump();
+              await tester.pump(const Duration(milliseconds: 100));
             });
 
             await tester.pumpWidget(
@@ -77,7 +77,8 @@ void main() {
             await tester.runAsync(() async {
               await Future.delayed(const Duration(seconds: 2));
             });
-            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            await tester.pump(const Duration(milliseconds: 100));
 
             expect(
               find.text('miniaudio_player'),
@@ -135,7 +136,7 @@ void main() {
           tester.view.resetPhysicalSize();
           tester.view.resetDevicePixelRatio();
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -143,20 +144,16 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         final scrollable = find.byType(Scrollable).first;
 
-        // 1. Crossfeed Mode Dropdown
-        final crossfeedDropdown = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<CrossfeedMode>,
-        );
-        expect(crossfeedDropdown, findsOneWidget);
-        await tester.scrollUntilVisible(crossfeedDropdown, 200, scrollable: scrollable);
-        await tester.tap(crossfeedDropdown);
-        await settleFrames(tester, frames: 5);
-        final crossfeedItem = find.text('Moffat-Bauer (4.5 dB)').last;
-        await tester.tap(crossfeedItem, warnIfMissed: false);
+        // 1. Crossfeed Mode Preset Selection
+        final crossfeedChip = find.textContaining('Moffat-Bauer');
+        expect(crossfeedChip, findsOneWidget);
+        await tester.scrollUntilVisible(crossfeedChip, 200, scrollable: scrollable);
+        await tester.tap(crossfeedChip);
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
@@ -173,19 +170,13 @@ void main() {
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
-        // 3. Audio Device Dropdown
-        final devDropdown = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<AudioDevice>,
+        // 3. Hardware I/O Routing Lists (Multi-output & multi-input)
+        final hardwareCard = find.ancestor(
+          of: find.text('AUDIO HARDWARE ROUTING MATRIX'),
+          matching: find.byType(Card),
         );
-        expect(devDropdown, findsOneWidget);
-        await tester.scrollUntilVisible(devDropdown, 200, scrollable: scrollable);
-        await tester.tap(devDropdown);
-        await settleFrames(tester, frames: 5);
-        final devItems = find.byWidgetPredicate(
-          (w) => w is DropdownMenuItem<AudioDevice>,
-        );
-        expect(devItems, findsWidgets);
-        await tester.tap(devItems.first, warnIfMissed: false);
+        expect(hardwareCard, findsOneWidget);
+        await tester.scrollUntilVisible(hardwareCard, 200, scrollable: scrollable);
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
@@ -197,12 +188,12 @@ void main() {
         expect(tester.takeException(), isNull);
 
         // 5. Silence Skip Mode Dropdown
-        final skipCard = find.ancestor(
+        final skipSection = find.ancestor(
           of: find.text('Smart Silence Skipping'),
-          matching: find.byType(Card),
-        );
+          matching: find.byType(Container),
+        ).first;
         final skipSwitch = find.descendant(
-          of: skipCard,
+          of: skipSection,
           matching: find.byType(Switch),
         );
         await tester.scrollUntilVisible(skipSwitch, 200, scrollable: scrollable);
@@ -246,7 +237,7 @@ void main() {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
         await tester.pumpWidget(const SizedBox());
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -254,31 +245,32 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       final scrollable = find.byType(Scrollable).first;
-      final skipCard = find.ancestor(
+      final skipSection = find.ancestor(
         of: find.text('Smart Silence Skipping'),
-        matching: find.byType(Card),
-      );
+        matching: find.byType(Container),
+      ).first;
       final skipSwitch = find.descendant(
-        of: skipCard,
+        of: skipSection,
         matching: find.byType(Switch),
       );
       await tester.scrollUntilVisible(skipSwitch, 200, scrollable: scrollable);
 
       // Verify initially OFF
-      expect(find.descendant(of: skipCard, matching: find.text('OFF')), findsOneWidget);
+      expect(find.descendant(of: skipSection, matching: find.text('OFF')), findsOneWidget);
 
       // Toggle ON
       await tester.tap(skipSwitch);
       await settleFrames(tester, frames: 5);
-      expect(find.descendant(of: skipCard, matching: find.text('ON')), findsOneWidget);
+      expect(find.descendant(of: skipSection, matching: find.text('ON')), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       // Verify subcontrols enabled (IgnorePointer is NOT ignoring)
       final subcolumnIgnorePointer = find.descendant(
-        of: skipCard,
+        of: skipSection,
         matching: find.byWidgetPredicate(
           (w) => w is IgnorePointer && w.ignoring == false,
         ),
@@ -288,7 +280,7 @@ void main() {
       // Toggle OFF
       await tester.tap(skipSwitch);
       await settleFrames(tester, frames: 5);
-      expect(find.descendant(of: skipCard, matching: find.text('OFF')), findsOneWidget);
+      expect(find.descendant(of: skipSection, matching: find.text('OFF')), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       // Rapid toggling 6 times
@@ -307,7 +299,7 @@ void main() {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
         await tester.pumpWidget(const SizedBox());
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -315,7 +307,8 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       final scrollable = find.byType(Scrollable).first;
       final visualizerCard = find.ancestor(
@@ -327,6 +320,7 @@ void main() {
         matching: find.byType(Switch),
       );
       await tester.scrollUntilVisible(visualizerSwitch, 200, scrollable: scrollable);
+      await settleFrames(tester, frames: 3);
 
       // Verify initially OFF
       expect(find.descendant(of: visualizerCard, matching: find.text('OFF')), findsOneWidget);
@@ -365,7 +359,7 @@ void main() {
           tester.view.resetPhysicalSize();
           tester.view.resetDevicePixelRatio();
           await tester.pumpWidget(const SizedBox());
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(
@@ -382,7 +376,8 @@ void main() {
         await tester.runAsync(() async {
           await Future.delayed(const Duration(seconds: 2));
         });
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
         expect(find.text('miniaudio_player'), findsOneWidget);
         expect(tester.takeException(), isNull);
@@ -397,12 +392,12 @@ void main() {
         }
 
         // Toggle Skip Silence ON under 1.5x TextScaler
-        final skipCard = find.ancestor(
+        final skipSection = find.ancestor(
           of: find.text('Smart Silence Skipping'),
-          matching: find.byType(Card),
-        );
+          matching: find.byType(Container),
+        ).first;
         final skipSwitch = find.descendant(
-          of: skipCard,
+          of: skipSection,
           matching: find.byType(Switch),
         );
         await tester.scrollUntilVisible(skipSwitch, 200, scrollable: scrollable);

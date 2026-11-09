@@ -36,7 +36,7 @@ void main() {
     testWidgets('Queue drag handle uses left 6-dots and buildDefaultDragHandles is false', (tester) async {
       addTearDown(() async {
         await tester.pumpWidget(const SizedBox());
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -45,7 +45,8 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Find ReorderableListView and verify buildDefaultDragHandles is false
       final reorderableFinder = find.byWidgetPredicate(
@@ -61,7 +62,7 @@ void main() {
     testWidgets('Waveform progress bar is rendered with non-zero size and is clickable', (tester) async {
       addTearDown(() async {
         await tester.pumpWidget(const SizedBox());
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -70,7 +71,8 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Find the CustomPaint with WaveformPainter
       final customPaintFinder = find.byWidgetPredicate(
@@ -94,7 +96,7 @@ void main() {
     testWidgets('Tapping a track in playlist queue updates active track banner', (tester) async {
       addTearDown(() async {
         await tester.pumpWidget(const SizedBox());
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
       });
 
       await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -103,12 +105,13 @@ void main() {
       await tester.runAsync(() async {
         await Future.delayed(const Duration(seconds: 2));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Scroll main page to make sure queue is visible
       final mainScrollable = find.byType(Scrollable).first;
       await tester.drag(mainScrollable, const Offset(0, -500));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
 
       final listTiles = find.descendant(
         of: find.byType(PlaylistQueueCard),
@@ -118,22 +121,22 @@ void main() {
 
       final secondTile = listTiles.at(1);
       await tester.ensureVisible(secondTile);
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
 
-      final titleFinder = find.descendant(of: secondTile, matching: find.byType(Text)).first;
-      final secondTitle = (tester.widget(titleFinder) as Text).data!;
+      final listTileWidget = tester.widget<ListTile>(secondTile);
+      final secondTitle = (listTileWidget.title as Text).data!;
 
       await tester.tap(secondTile);
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
       await tester.runAsync(() async {
         await Future.delayed(const Duration(milliseconds: 400));
       });
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Scroll back up to the top to verify active track banner
       await tester.drag(mainScrollable, const Offset(0, 700));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Verify active track banner inside PlaybackEngineCard displays second track title
       final activeBannerTitle = find.descendant(
