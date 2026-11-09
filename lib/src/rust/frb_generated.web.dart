@@ -257,6 +257,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustHttpHeader>? dco_decode_opt_list_rust_http_header(dynamic raw);
 
   @protected
+  (List<RustAudioDevice>, List<RustAudioDevice>)
+      dco_decode_record_list_rust_audio_device_list_rust_audio_device(
+          dynamic raw);
+
+  @protected
   (int, int) dco_decode_record_u_32_u_32(dynamic raw);
 
   @protected
@@ -625,6 +630,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   List<RustHttpHeader>? sse_decode_opt_list_rust_http_header(
       SseDeserializer deserializer);
+
+  @protected
+  (List<RustAudioDevice>, List<RustAudioDevice>)
+      sse_decode_record_list_rust_audio_device_list_rust_audio_device(
+          SseDeserializer deserializer);
 
   @protected
   (int, int) sse_decode_record_u_32_u_32(SseDeserializer deserializer);
@@ -1020,6 +1030,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_rust_http_header(
       List<RustHttpHeader>? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_record_list_rust_audio_device_list_rust_audio_device(
+      (List<RustAudioDevice>, List<RustAudioDevice>) self,
+      SseSerializer serializer);
 
   @protected
   void sse_encode_record_u_32_u_32((int, int) self, SseSerializer serializer);

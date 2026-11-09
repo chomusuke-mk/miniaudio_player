@@ -264,21 +264,16 @@ class RustAudioOutput {
   /// Hardware device identifier, or "AUTO" for the system default route.
   final String deviceId;
 
-  /// Whether exclusive hardware access mode is requested.
-  final bool exclusiveMode;
-
   /// Channel routing source (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
   final int source;
 
   const RustAudioOutput({
     required this.deviceId,
-    required this.exclusiveMode,
     required this.source,
   });
 
   @override
-  int get hashCode =>
-      deviceId.hashCode ^ exclusiveMode.hashCode ^ source.hashCode;
+  int get hashCode => deviceId.hashCode ^ source.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -286,7 +281,6 @@ class RustAudioOutput {
       other is RustAudioOutput &&
           runtimeType == other.runtimeType &&
           deviceId == other.deviceId &&
-          exclusiveMode == other.exclusiveMode &&
           source == other.source;
 }
 

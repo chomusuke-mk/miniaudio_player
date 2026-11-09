@@ -903,8 +903,6 @@ impl From<i32> for AudioOutputSource {
 pub struct RustAudioOutput {
     /// Hardware device identifier, or "AUTO" for the system default route.
     pub device_id: String,
-    /// Whether exclusive hardware access mode is requested.
-    pub exclusive_mode: bool,
     /// Channel routing source (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack).
     pub source: i32,
 }

@@ -820,7 +820,6 @@ class PlayerAction<T> {
     final rustOutputs = outputs.map((out) {
       return rust_types.RustAudioOutput(
         deviceId: out.deviceId,
-        exclusiveMode: out.exclusiveMode,
         source: out.source.value,
       );
     }).toList();
@@ -833,7 +832,6 @@ class PlayerAction<T> {
     _rust.addOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
-        exclusiveMode: output.exclusiveMode,
         source: output.source.value,
       ),
     );
@@ -845,7 +843,6 @@ class PlayerAction<T> {
     _rust.removeOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
-        exclusiveMode: output.exclusiveMode,
         source: output.source.value,
       ),
     );

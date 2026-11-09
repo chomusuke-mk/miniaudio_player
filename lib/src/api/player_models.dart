@@ -76,16 +76,12 @@ class AudioOutput {
   /// The operating system hardware device identifier, or 'AUTO' for system default.
   final String deviceId;
 
-  /// Whether exclusive hardware access mode should be requested (e.g. WASAPI exclusive).
-  final bool exclusiveMode;
-
   /// The audio signal routing source stream. Defaults to [AudioOutputSource.all].
   final AudioOutputSource source;
 
   /// Creates a unified [AudioOutput] destination.
   const AudioOutput({
     this.deviceId = 'AUTO',
-    this.exclusiveMode = false,
     this.source = AudioOutputSource.all,
   });
 
@@ -95,15 +91,14 @@ class AudioOutput {
       other is AudioOutput &&
           runtimeType == other.runtimeType &&
           deviceId == other.deviceId &&
-          exclusiveMode == other.exclusiveMode &&
           source == other.source;
 
   @override
-  int get hashCode => Object.hash(deviceId, exclusiveMode, source);
+  int get hashCode => Object.hash(deviceId, source);
 
   @override
   String toString() =>
-      'AudioOutput(deviceId: $deviceId, exclusiveMode: $exclusiveMode, source: $source)';
+      'AudioOutput(deviceId: $deviceId, source: $source)';
 }
 
 /// Real-time capture configuration parameters for an [AudioInput].

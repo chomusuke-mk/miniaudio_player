@@ -487,7 +487,6 @@ class MiniaudioPlayer<T> {
     final rustOutputs = resolvedOutputs
         .map((out) => rust_types.RustAudioOutput(
               deviceId: out.deviceId,
-              exclusiveMode: out.exclusiveMode,
               source: out.source.value,
             ))
         .toList();
@@ -669,7 +668,6 @@ class MiniaudioPlayer<T> {
         final outs = field0
             .map((r) => AudioOutput(
                   deviceId: r.deviceId,
-                  exclusiveMode: r.exclusiveMode,
                   source: AudioOutputSource.fromValue(r.source),
                 ))
             .toSet();

@@ -100,6 +100,11 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Returns the current number of concurrently playing sound effect voices.
   int getActiveVoicesCount();
 
+  /// Synchronously scans and enumerates connected playback output and capture devices in a single pass.
+  static Future<(List<RustAudioDevice>, List<RustAudioDevice>)>
+      getAllDevicesSync() => RustLib.instance.api
+          .crateApiPlayerRustMiniaudioPlayerGetAllDevicesSync();
+
   /// Returns the total RAM bytes occupied by decoded sound effect buffers.
   BigInt getAllocatedRamBytes();
 
