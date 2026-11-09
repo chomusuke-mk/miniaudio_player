@@ -308,6 +308,7 @@ struct IcyDemuxReader {
     bytes_until_meta: usize,
     trip_slot: Arc<Mutex<Option<TripartiteBuffer>>>,
     latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
+    icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -317,6 +318,7 @@ impl IcyDemuxReader {
         metaint: usize,
         trip_slot: Arc<Mutex<Option<TripartiteBuffer>>>,
         latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
+        icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
     ) -> Self {
         Self {
             inner,
@@ -324,6 +326,7 @@ impl IcyDemuxReader {
             bytes_until_meta: metaint,
             trip_slot,
             latest_icy,
+            icy_metadata,
         }
     }
 
@@ -356,6 +359,19 @@ impl Read for IcyDemuxReader {
                 let mut meta_buf = vec![0u8; meta_len];
                 if !self.read_exact_bytes(&mut meta_buf)? {
                     return Ok(0);
+                }
+                let (stream_title, stream_url) =
+                    crate::metadata::parse_icy_stream_block(&meta_buf);
+                if stream_title.is_some() || stream_url.is_some() {
+                    if let Ok(mut guard) = self.icy_metadata.write() {
+                        let entry = guard.get_or_insert_with(Default::default);
+                        if stream_title.is_some() {
+                            entry.stream_title = stream_title;
+                        }
+                        if stream_url.is_some() {
+                            entry.stream_url = stream_url;
+                        }
+                    }
                 }
                 if let Some(synthesized) = synthesize_icy_id3_container(&meta_buf) {
                     crate::map_log!(3, "ICY Metadata parsed (length={} bytes)", synthesized.len());
@@ -1229,6 +1245,16 @@ impl DecoderWorker {
     }
 }
 
+/// Origin of the currently opened source on a [`StreamingDeck`], enabling on-demand seekable metadata parsing.
+#[derive(Clone, Default)]
+pub enum DeckSourceOrigin {
+    #[default]
+    None,
+    File(std::path::PathBuf),
+    Memory(Arc<Vec<u8>>),
+    Stream,
+}
+
 /// Self-contained audio playback deck driving background decoding, buffering, DSP, and ring-buffer production.
 pub struct StreamingDeck {
     /// Zero-based numerical deck identifier (0: Deck A, 1: Deck B).
@@ -1258,8 +1284,22 @@ pub struct StreamingDeck {
     pub bitrate: Arc<AtomicU32>,
     /// Audio sample rate in Hz.
     pub sample_rate: Arc<AtomicU32>,
+    /// Raw codec sample rate in Hz (0 if None).
+    pub raw_sample_rate: Arc<AtomicU32>,
     /// Audio channel count.
     pub channels: Arc<AtomicU32>,
+    /// Bit depth per sample (0 if None).
+    pub bits_per_sample: Arc<AtomicU32>,
+    /// Whether the codec is lossless.
+    pub lossless: Arc<AtomicBool>,
+    /// Bitrate encoding mode (`0 = Unknown`, `1 = CBR`, `2 = VBR`).
+    pub bitrate_mode: Arc<AtomicI32>,
+    /// Total file/stream byte size (0 if unknown/live).
+    pub file_size: Arc<AtomicU64>,
+    /// Canonical codec name (e.g. `"MP3"`, `"FLAC"`, `"AAC"`, `"Vorbis"`, `"Opus"`, `"PCM"`, `"DSD"`, `"APE"`, `"WavPack"`).
+    pub codec: Arc<RwLock<String>>,
+    /// Canonical container format name (e.g. `"MP3"`, `"FLAC"`, `"Ogg"`, `"MP4"`, `"WAV"`, `"RF64"`, `"RIFX"`, `"W64"`, `"AIFF"`, `"CAF"`, `"Matroska"`, `"WebM"`, `"ADTS"`, `"DSF"`, `"APE"`, `"WavPack"`).
+    pub container_format: Arc<RwLock<String>>,
     /// Hardware device output sample rate.
     pub device_sample_rate: Arc<AtomicU32>,
     /// Hardware device output channel count.
@@ -1281,6 +1321,14 @@ pub struct StreamingDeck {
     pub head_bytes: Arc<RwLock<Vec<u8>>>,
     /// Container/codec format string (e.g. "mp3", "flac", "wav").
     pub format: Arc<RwLock<Option<String>>>,
+    /// Origin of the currently opened source.
+    pub source_origin: Arc<RwLock<DeckSourceOrigin>>,
+    /// Metadata revisions, visuals, and chapters captured by Symphonia during probing.
+    pub symphonia_meta: Arc<RwLock<crate::metadata::SymphoniaExtractedMeta>>,
+    /// Live Shoutcast / Icecast ICY stream metadata and station headers.
+    pub icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
+    /// Cached parsed `RustAudioMetadata` keyed by `(flush_generation, meta_version)`.
+    pub cached_metadata: Arc<Mutex<Option<(u64, u32, crate::api::types::RustAudioMetadata)>>>,
     /// Optional handle for custom Dart byte stream data injection.
     pub custom_source_handle: Arc<RwLock<Option<CustomByteSourceHandle>>>,
 
@@ -1444,7 +1492,14 @@ impl StreamingDeck {
         let pitch = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let bitrate = Arc::new(AtomicU32::new(0));
         let sample_rate = Arc::new(AtomicU32::new(sr));
+        let raw_sample_rate = Arc::new(AtomicU32::new(0));
         let channels = Arc::new(AtomicU32::new(ch));
+        let bits_per_sample = Arc::new(AtomicU32::new(0));
+        let lossless = Arc::new(AtomicBool::new(false));
+        let bitrate_mode = Arc::new(AtomicI32::new(0));
+        let file_size = Arc::new(AtomicU64::new(0));
+        let codec = Arc::new(RwLock::new(String::from("Unknown")));
+        let container_format = Arc::new(RwLock::new(String::from("Unknown")));
         let device_sample_rate = Arc::new(AtomicU32::new(sr));
         let device_channels = Arc::new(AtomicU32::new(ch));
         let period_size_in_frames = Arc::new(AtomicU32::new(period));
@@ -1456,6 +1511,10 @@ impl StreamingDeck {
         let boundary_info = Arc::new(RwLock::new(None));
         let head_bytes = Arc::new(RwLock::new(Vec::new()));
         let format = Arc::new(RwLock::new(None));
+        let source_origin = Arc::new(RwLock::new(DeckSourceOrigin::None));
+        let symphonia_meta = Arc::new(RwLock::new(crate::metadata::SymphoniaExtractedMeta::default()));
+        let icy_metadata = Arc::new(RwLock::new(None));
+        let cached_metadata = Arc::new(Mutex::new(None));
         let custom_source_handle = Arc::new(RwLock::new(None));
 
         let telemetry = Arc::new(TelemetryDispatcher::new(None, std::ptr::null_mut()));
@@ -1603,7 +1662,14 @@ impl StreamingDeck {
             pitch,
             bitrate,
             sample_rate,
+            raw_sample_rate,
             channels,
+            bits_per_sample,
+            lossless,
+            bitrate_mode,
+            file_size,
+            codec,
+            container_format,
             device_sample_rate,
             device_channels,
             period_size_in_frames,
@@ -1614,6 +1680,10 @@ impl StreamingDeck {
             boundary_info,
             head_bytes,
             format,
+            source_origin,
+            symphonia_meta,
+            icy_metadata,
+            cached_metadata,
             custom_source_handle,
             telemetry,
             completion_cb,
@@ -1792,6 +1862,18 @@ impl StreamingDeck {
         if let Ok(mut guard) = self.boundary_info.write() {
             *guard = None;
         }
+        if let Ok(mut guard) = self.source_origin.write() {
+            *guard = DeckSourceOrigin::None;
+        }
+        if let Ok(mut guard) = self.symphonia_meta.write() {
+            *guard = crate::metadata::SymphoniaExtractedMeta::default();
+        }
+        if let Ok(mut guard) = self.icy_metadata.write() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.cached_metadata.lock() {
+            *guard = None;
+        }
         self.stream_reinit_needed.store(false, Ordering::Release);
         if let Some(ref handle) = *self.custom_source_handle.read().unwrap() {
             handle.abort();
@@ -1811,6 +1893,17 @@ impl StreamingDeck {
         self.position_frames.store(0, Ordering::Relaxed);
         self.duration_ms.store(0, Ordering::Relaxed);
         self.bitrate.store(0, Ordering::Relaxed);
+        self.raw_sample_rate.store(0, Ordering::Relaxed);
+        self.bits_per_sample.store(0, Ordering::Relaxed);
+        self.lossless.store(false, Ordering::Relaxed);
+        self.bitrate_mode.store(0, Ordering::Relaxed);
+        self.file_size.store(0, Ordering::Relaxed);
+        if let Ok(mut c) = self.codec.write() {
+            *c = String::from("Unknown");
+        }
+        if let Ok(mut cf) = self.container_format.write() {
+            *cf = String::from("Unknown");
+        }
         self.telemetry.post_event(
             EventType::State,
             MapEventData {
@@ -2030,6 +2123,38 @@ impl StreamingDeck {
             .header("icy-metaint")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        let icy_name = res
+            .header("icy-name")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let icy_genre = res
+            .header("icy-genre")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let icy_url = res
+            .header("icy-url")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let icy_br: Option<u32> = res.header("icy-br").and_then(|s| s.trim().parse().ok());
+
+        if icy_metaint > 0
+            || icy_name.is_some()
+            || icy_genre.is_some()
+            || icy_url.is_some()
+            || icy_br.is_some()
+        {
+            if let Ok(mut guard) = self.icy_metadata.write() {
+                *guard = Some(crate::api::types::RustIcyMetadata {
+                    stream_title: None,
+                    stream_url: None,
+                    station_name: icy_name,
+                    station_genre: icy_genre,
+                    station_url: icy_url,
+                    bitrate_kbps: icy_br,
+                });
+            }
+        }
+
         let encoding_format = infer_network_encoding_format(url, content_type.as_deref());
         crate::map_log!(
             4,
@@ -2048,6 +2173,7 @@ impl StreamingDeck {
                 icy_metaint,
                 trip_slot.clone(),
                 latest_icy.clone(),
+                self.icy_metadata.clone(),
             ))
         } else {
             Box::new(res.into_reader())
@@ -2104,6 +2230,7 @@ impl StreamingDeck {
             }
         }
 
+        let preserved_icy = self.icy_metadata.read().ok().and_then(|g| g.clone());
         let is_live = content_length <= 0;
         let res_code = self.open_stream_ex(
             &initial_data,
@@ -2113,6 +2240,11 @@ impl StreamingDeck {
             4 * 1024 * 1024,
             encoding_format,
         );
+        if let Ok(mut guard) = self.icy_metadata.write() {
+            if guard.is_none() {
+                *guard = preserved_icy;
+            }
+        }
         if res_code != MAP_SUCCESS {
             return res_code;
         }
@@ -2200,6 +2332,9 @@ impl StreamingDeck {
             }
         };
 
+        if let Ok(mut origin) = self.source_origin.write() {
+            *origin = DeckSourceOrigin::File(std::path::PathBuf::from(path));
+        }
         self.init_engine(eng, false, file_size, &header[..header_len]);
         crate::map_log!(3, "open_file successfully opened: {}", path);
         MAP_SUCCESS
@@ -2222,7 +2357,8 @@ impl StreamingDeck {
             effective_hint
         );
 
-        let cursor = Cursor::new(data.to_vec());
+        let mem_vec = data.to_vec();
+        let cursor = Cursor::new(mem_vec.clone());
         let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
             Err(e) => {
@@ -2231,6 +2367,9 @@ impl StreamingDeck {
             }
         };
 
+        if let Ok(mut origin) = self.source_origin.write() {
+            *origin = DeckSourceOrigin::Memory(Arc::new(mem_vec));
+        }
         self.init_engine(eng, false, data.len() as u64, data);
         crate::map_log!(3, "open_memory successfully opened: size={}", data.len());
         MAP_SUCCESS
@@ -2312,6 +2451,9 @@ impl StreamingDeck {
         trip.set_decoding_audio(true);
 
         let tot = trip.total_size().unwrap_or(0);
+        if let Ok(mut origin) = self.source_origin.write() {
+            *origin = DeckSourceOrigin::Stream;
+        }
         *self.trip_buffer.write().unwrap() = Some(trip);
         self.init_engine(eng, true, tot, initial_data);
         crate::map_log!(3, "open_stream_ex successfully opened (hint={:?})", hint);
@@ -2344,6 +2486,9 @@ impl StreamingDeck {
             }
         };
 
+        if let Ok(mut origin) = self.source_origin.write() {
+            *origin = DeckSourceOrigin::Stream;
+        }
         self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), &[]);
         crate::map_log!(3, "open_custom_source successfully opened");
         MAP_SUCCESS
@@ -2387,7 +2532,14 @@ impl StreamingDeck {
     ) {
         let is_live = self.is_live_stream();
         let sr = eng.sample_rate();
+        let raw_sr = eng.raw_sample_rate().unwrap_or(sr);
         let ch = eng.channels();
+        let bps = eng.bits_per_sample().unwrap_or(0);
+        let codec_str = eng.codec();
+        let container_str = eng.container_format();
+        let is_lossless = eng.lossless();
+        let sym_meta = eng.symphonia_meta().clone();
+
         let mut dur = if is_live {
             0
         } else {
@@ -2415,22 +2567,73 @@ impl StreamingDeck {
             }
         }
 
-        if !is_live && dur <= 0 && total_bytes > 0 && !initial_data.is_empty() {
-            if let Some((_br, d)) =
+        let mut sniffed_bitrate: Option<u32> = None;
+        if !initial_data.is_empty() {
+            if let Some((br, d)) =
                 FormatSniffer::sniff_stream_info(initial_data, total_bytes as i64)
             {
-                if d > 0 {
+                if br > 0 {
+                    sniffed_bitrate = Some(br);
+                }
+                if !is_live && dur <= 0 && d > 0 {
                     dur = d;
                 }
             }
         }
 
-        let bitrate = if dur > 0 && total_bytes > 0 {
-            ((total_bytes * 8000) / dur as u64) as u32
-        } else if sr > 0 && ch > 0 {
-            sr * ch * 16
+        let boundary = if !initial_data.is_empty() {
+            FormatSniffer::detect_head_boundary(initial_data, total_bytes as i64).1
+        } else {
+            BoundaryInfo::new()
+        };
+
+        // Compute audio payload size (excluding huge ID3v2/FLAC cover art headers) for accurate bitrate
+        let audio_payload_bytes = if total_bytes > 0 {
+            let start = boundary.audio_start.max(0) as u64;
+            let end = if boundary.audio_end > 0 && (boundary.audio_end as u64) <= total_bytes {
+                boundary.audio_end as u64
+            } else {
+                total_bytes
+            };
+            if end > start {
+                end - start
+            } else {
+                total_bytes
+            }
         } else {
             0
+        };
+
+        let icy_br_bps = self
+            .icy_metadata
+            .read()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|m| m.bitrate_kbps.map(|kb| kb * 1000)));
+
+        let bitrate = if codec_str == "PCM" && sr > 0 && ch > 0 && bps > 0 {
+            sr * ch * bps
+        } else if codec_str == "DSD" && raw_sr > 0 && ch > 0 {
+            raw_sr * ch
+        } else if dur > 0 && audio_payload_bytes > 0 {
+            ((audio_payload_bytes * 8000) / dur as u64) as u32
+        } else if let Some(br) = icy_br_bps.or(sniffed_bitrate) {
+            br
+        } else if sr > 0 && ch > 0 {
+            sr * ch * bps.max(16)
+        } else {
+            0
+        };
+
+        let br_mode = FormatSniffer::detect_bitrate_mode(
+            initial_data,
+            boundary.container,
+            codec_str,
+            is_lossless,
+        );
+        let br_mode_code = match br_mode {
+            crate::api::types::RustBitrateMode::Unknown => 0,
+            crate::api::types::RustBitrateMode::Cbr => 1,
+            crate::api::types::RustBitrateMode::Vbr => 2,
         };
 
         {
@@ -2438,17 +2641,42 @@ impl StreamingDeck {
                 *hb = initial_data.to_vec();
             }
             if let Ok(mut fmt_guard) = self.format.write() {
-                *fmt_guard = if !initial_data.is_empty() {
-                    let (_status, boundary) = FormatSniffer::detect_head_boundary(initial_data, total_bytes as i64);
-                    boundary.container.hint_extension().map(|s| s.to_string())
-                } else {
-                    None
-                };
+                *fmt_guard = boundary
+                    .container
+                    .hint_extension()
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        if !container_str.is_empty() && container_str != "Unknown" {
+                            Some(container_str.to_ascii_lowercase())
+                        } else if !codec_str.is_empty() && codec_str != "Unknown" {
+                            Some(codec_str.to_ascii_lowercase())
+                        } else {
+                            None
+                        }
+                    });
             }
+            if let Ok(mut c_guard) = self.codec.write() {
+                *c_guard = codec_str.to_string();
+            }
+            if let Ok(mut cf_guard) = self.container_format.write() {
+                *cf_guard = container_str.to_string();
+            }
+            if let Ok(mut sm_guard) = self.symphonia_meta.write() {
+                *sm_guard = sym_meta;
+            }
+            if let Ok(mut cm_guard) = self.cached_metadata.lock() {
+                *cm_guard = None;
+            }
+
             let mut eng_lock = self.engine.lock().unwrap();
             *eng_lock = Some(eng);
             self.sample_rate.store(sr, Ordering::SeqCst);
+            self.raw_sample_rate.store(raw_sr, Ordering::SeqCst);
             self.channels.store(ch, Ordering::SeqCst);
+            self.bits_per_sample.store(bps, Ordering::SeqCst);
+            self.lossless.store(is_lossless, Ordering::SeqCst);
+            self.bitrate_mode.store(br_mode_code, Ordering::SeqCst);
+            self.file_size.store(total_bytes, Ordering::SeqCst);
             self.duration_ms.store(dur, Ordering::SeqCst);
             self.bitrate.store(bitrate, Ordering::SeqCst);
             self.is_stream.store(is_stream, Ordering::SeqCst);
@@ -2767,12 +2995,322 @@ impl StreamingDeck {
                 return Some(bytes);
             }
         }
+        if let Ok(origin_guard) = self.source_origin.read() {
+            match &*origin_guard {
+                DeckSourceOrigin::File(path) => {
+                    if let Some(synthesized) = Self::synthesize_file_meta_bytes(path) {
+                        return Some(synthesized);
+                    }
+                }
+                DeckSourceOrigin::Memory(mem) => {
+                    if let Some(synthesized) = Self::synthesize_slice_meta_bytes(mem) {
+                        return Some(synthesized);
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Ok(guard) = self.head_bytes.read() {
             if !guard.is_empty() {
                 return Some(guard.clone());
             }
         }
         None
+    }
+
+    fn synthesize_file_meta_bytes(path: &std::path::Path) -> Option<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        let mut file = File::open(path).ok()?;
+        let total_size = file.metadata().ok()?.len() as i64;
+        if total_size <= 0 {
+            return None;
+        }
+        let mut head_probe = vec![0u8; (total_size as usize).min(65536)];
+        let n = file.read(&mut head_probe).ok()?;
+        head_probe.truncate(n);
+        let (mut status, mut boundary) = FormatSniffer::detect_head_boundary(&head_probe, total_size);
+        while status == crate::decoder::sniffer::BoundaryStatus::NeedMore
+            && boundary.needed_bytes > head_probe.len() as i64
+            && boundary.needed_bytes <= 16 * 1024 * 1024
+        {
+            let target = (boundary.needed_bytes as usize).min(total_size as usize);
+            let old_len = head_probe.len();
+            head_probe.resize(target, 0);
+            let read_n = file.read(&mut head_probe[old_len..]).ok()?;
+            if read_n == 0 {
+                head_probe.truncate(old_len);
+                break;
+            }
+            head_probe.truncate(old_len + read_n);
+            let res = FormatSniffer::detect_head_boundary(&head_probe, total_size);
+            status = res.0;
+            boundary = res.1;
+        }
+
+        let head_len = if boundary.audio_start > 0 {
+            (boundary.audio_start as usize).min(head_probe.len())
+        } else {
+            head_probe.len().min(8192)
+        };
+        let mut out = head_probe[..head_len].to_vec();
+        Self::patch_synthesized_head(&mut out);
+
+        if boundary.audio_end > 0
+            && boundary.audio_end < total_size
+            && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
+        {
+            if file.seek(SeekFrom::Start(boundary.audio_end as u64)).is_ok() {
+                let _ = file.read_to_end(&mut out);
+            }
+        } else if FormatSniffer::container_needs_tail_scan(boundary.container) {
+            let floor = boundary.audio_start.max(0);
+            let probe_len = 65536i64.min(total_size - floor);
+            if probe_len > 0 {
+                let tail_offset = total_size - probe_len;
+                if file.seek(SeekFrom::Start(tail_offset as u64)).is_ok() {
+                    let mut tail_buf = Vec::with_capacity(probe_len as usize);
+                    if file.read_to_end(&mut tail_buf).is_ok() {
+                        let (_ts, audio_end) = FormatSniffer::detect_tail_boundary(
+                            boundary.container,
+                            &tail_buf,
+                            tail_offset,
+                            total_size,
+                            boundary.audio_start,
+                        );
+                        if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
+                            let rel = (audio_end - tail_offset) as usize;
+                            out.extend_from_slice(&tail_buf[rel..]);
+                        }
+                    }
+                }
+            }
+        }
+
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    fn synthesize_slice_meta_bytes(data: &[u8]) -> Option<Vec<u8>> {
+        if data.is_empty() {
+            return None;
+        }
+        let total_size = data.len() as i64;
+        let (_status, boundary) = FormatSniffer::detect_head_boundary(data, total_size);
+        let head_len = if boundary.audio_start > 0 {
+            (boundary.audio_start as usize).min(data.len())
+        } else {
+            data.len().min(8192)
+        };
+        let mut out = data[..head_len].to_vec();
+        Self::patch_synthesized_head(&mut out);
+
+        if boundary.audio_end > 0
+            && boundary.audio_end < total_size
+            && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
+        {
+            out.extend_from_slice(&data[boundary.audio_end as usize..]);
+        } else if FormatSniffer::container_needs_tail_scan(boundary.container) {
+            let floor = boundary.audio_start.max(0);
+            let probe_len = 65536i64.min(total_size - floor);
+            if probe_len > 0 {
+                let tail_offset = total_size - probe_len;
+                let tail_slice = &data[tail_offset as usize..];
+                let (_ts, audio_end) = FormatSniffer::detect_tail_boundary(
+                    boundary.container,
+                    tail_slice,
+                    tail_offset,
+                    total_size,
+                    boundary.audio_start,
+                );
+                if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
+                    out.extend_from_slice(&data[audio_end as usize..]);
+                }
+            }
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    fn patch_synthesized_head(out: &mut [u8]) {
+        let head_len = out.len();
+        if head_len >= 12
+            && (out.starts_with(b"RIFF") || out.starts_with(b"RF64"))
+            && &out[8..12] == b"WAVE"
+            && &out[head_len - 8..head_len - 4] == b"data"
+        {
+            out[head_len - 4..head_len].copy_from_slice(&0u32.to_le_bytes());
+        } else if head_len >= 16 && &out[4..8] == b"ftyp" {
+            if &out[head_len - 4..head_len] == b"mdat" {
+                out[head_len - 8..head_len - 4].copy_from_slice(&8u32.to_be_bytes());
+            } else if &out[head_len - 12..head_len - 8] == b"mdat" {
+                out[head_len - 8..head_len].copy_from_slice(&16u64.to_be_bytes());
+            }
+        }
+    }
+
+    /// Returns a zero-cost snapshot of the current track's [`RustAudioInfo`].
+    pub fn get_audio_info(&self) -> crate::api::types::RustAudioInfo {
+        let dur_ms = self.duration_ms.load(Ordering::Relaxed);
+        let sr = self.sample_rate.load(Ordering::Relaxed);
+        let raw_sr = self.raw_sample_rate.load(Ordering::Relaxed);
+        let ch = self.channels.load(Ordering::Relaxed);
+        let bps = self.bits_per_sample.load(Ordering::Relaxed);
+        let br = self.bitrate.load(Ordering::Relaxed);
+        let lossless = self.lossless.load(Ordering::Relaxed);
+        let br_mode_code = self.bitrate_mode.load(Ordering::Relaxed);
+        let fsize = self.file_size.load(Ordering::Relaxed);
+
+        let bitrate_mode = match br_mode_code {
+            1 => crate::api::types::RustBitrateMode::Cbr,
+            2 => crate::api::types::RustBitrateMode::Vbr,
+            _ => crate::api::types::RustBitrateMode::Unknown,
+        };
+
+        let format = self.format.read().ok().and_then(|g| g.clone());
+        let codec = self
+            .codec
+            .read()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_else(|| String::from("Unknown"));
+        let container_format = self
+            .container_format
+            .read()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_else(|| String::from("Unknown"));
+
+        crate::api::types::RustAudioInfo {
+            duration_ms: if dur_ms > 0 { Some(dur_ms) } else { None },
+            sample_rate: sr,
+            raw_sample_rate: if raw_sr > 0 { Some(raw_sr) } else { None },
+            channels: ch,
+            bits_per_sample: if bps > 0 { Some(bps) } else { None },
+            bitrate: br,
+            format,
+            codec,
+            container_format,
+            lossless,
+            bitrate_mode,
+            file_size: if fsize > 0 { Some(fsize) } else { None },
+        }
+    }
+
+    /// Parses and caches the full [`RustAudioMetadata`] for the currently opened source.
+    ///
+    /// Invoked only when `metadata` is explicitly requested (`analyzeAudio(metadata: true)` or
+    /// `player.state.metadataEnabled == true`). Subsequent calls with the same `(flush_generation, meta_version)`
+    /// return the cached clone in O(1).
+    pub fn get_parsed_metadata(&self) -> Option<crate::api::types::RustAudioMetadata> {
+        let cur_flush = self.flush_generation.load(Ordering::Acquire);
+        let cur_meta_ver = self.get_meta_bytes_version();
+
+        if let Ok(guard) = self.cached_metadata.lock() {
+            if let Some((cached_flush, cached_ver, ref cached_meta)) = *guard {
+                if cached_flush == cur_flush && cached_ver == cur_meta_ver {
+                    return if cached_meta.bytes.is_empty() && !Self::has_any_parsed_fields(cached_meta) {
+                        None
+                    } else {
+                        Some(cached_meta.clone())
+                    };
+                }
+            }
+        }
+
+        let meta_bytes = self.get_meta_bytes().unwrap_or_default();
+        let container_format = self
+            .container_format
+            .read()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let sym_meta = self.symphonia_meta.read().ok().map(|g| g.clone());
+        let icy_meta = self.icy_metadata.read().ok().and_then(|g| g.clone());
+        let origin = self
+            .source_origin
+            .read()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
+        let parsed = match origin {
+            DeckSourceOrigin::File(ref path) => {
+                if let Ok(mut file) = File::open(path) {
+                    crate::metadata::parse_full_metadata(
+                        Some(&mut file),
+                        meta_bytes,
+                        &container_format,
+                        sym_meta.as_ref(),
+                        icy_meta,
+                    )
+                } else {
+                    crate::metadata::parse_full_metadata::<Cursor<&[u8]>>(
+                        None,
+                        meta_bytes,
+                        &container_format,
+                        sym_meta.as_ref(),
+                        icy_meta,
+                    )
+                }
+            }
+            DeckSourceOrigin::Memory(ref bytes) => {
+                let mut cursor = Cursor::new(bytes.as_slice());
+                crate::metadata::parse_full_metadata(
+                    Some(&mut cursor),
+                    meta_bytes,
+                    &container_format,
+                    sym_meta.as_ref(),
+                    icy_meta,
+                )
+            }
+            DeckSourceOrigin::Stream | DeckSourceOrigin::None => {
+                crate::metadata::parse_full_metadata::<Cursor<&[u8]>>(
+                    None,
+                    meta_bytes,
+                    &container_format,
+                    sym_meta.as_ref(),
+                    icy_meta,
+                )
+            }
+        };
+
+        let is_non_empty = !parsed.bytes.is_empty() || Self::has_any_parsed_fields(&parsed);
+        if let Ok(mut guard) = self.cached_metadata.lock() {
+            *guard = Some((cur_flush, cur_meta_ver, parsed.clone()));
+        }
+
+        if is_non_empty {
+            Some(parsed)
+        } else {
+            None
+        }
+    }
+
+    fn has_any_parsed_fields(m: &crate::api::types::RustAudioMetadata) -> bool {
+        m.title.is_some()
+            || m.track_artist.is_some()
+            || m.album.is_some()
+            || m.album_artist.is_some()
+            || m.year.is_some()
+            || m.genre.is_some()
+            || m.track_number.is_some()
+            || m.disc_number.is_some()
+            || m.lyrics.is_some()
+            || m.comment.is_some()
+            || m.bpm.is_some()
+            || m.replay_gain_track_gain.is_some()
+            || m.replay_gain_album_gain.is_some()
+            || !m.pictures.is_empty()
+            || !m.chapters.is_empty()
+            || !m.custom_tags.is_empty()
+            || !m.tag_formats.is_empty()
+            || m.icy.is_some()
     }
 
     pub fn copy_meta_bytes(&self, out: &mut [u8]) -> usize {

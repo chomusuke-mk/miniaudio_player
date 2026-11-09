@@ -7,6 +7,8 @@ part of 'miniaudio_player.dart';
 class PlayerStream<T> {
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
+  final StreamController<Duration?> _durationController =
+      StreamController<Duration?>.broadcast();
   final StreamController<AudioInfo?> _audioInfoController =
       StreamController<AudioInfo?>.broadcast();
   final StreamController<bool> _playingController =
@@ -125,6 +127,10 @@ class PlayerStream<T> {
 
   /// Broadcast stream emitting the playback position within the active track.
   Stream<Duration> get position => _positionController.stream;
+
+  /// Reactive broadcast stream emitting the total timeline duration of the active audio track,
+  /// or `null` if unknown (e.g. livestream).
+  Stream<Duration?> get duration => _durationController.stream;
 
   /// Broadcast stream emitting whether audio frames are actively rendering.
   Stream<bool> get playing => _playingController.stream;
@@ -343,6 +349,7 @@ class PlayerStream<T> {
   Future<void> dispose() async {
     await Future.wait([
       _positionController.close(),
+      _durationController.close(),
       _playingController.close(),
       _bufferingController.close(),
       _completedController.close(),

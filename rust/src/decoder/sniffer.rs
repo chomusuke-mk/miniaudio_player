@@ -163,7 +163,11 @@ impl FormatSniffer {
     pub fn container_needs_tail_scan(container: ContainerFormat) -> bool {
         matches!(
             container,
-            ContainerFormat::Mp3 | ContainerFormat::Adts | ContainerFormat::Flac
+            ContainerFormat::Mp3
+                | ContainerFormat::Adts
+                | ContainerFormat::Flac
+                | ContainerFormat::Ape
+                | ContainerFormat::WavPack
         )
     }
 
@@ -203,7 +207,17 @@ impl FormatSniffer {
             return (BoundaryStatus::Found, info);
         }
         if let Some(container) = Self::match_lossless_magic(data) {
-            info.set_direct_container(container, 0, total_size);
+            let audio_end = if container == ContainerFormat::Dsf && avail >= 28 {
+                let meta_off = le64(&data[20..28]) as i64;
+                if meta_off > 0 && (total_size <= 0 || meta_off < total_size) {
+                    meta_off
+                } else {
+                    total_size
+                }
+            } else {
+                total_size
+            };
+            info.set_direct_container(container, 0, audio_end);
             return (BoundaryStatus::Found, info);
         }
 
@@ -227,7 +241,17 @@ impl FormatSniffer {
             );
         }
         if let Some(container) = Self::match_lossless_magic(&data[p..]) {
-            info.set_direct_container(container, p as i64, total_size);
+            let audio_end = if container == ContainerFormat::Dsf && avail >= p + 28 {
+                let meta_off = le64(&data[p + 20..p + 28]) as i64;
+                if meta_off > 0 && (total_size <= 0 || meta_off < total_size) {
+                    meta_off
+                } else {
+                    total_size
+                }
+            } else {
+                total_size
+            };
+            info.set_direct_container(container, p as i64, audio_end);
             return (BoundaryStatus::Found, info);
         }
 
@@ -850,6 +874,128 @@ impl FormatSniffer {
             .or_else(|| Self::sniff_adts_stream_info(data, total_size))
             .or_else(|| Self::sniff_ogg_vorbis_stream_info(data, total_size))
             .or_else(|| Self::sniff_ogg_opus_stream_info(data, total_size))
+    }
+
+    /// Detects the bitrate encoding mode (`CBR`, `VBR`, or `Unknown`) from stream headers and codec type.
+    pub fn detect_bitrate_mode(
+        data: &[u8],
+        container: ContainerFormat,
+        codec: &str,
+        lossless: bool,
+    ) -> crate::api::types::RustBitrateMode {
+        use crate::api::types::RustBitrateMode;
+
+        match codec {
+            "PCM" | "DSD" | "ALAW" | "ULAW" | "ADPCM" => return RustBitrateMode::Cbr,
+            "FLAC" | "ALAC" | "APE" | "WavPack" | "Opus" => return RustBitrateMode::Vbr,
+            _ => {}
+        }
+        if lossless {
+            return RustBitrateMode::Vbr;
+        }
+
+        if container == ContainerFormat::Mp3 || matches!(codec, "MP3" | "MP2" | "MP1") {
+            let (start_offset, _) = Self::initial_id3v2_skip(data);
+            let avail = data.len();
+            let scan_limit = (start_offset + 32768).min(avail);
+            for i in start_offset..scan_limit.saturating_sub(3) {
+                let mut hdr = MpegHeader::default();
+                if !parse_mpeg_header(&data[i..], &mut hdr) {
+                    continue;
+                }
+                if i + hdr.frame_size as usize + 4 <= avail {
+                    let mut nh = MpegHeader::default();
+                    if !parse_mpeg_header(&data[i + hdr.frame_size as usize..], &mut nh) {
+                        continue;
+                    }
+                }
+                let xing_off = 4 + (if hdr.has_crc { 2 } else { 0 }) + hdr.side_info as usize;
+                if hdr.layer == 1 && i + xing_off + 4 <= avail {
+                    let tag = &data[i + xing_off..];
+                    if tag.starts_with(b"Xing") {
+                        return RustBitrateMode::Vbr;
+                    }
+                    if tag.starts_with(b"Info") {
+                        return RustBitrateMode::Cbr;
+                    }
+                }
+                let vbri_off = 4 + (if hdr.has_crc { 2 } else { 0 }) + 32;
+                if hdr.layer == 1 && i + vbri_off + 4 <= avail && data[i + vbri_off..].starts_with(b"VBRI") {
+                    return RustBitrateMode::Vbr;
+                }
+
+                // Compare consecutive frame bitrates
+                let mut pos = i + hdr.frame_size as usize;
+                let mut checked = 0;
+                while pos + 4 <= avail && checked < 8 {
+                    let mut fh = MpegHeader::default();
+                    if !parse_mpeg_header(&data[pos..], &mut fh) {
+                        break;
+                    }
+                    if fh.bitrate_kbps != hdr.bitrate_kbps {
+                        return RustBitrateMode::Vbr;
+                    }
+                    pos += fh.frame_size as usize;
+                    checked += 1;
+                }
+                return RustBitrateMode::Cbr;
+            }
+            return RustBitrateMode::Cbr;
+        }
+
+        if container == ContainerFormat::OggVorbis || codec == "Vorbis" {
+            let scan_limit = data.len().min(4096);
+            for i in 0..scan_limit.saturating_sub(28) {
+                if data[i..].starts_with(b"\x01vorbis") {
+                    let br_max = le32(&data[i + 16..i + 20]) as i32;
+                    let br_min = le32(&data[i + 24..i + 28]) as i32;
+                    if br_min > 0 && br_max > 0 && br_min == br_max {
+                        return RustBitrateMode::Cbr;
+                    }
+                    return RustBitrateMode::Vbr;
+                }
+            }
+            return RustBitrateMode::Vbr;
+        }
+
+        if container == ContainerFormat::Adts {
+            let scan_limit = data.len().saturating_sub(6).min(4096);
+            for i in 0..scan_limit {
+                if is_adts_sync(&data[i..]) {
+                    let fh = &data[i..];
+                    let fullness = (((fh[5] as u16) & 0x1F) << 6) | ((fh[6] as u16) >> 2);
+                    if fullness == 0x7FF {
+                        return RustBitrateMode::Vbr;
+                    }
+                    let first_len = ((fh[3] as usize & 0x03) << 11)
+                        | ((fh[4] as usize) << 3)
+                        | ((fh[5] as usize) >> 5);
+                    let mut pos = i + first_len;
+                    let mut checked = 0;
+                    while pos + 7 <= data.len() && checked < 6 {
+                        let nh = &data[pos..];
+                        if !is_adts_sync(nh) {
+                            break;
+                        }
+                        let nlen = ((nh[3] as usize & 0x03) << 11)
+                            | ((nh[4] as usize) << 3)
+                            | ((nh[5] as usize) >> 5);
+                        if nlen.abs_diff(first_len) > 2 {
+                            return RustBitrateMode::Vbr;
+                        }
+                        pos += nlen;
+                        checked += 1;
+                    }
+                    return RustBitrateMode::Cbr;
+                }
+            }
+        }
+
+        if codec == "AAC" {
+            return RustBitrateMode::Vbr;
+        }
+
+        RustBitrateMode::Unknown
     }
 
     fn need_more(

@@ -141,6 +141,7 @@ pub struct ExtendedPcmReader {
     block_align: u16,
     is_big_endian: bool,
     is_float: bool,
+    container_format: &'static str,
     data_start: u64,
     current_frame: u64,
     total_frames: u64,
@@ -167,9 +168,9 @@ impl ExtendedPcmReader {
         if header.starts_with(&W64_RIFF_GUID) && header[24..40] == W64_WAVE_GUID {
             Self::parse_w64(source)
         } else if header.starts_with(b"RIFX") && &header[8..12] == b"WAVE" {
-            Self::parse_riff_variant(source, true)
+            Self::parse_riff_variant(source, true, "RIFX")
         } else if header.starts_with(b"RF64") && &header[8..12] == b"WAVE" {
-            Self::parse_riff_variant(source, false)
+            Self::parse_riff_variant(source, false, "RF64")
         } else {
             let _ = source.seek(SeekFrom::Start(0));
             Ok(ExtendedPcmProbe::NotMatched(source))
@@ -180,6 +181,7 @@ impl ExtendedPcmReader {
         mut source: Box<dyn MediaSource>,
         fmt: WaveFmtSpec,
         is_big_endian: bool,
+        container_format: &'static str,
         data_start: u64,
         data_size: u64,
     ) -> Result<ExtendedPcmProbe, SymphoniaError> {
@@ -199,6 +201,7 @@ impl ExtendedPcmReader {
             block_align: fmt.block_align,
             is_big_endian,
             is_float: fmt.is_float,
+            container_format,
             data_start,
             current_frame: 0,
             total_frames,
@@ -210,6 +213,7 @@ impl ExtendedPcmReader {
     fn parse_riff_variant(
         mut source: Box<dyn MediaSource>,
         is_big_endian: bool,
+        container_format: &'static str,
     ) -> Result<ExtendedPcmProbe, SymphoniaError> {
         let mut p = 12u64;
         let mut ds64_data_size = 0u64;
@@ -258,7 +262,14 @@ impl ExtendedPcmReader {
             }
         }
 
-        Self::build_from_spec(source, fmt, is_big_endian, data_start, data_size)
+        Self::build_from_spec(
+            source,
+            fmt,
+            is_big_endian,
+            container_format,
+            data_start,
+            data_size,
+        )
     }
 
     fn parse_w64(mut source: Box<dyn MediaSource>) -> Result<ExtendedPcmProbe, SymphoniaError> {
@@ -296,7 +307,7 @@ impl ExtendedPcmReader {
             }
         }
 
-        Self::build_from_spec(source, fmt, false, data_start, data_size)
+        Self::build_from_spec(source, fmt, false, "W64", data_start, data_size)
     }
 
     /// Returns the audio sample rate in Hz.
@@ -309,6 +320,18 @@ impl ExtendedPcmReader {
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
+    }
+
+    /// Returns the bit depth per sample (e.g. 8, 16, 24, 32).
+    #[inline]
+    pub fn bits_per_sample(&self) -> u32 {
+        self.bits_per_sample as u32
+    }
+
+    /// Returns the canonical container format string (`"RF64"`, `"RIFX"`, or `"W64"`).
+    #[inline]
+    pub fn container_format(&self) -> &'static str {
+        self.container_format
     }
 
     /// Returns total stream duration in milliseconds if known.

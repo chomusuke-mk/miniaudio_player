@@ -130,8 +130,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustEqualizerParams dco_decode_box_autoadd_rust_equalizer_params(dynamic raw);
 
   @protected
+  RustIcyMetadata dco_decode_box_autoadd_rust_icy_metadata(dynamic raw);
+
+  @protected
+  RustId3v2Version dco_decode_box_autoadd_rust_id_3_v_2_version(dynamic raw);
+
+  @protected
   RustInfiniteMixConfig dco_decode_box_autoadd_rust_infinite_mix_config(
       dynamic raw);
+
+  @protected
+  RustMimeType dco_decode_box_autoadd_rust_mime_type(dynamic raw);
 
   @protected
   RustPlayerConfig dco_decode_box_autoadd_rust_player_config(dynamic raw);
@@ -195,6 +204,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<RustAudioChapter> dco_decode_list_rust_audio_chapter(dynamic raw);
+
+  @protected
   List<RustAudioDevice> dco_decode_list_rust_audio_device(dynamic raw);
 
   @protected
@@ -207,7 +219,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustAudioOutput> dco_decode_list_rust_audio_output(dynamic raw);
 
   @protected
+  List<RustAudioPicture> dco_decode_list_rust_audio_picture(dynamic raw);
+
+  @protected
   List<RustAudioSource> dco_decode_list_rust_audio_source(dynamic raw);
+
+  @protected
+  List<RustCustomTagField> dco_decode_list_rust_custom_tag_field(dynamic raw);
 
   @protected
   List<RustHttpHeader> dco_decode_list_rust_http_header(dynamic raw);
@@ -240,6 +258,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustDuckingConfig? dco_decode_opt_box_autoadd_rust_ducking_config(
       dynamic raw);
+
+  @protected
+  RustIcyMetadata? dco_decode_opt_box_autoadd_rust_icy_metadata(dynamic raw);
+
+  @protected
+  RustId3v2Version? dco_decode_opt_box_autoadd_rust_id_3_v_2_version(
+      dynamic raw);
+
+  @protected
+  RustMimeType? dco_decode_opt_box_autoadd_rust_mime_type(dynamic raw);
 
   @protected
   RustReplayGainConfig? dco_decode_opt_box_autoadd_rust_replay_gain_config(
@@ -282,6 +310,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioAnalysisResult dco_decode_rust_audio_analysis_result(dynamic raw);
 
   @protected
+  RustAudioChapter dco_decode_rust_audio_chapter(dynamic raw);
+
+  @protected
   RustAudioDevice dco_decode_rust_audio_device(dynamic raw);
 
   @protected
@@ -303,7 +334,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioOutput dco_decode_rust_audio_output(dynamic raw);
 
   @protected
+  RustAudioPicture dco_decode_rust_audio_picture(dynamic raw);
+
+  @protected
   RustAudioSource dco_decode_rust_audio_source(dynamic raw);
+
+  @protected
+  RustBitrateMode dco_decode_rust_bitrate_mode(dynamic raw);
 
   @protected
   RustBuffer dco_decode_rust_buffer(dynamic raw);
@@ -316,6 +353,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustCueConfig dco_decode_rust_cue_config(dynamic raw);
+
+  @protected
+  RustCustomTagField dco_decode_rust_custom_tag_field(dynamic raw);
 
   @protected
   RustDartReadRequest dco_decode_rust_dart_read_request(dynamic raw);
@@ -333,10 +373,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustEqualizerParams dco_decode_rust_equalizer_params(dynamic raw);
 
   @protected
+  RustExtendedMetadata dco_decode_rust_extended_metadata(dynamic raw);
+
+  @protected
   RustHttpHeader dco_decode_rust_http_header(dynamic raw);
 
   @protected
+  RustIcyMetadata dco_decode_rust_icy_metadata(dynamic raw);
+
+  @protected
+  RustId3v2Version dco_decode_rust_id_3_v_2_version(dynamic raw);
+
+  @protected
   RustInfiniteMixConfig dco_decode_rust_infinite_mix_config(dynamic raw);
+
+  @protected
+  RustMimeType dco_decode_rust_mime_type(dynamic raw);
+
+  @protected
+  RustPictureType dco_decode_rust_picture_type(dynamic raw);
 
   @protected
   RustPlayerConfig dco_decode_rust_player_config(dynamic raw);
@@ -513,7 +568,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustIcyMetadata sse_decode_box_autoadd_rust_icy_metadata(
+      SseDeserializer deserializer);
+
+  @protected
+  RustId3v2Version sse_decode_box_autoadd_rust_id_3_v_2_version(
+      SseDeserializer deserializer);
+
+  @protected
   RustInfiniteMixConfig sse_decode_box_autoadd_rust_infinite_mix_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustMimeType sse_decode_box_autoadd_rust_mime_type(
       SseDeserializer deserializer);
 
   @protected
@@ -586,6 +653,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<RustAudioChapter> sse_decode_list_rust_audio_chapter(
+      SseDeserializer deserializer);
+
+  @protected
   List<RustAudioDevice> sse_decode_list_rust_audio_device(
       SseDeserializer deserializer);
 
@@ -602,7 +673,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<RustAudioPicture> sse_decode_list_rust_audio_picture(
+      SseDeserializer deserializer);
+
+  @protected
   List<RustAudioSource> sse_decode_list_rust_audio_source(
+      SseDeserializer deserializer);
+
+  @protected
+  List<RustCustomTagField> sse_decode_list_rust_custom_tag_field(
       SseDeserializer deserializer);
 
   @protected
@@ -638,6 +717,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustDuckingConfig? sse_decode_opt_box_autoadd_rust_ducking_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustIcyMetadata? sse_decode_opt_box_autoadd_rust_icy_metadata(
+      SseDeserializer deserializer);
+
+  @protected
+  RustId3v2Version? sse_decode_opt_box_autoadd_rust_id_3_v_2_version(
+      SseDeserializer deserializer);
+
+  @protected
+  RustMimeType? sse_decode_opt_box_autoadd_rust_mime_type(
       SseDeserializer deserializer);
 
   @protected
@@ -685,6 +776,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustAudioChapter sse_decode_rust_audio_chapter(SseDeserializer deserializer);
+
+  @protected
   RustAudioDevice sse_decode_rust_audio_device(SseDeserializer deserializer);
 
   @protected
@@ -708,7 +802,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioOutput sse_decode_rust_audio_output(SseDeserializer deserializer);
 
   @protected
+  RustAudioPicture sse_decode_rust_audio_picture(SseDeserializer deserializer);
+
+  @protected
   RustAudioSource sse_decode_rust_audio_source(SseDeserializer deserializer);
+
+  @protected
+  RustBitrateMode sse_decode_rust_bitrate_mode(SseDeserializer deserializer);
 
   @protected
   RustBuffer sse_decode_rust_buffer(SseDeserializer deserializer);
@@ -723,6 +823,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustCueConfig sse_decode_rust_cue_config(SseDeserializer deserializer);
+
+  @protected
+  RustCustomTagField sse_decode_rust_custom_tag_field(
+      SseDeserializer deserializer);
 
   @protected
   RustDartReadRequest sse_decode_rust_dart_read_request(
@@ -744,11 +848,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustExtendedMetadata sse_decode_rust_extended_metadata(
+      SseDeserializer deserializer);
+
+  @protected
   RustHttpHeader sse_decode_rust_http_header(SseDeserializer deserializer);
+
+  @protected
+  RustIcyMetadata sse_decode_rust_icy_metadata(SseDeserializer deserializer);
+
+  @protected
+  RustId3v2Version sse_decode_rust_id_3_v_2_version(
+      SseDeserializer deserializer);
 
   @protected
   RustInfiniteMixConfig sse_decode_rust_infinite_mix_config(
       SseDeserializer deserializer);
+
+  @protected
+  RustMimeType sse_decode_rust_mime_type(SseDeserializer deserializer);
+
+  @protected
+  RustPictureType sse_decode_rust_picture_type(SseDeserializer deserializer);
 
   @protected
   RustPlayerConfig sse_decode_rust_player_config(SseDeserializer deserializer);
@@ -936,8 +1057,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustEqualizerParams self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_icy_metadata(
+      RustIcyMetadata self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_id_3_v_2_version(
+      RustId3v2Version self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_infinite_mix_config(
       RustInfiniteMixConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_mime_type(
+      RustMimeType self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_player_config(
@@ -1012,6 +1145,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       Uint8List self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_rust_audio_chapter(
+      List<RustAudioChapter> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_rust_audio_device(
       List<RustAudioDevice> self, SseSerializer serializer);
 
@@ -1028,8 +1165,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustAudioOutput> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_rust_audio_picture(
+      List<RustAudioPicture> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_rust_audio_source(
       List<RustAudioSource> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_rust_custom_tag_field(
+      List<RustCustomTagField> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_rust_http_header(
@@ -1066,6 +1211,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_rust_ducking_config(
       RustDuckingConfig? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_icy_metadata(
+      RustIcyMetadata? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_id_3_v_2_version(
+      RustId3v2Version? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_mime_type(
+      RustMimeType? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_rust_replay_gain_config(
@@ -1113,6 +1270,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioAnalysisResult self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_audio_chapter(
+      RustAudioChapter self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_audio_device(
       RustAudioDevice self, SseSerializer serializer);
 
@@ -1140,8 +1301,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioOutput self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_audio_picture(
+      RustAudioPicture self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_audio_source(
       RustAudioSource self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_bitrate_mode(
+      RustBitrateMode self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_buffer(RustBuffer self, SseSerializer serializer);
@@ -1156,6 +1325,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_rust_cue_config(RustCueConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_custom_tag_field(
+      RustCustomTagField self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_dart_read_request(
@@ -1178,12 +1351,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustEqualizerParams self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_extended_metadata(
+      RustExtendedMetadata self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_http_header(
       RustHttpHeader self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_icy_metadata(
+      RustIcyMetadata self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_id_3_v_2_version(
+      RustId3v2Version self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_infinite_mix_config(
       RustInfiniteMixConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_mime_type(RustMimeType self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_picture_type(
+      RustPictureType self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_player_config(

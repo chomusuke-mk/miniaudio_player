@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1625341300;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -48947728;
 
 // Section: executor
 
@@ -3734,6 +3734,38 @@ fn wire__crate__api__types__rust_audio_analysis_result_default_impl(
         },
     )
 }
+fn wire__crate__api__types__rust_audio_chapter_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_audio_chapter_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustAudioChapter::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__types__rust_audio_device_default_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3863,6 +3895,38 @@ fn wire__crate__api__types__rust_audio_metadata_default_impl(
         },
     )
 }
+fn wire__crate__api__types__rust_audio_picture_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_audio_picture_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustAudioPicture::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__types__rust_audio_source_default_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3889,6 +3953,38 @@ fn wire__crate__api__types__rust_audio_source_default_impl(
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Ok::<_, ()>(crate::api::types::RustAudioSource::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__types__rust_bitrate_mode_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_bitrate_mode_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustBitrateMode::default())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -4023,6 +4119,38 @@ fn wire__crate__api__types__rust_cue_config_default_impl(
         },
     )
 }
+fn wire__crate__api__types__rust_custom_tag_field_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_custom_tag_field_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustCustomTagField::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__types__rust_distance_model_default_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4151,6 +4279,39 @@ fn wire__crate__api__types__rust_equalizer_params_default_impl(
         },
     )
 }
+fn wire__crate__api__types__rust_extended_metadata_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_extended_metadata_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Ok::<_, ()>(crate::api::types::RustExtendedMetadata::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__types__rust_http_header_default_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4177,6 +4338,38 @@ fn wire__crate__api__types__rust_http_header_default_impl(
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Ok::<_, ()>(crate::api::types::RustHttpHeader::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__types__rust_icy_metadata_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_icy_metadata_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustIcyMetadata::default())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -4210,6 +4403,70 @@ fn wire__crate__api__types__rust_infinite_mix_config_default_impl(
                 transform_result_sse::<_, ()>((move || {
                     let output_ok =
                         Ok::<_, ()>(crate::api::types::RustInfiniteMixConfig::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__types__rust_mime_type_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_mime_type_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustMimeType::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__types__rust_picture_type_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rust_picture_type_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::types::RustPictureType::default())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -4820,6 +5077,20 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Vec<crate::api::types::RustAudioChapter> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::types::RustAudioChapter>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::types::RustAudioDevice> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4876,6 +5147,20 @@ impl SseDecode for Vec<crate::api::types::RustAudioOutput> {
     }
 }
 
+impl SseDecode for Vec<crate::api::types::RustAudioPicture> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::types::RustAudioPicture>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::types::RustAudioSource> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4883,6 +5168,20 @@ impl SseDecode for Vec<crate::api::types::RustAudioSource> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::types::RustAudioSource>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::types::RustCustomTagField> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::types::RustCustomTagField>::sse_decode(
                 deserializer,
             ));
         }
@@ -5001,6 +5300,43 @@ impl SseDecode for Option<crate::api::types::RustDuckingConfig> {
             return Some(<crate::api::types::RustDuckingConfig>::sse_decode(
                 deserializer,
             ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::types::RustIcyMetadata> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::types::RustIcyMetadata>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::types::RustId3v2Version> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::types::RustId3v2Version>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::types::RustMimeType> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::types::RustMimeType>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -5148,11 +5484,10 @@ impl SseDecode for crate::api::types::RustAudioAnalysisResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_audioInfo = <crate::api::types::RustAudioInfo>::sse_decode(deserializer);
-        let mut var_peakAmplitude = <f32>::sse_decode(deserializer);
-        let mut var_rmsAmplitude = <f32>::sse_decode(deserializer);
         let mut var_hasReplayGain = <bool>::sse_decode(deserializer);
         let mut var_integratedLufs = <f32>::sse_decode(deserializer);
         let mut var_replayGainDb = <f32>::sse_decode(deserializer);
+        let mut var_replayGainPeak = <f32>::sse_decode(deserializer);
         let mut var_hasWaveform = <bool>::sse_decode(deserializer);
         let mut var_spectralCentroid = <f32>::sse_decode(deserializer);
         let mut var_frequencyBands = <Vec<f32>>::sse_decode(deserializer);
@@ -5162,17 +5497,30 @@ impl SseDecode for crate::api::types::RustAudioAnalysisResult {
             <Option<crate::api::types::RustAudioMetadata>>::sse_decode(deserializer);
         return crate::api::types::RustAudioAnalysisResult {
             audio_info: var_audioInfo,
-            peak_amplitude: var_peakAmplitude,
-            rms_amplitude: var_rmsAmplitude,
             has_replay_gain: var_hasReplayGain,
             integrated_lufs: var_integratedLufs,
             replay_gain_db: var_replayGainDb,
+            replay_gain_peak: var_replayGainPeak,
             has_waveform: var_hasWaveform,
             spectral_centroid: var_spectralCentroid,
             frequency_bands: var_frequencyBands,
             waveform_peaks: var_waveformPeaks,
             has_metadata: var_hasMetadata,
             metadata: var_metadata,
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustAudioChapter {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_title = <String>::sse_decode(deserializer);
+        let mut var_startMs = <u64>::sse_decode(deserializer);
+        let mut var_endMs = <u64>::sse_decode(deserializer);
+        return crate::api::types::RustAudioChapter {
+            title: var_title,
+            start_ms: var_startMs,
+            end_ms: var_endMs,
         };
     }
 }
@@ -5216,14 +5564,28 @@ impl SseDecode for crate::api::types::RustAudioInfo {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_durationMs = <Option<i64>>::sse_decode(deserializer);
         let mut var_sampleRate = <u32>::sse_decode(deserializer);
+        let mut var_rawSampleRate = <Option<u32>>::sse_decode(deserializer);
         let mut var_channels = <u32>::sse_decode(deserializer);
         let mut var_bitrate = <u32>::sse_decode(deserializer);
+        let mut var_bitsPerSample = <Option<u32>>::sse_decode(deserializer);
+        let mut var_codec = <String>::sse_decode(deserializer);
+        let mut var_containerFormat = <String>::sse_decode(deserializer);
+        let mut var_lossless = <bool>::sse_decode(deserializer);
+        let mut var_bitrateMode = <crate::api::types::RustBitrateMode>::sse_decode(deserializer);
+        let mut var_fileSize = <Option<u64>>::sse_decode(deserializer);
         let mut var_format = <Option<String>>::sse_decode(deserializer);
         return crate::api::types::RustAudioInfo {
             duration_ms: var_durationMs,
             sample_rate: var_sampleRate,
+            raw_sample_rate: var_rawSampleRate,
             channels: var_channels,
             bitrate: var_bitrate,
+            bits_per_sample: var_bitsPerSample,
+            codec: var_codec,
+            container_format: var_containerFormat,
+            lossless: var_lossless,
+            bitrate_mode: var_bitrateMode,
+            file_size: var_fileSize,
             format: var_format,
         };
     }
@@ -5261,8 +5623,60 @@ impl SseDecode for crate::api::types::RustAudioInputConfig {
 impl SseDecode for crate::api::types::RustAudioMetadata {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_title = <Option<String>>::sse_decode(deserializer);
+        let mut var_trackArtist = <Option<String>>::sse_decode(deserializer);
+        let mut var_album = <Option<String>>::sse_decode(deserializer);
+        let mut var_albumArtist = <Option<String>>::sse_decode(deserializer);
+        let mut var_year = <Option<u32>>::sse_decode(deserializer);
+        let mut var_genre = <Option<String>>::sse_decode(deserializer);
+        let mut var_trackNumber = <Option<u32>>::sse_decode(deserializer);
+        let mut var_trackTotal = <Option<u32>>::sse_decode(deserializer);
+        let mut var_discNumber = <Option<u32>>::sse_decode(deserializer);
+        let mut var_discTotal = <Option<u32>>::sse_decode(deserializer);
+        let mut var_lyrics = <Option<String>>::sse_decode(deserializer);
+        let mut var_comment = <Option<String>>::sse_decode(deserializer);
+        let mut var_bpm = <Option<f32>>::sse_decode(deserializer);
+        let mut var_replayGainTrackGain = <Option<String>>::sse_decode(deserializer);
+        let mut var_replayGainTrackPeak = <Option<String>>::sse_decode(deserializer);
+        let mut var_replayGainAlbumGain = <Option<String>>::sse_decode(deserializer);
+        let mut var_replayGainAlbumPeak = <Option<String>>::sse_decode(deserializer);
+        let mut var_pictures = <Vec<crate::api::types::RustAudioPicture>>::sse_decode(deserializer);
+        let mut var_extended = <crate::api::types::RustExtendedMetadata>::sse_decode(deserializer);
+        let mut var_chapters = <Vec<crate::api::types::RustAudioChapter>>::sse_decode(deserializer);
+        let mut var_customTags =
+            <Vec<crate::api::types::RustCustomTagField>>::sse_decode(deserializer);
+        let mut var_tagFormats = <Vec<String>>::sse_decode(deserializer);
+        let mut var_id3V2Version =
+            <Option<crate::api::types::RustId3v2Version>>::sse_decode(deserializer);
+        let mut var_icy = <Option<crate::api::types::RustIcyMetadata>>::sse_decode(deserializer);
         let mut var_bytes = <Vec<u8>>::sse_decode(deserializer);
-        return crate::api::types::RustAudioMetadata { bytes: var_bytes };
+        return crate::api::types::RustAudioMetadata {
+            title: var_title,
+            track_artist: var_trackArtist,
+            album: var_album,
+            album_artist: var_albumArtist,
+            year: var_year,
+            genre: var_genre,
+            track_number: var_trackNumber,
+            track_total: var_trackTotal,
+            disc_number: var_discNumber,
+            disc_total: var_discTotal,
+            lyrics: var_lyrics,
+            comment: var_comment,
+            bpm: var_bpm,
+            replay_gain_track_gain: var_replayGainTrackGain,
+            replay_gain_track_peak: var_replayGainTrackPeak,
+            replay_gain_album_gain: var_replayGainAlbumGain,
+            replay_gain_album_peak: var_replayGainAlbumPeak,
+            pictures: var_pictures,
+            extended: var_extended,
+            chapters: var_chapters,
+            custom_tags: var_customTags,
+            tag_formats: var_tagFormats,
+            id3v2_version: var_id3V2Version,
+            icy: var_icy,
+            bytes: var_bytes,
+        };
     }
 }
 
@@ -5274,6 +5688,22 @@ impl SseDecode for crate::api::types::RustAudioOutput {
         return crate::api::types::RustAudioOutput {
             device_id: var_deviceId,
             source: var_source,
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustAudioPicture {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_pictureType = <crate::api::types::RustPictureType>::sse_decode(deserializer);
+        let mut var_mimeType = <Option<crate::api::types::RustMimeType>>::sse_decode(deserializer);
+        let mut var_description = <Option<String>>::sse_decode(deserializer);
+        let mut var_bytes = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::types::RustAudioPicture {
+            picture_type: var_pictureType,
+            mime_type: var_mimeType,
+            description: var_description,
+            bytes: var_bytes,
         };
     }
 }
@@ -5295,6 +5725,19 @@ impl SseDecode for crate::api::types::RustAudioSource {
             data_bytes: var_dataBytes,
             replay_gain_db: var_replayGainDb,
             replay_peak: var_replayPeak,
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustBitrateMode {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::types::RustBitrateMode::Unknown,
+            1 => crate::api::types::RustBitrateMode::Cbr,
+            2 => crate::api::types::RustBitrateMode::Vbr,
+            _ => unreachable!("Invalid variant for RustBitrateMode: {}", inner),
         };
     }
 }
@@ -5353,6 +5796,18 @@ impl SseDecode for crate::api::types::RustCueConfig {
             device_id: var_deviceId,
             volume: var_volume,
             mode: var_mode,
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustCustomTagField {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_key = <String>::sse_decode(deserializer);
+        let mut var_value = <String>::sse_decode(deserializer);
+        return crate::api::types::RustCustomTagField {
+            key: var_key,
+            value: var_value,
         };
     }
 }
@@ -5445,6 +5900,138 @@ impl SseDecode for crate::api::types::RustEqualizerParams {
     }
 }
 
+impl SseDecode for crate::api::types::RustExtendedMetadata {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_musicBrainzRecordingId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzTrackId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzReleaseId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzReleaseGroupId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzArtistId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzReleaseArtistId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzWorkId = <Option<String>>::sse_decode(deserializer);
+        let mut var_musicBrainzReleaseType = <Option<String>>::sse_decode(deserializer);
+        let mut var_acoustId = <Option<String>>::sse_decode(deserializer);
+        let mut var_acoustIdFingerprint = <Option<String>>::sse_decode(deserializer);
+        let mut var_isrc = <Option<String>>::sse_decode(deserializer);
+        let mut var_barcode = <Option<String>>::sse_decode(deserializer);
+        let mut var_catalogNumber = <Option<String>>::sse_decode(deserializer);
+        let mut var_arranger = <Option<String>>::sse_decode(deserializer);
+        let mut var_conductor = <Option<String>>::sse_decode(deserializer);
+        let mut var_director = <Option<String>>::sse_decode(deserializer);
+        let mut var_engineer = <Option<String>>::sse_decode(deserializer);
+        let mut var_lyricist = <Option<String>>::sse_decode(deserializer);
+        let mut var_mixDj = <Option<String>>::sse_decode(deserializer);
+        let mut var_mixEngineer = <Option<String>>::sse_decode(deserializer);
+        let mut var_performer = <Option<String>>::sse_decode(deserializer);
+        let mut var_producer = <Option<String>>::sse_decode(deserializer);
+        let mut var_publisher = <Option<String>>::sse_decode(deserializer);
+        let mut var_label = <Option<String>>::sse_decode(deserializer);
+        let mut var_remixer = <Option<String>>::sse_decode(deserializer);
+        let mut var_writer = <Option<String>>::sse_decode(deserializer);
+        let mut var_composer = <Option<String>>::sse_decode(deserializer);
+        let mut var_originalLyricist = <Option<String>>::sse_decode(deserializer);
+        let mut var_recordingDate = <Option<String>>::sse_decode(deserializer);
+        let mut var_releaseDate = <Option<String>>::sse_decode(deserializer);
+        let mut var_originalReleaseDate = <Option<String>>::sse_decode(deserializer);
+        let mut var_initialKey = <Option<String>>::sse_decode(deserializer);
+        let mut var_color = <Option<String>>::sse_decode(deserializer);
+        let mut var_mood = <Option<String>>::sse_decode(deserializer);
+        let mut var_audioFileUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_audioSourceUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_commercialInformationUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_copyrightUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_trackArtistUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_radioStationUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_paymentUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_publisherUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_copyrightMessage = <Option<String>>::sse_decode(deserializer);
+        let mut var_license = <Option<String>>::sse_decode(deserializer);
+        let mut var_podcastDescription = <Option<String>>::sse_decode(deserializer);
+        let mut var_podcastSeriesCategory = <Option<String>>::sse_decode(deserializer);
+        let mut var_podcastUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_podcastGlobalUniqueId = <Option<String>>::sse_decode(deserializer);
+        let mut var_podcastKeywords = <Option<String>>::sse_decode(deserializer);
+        let mut var_setSubtitle = <Option<String>>::sse_decode(deserializer);
+        let mut var_showName = <Option<String>>::sse_decode(deserializer);
+        let mut var_contentGroup = <Option<String>>::sse_decode(deserializer);
+        let mut var_trackSubtitle = <Option<String>>::sse_decode(deserializer);
+        let mut var_language = <Option<String>>::sse_decode(deserializer);
+        let mut var_script = <Option<String>>::sse_decode(deserializer);
+        let mut var_parentalAdvisory = <Option<String>>::sse_decode(deserializer);
+        let mut var_fileOwner = <Option<String>>::sse_decode(deserializer);
+        let mut var_originalFileName = <Option<String>>::sse_decode(deserializer);
+        let mut var_originalMediaType = <Option<String>>::sse_decode(deserializer);
+        let mut var_encodedBy = <Option<String>>::sse_decode(deserializer);
+        let mut var_encoderSoftware = <Option<String>>::sse_decode(deserializer);
+        let mut var_encoderSettings = <Option<String>>::sse_decode(deserializer);
+        return crate::api::types::RustExtendedMetadata {
+            music_brainz_recording_id: var_musicBrainzRecordingId,
+            music_brainz_track_id: var_musicBrainzTrackId,
+            music_brainz_release_id: var_musicBrainzReleaseId,
+            music_brainz_release_group_id: var_musicBrainzReleaseGroupId,
+            music_brainz_artist_id: var_musicBrainzArtistId,
+            music_brainz_release_artist_id: var_musicBrainzReleaseArtistId,
+            music_brainz_work_id: var_musicBrainzWorkId,
+            music_brainz_release_type: var_musicBrainzReleaseType,
+            acoust_id: var_acoustId,
+            acoust_id_fingerprint: var_acoustIdFingerprint,
+            isrc: var_isrc,
+            barcode: var_barcode,
+            catalog_number: var_catalogNumber,
+            arranger: var_arranger,
+            conductor: var_conductor,
+            director: var_director,
+            engineer: var_engineer,
+            lyricist: var_lyricist,
+            mix_dj: var_mixDj,
+            mix_engineer: var_mixEngineer,
+            performer: var_performer,
+            producer: var_producer,
+            publisher: var_publisher,
+            label: var_label,
+            remixer: var_remixer,
+            writer: var_writer,
+            composer: var_composer,
+            original_lyricist: var_originalLyricist,
+            recording_date: var_recordingDate,
+            release_date: var_releaseDate,
+            original_release_date: var_originalReleaseDate,
+            initial_key: var_initialKey,
+            color: var_color,
+            mood: var_mood,
+            audio_file_url: var_audioFileUrl,
+            audio_source_url: var_audioSourceUrl,
+            commercial_information_url: var_commercialInformationUrl,
+            copyright_url: var_copyrightUrl,
+            track_artist_url: var_trackArtistUrl,
+            radio_station_url: var_radioStationUrl,
+            payment_url: var_paymentUrl,
+            publisher_url: var_publisherUrl,
+            copyright_message: var_copyrightMessage,
+            license: var_license,
+            podcast_description: var_podcastDescription,
+            podcast_series_category: var_podcastSeriesCategory,
+            podcast_url: var_podcastUrl,
+            podcast_global_unique_id: var_podcastGlobalUniqueId,
+            podcast_keywords: var_podcastKeywords,
+            set_subtitle: var_setSubtitle,
+            show_name: var_showName,
+            content_group: var_contentGroup,
+            track_subtitle: var_trackSubtitle,
+            language: var_language,
+            script: var_script,
+            parental_advisory: var_parentalAdvisory,
+            file_owner: var_fileOwner,
+            original_file_name: var_originalFileName,
+            original_media_type: var_originalMediaType,
+            encoded_by: var_encodedBy,
+            encoder_software: var_encoderSoftware,
+            encoder_settings: var_encoderSettings,
+        };
+    }
+}
+
 impl SseDecode for crate::api::types::RustHttpHeader {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5457,6 +6044,39 @@ impl SseDecode for crate::api::types::RustHttpHeader {
     }
 }
 
+impl SseDecode for crate::api::types::RustIcyMetadata {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_streamTitle = <Option<String>>::sse_decode(deserializer);
+        let mut var_streamUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_stationName = <Option<String>>::sse_decode(deserializer);
+        let mut var_stationGenre = <Option<String>>::sse_decode(deserializer);
+        let mut var_stationUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_bitrateKbps = <Option<u32>>::sse_decode(deserializer);
+        return crate::api::types::RustIcyMetadata {
+            stream_title: var_streamTitle,
+            stream_url: var_streamUrl,
+            station_name: var_stationName,
+            station_genre: var_stationGenre,
+            station_url: var_stationUrl,
+            bitrate_kbps: var_bitrateKbps,
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustId3v2Version {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::types::RustId3v2Version::V2,
+            1 => crate::api::types::RustId3v2Version::V3,
+            2 => crate::api::types::RustId3v2Version::V4,
+            _ => unreachable!("Invalid variant for RustId3v2Version: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::types::RustInfiniteMixConfig {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5465,6 +6085,54 @@ impl SseDecode for crate::api::types::RustInfiniteMixConfig {
         return crate::api::types::RustInfiniteMixConfig {
             enabled: var_enabled,
             remaining_tracks_threshold: var_remainingTracksThreshold,
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustMimeType {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::types::RustMimeType::Png,
+            1 => crate::api::types::RustMimeType::Jpeg,
+            2 => crate::api::types::RustMimeType::Tiff,
+            3 => crate::api::types::RustMimeType::Bmp,
+            4 => crate::api::types::RustMimeType::Gif,
+            5 => crate::api::types::RustMimeType::Webp,
+            6 => crate::api::types::RustMimeType::Unknown,
+            _ => unreachable!("Invalid variant for RustMimeType: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::types::RustPictureType {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::types::RustPictureType::Other,
+            1 => crate::api::types::RustPictureType::Icon,
+            2 => crate::api::types::RustPictureType::OtherIcon,
+            3 => crate::api::types::RustPictureType::CoverFront,
+            4 => crate::api::types::RustPictureType::CoverBack,
+            5 => crate::api::types::RustPictureType::Leaflet,
+            6 => crate::api::types::RustPictureType::Media,
+            7 => crate::api::types::RustPictureType::LeadArtist,
+            8 => crate::api::types::RustPictureType::Artist,
+            9 => crate::api::types::RustPictureType::Conductor,
+            10 => crate::api::types::RustPictureType::Band,
+            11 => crate::api::types::RustPictureType::Composer,
+            12 => crate::api::types::RustPictureType::Lyricist,
+            13 => crate::api::types::RustPictureType::RecordingLocation,
+            14 => crate::api::types::RustPictureType::DuringRecording,
+            15 => crate::api::types::RustPictureType::DuringPerformance,
+            16 => crate::api::types::RustPictureType::ScreenCapture,
+            17 => crate::api::types::RustPictureType::BrightFish,
+            18 => crate::api::types::RustPictureType::Illustration,
+            19 => crate::api::types::RustPictureType::BandLogo,
+            20 => crate::api::types::RustPictureType::PublisherLogo,
+            _ => unreachable!("Invalid variant for RustPictureType: {}", inner),
         };
     }
 }
@@ -6144,152 +6812,197 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__types__rust_audio_device_default_impl(
+        76 => wire__crate__api__types__rust_audio_chapter_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => {
+        77 => wire__crate__api__types__rust_audio_device_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        78 => {
             wire__crate__api__types__rust_audio_info_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        78 => wire__crate__api__types__rust_audio_input_config_default_impl(
+        79 => wire__crate__api__types__rust_audio_input_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__types__rust_audio_metadata_default_impl(
+        80 => wire__crate__api__types__rust_audio_metadata_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__types__rust_audio_source_default_impl(
+        81 => wire__crate__api__types__rust_audio_picture_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__types__rust_buffer_default_impl(port, ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__types__rust_crossfade_config_default_impl(
+        82 => wire__crate__api__types__rust_audio_source_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        83 => wire__crate__api__types__rust_crossfeed_config_default_impl(
+        83 => wire__crate__api__types__rust_bitrate_mode_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        84 => {
+        84 => wire__crate__api__types__rust_buffer_default_impl(port, ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__types__rust_crossfade_config_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        86 => wire__crate__api__types__rust_crossfeed_config_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        87 => {
             wire__crate__api__types__rust_cue_config_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        85 => wire__crate__api__types__rust_distance_model_default_impl(
+        88 => wire__crate__api__types__rust_custom_tag_field_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        86 => wire__crate__api__types__rust_ducking_config_default_impl(
+        89 => wire__crate__api__types__rust_distance_model_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        87 => wire__crate__api__types__rust_effect_config_default_impl(
+        90 => wire__crate__api__types__rust_ducking_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        88 => wire__crate__api__types__rust_equalizer_params_default_impl(
+        91 => wire__crate__api__types__rust_effect_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        89 => wire__crate__api__types__rust_http_header_default_impl(
+        92 => wire__crate__api__types__rust_equalizer_params_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        90 => wire__crate__api__types__rust_infinite_mix_config_default_impl(
+        93 => wire__crate__api__types__rust_extended_metadata_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        91 => wire__crate__api__types__rust_player_config_default_impl(
+        94 => wire__crate__api__types__rust_http_header_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        92 => wire__crate__api__types__rust_player_status_default_impl(
+        95 => wire__crate__api__types__rust_icy_metadata_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        93 => wire__crate__api__types__rust_replay_gain_config_default_impl(
+        96 => wire__crate__api__types__rust_infinite_mix_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        94 => wire__crate__api__types__rust_reverb_params_default_impl(
+        97 => {
+            wire__crate__api__types__rust_mime_type_default_impl(port, ptr, rust_vec_len, data_len)
+        }
+        98 => wire__crate__api__types__rust_picture_type_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        95 => wire__crate__api__types__rust_silence_config_default_impl(
+        99 => wire__crate__api__types__rust_player_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        96 => wire__crate__api__types__rust_sound_buffer_info_default_impl(
+        100 => wire__crate__api__types__rust_player_status_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        97 => wire__crate__api__types__rust_spatial_emitter_default_impl(
+        101 => wire__crate__api__types__rust_replay_gain_config_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        98 => wire__crate__api__types__rust_spatial_listener_default_impl(
+        102 => wire__crate__api__types__rust_reverb_params_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        99 => {
+        103 => wire__crate__api__types__rust_silence_config_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        104 => wire__crate__api__types__rust_sound_buffer_info_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        105 => wire__crate__api__types__rust_spatial_emitter_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        106 => wire__crate__api__types__rust_spatial_listener_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        107 => {
             wire__crate__api__types__rust_vector_3_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        100 => wire__crate__api__types__rust_visualizer_data_default_impl(
+        108 => wire__crate__api__types__rust_visualizer_data_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        101 => wire__crate__api__types__rust_voice_stealing_policy_default_impl(
+        109 => wire__crate__api__types__rust_voice_stealing_policy_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        102 => {
+        110 => {
             wire__crate__api__types__rust_wav_format_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        104 => wire__crate__api__player__telemetry_filter_default_impl(
+        112 => wire__crate__api__player__telemetry_filter_default_impl(
             port,
             ptr,
             rust_vec_len,
@@ -6560,7 +7273,7 @@ fn pde_ffi_dispatcher_sync_impl(
             data_len,
         ),
         73 => wire__crate__api__player__analyze_audio_source_sync_impl(ptr, rust_vec_len, data_len),
-        103 => wire__crate__api__player__set_log_level_impl(ptr, rust_vec_len, data_len),
+        111 => wire__crate__api__player__set_log_level_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6630,11 +7343,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustAudioAnalysisResul
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.audio_info.into_into_dart().into_dart(),
-            self.peak_amplitude.into_into_dart().into_dart(),
-            self.rms_amplitude.into_into_dart().into_dart(),
             self.has_replay_gain.into_into_dart().into_dart(),
             self.integrated_lufs.into_into_dart().into_dart(),
             self.replay_gain_db.into_into_dart().into_dart(),
+            self.replay_gain_peak.into_into_dart().into_dart(),
             self.has_waveform.into_into_dart().into_dart(),
             self.spectral_centroid.into_into_dart().into_dart(),
             self.frequency_bands.into_into_dart().into_dart(),
@@ -6653,6 +7365,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioAnalysisResul
     for crate::api::types::RustAudioAnalysisResult
 {
     fn into_into_dart(self) -> crate::api::types::RustAudioAnalysisResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustAudioChapter {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.title.into_into_dart().into_dart(),
+            self.start_ms.into_into_dart().into_dart(),
+            self.end_ms.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustAudioChapter
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioChapter>
+    for crate::api::types::RustAudioChapter
+{
+    fn into_into_dart(self) -> crate::api::types::RustAudioChapter {
         self
     }
 }
@@ -6709,8 +7443,15 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustAudioInfo {
         [
             self.duration_ms.into_into_dart().into_dart(),
             self.sample_rate.into_into_dart().into_dart(),
+            self.raw_sample_rate.into_into_dart().into_dart(),
             self.channels.into_into_dart().into_dart(),
             self.bitrate.into_into_dart().into_dart(),
+            self.bits_per_sample.into_into_dart().into_dart(),
+            self.codec.into_into_dart().into_dart(),
+            self.container_format.into_into_dart().into_dart(),
+            self.lossless.into_into_dart().into_dart(),
+            self.bitrate_mode.into_into_dart().into_dart(),
+            self.file_size.into_into_dart().into_dart(),
             self.format.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -6774,7 +7515,34 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioInputConfig>
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::types::RustAudioMetadata {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [self.bytes.into_into_dart().into_dart()].into_dart()
+        [
+            self.title.into_into_dart().into_dart(),
+            self.track_artist.into_into_dart().into_dart(),
+            self.album.into_into_dart().into_dart(),
+            self.album_artist.into_into_dart().into_dart(),
+            self.year.into_into_dart().into_dart(),
+            self.genre.into_into_dart().into_dart(),
+            self.track_number.into_into_dart().into_dart(),
+            self.track_total.into_into_dart().into_dart(),
+            self.disc_number.into_into_dart().into_dart(),
+            self.disc_total.into_into_dart().into_dart(),
+            self.lyrics.into_into_dart().into_dart(),
+            self.comment.into_into_dart().into_dart(),
+            self.bpm.into_into_dart().into_dart(),
+            self.replay_gain_track_gain.into_into_dart().into_dart(),
+            self.replay_gain_track_peak.into_into_dart().into_dart(),
+            self.replay_gain_album_gain.into_into_dart().into_dart(),
+            self.replay_gain_album_peak.into_into_dart().into_dart(),
+            self.pictures.into_into_dart().into_dart(),
+            self.extended.into_into_dart().into_dart(),
+            self.chapters.into_into_dart().into_dart(),
+            self.custom_tags.into_into_dart().into_dart(),
+            self.tag_formats.into_into_dart().into_dart(),
+            self.id3v2_version.into_into_dart().into_dart(),
+            self.icy.into_into_dart().into_dart(),
+            self.bytes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
     }
 }
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
@@ -6810,6 +7578,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioOutput>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustAudioPicture {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.picture_type.into_into_dart().into_dart(),
+            self.mime_type.into_into_dart().into_dart(),
+            self.description.into_into_dart().into_dart(),
+            self.bytes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustAudioPicture
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioPicture>
+    for crate::api::types::RustAudioPicture
+{
+    fn into_into_dart(self) -> crate::api::types::RustAudioPicture {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::types::RustAudioSource {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -6831,6 +7622,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustAudioSource>
     for crate::api::types::RustAudioSource
 {
     fn into_into_dart(self) -> crate::api::types::RustAudioSource {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustBitrateMode {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Unknown => 0.into_dart(),
+            Self::Cbr => 1.into_dart(),
+            Self::Vbr => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustBitrateMode
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustBitrateMode>
+    for crate::api::types::RustBitrateMode
+{
+    fn into_into_dart(self) -> crate::api::types::RustBitrateMode {
         self
     }
 }
@@ -6917,6 +7730,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustCueConfig>
     for crate::api::types::RustCueConfig
 {
     fn into_into_dart(self) -> crate::api::types::RustCueConfig {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustCustomTagField {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.key.into_into_dart().into_dart(),
+            self.value.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustCustomTagField
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustCustomTagField>
+    for crate::api::types::RustCustomTagField
+{
+    fn into_into_dart(self) -> crate::api::types::RustCustomTagField {
         self
     }
 }
@@ -7040,6 +7874,91 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustEqualizerParams>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustExtendedMetadata {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.music_brainz_recording_id.into_into_dart().into_dart(),
+            self.music_brainz_track_id.into_into_dart().into_dart(),
+            self.music_brainz_release_id.into_into_dart().into_dart(),
+            self.music_brainz_release_group_id
+                .into_into_dart()
+                .into_dart(),
+            self.music_brainz_artist_id.into_into_dart().into_dart(),
+            self.music_brainz_release_artist_id
+                .into_into_dart()
+                .into_dart(),
+            self.music_brainz_work_id.into_into_dart().into_dart(),
+            self.music_brainz_release_type.into_into_dart().into_dart(),
+            self.acoust_id.into_into_dart().into_dart(),
+            self.acoust_id_fingerprint.into_into_dart().into_dart(),
+            self.isrc.into_into_dart().into_dart(),
+            self.barcode.into_into_dart().into_dart(),
+            self.catalog_number.into_into_dart().into_dart(),
+            self.arranger.into_into_dart().into_dart(),
+            self.conductor.into_into_dart().into_dart(),
+            self.director.into_into_dart().into_dart(),
+            self.engineer.into_into_dart().into_dart(),
+            self.lyricist.into_into_dart().into_dart(),
+            self.mix_dj.into_into_dart().into_dart(),
+            self.mix_engineer.into_into_dart().into_dart(),
+            self.performer.into_into_dart().into_dart(),
+            self.producer.into_into_dart().into_dart(),
+            self.publisher.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.remixer.into_into_dart().into_dart(),
+            self.writer.into_into_dart().into_dart(),
+            self.composer.into_into_dart().into_dart(),
+            self.original_lyricist.into_into_dart().into_dart(),
+            self.recording_date.into_into_dart().into_dart(),
+            self.release_date.into_into_dart().into_dart(),
+            self.original_release_date.into_into_dart().into_dart(),
+            self.initial_key.into_into_dart().into_dart(),
+            self.color.into_into_dart().into_dart(),
+            self.mood.into_into_dart().into_dart(),
+            self.audio_file_url.into_into_dart().into_dart(),
+            self.audio_source_url.into_into_dart().into_dart(),
+            self.commercial_information_url.into_into_dart().into_dart(),
+            self.copyright_url.into_into_dart().into_dart(),
+            self.track_artist_url.into_into_dart().into_dart(),
+            self.radio_station_url.into_into_dart().into_dart(),
+            self.payment_url.into_into_dart().into_dart(),
+            self.publisher_url.into_into_dart().into_dart(),
+            self.copyright_message.into_into_dart().into_dart(),
+            self.license.into_into_dart().into_dart(),
+            self.podcast_description.into_into_dart().into_dart(),
+            self.podcast_series_category.into_into_dart().into_dart(),
+            self.podcast_url.into_into_dart().into_dart(),
+            self.podcast_global_unique_id.into_into_dart().into_dart(),
+            self.podcast_keywords.into_into_dart().into_dart(),
+            self.set_subtitle.into_into_dart().into_dart(),
+            self.show_name.into_into_dart().into_dart(),
+            self.content_group.into_into_dart().into_dart(),
+            self.track_subtitle.into_into_dart().into_dart(),
+            self.language.into_into_dart().into_dart(),
+            self.script.into_into_dart().into_dart(),
+            self.parental_advisory.into_into_dart().into_dart(),
+            self.file_owner.into_into_dart().into_dart(),
+            self.original_file_name.into_into_dart().into_dart(),
+            self.original_media_type.into_into_dart().into_dart(),
+            self.encoded_by.into_into_dart().into_dart(),
+            self.encoder_software.into_into_dart().into_dart(),
+            self.encoder_settings.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustExtendedMetadata
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustExtendedMetadata>
+    for crate::api::types::RustExtendedMetadata
+{
+    fn into_into_dart(self) -> crate::api::types::RustExtendedMetadata {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::types::RustHttpHeader {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -7061,6 +7980,53 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustHttpHeader>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustIcyMetadata {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.stream_title.into_into_dart().into_dart(),
+            self.stream_url.into_into_dart().into_dart(),
+            self.station_name.into_into_dart().into_dart(),
+            self.station_genre.into_into_dart().into_dart(),
+            self.station_url.into_into_dart().into_dart(),
+            self.bitrate_kbps.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustIcyMetadata
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustIcyMetadata>
+    for crate::api::types::RustIcyMetadata
+{
+    fn into_into_dart(self) -> crate::api::types::RustIcyMetadata {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustId3v2Version {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::V2 => 0.into_dart(),
+            Self::V3 => 1.into_dart(),
+            Self::V4 => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustId3v2Version
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustId3v2Version>
+    for crate::api::types::RustId3v2Version
+{
+    fn into_into_dart(self) -> crate::api::types::RustId3v2Version {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::types::RustInfiniteMixConfig {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -7078,6 +8044,72 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustInfiniteMixConfig>
     for crate::api::types::RustInfiniteMixConfig
 {
     fn into_into_dart(self) -> crate::api::types::RustInfiniteMixConfig {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustMimeType {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Png => 0.into_dart(),
+            Self::Jpeg => 1.into_dart(),
+            Self::Tiff => 2.into_dart(),
+            Self::Bmp => 3.into_dart(),
+            Self::Gif => 4.into_dart(),
+            Self::Webp => 5.into_dart(),
+            Self::Unknown => 6.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustMimeType
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustMimeType>
+    for crate::api::types::RustMimeType
+{
+    fn into_into_dart(self) -> crate::api::types::RustMimeType {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::types::RustPictureType {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Other => 0.into_dart(),
+            Self::Icon => 1.into_dart(),
+            Self::OtherIcon => 2.into_dart(),
+            Self::CoverFront => 3.into_dart(),
+            Self::CoverBack => 4.into_dart(),
+            Self::Leaflet => 5.into_dart(),
+            Self::Media => 6.into_dart(),
+            Self::LeadArtist => 7.into_dart(),
+            Self::Artist => 8.into_dart(),
+            Self::Conductor => 9.into_dart(),
+            Self::Band => 10.into_dart(),
+            Self::Composer => 11.into_dart(),
+            Self::Lyricist => 12.into_dart(),
+            Self::RecordingLocation => 13.into_dart(),
+            Self::DuringRecording => 14.into_dart(),
+            Self::DuringPerformance => 15.into_dart(),
+            Self::ScreenCapture => 16.into_dart(),
+            Self::BrightFish => 17.into_dart(),
+            Self::Illustration => 18.into_dart(),
+            Self::BandLogo => 19.into_dart(),
+            Self::PublisherLogo => 20.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::types::RustPictureType
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::types::RustPictureType>
+    for crate::api::types::RustPictureType
+{
+    fn into_into_dart(self) -> crate::api::types::RustPictureType {
         self
     }
 }
@@ -7767,6 +8799,16 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Vec<crate::api::types::RustAudioChapter> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::types::RustAudioChapter>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::types::RustAudioDevice> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -7807,12 +8849,32 @@ impl SseEncode for Vec<crate::api::types::RustAudioOutput> {
     }
 }
 
+impl SseEncode for Vec<crate::api::types::RustAudioPicture> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::types::RustAudioPicture>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::types::RustAudioSource> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::types::RustAudioSource>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::types::RustCustomTagField> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::types::RustCustomTagField>::sse_encode(item, serializer);
         }
     }
 }
@@ -7913,6 +8975,36 @@ impl SseEncode for Option<crate::api::types::RustDuckingConfig> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::types::RustDuckingConfig>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::types::RustIcyMetadata> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::types::RustIcyMetadata>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::types::RustId3v2Version> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::types::RustId3v2Version>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::types::RustMimeType> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::types::RustMimeType>::sse_encode(value, serializer);
         }
     }
 }
@@ -8034,17 +9126,25 @@ impl SseEncode for crate::api::types::RustAudioAnalysisResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <crate::api::types::RustAudioInfo>::sse_encode(self.audio_info, serializer);
-        <f32>::sse_encode(self.peak_amplitude, serializer);
-        <f32>::sse_encode(self.rms_amplitude, serializer);
         <bool>::sse_encode(self.has_replay_gain, serializer);
         <f32>::sse_encode(self.integrated_lufs, serializer);
         <f32>::sse_encode(self.replay_gain_db, serializer);
+        <f32>::sse_encode(self.replay_gain_peak, serializer);
         <bool>::sse_encode(self.has_waveform, serializer);
         <f32>::sse_encode(self.spectral_centroid, serializer);
         <Vec<f32>>::sse_encode(self.frequency_bands, serializer);
         <Vec<f32>>::sse_encode(self.waveform_peaks, serializer);
         <bool>::sse_encode(self.has_metadata, serializer);
         <Option<crate::api::types::RustAudioMetadata>>::sse_encode(self.metadata, serializer);
+    }
+}
+
+impl SseEncode for crate::api::types::RustAudioChapter {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.title, serializer);
+        <u64>::sse_encode(self.start_ms, serializer);
+        <u64>::sse_encode(self.end_ms, serializer);
     }
 }
 
@@ -8074,8 +9174,15 @@ impl SseEncode for crate::api::types::RustAudioInfo {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<i64>>::sse_encode(self.duration_ms, serializer);
         <u32>::sse_encode(self.sample_rate, serializer);
+        <Option<u32>>::sse_encode(self.raw_sample_rate, serializer);
         <u32>::sse_encode(self.channels, serializer);
         <u32>::sse_encode(self.bitrate, serializer);
+        <Option<u32>>::sse_encode(self.bits_per_sample, serializer);
+        <String>::sse_encode(self.codec, serializer);
+        <String>::sse_encode(self.container_format, serializer);
+        <bool>::sse_encode(self.lossless, serializer);
+        <crate::api::types::RustBitrateMode>::sse_encode(self.bitrate_mode, serializer);
+        <Option<u64>>::sse_encode(self.file_size, serializer);
         <Option<String>>::sse_encode(self.format, serializer);
     }
 }
@@ -8101,6 +9208,30 @@ impl SseEncode for crate::api::types::RustAudioInputConfig {
 impl SseEncode for crate::api::types::RustAudioMetadata {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.title, serializer);
+        <Option<String>>::sse_encode(self.track_artist, serializer);
+        <Option<String>>::sse_encode(self.album, serializer);
+        <Option<String>>::sse_encode(self.album_artist, serializer);
+        <Option<u32>>::sse_encode(self.year, serializer);
+        <Option<String>>::sse_encode(self.genre, serializer);
+        <Option<u32>>::sse_encode(self.track_number, serializer);
+        <Option<u32>>::sse_encode(self.track_total, serializer);
+        <Option<u32>>::sse_encode(self.disc_number, serializer);
+        <Option<u32>>::sse_encode(self.disc_total, serializer);
+        <Option<String>>::sse_encode(self.lyrics, serializer);
+        <Option<String>>::sse_encode(self.comment, serializer);
+        <Option<f32>>::sse_encode(self.bpm, serializer);
+        <Option<String>>::sse_encode(self.replay_gain_track_gain, serializer);
+        <Option<String>>::sse_encode(self.replay_gain_track_peak, serializer);
+        <Option<String>>::sse_encode(self.replay_gain_album_gain, serializer);
+        <Option<String>>::sse_encode(self.replay_gain_album_peak, serializer);
+        <Vec<crate::api::types::RustAudioPicture>>::sse_encode(self.pictures, serializer);
+        <crate::api::types::RustExtendedMetadata>::sse_encode(self.extended, serializer);
+        <Vec<crate::api::types::RustAudioChapter>>::sse_encode(self.chapters, serializer);
+        <Vec<crate::api::types::RustCustomTagField>>::sse_encode(self.custom_tags, serializer);
+        <Vec<String>>::sse_encode(self.tag_formats, serializer);
+        <Option<crate::api::types::RustId3v2Version>>::sse_encode(self.id3v2_version, serializer);
+        <Option<crate::api::types::RustIcyMetadata>>::sse_encode(self.icy, serializer);
         <Vec<u8>>::sse_encode(self.bytes, serializer);
     }
 }
@@ -8113,6 +9244,16 @@ impl SseEncode for crate::api::types::RustAudioOutput {
     }
 }
 
+impl SseEncode for crate::api::types::RustAudioPicture {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::types::RustPictureType>::sse_encode(self.picture_type, serializer);
+        <Option<crate::api::types::RustMimeType>>::sse_encode(self.mime_type, serializer);
+        <Option<String>>::sse_encode(self.description, serializer);
+        <Vec<u8>>::sse_encode(self.bytes, serializer);
+    }
+}
+
 impl SseEncode for crate::api::types::RustAudioSource {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -8122,6 +9263,23 @@ impl SseEncode for crate::api::types::RustAudioSource {
         <Option<Vec<u8>>>::sse_encode(self.data_bytes, serializer);
         <Option<f32>>::sse_encode(self.replay_gain_db, serializer);
         <Option<f32>>::sse_encode(self.replay_peak, serializer);
+    }
+}
+
+impl SseEncode for crate::api::types::RustBitrateMode {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::types::RustBitrateMode::Unknown => 0,
+                crate::api::types::RustBitrateMode::Cbr => 1,
+                crate::api::types::RustBitrateMode::Vbr => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -8159,6 +9317,14 @@ impl SseEncode for crate::api::types::RustCueConfig {
         <Option<String>>::sse_encode(self.device_id, serializer);
         <f32>::sse_encode(self.volume, serializer);
         <i32>::sse_encode(self.mode, serializer);
+    }
+}
+
+impl SseEncode for crate::api::types::RustCustomTagField {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.key, serializer);
+        <String>::sse_encode(self.value, serializer);
     }
 }
 
@@ -8224,6 +9390,74 @@ impl SseEncode for crate::api::types::RustEqualizerParams {
     }
 }
 
+impl SseEncode for crate::api::types::RustExtendedMetadata {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.music_brainz_recording_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_track_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_release_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_release_group_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_artist_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_release_artist_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_work_id, serializer);
+        <Option<String>>::sse_encode(self.music_brainz_release_type, serializer);
+        <Option<String>>::sse_encode(self.acoust_id, serializer);
+        <Option<String>>::sse_encode(self.acoust_id_fingerprint, serializer);
+        <Option<String>>::sse_encode(self.isrc, serializer);
+        <Option<String>>::sse_encode(self.barcode, serializer);
+        <Option<String>>::sse_encode(self.catalog_number, serializer);
+        <Option<String>>::sse_encode(self.arranger, serializer);
+        <Option<String>>::sse_encode(self.conductor, serializer);
+        <Option<String>>::sse_encode(self.director, serializer);
+        <Option<String>>::sse_encode(self.engineer, serializer);
+        <Option<String>>::sse_encode(self.lyricist, serializer);
+        <Option<String>>::sse_encode(self.mix_dj, serializer);
+        <Option<String>>::sse_encode(self.mix_engineer, serializer);
+        <Option<String>>::sse_encode(self.performer, serializer);
+        <Option<String>>::sse_encode(self.producer, serializer);
+        <Option<String>>::sse_encode(self.publisher, serializer);
+        <Option<String>>::sse_encode(self.label, serializer);
+        <Option<String>>::sse_encode(self.remixer, serializer);
+        <Option<String>>::sse_encode(self.writer, serializer);
+        <Option<String>>::sse_encode(self.composer, serializer);
+        <Option<String>>::sse_encode(self.original_lyricist, serializer);
+        <Option<String>>::sse_encode(self.recording_date, serializer);
+        <Option<String>>::sse_encode(self.release_date, serializer);
+        <Option<String>>::sse_encode(self.original_release_date, serializer);
+        <Option<String>>::sse_encode(self.initial_key, serializer);
+        <Option<String>>::sse_encode(self.color, serializer);
+        <Option<String>>::sse_encode(self.mood, serializer);
+        <Option<String>>::sse_encode(self.audio_file_url, serializer);
+        <Option<String>>::sse_encode(self.audio_source_url, serializer);
+        <Option<String>>::sse_encode(self.commercial_information_url, serializer);
+        <Option<String>>::sse_encode(self.copyright_url, serializer);
+        <Option<String>>::sse_encode(self.track_artist_url, serializer);
+        <Option<String>>::sse_encode(self.radio_station_url, serializer);
+        <Option<String>>::sse_encode(self.payment_url, serializer);
+        <Option<String>>::sse_encode(self.publisher_url, serializer);
+        <Option<String>>::sse_encode(self.copyright_message, serializer);
+        <Option<String>>::sse_encode(self.license, serializer);
+        <Option<String>>::sse_encode(self.podcast_description, serializer);
+        <Option<String>>::sse_encode(self.podcast_series_category, serializer);
+        <Option<String>>::sse_encode(self.podcast_url, serializer);
+        <Option<String>>::sse_encode(self.podcast_global_unique_id, serializer);
+        <Option<String>>::sse_encode(self.podcast_keywords, serializer);
+        <Option<String>>::sse_encode(self.set_subtitle, serializer);
+        <Option<String>>::sse_encode(self.show_name, serializer);
+        <Option<String>>::sse_encode(self.content_group, serializer);
+        <Option<String>>::sse_encode(self.track_subtitle, serializer);
+        <Option<String>>::sse_encode(self.language, serializer);
+        <Option<String>>::sse_encode(self.script, serializer);
+        <Option<String>>::sse_encode(self.parental_advisory, serializer);
+        <Option<String>>::sse_encode(self.file_owner, serializer);
+        <Option<String>>::sse_encode(self.original_file_name, serializer);
+        <Option<String>>::sse_encode(self.original_media_type, serializer);
+        <Option<String>>::sse_encode(self.encoded_by, serializer);
+        <Option<String>>::sse_encode(self.encoder_software, serializer);
+        <Option<String>>::sse_encode(self.encoder_settings, serializer);
+    }
+}
+
 impl SseEncode for crate::api::types::RustHttpHeader {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -8232,11 +9466,96 @@ impl SseEncode for crate::api::types::RustHttpHeader {
     }
 }
 
+impl SseEncode for crate::api::types::RustIcyMetadata {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.stream_title, serializer);
+        <Option<String>>::sse_encode(self.stream_url, serializer);
+        <Option<String>>::sse_encode(self.station_name, serializer);
+        <Option<String>>::sse_encode(self.station_genre, serializer);
+        <Option<String>>::sse_encode(self.station_url, serializer);
+        <Option<u32>>::sse_encode(self.bitrate_kbps, serializer);
+    }
+}
+
+impl SseEncode for crate::api::types::RustId3v2Version {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::types::RustId3v2Version::V2 => 0,
+                crate::api::types::RustId3v2Version::V3 => 1,
+                crate::api::types::RustId3v2Version::V4 => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::types::RustInfiniteMixConfig {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.enabled, serializer);
         <u32>::sse_encode(self.remaining_tracks_threshold, serializer);
+    }
+}
+
+impl SseEncode for crate::api::types::RustMimeType {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::types::RustMimeType::Png => 0,
+                crate::api::types::RustMimeType::Jpeg => 1,
+                crate::api::types::RustMimeType::Tiff => 2,
+                crate::api::types::RustMimeType::Bmp => 3,
+                crate::api::types::RustMimeType::Gif => 4,
+                crate::api::types::RustMimeType::Webp => 5,
+                crate::api::types::RustMimeType::Unknown => 6,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::types::RustPictureType {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::types::RustPictureType::Other => 0,
+                crate::api::types::RustPictureType::Icon => 1,
+                crate::api::types::RustPictureType::OtherIcon => 2,
+                crate::api::types::RustPictureType::CoverFront => 3,
+                crate::api::types::RustPictureType::CoverBack => 4,
+                crate::api::types::RustPictureType::Leaflet => 5,
+                crate::api::types::RustPictureType::Media => 6,
+                crate::api::types::RustPictureType::LeadArtist => 7,
+                crate::api::types::RustPictureType::Artist => 8,
+                crate::api::types::RustPictureType::Conductor => 9,
+                crate::api::types::RustPictureType::Band => 10,
+                crate::api::types::RustPictureType::Composer => 11,
+                crate::api::types::RustPictureType::Lyricist => 12,
+                crate::api::types::RustPictureType::RecordingLocation => 13,
+                crate::api::types::RustPictureType::DuringRecording => 14,
+                crate::api::types::RustPictureType::DuringPerformance => 15,
+                crate::api::types::RustPictureType::ScreenCapture => 16,
+                crate::api::types::RustPictureType::BrightFish => 17,
+                crate::api::types::RustPictureType::Illustration => 18,
+                crate::api::types::RustPictureType::BandLogo => 19,
+                crate::api::types::RustPictureType::PublisherLogo => 20,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

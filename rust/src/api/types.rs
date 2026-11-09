@@ -366,25 +366,286 @@ impl From<crate::core::dual_source::MiniaudioPlayerStatus> for RustPlayerStatus 
     }
 }
 
+/// Bitrate encoding mode of an audio stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustBitrateMode {
+    /// Bitrate mode could not be determined or is not applicable.
+    #[default]
+    Unknown,
+    /// Constant Bitrate (CBR).
+    Cbr,
+    /// Variable Bitrate (VBR).
+    Vbr,
+}
+
 /// Technical format and stream characteristics of an audio asset.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RustAudioInfo {
     /// Total duration in milliseconds, or None if unknown / infinite livestream.
     pub duration_ms: Option<i64>,
-    /// Sample rate in Hz.
+    /// Decoded output PCM sample rate in Hz.
     pub sample_rate: u32,
+    /// Native stream sample rate in Hz before decimation (e.g., 2822400 Hz for DSD64).
+    pub raw_sample_rate: Option<u32>,
     /// Channel count.
     pub channels: u32,
     /// Nominal bitrate in bps.
     pub bitrate: u32,
-    /// Container/codec format string (e.g. "mp3", "flac", "wav").
+    /// Bit depth per sample (e.g. 16, 24, 32, or 1 for DSD).
+    pub bits_per_sample: Option<u32>,
+    /// Canonical codec name (e.g. "MP3", "FLAC", "AAC", "ALAC", "Opus", "Vorbis", "PCM", "DSD", "APE", "WavPack").
+    pub codec: String,
+    /// Canonical container format (e.g. "MP3", "FLAC", "MP4", "Ogg", "WAV", "RF64", "W64", "RIFX", "AIFF", "CAF", "Matroska", "DSF", "APE", "WavPack", "ADTS", "HLS").
+    pub container_format: String,
+    /// Whether the audio codec is lossless.
+    pub lossless: bool,
+    /// Bitrate encoding mode (Unknown, Cbr, Vbr).
+    pub bitrate_mode: RustBitrateMode,
+    /// Total file or stream byte size when known.
+    pub file_size: Option<u64>,
+    /// Short container/codec format hint string (e.g. "mp3", "flac", "wav").
     pub format: Option<String>,
 }
 
-/// Container encapsulating raw audio metadata bytes.
+/// Type of embedded picture according to ID3v2 APIC / FLAC Picture standards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustPictureType {
+    #[default]
+    Other,
+    Icon,
+    OtherIcon,
+    CoverFront,
+    CoverBack,
+    Leaflet,
+    Media,
+    LeadArtist,
+    Artist,
+    Conductor,
+    Band,
+    Composer,
+    Lyricist,
+    RecordingLocation,
+    DuringRecording,
+    DuringPerformance,
+    ScreenCapture,
+    BrightFish,
+    Illustration,
+    BandLogo,
+    PublisherLogo,
+}
+
+/// MIME type of an embedded picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustMimeType {
+    Png,
+    Jpeg,
+    Tiff,
+    Bmp,
+    Gif,
+    Webp,
+    #[default]
+    Unknown,
+}
+
+/// Embedded artwork/picture extracted from an audio container.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustAudioPicture {
+    /// Picture category (e.g. CoverFront, CoverBack, Artist).
+    pub picture_type: RustPictureType,
+    /// Detected or declared image MIME type.
+    pub mime_type: Option<RustMimeType>,
+    /// Optional textual description attached to the picture frame.
+    pub description: Option<String>,
+    /// Raw encoded image bytes (PNG, JPEG, WebP, etc.).
+    pub bytes: Vec<u8>,
+}
+
+/// Chapter marker embedded in the audio file.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustAudioChapter {
+    /// Chapter title.
+    pub title: String,
+    /// Chapter start timestamp in milliseconds.
+    pub start_ms: u64,
+    /// Chapter end timestamp in milliseconds.
+    pub end_ms: u64,
+}
+
+/// Major version of an ID3v2 tag header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustId3v2Version {
+    /// ID3v2.2 (3-character frame IDs).
+    V2,
+    /// ID3v2.3 (4-character frame IDs).
+    V3,
+    /// ID3v2.4 (4-character frame IDs, UTF-8 support).
+    V4,
+}
+
+/// Shoutcast / Icecast (ICY) live stream metadata and station headers.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustIcyMetadata {
+    /// Raw ICY `StreamTitle` value.
+    pub stream_title: Option<String>,
+    /// Optional ICY `StreamUrl` value.
+    pub stream_url: Option<String>,
+    /// Optional `icy-name` station name header.
+    pub station_name: Option<String>,
+    /// Optional `icy-genre` station genre header.
+    pub station_genre: Option<String>,
+    /// Optional `icy-url` station URL header.
+    pub station_url: Option<String>,
+    /// Optional `icy-br` station nominal bitrate in kbps.
+    pub bitrate_kbps: Option<u32>,
+}
+
+/// Key-value pair representing a custom/user-defined metadata tag field.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustCustomTagField {
+    /// Tag field key/identifier.
+    pub key: String,
+    /// Tag field text value.
+    pub value: String,
+}
+
+/// Extended metadata fields (63 fields matching haudiotagger::ExtendedTag).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RustExtendedMetadata {
+    // MusicBrainz Identifiers
+    pub music_brainz_recording_id: Option<String>,
+    pub music_brainz_track_id: Option<String>,
+    pub music_brainz_release_id: Option<String>,
+    pub music_brainz_release_group_id: Option<String>,
+    pub music_brainz_artist_id: Option<String>,
+    pub music_brainz_release_artist_id: Option<String>,
+    pub music_brainz_work_id: Option<String>,
+    pub music_brainz_release_type: Option<String>,
+
+    // AcoustID
+    pub acoust_id: Option<String>,
+    pub acoust_id_fingerprint: Option<String>,
+
+    // Standard Identifiers
+    pub isrc: Option<String>,
+    pub barcode: Option<String>,
+    pub catalog_number: Option<String>,
+
+    // Credits & People
+    pub arranger: Option<String>,
+    pub conductor: Option<String>,
+    pub director: Option<String>,
+    pub engineer: Option<String>,
+    pub lyricist: Option<String>,
+    pub mix_dj: Option<String>,
+    pub mix_engineer: Option<String>,
+    pub performer: Option<String>,
+    pub producer: Option<String>,
+    pub publisher: Option<String>,
+    pub label: Option<String>,
+    pub remixer: Option<String>,
+    pub writer: Option<String>,
+    pub composer: Option<String>,
+    pub original_lyricist: Option<String>,
+
+    // Detailed Dates
+    pub recording_date: Option<String>,
+    pub release_date: Option<String>,
+    pub original_release_date: Option<String>,
+
+    // Style & Classification
+    pub initial_key: Option<String>,
+    pub color: Option<String>,
+    pub mood: Option<String>,
+
+    // URLs
+    pub audio_file_url: Option<String>,
+    pub audio_source_url: Option<String>,
+    pub commercial_information_url: Option<String>,
+    pub copyright_url: Option<String>,
+    pub track_artist_url: Option<String>,
+    pub radio_station_url: Option<String>,
+    pub payment_url: Option<String>,
+    pub publisher_url: Option<String>,
+
+    // Legal & Copyright
+    pub copyright_message: Option<String>,
+    pub license: Option<String>,
+
+    // Podcast
+    pub podcast_description: Option<String>,
+    pub podcast_series_category: Option<String>,
+    pub podcast_url: Option<String>,
+    pub podcast_global_unique_id: Option<String>,
+    pub podcast_keywords: Option<String>,
+
+    // Grouping, Sorting & Encoding
+    pub set_subtitle: Option<String>,
+    pub show_name: Option<String>,
+    pub content_group: Option<String>,
+    pub track_subtitle: Option<String>,
+    pub language: Option<String>,
+    pub script: Option<String>,
+    pub parental_advisory: Option<String>,
+    pub file_owner: Option<String>,
+    pub original_file_name: Option<String>,
+    pub original_media_type: Option<String>,
+    pub encoded_by: Option<String>,
+    pub encoder_software: Option<String>,
+    pub encoder_settings: Option<String>,
+}
+
+/// Complete parsed audio metadata and raw synthesized container bytes.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct RustAudioMetadata {
-    /// Raw metadata bytes (ID3v2, Vorbis Comments, moov atom, etc.).
+    /// Track title.
+    pub title: Option<String>,
+    /// Primary track artist.
+    pub track_artist: Option<String>,
+    /// Album title.
+    pub album: Option<String>,
+    /// Album artist.
+    pub album_artist: Option<String>,
+    /// Release or recording year.
+    pub year: Option<u32>,
+    /// Genre name.
+    pub genre: Option<String>,
+    /// Track number within the album/disc.
+    pub track_number: Option<u32>,
+    /// Total tracks on the album/disc.
+    pub track_total: Option<u32>,
+    /// Disc number.
+    pub disc_number: Option<u32>,
+    /// Total discs in the release.
+    pub disc_total: Option<u32>,
+    /// Synchronized or unsynchronized lyrics.
+    pub lyrics: Option<String>,
+    /// General comment tag.
+    pub comment: Option<String>,
+    /// Tempo in beats per minute (BPM).
+    pub bpm: Option<f32>,
+    /// ReplayGain track gain string (e.g. "-6.50 dB").
+    pub replay_gain_track_gain: Option<String>,
+    /// ReplayGain track peak string (e.g. "0.988553").
+    pub replay_gain_track_peak: Option<String>,
+    /// ReplayGain album gain string.
+    pub replay_gain_album_gain: Option<String>,
+    /// ReplayGain album peak string.
+    pub replay_gain_album_peak: Option<String>,
+    /// Embedded pictures / cover art.
+    pub pictures: Vec<RustAudioPicture>,
+    /// Extended 63-field metadata set.
+    pub extended: RustExtendedMetadata,
+    /// Embedded chapter markers.
+    pub chapters: Vec<RustAudioChapter>,
+    /// Custom user-defined key-value tag fields.
+    pub custom_tags: Vec<RustCustomTagField>,
+    /// Detected tag container formats (e.g. "ID3v2", "ID3v1", "VorbisComments", "iTunes", "APE", "RiffInfo", "AiffText", "Matroska", "ICY").
+    pub tag_formats: Vec<String>,
+    /// Specific ID3v2 version if an ID3v2 tag is present.
+    pub id3v2_version: Option<RustId3v2Version>,
+    /// Live Shoutcast/Icecast ICY metadata when streaming from an ICY server.
+    pub icy: Option<RustIcyMetadata>,
+    /// Raw synthesized metadata container bytes (ID3v2, Vorbis Comments, moov atom, etc.).
     pub bytes: Vec<u8>,
 }
 
@@ -423,16 +684,14 @@ impl Default for RustAnalysisConfig {
 pub struct RustAudioAnalysisResult {
     /// Format and audio technical characteristics (cost: 0).
     pub audio_info: RustAudioInfo,
-    /// Absolute true peak sample amplitude.
-    pub peak_amplitude: f32,
-    /// RMS energy amplitude.
-    pub rms_amplitude: f32,
     /// Whether ReplayGain analysis was performed and populated.
     pub has_replay_gain: bool,
     /// Integrated loudness in LUFS according to ITU-R BS.1770-4.
     pub integrated_lufs: f32,
     /// Recommended volume normalization adjustment in decibels.
     pub replay_gain_db: f32,
+    /// Peak amplitude measured for ReplayGain.
+    pub replay_gain_peak: f32,
     /// Whether waveform points were computed.
     pub has_waveform: bool,
     /// Spectral centroid metric in Hz.
@@ -458,9 +717,13 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
             Vec::new()
         };
         let metadata = if has_metadata && !result.metadata_bytes.is_empty() {
-            Some(RustAudioMetadata {
-                bytes: result.metadata_bytes,
-            })
+            Some(crate::metadata::parse_full_metadata::<std::io::Cursor<&[u8]>>(
+                None,
+                result.metadata_bytes,
+                "",
+                None,
+                None,
+            ))
         } else {
             None
         };
@@ -468,12 +731,17 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
             audio_info: RustAudioInfo {
                 duration_ms: (result.duration_ms > 0).then_some(result.duration_ms),
                 sample_rate: result.sample_rate,
+                raw_sample_rate: (result.sample_rate > 0).then_some(result.sample_rate),
                 channels: result.channels,
+                bits_per_sample: None,
                 bitrate: result.bitrate,
                 format: result.format,
+                codec: String::new(),
+                container_format: String::new(),
+                lossless: false,
+                bitrate_mode: RustBitrateMode::Unknown,
+                file_size: None,
             },
-            peak_amplitude: result.peak,
-            rms_amplitude: result.peak,
             has_replay_gain,
             integrated_lufs: if has_replay_gain {
                 result.replay_gain.lufs
@@ -482,6 +750,11 @@ impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult
             },
             replay_gain_db: if has_replay_gain {
                 result.replay_gain.gain_db
+            } else {
+                0.0
+            },
+            replay_gain_peak: if has_replay_gain {
+                result.replay_gain.peak
             } else {
                 0.0
             },

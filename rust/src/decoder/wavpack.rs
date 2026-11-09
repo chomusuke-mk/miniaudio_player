@@ -69,6 +69,7 @@ pub enum WavpackProbe {
 pub struct WavpackReader {
     sample_rate: u32,
     channels: u32,
+    bits_per_sample: u32,
     samples_f32: Vec<f32>,
     current_frame: usize,
     total_frames: usize,
@@ -118,6 +119,7 @@ impl WavpackReader {
         Ok(WavpackProbe::Matched(Self {
             sample_rate: decoded.sample_rate,
             channels: decoded.channels,
+            bits_per_sample: decoded.bits_per_sample,
             samples_f32,
             current_frame: 0,
             total_frames,
@@ -135,6 +137,12 @@ impl WavpackReader {
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
+    }
+
+    /// Returns the bit depth per sample (e.g. 16, 24, 32).
+    #[inline]
+    pub fn bits_per_sample(&self) -> u32 {
+        self.bits_per_sample
     }
 
     /// Returns total stream duration in milliseconds if known.

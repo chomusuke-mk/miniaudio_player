@@ -578,18 +578,11 @@ class MiniaudioPlayer<T> {
         state._position = pos;
         stream._positionController.add(pos);
       case rust_types.RustPlayerEvent_AudioInfo(:final field0):
-        final durMs = field0.durationMs?.toInt();
-        final dur =
-            (durMs != null && durMs > 0) ? Duration(milliseconds: durMs) : null;
-        final info = AudioInfo(
-          duration: dur,
-          sampleRate: field0.sampleRate,
-          channels: field0.channels,
-          bitrate: field0.bitrate,
-          format: field0.format,
-        );
+        final info = AudioInfo.fromRust(field0);
         state._audioInfo = info;
+        state._duration = info.duration;
         stream._audioInfoController.add(info);
+        stream._durationController.add(info.duration);
       case rust_types.RustPlayerEvent_Buffer(:final field0):
         final b = Buffer(
           start: Duration(milliseconds: field0.startMs.toInt()),
@@ -777,7 +770,7 @@ class MiniaudioPlayer<T> {
         state._activeVoicesCount = field0;
         stream._activeVoicesCountController.add(field0);
       case rust_types.RustPlayerEvent_AudioMetadata(:final field0):
-        final meta = field0.bytes.isEmpty ? null : AudioMetadata(bytes: field0.bytes);
+        final meta = AudioMetadata.fromRustNullable(field0);
         state._metadata = meta;
         stream._metadataController.add(meta);
       case rust_types.RustPlayerEvent_MetadataEnabled(:final field0):
@@ -923,6 +916,7 @@ class MiniaudioPlayer<T> {
     MapLogger.info('Disposing MiniaudioPlayer instance');
     state._metadata = null;
     state._audioInfo = null;
+    state._duration = null;
     _eventSub?.cancel();
     _eventSub = null;
     try {
@@ -954,7 +948,7 @@ class MiniaudioPlayer<T> {
     final rg = res.hasReplayGain
         ? ReplayGainResult(
             gainDb: res.replayGainDb,
-            peak: res.peakAmplitude,
+            peak: res.replayGainPeak,
             lufs: res.integratedLufs,
           )
         : null;
@@ -964,20 +958,11 @@ class MiniaudioPlayer<T> {
           )
         : null;
     final md = res.hasMetadata && res.metadata != null
-        ? AudioMetadata(bytes: res.metadata!.bytes)
+        ? AudioMetadata.fromRust(res.metadata!)
         : null;
-    final info = AudioInfo(
-      duration: res.audioInfo.durationMs != null
-          ? Duration(milliseconds: res.audioInfo.durationMs!.toInt())
-          : null,
-      sampleRate: res.audioInfo.sampleRate,
-      channels: res.audioInfo.channels,
-      bitrate: res.audioInfo.bitrate,
-      format: res.audioInfo.format,
-    );
+    final info = AudioInfo.fromRust(res.audioInfo);
     return AudioAnalysisResult(
       audioInfo: info,
-      peak: res.peakAmplitude,
       replayGain: rg,
       waveform: wf,
       metadata: md,

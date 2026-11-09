@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Configuration parameters for offline acoustic and metadata analysis.
 class RustAnalysisConfig {
@@ -71,12 +71,6 @@ class RustAudioAnalysisResult {
   /// Format and audio technical characteristics (cost: 0).
   final RustAudioInfo audioInfo;
 
-  /// Absolute true peak sample amplitude.
-  final double peakAmplitude;
-
-  /// RMS energy amplitude.
-  final double rmsAmplitude;
-
   /// Whether ReplayGain analysis was performed and populated.
   final bool hasReplayGain;
 
@@ -85,6 +79,9 @@ class RustAudioAnalysisResult {
 
   /// Recommended volume normalization adjustment in decibels.
   final double replayGainDb;
+
+  /// Peak amplitude measured for ReplayGain.
+  final double replayGainPeak;
 
   /// Whether waveform points were computed.
   final bool hasWaveform;
@@ -106,11 +103,10 @@ class RustAudioAnalysisResult {
 
   const RustAudioAnalysisResult({
     required this.audioInfo,
-    required this.peakAmplitude,
-    required this.rmsAmplitude,
     required this.hasReplayGain,
     required this.integratedLufs,
     required this.replayGainDb,
+    required this.replayGainPeak,
     required this.hasWaveform,
     required this.spectralCentroid,
     required this.frequencyBands,
@@ -125,11 +121,10 @@ class RustAudioAnalysisResult {
   @override
   int get hashCode =>
       audioInfo.hashCode ^
-      peakAmplitude.hashCode ^
-      rmsAmplitude.hashCode ^
       hasReplayGain.hashCode ^
       integratedLufs.hashCode ^
       replayGainDb.hashCode ^
+      replayGainPeak.hashCode ^
       hasWaveform.hashCode ^
       spectralCentroid.hashCode ^
       frequencyBands.hashCode ^
@@ -143,17 +138,49 @@ class RustAudioAnalysisResult {
       other is RustAudioAnalysisResult &&
           runtimeType == other.runtimeType &&
           audioInfo == other.audioInfo &&
-          peakAmplitude == other.peakAmplitude &&
-          rmsAmplitude == other.rmsAmplitude &&
           hasReplayGain == other.hasReplayGain &&
           integratedLufs == other.integratedLufs &&
           replayGainDb == other.replayGainDb &&
+          replayGainPeak == other.replayGainPeak &&
           hasWaveform == other.hasWaveform &&
           spectralCentroid == other.spectralCentroid &&
           frequencyBands == other.frequencyBands &&
           waveformPeaks == other.waveformPeaks &&
           hasMetadata == other.hasMetadata &&
           metadata == other.metadata;
+}
+
+/// Chapter marker embedded in the audio file.
+class RustAudioChapter {
+  /// Chapter title.
+  final String title;
+
+  /// Chapter start timestamp in milliseconds.
+  final BigInt startMs;
+
+  /// Chapter end timestamp in milliseconds.
+  final BigInt endMs;
+
+  const RustAudioChapter({
+    required this.title,
+    required this.startMs,
+    required this.endMs,
+  });
+
+  static Future<RustAudioChapter> default_() =>
+      RustLib.instance.api.crateApiTypesRustAudioChapterDefault();
+
+  @override
+  int get hashCode => title.hashCode ^ startMs.hashCode ^ endMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioChapter &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          startMs == other.startMs &&
+          endMs == other.endMs;
 }
 
 /// Hardware or virtual audio endpoint detected by the operating system.
@@ -245,8 +272,11 @@ class RustAudioInfo {
   /// Total duration in milliseconds, or None if unknown / infinite livestream.
   final PlatformInt64? durationMs;
 
-  /// Sample rate in Hz.
+  /// Decoded output PCM sample rate in Hz.
   final int sampleRate;
+
+  /// Native stream sample rate in Hz before decimation (e.g., 2822400 Hz for DSD64).
+  final int? rawSampleRate;
 
   /// Channel count.
   final int channels;
@@ -254,14 +284,39 @@ class RustAudioInfo {
   /// Nominal bitrate in bps.
   final int bitrate;
 
-  /// Container/codec format string (e.g. "mp3", "flac", "wav").
+  /// Bit depth per sample (e.g. 16, 24, 32, or 1 for DSD).
+  final int? bitsPerSample;
+
+  /// Canonical codec name (e.g. "MP3", "FLAC", "AAC", "ALAC", "Opus", "Vorbis", "PCM", "DSD", "APE", "WavPack").
+  final String codec;
+
+  /// Canonical container format (e.g. "MP3", "FLAC", "MP4", "Ogg", "WAV", "RF64", "W64", "RIFX", "AIFF", "CAF", "Matroska", "DSF", "APE", "WavPack", "ADTS", "HLS").
+  final String containerFormat;
+
+  /// Whether the audio codec is lossless.
+  final bool lossless;
+
+  /// Bitrate encoding mode (Unknown, Cbr, Vbr).
+  final RustBitrateMode bitrateMode;
+
+  /// Total file or stream byte size when known.
+  final BigInt? fileSize;
+
+  /// Short container/codec format hint string (e.g. "mp3", "flac", "wav").
   final String? format;
 
   const RustAudioInfo({
     this.durationMs,
     required this.sampleRate,
+    this.rawSampleRate,
     required this.channels,
     required this.bitrate,
+    this.bitsPerSample,
+    required this.codec,
+    required this.containerFormat,
+    required this.lossless,
+    required this.bitrateMode,
+    this.fileSize,
     this.format,
   });
 
@@ -272,8 +327,15 @@ class RustAudioInfo {
   int get hashCode =>
       durationMs.hashCode ^
       sampleRate.hashCode ^
+      rawSampleRate.hashCode ^
       channels.hashCode ^
       bitrate.hashCode ^
+      bitsPerSample.hashCode ^
+      codec.hashCode ^
+      containerFormat.hashCode ^
+      lossless.hashCode ^
+      bitrateMode.hashCode ^
+      fileSize.hashCode ^
       format.hashCode;
 
   @override
@@ -283,8 +345,15 @@ class RustAudioInfo {
           runtimeType == other.runtimeType &&
           durationMs == other.durationMs &&
           sampleRate == other.sampleRate &&
+          rawSampleRate == other.rawSampleRate &&
           channels == other.channels &&
           bitrate == other.bitrate &&
+          bitsPerSample == other.bitsPerSample &&
+          codec == other.codec &&
+          containerFormat == other.containerFormat &&
+          lossless == other.lossless &&
+          bitrateMode == other.bitrateMode &&
+          fileSize == other.fileSize &&
           format == other.format;
 }
 
@@ -355,12 +424,108 @@ class RustAudioInputConfig {
           monitorVolume == other.monitorVolume;
 }
 
-/// Container encapsulating raw audio metadata bytes.
+/// Complete parsed audio metadata and raw synthesized container bytes.
 class RustAudioMetadata {
-  /// Raw metadata bytes (ID3v2, Vorbis Comments, moov atom, etc.).
+  /// Track title.
+  final String? title;
+
+  /// Primary track artist.
+  final String? trackArtist;
+
+  /// Album title.
+  final String? album;
+
+  /// Album artist.
+  final String? albumArtist;
+
+  /// Release or recording year.
+  final int? year;
+
+  /// Genre name.
+  final String? genre;
+
+  /// Track number within the album/disc.
+  final int? trackNumber;
+
+  /// Total tracks on the album/disc.
+  final int? trackTotal;
+
+  /// Disc number.
+  final int? discNumber;
+
+  /// Total discs in the release.
+  final int? discTotal;
+
+  /// Synchronized or unsynchronized lyrics.
+  final String? lyrics;
+
+  /// General comment tag.
+  final String? comment;
+
+  /// Tempo in beats per minute (BPM).
+  final double? bpm;
+
+  /// ReplayGain track gain string (e.g. "-6.50 dB").
+  final String? replayGainTrackGain;
+
+  /// ReplayGain track peak string (e.g. "0.988553").
+  final String? replayGainTrackPeak;
+
+  /// ReplayGain album gain string.
+  final String? replayGainAlbumGain;
+
+  /// ReplayGain album peak string.
+  final String? replayGainAlbumPeak;
+
+  /// Embedded pictures / cover art.
+  final List<RustAudioPicture> pictures;
+
+  /// Extended 63-field metadata set.
+  final RustExtendedMetadata extended;
+
+  /// Embedded chapter markers.
+  final List<RustAudioChapter> chapters;
+
+  /// Custom user-defined key-value tag fields.
+  final List<RustCustomTagField> customTags;
+
+  /// Detected tag container formats (e.g. "ID3v2", "ID3v1", "VorbisComments", "iTunes", "APE", "RiffInfo", "AiffText", "Matroska", "ICY").
+  final List<String> tagFormats;
+
+  /// Specific ID3v2 version if an ID3v2 tag is present.
+  final RustId3v2Version? id3V2Version;
+
+  /// Live Shoutcast/Icecast ICY metadata when streaming from an ICY server.
+  final RustIcyMetadata? icy;
+
+  /// Raw synthesized metadata container bytes (ID3v2, Vorbis Comments, moov atom, etc.).
   final Uint8List bytes;
 
   const RustAudioMetadata({
+    this.title,
+    this.trackArtist,
+    this.album,
+    this.albumArtist,
+    this.year,
+    this.genre,
+    this.trackNumber,
+    this.trackTotal,
+    this.discNumber,
+    this.discTotal,
+    this.lyrics,
+    this.comment,
+    this.bpm,
+    this.replayGainTrackGain,
+    this.replayGainTrackPeak,
+    this.replayGainAlbumGain,
+    this.replayGainAlbumPeak,
+    required this.pictures,
+    required this.extended,
+    required this.chapters,
+    required this.customTags,
+    required this.tagFormats,
+    this.id3V2Version,
+    this.icy,
     required this.bytes,
   });
 
@@ -368,13 +533,62 @@ class RustAudioMetadata {
       RustLib.instance.api.crateApiTypesRustAudioMetadataDefault();
 
   @override
-  int get hashCode => bytes.hashCode;
+  int get hashCode =>
+      title.hashCode ^
+      trackArtist.hashCode ^
+      album.hashCode ^
+      albumArtist.hashCode ^
+      year.hashCode ^
+      genre.hashCode ^
+      trackNumber.hashCode ^
+      trackTotal.hashCode ^
+      discNumber.hashCode ^
+      discTotal.hashCode ^
+      lyrics.hashCode ^
+      comment.hashCode ^
+      bpm.hashCode ^
+      replayGainTrackGain.hashCode ^
+      replayGainTrackPeak.hashCode ^
+      replayGainAlbumGain.hashCode ^
+      replayGainAlbumPeak.hashCode ^
+      pictures.hashCode ^
+      extended.hashCode ^
+      chapters.hashCode ^
+      customTags.hashCode ^
+      tagFormats.hashCode ^
+      id3V2Version.hashCode ^
+      icy.hashCode ^
+      bytes.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is RustAudioMetadata &&
           runtimeType == other.runtimeType &&
+          title == other.title &&
+          trackArtist == other.trackArtist &&
+          album == other.album &&
+          albumArtist == other.albumArtist &&
+          year == other.year &&
+          genre == other.genre &&
+          trackNumber == other.trackNumber &&
+          trackTotal == other.trackTotal &&
+          discNumber == other.discNumber &&
+          discTotal == other.discTotal &&
+          lyrics == other.lyrics &&
+          comment == other.comment &&
+          bpm == other.bpm &&
+          replayGainTrackGain == other.replayGainTrackGain &&
+          replayGainTrackPeak == other.replayGainTrackPeak &&
+          replayGainAlbumGain == other.replayGainAlbumGain &&
+          replayGainAlbumPeak == other.replayGainAlbumPeak &&
+          pictures == other.pictures &&
+          extended == other.extended &&
+          chapters == other.chapters &&
+          customTags == other.customTags &&
+          tagFormats == other.tagFormats &&
+          id3V2Version == other.id3V2Version &&
+          icy == other.icy &&
           bytes == other.bytes;
 }
 
@@ -401,6 +615,48 @@ class RustAudioOutput {
           runtimeType == other.runtimeType &&
           deviceId == other.deviceId &&
           source == other.source;
+}
+
+/// Embedded artwork/picture extracted from an audio container.
+class RustAudioPicture {
+  /// Picture category (e.g. CoverFront, CoverBack, Artist).
+  final RustPictureType pictureType;
+
+  /// Detected or declared image MIME type.
+  final RustMimeType? mimeType;
+
+  /// Optional textual description attached to the picture frame.
+  final String? description;
+
+  /// Raw encoded image bytes (PNG, JPEG, WebP, etc.).
+  final Uint8List bytes;
+
+  const RustAudioPicture({
+    required this.pictureType,
+    this.mimeType,
+    this.description,
+    required this.bytes,
+  });
+
+  static Future<RustAudioPicture> default_() =>
+      RustLib.instance.api.crateApiTypesRustAudioPictureDefault();
+
+  @override
+  int get hashCode =>
+      pictureType.hashCode ^
+      mimeType.hashCode ^
+      description.hashCode ^
+      bytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioPicture &&
+          runtimeType == other.runtimeType &&
+          pictureType == other.pictureType &&
+          mimeType == other.mimeType &&
+          description == other.description &&
+          bytes == other.bytes;
 }
 
 /// Representation of an audio track queued for playback.
@@ -455,6 +711,22 @@ class RustAudioSource {
           dataBytes == other.dataBytes &&
           replayGainDb == other.replayGainDb &&
           replayPeak == other.replayPeak;
+}
+
+/// Bitrate encoding mode of an audio stream.
+enum RustBitrateMode {
+  /// Bitrate mode could not be determined or is not applicable.
+  unknown,
+
+  /// Constant Bitrate (CBR).
+  cbr,
+
+  /// Variable Bitrate (VBR).
+  vbr,
+  ;
+
+  static Future<RustBitrateMode> default_() =>
+      RustLib.instance.api.crateApiTypesRustBitrateModeDefault();
 }
 
 /// Continuous prefetch buffer telemetry metrics.
@@ -594,6 +866,34 @@ class RustCueConfig {
           deviceId == other.deviceId &&
           volume == other.volume &&
           mode == other.mode;
+}
+
+/// Key-value pair representing a custom/user-defined metadata tag field.
+class RustCustomTagField {
+  /// Tag field key/identifier.
+  final String key;
+
+  /// Tag field text value.
+  final String value;
+
+  const RustCustomTagField({
+    required this.key,
+    required this.value,
+  });
+
+  static Future<RustCustomTagField> default_() =>
+      RustLib.instance.api.crateApiTypesRustCustomTagFieldDefault();
+
+  @override
+  int get hashCode => key.hashCode ^ value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustCustomTagField &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          value == other.value;
 }
 
 /// Asynchronous read request dispatched from Rust to a Dart `CustomByteProvider`.
@@ -805,6 +1105,273 @@ class RustEqualizerParams {
           enabled == other.enabled;
 }
 
+/// Extended metadata fields (63 fields matching haudiotagger::ExtendedTag).
+class RustExtendedMetadata {
+  final String? musicBrainzRecordingId;
+  final String? musicBrainzTrackId;
+  final String? musicBrainzReleaseId;
+  final String? musicBrainzReleaseGroupId;
+  final String? musicBrainzArtistId;
+  final String? musicBrainzReleaseArtistId;
+  final String? musicBrainzWorkId;
+  final String? musicBrainzReleaseType;
+  final String? acoustId;
+  final String? acoustIdFingerprint;
+  final String? isrc;
+  final String? barcode;
+  final String? catalogNumber;
+  final String? arranger;
+  final String? conductor;
+  final String? director;
+  final String? engineer;
+  final String? lyricist;
+  final String? mixDj;
+  final String? mixEngineer;
+  final String? performer;
+  final String? producer;
+  final String? publisher;
+  final String? label;
+  final String? remixer;
+  final String? writer;
+  final String? composer;
+  final String? originalLyricist;
+  final String? recordingDate;
+  final String? releaseDate;
+  final String? originalReleaseDate;
+  final String? initialKey;
+  final String? color;
+  final String? mood;
+  final String? audioFileUrl;
+  final String? audioSourceUrl;
+  final String? commercialInformationUrl;
+  final String? copyrightUrl;
+  final String? trackArtistUrl;
+  final String? radioStationUrl;
+  final String? paymentUrl;
+  final String? publisherUrl;
+  final String? copyrightMessage;
+  final String? license;
+  final String? podcastDescription;
+  final String? podcastSeriesCategory;
+  final String? podcastUrl;
+  final String? podcastGlobalUniqueId;
+  final String? podcastKeywords;
+  final String? setSubtitle;
+  final String? showName;
+  final String? contentGroup;
+  final String? trackSubtitle;
+  final String? language;
+  final String? script;
+  final String? parentalAdvisory;
+  final String? fileOwner;
+  final String? originalFileName;
+  final String? originalMediaType;
+  final String? encodedBy;
+  final String? encoderSoftware;
+  final String? encoderSettings;
+
+  const RustExtendedMetadata({
+    this.musicBrainzRecordingId,
+    this.musicBrainzTrackId,
+    this.musicBrainzReleaseId,
+    this.musicBrainzReleaseGroupId,
+    this.musicBrainzArtistId,
+    this.musicBrainzReleaseArtistId,
+    this.musicBrainzWorkId,
+    this.musicBrainzReleaseType,
+    this.acoustId,
+    this.acoustIdFingerprint,
+    this.isrc,
+    this.barcode,
+    this.catalogNumber,
+    this.arranger,
+    this.conductor,
+    this.director,
+    this.engineer,
+    this.lyricist,
+    this.mixDj,
+    this.mixEngineer,
+    this.performer,
+    this.producer,
+    this.publisher,
+    this.label,
+    this.remixer,
+    this.writer,
+    this.composer,
+    this.originalLyricist,
+    this.recordingDate,
+    this.releaseDate,
+    this.originalReleaseDate,
+    this.initialKey,
+    this.color,
+    this.mood,
+    this.audioFileUrl,
+    this.audioSourceUrl,
+    this.commercialInformationUrl,
+    this.copyrightUrl,
+    this.trackArtistUrl,
+    this.radioStationUrl,
+    this.paymentUrl,
+    this.publisherUrl,
+    this.copyrightMessage,
+    this.license,
+    this.podcastDescription,
+    this.podcastSeriesCategory,
+    this.podcastUrl,
+    this.podcastGlobalUniqueId,
+    this.podcastKeywords,
+    this.setSubtitle,
+    this.showName,
+    this.contentGroup,
+    this.trackSubtitle,
+    this.language,
+    this.script,
+    this.parentalAdvisory,
+    this.fileOwner,
+    this.originalFileName,
+    this.originalMediaType,
+    this.encodedBy,
+    this.encoderSoftware,
+    this.encoderSettings,
+  });
+
+  static Future<RustExtendedMetadata> default_() =>
+      RustLib.instance.api.crateApiTypesRustExtendedMetadataDefault();
+
+  @override
+  int get hashCode =>
+      musicBrainzRecordingId.hashCode ^
+      musicBrainzTrackId.hashCode ^
+      musicBrainzReleaseId.hashCode ^
+      musicBrainzReleaseGroupId.hashCode ^
+      musicBrainzArtistId.hashCode ^
+      musicBrainzReleaseArtistId.hashCode ^
+      musicBrainzWorkId.hashCode ^
+      musicBrainzReleaseType.hashCode ^
+      acoustId.hashCode ^
+      acoustIdFingerprint.hashCode ^
+      isrc.hashCode ^
+      barcode.hashCode ^
+      catalogNumber.hashCode ^
+      arranger.hashCode ^
+      conductor.hashCode ^
+      director.hashCode ^
+      engineer.hashCode ^
+      lyricist.hashCode ^
+      mixDj.hashCode ^
+      mixEngineer.hashCode ^
+      performer.hashCode ^
+      producer.hashCode ^
+      publisher.hashCode ^
+      label.hashCode ^
+      remixer.hashCode ^
+      writer.hashCode ^
+      composer.hashCode ^
+      originalLyricist.hashCode ^
+      recordingDate.hashCode ^
+      releaseDate.hashCode ^
+      originalReleaseDate.hashCode ^
+      initialKey.hashCode ^
+      color.hashCode ^
+      mood.hashCode ^
+      audioFileUrl.hashCode ^
+      audioSourceUrl.hashCode ^
+      commercialInformationUrl.hashCode ^
+      copyrightUrl.hashCode ^
+      trackArtistUrl.hashCode ^
+      radioStationUrl.hashCode ^
+      paymentUrl.hashCode ^
+      publisherUrl.hashCode ^
+      copyrightMessage.hashCode ^
+      license.hashCode ^
+      podcastDescription.hashCode ^
+      podcastSeriesCategory.hashCode ^
+      podcastUrl.hashCode ^
+      podcastGlobalUniqueId.hashCode ^
+      podcastKeywords.hashCode ^
+      setSubtitle.hashCode ^
+      showName.hashCode ^
+      contentGroup.hashCode ^
+      trackSubtitle.hashCode ^
+      language.hashCode ^
+      script.hashCode ^
+      parentalAdvisory.hashCode ^
+      fileOwner.hashCode ^
+      originalFileName.hashCode ^
+      originalMediaType.hashCode ^
+      encodedBy.hashCode ^
+      encoderSoftware.hashCode ^
+      encoderSettings.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustExtendedMetadata &&
+          runtimeType == other.runtimeType &&
+          musicBrainzRecordingId == other.musicBrainzRecordingId &&
+          musicBrainzTrackId == other.musicBrainzTrackId &&
+          musicBrainzReleaseId == other.musicBrainzReleaseId &&
+          musicBrainzReleaseGroupId == other.musicBrainzReleaseGroupId &&
+          musicBrainzArtistId == other.musicBrainzArtistId &&
+          musicBrainzReleaseArtistId == other.musicBrainzReleaseArtistId &&
+          musicBrainzWorkId == other.musicBrainzWorkId &&
+          musicBrainzReleaseType == other.musicBrainzReleaseType &&
+          acoustId == other.acoustId &&
+          acoustIdFingerprint == other.acoustIdFingerprint &&
+          isrc == other.isrc &&
+          barcode == other.barcode &&
+          catalogNumber == other.catalogNumber &&
+          arranger == other.arranger &&
+          conductor == other.conductor &&
+          director == other.director &&
+          engineer == other.engineer &&
+          lyricist == other.lyricist &&
+          mixDj == other.mixDj &&
+          mixEngineer == other.mixEngineer &&
+          performer == other.performer &&
+          producer == other.producer &&
+          publisher == other.publisher &&
+          label == other.label &&
+          remixer == other.remixer &&
+          writer == other.writer &&
+          composer == other.composer &&
+          originalLyricist == other.originalLyricist &&
+          recordingDate == other.recordingDate &&
+          releaseDate == other.releaseDate &&
+          originalReleaseDate == other.originalReleaseDate &&
+          initialKey == other.initialKey &&
+          color == other.color &&
+          mood == other.mood &&
+          audioFileUrl == other.audioFileUrl &&
+          audioSourceUrl == other.audioSourceUrl &&
+          commercialInformationUrl == other.commercialInformationUrl &&
+          copyrightUrl == other.copyrightUrl &&
+          trackArtistUrl == other.trackArtistUrl &&
+          radioStationUrl == other.radioStationUrl &&
+          paymentUrl == other.paymentUrl &&
+          publisherUrl == other.publisherUrl &&
+          copyrightMessage == other.copyrightMessage &&
+          license == other.license &&
+          podcastDescription == other.podcastDescription &&
+          podcastSeriesCategory == other.podcastSeriesCategory &&
+          podcastUrl == other.podcastUrl &&
+          podcastGlobalUniqueId == other.podcastGlobalUniqueId &&
+          podcastKeywords == other.podcastKeywords &&
+          setSubtitle == other.setSubtitle &&
+          showName == other.showName &&
+          contentGroup == other.contentGroup &&
+          trackSubtitle == other.trackSubtitle &&
+          language == other.language &&
+          script == other.script &&
+          parentalAdvisory == other.parentalAdvisory &&
+          fileOwner == other.fileOwner &&
+          originalFileName == other.originalFileName &&
+          originalMediaType == other.originalMediaType &&
+          encodedBy == other.encodedBy &&
+          encoderSoftware == other.encoderSoftware &&
+          encoderSettings == other.encoderSettings;
+}
+
 /// HTTP header key-value pair for network requests.
 class RustHttpHeader {
   /// Header field name.
@@ -833,6 +1400,73 @@ class RustHttpHeader {
           value == other.value;
 }
 
+/// Shoutcast / Icecast (ICY) live stream metadata and station headers.
+class RustIcyMetadata {
+  /// Raw ICY `StreamTitle` value.
+  final String? streamTitle;
+
+  /// Optional ICY `StreamUrl` value.
+  final String? streamUrl;
+
+  /// Optional `icy-name` station name header.
+  final String? stationName;
+
+  /// Optional `icy-genre` station genre header.
+  final String? stationGenre;
+
+  /// Optional `icy-url` station URL header.
+  final String? stationUrl;
+
+  /// Optional `icy-br` station nominal bitrate in kbps.
+  final int? bitrateKbps;
+
+  const RustIcyMetadata({
+    this.streamTitle,
+    this.streamUrl,
+    this.stationName,
+    this.stationGenre,
+    this.stationUrl,
+    this.bitrateKbps,
+  });
+
+  static Future<RustIcyMetadata> default_() =>
+      RustLib.instance.api.crateApiTypesRustIcyMetadataDefault();
+
+  @override
+  int get hashCode =>
+      streamTitle.hashCode ^
+      streamUrl.hashCode ^
+      stationName.hashCode ^
+      stationGenre.hashCode ^
+      stationUrl.hashCode ^
+      bitrateKbps.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustIcyMetadata &&
+          runtimeType == other.runtimeType &&
+          streamTitle == other.streamTitle &&
+          streamUrl == other.streamUrl &&
+          stationName == other.stationName &&
+          stationGenre == other.stationGenre &&
+          stationUrl == other.stationUrl &&
+          bitrateKbps == other.bitrateKbps;
+}
+
+/// Major version of an ID3v2 tag header.
+enum RustId3v2Version {
+  /// ID3v2.2 (3-character frame IDs).
+  v2,
+
+  /// ID3v2.3 (4-character frame IDs).
+  v3,
+
+  /// ID3v2.4 (4-character frame IDs, UTF-8 support).
+  v4,
+  ;
+}
+
 /// Configuration settings for continuous auto-refill Infinite Mix queue replenishment.
 class RustInfiniteMixConfig {
   /// Whether continuous auto-refill infinite mix mode is enabled.
@@ -859,6 +1493,50 @@ class RustInfiniteMixConfig {
           runtimeType == other.runtimeType &&
           enabled == other.enabled &&
           remainingTracksThreshold == other.remainingTracksThreshold;
+}
+
+/// MIME type of an embedded picture.
+enum RustMimeType {
+  png,
+  jpeg,
+  tiff,
+  bmp,
+  gif,
+  webp,
+  unknown,
+  ;
+
+  static Future<RustMimeType> default_() =>
+      RustLib.instance.api.crateApiTypesRustMimeTypeDefault();
+}
+
+/// Type of embedded picture according to ID3v2 APIC / FLAC Picture standards.
+enum RustPictureType {
+  other,
+  icon,
+  otherIcon,
+  coverFront,
+  coverBack,
+  leaflet,
+  media,
+  leadArtist,
+  artist,
+  conductor,
+  band,
+  composer,
+  lyricist,
+  recordingLocation,
+  duringRecording,
+  duringPerformance,
+  screenCapture,
+  brightFish,
+  illustration,
+  bandLogo,
+  publisherLogo,
+  ;
+
+  static Future<RustPictureType> default_() =>
+      RustLib.instance.api.crateApiTypesRustPictureTypeDefault();
 }
 
 /// Initialization configuration for the audio player and backend engine.

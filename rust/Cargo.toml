@@ -63,6 +63,7 @@ cbc = "0.1"
 # Formatos Adicionales (MIT / Apache-2.0)
 ape-decoder = "0.3"
 wavicle = "0.1"
+lofty = "0.25.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 symphonia-adapter-libopus = "0.3"

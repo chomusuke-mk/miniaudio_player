@@ -105,8 +105,8 @@ class AudioAnalyzerCard extends StatelessWidget {
                       _buildKpiTile(
                         label: 'TRUE-PEAK MAX',
                         value: canAnalyze
-                            ? (result != null
-                                ? '${(20.0 * (result.peak > 0 ? (result.peak <= 1.0 ? 0.0 : 0.5) : 0.0) - 0.4).toStringAsFixed(1)} dBTP'
+                            ? (result?.replayGain != null
+                                ? '${(20.0 * (result!.replayGain!.peak > 0 ? (result.replayGain!.peak <= 1.0 ? 0.0 : 0.5) : 0.0) - 0.4).toStringAsFixed(1)} dBTP'
                                 : (analyzerController.isAnalyzing ? '...' : '--'))
                             : 'N/A',
                         subtext: canAnalyze

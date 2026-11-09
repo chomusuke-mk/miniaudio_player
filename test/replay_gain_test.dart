@@ -32,12 +32,10 @@ void main() {
       );
 
       // Track metadata
-      expect(result.duration?.inMilliseconds, greaterThan(0));
-      expect(result.sampleRate, equals(48000));
-      expect(result.channels, equals(2));
-      expect(result.bitrate, greaterThan(0));
-      expect(result.peak, greaterThan(0.9));
-      expect(result.peak, lessThanOrEqualTo(1.05));
+      expect(result.audioInfo.duration?.inMilliseconds, greaterThan(0));
+      expect(result.audioInfo.sampleRate, equals(48000));
+      expect(result.audioInfo.channels, equals(2));
+      expect(result.audioInfo.bitrate, greaterThan(0));
 
       // ReplayGain metrics
       expect(result.replayGain, isNotNull);
@@ -71,7 +69,7 @@ void main() {
       // Progress and position sampling helpers
       expect(wf.getPointAtProgress(0.0), equals(wf.points.first));
       expect(wf.getPointAtProgress(1.0), equals(wf.points.last));
-      expect(wf.getPointAtPosition(Duration.zero, result.duration ?? Duration.zero), equals(wf.points.first));
+      expect(wf.getPointAtPosition(Duration.zero, result.audioInfo.duration ?? Duration.zero), equals(wf.points.first));
     });
 
     test('analyzeAudio with only waveform skips ReplayGain calculation', () async {
@@ -115,8 +113,8 @@ void main() {
         waveformPoints: 50,
       );
 
-      expect(result.peak, greaterThan(0.9));
       expect(result.replayGain, isNotNull);
+      expect(result.replayGain!.peak, greaterThan(0.9));
       expect(result.replayGain!.lufs, closeTo(-4.7, 0.5));
       expect(result.replayGain!.gainDb, closeTo(-9.3, 0.5)); // Target -14 - (-4.7) = -9.3 dB
 
@@ -137,8 +135,8 @@ void main() {
         if (!file.existsSync()) continue;
 
         final result = await MiniaudioPlayer.analyzeAudio(file.path, waveformPoints: 80);
-        expect(result.peak, greaterThan(0.5), reason: 'Peak for $relPath');
         expect(result.replayGain, isNotNull, reason: 'ReplayGain for $relPath');
+        expect(result.replayGain!.peak, greaterThan(0.5), reason: 'Peak for $relPath');
         expect(result.replayGain!.lufs, lessThan(0.0), reason: 'LUFS for $relPath');
         expect(result.replayGain!.gainDb.isFinite, isTrue, reason: 'Gain for $relPath');
         expect(result.waveform, isNotNull, reason: 'Waveform for $relPath');
@@ -151,8 +149,8 @@ void main() {
       expect(wav24.existsSync(), isTrue);
 
       final result = await MiniaudioPlayer.analyzeAudio(wav24.path, waveformPoints: 30);
-      expect(result.peak, greaterThan(0.05));
       expect(result.replayGain, isNotNull);
+      expect(result.replayGain!.peak, greaterThan(0.05));
       expect(result.replayGain!.lufs.isFinite, isTrue);
       expect(result.replayGain!.gainDb.isFinite, isTrue);
       expect(result.waveform, isNotNull);
@@ -194,8 +192,6 @@ void main() {
       expect(fileRes.audioInfo.sampleRate, equals(48000));
       expect(fileRes.audioInfo.channels, equals(2));
       expect(fileRes.audioInfo.format, equals('mp3'));
-      expect(fileRes.sampleRate, equals(48000));
-      expect(fileRes.channels, equals(2));
       expect(fileRes.waveform?.length, equals(32));
 
       // Memory AudioSource
@@ -269,7 +265,7 @@ void main() {
       );
 
       expect(cappedRes.waveform, isNotNull);
-      expect(cappedRes.peak, greaterThan(0.0));
+      expect(cappedRes.replayGain?.peak, greaterThan(0.0));
       expect(cappedRes.audioInfo.sampleRate, equals(fullRes.audioInfo.sampleRate));
     });
   });

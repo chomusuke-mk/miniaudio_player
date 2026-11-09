@@ -93,10 +93,10 @@ class PlayerState<T> {
   /// The current playback elapsed position within the active track.
   Duration get position => _position;
 
+  Duration? _duration;
+
   /// Total timeline duration of the currently active audio track, or `null` if unknown (e.g. livestream).
-  ///
-  /// Convenience getter delegating directly to [audioInfo.duration].
-  Duration? get duration => _audioInfo?.duration;
+  Duration? get duration => _duration;
 
   PlaybackState _playbackState = PlaybackState.stopped;
 

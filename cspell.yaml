@@ -3,6 +3,8 @@ ignorePaths:
 words:
   - aaudio
   - absval
+  - acoust
+  - Acoust
   - addrof
   - advapi
   - ALLOCA
@@ -56,6 +58,7 @@ words:
   - bluetooth
   - Borgerding
   - bosflag
+  - Brainz
   - bresenham
   - brickwall
   - bridgefor
@@ -76,6 +79,7 @@ words:
   - cdylib
   - cfgs
   - chomusuke
+  - chpl
   - ciphertext
   - classpath
   - CLEVEL
@@ -92,6 +96,7 @@ words:
   - coeff
   - coeffs
   - COINIT
+  - coloured
   - COMBFILTER
   - COMMDEVICE
   - Condvar
@@ -103,6 +108,7 @@ words:
   - coreaudio
   - cosf
   - cosinusoidal
+  - covr
   - crctable
   - crossfade
   - crossfades
@@ -303,6 +309,7 @@ words:
   - ipart
   - ISHLD
   - isqrt
+  - isrc
   - Isrc
   - itheta
   - jetbrains
@@ -503,6 +510,7 @@ words:
   - reinicios
   - reinit
   - Reintenta
+  - remixer
   - remuestreador
   - remuestreo
   - Remuestreo
@@ -616,6 +624,7 @@ words:
   - tagncompare
   - tapset
   - TDAC
+  - TDRC
   - telemetría
   - Telemetría
   - Terje
@@ -633,6 +642,7 @@ words:
   - Trylocks
   - tvbr
   - TWID
+  - TXXX
   - typedef
   - typestate
   - ubsan

@@ -4,12 +4,15 @@
 //! `WavpackReader`, and Symphonia container/codec readers via a clean black-box interface.
 
 use symphonia::core::codecs::audio::{
-    AudioCodecParameters, AudioDecoder, AudioDecoderOptions, CODEC_ID_NULL_AUDIO,
+    well_known as codec_wk, AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
+    CODEC_ID_NULL_AUDIO,
 };
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+use symphonia::core::formats::{
+    well_known as format_wk, FormatId, FormatOptions, FormatReader, SeekMode, SeekTo,
+};
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::{MetadataOptions, RawTag, RawValue};
 use symphonia::core::units::{Duration as SymphoniaDuration, Time, TimeBase, Timestamp};
@@ -20,6 +23,7 @@ use super::ape::{ApeProbe, ApeReader};
 use super::dsf::{DsfProbe, DsfReader};
 use super::extended_pcm::{ExtendedPcmProbe, ExtendedPcmReader};
 use super::wavpack::{WavpackProbe, WavpackReader};
+use crate::metadata::SymphoniaExtractedMeta;
 
 /// Constructs a Symphonia `CodecRegistry` preloaded with standard codecs and external Opus/AAC adapters.
 pub fn create_codec_registry() -> CodecRegistry {
@@ -33,14 +37,124 @@ pub fn create_codec_registry() -> CodecRegistry {
     registry
 }
 
+fn classify_symphonia_codec(
+    codec: AudioCodecId,
+    explicit_bps: Option<u32>,
+) -> (&'static str, bool, Option<u32>) {
+    match codec {
+        codec_wk::CODEC_ID_MP1 => ("MP1", false, explicit_bps),
+        codec_wk::CODEC_ID_MP2 => ("MP2", false, explicit_bps),
+        codec_wk::CODEC_ID_MP3 => ("MP3", false, explicit_bps),
+        codec_wk::CODEC_ID_FLAC => ("FLAC", true, explicit_bps),
+        codec_wk::CODEC_ID_AAC => ("AAC", false, explicit_bps),
+        codec_wk::CODEC_ID_ALAC => ("ALAC", true, explicit_bps),
+        codec_wk::CODEC_ID_VORBIS => ("Vorbis", false, explicit_bps),
+        codec_wk::CODEC_ID_OPUS => ("Opus", false, explicit_bps),
+        codec_wk::CODEC_ID_WAVPACK => ("WavPack", true, explicit_bps),
+        codec_wk::CODEC_ID_MONKEYS_AUDIO => ("APE", true, explicit_bps),
+        codec_wk::CODEC_ID_PCM_ALAW => ("ALAW", false, explicit_bps.or(Some(8))),
+        codec_wk::CODEC_ID_PCM_MULAW => ("ULAW", false, explicit_bps.or(Some(8))),
+        codec_wk::CODEC_ID_ADPCM_MS
+        | codec_wk::CODEC_ID_ADPCM_IMA_WAV
+        | codec_wk::CODEC_ID_ADPCM_IMA_QT
+        | codec_wk::CODEC_ID_ADPCM_G722
+        | codec_wk::CODEC_ID_ADPCM_G726
+        | codec_wk::CODEC_ID_ADPCM_G726LE => ("ADPCM", false, explicit_bps.or(Some(4))),
+        codec_wk::CODEC_ID_PCM_S8
+        | codec_wk::CODEC_ID_PCM_S8_PLANAR
+        | codec_wk::CODEC_ID_PCM_U8
+        | codec_wk::CODEC_ID_PCM_U8_PLANAR => ("PCM", true, explicit_bps.or(Some(8))),
+        codec_wk::CODEC_ID_PCM_S16LE
+        | codec_wk::CODEC_ID_PCM_S16LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_S16BE
+        | codec_wk::CODEC_ID_PCM_S16BE_PLANAR
+        | codec_wk::CODEC_ID_PCM_U16LE
+        | codec_wk::CODEC_ID_PCM_U16LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_U16BE
+        | codec_wk::CODEC_ID_PCM_U16BE_PLANAR => ("PCM", true, explicit_bps.or(Some(16))),
+        codec_wk::CODEC_ID_PCM_S24LE
+        | codec_wk::CODEC_ID_PCM_S24LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_S24BE
+        | codec_wk::CODEC_ID_PCM_S24BE_PLANAR
+        | codec_wk::CODEC_ID_PCM_U24LE
+        | codec_wk::CODEC_ID_PCM_U24LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_U24BE
+        | codec_wk::CODEC_ID_PCM_U24BE_PLANAR => ("PCM", true, explicit_bps.or(Some(24))),
+        codec_wk::CODEC_ID_PCM_S32LE
+        | codec_wk::CODEC_ID_PCM_S32LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_S32BE
+        | codec_wk::CODEC_ID_PCM_S32BE_PLANAR
+        | codec_wk::CODEC_ID_PCM_U32LE
+        | codec_wk::CODEC_ID_PCM_U32LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_U32BE
+        | codec_wk::CODEC_ID_PCM_U32BE_PLANAR
+        | codec_wk::CODEC_ID_PCM_F32LE
+        | codec_wk::CODEC_ID_PCM_F32LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_F32BE
+        | codec_wk::CODEC_ID_PCM_F32BE_PLANAR => ("PCM", true, explicit_bps.or(Some(32))),
+        codec_wk::CODEC_ID_PCM_F64LE
+        | codec_wk::CODEC_ID_PCM_F64LE_PLANAR
+        | codec_wk::CODEC_ID_PCM_F64BE
+        | codec_wk::CODEC_ID_PCM_F64BE_PLANAR => ("PCM", true, explicit_bps.or(Some(64))),
+        _ => ("Unknown", false, explicit_bps),
+    }
+}
+
+fn classify_symphonia_container(
+    format_id: FormatId,
+    short_name: &str,
+    hint_extension: Option<&str>,
+    codec: &'static str,
+) -> &'static str {
+    match format_id {
+        format_wk::FORMAT_ID_WAVE => "WAV",
+        format_wk::FORMAT_ID_AIFF => "AIFF",
+        format_wk::FORMAT_ID_CAF => "CAF",
+        format_wk::FORMAT_ID_MP1 => "MP1",
+        format_wk::FORMAT_ID_MP2 => "MP2",
+        format_wk::FORMAT_ID_MP3 => "MP3",
+        format_wk::FORMAT_ID_ADTS => "ADTS",
+        format_wk::FORMAT_ID_OGG => "Ogg",
+        format_wk::FORMAT_ID_FLAC => "FLAC",
+        format_wk::FORMAT_ID_WAVPACK => "WavPack",
+        format_wk::FORMAT_ID_ISOMP4 => "MP4",
+        format_wk::FORMAT_ID_MKV => {
+            if hint_extension == Some("webm") || short_name.eq_ignore_ascii_case("webm") {
+                "WebM"
+            } else {
+                "Matroska"
+            }
+        }
+        _ => match short_name.to_ascii_lowercase().as_str() {
+            "wav" | "wave" => "WAV",
+            "aiff" | "aif" => "AIFF",
+            "caf" => "CAF",
+            "mp3" => "MP3",
+            "aac" | "adts" => "ADTS",
+            "ogg" | "oga" => "Ogg",
+            "flac" => "FLAC",
+            "isomp4" | "mp4" | "m4a" => "MP4",
+            "mkv" | "matroska" | "mka" => "Matroska",
+            "webm" => "WebM",
+            _ => codec,
+        },
+    }
+}
+
 /// Encapsulates Symphonia container reading, packet filtering, and audio frame decoding.
 struct SymphoniaTrackSession {
     format_reader: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     sample_rate: u32,
+    raw_sample_rate: Option<u32>,
     channels: u32,
+    bits_per_sample: Option<u32>,
+    codec: &'static str,
+    container_format: &'static str,
+    lossless: bool,
     duration_ms: Option<u64>,
+    symphonia_meta: SymphoniaExtractedMeta,
 }
 
 impl SymphoniaTrackSession {
@@ -64,9 +178,22 @@ impl SymphoniaTrackSession {
         let (track_id, audio_params, time_base, duration, num_frames) =
             Self::select_primary_audio_track(&*format_reader)?;
 
-        let (sample_rate, channels) = Self::validate_audio_params(&audio_params)?;
+        let (raw_sr, channels) = Self::validate_audio_params(&audio_params)?;
+        let (codec, lossless, bits_per_sample) =
+            classify_symphonia_codec(audio_params.codec, audio_params.bits_per_sample);
+        let fmt_info = *format_reader.format_info();
+        let container_format = classify_symphonia_container(
+            fmt_info.format,
+            fmt_info.short_name,
+            hint_extension,
+            codec,
+        );
+        let sample_rate = if codec == "Opus" { 48000 } else { raw_sr };
+        let raw_sample_rate = Some(raw_sr);
+
         let duration_ms = Self::compute_duration_ms(time_base, duration, num_frames)
             .or_else(|| Self::extract_metadata_duration_ms(&mut *format_reader));
+        let symphonia_meta = SymphoniaExtractedMeta::from_format_reader(&mut *format_reader);
 
         let decoder = create_codec_registry()
             .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())?;
@@ -76,8 +203,14 @@ impl SymphoniaTrackSession {
             decoder,
             track_id,
             sample_rate,
+            raw_sample_rate,
             channels,
+            bits_per_sample,
+            codec,
+            container_format,
+            lossless,
             duration_ms,
+            symphonia_meta,
         })
     }
 
@@ -273,8 +406,14 @@ enum EngineBackend {
 pub struct SymphoniaEngine {
     backend: EngineBackend,
     sample_rate: u32,
+    raw_sample_rate: Option<u32>,
     channels: u32,
+    bits_per_sample: Option<u32>,
+    codec: &'static str,
+    container_format: &'static str,
+    lossless: bool,
     duration_ms: Option<u64>,
+    symphonia_meta: SymphoniaExtractedMeta,
 }
 
 impl SymphoniaEngine {
@@ -287,10 +426,17 @@ impl SymphoniaEngine {
 
         let boxed_source = match ExtendedPcmReader::try_new(boxed_source)? {
             ExtendedPcmProbe::Matched(pcm) => {
+                let sr = pcm.sample_rate();
                 return Ok(Self {
-                    sample_rate: pcm.sample_rate(),
+                    sample_rate: sr,
+                    raw_sample_rate: Some(sr),
                     channels: pcm.channels(),
+                    bits_per_sample: Some(pcm.bits_per_sample()),
+                    codec: "PCM",
+                    container_format: pcm.container_format(),
+                    lossless: true,
                     duration_ms: pcm.duration_ms(),
+                    symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::ExtendedPcm(pcm),
                 });
             }
@@ -301,8 +447,14 @@ impl SymphoniaEngine {
             DsfProbe::Matched(dsf) => {
                 return Ok(Self {
                     sample_rate: dsf.sample_rate(),
+                    raw_sample_rate: Some(dsf.raw_sample_rate()),
                     channels: dsf.channels(),
+                    bits_per_sample: Some(dsf.bits_per_sample()),
+                    codec: "DSD",
+                    container_format: "DSF",
+                    lossless: true,
                     duration_ms: dsf.duration_ms(),
+                    symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::Dsf(dsf),
                 });
             }
@@ -311,10 +463,17 @@ impl SymphoniaEngine {
 
         let boxed_source = match ApeReader::try_new(boxed_source)? {
             ApeProbe::Matched(ape) => {
+                let sr = ape.sample_rate();
                 return Ok(Self {
-                    sample_rate: ape.sample_rate(),
+                    sample_rate: sr,
+                    raw_sample_rate: Some(sr),
                     channels: ape.channels(),
+                    bits_per_sample: Some(ape.bits_per_sample()),
+                    codec: "APE",
+                    container_format: "APE",
+                    lossless: true,
                     duration_ms: ape.duration_ms(),
+                    symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::Ape(ape),
                 });
             }
@@ -323,10 +482,17 @@ impl SymphoniaEngine {
 
         let mut boxed_source = match WavpackReader::try_new(boxed_source)? {
             WavpackProbe::Matched(wv) => {
+                let sr = wv.sample_rate();
                 return Ok(Self {
-                    sample_rate: wv.sample_rate(),
+                    sample_rate: sr,
+                    raw_sample_rate: Some(sr),
                     channels: wv.channels(),
+                    bits_per_sample: Some(wv.bits_per_sample()),
+                    codec: "WavPack",
+                    container_format: "WavPack",
+                    lossless: true,
                     duration_ms: wv.duration_ms(),
+                    symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::WavPack(wv),
                 });
             }
@@ -344,10 +510,18 @@ impl SymphoniaEngine {
             session.duration_ms = Some(exact_dur);
         }
 
+        let symphonia_meta = session.symphonia_meta.clone();
+
         Ok(Self {
             sample_rate: session.sample_rate,
+            raw_sample_rate: session.raw_sample_rate,
             channels: session.channels,
+            bits_per_sample: session.bits_per_sample,
+            codec: session.codec,
+            container_format: session.container_format,
+            lossless: session.lossless,
             duration_ms: session.duration_ms,
+            symphonia_meta,
             backend: EngineBackend::Symphonia(session),
         })
     }
@@ -358,16 +532,52 @@ impl SymphoniaEngine {
         self.sample_rate
     }
 
+    /// Returns the raw codec sample rate in Hz (e.g., 2.8224 MHz for DSD64 or input rate for Opus).
+    #[inline]
+    pub fn raw_sample_rate(&self) -> Option<u32> {
+        self.raw_sample_rate
+    }
+
     /// Returns the decoded stream channel count.
     #[inline]
     pub fn channels(&self) -> u32 {
         self.channels
     }
 
+    /// Returns the bit depth per sample if defined by the codec/container.
+    #[inline]
+    pub fn bits_per_sample(&self) -> Option<u32> {
+        self.bits_per_sample
+    }
+
+    /// Returns the canonical codec identifier (`"MP3"`, `"FLAC"`, `"AAC"`, `"ALAC"`, `"Vorbis"`, `"Opus"`, `"PCM"`, `"DSD"`, `"APE"`, `"WavPack"`).
+    #[inline]
+    pub fn codec(&self) -> &'static str {
+        self.codec
+    }
+
+    /// Returns the canonical container format identifier (`"MP3"`, `"FLAC"`, `"Ogg"`, `"MP4"`, `"WAV"`, `"RF64"`, `"RIFX"`, `"W64"`, `"AIFF"`, `"CAF"`, `"Matroska"`, `"WebM"`, `"ADTS"`, `"DSF"`, `"APE"`, `"WavPack"`).
+    #[inline]
+    pub fn container_format(&self) -> &'static str {
+        self.container_format
+    }
+
+    /// Returns `true` if the codec is lossless.
+    #[inline]
+    pub fn lossless(&self) -> bool {
+        self.lossless
+    }
+
     /// Returns the total stream duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         self.duration_ms
+    }
+
+    /// Returns a reference to the metadata/visuals/chapters captured by Symphonia during probing.
+    #[inline]
+    pub fn symphonia_meta(&self) -> &SymphoniaExtractedMeta {
+        &self.symphonia_meta
     }
 
     /// Decodes the next packet or block into interleaved normalized float PCM samples.

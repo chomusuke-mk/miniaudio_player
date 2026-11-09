@@ -7,10 +7,9 @@
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::Cursor;
-use std::sync::atomic::Ordering;
 use symphonia::core::io::MediaSource;
 
-use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult, RustAudioInfo, RustAudioMetadata};
+use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult};
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 use crate::decoder::sniffer::FormatSniffer;
 use crate::decoder::SymphoniaEngine;
@@ -468,45 +467,30 @@ pub fn analyze_audio_source(
         return Err(format!("Failed to open audio source (code: {})", res));
     }
 
-    let raw_meta = deck.get_meta_bytes();
-    let head_info = if let Some(ref m) = raw_meta {
-        analyze_head_info(m, 0, config.metadata)
-    } else {
-        HeadAnalysisInfo::default()
-    };
-
-    let sample_rate = deck.sample_rate.load(Ordering::SeqCst);
-    let channels = deck.channels.load(Ordering::SeqCst).max(1);
-    let mut duration_ms = deck.duration_ms.load(Ordering::SeqCst);
-    let bitrate = deck.bitrate.load(Ordering::Relaxed);
+    let mut audio_info = deck.get_audio_info();
+    let sample_rate = audio_info.sample_rate;
+    let channels = audio_info.channels.max(1);
+    let mut duration_ms = audio_info.duration_ms.unwrap_or(0);
 
     // Fast path: if neither ReplayGain nor Waveform is requested, return early
     if !config.replay_gain && !config.waveform {
-        let meta_bytes = if config.metadata {
-            raw_meta.or(head_info.metadata_bytes)
+        let metadata = if config.metadata {
+            deck.get_parsed_metadata()
         } else {
             None
         };
-        let fast_duration = if duration_ms > 0 { Some(duration_ms) } else { None };
         return Ok(RustAudioAnalysisResult {
-            audio_info: RustAudioInfo {
-                duration_ms: fast_duration,
-                sample_rate,
-                channels,
-                bitrate,
-                format: head_info.format,
-            },
-            peak_amplitude: 0.0,
-            rms_amplitude: 0.0,
+            audio_info,
             has_replay_gain: false,
             integrated_lufs: 0.0,
             replay_gain_db: 0.0,
+            replay_gain_peak: 0.0,
             has_waveform: false,
             spectral_centroid: 0.0,
             frequency_bands: Vec::new(),
             waveform_peaks: Vec::new(),
-            has_metadata: meta_bytes.is_some(),
-            metadata: meta_bytes.map(|b| RustAudioMetadata { bytes: b }),
+            has_metadata: metadata.is_some(),
+            metadata,
         });
     }
 
@@ -546,14 +530,16 @@ pub fn analyze_audio_source(
         let decoded_dur = (total_decoded_frames as f64 * 1000.0 / sample_rate as f64).round() as i64;
         if duration_ms <= 0 || (decoded_dur - duration_ms).abs() > 100 {
             duration_ms = decoded_dur;
+            audio_info.duration_ms = if duration_ms > 0 { Some(duration_ms) } else { None };
+            if audio_info.bitrate == 0 && duration_ms > 0 {
+                if let Some(fs) = audio_info.file_size {
+                    if fs > 0 {
+                        audio_info.bitrate = ((fs * 8000) / (duration_ms as u64)) as u32;
+                    }
+                }
+            }
         }
     }
-
-    let final_duration = if duration_ms > 0 {
-        Some(duration_ms)
-    } else {
-        None
-    };
 
     let (has_replay_gain, replay_gain) = match rg_analyzer {
         Some(rg) => (true, rg.finalize(config.target_lufs, peak)),
@@ -565,31 +551,24 @@ pub fn analyze_audio_source(
         None => (false, Vec::new()),
     };
 
-    let meta_bytes = if config.metadata {
-        raw_meta.or(head_info.metadata_bytes)
+    let metadata = if config.metadata {
+        deck.get_parsed_metadata()
     } else {
         None
     };
 
     Ok(RustAudioAnalysisResult {
-        audio_info: RustAudioInfo {
-            duration_ms: final_duration,
-            sample_rate,
-            channels,
-            bitrate,
-            format: head_info.format,
-        },
-        peak_amplitude: peak,
-        rms_amplitude: peak,
+        audio_info,
         has_replay_gain,
         integrated_lufs: if has_replay_gain { replay_gain.lufs } else { 0.0 },
         replay_gain_db: if has_replay_gain { replay_gain.gain_db } else { 0.0 },
+        replay_gain_peak: if has_replay_gain { replay_gain.peak } else { 0.0 },
         has_waveform,
         spectral_centroid: 0.0,
         frequency_bands: Vec::new(),
         waveform_peaks,
-        has_metadata: meta_bytes.is_some(),
-        metadata: meta_bytes.map(|b| RustAudioMetadata { bytes: b }),
+        has_metadata: metadata.is_some(),
+        metadata,
     })
 }
 

@@ -77,6 +77,12 @@ impl ApeReader {
         self.channels
     }
 
+    /// Returns the bit depth per sample (e.g. 16, 24).
+    #[inline]
+    pub fn bits_per_sample(&self) -> u32 {
+        self.bits_per_sample as u32
+    }
+
     /// Returns the total duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {

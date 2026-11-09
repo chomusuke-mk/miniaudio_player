@@ -8,25 +8,20 @@ export 'audio_metadata.dart';
 
 /// Complete result of analyzing an audio track's acoustic, format, and DSP properties.
 ///
-/// Contains fundamental format information in [audioInfo] (duration, sample rate, channels,
-/// nominal bitrate, and container format) as well as optional specialized modules:
-/// - [peak]: Absolute true sample peak across the entire track.
-/// - [replayGain]: ITU-R BS.1770-4 / EBU R128 loudness metrics (or `null` if disabled).
+/// Contains fundamental format and stream information in [audioInfo] (duration, sample rate,
+/// raw sample rate, channels, bit depth, bitrate, format, codec, container format, lossless,
+/// bitrate mode, and file size) as well as optional specialized modules:
+/// - [replayGain]: ITU-R BS.1770-4 / EBU R128 loudness metrics and peak (or `null` if disabled).
 /// - [waveform]: Normalized amplitude envelope points (or `null` if disabled).
-/// - [metadata]: Raw metadata bytes container (or `null` if disabled).
-///
-/// Convenience getters ([duration], [sampleRate], [channels], [bitrate], [format]) forward
-/// directly to [audioInfo] for backwards compatibility.
+/// - [metadata]: Parsed metadata container (or `null` if disabled).
 class AudioAnalysisResult {
-  /// Core technical audio properties (sample rate, channels, bitrate, duration, format).
+  /// Core technical audio properties (sample rate, channels, bitrate, duration, format,
+  /// codec, container format, lossless flag, bitrate mode, bit depth, etc.).
   /// Always extracted at zero computational cost.
   final AudioInfo audioInfo;
 
-  /// Absolute true sample peak across the entire track (where `1.0` represents 0 dBFS / digital full scale).
-  final double peak;
-
-  /// ITU-R BS.1770-4 / EBU R128 loudness metrics and recommended volume gain,
-  /// or `null` if ReplayGain analysis was disabled (`replayGain: false`).
+  /// ITU-R BS.1770-4 / EBU R128 loudness metrics, true peak sample amplitude, and recommended
+  /// volume gain, or `null` if ReplayGain analysis was disabled (`replayGain: false`).
   final ReplayGainResult? replayGain;
 
   /// Normalized amplitude envelope points for rendering seekbars and track shapes,
@@ -36,25 +31,9 @@ class AudioAnalysisResult {
   /// Encapsulated metadata bytes, or `null` if metadata extraction was disabled (`metadata: false`).
   final AudioMetadata? metadata;
 
-  /// Total duration of the audio track, or `null` if unknown (e.g. infinite livestream).
-  Duration? get duration => audioInfo.duration;
-
-  /// Native audio sample rate in Hz (e.g. 44100, 48000).
-  int get sampleRate => audioInfo.sampleRate;
-
-  /// Number of audio channels (e.g. 1 for Mono, 2 for Stereo).
-  int get channels => audioInfo.channels;
-
-  /// Average nominal bitrate of the file in bits per second (bps).
-  int get bitrate => audioInfo.bitrate;
-
-  /// Container or codec format identifier (e.g. "mp3", "flac", "wav").
-  String? get format => audioInfo.format;
-
   /// Creates an [AudioAnalysisResult] with acoustic metrics.
   const AudioAnalysisResult({
     required this.audioInfo,
-    required this.peak,
     this.replayGain,
     this.waveform,
     this.metadata,
@@ -66,7 +45,6 @@ class AudioAnalysisResult {
       other is AudioAnalysisResult &&
           runtimeType == other.runtimeType &&
           audioInfo == other.audioInfo &&
-          peak == other.peak &&
           replayGain == other.replayGain &&
           waveform == other.waveform &&
           metadata == other.metadata;
@@ -74,7 +52,6 @@ class AudioAnalysisResult {
   @override
   int get hashCode => Object.hash(
         audioInfo,
-        peak,
         replayGain,
         waveform,
         metadata,
@@ -82,8 +59,8 @@ class AudioAnalysisResult {
 
   @override
   String toString() =>
-      'AudioAnalysisResult(audioInfo: $audioInfo, peak: ${peak.toStringAsFixed(4)}, '
-      'replayGain: $replayGain, waveform: $waveform, metadata: $metadata)';
+      'AudioAnalysisResult(audioInfo: $audioInfo, replayGain: $replayGain, '
+      'waveform: $waveform, metadata: $metadata)';
 }
 
 /// Representation of a track's normalized amplitude waveform points.

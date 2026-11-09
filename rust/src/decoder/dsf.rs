@@ -288,6 +288,12 @@ impl DsfReader {
         self.channels
     }
 
+    /// Returns the native DSD bit depth per sample (`1`).
+    #[inline]
+    pub fn bits_per_sample(&self) -> u32 {
+        1
+    }
+
     /// Returns total stream duration in milliseconds if known.
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {

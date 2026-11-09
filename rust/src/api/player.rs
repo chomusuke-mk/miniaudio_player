@@ -669,11 +669,7 @@ impl RustMiniaudioPlayer {
                     let state = active_deck.state.load(Ordering::Relaxed);
                     let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
                     let pos = active_deck.position_ms.load(Ordering::Relaxed);
-                    let dur = active_deck.duration_ms.load(Ordering::Relaxed);
-                    let bitrate = active_deck.bitrate.load(Ordering::Relaxed);
-                    let sr = active_deck.sample_rate.load(Ordering::Relaxed);
-                    let ch = active_deck.channels.load(Ordering::Relaxed);
-                    let format = active_deck.format.read().ok().and_then(|f| f.clone());
+                    let audio_info = active_deck.get_audio_info();
                     let mut br = crate::bridge::ffi::MiniaudioBufferedRange::default();
                     let has_br = active_deck.get_buffered_range(&mut br) == 0;
                     let idx = ply.music_manager.current_index();
@@ -682,7 +678,7 @@ impl RustMiniaudioPlayer {
                     let is_ducking = ply.input_manager.is_ducking_active();
                     let mic_rms = ply.input_manager.last_rms_db();
                     let meta_to_send = if meta_enabled.load(Ordering::Relaxed) {
-                        active_deck.get_meta_bytes()
+                        active_deck.get_parsed_metadata()
                     } else {
                         None
                     };
@@ -712,14 +708,7 @@ impl RustMiniaudioPlayer {
                     worker_reporter.emit(RustPlayerEvent::IsCompleted(is_completed));
                     worker_reporter.emit(RustPlayerEvent::Position(pos));
                     worker_reporter.emit(RustPlayerEvent::CurrentIndex(idx as i32));
-                    if sr > 0 {
-                        let audio_info = RustAudioInfo {
-                            duration_ms: if dur > 0 { Some(dur) } else { None },
-                            sample_rate: sr,
-                            channels: ch.max(1),
-                            bitrate,
-                            format,
-                        };
+                    if audio_info.sample_rate > 0 {
                         worker_reporter.emit(RustPlayerEvent::AudioInfo(audio_info));
                     }
                     worker_reporter.emit(RustPlayerEvent::ActiveVoices(active_voices));
@@ -736,8 +725,8 @@ impl RustMiniaudioPlayer {
                     if mic_rms > -90.0 {
                         worker_reporter.emit(RustPlayerEvent::MicRmsLevel(mic_rms));
                     }
-                    if let Some(mb) = meta_to_send {
-                        worker_reporter.emit(RustPlayerEvent::AudioMetadata(RustAudioMetadata { bytes: mb }));
+                    if let Some(meta) = meta_to_send {
+                        worker_reporter.emit(RustPlayerEvent::AudioMetadata(meta));
                     }
                     worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
                         gain_db: rg.gain_db,
@@ -884,12 +873,12 @@ impl RustMiniaudioPlayer {
         let state = active_deck.state.load(Ordering::Relaxed);
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
         let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
-        let initial_dur = active_deck.duration_ms.load(Ordering::Relaxed);
-        let initial_bitrate = active_deck.bitrate.load(Ordering::Relaxed);
-        let initial_sr = active_deck.sample_rate.load(Ordering::Relaxed);
-        let initial_ch = active_deck.channels.load(Ordering::Relaxed);
-        let initial_fmt = active_deck.format.read().ok().and_then(|f| f.clone());
-        let initial_meta = active_deck.get_meta_bytes();
+        let initial_info = active_deck.get_audio_info();
+        let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
+            active_deck.get_parsed_metadata()
+        } else {
+            None
+        };
         let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
         let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
         let rg = if cur_idx >= 0 {
@@ -912,19 +901,13 @@ impl RustMiniaudioPlayer {
         self.emit_event(RustPlayerEvent::IsCompleted(false));
         if self.metadata_enabled.load(Ordering::Relaxed) {
             self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
-            if let Some(mb) = initial_meta {
-                self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata { bytes: mb }));
+            if let Some(meta) = initial_meta {
+                self.emit_event(RustPlayerEvent::AudioMetadata(meta));
             }
         }
         self.emit_event(RustPlayerEvent::Position(initial_pos));
-        if initial_sr > 0 {
-            self.emit_event(RustPlayerEvent::AudioInfo(RustAudioInfo {
-                duration_ms: if initial_dur > 0 { Some(initial_dur) } else { None },
-                sample_rate: initial_sr,
-                channels: initial_ch.max(1),
-                bitrate: initial_bitrate,
-                format: initial_fmt,
-            }));
+        if initial_info.sample_rate > 0 {
+            self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
         }
         if has_br {
             self.emit_event(RustPlayerEvent::Buffer(RustBuffer {
@@ -1509,8 +1492,8 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             self.emit_event(RustPlayerEvent::MetadataEnabled(enabled));
             if enabled {
                 let ply = self.inner.lock().unwrap();
-                if let Some(mb) = ply.music_manager.active_deck_ref().get_meta_bytes() {
-                    self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata { bytes: mb }));
+                if let Some(meta) = ply.music_manager.active_deck_ref().get_parsed_metadata() {
+                    self.emit_event(RustPlayerEvent::AudioMetadata(meta));
                 }
             } else {
                 self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
