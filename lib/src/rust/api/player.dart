@@ -77,6 +77,9 @@ abstract class EventReporter implements RustOpaqueInterface {
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>>
 abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
+  /// Adds an audio input capture node.
+  void addInput({required RustAudioInput input});
+
   /// Adds or routes an audio output destination to the output matrix.
   void addOutput({required RustAudioOutput output});
 
@@ -86,20 +89,12 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Clears pending tracks from the queue, optionally preserving the currently active track.
   void clearQueue({required bool keepCurrent});
 
-  /// Stops and closes the active microphone capture device.
-  void disableMicrophone();
+  /// Configures runtime parameters for an existing capture node without reopening hardware.
+  void configureInput({String? deviceId, required RustAudioInputConfig config});
 
   /// Releases all native audio devices, worker threads, DSP chains, and memory.
   @override
   void dispose();
-
-  /// Initializes and opens the microphone capture stream with ducking and monitoring options.
-  Future<void> enableMicrophone(
-      {String? deviceId,
-      required double volume,
-      RustDuckingConfig? ducking,
-      required bool monitorDirect,
-      required double monitorVolume});
 
   /// Returns the current number of concurrently playing sound effect voices.
   int getActiveVoicesCount();
@@ -170,6 +165,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Removes an audio source at the specified index from the playlist queue.
   bool removeAt({required BigInt index});
 
+  /// Removes an audio input capture node by matching device identifier.
+  void removeInput({required RustAudioInput input});
+
   /// Removes an audio output destination from the output matrix.
   void removeOutput({required RustAudioOutput output});
 
@@ -203,15 +201,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
   void setDefaultReplayGain({required double gainDb, required double peak});
 
-  /// Enables or disables direct microphone monitoring to the main speaker output.
-  void setDirectMonitoring({required bool enabled, required double volume});
-
   /// Configures global Doppler factor and medium speed of sound in meters per second.
   void setDopplerParameters(
       {required double factor, required double speedOfSound});
-
-  /// Updates dynamic ducking parameters for attenuating music during microphone speech.
-  void setDucking({required RustDuckingConfig config});
 
   /// Adjusts stereo pan balance of an active sound effect voice.
   void setEffectBalance({required int voiceId, required double balance});
@@ -234,6 +226,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
   void setInfiniteMix({required RustInfiniteMixConfig config});
 
+  /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
+  void setInputs({required List<RustAudioInput> inputs});
+
   /// Enables or disables the output brickwall peak limiter.
   void setLimiter({required bool enabled});
 
@@ -245,9 +240,6 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
 
   /// Enables or disables forwarding of raw ICY/ID3 metadata byte payloads.
   void setMetabytesEnabled({required bool enabled});
-
-  /// Sets the microphone input gain volume multiplier.
-  void setMicrophoneVolume({required double volume});
 
   /// Toggles mono downmixing of multi-channel audio.
   void setMono({required bool enabled});

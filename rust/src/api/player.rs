@@ -724,7 +724,8 @@ impl RustMiniaudioPlayer {
                         let deck_state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
                         let is_rec = ply.output_manager.is_recording.load(Ordering::Relaxed);
                         let has_voices = ply.effects_manager.active_voices_count() > 0;
-                        let is_active = deck_state == crate::core::dual_source::STATE_PLAYING || is_rec || has_voices;
+                        let has_inputs = ply.input_manager.has_active_inputs();
+                        let is_active = deck_state == crate::core::dual_source::STATE_PLAYING || is_rec || has_voices || has_inputs;
                         if is_active {
                             ply.render_pcm(clock_period as usize);
                         }
@@ -1703,75 +1704,59 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     // =========================================================================
-    // Capture & Microphone Methods
+    // Capture & Multi-Input Methods
     // =========================================================================
 
-    /// Initializes and opens the microphone capture stream with ducking and monitoring options.
-    pub fn enable_microphone(
+    /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn set_inputs(&self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        ply.input_manager.set_inputs(inputs)?;
+        let current = ply.input_manager.current_inputs();
+        drop(ply);
+
+        self.emit_event(RustPlayerEvent::Inputs(current));
+        Ok(())
+    }
+
+    /// Adds an audio input capture node.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn add_input(&self, input: RustAudioInput) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        ply.input_manager.add_input(input)?;
+        let current = ply.input_manager.current_inputs();
+        drop(ply);
+
+        self.emit_event(RustPlayerEvent::Inputs(current));
+        Ok(())
+    }
+
+    /// Removes an audio input capture node by matching device identifier.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn remove_input(&self, input: RustAudioInput) -> Result<(), String> {
+        let mut ply = self.inner.lock().unwrap();
+        ply.input_manager.remove_input(input.device_id)?;
+        let current = ply.input_manager.current_inputs();
+        drop(ply);
+
+        self.emit_event(RustPlayerEvent::Inputs(current));
+        Ok(())
+    }
+
+    /// Configures runtime parameters for an existing capture node without reopening hardware.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn configure_input(
         &self,
         device_id: Option<String>,
-        volume: f32,
-        ducking: Option<RustDuckingConfig>,
-        monitor_direct: bool,
-        monitor_volume: f32,
+        config: RustAudioInputConfig,
     ) -> Result<(), String> {
-        let (d_en, d_db, t_db, att_ms, hold_ms, rel_ms) = match ducking {
-            Some(d) => (d.enabled, d.ducking_db, d.threshold_db, d.attack_ms, d.hold_ms, d.release_ms),
-            None => (false, -14.0, -30.0, 30.0, 250.0, 400.0),
-        };
+        let mut ply = self.inner.lock().unwrap();
+        ply.input_manager.configure_input(device_id, config)?;
+        let current = ply.input_manager.current_inputs();
+        drop(ply);
 
-        let res = self.inner.lock().unwrap().input_manager.enable_microphone(
-            device_id,
-            volume,
-            d_en,
-            d_db,
-            t_db,
-            att_ms,
-            hold_ms,
-            rel_ms,
-            monitor_direct,
-            monitor_volume,
-        );
-        if res.is_ok() {
-            self.emit_event(RustPlayerEvent::MicrophoneEnabled(true));
-            self.emit_event(RustPlayerEvent::MicVolume(volume));
-            self.emit_event(RustPlayerEvent::DirectMonitoringEnabled(monitor_direct));
-        }
-        res
-    }
-
-    /// Stops and closes the active microphone capture device.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn disable_microphone(&self) {
-        self.inner.lock().unwrap().input_manager.disable_microphone();
-        self.emit_event(RustPlayerEvent::MicrophoneEnabled(false));
-    }
-
-    /// Sets the microphone input gain volume multiplier.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn set_microphone_volume(&self, volume: f32) {
-        self.inner.lock().unwrap().input_manager.set_volume(volume);
-        self.emit_event(RustPlayerEvent::MicVolume(volume));
-    }
-
-    /// Updates dynamic ducking parameters for attenuating music during microphone speech.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn set_ducking(&self, config: RustDuckingConfig) {
-        self.inner.lock().unwrap().input_manager.set_ducking(
-            config.enabled,
-            config.ducking_db,
-            config.threshold_db,
-            config.attack_ms,
-            config.hold_ms,
-            config.release_ms,
-        );
-    }
-
-    /// Enables or disables direct microphone monitoring to the main speaker output.
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn set_direct_monitoring(&self, enabled: bool, volume: f32) {
-        self.inner.lock().unwrap().input_manager.set_direct_monitoring(enabled, volume);
-        self.emit_event(RustPlayerEvent::DirectMonitoringEnabled(enabled));
+        self.emit_event(RustPlayerEvent::Inputs(current));
+        Ok(())
     }
 
     /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.

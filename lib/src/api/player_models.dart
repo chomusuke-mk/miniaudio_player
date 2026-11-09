@@ -1,5 +1,6 @@
 import '../equalizer.dart';
 import '../reverb.dart';
+import 'audio_device.dart';
 import 'crossfade_config.dart';
 import 'miniaudio_player.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
@@ -105,37 +106,49 @@ class AudioOutput {
       'AudioOutput(deviceId: $deviceId, exclusiveMode: $exclusiveMode, source: $source)';
 }
 
-/// Hardware microphone capture input node configuration.
-class AudioInput {
-  /// The optional hardware microphone device ID (`null` for system default).
-  final String? deviceId;
-
-  /// The capture input gain/volume (`>= 0.0`).
+/// Real-time capture configuration parameters for an [AudioInput].
+class AudioInputConfig {
+  /// The linear capture input gain/volume multiplier (`>= 0.0`). Defaults to `1.0`.
   final double volume;
 
-  /// Optional sidechain ducking configuration.
+  /// Optional sidechain ducking configuration. When non-null and enabled, this input's
+  /// voice signal attenuates the music deck bus during speech.
   final DuckingConfig? ducking;
 
   /// Whether low-latency direct pass-through monitoring to the master output is enabled.
+  /// When `true`, this input's signal is routed directly to the master output.
   final bool monitorDirect;
 
-  /// The volume level for direct voice monitoring (`>= 0.0`).
+  /// The linear volume multiplier for direct voice monitoring (`>= 0.0`). Defaults to `1.0`.
   final double monitorVolume;
 
-  /// Creates an [AudioInput] capture node configuration.
-  const AudioInput({
-    this.deviceId,
+  /// Creates an [AudioInputConfig] with the specified capture parameters.
+  const AudioInputConfig({
     this.volume = 1.0,
     this.ducking,
     this.monitorDirect = false,
     this.monitorVolume = 1.0,
   });
 
+  /// Creates a copy of this configuration with the given fields replaced.
+  AudioInputConfig copyWith({
+    double? volume,
+    DuckingConfig? ducking,
+    bool? monitorDirect,
+    double? monitorVolume,
+  }) {
+    return AudioInputConfig(
+      volume: volume ?? this.volume,
+      ducking: ducking ?? this.ducking,
+      monitorDirect: monitorDirect ?? this.monitorDirect,
+      monitorVolume: monitorVolume ?? this.monitorVolume,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is AudioInput &&
-          deviceId == other.deviceId &&
+      other is AudioInputConfig &&
           volume == other.volume &&
           ducking == other.ducking &&
           monitorDirect == other.monitorDirect &&
@@ -143,7 +156,6 @@ class AudioInput {
 
   @override
   int get hashCode => Object.hash(
-        deviceId,
         volume,
         ducking,
         monitorDirect,
@@ -152,7 +164,52 @@ class AudioInput {
 
   @override
   String toString() =>
-      'AudioInput(deviceId: $deviceId, volume: $volume, ducking: $ducking, monitorDirect: $monitorDirect, monitorVolume: $monitorVolume)';
+      'AudioInputConfig(volume: $volume, ducking: $ducking, monitorDirect: $monitorDirect, monitorVolume: $monitorVolume)';
+}
+
+/// Represents an active or requested hardware audio capture source.
+class AudioInput {
+  final String? _deviceId;
+
+  /// The physical OS hardware audio capture device identifier (`null` or `'auto'` targets default).
+  String? get deviceId => _deviceId;
+
+  final AudioInputConfig _config;
+
+  /// Real-time capture configuration (gain, ducking, direct monitoring).
+  AudioInputConfig get config => _config;
+
+  /// Creates an [AudioInput] bound to a hardware endpoint and an [AudioInputConfig].
+  AudioInput({
+    String? deviceId,
+    AudioDevice? device,
+    AudioInputConfig config = const AudioInputConfig(),
+  })  : _deviceId = deviceId ?? device?.id,
+        _config = config;
+
+  /// Creates a copy of this input with updated parameters.
+  AudioInput copyWith({
+    String? deviceId,
+    AudioDevice? device,
+    AudioInputConfig? config,
+  }) {
+    return AudioInput(
+      deviceId: deviceId ?? (device != null ? device.id : _deviceId),
+      config: config ?? _config,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AudioInput && _deviceId == other._deviceId;
+
+  @override
+  int get hashCode => _deviceId.hashCode;
+
+  @override
+  String toString() =>
+      'AudioInput(deviceId: $_deviceId, config: $_config)';
 }
 
 /// Descriptor of an audio effect registered in the player's sound effects catalog.

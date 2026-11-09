@@ -109,13 +109,7 @@ class PlayerStream<T> {
       StreamController<AudioOutputSource?>.broadcast();
   final StreamController<Duration> _recordedDurationController =
       StreamController<Duration>.broadcast();
-  final StreamController<bool> _isMicrophoneEnabledController =
-      StreamController<bool>.broadcast();
-  final StreamController<double> _micVolumeController =
-      StreamController<double>.broadcast();
   final StreamController<bool> _isDuckingActiveController =
-      StreamController<bool>.broadcast();
-  final StreamController<bool> _isDirectMonitoringEnabledController =
       StreamController<bool>.broadcast();
   final StreamController<double> _micRmsLevelController =
       StreamController<double>.broadcast();
@@ -320,18 +314,8 @@ class PlayerStream<T> {
   /// Broadcast stream emitting the elapsed duration of active recording.
   Stream<Duration> get recordedDuration => _recordedDurationController.stream;
 
-  /// Broadcast stream emitting whether hardware microphone capture is active.
-  Stream<bool> get isMicrophoneEnabled => _isMicrophoneEnabledController.stream;
-
-  /// Broadcast stream emitting microphone capture volume updates.
-  Stream<double> get micVolume => _micVolumeController.stream;
-
   /// Broadcast stream emitting whether voice auto-ducking is currently active.
   Stream<bool> get isDuckingActive => _isDuckingActiveController.stream;
-
-  /// Broadcast stream emitting whether direct microphone pass-through monitoring is active.
-  Stream<bool> get isDirectMonitoringEnabled =>
-      _isDirectMonitoringEnabledController.stream;
 
   /// Broadcast stream emitting instantaneous microphone RMS levels in dBFS.
   Stream<double> get micRmsLevel => _micRmsLevelController.stream;
@@ -409,10 +393,7 @@ class PlayerStream<T> {
       _isRecordingController.close(),
       _recordingSourceController.close(),
       _recordedDurationController.close(),
-      _isMicrophoneEnabledController.close(),
-      _micVolumeController.close(),
       _isDuckingActiveController.close(),
-      _isDirectMonitoringEnabledController.close(),
       _micRmsLevelController.close(),
       _voiceCompletedController.close(),
       _errorsController.close(),

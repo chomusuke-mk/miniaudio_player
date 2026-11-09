@@ -1,33 +1,29 @@
-//! Microphone Capture & Auto-Ducking Domain Manager (`InputManager`).
+//! Multi-Input Capture & Auto-Ducking Domain Manager (`InputManager`).
 //!
-//! Encapsulates hardware capture node, real-time voice RMS detector,
-//! sidechain auto-ducking dynamics processor, and low-latency direct monitoring.
+//! Encapsulates an N-channel multi-capture matrix (symmetric to `OutputManager`).
+//! Governs hardware capture nodes, real-time voice RMS detector,
+//! sidechain auto-ducking dynamics processors, and low-latency direct monitoring summation.
 
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
 
+use crate::api::types::{RustAudioInput, RustAudioInputConfig};
 use crate::core::capture::DeviceCaptureNode;
 use crate::dsp::ducking::AutoDucker;
 
-/// Domain manager governing microphone capture, RMS detection, auto-ducking, and direct monitoring.
-pub struct InputManager {
-    /// Active hardware capture device node.
-    pub capture_node: Arc<RwLock<Option<Box<DeviceCaptureNode>>>>,
-    /// Ring buffer consumer reading captured microphone samples.
-    pub mic_consumer: Arc<Mutex<Option<rtrb::Consumer<f32>>>>,
-    /// Sidechain auto-ducker compressor.
+/// Concrete active capture hardware node instance.
+pub struct ActiveInputNode {
+    pub device_id: Option<String>,
+    pub config: RustAudioInputConfig,
+    pub capture_node: Box<DeviceCaptureNode>,
+    pub consumer: rtrb::Consumer<f32>,
     pub ducker: AutoDucker,
-    /// Whether microphone capture is active.
-    pub mic_enabled: Arc<AtomicBool>,
-    /// Microphone capture input gain.
-    pub mic_volume: Arc<AtomicU32>,
-    /// Whether low-latency direct voice monitoring to master is active.
-    pub mic_monitor_direct: Arc<AtomicBool>,
-    /// Direct voice monitoring volume.
-    pub mic_monitor_volume: Arc<AtomicU32>,
-    /// Scratch buffer holding captured voice frames.
-    pub scratch_mic: Vec<f32>,
+    pub scratch_buffer: Vec<f32>,
+}
+
+/// Domain manager governing multi-input capture, RMS detection, auto-ducking, and direct monitoring.
+pub struct InputManager {
+    /// Active capture hardware input nodes.
+    pub active_inputs: Vec<ActiveInputNode>,
     /// Audio sample rate in Hz.
     pub sample_rate: u32,
     /// Output channel count.
@@ -38,160 +34,256 @@ impl InputManager {
     /// Creates a new `InputManager` with the specified sample rate and channel count.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         Self {
-            capture_node: Arc::new(RwLock::new(None)),
-            mic_consumer: Arc::new(Mutex::new(None)),
-            ducker: AutoDucker::new(sample_rate),
-            mic_enabled: Arc::new(AtomicBool::new(false)),
-            mic_volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            mic_monitor_direct: Arc::new(AtomicBool::new(false)),
-            mic_monitor_volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            scratch_mic: vec![0.0; 2048 * channels],
+            active_inputs: Vec::new(),
             sample_rate,
             channels,
         }
     }
 
     // =========================================================================
-    // Direct Input Commands
+    // Multi-Input Management Commands
     // =========================================================================
 
-    pub fn enable_microphone(
-        &mut self,
-        device_id: Option<String>,
-        volume: f32,
-        ducking_enabled: bool,
-        ducking_db: f32,
-        threshold_db: f32,
-        attack_ms: f32,
-        hold_ms: f32,
-        release_ms: f32,
-        monitor_direct: bool,
-        monitor_volume: f32,
-    ) -> Result<(), String> {
-        self.disable_microphone();
+    /// Reconciles active capture nodes with the requested inputs set.
+    pub fn set_inputs(&mut self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
+        // 1. Evict nodes not present in requested inputs
+        self.active_inputs.retain_mut(|node| {
+            let keep = inputs.iter().any(|inp| inp.device_id == node.device_id);
+            if !keep {
+                let _ = node.capture_node.stop();
+            }
+            keep
+        });
 
-        let c_dev = match device_id {
-            Some(s) if !s.is_empty() => Some(CString::new(s).map_err(|e| e.to_string())?),
-            _ => None,
-        };
-        let c_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+        // 2. Update existing nodes and open new ones
+        for inp in inputs {
+            if let Some(node) = self
+                .active_inputs
+                .iter_mut()
+                .find(|n| n.device_id == inp.device_id)
+            {
+                // Modulate runtime config without reopening hardware
+                node.config = inp.config.clone();
+                if let Some(ref d) = inp.config.ducking {
+                    node.ducker.set_params(
+                        d.enabled,
+                        d.ducking_db,
+                        d.threshold_db,
+                        d.attack_ms,
+                        d.hold_ms,
+                        d.release_ms,
+                    );
+                } else {
+                    node.ducker.set_params(false, -14.0, -30.0, 30.0, 250.0, 400.0);
+                }
+            } else {
+                // Add new hardware capture node
+                let c_dev = match inp.device_id.as_deref() {
+                    Some(s) if !s.is_empty() && s != "auto" => {
+                        Some(CString::new(s).map_err(|e| e.to_string())?)
+                    }
+                    _ => None,
+                };
+                let c_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
 
-        let (node, consumer) = DeviceCaptureNode::new(self.sample_rate, 1, 512, c_ptr)
-            .map_err(|e| format!("Failed to create capture device: code {}", e))?;
+                let (capture_node, consumer) =
+                    DeviceCaptureNode::new(self.sample_rate, 1, 512, c_ptr)
+                        .map_err(|e| format!("Failed to create capture device: code {}", e))?;
 
-        let _ = node.start();
-        *self.capture_node.write().unwrap() = Some(node);
-        *self.mic_consumer.lock().unwrap() = Some(consumer);
+                let _ = capture_node.start();
 
-        self.mic_enabled.store(true, Ordering::Release);
-        self.mic_volume.store(volume.to_bits(), Ordering::Relaxed);
-        self.mic_monitor_direct.store(monitor_direct, Ordering::Relaxed);
-        self.mic_monitor_volume.store(monitor_volume.to_bits(), Ordering::Relaxed);
+                let mut ducker = AutoDucker::new(self.sample_rate);
+                if let Some(ref d) = inp.config.ducking {
+                    ducker.set_params(
+                        d.enabled,
+                        d.ducking_db,
+                        d.threshold_db,
+                        d.attack_ms,
+                        d.hold_ms,
+                        d.release_ms,
+                    );
+                }
 
-        self.ducker.set_params(
-            ducking_enabled,
-            ducking_db,
-            threshold_db,
-            attack_ms,
-            hold_ms,
-            release_ms,
-        );
+                self.active_inputs.push(ActiveInputNode {
+                    device_id: inp.device_id,
+                    config: inp.config,
+                    capture_node,
+                    consumer,
+                    ducker,
+                    scratch_buffer: vec![0.0; 2048],
+                });
+            }
+        }
 
         Ok(())
     }
 
-    pub fn disable_microphone(&mut self) {
-        self.mic_enabled.store(false, Ordering::Release);
-        if let Some(node) = self.capture_node.write().unwrap().take() {
-            let _ = node.stop();
+    /// Adds a new audio input capture node. Rejects if deviceId is already active.
+    pub fn add_input(&mut self, input: RustAudioInput) -> Result<(), String> {
+        if self
+            .active_inputs
+            .iter()
+            .any(|n| n.device_id == input.device_id)
+        {
+            return Err(format!(
+                "Input with device_id {:?} is already active",
+                input.device_id
+            ));
         }
-        *self.mic_consumer.lock().unwrap() = None;
+
+        let c_dev = match input.device_id.as_deref() {
+            Some(s) if !s.is_empty() && s != "auto" => {
+                Some(CString::new(s).map_err(|e| e.to_string())?)
+            }
+            _ => None,
+        };
+        let c_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+
+        let (capture_node, consumer) = DeviceCaptureNode::new(self.sample_rate, 1, 512, c_ptr)
+            .map_err(|e| format!("Failed to create capture device: code {}", e))?;
+
+        let _ = capture_node.start();
+
+        let mut ducker = AutoDucker::new(self.sample_rate);
+        if let Some(ref d) = input.config.ducking {
+            ducker.set_params(
+                d.enabled,
+                d.ducking_db,
+                d.threshold_db,
+                d.attack_ms,
+                d.hold_ms,
+                d.release_ms,
+            );
+        }
+
+        self.active_inputs.push(ActiveInputNode {
+            device_id: input.device_id,
+            config: input.config,
+            capture_node,
+            consumer,
+            ducker,
+            scratch_buffer: vec![0.0; 2048],
+        });
+
+        Ok(())
     }
 
-    #[inline]
-    pub fn set_volume(&mut self, volume: f32) {
-        self.mic_volume.store(volume.max(0.0).to_bits(), Ordering::Relaxed);
+    /// Removes an audio input capture node by device identifier.
+    pub fn remove_input(&mut self, device_id: Option<String>) -> Result<(), String> {
+        if let Some(pos) = self
+            .active_inputs
+            .iter()
+            .position(|n| n.device_id == device_id)
+        {
+            let node = self.active_inputs.remove(pos);
+            let _ = node.capture_node.stop();
+        }
+        Ok(())
     }
 
-    #[inline]
-    pub fn set_ducking(
+    /// Configures runtime parameters for an active capture node without reopening hardware.
+    pub fn configure_input(
         &mut self,
-        enabled: bool,
-        ducking_db: f32,
-        threshold_db: f32,
-        attack_ms: f32,
-        hold_ms: f32,
-        release_ms: f32,
-    ) {
-        self.ducker.set_params(
-            enabled,
-            ducking_db,
-            threshold_db,
-            attack_ms,
-            hold_ms,
-            release_ms,
-        );
+        device_id: Option<String>,
+        config: RustAudioInputConfig,
+    ) -> Result<(), String> {
+        if let Some(node) = self
+            .active_inputs
+            .iter_mut()
+            .find(|n| n.device_id == device_id)
+        {
+            node.config = config.clone();
+            if let Some(ref d) = config.ducking {
+                node.ducker.set_params(
+                    d.enabled,
+                    d.ducking_db,
+                    d.threshold_db,
+                    d.attack_ms,
+                    d.hold_ms,
+                    d.release_ms,
+                );
+            } else {
+                node.ducker.set_params(false, -14.0, -30.0, 30.0, 250.0, 400.0);
+            }
+            Ok(())
+        } else {
+            Err(format!(
+                "Input with device_id {:?} not found",
+                device_id
+            ))
+        }
     }
 
-    #[inline]
-    pub fn set_direct_monitoring(&mut self, enabled: bool, volume: f32) {
-        self.mic_monitor_direct.store(enabled, Ordering::Relaxed);
-        self.mic_monitor_volume.store(volume.max(0.0).to_bits(), Ordering::Relaxed);
+    /// Returns a snapshot of the currently active inputs.
+    pub fn current_inputs(&self) -> Vec<RustAudioInput> {
+        self.active_inputs
+            .iter()
+            .map(|n| RustAudioInput {
+                device_id: n.device_id.clone(),
+                config: n.config.clone(),
+            })
+            .collect()
     }
 
     // =========================================================================
     // Real-Time Audio Processing
     // =========================================================================
 
-    /// Processes microphone capture:
-    /// - Drains lock-free SPSC microphone queue.
-    /// - Applies sidechain Auto-Ducking on `music_buffer`.
-    /// - If direct monitoring is enabled, fills `scratch_voice_out` with microphone audio.
+    /// Processes multi-input capture:
+    /// - Drains lock-free SPSC consumer queues.
+    /// - Scales by per-input volume.
+    /// - Applies sidechain Auto-Ducking per active ducker on `music_buffer`.
+    /// - Sums direct monitoring into `scratch_voice_out` with zero latency.
     pub fn process(&mut self, music_buffer: &mut [f32], scratch_voice_out: &mut [f32]) {
         let frame_count = music_buffer.len() / self.channels;
         let sample_count = music_buffer.len();
 
         scratch_voice_out.fill(0.0);
 
-        if !self.mic_enabled.load(Ordering::Relaxed) {
+        if self.active_inputs.is_empty() {
             return;
         }
 
-        if self.scratch_mic.len() < frame_count {
-            self.scratch_mic.resize(frame_count, 0.0);
-        }
-        self.scratch_mic[..frame_count].fill(0.0);
+        for node in &mut self.active_inputs {
+            if node.scratch_buffer.len() < frame_count {
+                node.scratch_buffer.resize(frame_count, 0.0);
+            }
+            node.scratch_buffer[..frame_count].fill(0.0);
 
-        let mic_vol = f32::from_bits(self.mic_volume.load(Ordering::Relaxed));
-
-        if let Ok(mut guard) = self.mic_consumer.try_lock() {
-            if let Some(ref mut consumer) = *guard {
-                let mut read_idx = 0;
-                while read_idx < frame_count {
-                    if let Ok(sample) = consumer.pop() {
-                        self.scratch_mic[read_idx] = sample * mic_vol;
-                        read_idx += 1;
-                    } else {
-                        break;
-                    }
+            let mic_vol = node.config.volume.max(0.0);
+            let mut read_idx = 0;
+            while read_idx < frame_count {
+                if let Ok(sample) = node.consumer.pop() {
+                    node.scratch_buffer[read_idx] = sample * mic_vol;
+                    read_idx += 1;
+                } else {
+                    break;
                 }
             }
-        }
 
-        // Apply Auto-Ducking on music_buffer using scratch_mic as sidechain
-        self.ducker.process_sidechain(&self.scratch_mic[..frame_count], music_buffer, self.channels);
+            // Sidechain auto-ducking
+            if let Some(ref ducking) = node.config.ducking {
+                if ducking.enabled {
+                    node.ducker.process_sidechain(
+                        &node.scratch_buffer[..frame_count],
+                        music_buffer,
+                        self.channels,
+                    );
+                }
+            }
 
-        // Direct monitoring output
-        if self.mic_monitor_direct.load(Ordering::Relaxed) {
-            let mon_vol = f32::from_bits(self.mic_monitor_volume.load(Ordering::Relaxed));
-            let out_len = scratch_voice_out.len().min(sample_count);
+            // Direct pass-through monitoring
+            if node.config.monitor_direct {
+                let mon_vol = node.config.monitor_volume.max(0.0);
+                let out_len = scratch_voice_out.len().min(sample_count);
 
-            for f in 0..frame_count {
-                let val = self.scratch_mic[f] * mon_vol;
-                let out_idx = f * self.channels;
-                if out_idx + 1 < out_len {
-                    scratch_voice_out[out_idx] = val;
-                    scratch_voice_out[out_idx + 1] = val;
+                for f in 0..frame_count {
+                    let val = node.scratch_buffer[f] * mon_vol;
+                    let out_idx = f * self.channels;
+                    if out_idx + 1 < out_len {
+                        scratch_voice_out[out_idx] += val;
+                        scratch_voice_out[out_idx + 1] += val;
+                    }
                 }
             }
         }
@@ -199,11 +291,19 @@ impl InputManager {
 
     #[inline]
     pub fn is_ducking_active(&self) -> bool {
-        self.ducker.is_ducking()
+        self.active_inputs.iter().any(|n| n.ducker.is_ducking())
     }
 
     #[inline]
     pub fn last_rms_db(&self) -> f32 {
-        self.ducker.last_rms_db()
+        self.active_inputs
+            .iter()
+            .map(|n| n.ducker.last_rms_db())
+            .fold(-100.0f32, |acc, val| acc.max(val))
+    }
+
+    #[inline]
+    pub fn has_active_inputs(&self) -> bool {
+        !self.active_inputs.is_empty()
     }
 }

@@ -407,25 +407,10 @@ class PlayerState<T> {
   /// The elapsed duration of the active live recording.
   Duration get recordedDuration => _recordedDuration;
 
-  bool _isMicrophoneEnabled = false;
-
-  /// Whether hardware microphone capture is active.
-  bool get isMicrophoneEnabled => _isMicrophoneEnabled;
-
-  double _micVolume = 1.0;
-
-  /// The input capture gain of the microphone (`>= 0.0`).
-  double get micVolume => _micVolume;
-
   bool _isDuckingActive = false;
 
   /// Whether music auto-ducking is currently active due to detected speech.
   bool get isDuckingActive => _isDuckingActive;
-
-  bool _isDirectMonitoringEnabled = false;
-
-  /// Whether low-latency direct microphone pass-through monitoring is enabled.
-  bool get isDirectMonitoringEnabled => _isDirectMonitoringEnabled;
 
   double _micRmsLevel = -100.0;
 

@@ -101,11 +101,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_InfiniteMix value)? infiniteMix,
     TResult Function(RustPlayerEvent_PauseOnDeviceChange value)?
         pauseOnDeviceChange,
-    TResult Function(RustPlayerEvent_MicrophoneEnabled value)?
-        microphoneEnabled,
-    TResult Function(RustPlayerEvent_MicVolume value)? micVolume,
-    TResult Function(RustPlayerEvent_DirectMonitoringEnabled value)?
-        directMonitoringEnabled,
+    TResult Function(RustPlayerEvent_Inputs value)? inputs,
     TResult Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
@@ -209,13 +205,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that);
-      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
-        return microphoneEnabled(_that);
-      case RustPlayerEvent_MicVolume() when micVolume != null:
-        return micVolume(_that);
-      case RustPlayerEvent_DirectMonitoringEnabled()
-          when directMonitoringEnabled != null:
-        return directMonitoringEnabled(_that);
+      case RustPlayerEvent_Inputs() when inputs != null:
+        return inputs(_that);
       case RustPlayerEvent_OutputDevices() when outputDevices != null:
         return outputDevices(_that);
       case RustPlayerEvent_InputDevices() when inputDevices != null:
@@ -308,11 +299,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_InfiniteMix value) infiniteMix,
     required TResult Function(RustPlayerEvent_PauseOnDeviceChange value)
         pauseOnDeviceChange,
-    required TResult Function(RustPlayerEvent_MicrophoneEnabled value)
-        microphoneEnabled,
-    required TResult Function(RustPlayerEvent_MicVolume value) micVolume,
-    required TResult Function(RustPlayerEvent_DirectMonitoringEnabled value)
-        directMonitoringEnabled,
+    required TResult Function(RustPlayerEvent_Inputs value) inputs,
     required TResult Function(RustPlayerEvent_OutputDevices value)
         outputDevices,
     required TResult Function(RustPlayerEvent_InputDevices value) inputDevices,
@@ -417,12 +404,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return infiniteMix(_that);
       case RustPlayerEvent_PauseOnDeviceChange():
         return pauseOnDeviceChange(_that);
-      case RustPlayerEvent_MicrophoneEnabled():
-        return microphoneEnabled(_that);
-      case RustPlayerEvent_MicVolume():
-        return micVolume(_that);
-      case RustPlayerEvent_DirectMonitoringEnabled():
-        return directMonitoringEnabled(_that);
+      case RustPlayerEvent_Inputs():
+        return inputs(_that);
       case RustPlayerEvent_OutputDevices():
         return outputDevices(_that);
       case RustPlayerEvent_InputDevices():
@@ -501,11 +484,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_InfiniteMix value)? infiniteMix,
     TResult? Function(RustPlayerEvent_PauseOnDeviceChange value)?
         pauseOnDeviceChange,
-    TResult? Function(RustPlayerEvent_MicrophoneEnabled value)?
-        microphoneEnabled,
-    TResult? Function(RustPlayerEvent_MicVolume value)? micVolume,
-    TResult? Function(RustPlayerEvent_DirectMonitoringEnabled value)?
-        directMonitoringEnabled,
+    TResult? Function(RustPlayerEvent_Inputs value)? inputs,
     TResult? Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult? Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult? Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
@@ -608,13 +587,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that);
-      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
-        return microphoneEnabled(_that);
-      case RustPlayerEvent_MicVolume() when micVolume != null:
-        return micVolume(_that);
-      case RustPlayerEvent_DirectMonitoringEnabled()
-          when directMonitoringEnabled != null:
-        return directMonitoringEnabled(_that);
+      case RustPlayerEvent_Inputs() when inputs != null:
+        return inputs(_that);
       case RustPlayerEvent_OutputDevices() when outputDevices != null:
         return outputDevices(_that);
       case RustPlayerEvent_InputDevices() when inputDevices != null:
@@ -692,9 +666,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(bool field0)? isShuffled,
     TResult Function(RustInfiniteMixConfig field0)? infiniteMix,
     TResult Function(bool field0)? pauseOnDeviceChange,
-    TResult Function(bool field0)? microphoneEnabled,
-    TResult Function(double field0)? micVolume,
-    TResult Function(bool field0)? directMonitoringEnabled,
+    TResult Function(List<RustAudioInput> field0)? inputs,
     TResult Function(List<RustAudioDevice> field0)? outputDevices,
     TResult Function(List<RustAudioDevice> field0)? inputDevices,
     TResult Function(RustDartReadRequest field0)? dartReadRequest,
@@ -799,13 +771,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that.field0);
-      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
-        return microphoneEnabled(_that.field0);
-      case RustPlayerEvent_MicVolume() when micVolume != null:
-        return micVolume(_that.field0);
-      case RustPlayerEvent_DirectMonitoringEnabled()
-          when directMonitoringEnabled != null:
-        return directMonitoringEnabled(_that.field0);
+      case RustPlayerEvent_Inputs() when inputs != null:
+        return inputs(_that.field0);
       case RustPlayerEvent_OutputDevices() when outputDevices != null:
         return outputDevices(_that.field0);
       case RustPlayerEvent_InputDevices() when inputDevices != null:
@@ -885,9 +852,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(bool field0) isShuffled,
     required TResult Function(RustInfiniteMixConfig field0) infiniteMix,
     required TResult Function(bool field0) pauseOnDeviceChange,
-    required TResult Function(bool field0) microphoneEnabled,
-    required TResult Function(double field0) micVolume,
-    required TResult Function(bool field0) directMonitoringEnabled,
+    required TResult Function(List<RustAudioInput> field0) inputs,
     required TResult Function(List<RustAudioDevice> field0) outputDevices,
     required TResult Function(List<RustAudioDevice> field0) inputDevices,
     required TResult Function(RustDartReadRequest field0) dartReadRequest,
@@ -990,12 +955,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return infiniteMix(_that.field0);
       case RustPlayerEvent_PauseOnDeviceChange():
         return pauseOnDeviceChange(_that.field0);
-      case RustPlayerEvent_MicrophoneEnabled():
-        return microphoneEnabled(_that.field0);
-      case RustPlayerEvent_MicVolume():
-        return micVolume(_that.field0);
-      case RustPlayerEvent_DirectMonitoringEnabled():
-        return directMonitoringEnabled(_that.field0);
+      case RustPlayerEvent_Inputs():
+        return inputs(_that.field0);
       case RustPlayerEvent_OutputDevices():
         return outputDevices(_that.field0);
       case RustPlayerEvent_InputDevices():
@@ -1071,9 +1032,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(bool field0)? isShuffled,
     TResult? Function(RustInfiniteMixConfig field0)? infiniteMix,
     TResult? Function(bool field0)? pauseOnDeviceChange,
-    TResult? Function(bool field0)? microphoneEnabled,
-    TResult? Function(double field0)? micVolume,
-    TResult? Function(bool field0)? directMonitoringEnabled,
+    TResult? Function(List<RustAudioInput> field0)? inputs,
     TResult? Function(List<RustAudioDevice> field0)? outputDevices,
     TResult? Function(List<RustAudioDevice> field0)? inputDevices,
     TResult? Function(RustDartReadRequest field0)? dartReadRequest,
@@ -1177,13 +1136,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
       case RustPlayerEvent_PauseOnDeviceChange()
           when pauseOnDeviceChange != null:
         return pauseOnDeviceChange(_that.field0);
-      case RustPlayerEvent_MicrophoneEnabled() when microphoneEnabled != null:
-        return microphoneEnabled(_that.field0);
-      case RustPlayerEvent_MicVolume() when micVolume != null:
-        return micVolume(_that.field0);
-      case RustPlayerEvent_DirectMonitoringEnabled()
-          when directMonitoringEnabled != null:
-        return directMonitoringEnabled(_that.field0);
+      case RustPlayerEvent_Inputs() when inputs != null:
+        return inputs(_that.field0);
       case RustPlayerEvent_OutputDevices() when outputDevices != null:
         return outputDevices(_that.field0);
       case RustPlayerEvent_InputDevices() when inputDevices != null:
@@ -4375,123 +4329,63 @@ class _$RustPlayerEvent_PauseOnDeviceChangeCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustPlayerEvent_MicrophoneEnabled extends RustPlayerEvent {
-  const RustPlayerEvent_MicrophoneEnabled(this.field0) : super._();
+class RustPlayerEvent_Inputs extends RustPlayerEvent {
+  const RustPlayerEvent_Inputs(List<RustAudioInput> field0)
+      : _field0 = field0,
+        super._();
 
-  final bool field0;
+  final List<RustAudioInput> _field0;
+  List<RustAudioInput> get field0 {
+    if (_field0 is EqualUnmodifiableListView) return _field0;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_field0);
+  }
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $RustPlayerEvent_MicrophoneEnabledCopyWith<RustPlayerEvent_MicrophoneEnabled>
-      get copyWith => _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl<
-          RustPlayerEvent_MicrophoneEnabled>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_MicrophoneEnabled &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.microphoneEnabled(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_MicrophoneEnabledCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_MicrophoneEnabledCopyWith(
-          RustPlayerEvent_MicrophoneEnabled value,
-          $Res Function(RustPlayerEvent_MicrophoneEnabled) _then) =
-      _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl<$Res>
-    implements $RustPlayerEvent_MicrophoneEnabledCopyWith<$Res> {
-  _$RustPlayerEvent_MicrophoneEnabledCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_MicrophoneEnabled _self;
-  final $Res Function(RustPlayerEvent_MicrophoneEnabled) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_MicrophoneEnabled(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_MicVolume extends RustPlayerEvent {
-  const RustPlayerEvent_MicVolume(this.field0) : super._();
-
-  final double field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_MicVolumeCopyWith<RustPlayerEvent_MicVolume> get copyWith =>
-      _$RustPlayerEvent_MicVolumeCopyWithImpl<RustPlayerEvent_MicVolume>(
+  $RustPlayerEvent_InputsCopyWith<RustPlayerEvent_Inputs> get copyWith =>
+      _$RustPlayerEvent_InputsCopyWithImpl<RustPlayerEvent_Inputs>(
           this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_MicVolume &&
-            (identical(other.field0, field0) || other.field0 == field0));
+            other is RustPlayerEvent_Inputs &&
+            const DeepCollectionEquality().equals(other.field0, _field0));
   }
 
   @override
   int get hashCode {
-    return Object.hash(runtimeType, field0);
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(_field0));
   }
 
   @override
   String toString() {
-    return 'RustPlayerEvent.micVolume(field0: $field0)';
+    return 'RustPlayerEvent.inputs(field0: $field0)';
   }
 }
 
 /// @nodoc
-abstract mixin class $RustPlayerEvent_MicVolumeCopyWith<$Res>
+abstract mixin class $RustPlayerEvent_InputsCopyWith<$Res>
     implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_MicVolumeCopyWith(RustPlayerEvent_MicVolume value,
-          $Res Function(RustPlayerEvent_MicVolume) _then) =
-      _$RustPlayerEvent_MicVolumeCopyWithImpl;
+  factory $RustPlayerEvent_InputsCopyWith(RustPlayerEvent_Inputs value,
+          $Res Function(RustPlayerEvent_Inputs) _then) =
+      _$RustPlayerEvent_InputsCopyWithImpl;
   @useResult
-  $Res call({double field0});
+  $Res call({List<RustAudioInput> field0});
 }
 
 /// @nodoc
-class _$RustPlayerEvent_MicVolumeCopyWithImpl<$Res>
-    implements $RustPlayerEvent_MicVolumeCopyWith<$Res> {
-  _$RustPlayerEvent_MicVolumeCopyWithImpl(this._self, this._then);
+class _$RustPlayerEvent_InputsCopyWithImpl<$Res>
+    implements $RustPlayerEvent_InputsCopyWith<$Res> {
+  _$RustPlayerEvent_InputsCopyWithImpl(this._self, this._then);
 
-  final RustPlayerEvent_MicVolume _self;
-  final $Res Function(RustPlayerEvent_MicVolume) _then;
+  final RustPlayerEvent_Inputs _self;
+  final $Res Function(RustPlayerEvent_Inputs) _then;
 
   /// Create a copy of RustPlayerEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -4499,80 +4393,11 @@ class _$RustPlayerEvent_MicVolumeCopyWithImpl<$Res>
   $Res call({
     Object? field0 = null,
   }) {
-    return _then(RustPlayerEvent_MicVolume(
+    return _then(RustPlayerEvent_Inputs(
       null == field0
-          ? _self.field0
+          ? _self._field0
           : field0 // ignore: cast_nullable_to_non_nullable
-              as double,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_DirectMonitoringEnabled extends RustPlayerEvent {
-  const RustPlayerEvent_DirectMonitoringEnabled(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_DirectMonitoringEnabledCopyWith<
-          RustPlayerEvent_DirectMonitoringEnabled>
-      get copyWith => _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl<
-          RustPlayerEvent_DirectMonitoringEnabled>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_DirectMonitoringEnabled &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.directMonitoringEnabled(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_DirectMonitoringEnabledCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_DirectMonitoringEnabledCopyWith(
-          RustPlayerEvent_DirectMonitoringEnabled value,
-          $Res Function(RustPlayerEvent_DirectMonitoringEnabled) _then) =
-      _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl<$Res>
-    implements $RustPlayerEvent_DirectMonitoringEnabledCopyWith<$Res> {
-  _$RustPlayerEvent_DirectMonitoringEnabledCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_DirectMonitoringEnabled _self;
-  final $Res Function(RustPlayerEvent_DirectMonitoringEnabled) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_DirectMonitoringEnabled(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
+              as List<RustAudioInput>,
     ));
   }
 }

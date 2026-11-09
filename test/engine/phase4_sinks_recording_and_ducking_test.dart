@@ -91,7 +91,7 @@ void main() {
     });
 
     test('Microphone capture and auto-ducking configuration reacts to state and streams', () async {
-      expect(engine.state.isMicrophoneEnabled, isFalse);
+      expect(engine.state.inputs.isNotEmpty, isFalse);
 
       final duckingStates = <bool>[];
       final rmsLevels = <double>[];
@@ -99,23 +99,29 @@ void main() {
       final sub1 = engine.stream.isDuckingActive.listen(duckingStates.add);
       final sub2 = engine.stream.micRmsLevel.listen(rmsLevels.add);
 
-      // Enable microphone with custom ducking parameters
-      await engine.action.enableMicrophone(
-        ducking: const DuckingConfig(
-          enabled: true,
-          duckingDb: -18.0,
-          thresholdDb: -32.0,
+      final micInput = AudioInput(
+        config: const AudioInputConfig(
+          ducking: DuckingConfig(
+            enabled: true,
+            duckingDb: -18.0,
+            thresholdDb: -32.0,
+          ),
+          volume: 0.85,
+          monitorDirect: false,
         ),
-        volume: 0.85,
-        monitorDirect: false,
       );
 
-      expect(engine.state.isMicrophoneEnabled, isTrue);
-      expect(engine.state.micVolume, closeTo(0.85, 0.001));
+      // Add input with custom ducking parameters
+      await engine.action.addInput(micInput);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      // Disable microphone
-      await engine.action.disableMicrophone();
-      expect(engine.state.isMicrophoneEnabled, isFalse);
+      expect(engine.state.inputs.isNotEmpty, isTrue);
+      expect(engine.state.inputs.first.config.volume, closeTo(0.85, 0.001));
+
+      // Remove input
+      await engine.action.removeInput(micInput);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(engine.state.inputs.isEmpty, isTrue);
 
       await Future.delayed(const Duration(milliseconds: 50));
       await Future.wait([sub1.cancel(), sub2.cancel()]);
@@ -124,28 +130,40 @@ void main() {
     test('AudioInput direct instantiation, routing and state updates', () async {
       expect(engine.state.inputs, isEmpty);
 
-      const micInput = AudioInput(
-        volume: 0.75,
-        ducking: DuckingConfig(enabled: true, duckingDb: -12.0),
-        monitorDirect: false,
+      final micInput = AudioInput(
+        config: const AudioInputConfig(
+          volume: 0.75,
+          ducking: DuckingConfig(enabled: true, duckingDb: -12.0),
+          monitorDirect: false,
+        ),
       );
 
       await engine.action.addInput(micInput);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, contains(micInput));
-      expect(engine.state.isMicrophoneEnabled, isTrue);
-      expect(engine.state.micVolume, closeTo(0.75, 0.001));
+      expect(engine.state.inputs.first.config.volume, closeTo(0.75, 0.001));
+
+      // Re-adding the same input device must throw StateError
+      expect(() => engine.action.addInput(micInput), throwsStateError);
+
+      // Modulate parameters with configureInput
+      await engine.action.configureInput(
+        const AudioInputConfig(volume: 0.9),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(engine.state.inputs.first.config.volume, closeTo(0.9, 0.001));
 
       await engine.action.removeInput(micInput);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, isEmpty);
-      expect(engine.state.isMicrophoneEnabled, isFalse);
 
       await engine.action.setInputs({micInput});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, contains(micInput));
-      expect(engine.state.isMicrophoneEnabled, isTrue);
 
-      await engine.action.clearInputs();
+      await engine.action.setInputs({});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, isEmpty);
-      expect(engine.state.isMicrophoneEnabled, isFalse);
     });
 
     test('Selective AudioOutputSource configuration and output routing', () async {

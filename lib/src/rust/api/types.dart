@@ -9,8 +9,8 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustAudioInput`, `RustEngineEvent`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`, `RustEngineEvent`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Offline acoustic analysis results containing loudness, waveform, and format properties.
 class RustAudioAnalysisResult {
@@ -190,6 +190,73 @@ class RustAudioEffect {
           source == other.source &&
           maxPolyphony == other.maxPolyphony &&
           pinned == other.pinned;
+}
+
+/// Audio input hardware endpoint configuration.
+class RustAudioInput {
+  /// Optional specific hardware device identifier. If None, targets default capture endpoint.
+  final String? deviceId;
+
+  /// Real-time capture configuration parameters.
+  final RustAudioInputConfig config;
+
+  const RustAudioInput({
+    this.deviceId,
+    required this.config,
+  });
+
+  @override
+  int get hashCode => deviceId.hashCode ^ config.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioInput &&
+          runtimeType == other.runtimeType &&
+          deviceId == other.deviceId &&
+          config == other.config;
+}
+
+/// Real-time capture configuration parameters for an audio input node.
+class RustAudioInputConfig {
+  /// Linear capture input gain multiplier (>= 0.0). Defaults to 1.0.
+  final double volume;
+
+  /// Optional sidechain ducking configuration.
+  final RustDuckingConfig? ducking;
+
+  /// Whether low-latency direct pass-through monitoring to the master output is enabled.
+  final bool monitorDirect;
+
+  /// Linear volume multiplier for direct voice monitoring (>= 0.0).
+  final double monitorVolume;
+
+  const RustAudioInputConfig({
+    required this.volume,
+    this.ducking,
+    required this.monitorDirect,
+    required this.monitorVolume,
+  });
+
+  static Future<RustAudioInputConfig> default_() =>
+      RustLib.instance.api.crateApiTypesRustAudioInputConfigDefault();
+
+  @override
+  int get hashCode =>
+      volume.hashCode ^
+      ducking.hashCode ^
+      monitorDirect.hashCode ^
+      monitorVolume.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioInputConfig &&
+          runtimeType == other.runtimeType &&
+          volume == other.volume &&
+          ducking == other.ducking &&
+          monitorDirect == other.monitorDirect &&
+          monitorVolume == other.monitorVolume;
 }
 
 /// Audio hardware output endpoint configuration.
@@ -985,20 +1052,10 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     bool field0,
   ) = RustPlayerEvent_PauseOnDeviceChange;
 
-  /// Whether microphone capture is enabled.
-  const factory RustPlayerEvent.microphoneEnabled(
-    bool field0,
-  ) = RustPlayerEvent_MicrophoneEnabled;
-
-  /// Microphone input volume level.
-  const factory RustPlayerEvent.micVolume(
-    double field0,
-  ) = RustPlayerEvent_MicVolume;
-
-  /// Whether direct microphone monitoring is active.
-  const factory RustPlayerEvent.directMonitoringEnabled(
-    bool field0,
-  ) = RustPlayerEvent_DirectMonitoringEnabled;
+  /// Active audio input sources in the multi-capture matrix.
+  const factory RustPlayerEvent.inputs(
+    List<RustAudioInput> field0,
+  ) = RustPlayerEvent_Inputs;
 
   /// List of available audio output devices.
   const factory RustPlayerEvent.outputDevices(

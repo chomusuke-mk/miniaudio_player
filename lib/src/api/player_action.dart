@@ -880,121 +880,86 @@ class PlayerAction<T> {
   }
 
   // =========================================================================
-  // Input Routing Matrix & Microphone Capture
+  // Input Routing Matrix & Multi-Capture
   // =========================================================================
 
-  /// Adds an audio input source to this player instance.
-  Future<void> addInput(AudioInput input) async {
-    _player._ensureNotDisposed();
-    await enableMicrophone(
-      deviceId: input.deviceId,
-      volume: input.volume,
-      ducking: input.ducking,
-      monitorDirect: input.monitorDirect,
-      monitorVolume: input.monitorVolume,
+  rust_types.RustAudioInputConfig _toRustInputConfig(AudioInputConfig config) {
+    if (config.volume.isNaN || config.volume.isInfinite || config.volume < 0.0) {
+      throw ArgumentError.value(
+        config.volume,
+        'volume',
+        'Input volume must be >= 0.0',
+      );
+    }
+    if (config.monitorVolume.isNaN ||
+        config.monitorVolume.isInfinite ||
+        config.monitorVolume < 0.0) {
+      throw ArgumentError.value(
+        config.monitorVolume,
+        'monitorVolume',
+        'Monitor volume must be >= 0.0',
+      );
+    }
+    return rust_types.RustAudioInputConfig(
+      volume: config.volume,
+      ducking: config.ducking?.toRust(),
+      monitorDirect: config.monitorDirect,
+      monitorVolume: config.monitorVolume,
     );
   }
 
-  /// Removes an audio input source from this player instance.
-  Future<void> removeInput(AudioInput input) async {
-    _player._ensureNotDisposed();
-    await disableMicrophone();
+  rust_types.RustAudioInput _toRustInput(AudioInput input) {
+    return rust_types.RustAudioInput(
+      deviceId: input.deviceId,
+      config: _toRustInputConfig(input.config),
+    );
   }
 
-  /// Sets the active inputs for this player instance, replacing any existing ones.
+  /// Sets the active audio capture inputs, reconciling them in the Rust engine.
   Future<void> setInputs(Set<AudioInput> inputs) async {
     _player._ensureNotDisposed();
-    await clearInputs();
-    for (final inp in inputs) {
-      await addInput(inp);
-    }
+    final rustList = inputs.map(_toRustInput).toList();
+    _rust.setInputs(inputs: rustList);
   }
 
-  /// Clears all active audio input sources from this player instance.
-  Future<void> clearInputs() async {
+  /// Adds an audio input capture node to the player.
+  ///
+  /// Throws [StateError] if an input with the same device identifier is already active.
+  Future<void> addInput(AudioInput input) async {
     _player._ensureNotDisposed();
-    await disableMicrophone();
+    if (_player.state.inputs.any((i) => i.deviceId == input.deviceId)) {
+      throw StateError(
+        'Input with deviceId ${input.deviceId} is already active. Use configureInput to modify it.',
+      );
+    }
+    _rust.addInput(input: _toRustInput(input));
   }
 
-  /// Enables hardware microphone capture with Auto-Ducking and direct monitoring.
-  Future<void> enableMicrophone({
+  /// Removes an audio input capture node from the player.
+  Future<void> removeInput(AudioInput input) async {
+    _player._ensureNotDisposed();
+    _rust.removeInput(input: _toRustInput(input));
+  }
+
+  /// Modulates runtime parameters of an already active audio input capture node without reopening hardware.
+  ///
+  /// Throws [StateError] if no active input exists for the target device.
+  Future<void> configureInput(
+    AudioInputConfig config, {
     String? deviceId,
-    double volume = 1.0,
-    DuckingConfig? ducking,
-    bool monitorDirect = false,
-    double monitorVolume = 1.0,
+    AudioDevice? device,
   }) async {
     _player._ensureNotDisposed();
-    if (volume.isNaN || volume.isInfinite || volume < 0.0) {
-      throw ArgumentError.value(
-        volume,
-        'volume',
-        'Microphone volume must be >= 0.0',
+    final targetId = deviceId ?? device?.id;
+    if (!_player.state.inputs.any((i) => i.deviceId == targetId)) {
+      throw StateError(
+        'Cannot configure input: deviceId $targetId is not currently active.',
       );
     }
-    final d = ducking ?? const DuckingConfig();
-    await _rust.enableMicrophone(
-      deviceId: deviceId,
-      volume: volume.toDouble(),
-      ducking: d.toRust(),
-      monitorDirect: monitorDirect,
-      monitorVolume: monitorVolume.toDouble(),
+    _rust.configureInput(
+      deviceId: targetId,
+      config: _toRustInputConfig(config),
     );
-    final input = AudioInput(
-      deviceId: deviceId,
-      volume: volume,
-      ducking: ducking,
-      monitorDirect: monitorDirect,
-      monitorVolume: monitorVolume,
-    );
-    final next = Set<AudioInput>.of(_player.state.inputs)..add(input);
-    _player.state._inputs = next;
-    _player.stream._inputsController.add(next);
-    await Future<void>.delayed(Duration.zero);
-  }
-
-  /// Disables and frees hardware microphone capture.
-  Future<void> disableMicrophone() async {
-    _player._ensureNotDisposed();
-    _rust.disableMicrophone();
-    final next = Set<AudioInput>.of(_player.state.inputs)..clear();
-    _player.state._inputs = next;
-    _player.stream._inputsController.add(next);
-    await Future<void>.delayed(Duration.zero);
-  }
-
-  /// Sets microphone input capture volume (`>= 0.0`).
-  Future<void> setMicrophoneVolume(double volume) async {
-    _player._ensureNotDisposed();
-    if (volume.isNaN || volume.isInfinite || volume < 0.0) {
-      throw ArgumentError.value(
-        volume,
-        'volume',
-        'Microphone volume must be >= 0.0',
-      );
-    }
-    _rust.setMicrophoneVolume(volume: volume.toDouble());
-    await Future<void>.delayed(Duration.zero);
-  }
-
-  /// Configures microphone Auto-Ducking sidechain compressor.
-  Future<void> setDucking(DuckingConfig config) async {
-    _player._ensureNotDisposed();
-    _rust.setDucking(config: config.toRust());
-    await Future<void>.delayed(Duration.zero);
-  }
-
-  /// Toggles low-latency direct monitoring of voice into headphones.
-  Future<void> setDirectMonitoring({
-    required bool enabled,
-    double volume = 1.0,
-  }) async {
-    _player._ensureNotDisposed();
-    _rust.setDirectMonitoring(
-      enabled: enabled,
-      volume: volume.toDouble(),
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   // =========================================================================

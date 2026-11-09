@@ -909,19 +909,37 @@ pub struct RustAudioOutput {
     pub source: i32,
 }
 
-/// Audio input configuration for recording and microphone pass-through.
+/// Real-time capture configuration parameters for an audio input node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustAudioInputConfig {
+    /// Linear capture input gain multiplier (>= 0.0). Defaults to 1.0.
+    pub volume: f32,
+    /// Optional sidechain ducking configuration.
+    pub ducking: Option<RustDuckingConfig>,
+    /// Whether low-latency direct pass-through monitoring to the master output is enabled.
+    pub monitor_direct: bool,
+    /// Linear volume multiplier for direct voice monitoring (>= 0.0).
+    pub monitor_volume: f32,
+}
+
+impl Default for RustAudioInputConfig {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            ducking: None,
+            monitor_direct: false,
+            monitor_volume: 1.0,
+        }
+    }
+}
+
+/// Audio input hardware endpoint configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustAudioInput {
-    /// Optional specific input device identifier.
+    /// Optional specific hardware device identifier. If None, targets default capture endpoint.
     pub device_id: Option<String>,
-    /// Input capture gain volume multiplier.
-    pub volume: f32,
-    /// Optional automatic ducking configuration.
-    pub ducking: Option<RustDuckingConfig>,
-    /// Whether direct microphone monitoring is routed to output.
-    pub monitor_direct: bool,
-    /// Direct monitoring volume level.
-    pub monitor_volume: f32,
+    /// Real-time capture configuration parameters.
+    pub config: RustAudioInputConfig,
 }
 
 /// Sound effect asset registration descriptor.
@@ -1128,12 +1146,8 @@ pub enum RustPlayerEvent {
     InfiniteMix(RustInfiniteMixConfig),
     /// Whether auto-pause on device change is enabled.
     PauseOnDeviceChange(bool),
-    /// Whether microphone capture is enabled.
-    MicrophoneEnabled(bool),
-    /// Microphone input volume level.
-    MicVolume(f32),
-    /// Whether direct microphone monitoring is active.
-    DirectMonitoringEnabled(bool),
+    /// Active audio input sources in the multi-capture matrix.
+    Inputs(Vec<RustAudioInput>),
     /// List of available audio output devices.
     OutputDevices(Vec<RustAudioDevice>),
     /// List of available audio input devices.

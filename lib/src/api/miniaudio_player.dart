@@ -466,8 +466,8 @@ class MiniaudioPlayer<T> {
     if (effects.isNotEmpty) {
       action.setEffects(effects);
     }
-    for (final input in inputs) {
-      action.addInput(input);
+    if (inputs.isNotEmpty) {
+      action.setInputs(inputs);
     }
     if (pauseOnDeviceChange) {
       action.setPauseOnDeviceChange(true);
@@ -649,15 +649,29 @@ class MiniaudioPlayer<T> {
         state._infiniteMix = im;
         stream._infiniteMixController.add(im);
         stream._infiniteMixEnabledController.add(im.enabled);
-      case rust_types.RustPlayerEvent_MicrophoneEnabled(:final field0):
-        state._isMicrophoneEnabled = field0;
-        stream._isMicrophoneEnabledController.add(field0);
-      case rust_types.RustPlayerEvent_MicVolume(:final field0):
-        state._micVolume = field0;
-        stream._micVolumeController.add(field0);
-      case rust_types.RustPlayerEvent_DirectMonitoringEnabled(:final field0):
-        state._isDirectMonitoringEnabled = field0;
-        stream._isDirectMonitoringEnabledController.add(field0);
+      case rust_types.RustPlayerEvent_Inputs(:final field0):
+        final inps = field0
+            .map((r) => AudioInput(
+                  deviceId: r.deviceId,
+                  config: AudioInputConfig(
+                    volume: r.config.volume,
+                    ducking: r.config.ducking != null
+                        ? DuckingConfig(
+                            enabled: r.config.ducking!.enabled,
+                            duckingDb: r.config.ducking!.duckingDb,
+                            thresholdDb: r.config.ducking!.thresholdDb,
+                            attackMs: r.config.ducking!.attackMs,
+                            holdMs: r.config.ducking!.holdMs,
+                            releaseMs: r.config.ducking!.releaseMs,
+                          )
+                        : null,
+                    monitorDirect: r.config.monitorDirect,
+                    monitorVolume: r.config.monitorVolume,
+                  ),
+                ))
+            .toSet();
+        state._inputs = Set.unmodifiable(inps);
+        stream._inputsController.add(state.inputs);
       case rust_types.RustPlayerEvent_IsCrossfading(:final field0):
         state._isCrossfading = field0;
         stream._isCrossfadingController.add(field0);
