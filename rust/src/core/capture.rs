@@ -111,6 +111,7 @@ impl Drop for DeviceCaptureNode {
 }
 
 impl DeviceCaptureNode {
+    /// Initializes a hardware audio capture device with an asynchronous lock-free SPSC queue.
     pub fn new(
         sample_rate: u32,
         channels: u32,
@@ -169,6 +170,7 @@ impl DeviceCaptureNode {
         Ok((node, consumer))
     }
 
+    /// Starts capturing audio frames from the hardware device.
     pub fn start(&self) -> Result<(), i32> {
         self.is_active.store(true, Ordering::Release);
         if !self.device_ctx.is_null() {
@@ -181,6 +183,7 @@ impl DeviceCaptureNode {
         Ok(())
     }
 
+    /// Stops audio capture and pauses hardware delivery.
     pub fn stop(&self) {
         self.is_active.store(false, Ordering::Release);
         if !self.device_ctx.is_null() {
@@ -190,28 +193,34 @@ impl DeviceCaptureNode {
         }
     }
 
+    /// Returns whether the capture node is actively receiving frames.
     pub fn is_capturing(&self) -> bool {
         self.is_active.load(Ordering::Acquire)
     }
 
+    /// Sets microphone input capture volume multiplier `[0.0, 2.0]`.
     pub fn set_mic_volume(&self, volume: f32) {
         let clamped = volume.clamp(0.0, 2.0);
         self.mic_volume.store(clamped.to_bits(), Ordering::Relaxed);
     }
 
+    /// Returns current microphone capture volume multiplier.
     pub fn mic_volume(&self) -> f32 {
         f32::from_bits(self.mic_volume.load(Ordering::Relaxed))
     }
 
+    /// Configures direct zero-latency monitor pass-through to output speakers.
     pub fn set_direct_monitoring(&self, enabled: bool, volume: f32) {
         self.monitor_direct.store(enabled, Ordering::Release);
         self.monitor_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Release);
     }
 
+    /// Returns whether direct monitoring is active.
     pub fn is_direct_monitoring(&self) -> bool {
         self.monitor_direct.load(Ordering::Acquire)
     }
 
+    /// Returns direct monitoring volume level.
     pub fn monitor_volume(&self) -> f32 {
         f32::from_bits(self.monitor_volume.load(Ordering::Relaxed))
     }

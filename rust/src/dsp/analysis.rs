@@ -37,6 +37,7 @@ pub struct Bs1770LoudnessAnalyzer {
 }
 
 impl Bs1770LoudnessAnalyzer {
+    /// Constructs a new `Bs1770LoudnessAnalyzer` tuned for the specified sample rate.
     pub fn new(sample_rate: u32) -> Self {
         let (hs, hp) = Self::design_k_weighting_filters(sample_rate);
         let samples_per_100ms = (0.1 * (sample_rate as f64) + 0.5).max(1.0) as usize;
@@ -92,6 +93,7 @@ impl Bs1770LoudnessAnalyzer {
         (hs, hp)
     }
 
+    /// Feeds a stereo frame through K-weighting filters and accumulates 100 ms energy intervals.
     #[inline]
     pub fn push_stereo_frame(&mut self, s_l: f32, s_r: f32) {
         let y_l = self.hp_l.process(self.hs_l.process(s_l));
@@ -110,6 +112,7 @@ impl Bs1770LoudnessAnalyzer {
         }
     }
 
+    /// Computes the gated integrated loudness (LUFS) and target gain difference in dB.
     pub fn finalize(mut self, target_lufs: f32, peak: f32) -> ReplayGainData {
         if self.current_interval_samples > 0 {
             let energy = (self.current_interval_sq[0] + self.current_interval_sq[1])
@@ -213,8 +216,10 @@ pub struct AdaptiveWaveformAccumulator {
 }
 
 impl AdaptiveWaveformAccumulator {
+    /// Maximum bucket threshold triggering dynamic 2:1 decimation.
     pub const MAX_BUCKETS: usize = 2048;
 
+    /// Creates a new waveform accumulator targeting `target_points` output samples.
     pub fn new(target_points: usize) -> Self {
         Self {
             target_points: target_points.max(1),
@@ -226,6 +231,7 @@ impl AdaptiveWaveformAccumulator {
         }
     }
 
+    /// Feeds an instantaneous absolute frame peak value into the accumulator.
     #[inline]
     pub fn push_frame_peak(&mut self, peak: f32) {
         self.has_samples = true;
@@ -249,6 +255,7 @@ impl AdaptiveWaveformAccumulator {
         }
     }
 
+    /// Resamples accumulated peaks into normalized `[0.0, 1.0]` points matching `target_points`.
     pub fn finalize(mut self) -> Vec<f32> {
         if !self.has_samples {
             return Vec::new();
@@ -293,11 +300,17 @@ impl AdaptiveWaveformAccumulator {
 /// Standalone, reusable metadata and format extraction information from audio container headers.
 #[derive(Debug, Clone, Default)]
 pub struct HeadAnalysisInfo {
+    /// Inferred container or codec format name (e.g., "mp3", "flac").
     pub format: Option<String>,
+    /// Estimated nominal bitrate in bits per second.
     pub bitrate: u32,
+    /// Estimated audio duration in milliseconds.
     pub duration_ms: i64,
+    /// Byte offset where audio payload begins.
     pub audio_start: i64,
+    /// Byte offset where audio payload ends.
     pub audio_end: i64,
+    /// Raw metadata tag bytes extracted from header.
     pub metadata_bytes: Option<Vec<u8>>,
 }
 

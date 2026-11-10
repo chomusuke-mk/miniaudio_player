@@ -770,92 +770,6 @@ impl From<&crate::core::dual_source::AudioSourceCore> for RustAudioSource {
     }
 }
 
-/// Engine event dispatched internally between the audio thread and coordination threads.
-#[derive(Debug, Clone)]
-pub enum RustEngineEvent {
-    /// Playback phase transition code.
-    Phase(i32),
-    /// Playback state integer code.
-    State(i32),
-    /// Track elapsed position in milliseconds.
-    Position(i64),
-    /// Track total duration in milliseconds.
-    Duration(i64),
-    /// Whether audio is actively playing.
-    IsPlaying(bool),
-    /// Whether the player is buffering data.
-    IsBuffering(bool),
-    /// Whether the current track finished playing.
-    IsCompleted(bool),
-    /// Active playlist queue index.
-    CurrentIndex(i32),
-    /// Notification that the queued tracks list changed.
-    QueueChanged(Vec<RustAudioSource>),
-    /// Notification that queue is approaching exhaustion and requires more tracks.
-    NeedMoreTracks {
-        /// Current track ID triggering the threshold.
-        current_track_id: i64,
-        /// Number of remaining tracks in the queue.
-        remaining_tracks: usize,
-    },
-    /// Master volume level.
-    Volume(f32),
-    /// Playback speed rate multiplier.
-    Rate(f32),
-    /// Playback pitch shift multiplier.
-    Pitch(f32),
-    /// Stream nominal bitrate in bps.
-    Bitrate(u32),
-    /// Audio buffer frame size.
-    BufferSize(u32),
-    /// Active audio output destinations in the multi-sink matrix.
-    Outputs(Vec<RustAudioOutput>),
-    /// Real-time FFT spectrum and stereo energy data.
-    Visualizer(RustVisualizerData),
-    /// Whether visualizer analysis is enabled.
-    VisualizerEnabled(bool),
-    /// Tripartite ring buffer telemetry metrics.
-    Buffer(RustBuffer),
-    /// Equalizer frequency band gains.
-    Equalizer(RustEqualizerParams),
-    /// Equalizer pre-amplification gain in dB.
-    Preamp(f32),
-    /// Active ReplayGain loudness normalization configuration.
-    ReplayGain(RustReplayGainConfig),
-    /// Stereo balance pan (-1.0 to +1.0).
-    Balance(f32),
-    /// Downmix stereo to mono.
-    Mono(bool),
-    /// Bauer binaural crossfeed mode.
-    Crossfeed(i32),
-    /// 3D stereo widening spatializer state and width multiplier.
-    Spatializer {
-        /// Whether spatializer is enabled.
-        enabled: bool,
-        /// Stereo widening factor.
-        width: f32,
-    },
-    /// Algorithmic studio reverberation parameters.
-    Reverb(RustReverbParams),
-    /// Brickwall peak limiter enabled state.
-    Limiter(bool),
-    /// Overlap crossfade duration and curve configuration.
-    CrossfadeConfig(RustCrossfadeConfig),
-    /// Active loop mode policy (0: off, 1: one, 2: all).
-    LoopMode(i32),
-    /// Playlist shuffle state.
-    Shuffle(bool),
-    /// Audio metadata payload.
-    AudioMetadata(RustAudioMetadata),
-    /// Unrecoverable playback or engine error.
-    Error {
-        /// Detailed human-readable error description.
-        message: String,
-        /// Numeric error categorization code.
-        code: i32,
-    },
-}
-
 /// Three-dimensional Cartesian coordinate vector used in 3D spatial audio calculations.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RustVector3 {
@@ -1010,7 +924,7 @@ pub enum RustVoiceStealingPolicy {
     Farthest,
 }
 
-impl From<RustVoiceStealingPolicy> for crate::dsp::voice_pool::VoiceStealingPolicy {
+impl From<RustVoiceStealingPolicy> for crate::core::voice_pool::VoiceStealingPolicy {
     fn from(p: RustVoiceStealingPolicy) -> Self {
         match p {
             RustVoiceStealingPolicy::LowestPriority => Self::LowestPriority,
@@ -1021,13 +935,13 @@ impl From<RustVoiceStealingPolicy> for crate::dsp::voice_pool::VoiceStealingPoli
     }
 }
 
-impl From<crate::dsp::voice_pool::VoiceStealingPolicy> for RustVoiceStealingPolicy {
-    fn from(p: crate::dsp::voice_pool::VoiceStealingPolicy) -> Self {
+impl From<crate::core::voice_pool::VoiceStealingPolicy> for RustVoiceStealingPolicy {
+    fn from(p: crate::core::voice_pool::VoiceStealingPolicy) -> Self {
         match p {
-            crate::dsp::voice_pool::VoiceStealingPolicy::LowestPriority => Self::LowestPriority,
-            crate::dsp::voice_pool::VoiceStealingPolicy::Oldest => Self::Oldest,
-            crate::dsp::voice_pool::VoiceStealingPolicy::Quietest => Self::Quietest,
-            crate::dsp::voice_pool::VoiceStealingPolicy::Farthest => Self::Farthest,
+            crate::core::voice_pool::VoiceStealingPolicy::LowestPriority => Self::LowestPriority,
+            crate::core::voice_pool::VoiceStealingPolicy::Oldest => Self::Oldest,
+            crate::core::voice_pool::VoiceStealingPolicy::Quietest => Self::Quietest,
+            crate::core::voice_pool::VoiceStealingPolicy::Farthest => Self::Farthest,
         }
     }
 }

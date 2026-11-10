@@ -131,7 +131,7 @@ enum VoiceState {
 
 /// A single polyphonic audio voice with encapsulated state and rendering logic.
 #[derive(Clone)]
-pub struct Voice {
+pub struct DspVoice {
     /// Unique identifier of the currently playing voice.
     pub id: u32,
     /// Pre-decoded PCM sound buffer.
@@ -155,7 +155,7 @@ pub struct Voice {
     state: VoiceState,
 }
 
-impl Default for Voice {
+impl Default for DspVoice {
     fn default() -> Self {
         Self {
             id: 0,
@@ -173,7 +173,7 @@ impl Default for Voice {
     }
 }
 
-impl Voice {
+impl DspVoice {
     /// Returns whether the voice is active (either playing or fading out).
     #[inline]
     pub fn is_active(&self) -> bool {
@@ -345,9 +345,15 @@ impl Voice {
     }
 }
 
+/// A single polyphonic audio voice with encapsulated state and rendering logic.
+pub type Voice = DspVoice;
+
 /// Dynamic Voice Pool managing polyphonic voice recycling, stealing, and spatial mixing.
-pub struct VoicePool {
-    voices: Vec<Voice>,
+pub type VoicePool = DspVoicePool;
+
+/// Dynamic Voice Pool managing polyphonic voice recycling, stealing, and spatial mixing.
+pub struct DspVoicePool {
+    voices: Vec<DspVoice>,
     policy: VoiceStealingPolicy,
     next_voice_id: AtomicU32,
     master_volume: f32,
@@ -355,18 +361,18 @@ pub struct VoicePool {
     listener_position: Vector3,
 }
 
-impl Default for VoicePool {
+impl Default for DspVoicePool {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_VOICES, VoiceStealingPolicy::default())
     }
 }
 
-impl VoicePool {
-    /// Creates a new `VoicePool` with the specified capacity and stealing policy.
+impl DspVoicePool {
+    /// Creates a new `DspVoicePool` with the specified capacity and stealing policy.
     pub fn new(capacity: usize, policy: VoiceStealingPolicy) -> Self {
         let cap = capacity.clamp(1, 256);
         Self {
-            voices: vec![Voice::default(); cap],
+            voices: vec![DspVoice::default(); cap],
             policy,
             next_voice_id: AtomicU32::new(1),
             master_volume: 1.0,
@@ -546,7 +552,7 @@ impl VoicePool {
     }
 
     /// Returns a reference to the voice with the given ID if found.
-    pub fn get_voice(&self, voice_id: u32) -> Option<&Voice> {
+    pub fn get_voice(&self, voice_id: u32) -> Option<&DspVoice> {
         self.voices.iter().find(|v| v.id == voice_id)
     }
 

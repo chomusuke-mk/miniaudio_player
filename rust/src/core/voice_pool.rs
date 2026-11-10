@@ -294,6 +294,7 @@ impl VoicePool {
             .collect()
     }
 
+    /// Returns the number of currently active, non-stopping voices.
     pub fn active_voices_count(&self) -> usize {
         self.voices[..self.max_voices]
             .iter()
@@ -301,10 +302,12 @@ impl VoicePool {
             .count()
     }
 
+    /// Updates 3D spatial audio listener parameters.
     pub fn set_listener(&mut self, listener: SpatialListener) {
         self.listener = listener;
     }
 
+    /// Sets Doppler physics parameters (intensity factor and speed of sound in m/s).
     pub fn set_doppler_parameters(&mut self, factor: f32, speed_of_sound: f32) {
         self.doppler_factor = factor;
         self.speed_of_sound = speed_of_sound;
@@ -500,6 +503,7 @@ impl VoicePool {
         true
     }
 
+    /// Triggers an already loaded sound effect at `effect_idx` using the specified DSP routing and playback parameters.
     pub fn play_loaded_effect(
         &mut self,
         effect_idx: usize,
@@ -556,6 +560,7 @@ impl VoicePool {
         Ok(voice_id)
     }
 
+    /// Triggers a registered sound effect by its identifier, loading it into RAM on demand if needed.
     pub fn play_effect(
         &mut self,
         id: &str,
@@ -684,6 +689,7 @@ impl VoicePool {
         }
     }
 
+    /// Stops playback of the specified voice, applying quick fadeout if `fade_out_samples > 0`.
     pub fn stop_voice(&mut self, voice_id: u32, fade_out_samples: usize) {
         let mut stopped_immediate = false;
         for v in self.voices[..self.max_voices].iter_mut() {
@@ -711,6 +717,7 @@ impl VoicePool {
         }
     }
 
+    /// Stops all currently active voices, applying fadeout ramps if requested.
     pub fn stop_all(&mut self, fade_out_samples: usize) {
         let mut stopped_immediate = false;
         for v in self.voices[..self.max_voices].iter_mut() {
@@ -737,6 +744,7 @@ impl VoicePool {
         }
     }
 
+    /// Dynamically modifies playback volume of an active voice.
     pub fn set_voice_volume(&mut self, voice_id: u32, volume: f32) {
         if !volume.is_finite() {
             return;
@@ -749,6 +757,7 @@ impl VoicePool {
         }
     }
 
+    /// Dynamically modifies playback pitch multiplier of an active voice.
     pub fn set_voice_pitch(&mut self, voice_id: u32, pitch: f32) {
         if !pitch.is_finite() || pitch <= 0.0 {
             return;
@@ -761,6 +770,7 @@ impl VoicePool {
         }
     }
 
+    /// Dynamically modifies stereo pan balance of an active voice.
     pub fn set_voice_balance(&mut self, voice_id: u32, balance: f32) {
         for v in self.voices[..self.max_voices].iter_mut() {
             if v.active && v.voice_id == voice_id {
@@ -770,6 +780,7 @@ impl VoicePool {
         }
     }
 
+    /// Updates 3D spatial emitter parameters for an active voice.
     pub fn set_voice_emitter(&mut self, voice_id: u32, emitter: Option<SpatialEmitter>) {
         for v in self.voices[..self.max_voices].iter_mut() {
             if v.active && v.voice_id == voice_id {

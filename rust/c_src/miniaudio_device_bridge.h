@@ -20,16 +20,28 @@ extern "C"
         int32_t is_auto;        /**< 1 if auto (system-managed) routing, 0 for pinned hardware device */
     } map_device_info_t;
 
-    /* Callback exportado por Rust para renderizar tramas PCM f32 entrelazadas */
+    /* Callback exported by Rust to render interleaved f32 PCM audio frames */
     extern void rust_render_pcm_frames(void *user_data, float *output_frames, uint32_t frame_count);
 
-    /* Callback exportado por Rust para recibir tramas PCM f32 capturadas de micrófono */
+    /* Callback exported by Rust to receive captured f32 PCM audio frames from microphone/line-in */
     extern void rust_capture_pcm_frames(void *user_data, const float *input_frames, uint32_t frame_count);
 
-    /* Callback exportado por Rust para recibir notificaciones de hardware del SO */
+    /* Callback exported by Rust to receive hardware lifecycle notifications from the OS */
     extern void rust_on_device_notification(void *user_data, int32_t notification_type);
 
-    /* Funciones de control de dispositivo implementadas en C sobre miniaudio.h */
+    /* Device control and lifecycle API implemented in C on top of miniaudio.h */
+
+    /**
+     * Initializes and opens an OS audio playback device using miniaudio.
+     *
+     * @param sample_rate Desired sample rate (Hz), or 0 for default 44100 Hz.
+     * @param channels Desired channel count, or 0 for stereo (2).
+     * @param period_size_in_frames Buffer period size in frames.
+     * @param playback_device_id Target hardware endpoint hex ID, name, or "auto" for system default.
+     * @param rust_user_data Opaque pointer passed back to Rust callbacks.
+     * @param out_result Output error code (0 on success, negative on error).
+     * @return Allocated device context, or NULL on failure.
+     */
     map_device_context_t *map_device_create(
         uint32_t sample_rate,
         uint32_t channels,
@@ -38,6 +50,17 @@ extern "C"
         void *rust_user_data,
         int32_t *out_result);
 
+    /**
+     * Initializes and opens an OS audio capture (recording/microphone) device using miniaudio.
+     *
+     * @param sample_rate Desired sample rate (Hz), or 0 for default 44100 Hz.
+     * @param channels Desired channel count, or 0 for mono (1).
+     * @param period_size_in_frames Buffer period size in frames.
+     * @param capture_device_id Target capture endpoint hex ID, name, or "auto" for system default.
+     * @param rust_user_data Opaque pointer passed back to Rust callbacks.
+     * @param out_result Output error code (0 on success, negative on error).
+     * @return Allocated capture device context, or NULL on failure.
+     */
     map_device_context_t *map_capture_device_create(
         uint32_t sample_rate,
         uint32_t channels,
@@ -46,19 +69,59 @@ extern "C"
         void *rust_user_data,
         int32_t *out_result);
 
+    /**
+     * Starts the audio device backend rendering/capture loop.
+     */
     int32_t map_device_start(map_device_context_t *ctx);
+
+    /**
+     * Stops the audio device backend rendering/capture loop.
+     */
     int32_t map_device_stop(map_device_context_t *ctx);
+
+    /**
+     * Uninitializes miniaudio hardware resources and frees the context memory.
+     */
     int32_t map_device_destroy(map_device_context_t *ctx);
 
+    /**
+     * Returns the active hardware sample rate of the device context.
+     */
     uint32_t map_device_get_sample_rate(const map_device_context_t *ctx);
+
+    /**
+     * Returns the active channel count of the device context.
+     */
     uint32_t map_device_get_channels(const map_device_context_t *ctx);
+
+    /**
+     * Reconfigures the device context to route to a new target hardware device ID.
+     */
     int32_t map_device_set_device(map_device_context_t *ctx, const char *device_id);
+
+    /**
+     * Copies current hardware device information into out_device.
+     */
     int32_t map_device_get_current_device_info(const map_device_context_t *ctx, map_device_info_t *out_device);
 
+    /**
+     * Enumerates all physical audio playback devices available on the host system.
+     */
     int32_t map_device_enumerate_devices(map_device_info_t **out_devices, uint32_t *out_count);
+
+    /**
+     * Enumerates all physical audio capture devices available on the host system.
+     */
     int32_t map_device_enumerate_capture_devices(map_device_info_t **out_devices, uint32_t *out_count);
+
+    /**
+     * Deallocates the array of device info structures returned by enumeration functions.
+     */
     void map_device_free_devices(map_device_info_t *devices);
 
+    /**
+     * Combined playback and capture hardware device enumeration result.
+     */
     typedef struct
     {
         map_device_info_t *playback_devices;
@@ -67,7 +130,14 @@ extern "C"
         uint32_t capture_count;
     } map_all_devices_t;
 
+    /**
+     * Enumerates both playback and capture devices in a single call.
+     */
     int32_t map_device_enumerate_all(map_all_devices_t *out_all);
+
+    /**
+     * Frees all arrays within the combined device enumeration structure.
+     */
     void map_device_free_all(map_all_devices_t *all);
 
 #ifdef __cplusplus

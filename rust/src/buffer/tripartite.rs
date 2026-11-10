@@ -271,6 +271,7 @@ impl TripartiteBuffer {
         }
     }
 
+    /// Stores the pinned header bytes for format probing and ID3/container parsing.
     pub fn set_head(&self, head: &[u8]) {
         crate::map_log!(4, "TripartiteBuffer set_head: bytes={}", head.len());
         let mut b = self.inner.lock().unwrap();
@@ -279,6 +280,7 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Stores the pinned trailing metadata bytes at the specified tail offset.
     pub fn set_tail(&self, tail: &[u8], tail_offset: Option<u64>) {
         let mut b = self.inner.lock().unwrap();
         let resolved_offset = tail_offset
@@ -301,14 +303,17 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Probes and pins trailing metadata bytes for MP4 moov atom or ID3v1 tags.
     pub fn probe_tail(&self, tail: &[u8], tail_offset: u64) {
         self.set_tail(tail, Some(tail_offset));
     }
 
+    /// Returns a copy of the currently pinned tail metadata bytes.
     pub fn tail_data(&self) -> Vec<u8> {
         self.inner.lock().unwrap().tail.data.clone()
     }
 
+    /// Sets the byte offset where the encoded audio payload begins.
     pub fn set_audio_start(&self, start: u64) {
         let mut b = self.inner.lock().unwrap();
         b.head.audio_start = start;
@@ -320,6 +325,7 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Sets the byte offset where the encoded audio payload ends.
     pub fn set_audio_end(&self, end: u64) {
         let mut b = self.inner.lock().unwrap();
         b.tail.audio_end = Some(end);
@@ -328,6 +334,7 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Configures whether the active consumer is actively decoding audio frames.
     pub fn set_decoding_audio(&self, decoding: bool) {
         self.inner.lock().unwrap().is_decoding_audio = decoding;
     }
@@ -512,6 +519,7 @@ impl TripartiteBuffer {
         Err(BufferError::InvalidArgs)
     }
 
+    /// Blocking read operation with timeout, waiting on the condition variable if data is pending.
     pub fn read_blocking(
         &self,
         offset: u64,
@@ -567,6 +575,7 @@ impl TripartiteBuffer {
         b.read_cursor = cursor;
     }
 
+    /// Resets the sliding ring buffer starting at `new_stream_offset` after a non-contiguous seek.
     pub fn flush(&self, new_stream_offset: u64) {
         crate::map_log!(4, "TripartiteBuffer flush at offset={}", new_stream_offset);
         let mut b = self.inner.lock().unwrap();
@@ -577,6 +586,7 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Sets the buffer read cursor to `target_offset` and evaluates whether the offset is cached.
     pub fn seek(&self, target_offset: u64) -> Result<(), BufferError> {
         let mut b = self.inner.lock().unwrap();
         b.read_cursor = target_offset;
@@ -593,6 +603,8 @@ impl TripartiteBuffer {
         Ok(())
     }
 
+    /// Checks if `target_offset` resides within the cached sliding window or pinned head.
+    /// Returns `(in_cache, contiguous_from_start)`.
     pub fn try_seek_cached(&self, target_offset: u64) -> (bool, bool) {
         let mut b = self.inner.lock().unwrap();
         let effective_audio_start = b.head.audio_start;
@@ -639,6 +651,7 @@ impl TripartiteBuffer {
         }
     }
 
+    /// Marks the source stream ingestion as completed (EOF reached).
     pub fn mark_eof(&self) {
         let mut b = self.inner.lock().unwrap();
         b.is_eof = true;
@@ -646,6 +659,7 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Aborts any pending buffer operations and signals awaiting readers.
     pub fn abort(&self) {
         crate::map_log!(4, "TripartiteBuffer abort called");
         let mut b = self.inner.lock().unwrap();
@@ -654,6 +668,7 @@ impl TripartiteBuffer {
         self.data_ready_cond.notify_all();
     }
 
+    /// Clears an active abort state and restores the buffer operational status.
     pub fn clear_abort(&self) {
         let mut b = self.inner.lock().unwrap();
         b.should_abort = false;
@@ -666,25 +681,7 @@ impl TripartiteBuffer {
         }
     }
 
-    pub fn is_starving(&self) -> bool {
-        let b = self.inner.lock().unwrap();
-        !b.is_eof && (b.read_cursor >= b.ring.range_end || b.state == BufferState::Buffering)
-    }
-
-    pub fn is_eof_and_exhausted(&self) -> bool {
-        let b = self.inner.lock().unwrap();
-        b.is_eof && b.read_cursor >= b.ring.range_end
-    }
-
-    pub fn set_buffering(&self, buffering: bool) {
-        let mut b = self.inner.lock().unwrap();
-        if buffering {
-            b.state = BufferState::Buffering;
-        } else if b.state == BufferState::Buffering {
-            b.state = BufferState::Ready;
-        }
-    }
-
+    /// Returns a snapshot of byte offsets, progress percentages, and buffer state.
     pub fn get_range(&self) -> BufferRange {
         let b = self.inner.lock().unwrap();
         let total = b.total_size.map(|v| v as i64).unwrap_or(-1);
@@ -708,10 +705,12 @@ impl TripartiteBuffer {
         }
     }
 
+    /// Current metadata change version for detecting runtime updates (e.g. ICY streams).
     pub fn meta_version(&self) -> u32 {
         self.inner.lock().unwrap().meta_version
     }
 
+    /// Extracts or synthesizes available container metadata bytes for format sniffing.
     pub fn get_meta_bytes(&self) -> Vec<u8> {
         let b = self.inner.lock().unwrap();
         if !b.icy_meta_data.is_empty() {
@@ -745,6 +744,7 @@ impl TripartiteBuffer {
         out
     }
 
+    /// Copies synthesized metadata bytes into the provided slice.
     pub fn copy_meta_bytes(&self, out: &mut [u8]) -> usize {
         let bytes = self.get_meta_bytes();
         let to_copy = out.len().min(bytes.len());
@@ -752,6 +752,7 @@ impl TripartiteBuffer {
         to_copy
     }
 
+    /// Updates dynamic ICY metadata extracted from an active HTTP stream.
     pub fn set_icy_meta(&self, data: &[u8]) {
         let mut b = self.inner.lock().unwrap();
         b.icy_meta_data.clear();
@@ -759,31 +760,33 @@ impl TripartiteBuffer {
         b.meta_version = b.meta_version.wrapping_add(1);
     }
 
+    /// Returns the beginning byte offset of the audio payload.
     pub fn audio_start(&self) -> u64 {
         self.inner.lock().unwrap().head.audio_start
     }
 
-    pub fn audio_end(&self) -> Option<u64> {
-        self.inner.lock().unwrap().tail.audio_end
-    }
-
+    /// Whether this buffer is serving a live/indeterminate stream.
     pub fn is_live(&self) -> bool {
         self.inner.lock().unwrap().is_live
     }
 
+    /// Earliest byte offset currently stored in the sliding ring buffer.
     pub fn range_start(&self) -> u64 {
         self.inner.lock().unwrap().ring.range_start
     }
 
+    /// Furthest byte offset currently written in the sliding ring buffer.
     pub fn range_end(&self) -> u64 {
         self.inner.lock().unwrap().ring.range_end
     }
 
+    /// Whether trailing metadata has been received and pinned.
     pub fn is_tail_locked(&self) -> bool {
         let b = self.inner.lock().unwrap();
         b.tail.locked && !b.tail.data.is_empty()
     }
 
+    /// Whether all stream bytes have been ingested into memory.
     pub fn is_fully_buffered(&self) -> bool {
         let b = self.inner.lock().unwrap();
         b.total_size
@@ -791,6 +794,7 @@ impl TripartiteBuffer {
             .unwrap_or(false)
     }
 
+    /// Whether stream ingestion is completed or range has reached the known total size.
     pub fn is_eof(&self) -> bool {
         let b = self.inner.lock().unwrap();
         b.is_eof
@@ -799,18 +803,22 @@ impl TripartiteBuffer {
                 .unwrap_or(false)
     }
 
+    /// Pinned header segment byte length.
     pub fn head_size(&self) -> usize {
         self.inner.lock().unwrap().head.data.len()
     }
 
+    /// Maximum capacity of the circular ring segment in bytes.
     pub fn ring_capacity(&self) -> usize {
         self.inner.lock().unwrap().ring.capacity
     }
 
+    /// Known total byte length of the stream if bounded.
     pub fn total_size(&self) -> Option<u64> {
         self.inner.lock().unwrap().total_size
     }
 
+    /// Creates an independent `BufferStreamReader` iterating over this tripartite buffer.
     pub fn create_reader(&self) -> super::stream_reader::BufferStreamReader {
         super::stream_reader::BufferStreamReader::new(self.clone())
     }

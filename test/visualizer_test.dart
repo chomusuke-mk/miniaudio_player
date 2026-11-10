@@ -227,6 +227,7 @@ void main() {
       await player.action.setVisualizerEnabled(false);
       expect(player.state.visualizerEnabled, isFalse);
 
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(enabledStates, equals([true, false, true, false]));
     });
   });

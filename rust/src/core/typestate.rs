@@ -71,6 +71,7 @@ impl Player<Uninitialized> {
         })
     }
 
+    /// Returns a reference to the active player configuration.
     pub fn config(&self) -> &PlayerConfig {
         &self.config
     }
@@ -97,10 +98,12 @@ impl<S: ByteSource> Player<Open<S>> {
         }
     }
 
+    /// Returns whether the opened byte source supports seeking.
     pub fn is_seekable(&self) -> bool {
         self.state.is_seekable
     }
 
+    /// Returns the total stream size in bytes if known.
     pub fn total_bytes(&self) -> Option<u64> {
         self.state.total_bytes
     }
@@ -130,14 +133,17 @@ impl<S: ByteSource> Player<Active<S>> {
         }
     }
 
+    /// Updates playback volume in the active state.
     pub fn set_volume(&mut self, vol: Volume) {
         self.state.volume = vol;
     }
 
+    /// Returns current active playback volume.
     pub fn volume(&self) -> Volume {
         self.state.volume
     }
 
+    /// Returns current rendered playback position in milliseconds.
     pub fn position_ms(&self) -> u64 {
         self.state.current_position_ms
     }
@@ -167,6 +173,7 @@ impl<S: ByteSource> Player<Paused<S>> {
         }
     }
 
+    /// Returns the position in milliseconds where playback was paused.
     pub fn paused_position_ms(&self) -> u64 {
         self.state.paused_position_ms
     }

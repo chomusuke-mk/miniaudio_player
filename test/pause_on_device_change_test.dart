@@ -84,17 +84,20 @@ void main() {
       final events = <bool>[];
       final sub = player.stream.pauseOnDeviceChange.listen(events.add);
 
-      player.action.setPauseOnDeviceChange(true);
+      await player.action.setPauseOnDeviceChange(true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       await pumpEventQueue();
       expect(player.state.pauseOnDeviceChange, isTrue);
       expect(events, equals([true]));
 
       // Redundant set does not emit duplicate
-      player.action.setPauseOnDeviceChange(true);
+      await player.action.setPauseOnDeviceChange(true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       await pumpEventQueue();
       expect(events, equals([true]));
 
-      player.action.setPauseOnDeviceChange(false);
+      await player.action.setPauseOnDeviceChange(false);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       await pumpEventQueue();
       expect(player.state.pauseOnDeviceChange, isFalse);
       expect(events, equals([true, false]));
@@ -128,17 +131,20 @@ void main() {
       final sub = engine.stream.pauseOnDeviceChange.listen(events.add);
 
       await engine.action.setPauseOnDeviceChange(true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
       expect(engine.state.pauseOnDeviceChange, isTrue);
       expect(events, equals([true]));
 
       // Redundant set does not emit duplicate
       await engine.action.setPauseOnDeviceChange(true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
       expect(events, equals([true]));
 
       await engine.action.setPauseOnDeviceChange(false);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
       expect(engine.state.pauseOnDeviceChange, isFalse);
       expect(events, equals([true, false]));
 

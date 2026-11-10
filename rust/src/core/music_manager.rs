@@ -49,56 +49,67 @@ impl MusicManager {
     // Direct Music Commands
     // =========================================================================
 
+    /// Replaces the playlist queue with a new list of audio sources.
     #[inline]
     pub fn set_queue(&mut self, queue: Vec<AudioSourceCore>) {
         self.inner.set_queue(queue);
     }
 
+    /// Sets the custom byte source factory for Dart stream callbacks.
     #[inline]
     pub fn set_custom_source_factory(&mut self, factory: crate::core::dual_source::CustomSourceFactory) {
         self.inner.custom_source_factory = Some(factory);
     }
 
+    /// Appends audio sources to the end of the playlist queue.
     #[inline]
     pub fn append(&mut self, sources: Vec<AudioSourceCore>) {
         self.inner.append_items(sources);
     }
 
+    /// Inserts an audio source directly after the currently playing item.
     #[inline]
     pub fn insert_next(&mut self, source: AudioSourceCore) {
         self.inner.insert_next_item(source);
     }
 
+    /// Removes an item at the specified index from the playlist queue.
     #[inline]
     pub fn remove_at(&mut self, index: usize) -> Option<AudioSourceCore> {
         self.inner.remove_item_at(index)
     }
 
+    /// Reorders a playlist item from `old_index` to `new_index`.
     #[inline]
     pub fn reorder(&mut self, old_index: usize, new_index: usize) -> bool {
         self.inner.reorder_item(old_index, new_index)
     }
 
+    /// Reorders playlist queue according to the given array of source identifiers.
     #[inline]
     pub fn reorder_by_ids(&mut self, ids: &[i64]) -> bool {
         self.inner.reorder_by_ids(ids)
     }
 
+    /// Clears the playlist queue, optionally retaining the currently playing item.
     #[inline]
     pub fn clear_queue(&mut self, keep_current: bool) {
         self.inner.clear_items(keep_current);
     }
 
+    /// Advances playback to the next item in the playlist queue with optional crossfade duration.
     #[inline]
     pub fn next(&mut self, manual_crossfade_ms: Option<u64>) -> Result<(), String> {
         self.inner.next(manual_crossfade_ms)
     }
 
+    /// Moves playback to the previous item in the playlist queue.
     #[inline]
     pub fn previous(&mut self) -> Result<(), String> {
         self.inner.previous()
     }
 
+    /// Initiates playback of the requested track ID or queue position.
     #[inline]
     pub fn play(
         &mut self,
@@ -110,16 +121,19 @@ impl MusicManager {
         self.inner.play(id, position, shuffled, seek_ms)
     }
 
+    /// Pauses music playback across active decks.
     #[inline]
     pub fn pause(&mut self) {
         self.inner.pause();
     }
 
+    /// Stops music playback and resets playback positions.
     #[inline]
     pub fn stop(&mut self) {
         self.inner.stop();
     }
 
+    /// Seeks the active music deck to `position_ms`.
     #[inline]
     pub fn seek(&mut self, position_ms: i64) -> Result<(), String> {
         let res = self.inner.seek(position_ms);
@@ -130,48 +144,57 @@ impl MusicManager {
         }
     }
 
+    /// Updates playlist looping mode (`0 = Off`, `1 = One`, `2 = All`).
     #[inline]
     pub fn set_loop_mode(&mut self, mode: i32) {
         self.inner.set_loop_mode(mode);
     }
 
+    /// Enables or disables playlist shuffle order.
     #[inline]
     pub fn set_shuffle(&mut self, enabled: bool) {
         self.inner.set_shuffle(enabled);
     }
 
+    /// Configures automatic and manual crossfade durations and curve profile.
     #[inline]
     pub fn set_crossfade(&mut self, duration_ms: u64, manual_ms: u64, curve: i32) {
         self.inner.set_crossfade(duration_ms, manual_ms, curve);
     }
 
+    /// Returns the current playback speed rate.
     #[inline]
     pub fn rate(&self) -> f32 {
         f32::from_bits(self.inner.deck_a.rate.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Returns the current playback pitch shift multiplier.
     #[inline]
     pub fn pitch(&self) -> f32 {
         f32::from_bits(self.inner.deck_a.pitch.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Returns whether playlist shuffle is enabled.
     #[inline]
     pub fn is_shuffled(&self) -> bool {
         self.inner.shuffle_enabled.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Sets playback speed rate across active decks.
     #[inline]
     pub fn set_rate(&mut self, rate: f32) {
         self.inner.deck_a.set_rate(rate);
         self.inner.deck_b.set_rate(rate);
     }
 
+    /// Sets pitch shift multiplier across active decks.
     #[inline]
     pub fn set_pitch(&mut self, pitch: f32) {
         self.inner.deck_a.set_pitch(pitch);
         self.inner.deck_b.set_pitch(pitch);
     }
 
+    /// Sets music volume multiplier across active decks.
     #[inline]
     pub fn set_volume(&mut self, volume: f32) {
         self.inner.deck_a.set_volume(volume);
@@ -226,11 +249,13 @@ impl MusicManager {
         }
     }
 
+    /// Returns an immutable slice to the standby CUE monitoring buffer.
     #[inline]
     pub fn standby_buffer(&self) -> &[f32] {
         &self.scratch_standby
     }
 
+    /// Returns an immutable slice to the active deck rendered audio buffer.
     #[inline]
     pub fn active_deck_buffer(&self) -> &[f32] {
         if self.inner.active_deck.load(Ordering::Relaxed) == 0 {
@@ -244,31 +269,37 @@ impl MusicManager {
     // State Accessors
     // =========================================================================
 
+    /// Returns a reference to the active foreground streaming deck.
     #[inline]
     pub fn active_deck_ref(&self) -> &StreamingDeck {
         self.inner.active_deck_ref()
     }
 
+    /// Returns a mutable reference to the active foreground streaming deck.
     #[inline]
     pub fn active_deck_mut(&mut self) -> &mut StreamingDeck {
         self.inner.active_deck_mut()
     }
 
+    /// Returns the currently active playlist queue index.
     #[inline]
     pub fn current_index(&self) -> i64 {
         self.inner.current_index.load(Ordering::Relaxed)
     }
 
+    /// Returns whether an atomic crossfade is currently in progress.
     #[inline]
     pub fn is_crossfading(&self) -> bool {
         self.inner.crossfade.is_active.load(Ordering::Relaxed)
     }
 
+    /// Returns a copy of the playlist queue items.
     #[inline]
     pub fn queue_items(&self) -> Vec<AudioSourceCore> {
         self.inner.queue.read().unwrap().clone()
     }
 
+    /// Destroys and cleans up both streaming decks.
     pub fn dispose(&mut self) {
         self.inner.deck_a.destroy();
         self.inner.deck_b.destroy();

@@ -1,3 +1,4 @@
+# Compiler and linker flags for Linux builds (binary size optimization and dead code stripping)
 [target.'cfg(target_os = "linux")']
 rustflags = [
     "-C", "link-arg=-Wl,--gc-sections",
@@ -6,8 +7,10 @@ rustflags = [
     "-C", "force-unwind-tables=no",
 ]
 
+# Development and diagnostic environment variables
 [env]
 RUST_BACKTRACE = "1"
 
+# Cargo shortcuts for strict testing
 [alias]
 test-strict = "test -- --test-threads=8 --nocapture"

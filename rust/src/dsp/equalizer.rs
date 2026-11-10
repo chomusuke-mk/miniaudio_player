@@ -134,6 +134,7 @@ pub struct PreampStage {
 }
 
 impl PreampStage {
+    /// Creates a new `PreampStage` configured for `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
         Self {
             preamp_db: 0.0,
@@ -144,25 +145,30 @@ impl PreampStage {
         }
     }
 
+    /// Updates the sample rate and recalculates smoothing interpolation factors.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.smooth_factor = compute_smoothing_factor(sample_rate);
     }
 
+    /// Sets the pre-amplification gain in decibels.
     pub fn set_preamp_db(&mut self, preamp_db: f32) {
         self.preamp_db = preamp_db;
         self.recalculate_target();
     }
 
+    /// Updates the active ReplayGain track normalization parameters.
     pub fn set_replay_gain(&mut self, config: ReplayGainConfig) {
         self.replay_gain = config;
         self.recalculate_target();
     }
 
+    /// Returns the current pre-amplification gain in dB.
     #[inline]
     pub fn preamp_db(&self) -> f32 {
         self.preamp_db
     }
 
+    /// Returns the active ReplayGain configuration settings.
     #[inline]
     pub fn replay_gain(&self) -> ReplayGainConfig {
         self.replay_gain
@@ -187,6 +193,7 @@ impl PreampStage {
         self.target_linear = linear;
     }
 
+    /// Applies smoothed preamp and ReplayGain scaling to interleaved PCM samples.
     #[inline]
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
         if samples.is_empty() || channels == 0 {
@@ -210,6 +217,7 @@ pub struct Iso10BandStage {
 }
 
 impl Iso10BandStage {
+    /// Constructs a new 10-band ISO 266 filter bank stage.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let ch = channels.max(1);
         let mut stage = Self {
@@ -222,6 +230,7 @@ impl Iso10BandStage {
         stage
     }
 
+    /// Updates the sample rate and redesigns all biquad band filters.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if sample_rate > 0 && self.sample_rate != sample_rate {
             self.sample_rate = sample_rate;
@@ -229,6 +238,7 @@ impl Iso10BandStage {
         }
     }
 
+    /// Sets the gain in dB for a single band index (0 to 9).
     pub fn set_band(&mut self, band_index: usize, gain_db: f32) {
         if band_index < EQ_BAND_COUNT {
             self.band_gains[band_index] = gain_db.clamp(-24.0, 24.0);
@@ -236,6 +246,7 @@ impl Iso10BandStage {
         }
     }
 
+    /// Updates all 10 equalizer band gains and active status simultaneously.
     pub fn set_all(&mut self, params: &EqualizerParams) {
         self.enabled = params.enabled;
         let arr = params.as_array();
@@ -245,6 +256,7 @@ impl Iso10BandStage {
         self.recalculate_all_bands();
     }
 
+    /// Returns the current 10-band equalizer settings.
     #[inline]
     pub fn params(&self) -> EqualizerParams {
         EqualizerParams {
@@ -286,6 +298,7 @@ impl Iso10BandStage {
         }
     }
 
+    /// Applies smoothed preamp and ReplayGain scaling to interleaved PCM samples.
     #[inline]
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
         if !self.enabled || samples.is_empty() || channels == 0 || channels > self.filters.len() {
@@ -317,6 +330,7 @@ pub struct StereoImagingStage {
 }
 
 impl StereoImagingStage {
+    /// Creates a new `StereoImagingStage` configured for `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
         Self {
             balance: 0.0,
@@ -331,10 +345,12 @@ impl StereoImagingStage {
         }
     }
 
+    /// Updates the sample rate and recalculates smoothing interpolation factors.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.smooth_factor = compute_smoothing_factor(sample_rate);
     }
 
+    /// Sets stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
     pub fn set_balance(&mut self, balance: f32) {
         self.balance = balance.clamp(-1.0, 1.0);
         if self.balance < 0.0 {
@@ -346,35 +362,42 @@ impl StereoImagingStage {
         }
     }
 
+    /// Enables or disables stereo downmixing to mono.
     pub fn set_mono(&mut self, enabled: bool) {
         self.mono_enabled = enabled;
     }
 
+    /// Enables or disables Mid-Side stereo widening with width multiplier.
     pub fn set_spatializer(&mut self, enabled: bool, width: f32) {
         self.spatializer_enabled = enabled;
         self.spatializer_width = width.clamp(0.0, 2.0);
     }
 
+    /// Returns the current balance pan value (-1.0 to 1.0).
     #[inline]
     pub fn balance(&self) -> f32 {
         self.balance
     }
 
+    /// Returns whether mono downmix is active.
     #[inline]
     pub fn mono(&self) -> bool {
         self.mono_enabled
     }
 
+    /// Returns whether the 3D stereo widening spatializer is enabled.
     #[inline]
     pub fn spatializer_enabled(&self) -> bool {
         self.spatializer_enabled
     }
 
+    /// Returns the stereo widening factor (0.0 to 2.0).
     #[inline]
     pub fn spatializer_width(&self) -> f32 {
         self.spatializer_width
     }
 
+    /// Applies smoothed preamp and ReplayGain scaling to interleaved PCM samples.
     #[inline]
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
         if samples.is_empty() || channels < 2 {

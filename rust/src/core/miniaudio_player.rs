@@ -20,25 +20,41 @@ use crate::dsp::limiter::SoftLimiter;
 
 /// Master Miniaudio Player Coordinator.
 pub struct MiniaudioPlayer {
+    /// Domain manager for dual-deck streaming, queues, and crossfading.
     pub music_manager: MusicManager,
+    /// Vectorized DSP processing chain for music playback.
     pub music_dsp: DspProcessor,
+    /// Domain manager for 64-voice polyphonic RAM sound effects.
     pub effects_manager: EffectsManager,
+    /// Isolated DSP chain for dedicated sound effects.
     pub isolate_dsp: DspProcessor,
+    /// Domain manager for microphone capture and auto-ducking dynamics.
     pub input_manager: InputManager,
+    /// SIMD vector mixer for fast summing and headroom saturation.
     pub simd_mixer: SimdMixer,
+    /// Master True-Peak soft brickwall limiter.
     pub master_limiter: SoftLimiter,
+    /// Multi-destination physical output matrix, recording, and visualizer.
     pub output_manager: OutputManager,
 
     // Real-Time Preallocated Scratch Buffers (O(1) L1 Cache)
+    /// Scratch buffer for decoded music frames.
     pub scratch_music: Vec<f32>,
+    /// Scratch buffer for captured microphone audio.
     pub scratch_voice: Vec<f32>,
+    /// Master summing bus combining all sound sources.
     pub super_flow: Vec<f32>,
 
+    /// Audio sample rate in Hz.
     pub sample_rate: u32,
+    /// Audio channel count.
     pub channels: usize,
+    /// Hardware callback period size in frames.
     pub period_size: u32,
 
+    /// Default ReplayGain fallback values `(gain_db, peak)`.
     pub default_replay_gain: (f32, f32),
+    /// ReplayGain mode (`0 = Disabled`, `1 = Track`, `2 = Forced`).
     pub replay_gain_mode: u32,
 }
 
@@ -52,11 +68,13 @@ impl Drop for MiniaudioPlayer {
 }
 
 impl MiniaudioPlayer {
+    /// Disposes underlying music and output managers, releasing hardware resources.
     pub fn dispose(&mut self) {
         self.music_manager.dispose();
         self.output_manager.dispose();
     }
 
+    /// Creates and initializes the master `MiniaudioPlayer` engine with all modular domains.
     pub fn new(
         sample_rate: u32,
         channels: u32,
@@ -198,11 +216,13 @@ impl MiniaudioPlayer {
     // Cross-Cutting Commands
     // =========================================================================
 
+    /// Sets the master music volume level.
     #[inline]
     pub fn set_volume(&mut self, volume: f32) {
         self.music_dsp.set_volume(volume);
     }
 
+    /// Stops music playback and all polyphonic sound effects with optional fadeout.
     #[inline]
     pub fn stop_all(&mut self, fade_out_samples: usize) {
         self.music_manager.stop();

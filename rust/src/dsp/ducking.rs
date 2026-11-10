@@ -55,10 +55,12 @@ impl AutoDucker {
         }
     }
 
+    /// Updates the sample rate and recalculates internal envelope timings.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate.max(8000);
     }
 
+    /// Reconfigures auto-ducking dynamics parameters (threshold, attenuation, attack, hold, release).
     pub fn set_params(
         &mut self,
         enabled: bool,
@@ -79,16 +81,19 @@ impl AutoDucker {
         }
     }
 
+    /// Returns `true` if auto-ducking is active and attenuation is being applied.
     #[inline]
     pub fn is_ducking(&self) -> bool {
         self.enabled && self.current_gain < 0.99
     }
 
+    /// Returns the current dynamic gain attenuation factor applied to background audio.
     #[inline]
     pub fn current_gain(&self) -> f32 {
         self.current_gain
     }
 
+    /// Returns the most recently measured voice sidechain signal RMS in dBFS.
     #[inline]
     pub fn last_rms_db(&self) -> f32 {
         self.last_rms_db

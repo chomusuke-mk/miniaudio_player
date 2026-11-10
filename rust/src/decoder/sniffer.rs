@@ -83,8 +83,11 @@ pub struct BoundaryInfo {
     pub mp4_mdat_atom_offset: i64,
     /// Header size of MP4 mdat atom.
     pub mp4_mdat_header_size: u32,
+    /// Non-zero if the head segment contains an MPEG Xing or VBRI frame.
     pub head_has_mpeg_frame: i32,
+    /// Block alignment or bytes per frame for PCM/WAV formats.
     pub bytes_per_frame: u32,
+    /// Number of stream bytes needed to resolve the container boundary when status is `NeedMore`.
     pub needed_bytes: i64,
 }
 
@@ -107,10 +110,6 @@ impl BoundaryInfo {
             bytes_per_frame: 1,
             needed_bytes: 0,
         }
-    }
-
-    pub fn reset(&mut self) {
-        *self = Self::new();
     }
 
     #[inline]
@@ -159,6 +158,7 @@ impl FormatSniffer {
         }
     }
 
+    /// Whether this container format can contain trailing metadata or tags (ID3v1, APE, Lyrics3).
     #[inline]
     pub fn container_needs_tail_scan(container: ContainerFormat) -> bool {
         matches!(
@@ -171,6 +171,7 @@ impl FormatSniffer {
         )
     }
 
+    /// Parses the pinned head bytes to determine the container format, audio payload start, and metadata bounds.
     pub fn detect_head_boundary(data: &[u8], total_size: i64) -> (BoundaryStatus, BoundaryInfo) {
         let mut info = BoundaryInfo::new();
         let avail = data.len();
@@ -302,6 +303,7 @@ impl FormatSniffer {
         }
     }
 
+    /// Parses trailing bytes to strip ID3v1, APE, or Lyrics3 tags and compute the true audio payload end.
     pub fn detect_tail_boundary(
         container: ContainerFormat,
         tail: &[u8],
@@ -478,6 +480,7 @@ impl FormatSniffer {
         }
     }
 
+    /// Extracts stream duration from trailing Ogg Vorbis/Opus pages granule positions.
     pub fn extract_tail_duration_ms(
         container: ContainerFormat,
         sample_rate: u32,
@@ -516,6 +519,7 @@ impl FormatSniffer {
         None
     }
 
+    /// Inspects MPEG audio frames and Xing/VBRI headers to compute bitrate and estimated duration.
     pub fn sniff_mp3_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         let avail = data.len();
         if avail < 10 || Self::has_non_mpeg_magic(data) {
@@ -652,6 +656,7 @@ impl FormatSniffer {
         Some((bitrate, duration_ms))
     }
 
+    /// Reads Vorbis identification headers to determine nominal bitrate and stream duration.
     pub fn sniff_ogg_vorbis_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if data.len() < 40 || !data.starts_with(b"OggS") {
             return None;
@@ -696,6 +701,7 @@ impl FormatSniffer {
         None
     }
 
+    /// Reads OpusHead identification headers to determine bitrate and stream duration.
     pub fn sniff_ogg_opus_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if data.len() < 40 || !data.starts_with(b"OggS") {
             return None;
@@ -726,6 +732,7 @@ impl FormatSniffer {
         None
     }
 
+    /// Inspects ADTS AAC headers to calculate stream bitrate and duration.
     pub fn sniff_adts_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if data.len() < 7 || total_size <= 0 {
             return None;
@@ -869,6 +876,7 @@ impl FormatSniffer {
         }
     }
 
+    /// High-level sniffer combining format probes to extract nominal bitrate and duration in milliseconds.
     pub fn sniff_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         Self::sniff_mp3_stream_info(data, total_size)
             .or_else(|| Self::sniff_adts_stream_info(data, total_size))

@@ -1,3 +1,5 @@
+//! Raw FFI declarations, C callbacks, WebAudio WASM runtime bindings, and safe enumeration wrappers.
+
 use std::os::raw::{c_char, c_void};
 
 /// Opaque marker type representing a miniaudio audio hardware device context.
@@ -5,7 +7,7 @@ pub enum MapDeviceContextOpaque {}
 /// Type alias for the opaque device context pointer.
 pub type MapDeviceContext = MapDeviceContextOpaque;
 
-/* Canonical error codes for miniaudio_player */
+/// Canonical error codes for miniaudio_player.
 /// Operation completed successfully.
 pub const MAP_SUCCESS: i32 = 0;
 /// Generic unspecified error.

@@ -332,11 +332,13 @@ impl InputManager {
         }
     }
 
+    /// Returns whether any active input ducker is currently attenuating the music bus.
     #[inline]
     pub fn is_ducking_active(&self) -> bool {
         self.active_inputs.iter().any(|n| n.ducker.is_ducking())
     }
 
+    /// Returns the highest instantaneous RMS signal level in dB across all active microphone inputs.
     #[inline]
     pub fn last_rms_db(&self) -> f32 {
         self.active_inputs
@@ -345,6 +347,7 @@ impl InputManager {
             .fold(-100.0f32, |acc, val| acc.max(val))
     }
 
+    /// Returns whether there are physical microphone or line-in capture nodes active.
     #[inline]
     pub fn has_active_inputs(&self) -> bool {
         !self.active_inputs.is_empty()

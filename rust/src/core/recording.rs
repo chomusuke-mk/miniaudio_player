@@ -76,6 +76,7 @@ pub fn write_wav_header<W: Write>(
     Ok(())
 }
 
+/// Back-patches RIFF header sizes in `file` using the finalized `data_bytes` count.
 pub fn finalize_wav_header(file: &mut File, data_bytes: u32) -> std::io::Result<()> {
     let riff_size = data_bytes.saturating_add(36);
     file.seek(SeekFrom::Start(4))?;
@@ -96,6 +97,7 @@ pub struct WavSampleWriter<W: Write> {
 }
 
 impl<W: Write> WavSampleWriter<W> {
+    /// Constructs a `WavSampleWriter` writing an initial header to `writer`.
     pub fn new(
         mut writer: W,
         sample_rate: u32,
@@ -110,6 +112,7 @@ impl<W: Write> WavSampleWriter<W> {
         })
     }
 
+    /// Encodes and writes a single audio sample into the WAV payload.
     #[inline]
     pub fn write_sample(&mut self, sample: f32) -> std::io::Result<()> {
         match self.format {
@@ -127,6 +130,7 @@ impl<W: Write> WavSampleWriter<W> {
         Ok(())
     }
 
+    /// Encodes and writes a contiguous slice of float PCM samples.
     pub fn write_samples(&mut self, samples: &[f32]) -> std::io::Result<()> {
         for &sample in samples {
             self.write_sample(sample)?;
@@ -155,6 +159,7 @@ impl<W: Write> WavSampleWriter<W> {
         }
     }
 
+    /// Flushes writer buffer and decomposes self into the underlying writer and total payload bytes written.
     pub fn flush_and_into_parts(mut self) -> std::io::Result<(W, u32)> {
         self.writer.flush()?;
         Ok((self.writer, self.data_bytes))
@@ -209,6 +214,7 @@ pub struct LiveRecorder {
 }
 
 impl LiveRecorder {
+    /// Creates a new `LiveRecorder` configured with target sample rate, channels, and encoding format.
     pub fn new(sample_rate: u32, channels: usize, format: WavFormat) -> Self {
         Self {
             is_recording: Arc::new(AtomicBool::new(false)),
@@ -220,10 +226,12 @@ impl LiveRecorder {
         }
     }
 
+    /// Returns whether a background disk recording session is active.
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::Acquire)
     }
 
+    /// Sets the target WAV sample encoding format (`Pcm16` or `Float32`).
     pub fn set_format(&mut self, format: WavFormat) {
         self.format = format;
     }

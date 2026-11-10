@@ -42,29 +42,28 @@ name = "benchmark_test"
 path = "../test/rust/benchmark_test.rs"
 
 [dependencies]
-# Decodificación y Demuxing 100% Rust
+# 100% Rust Audio Decoding and Demuxing
 symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats", "all-meta"] }
 
-# Concurrencia Lock-Free y Tiempo Real
+# Lock-Free Concurrency and Real-Time Synchronization
 log = "0.4"
 rand = "0.8"
 rtrb = "0.3"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
-atomic = "0.6"
 flutter_rust_bridge = "=2.13.0"
 
-# DSP, Análisis Espectral y Resampling
+# DSP, Spectral Analysis, and Resampling
 rustfft = "6.2"
 rubato = "0.15"
 timestretch = "0.16"
 
-# Streaming HLS (M3U8) y Criptografía
+# HLS Streaming (M3U8) and Cryptography
 m3u8-rs = "6.0"
 aes = "0.8"
 cbc = "0.1"
 
-# Formatos Adicionales (MIT / Apache-2.0)
+# Additional Audio Formats and Tag Metadata (MIT / Apache-2.0)
 ape-decoder = "0.3"
 wavicle = "0.1"
 lofty = "0.25.4"

@@ -1,7 +1,7 @@
 //! RAM Sound Effects Domain Manager (`EffectsManager`).
 //!
 //! Encapsulates 64 polyphonic RAM voices (Arc<[f32]>), 3D spatial evaluation,
-//! Doppler cinemática, pitch/volume jitter, LRU eviction with pinned protection,
+//! Doppler kinematics, pitch/volume jitter, LRU eviction with pinned protection,
 //! and In-Place Buffer Reuse routing.
 
 use std::sync::{Arc, Mutex};
@@ -50,11 +50,13 @@ impl EffectsManager {
     // Direct Effects Commands
     // =========================================================================
 
+    /// Declaratively registers the sound effect catalog into the voice pool.
     #[inline]
     pub fn set_effects(&self, effects: Vec<EffectCatalogItem>) -> Result<(), String> {
         self.pool.lock().unwrap().set_effects(effects)
     }
 
+    /// Triggers playback of a registered sound effect by ID with specified routing and parameters.
     #[inline]
     pub fn play_effect(
         &self,
@@ -101,46 +103,55 @@ impl EffectsManager {
         Ok((voice_id, ram_changed))
     }
 
+    /// Re-evaluates LRU cache eviction when an active voice completes.
     #[inline]
     pub fn on_voice_completed(&self) -> bool {
         self.pool.lock().unwrap().on_voice_completed()
     }
 
+    /// Stops playback of an active voice slot.
     #[inline]
     pub fn stop_effect(&self, voice_id: u32, fade_out_samples: usize) {
         self.pool.lock().unwrap().stop_voice(voice_id, fade_out_samples);
     }
 
+    /// Stops all currently active sound effect voices.
     #[inline]
     pub fn stop_all_effects(&self, fade_out_samples: usize) {
         self.pool.lock().unwrap().stop_all(fade_out_samples);
     }
 
+    /// Sets playback volume of an active voice.
     #[inline]
     pub fn set_voice_volume(&self, voice_id: u32, volume: f32) {
         self.pool.lock().unwrap().set_voice_volume(voice_id, volume);
     }
 
+    /// Sets playback pitch multiplier of an active voice.
     #[inline]
     pub fn set_voice_pitch(&self, voice_id: u32, pitch: f32) {
         self.pool.lock().unwrap().set_voice_pitch(voice_id, pitch);
     }
 
+    /// Sets stereo pan balance of an active voice.
     #[inline]
     pub fn set_voice_balance(&self, voice_id: u32, balance: f32) {
         self.pool.lock().unwrap().set_voice_balance(voice_id, balance);
     }
 
+    /// Sets 3D spatial emitter parameters of an active voice.
     #[inline]
     pub fn set_voice_emitter(&self, voice_id: u32, emitter: Option<SpatialEmitter>) {
         self.pool.lock().unwrap().set_voice_emitter(voice_id, emitter);
     }
 
+    /// Sets 3D spatial listener position and orientation for all sound effects.
     #[inline]
     pub fn set_listener(&self, listener: SpatialListener) {
         self.pool.lock().unwrap().set_listener(listener);
     }
 
+    /// Updates Doppler effect physics parameters.
     #[inline]
     pub fn set_doppler_parameters(&self, factor: f32, speed_of_sound: f32) {
         self.pool.lock().unwrap().set_doppler_parameters(factor, speed_of_sound);
@@ -177,6 +188,7 @@ impl EffectsManager {
         }
     }
 
+    /// Returns a mutable slice to the isolated scratch work buffer.
     #[inline]
     pub fn work_buffer(&mut self, sample_count: usize) -> &mut [f32] {
         &mut self.effects_work_buffer[..sample_count]
@@ -186,6 +198,7 @@ impl EffectsManager {
     // State Accessors
     // =========================================================================
 
+    /// Returns the number of currently active sound effect voices.
     #[inline]
     pub fn active_voices_count(&self) -> u32 {
         if let Ok(pool) = self.pool.try_lock() {
@@ -195,6 +208,7 @@ impl EffectsManager {
         }
     }
 
+    /// Returns the total bytes of decoded sound effect PCM currently allocated in RAM.
     #[inline]
     pub fn allocated_ram_bytes(&self) -> usize {
         if let Ok(pool) = self.pool.try_lock() {
@@ -204,6 +218,7 @@ impl EffectsManager {
         }
     }
 
+    /// Returns the identifiers of all sound effects currently resident in RAM.
     #[inline]
     pub fn loaded_effect_ids(&self) -> Vec<String> {
         if let Ok(pool) = self.pool.try_lock() {

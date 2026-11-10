@@ -38,6 +38,7 @@ impl DspProcessor {
         }
     }
 
+    /// Updates sample rate across equalizer and reverb stages.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if sample_rate > 0 && self.sample_rate != sample_rate {
             self.sample_rate = sample_rate;
@@ -46,38 +47,45 @@ impl DspProcessor {
         }
     }
 
+    /// Updates 10-band equalizer band gains.
     #[inline]
     pub fn set_equalizer(&mut self, params: &EqualizerParams) {
         self.equalizer.set_all(params);
     }
 
+    /// Configures algorithmic reverb parameters.
     #[inline]
     pub fn set_reverb(&mut self, config: ReverbConfig) {
         self.reverb.set_config(config);
     }
 
+    /// Sets preamp gain in dB.
     #[inline]
     pub fn set_preamp(&mut self, preamp_db: f32) {
         self.equalizer.set_preamp_db(preamp_db);
     }
 
+    /// Configures ReplayGain loudness normalization.
     #[inline]
     pub fn set_replay_gain(&mut self, config: ReplayGainConfig) {
         self.equalizer.set_replay_gain(config);
     }
 
+    /// Sets stereo pan balance from -1.0 (left) to 1.0 (right).
     #[inline]
     pub fn set_balance(&mut self, balance: f32) {
         self.balance = balance.clamp(-1.0, 1.0);
         self.equalizer.set_balance(self.balance);
     }
 
+    /// Enables or disables monophonic downmixing.
     #[inline]
     pub fn set_mono(&mut self, mono: bool) {
         self.mono = mono;
         self.equalizer.set_mono(mono);
     }
 
+    /// Sets local stage volume multiplier.
     #[inline]
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.max(0.0);

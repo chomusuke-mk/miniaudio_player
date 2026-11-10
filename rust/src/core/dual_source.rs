@@ -718,10 +718,7 @@ impl PcmAdaptationPipeline {
 /// Background decoding worker orchestrating decoder lifecycle, stream re-init,
 /// seek synchronization, PCM adaptation, and ring-buffer feeding.
 struct DecoderWorker {
-    #[allow(dead_code)]
-    deck_id: usize,
     running: Arc<AtomicBool>,
-    #[allow(dead_code)]
     wake: Arc<(Mutex<bool>, Condvar)>,
     state: Arc<AtomicI32>,
     engine_arc: Arc<Mutex<Option<SymphoniaEngine>>>,
@@ -745,9 +742,7 @@ struct DecoderWorker {
     buffering_resumed_flag: Arc<AtomicBool>,
     visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     visualizer_enabled: Arc<AtomicBool>,
-    #[allow(dead_code)]
     flush_generation: Arc<AtomicU64>,
-    #[allow(dead_code)]
     flush_acknowledged: Arc<AtomicU64>,
     stream_reinit_needed: Arc<AtomicBool>,
 
@@ -1646,6 +1641,7 @@ impl StreamingDeck {
         Ok(coordinator)
     }
 
+    /// Sends a real-time thread-safe control command to the audio renderer.
     pub fn send_dsp_command(&self, cmd: DspCommand) {
         if let Ok(mut guard) = self.cmd_producer.lock() {
             if let Some(ref mut prod) = *guard {
@@ -1654,22 +1650,27 @@ impl StreamingDeck {
         }
     }
 
+    /// Enables or disables 3D spatial audio processing on this deck.
     pub fn set_spatial_enabled(&mut self, enabled: bool) {
         self.send_dsp_command(DspCommand::SetSpatialEnabled(enabled));
     }
 
+    /// Updates the 3D spatial listener position and orientation on this deck.
     pub fn set_spatial_listener(&mut self, listener: crate::dsp::spatial::SpatialListener) {
         self.send_dsp_command(DspCommand::SetSpatialListener(listener));
     }
 
+    /// Updates the 3D spatial emitter parameters on this deck.
     pub fn set_spatial_emitter(&mut self, emitter: crate::dsp::spatial::SpatialEmitter) {
         self.send_dsp_command(DspCommand::SetSpatialEmitter(emitter));
     }
 
+    /// Sets the Doppler effect intensity factor on this deck.
     pub fn set_spatial_doppler_factor(&mut self, factor: f32) {
         self.send_dsp_command(DspCommand::SetSpatialDopplerFactor(factor));
     }
 
+    /// Sets the speed of sound medium velocity in meters per second.
     pub fn set_spatial_speed_of_sound(&mut self, speed: f32) {
         self.send_dsp_command(DspCommand::SetSpatialSpeedOfSound(speed));
     }
@@ -1681,7 +1682,6 @@ impl StreamingDeck {
         let cur_dev_ch = (self.device_channels.load(Ordering::Relaxed) as usize).clamp(1, 16);
 
         let mut worker = DecoderWorker {
-            deck_id: self.deck_id,
             running: self.decoder_running.clone(),
             wake: self.decoder_wake.clone(),
             state: self.state.clone(),
@@ -3948,6 +3948,7 @@ impl DualSource {
         })
     }
 
+    /// Returns a mutable reference to the currently active foreground deck.
     #[inline]
     pub fn active_deck_mut(&mut self) -> &mut StreamingDeck {
         if self.active_deck.load(Ordering::Relaxed) == 0 {
@@ -3957,6 +3958,7 @@ impl DualSource {
         }
     }
 
+    /// Returns a mutable reference to the standby / background deck.
     #[inline]
     pub fn standby_deck_mut(&mut self) -> &mut StreamingDeck {
         if self.active_deck.load(Ordering::Relaxed) == 0 {
@@ -3966,6 +3968,7 @@ impl DualSource {
         }
     }
 
+    /// Returns an immutable reference to the active foreground deck.
     #[inline]
     pub fn active_deck_ref(&self) -> &StreamingDeck {
         if self.active_deck.load(Ordering::Relaxed) == 0 {
@@ -3975,6 +3978,7 @@ impl DualSource {
         }
     }
 
+    /// Returns an immutable reference to the standby background deck.
     #[inline]
     pub fn standby_deck_ref(&self) -> &StreamingDeck {
         if self.active_deck.load(Ordering::Relaxed) == 0 {

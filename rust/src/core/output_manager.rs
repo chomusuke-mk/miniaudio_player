@@ -427,16 +427,19 @@ impl OutputManager {
         }
     }
 
+    /// Returns whether live recording is actively capturing audio frames.
     #[inline]
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::Relaxed)
     }
 
+    /// Returns the total audio frames captured during the current recording session.
     #[inline]
     pub fn recorded_frames(&self) -> u64 {
         self.recorded_frames.load(Ordering::Relaxed)
     }
 
+    /// Returns the duration of the current recording session in milliseconds.
     #[inline]
     pub fn recorded_duration_ms(&self) -> u64 {
         let frames = self.recorded_frames.load(Ordering::Relaxed);
@@ -447,6 +450,7 @@ impl OutputManager {
     // Visualizer & Configuration
     // =========================================================================
 
+    /// Enables or disables real-time FFT spectrum visualizer computation.
     #[inline]
     pub fn set_visualizer_enabled(&mut self, enabled: bool) {
         self.visualizer_enabled.store(enabled, Ordering::Release);
@@ -456,11 +460,13 @@ impl OutputManager {
         }
     }
 
+    /// Retrieves instantaneous visualizer metrics via lock-free seqlock reader.
     #[inline]
     pub fn get_visualizer_data(&self) -> VisualizerData {
         self.visualizer_seqlock.read()
     }
 
+    /// Sets whether playback automatically pauses when the OS default audio output changes.
     #[inline]
     pub fn set_pause_on_device_change(&self, enabled: bool) {
         self.pause_on_device_change.store(enabled, Ordering::Release);
@@ -539,6 +545,7 @@ impl OutputManager {
         }
     }
 
+    /// Stops all live recording sessions and releases all physical output audio devices.
     pub fn dispose(&mut self) {
         let _ = self.stop_recording();
         self.active_devices.clear();

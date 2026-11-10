@@ -1,9 +1,9 @@
 /**
  * @file miniaudio_device_bridge.c
- * @brief Bridge ultradelgado C99 para la gestión de dispositivos de audio del SO con miniaudio.h.
+ * @brief Ultra-thin C99 hardware audio device bridge for OS backend interactions via miniaudio.h.
  *
- * Utiliza miniaudio.h 100% original e intacto, configurado exclusivamente como
- * capa de hardware de audio (ma_device y ma_context).
+ * Utilizes 100% original, unmodified miniaudio.h configured strictly as
+ * the low-level hardware abstraction layer (ma_device and ma_context).
  */
 
 #define MA_NO_DECODING
@@ -34,15 +34,15 @@ static ma_aaudio_result_t map_aaudio_waitForStateChange_hook(
         return -1;
     }
 
-    /* Timeout defensivo de 1 segundo en lugar de 5 segundos */
+    /* Defensive 1-second timeout instead of 5 seconds */
     int64_t safeTimeout = 1000000000LL;
     ma_aaudio_result_t resultAA = g_orig_AAudioStream_waitForStateChange(stream, inputState, nextState, safeTimeout);
     if (resultAA != 0 /* AAUDIO_OK */)
     {
-        /* En caso de timeout o discrepancia en Android, consultar estado real */
+        /* In case of timeout or discrepancy on Android, query real state */
         if (nextState != NULL)
         {
-            /* Devolvemos éxito si ya está en estado STARTING o STARTED para reproducción */
+            /* Return success if already in STARTING or STARTED state for playback */
             if (inputState == 2 /* STARTING */ || inputState == 3 /* STARTED */)
             {
                 return 0;
@@ -175,7 +175,7 @@ map_device_context_t *map_device_create(
     ctx->has_context = MA_TRUE;
 
 #if defined(__ANDROID__)
-    /* Intercepción limpia del hook de AAudio sin tocar miniaudio.h */
+    /* Clean interception of AAudio hook without modifying miniaudio.h */
     if (ctx->context.backend == ma_backend_aaudio && ctx->context.aaudio.AAudioStream_waitForStateChange != NULL)
     {
         g_orig_AAudioStream_waitForStateChange = ctx->context.aaudio.AAudioStream_waitForStateChange;
@@ -251,7 +251,7 @@ map_device_context_t *map_device_create(
     ctx->sample_rate = ctx->device.sampleRate;
     ctx->channels = ctx->device.playback.channels;
 
-    /* Actualizar información de dispositivo actual */
+    /* Populate active device info */
     if (playback_device_id && strlen(playback_device_id) > 0 && strcmp(playback_device_id, "auto") != 0)
     {
         strncpy(ctx->current_device_info.id, playback_device_id, sizeof(ctx->current_device_info.id) - 1);

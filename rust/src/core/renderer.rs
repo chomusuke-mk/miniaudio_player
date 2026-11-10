@@ -159,6 +159,7 @@ impl AudioRenderer {
         }
     }
 
+    /// Acknowledges and applies pending buffer flushes requested across threads.
     #[inline]
     pub fn acknowledge_flush_if_needed(&mut self) {
         let current_flush = self.flush_generation.load(Ordering::Acquire);
@@ -338,6 +339,7 @@ impl AudioRenderer {
         self.apply_realtime_dsp_and_visualizer(out_slice, spatial_gain, spatial_pan);
     }
 
+    /// Dispatches hardware device state change notifications to registered listener callbacks.
     #[inline]
     pub fn on_device_notification(&self, notification_type: i32) {
         if let Some(ref cb) = self.notification_callback {

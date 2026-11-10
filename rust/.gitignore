@@ -1,2 +1,5 @@
+# Build artifacts and target directory
 /target
+
+# Local lockfile excluded from repository for library crate
 Cargo.lock

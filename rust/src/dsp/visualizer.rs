@@ -105,11 +105,6 @@ impl Visualizer {
         self.current_data
     }
 
-    /// Returns the latest calculated visualizer measurements.
-    pub fn data(&self) -> VisualizerData {
-        self.current_data
-    }
-
     /// Processes a buffer of interleaved float frames and updates band energies and peak levels.
     pub fn process_frames(&mut self, frames: &[f32]) {
         if !self.enabled || frames.is_empty() || self.channels == 0 {

@@ -29,6 +29,7 @@ impl SampleRate {
         None
     }
 
+    /// Returns the sample rate frequency in Hertz as a raw `u32`.
     pub fn get(self) -> u32 {
         self.0.get()
     }
@@ -45,9 +46,12 @@ impl Default for SampleRate {
 pub struct Volume(f32);
 
 impl Volume {
+    /// Silence level (0.0 linear).
     pub const SILENCE: Self = Self(0.0);
+    /// Unity gain level (1.0 linear).
     pub const UNITY: Self = Self(1.0);
 
+    /// Creates a validated `Volume`, returning an error if negative or non-finite.
     pub fn new(vol: f32) -> Result<Self, PlayerError> {
         if !vol.is_finite() || vol < 0.0 {
             return Err(PlayerError::InvalidArgs);
@@ -55,6 +59,7 @@ impl Volume {
         Ok(Self(vol))
     }
 
+    /// Clamps volume to `0.0` if non-finite or negative.
     pub fn clamp(vol: f32) -> Self {
         if !vol.is_finite() || vol < 0.0 {
             Self::SILENCE
@@ -63,10 +68,12 @@ impl Volume {
         }
     }
 
+    /// Returns the raw linear volume scalar.
     pub fn get(self) -> f32 {
         self.0
     }
 
+    /// Converts this linear volume multiplier into decibels (dB).
     pub fn to_decibels(self) -> Decibels {
         Decibels::from_linear(self)
     }
@@ -83,8 +90,10 @@ impl Default for Volume {
 pub struct Decibels(f32);
 
 impl Decibels {
+    /// Zero decibels reference point (unity gain).
     pub const ZERO_DB: Self = Self(0.0);
 
+    /// Creates a validated `Decibels` instance, returning an error if non-finite.
     pub fn new(db: f32) -> Result<Self, PlayerError> {
         if !db.is_finite() {
             return Err(PlayerError::InvalidArgs);
@@ -92,6 +101,7 @@ impl Decibels {
         Ok(Self(db))
     }
 
+    /// Converts a linear `Volume` to decibels (clamped at -120 dB noise floor).
     pub fn from_linear(vol: Volume) -> Self {
         if vol.get() <= 0.000001 {
             Self(-120.0) // Audio floor
@@ -100,11 +110,13 @@ impl Decibels {
         }
     }
 
+    /// Converts this decibel level to a linear `Volume` multiplier.
     pub fn to_linear(self) -> Volume {
         let linear = 10.0f32.powf(self.0 / 20.0);
         Volume::clamp(linear)
     }
 
+    /// Returns the raw decibel value as `f32`.
     pub fn get(self) -> f32 {
         self.0
     }

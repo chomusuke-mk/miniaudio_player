@@ -4,13 +4,14 @@
 //! peak saturation to prevent digital harshness before the True-Peak limiter.
 
 /// SIMD-accelerated audio sample mixer with AVX2/NEON and scalar fallback routines.
-pub struct SimdMixer;
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SimdMixer {}
 
 impl SimdMixer {
     /// Creates a new `SimdMixer` instance.
     #[inline]
     pub fn new() -> Self {
-        Self
+        Self {}
     }
 
     /// Vectorized accumulation: `dst[i] += src[i]`.
