@@ -119,7 +119,7 @@ void main() {
       engineController.dispose();
     });
 
-    testWidgets('Renders ReplayGain operating modes with English descriptions', (tester) async {
+    testWidgets('Renders 4-part AudioAnalyzerCard: Replay Gain, Waveform, Audio Info, and Metadata', (tester) async {
       tester.view.physicalSize = const Size(800, 1200);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -141,21 +141,76 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Verify Header & Mode selector are present
-      expect(find.text('UNIFIED AUDIO ANALYZER (BS.1770-4 / EBU R128)'), findsOneWidget);
-      expect(find.text('REPLAYGAIN NORMALIZATION'), findsOneWidget);
-      expect(find.text('TRACK (AUTO)'), findsOneWidget);
+      // Verify Header & Status pill & Re-analyze IconButton
+      expect(find.text('UNIFIED AUDIO ANALYZER'), findsOneWidget);
+      expect(find.byType(IconButton), findsWidgets);
+      expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
 
-      // Verify default English description for ReplayGainMode.track
-      expect(
-        find.textContaining('Automatically applies individual ITU-R BS.1770-4'),
-        findsOneWidget,
+      // Verify Part 1: Replay Gain
+      expect(find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'), findsOneWidget);
+      expect(find.text('REPLAY GAIN'), findsOneWidget);
+      expect(find.text('TRUE-PEAK'), findsOneWidget);
+      expect(find.text('INTEGRATED LOUDNESS'), findsOneWidget);
+
+      // Verify Part 2: Waveform
+      expect(find.text('WAVEFORM PROFILE'), findsOneWidget);
+      expect(find.textContaining('discrete, un-smoothed rectangular blocks'), findsOneWidget);
+
+      // Verify Part 3: Audio Info
+      expect(find.text('AUDIO INFO'), findsOneWidget);
+      expect(find.text('Container Format'), findsOneWidget);
+      expect(find.text('Audio Codec'), findsOneWidget);
+      expect(find.text('Sample Rate'), findsOneWidget);
+      expect(find.text('Bitrate Mode'), findsOneWidget);
+
+      // Verify Part 4: Metadata
+      expect(find.text('METADATA'), findsOneWidget);
+      expect(find.text('Title'), findsOneWidget);
+      expect(find.text('Artist'), findsOneWidget);
+      expect(find.text('Album'), findsOneWidget);
+      expect(find.text('Thumbnails'), findsOneWidget);
+      expect(find.text('Extended Tags'), findsOneWidget);
+
+      // Now pump with active analysis containing extended metadata and waveform
+      final sampleAnalysis = AudioAnalysisResult(
+        audioInfo: const AudioInfo(
+          sampleRate: 44100,
+          channels: 2,
+          bitrate: 320000,
+          codec: 'FLAC',
+          containerFormat: 'FLAC',
+          lossless: true,
+          bitrateMode: BitrateMode.vbr,
+        ),
+        replayGain: const ReplayGainResult(gainDb: -3.5, peak: 0.98, lufs: -17.5),
+        waveform: const WaveformResult(points: [0.1, 0.5, 0.8, 0.3]),
+        metadata: AudioMetadata(
+          title: 'Master Track',
+          trackArtist: 'Studio Artist',
+          album: 'Studio Album',
+          extended: const ExtendedMetadata(isrc: 'US-XYZ-26-00001'),
+        ),
       );
 
-      // Verify Real-Time Streaming Metadata toggle section
-      expect(find.text('REAL-TIME STREAM METADATA'), findsOneWidget);
-      expect(find.text('Parses live ICY radio headers and dynamic ID3v2 tags during playback'), findsOneWidget);
-      expect(find.byType(Switch), findsWidgets);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: AudioAnalyzerCard(
+                analysis: sampleAnalysis,
+                isLoading: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify populated UI values
+      expect(find.text('4 blocks'), findsOneWidget);
+      expect(find.text('VBR'), findsOneWidget);
+      expect(find.text('Master Track'), findsOneWidget);
+      expect(find.textContaining('VIEW EXTENDED (1)'), findsOneWidget);
     });
 
     testWidgets('Full app mounts and displays acoustic analysis without errors', (tester) async {
@@ -174,7 +229,7 @@ void main() {
       });
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.text('UNIFIED AUDIO ANALYZER (BS.1770-4 / EBU R128)'), findsOneWidget);
+      expect(find.text('UNIFIED AUDIO ANALYZER'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -219,7 +274,12 @@ void main() {
       await tester.tap(closeButton);
       await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull);
+      final ex = tester.takeException();
+      if (ex is FlutterError) {
+        // ignore: avoid_print
+        print(ex.toStringDeep());
+      }
+      expect(ex, isNull);
     });
   });
 }
