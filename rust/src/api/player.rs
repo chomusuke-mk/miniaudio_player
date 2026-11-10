@@ -1984,26 +1984,20 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Synchronously scans and enumerates connected playback output and capture devices in a single pass.
     pub fn get_all_devices_sync() -> Result<(Vec<RustAudioDevice>, Vec<RustAudioDevice>), String> {
-        let mut all = crate::bridge::ffi::MapAllDevices::default();
-        let res = unsafe { crate::bridge::ffi::map_device_enumerate_all(&mut all) };
-        if res != 0 {
-            return Err(format!("Unified device enumeration failed with code {}", res));
-        }
+        let (raw_playback, raw_capture) = crate::bridge::ffi::safe_enumerate_all_devices()
+            .map_err(|e| format!("Unified device enumeration failed with code {}", e))?;
 
-        let mut out_devs = Vec::with_capacity(all.playback_count as usize + 1);
+        let mut out_devs = Vec::with_capacity(raw_playback.len() + 1);
         let mut default_out_name = String::new();
         let mut default_out_effective_id = String::new();
 
-        if !all.playback_devices.is_null() && all.playback_count > 0 {
-            let slice = unsafe { std::slice::from_raw_parts(all.playback_devices, all.playback_count as usize) };
-            for d in slice {
-                let dev = RustAudioDevice::from(d);
-                if dev.is_default && default_out_name.is_empty() {
-                    default_out_name = dev.name.clone();
-                    default_out_effective_id = dev.effective_id.clone();
-                }
-                out_devs.push(dev);
+        for d in &raw_playback {
+            let dev = RustAudioDevice::from(d);
+            if dev.is_default && default_out_name.is_empty() {
+                default_out_name = dev.name.clone();
+                default_out_effective_id = dev.effective_id.clone();
             }
+            out_devs.push(dev);
         }
 
         if default_out_name.is_empty() && !out_devs.is_empty() {
@@ -2020,20 +2014,17 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         };
         out_devs.insert(0, auto_out);
 
-        let mut in_devs = Vec::with_capacity(all.capture_count as usize + 1);
+        let mut in_devs = Vec::with_capacity(raw_capture.len() + 1);
         let mut default_in_name = String::new();
         let mut default_in_effective_id = String::new();
 
-        if !all.capture_devices.is_null() && all.capture_count > 0 {
-            let slice = unsafe { std::slice::from_raw_parts(all.capture_devices, all.capture_count as usize) };
-            for d in slice {
-                let dev = RustAudioDevice::from(d);
-                if dev.is_default && default_in_name.is_empty() {
-                    default_in_name = dev.name.clone();
-                    default_in_effective_id = dev.effective_id.clone();
-                }
-                in_devs.push(dev);
+        for d in &raw_capture {
+            let dev = RustAudioDevice::from(d);
+            if dev.is_default && default_in_name.is_empty() {
+                default_in_name = dev.name.clone();
+                default_in_effective_id = dev.effective_id.clone();
             }
+            in_devs.push(dev);
         }
 
         if default_in_name.is_empty() && !in_devs.is_empty() {
@@ -2050,7 +2041,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         };
         in_devs.insert(0, auto_in);
 
-        unsafe { crate::bridge::ffi::map_device_free_all(&mut all) };
         Ok((out_devs, in_devs))
     }
 

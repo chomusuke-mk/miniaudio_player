@@ -199,16 +199,8 @@ impl MusicManager {
         self.scratch_deck_a[..sample_count].fill(0.0);
         self.scratch_deck_b[..sample_count].fill(0.0);
 
-        unsafe {
-            if !self.inner.deck_a.renderer_ptr.is_null() {
-                let rend_a = &mut *self.inner.deck_a.renderer_ptr;
-                rend_a.render_pcm(self.scratch_deck_a.as_mut_ptr(), frame_count);
-            }
-            if !self.inner.deck_b.renderer_ptr.is_null() {
-                let rend_b = &mut *self.inner.deck_b.renderer_ptr;
-                rend_b.render_pcm(self.scratch_deck_b.as_mut_ptr(), frame_count);
-            }
-        }
+        self.inner.deck_a.render_pcm(self.scratch_deck_a.as_mut_ptr(), frame_count);
+        self.inner.deck_b.render_pcm(self.scratch_deck_b.as_mut_ptr(), frame_count);
 
         if is_xfading {
             let (gain_a, gain_b) = self.inner.crossfade.advance_and_get_gains(frame_count as u64);

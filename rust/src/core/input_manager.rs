@@ -51,27 +51,22 @@ impl InputManager {
     /// Resolves a requested device ID ("AUTO" or specific ID) to a physical OS capture device endpoint ID.
     pub fn resolve_physical_input_id(device_id: &str) -> Option<String> {
         if device_id == "AUTO" || device_id == "auto" || device_id.is_empty() {
-            let mut count = 0;
-            let mut ptr = std::ptr::null_mut();
-            let res = unsafe { crate::bridge::ffi::map_device_enumerate_capture_devices(&mut ptr, &mut count) };
-            if res == 0 && !ptr.is_null() {
-                let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+            if let Ok(devs) = crate::bridge::ffi::safe_enumerate_capture_devices() {
                 let mut found = None;
-                for d in slice {
+                for d in &devs {
                     if d.is_default != 0 && d.is_auto == 0 {
                         found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
                         break;
                     }
                 }
                 if found.is_none() {
-                    for d in slice {
+                    for d in &devs {
                         if d.is_auto == 0 {
                             found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
                             break;
                         }
                     }
                 }
-                unsafe { crate::bridge::ffi::map_device_free_devices(ptr) };
                 return found;
             }
             None

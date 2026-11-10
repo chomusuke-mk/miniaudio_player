@@ -18,7 +18,7 @@ use miniaudio_player::core::capture::{
     capture_receiver_capture_trampoline, capture_receiver_notif_trampoline, CaptureReceiver,
 };
 use miniaudio_player::sync::{
-    AudioRingBuffer, CachePaddedSeqlock, EventCallback, MapEvent, MapEventData,
+    AudioRingBuffer, CachePaddedSeqlock, MapEvent, MapEventData,
     TelemetryDispatcher,
 };
 
@@ -159,21 +159,13 @@ fn test_seqlock_tear_free_multi_reader_concurrency() {
 fn test_telemetry_dispatcher_concurrent_multi_producer() {
     static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
     static LAST_EVENT_TYPE: AtomicI32 = AtomicI32::new(0);
-    static RECEIVED_USER_DATA: AtomicUsize = AtomicUsize::new(0);
-
-    unsafe extern "C" fn test_callback(user_data: *mut std::ffi::c_void, event: *const MapEvent) {
-        CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-        unsafe {
-            LAST_EVENT_TYPE.store((*event).event_type, Ordering::SeqCst);
-        }
-        RECEIVED_USER_DATA.store(user_data as usize, Ordering::SeqCst);
-    }
 
     CALL_COUNT.store(0, Ordering::SeqCst);
-    let dispatcher = Arc::new(TelemetryDispatcher::new(
-        Some(test_callback as EventCallback),
-        0xCAFE as *mut _,
-    ));
+    let dispatcher = Arc::new(TelemetryDispatcher::new());
+    dispatcher.set_rust_callback(Some(Box::new(|ev_type, _data| {
+        CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        LAST_EVENT_TYPE.store(ev_type as i32, Ordering::SeqCst);
+    })));
 
     let num_producers = 4;
     let events_per_producer = 50;
@@ -208,7 +200,6 @@ fn test_telemetry_dispatcher_concurrent_multi_producer() {
         CALL_COUNT.load(Ordering::SeqCst),
         num_producers * events_per_producer
     );
-    assert_eq!(RECEIVED_USER_DATA.load(Ordering::SeqCst), 0xCAFE);
 }
 
 #[test]

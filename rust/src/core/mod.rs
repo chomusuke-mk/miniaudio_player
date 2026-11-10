@@ -19,7 +19,7 @@ pub mod voice_pool;
 pub use config::PlayerConfig;
 pub use dsp_processor::DspProcessor;
 pub use dual_source::{
-    AudioSourceCore, CompletionCallback, CrossfadeAtomic, DualSource, MiniaudioPlayerStatus,
+    AudioSourceCore, CrossfadeAtomic, DualSource, MiniaudioPlayerStatus,
     MiniaudioStreamStatus, StreamingDeck, MAP_STREAM_SEEK_CACHE_HIT,
     MAP_STREAM_SEEK_CACHE_HIT_PREFETCH, MAP_STREAM_SEEK_CACHE_MISS, STATE_BUFFERING,
     STATE_COMPLETED, STATE_ERROR, STATE_OPENING, STATE_PAUSED, STATE_PLAYING, STATE_STOPPED,

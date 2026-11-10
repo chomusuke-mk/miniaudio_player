@@ -96,6 +96,23 @@ pub struct ActiveOutputDevice {
 unsafe impl Send for ActiveOutputDevice {}
 unsafe impl Sync for ActiveOutputDevice {}
 
+impl Drop for ActiveOutputDevice {
+    fn drop(&mut self) {
+        if !self.device_ctx.is_null() {
+            unsafe {
+                map_device_destroy(self.device_ctx);
+            }
+            self.device_ctx = std::ptr::null_mut();
+        }
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.renderer_ptr as *mut OutputDeviceRenderer));
+            }
+            self.renderer_ptr = std::ptr::null_mut();
+        }
+    }
+}
+
 /// Domain manager governing output routing, live selective disk recording, and visualizer.
 pub struct OutputManager {
     /// Declarative configurations of requested outputs.
@@ -166,27 +183,22 @@ impl OutputManager {
     /// Resolves a requested device ID ("AUTO" or specific ID) to a physical OS device endpoint ID.
     pub fn resolve_physical_output_id(device_id: &str) -> Option<String> {
         if device_id == "AUTO" || device_id == "auto" || device_id.is_empty() {
-            let mut count = 0;
-            let mut ptr = std::ptr::null_mut();
-            let res = unsafe { crate::bridge::ffi::map_device_enumerate_devices(&mut ptr, &mut count) };
-            if res == 0 && !ptr.is_null() {
-                let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+            if let Ok(devs) = crate::bridge::ffi::safe_enumerate_playback_devices() {
                 let mut found = None;
-                for d in slice {
+                for d in &devs {
                     if d.is_default != 0 && d.is_auto == 0 {
                         found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
                         break;
                     }
                 }
                 if found.is_none() {
-                    for d in slice {
+                    for d in &devs {
                         if d.is_auto == 0 {
                             found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
                             break;
                         }
                     }
                 }
-                unsafe { crate::bridge::ffi::map_device_free_devices(ptr) };
                 return found;
             }
             None
@@ -266,20 +278,10 @@ impl OutputManager {
             if !still_active {
                 map_log!(
                     2,
-                    "[OUTPUT_MGR:DESTROY:START] Evicting active device '{}' (resolved '{}', source={:?}). Calling map_device_destroy...",
+                    "[OUTPUT_MGR:DESTROY] Evicting active device '{}' (resolved '{}', source={:?}) via RAII drop...",
                     dev.device_id,
                     dev.resolved_id,
                     dev.source
-                );
-                let t_dest = Instant::now();
-                unsafe {
-                    map_device_destroy(dev.device_ctx);
-                    drop(Box::from_raw(dev.renderer_ptr as *mut OutputDeviceRenderer));
-                }
-                map_log!(
-                    2,
-                    "[OUTPUT_MGR:DESTROY:DONE] map_device_destroy completed in {}ms",
-                    t_dest.elapsed().as_millis()
                 );
                 false
             } else {
@@ -539,11 +541,6 @@ impl OutputManager {
 
     pub fn dispose(&mut self) {
         let _ = self.stop_recording();
-        for dev in self.active_devices.drain(..) {
-            unsafe {
-                map_device_destroy(dev.device_ctx);
-                drop(Box::from_raw(dev.renderer_ptr as *mut OutputDeviceRenderer));
-            }
-        }
+        self.active_devices.clear();
     }
 }

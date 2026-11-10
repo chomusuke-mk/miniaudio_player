@@ -1,8 +1,6 @@
 //! Native reactive event dispatcher and telemetry pipeline for Dart FFI delivery.
 
-use std::cell::UnsafeCell;
-use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -406,9 +404,6 @@ pub struct MapEvent {
     pub data: MapEventData,
 }
 
-/// C ABI event callback function pointer type.
-pub type EventCallback = unsafe extern "C" fn(user_data: *mut c_void, event: *const MapEvent);
-
 /// Internal Rust event callback closure type.
 pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>;
 
@@ -468,61 +463,14 @@ pub fn monotonic_now_ns() -> i64 {
     start.elapsed().as_nanos() as i64
 }
 
-/// Fixed slot capacity for the lock-free circular event ring arena.
-pub const MAP_EVENT_RING_CAPACITY: usize = 128;
-
-/// Fixed-capacity circular arena for C-ABI `MapEvent` pointers.
-struct EventRingArena {
-    slots: Vec<UnsafeCell<MapEvent>>,
-    head: AtomicUsize,
-}
-
-unsafe impl Send for EventRingArena {}
-unsafe impl Sync for EventRingArena {}
-
-impl EventRingArena {
-    fn new(capacity: usize) -> Self {
-        let mut slots = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            slots.push(UnsafeCell::new(MapEvent {
-                event_type: 0,
-                padding: 0,
-                timestamp_ns: 0,
-                data: MapEventData { state: 0 },
-            }));
-        }
-        Self {
-            slots,
-            head: AtomicUsize::new(0),
-        }
-    }
-
-    #[inline]
-    fn write_slot(&self, event: MapEvent) -> *const MapEvent {
-        let idx = self.head.fetch_add(1, Ordering::Relaxed) % self.slots.len();
-        let ptr = self.slots[idx].get();
-        unsafe {
-            *ptr = event;
-        }
-        ptr
-    }
-}
-
-/// Encapsulates all registered telemetry callbacks with single-responsibility notification methods.
+/// Encapsulates registered telemetry callbacks with single-responsibility notification methods.
 #[derive(Default)]
 struct CallbackRegistry {
-    c_callback: RwLock<Option<(EventCallback, usize)>>,
     rust_callback: RwLock<Option<RustEventCallback>>,
     typed_callback: RwLock<Option<TypedEventCallback>>,
 }
 
 impl CallbackRegistry {
-    fn set_c(&self, cb: Option<EventCallback>, user_data: *mut c_void) {
-        if let Ok(mut guard) = self.c_callback.write() {
-            *guard = cb.map(|f| (f, user_data as usize));
-        }
-    }
-
     fn set_rust(&self, cb: Option<RustEventCallback>) {
         if let Ok(mut guard) = self.rust_callback.write() {
             *guard = cb;
@@ -535,22 +483,10 @@ impl CallbackRegistry {
         }
     }
 
-    fn notify_immediate(
-        &self,
-        event_type: EventType,
-        data: &MapEventData,
-        event_ptr: *const MapEvent,
-    ) {
+    fn notify_rust(&self, event_type: EventType, data: &MapEventData) {
         if let Ok(guard) = self.rust_callback.read() {
             if let Some(cb) = guard.as_ref() {
                 cb(event_type, data);
-            }
-        }
-        if let Ok(guard) = self.c_callback.read() {
-            if let Some((cb, user_data_addr)) = *guard {
-                unsafe {
-                    cb(user_data_addr as *mut c_void, event_ptr);
-                }
             }
         }
     }
@@ -572,24 +508,26 @@ impl CallbackRegistry {
     }
 }
 
-/// Central telemetry dispatcher broadcasting real-time engine events to C and Dart listeners.
+/// Central telemetry dispatcher broadcasting real-time engine events to listeners.
 pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callbacks: Arc<CallbackRegistry>,
-    arena: Arc<EventRingArena>,
     #[allow(dead_code)]
     tx: crossbeam_channel::Sender<TelemetryEvent>,
     worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
+impl Default for TelemetryDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TelemetryDispatcher {
-    /// Creates a new `TelemetryDispatcher` initializing worker threads and the ring buffer arena.
-    pub fn new(callback: Option<EventCallback>, user_data: *mut c_void) -> Self {
+    /// Creates a new `TelemetryDispatcher` initializing worker threads.
+    pub fn new() -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let callbacks = Arc::new(CallbackRegistry::default());
-        callbacks.set_c(callback, user_data);
-
-        let arena = Arc::new(EventRingArena::new(MAP_EVENT_RING_CAPACITY));
         let (tx, rx) = crossbeam_channel::unbounded::<TelemetryEvent>();
 
         let worker_handle = Self::spawn_worker(is_running.clone(), callbacks.clone(), rx);
@@ -597,7 +535,6 @@ impl TelemetryDispatcher {
         Self {
             is_running,
             callbacks,
-            arena,
             tx,
             worker_handle: Mutex::new(worker_handle),
         }
@@ -639,11 +576,6 @@ impl TelemetryDispatcher {
             .ok()
     }
 
-    /// Sets or clears the C-compatible event callback and opaque context pointer.
-    pub fn set_callback(&self, callback: Option<EventCallback>, user_data: *mut c_void) {
-        self.callbacks.set_c(callback, user_data);
-    }
-
     /// Sets or clears the internal Rust event callback closure.
     pub fn set_rust_callback(&self, callback: Option<RustEventCallback>) {
         self.callbacks.set_rust(callback);
@@ -659,12 +591,10 @@ impl TelemetryDispatcher {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
         }
-        let map_event = event.to_map_event();
         let event_type = event.event_type();
-        let event_ptr = self.arena.write_slot(map_event);
+        let event_data = event.to_map_event_data();
+        self.callbacks.notify_rust(event_type, &event_data);
 
-        self.callbacks
-            .notify_immediate(event_type, &map_event.data, event_ptr);
         #[cfg(target_arch = "wasm32")]
         {
             let mut last_pos = -1;
@@ -690,19 +620,16 @@ impl TelemetryDispatcher {
         }
         let event_type = EventType::from_i32(event.event_type);
         let typed = TelemetryEvent::from_raw(event_type, &event.data);
-        let event_ptr = self.arena.write_slot(event);
 
         let mut last_pos = -1;
         self.callbacks
             .notify_typed_batch(std::slice::from_ref(&typed), &mut last_pos);
-        self.callbacks
-            .notify_immediate(event_type, &event.data, event_ptr);
+        self.callbacks.notify_rust(event_type, &event.data);
     }
 
     /// Signals the dispatcher to stop all threads and release callbacks.
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
-        self.callbacks.set_c(None, std::ptr::null_mut());
         self.callbacks.set_rust(None);
         self.callbacks.set_typed(None);
         if let Ok(mut handle_guard) = self.worker_handle.lock() {

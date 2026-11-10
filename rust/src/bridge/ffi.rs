@@ -489,3 +489,73 @@ pub unsafe extern "C" fn rust_on_device_notification(
         (header.notif_fn)(user_data, notification_type);
     }
 }
+
+// =========================================================================
+// Safe RAII and Device Enumeration Wrappers
+// =========================================================================
+
+/// Safely queries all playback and capture audio devices from the OS in a single pass.
+pub fn safe_enumerate_all_devices() -> Result<(Vec<MapDeviceInfo>, Vec<MapDeviceInfo>), i32> {
+    let mut all = MapAllDevices::default();
+    let res = unsafe { map_device_enumerate_all(&mut all) };
+    if res != 0 {
+        return Err(res);
+    }
+
+    let playback = if !all.playback_devices.is_null() && all.playback_count > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(all.playback_devices, all.playback_count as usize) };
+        slice.to_vec()
+    } else {
+        Vec::new()
+    };
+
+    let capture = if !all.capture_devices.is_null() && all.capture_count > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(all.capture_devices, all.capture_count as usize) };
+        slice.to_vec()
+    } else {
+        Vec::new()
+    };
+
+    unsafe { map_device_free_all(&mut all) };
+    Ok((playback, capture))
+}
+
+/// Safely queries all playback output devices.
+pub fn safe_enumerate_playback_devices() -> Result<Vec<MapDeviceInfo>, i32> {
+    let mut count = 0;
+    let mut ptr = std::ptr::null_mut();
+    let res = unsafe { map_device_enumerate_devices(&mut ptr, &mut count) };
+    if res != 0 {
+        return Err(res);
+    }
+    let devs = if !ptr.is_null() && count > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        slice.to_vec()
+    } else {
+        Vec::new()
+    };
+    if !ptr.is_null() {
+        unsafe { map_device_free_devices(ptr) };
+    }
+    Ok(devs)
+}
+
+/// Safely queries all capture input devices.
+pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
+    let mut count = 0;
+    let mut ptr = std::ptr::null_mut();
+    let res = unsafe { map_device_enumerate_capture_devices(&mut ptr, &mut count) };
+    if res != 0 {
+        return Err(res);
+    }
+    let devs = if !ptr.is_null() && count > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        slice.to_vec()
+    } else {
+        Vec::new()
+    };
+    if !ptr.is_null() {
+        unsafe { map_device_free_devices(ptr) };
+    }
+    Ok(devs)
+}

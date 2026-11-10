@@ -178,9 +178,6 @@ fn test_player_coordinator_lifecycle_on_manifest_fixtures() {
         48000,
         2,
         1024,
-        std::ptr::null(),
-        None,
-        std::ptr::null_mut(),
     );
 
     if let Ok(mut player) = coordinator_res {

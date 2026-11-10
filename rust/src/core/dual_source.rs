@@ -1,6 +1,5 @@
 //! Central thread-safe player coordinator integrating decoding, DSP, buffering, and device output.
 
-use std::ffi::{c_char, c_void};
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -26,8 +25,7 @@ use crate::dsp::DspChain;
 use crate::sync::ring_buffer::{AudioProducer, AudioRingBuffer};
 use crate::sync::seqlock::CachePaddedSeqlock;
 use crate::sync::telemetry::{
-    DeviceInfo as TelemetryDeviceInfo, EventCallback, EventType, MapEventData, MonotonicInstant,
-    SpatializerData, TelemetryDispatcher,
+    EventType, MapEventData, MonotonicInstant, SpatializerData, TelemetryDispatcher,
 };
 
 /// Deck playback state: playback is stopped and position is reset.
@@ -134,8 +132,6 @@ pub struct MiniaudioPlayerStatus {
     pub limiter_enabled: i32,
 }
 
-/// C completion callback invoked when a track finishes playback.
-pub type CompletionCallback = unsafe extern "C" fn(user_data: *mut c_void);
 
 /// Strips `file://` or `file://localhost/` URI schemes from filesystem paths.
 pub fn strip_file_prefix(source: &str) -> String {
@@ -749,7 +745,6 @@ struct DecoderWorker {
     buffering_resumed_flag: Arc<AtomicBool>,
     visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     visualizer_enabled: Arc<AtomicBool>,
-    completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
     #[allow(dead_code)]
     flush_generation: Arc<AtomicU64>,
     #[allow(dead_code)]
@@ -806,13 +801,6 @@ impl DecoderWorker {
                     state: STATE_COMPLETED,
                 },
             );
-            if let Ok(guard) = self.completion_cb.read() {
-                if let Some((cb, udata)) = *guard {
-                    unsafe {
-                        cb(udata as *mut c_void);
-                    }
-                }
-            }
         }
 
         if self.buffering_flag.swap(false, Ordering::AcqRel) {
@@ -1259,8 +1247,6 @@ pub enum DeckSourceOrigin {
 pub struct StreamingDeck {
     /// Zero-based numerical deck identifier (0: Deck A, 1: Deck B).
     pub deck_id: usize,
-    /// Native miniaudio device context pointer.
-    pub device_ctx: *mut MapDeviceContext,
     /// Lock-free C trampoline audio renderer pointer.
     pub renderer_ptr: *mut AudioRenderer,
 
@@ -1334,8 +1320,6 @@ pub struct StreamingDeck {
 
     /// Telemetry event dispatcher delivering updates to Dart.
     pub telemetry: Arc<TelemetryDispatcher>,
-    /// Completion callback invoked upon reaching end-of-track.
-    pub completion_cb: Arc<RwLock<Option<(CompletionCallback, usize)>>>,
 
     /// Dynamic silence detection and trimming configuration.
     pub silence_config: Arc<RwLock<SilenceConfig>>,
@@ -1392,23 +1376,15 @@ unsafe impl Send for StreamingDeck {}
 unsafe impl Sync for StreamingDeck {}
 
 impl StreamingDeck {
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(
         target_sample_rate: u32,
         target_channels: u32,
         period_size: u32,
-        playback_device_id: *const c_char,
-        on_completed: Option<CompletionCallback>,
-        user_data: *mut c_void,
     ) -> Result<Box<Self>, i32> {
         Self::new_internal(
             target_sample_rate,
             target_channels,
             period_size,
-            playback_device_id,
-            on_completed,
-            user_data,
-            true,
             true,
         )
     }
@@ -1418,16 +1394,7 @@ impl StreamingDeck {
         target_channels: u32,
         period_size: u32,
     ) -> Result<Box<Self>, i32> {
-        Self::new_internal(
-            target_sample_rate,
-            target_channels,
-            period_size,
-            std::ptr::null(),
-            None,
-            std::ptr::null_mut(),
-            false,
-            true,
-        )
+        Self::new(target_sample_rate, target_channels, period_size)
     }
 
     /// Creates a headless deck without hardware audio output and without the real-time decoder loop,
@@ -1440,10 +1407,6 @@ impl StreamingDeck {
             target_sample_rate,
             target_channels,
             1024,
-            std::ptr::null(),
-            None,
-            std::ptr::null_mut(),
-            false,
             false,
         )
     }
@@ -1459,15 +1422,10 @@ impl StreamingDeck {
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn new_internal(
         target_sample_rate: u32,
         target_channels: u32,
         period_size: u32,
-        playback_device_id: *const c_char,
-        on_completed: Option<CompletionCallback>,
-        user_data: *mut c_void,
-        with_device: bool,
         run_decoder_loop: bool,
     ) -> Result<Box<Self>, i32> {
         let sr = if target_sample_rate > 0 {
@@ -1517,8 +1475,7 @@ impl StreamingDeck {
         let cached_metadata = Arc::new(Mutex::new(None));
         let custom_source_handle = Arc::new(RwLock::new(None));
 
-        let telemetry = Arc::new(TelemetryDispatcher::new(None, std::ptr::null_mut()));
-        let completion_cb = Arc::new(RwLock::new(on_completed.map(|cb| (cb, user_data as usize))));
+        let telemetry = Arc::new(TelemetryDispatcher::new());
 
         let silence_config = Arc::new(RwLock::new(SilenceConfig::default()));
 
@@ -1617,40 +1574,8 @@ impl StreamingDeck {
         };
         let renderer_ptr = Box::into_raw(Box::new(renderer));
 
-        let mut device_ctx = std::ptr::null_mut();
-        if with_device {
-            let mut dev_res = 0;
-            device_ctx = unsafe {
-                map_device_create(
-                    sr,
-                    ch,
-                    period,
-                    playback_device_id,
-                    renderer_ptr as *mut c_void,
-                    &mut dev_res,
-                )
-            };
-
-            if device_ctx.is_null() || dev_res != 0 {
-                unsafe {
-                    drop(Box::from_raw(renderer_ptr));
-                }
-                return Err(dev_res);
-            }
-
-            let actual_sr = unsafe { map_device_get_sample_rate(device_ctx) };
-            let actual_ch = unsafe { map_device_get_channels(device_ctx) };
-            if actual_sr > 0 {
-                device_sample_rate.store(actual_sr, Ordering::SeqCst);
-            }
-            if actual_ch > 0 {
-                device_channels.store(actual_ch, Ordering::SeqCst);
-            }
-        }
-
         let mut coordinator = Box::new(Self {
             deck_id,
-            device_ctx,
             renderer_ptr,
             state,
             pause_on_device_change,
@@ -1686,7 +1611,6 @@ impl StreamingDeck {
             cached_metadata,
             custom_source_handle,
             telemetry,
-            completion_cb,
             silence_config,
             audio_producer,
             cmd_producer,
@@ -1782,7 +1706,6 @@ impl StreamingDeck {
             buffering_resumed_flag: self.buffering_resumed_flag.clone(),
             visualizer_seqlock: self.visualizer_seqlock.clone(),
             visualizer_enabled: self.visualizer_enabled.clone(),
-            completion_cb: self.completion_cb.clone(),
             flush_generation: self.flush_generation.clone(),
             flush_acknowledged: self.flush_acknowledged.clone(),
             stream_reinit_needed: self.stream_reinit_needed.clone(),
@@ -1810,37 +1733,7 @@ impl StreamingDeck {
         }
     }
 
-    fn post_current_device_telemetry(&self) {
-        let mut dev_info = MapDeviceInfo::default();
-        let _ = self.get_current_device(&mut dev_info);
-        let tele_dev = TelemetryDeviceInfo {
-            id: dev_info.id,
-            effective_id: dev_info.effective_id,
-            name: dev_info.name,
-            is_default: dev_info.is_default,
-            is_auto: dev_info.is_auto,
-        };
-        self.telemetry
-            .post_event(EventType::Device, MapEventData { device: tele_dev });
-    }
 
-    pub fn on_device_notification(&mut self, _notification_type: i32) {
-        if self.pause_on_device_change.load(Ordering::Relaxed)
-            && self.state.load(Ordering::Relaxed) == STATE_PLAYING
-        {
-            let _ = self.pause();
-        }
-        self.post_current_device_telemetry();
-    }
-
-    pub fn set_event_callback(
-        &self,
-        callback: Option<EventCallback>,
-        user_data: *mut c_void,
-    ) -> i32 {
-        self.telemetry.set_callback(callback, user_data);
-        MAP_SUCCESS
-    }
 
     fn mark_open_error(&self, err_code: i32) -> i32 {
         self.state.store(STATE_ERROR, Ordering::Relaxed);
@@ -2684,12 +2577,7 @@ impl StreamingDeck {
             self.position_ms.store(0, Ordering::SeqCst);
             self.position_frames.store(0, Ordering::SeqCst);
             self.flush_generation.fetch_add(1, Ordering::SeqCst);
-            #[cfg(target_arch = "wasm32")]
-            if !self.renderer_ptr.is_null() {
-                unsafe {
-                    (*self.renderer_ptr).acknowledge_flush_if_needed();
-                }
-            }
+            self.acknowledge_renderer_flush();
         }
 
         self.send_dsp_command(DspCommand::SetSampleRate(
@@ -2753,12 +2641,7 @@ impl StreamingDeck {
             trip.flush(new_stream_offset as u64);
             self.decoder_eof.store(false, Ordering::Relaxed);
             self.flush_generation.fetch_add(1, Ordering::Release);
-            #[cfg(target_arch = "wasm32")]
-            if !self.renderer_ptr.is_null() {
-                unsafe {
-                    (*self.renderer_ptr).acknowledge_flush_if_needed();
-                }
-            }
+            self.acknowledge_renderer_flush();
             if trip.is_live() {
                 self.stream_reinit_needed.store(true, Ordering::Release);
             }
@@ -2785,12 +2668,7 @@ impl StreamingDeck {
         );
         self.seek_request_ms.store(-1, Ordering::SeqCst);
         self.flush_generation.fetch_add(1, Ordering::Release);
-        #[cfg(target_arch = "wasm32")]
-        if !self.renderer_ptr.is_null() {
-            unsafe {
-                (*self.renderer_ptr).acknowledge_flush_if_needed();
-            }
-        }
+        self.acknowledge_renderer_flush();
 
         self.telemetry
             .post_event(EventType::Position, MapEventData { position_ms: dur });
@@ -2804,13 +2682,6 @@ impl StreamingDeck {
                 state: STATE_COMPLETED,
             },
         );
-        if let Ok(guard) = self.completion_cb.read() {
-            if let Some((cb, udata)) = *guard {
-                unsafe {
-                    cb(udata as *mut c_void);
-                }
-            }
-        }
     }
 
     fn dispatch_seek_to_decoder(&mut self, position_ms: i64) {
@@ -2833,12 +2704,7 @@ impl StreamingDeck {
             );
         }
         self.flush_generation.fetch_add(1, Ordering::Release);
-        #[cfg(target_arch = "wasm32")]
-        if !self.renderer_ptr.is_null() {
-            unsafe {
-                (*self.renderer_ptr).acknowledge_flush_if_needed();
-            }
-        }
+        self.acknowledge_renderer_flush();
 
         self.position_ms.store(position_ms, Ordering::Relaxed);
         let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
@@ -3355,26 +3221,6 @@ impl StreamingDeck {
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn read_pcm_frames(
-        &mut self,
-        frames_out: *mut f32,
-        frame_count: u32,
-        out_frames_read: *mut u32,
-    ) -> i32 {
-        if frames_out.is_null() || out_frames_read.is_null() {
-            return MAP_ERROR_INVALID_ARGS;
-        }
-        if !self.renderer_ptr.is_null() {
-            unsafe {
-                (*self.renderer_ptr).render_pcm(frames_out, frame_count as usize);
-            }
-        }
-        unsafe {
-            *out_frames_read = frame_count;
-        }
-        MAP_SUCCESS
-    }
 
     pub fn play(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
@@ -3395,12 +3241,6 @@ impl StreamingDeck {
         self.decoder_eof.store(false, Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
-
-        if !self.device_ctx.is_null() {
-            unsafe {
-                map_device_start(self.device_ctx);
-            }
-        }
 
         self.state.store(STATE_PLAYING, Ordering::Relaxed);
         self.telemetry
@@ -3425,13 +3265,6 @@ impl StreamingDeck {
             return MAP_ERROR_INVALID_STATE;
         }
 
-        #[cfg(target_arch = "wasm32")]
-        if !self.device_ctx.is_null() {
-            unsafe {
-                map_device_stop(self.device_ctx);
-            }
-        }
-
         self.state.store(STATE_PAUSED, Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
@@ -3447,12 +3280,6 @@ impl StreamingDeck {
 
     pub fn stop(&mut self) -> i32 {
         crate::map_log!(3, "stop() called");
-        #[cfg(target_arch = "wasm32")]
-        if !self.device_ctx.is_null() {
-            unsafe {
-                map_device_stop(self.device_ctx);
-            }
-        }
 
         self.network_streamer_abort.store(true, Ordering::Release);
         self.decoder_eof.store(false, Ordering::Relaxed);
@@ -3479,12 +3306,7 @@ impl StreamingDeck {
             );
         }
         self.flush_generation.fetch_add(1, Ordering::Release);
-        #[cfg(target_arch = "wasm32")]
-        if !self.renderer_ptr.is_null() {
-            unsafe {
-                (*self.renderer_ptr).acknowledge_flush_if_needed();
-            }
-        }
+        self.acknowledge_renderer_flush();
 
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
         self.position_ms.store(0, Ordering::Relaxed);
@@ -3575,25 +3397,6 @@ impl StreamingDeck {
         self.period_size_in_frames.load(Ordering::Relaxed)
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn set_device(&mut self, device_id: *const c_char) -> i32 {
-        crate::map_log!(3, "set_device requested");
-        if self.device_ctx.is_null() {
-            return MAP_ERROR_INVALID_STATE;
-        }
-        let ret = unsafe { map_device_set_device(self.device_ctx, device_id) };
-        self.post_current_device_telemetry();
-        ret
-    }
-
-    pub fn get_current_device(&self, out_device: &mut MapDeviceInfo) -> i32 {
-        if self.device_ctx.is_null() {
-            return MAP_ERROR_INVALID_STATE;
-        }
-        unsafe {
-            map_device_get_current_device_info(self.device_ctx, out_device as *mut MapDeviceInfo)
-        }
-    }
 
     pub fn set_pause_on_device_change(&mut self, enabled: i32) -> i32 {
         crate::map_log!(4, "set_pause_on_device_change(enabled={})", enabled != 0);
@@ -3839,6 +3642,16 @@ impl StreamingDeck {
     }
 
     #[inline]
+    fn acknowledge_renderer_flush(&self) {
+        #[cfg(target_arch = "wasm32")]
+        if !self.renderer_ptr.is_null() {
+            unsafe {
+                (*self.renderer_ptr).acknowledge_flush_if_needed();
+            }
+        }
+    }
+
+    #[inline]
     pub fn render_pcm(&self, output_frames: *mut f32, frame_count: usize) {
         if !self.renderer_ptr.is_null() && !output_frames.is_null() && frame_count > 0 {
             unsafe {
@@ -3878,7 +3691,7 @@ impl StreamingDeck {
         out.silence = *self.silence_config.read().unwrap();
         out.silence_saved_ms = self.silence_saved_ms.load(Ordering::Relaxed);
 
-        let _ = self.get_current_device(&mut out.device);
+        out.device = MapDeviceInfo::default();
 
         MAP_SUCCESS
     }
@@ -3892,22 +3705,12 @@ impl StreamingDeck {
             }
         }
         self.telemetry.stop();
-        if let Ok(mut cb) = self.completion_cb.write() {
-            *cb = None;
-        }
         self.decoder_running.store(false, Ordering::Relaxed);
         let (_, cvar) = &*self.decoder_wake;
         cvar.notify_all();
 
         if let Some(handle) = self.decoder_thread.take() {
             let _ = handle.join();
-        }
-
-        if !self.device_ctx.is_null() {
-            unsafe {
-                map_device_destroy(self.device_ctx);
-            }
-            self.device_ctx = std::ptr::null_mut();
         }
 
         if !self.renderer_ptr.is_null() {
