@@ -48,19 +48,19 @@ abstract class EventReporter implements RustOpaqueInterface {
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>>
 abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Adds an audio input capture node.
-  void addInput({required RustAudioInput input});
+  Future<void> addInput({required RustAudioInput input});
 
   /// Adds or routes an audio output destination to the output matrix.
-  void addOutput({required RustAudioOutput output});
+  Future<void> addOutput({required RustAudioOutput output});
 
   /// Appends a batch of audio sources to the end of the playlist queue.
-  void append({required List<RustAudioSource> sources});
+  Future<void> append({required List<RustAudioSource> sources});
 
   /// Clears pending tracks from the queue, optionally preserving the currently active track.
-  void clearQueue({required bool keepCurrent});
+  Future<void> clearQueue({required bool keepCurrent});
 
   /// Configures runtime parameters for an existing capture node without reopening hardware.
-  void configureInput(
+  Future<void> configureInput(
       {required String deviceId, required RustAudioInputConfig config});
 
   /// Releases all native audio devices, worker threads, DSP chains, and memory.
@@ -98,7 +98,7 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
       .crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync();
 
   /// Inserts an audio source directly after the currently playing track.
-  void insertNext({required RustAudioSource source});
+  Future<void> insertNext({required RustAudioSource source});
 
   /// Initializes and boots the native miniaudio engine, DSP pipeline, and mixer.
   factory RustMiniaudioPlayer(
@@ -118,7 +118,7 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   Future<void> next({BigInt? crossfadeDurationMs});
 
   /// Pauses playback on the active audio deck without releasing resources.
-  void pause();
+  Future<void> pause();
 
   /// Universal playback command: starts, resumes, or switches tracks by ID or position,
   /// optionally applying shuffle and/or seeking to an initial offset.
@@ -130,7 +130,7 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
 
   /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
   /// returning the assigned voice ID.
-  int playEffect(
+  Future<int> playEffect(
       {required String id,
       required int dspRouting,
       required RustEffectConfig config});
@@ -139,19 +139,19 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   Future<void> previous();
 
   /// Removes an audio source at the specified index from the playlist queue.
-  bool removeAt({required BigInt index});
+  Future<bool> removeAt({required BigInt index});
 
   /// Removes an audio input capture node by matching device identifier.
-  void removeInput({required RustAudioInput input});
+  Future<void> removeInput({required RustAudioInput input});
 
   /// Removes an audio output destination from the output matrix.
-  void removeOutput({required RustAudioOutput output});
+  Future<void> removeOutput({required RustAudioOutput output});
 
   /// Reorders a track within the queue from `old_index` to `new_index`.
-  bool reorder({required BigInt oldIndex, required BigInt newIndex});
+  Future<bool> reorder({required BigInt oldIndex, required BigInt newIndex});
 
   /// Reorders the playlist queue to match the specified list of track IDs.
-  bool reorderByIds({required Int64List ids});
+  Future<bool> reorderByIds({required Int64List ids});
 
   /// Responds to a pending custom stream byte read request from Dart.
   void respondDartReadRequest(
@@ -160,122 +160,124 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
       required bool isEof});
 
   /// Seeks to the specified position in milliseconds within the current track.
-  void seek({required PlatformInt64 positionMs});
+  Future<void> seek({required PlatformInt64 positionMs});
 
   /// Sets the stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
-  void setBalance({required double balance});
+  Future<void> setBalance({required double balance});
 
   /// Adjusts the audio stream buffer frame size.
-  void setBufferSize({required int bufferSizeFrames});
+  Future<void> setBufferSize({required int bufferSizeFrames});
 
   /// Configures automatic and manual crossfade durations and curve formulas.
-  void setCrossfade({required RustCrossfadeConfig config});
+  Future<void> setCrossfade({required RustCrossfadeConfig config});
 
   /// Sets the Bauer binaural headphone crossfeed configuration.
-  void setCrossfeed({required RustCrossfeedConfig config});
+  Future<void> setCrossfeed({required RustCrossfeedConfig config});
 
   /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
-  void setDefaultReplayGain({required double gainDb, required double peak});
+  Future<void> setDefaultReplayGain(
+      {required double gainDb, required double peak});
 
   /// Configures global Doppler factor and medium speed of sound in meters per second.
-  void setDopplerParameters(
+  Future<void> setDopplerParameters(
       {required double factor, required double speedOfSound});
 
   /// Adjusts stereo pan balance of an active sound effect voice.
-  void setEffectBalance({required int voiceId, required double balance});
+  Future<void> setEffectBalance(
+      {required int voiceId, required double balance});
 
   /// Updates the 3D spatial emitter parameters for an active sound effect voice.
-  void setEffectEmitter({required int voiceId, RustSpatialEmitter? emitter});
+  Future<void> setEffectEmitter(
+      {required int voiceId, RustSpatialEmitter? emitter});
 
   /// Modulates the pitch multiplier of an active sound effect voice.
-  void setEffectPitch({required int voiceId, required double pitch});
+  Future<void> setEffectPitch({required int voiceId, required double pitch});
 
   /// Modulates the volume of an active sound effect voice.
-  void setEffectVolume({required int voiceId, required double volume});
+  Future<void> setEffectVolume({required int voiceId, required double volume});
 
   /// Declaratively registers the catalog of sound effects with the autonomous RAM engine.
   Future<void> setEffects({required List<RustAudioEffect> effects});
 
   /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
-  void setEqualizer({required RustEqualizerParams params});
+  Future<void> setEqualizer({required RustEqualizerParams params});
 
   /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
-  void setInfiniteMix({required RustInfiniteMixConfig config});
+  Future<void> setInfiniteMix({required RustInfiniteMixConfig config});
 
   /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
-  void setInputs({required List<RustAudioInput> inputs});
+  Future<void> setInputs({required List<RustAudioInput> inputs});
 
   /// Enables or disables the output brickwall peak limiter.
-  void setLimiter({required bool enabled});
+  Future<void> setLimiter({required bool enabled});
 
   /// Updates the global 3D audio listener position, velocity, and orientation vectors.
-  void setListener({required RustSpatialListener listener});
+  Future<void> setListener({required RustSpatialListener listener});
 
   /// Sets the queue loop policy (0: off, 1: one, 2: all).
-  void setLoopMode({required int mode});
+  Future<void> setLoopMode({required int mode});
 
   /// Enables or disables forwarding of audio metadata payloads.
-  void setMetadataEnabled({required bool enabled});
+  Future<void> setMetadataEnabled({required bool enabled});
 
   /// Toggles mono downmixing of multi-channel audio.
-  void setMono({required bool enabled});
+  Future<void> setMono({required bool enabled});
 
   /// Replaces the active audio output destinations in the multi-sink matrix.
-  void setOutputs({required List<RustAudioOutput> outputs});
+  Future<void> setOutputs({required List<RustAudioOutput> outputs});
 
   /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
-  void setPauseOnDeviceChange({required bool enabled});
+  Future<void> setPauseOnDeviceChange({required bool enabled});
 
   /// Sets the pitch shift frequency multiplier independently of playback speed.
-  void setPitch({required double pitch});
+  Future<void> setPitch({required double pitch});
 
   /// Sets the equalizer pre-amplification gain in decibels.
-  void setPreamp({required double preampDb});
+  Future<void> setPreamp({required double preampDb});
 
   /// Replaces the entire playback queue with `queue` without starting playback.
   Future<void> setQueue({required List<RustAudioSource> queue});
 
   /// Sets the playback speed multiplier with automatic pitch compensation.
-  void setRate({required double rate});
+  Future<void> setRate({required double rate});
 
-  /// Applies ReplayGain loudness normalization settings.
   /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
-  void setReplayGain(
+  Future<void> setReplayGain(
       {RustReplayGainConfig? config, PlatformInt64? id, BigInt? position});
 
   /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
-  void setReplayGainMode({required int mode});
+  Future<void> setReplayGainMode({required int mode});
 
   /// Updates studio reverberation acoustic parameters.
-  void setReverb({required RustReverbParams params});
+  Future<void> setReverb({required RustReverbParams params});
 
   /// Enables or disables playlist shuffle mode.
-  void setShuffle({required bool enabled});
+  Future<void> setShuffle({required bool enabled});
 
   /// Configures automatic silence skipping and trimming parameters.
-  void setSilenceConfig({required RustSilenceConfig config});
+  Future<void> setSilenceConfig({required RustSilenceConfig config});
 
   /// Enables or disables 3D stereo widening spatializer with width multiplier.
-  void setSpatializer({required bool enabled, required double width});
+  Future<void> setSpatializer({required bool enabled, required double width});
 
   /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
-  void setVisualizerEnabled({required bool enabled});
+  Future<void> setVisualizerEnabled({required bool enabled});
 
   /// Sets the master output volume level (0.0 to 1.0+).
-  void setVolume({required double volume});
+  Future<void> setVolume({required double volume});
 
   /// Begins recording rendered audio to a WAV file at `path` with a selective source.
   Future<void> startRecording(
       {required String path, required int format, required int source});
 
   /// Stops playback and resets elapsed position to the beginning.
-  void stop();
+  Future<void> stop();
 
   /// Stops all actively playing sound effect voices with an optional fade-out ramp in milliseconds.
-  void stopAllEffects({required BigInt fadeOutMs});
+  Future<void> stopAllEffects({required BigInt fadeOutMs});
 
   /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.
-  void stopEffect({required int voiceId, required BigInt fadeOutMs});
+  Future<void> stopEffect({required int voiceId, required BigInt fadeOutMs});
 
   /// Stops active file recording and returns the finalization metrics.
   Future<RustRecordingResult> stopRecording();

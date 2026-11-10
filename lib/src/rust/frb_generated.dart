@@ -92,20 +92,20 @@ abstract class RustLibApi extends BaseApi {
   Stream<RustPlayerEvent> crateApiPlayerEventReporterSetSink(
       {required EventReporter that});
 
-  void crateApiPlayerRustMiniaudioPlayerAddInput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerAddInput(
       {required RustMiniaudioPlayer that, required RustAudioInput input});
 
-  void crateApiPlayerRustMiniaudioPlayerAddOutput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerAddOutput(
       {required RustMiniaudioPlayer that, required RustAudioOutput output});
 
-  void crateApiPlayerRustMiniaudioPlayerAppend(
+  Future<void> crateApiPlayerRustMiniaudioPlayerAppend(
       {required RustMiniaudioPlayer that,
       required List<RustAudioSource> sources});
 
-  void crateApiPlayerRustMiniaudioPlayerClearQueue(
+  Future<void> crateApiPlayerRustMiniaudioPlayerClearQueue(
       {required RustMiniaudioPlayer that, required bool keepCurrent});
 
-  void crateApiPlayerRustMiniaudioPlayerConfigureInput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerConfigureInput(
       {required RustMiniaudioPlayer that,
       required String deviceId,
       required RustAudioInputConfig config});
@@ -135,7 +135,7 @@ abstract class RustLibApi extends BaseApi {
 
   List<RustAudioDevice> crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync();
 
-  void crateApiPlayerRustMiniaudioPlayerInsertNext(
+  Future<void> crateApiPlayerRustMiniaudioPlayerInsertNext(
       {required RustMiniaudioPlayer that, required RustAudioSource source});
 
   RustMiniaudioPlayer crateApiPlayerRustMiniaudioPlayerNew(
@@ -148,7 +148,7 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiPlayerRustMiniaudioPlayerNext(
       {required RustMiniaudioPlayer that, BigInt? crossfadeDurationMs});
 
-  void crateApiPlayerRustMiniaudioPlayerPause(
+  Future<void> crateApiPlayerRustMiniaudioPlayerPause(
       {required RustMiniaudioPlayer that});
 
   Future<void> crateApiPlayerRustMiniaudioPlayerPlay(
@@ -158,7 +158,7 @@ abstract class RustLibApi extends BaseApi {
       bool? shuffled,
       PlatformInt64? seekMs});
 
-  int crateApiPlayerRustMiniaudioPlayerPlayEffect(
+  Future<int> crateApiPlayerRustMiniaudioPlayerPlayEffect(
       {required RustMiniaudioPlayer that,
       required String id,
       required int dspRouting,
@@ -167,21 +167,21 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiPlayerRustMiniaudioPlayerPrevious(
       {required RustMiniaudioPlayer that});
 
-  bool crateApiPlayerRustMiniaudioPlayerRemoveAt(
+  Future<bool> crateApiPlayerRustMiniaudioPlayerRemoveAt(
       {required RustMiniaudioPlayer that, required BigInt index});
 
-  void crateApiPlayerRustMiniaudioPlayerRemoveInput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerRemoveInput(
       {required RustMiniaudioPlayer that, required RustAudioInput input});
 
-  void crateApiPlayerRustMiniaudioPlayerRemoveOutput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerRemoveOutput(
       {required RustMiniaudioPlayer that, required RustAudioOutput output});
 
-  bool crateApiPlayerRustMiniaudioPlayerReorder(
+  Future<bool> crateApiPlayerRustMiniaudioPlayerReorder(
       {required RustMiniaudioPlayer that,
       required BigInt oldIndex,
       required BigInt newIndex});
 
-  bool crateApiPlayerRustMiniaudioPlayerReorderByIds(
+  Future<bool> crateApiPlayerRustMiniaudioPlayerReorderByIds(
       {required RustMiniaudioPlayer that, required Int64List ids});
 
   void crateApiPlayerRustMiniaudioPlayerRespondDartReadRequest(
@@ -190,47 +190,47 @@ abstract class RustLibApi extends BaseApi {
       required List<int> bytes,
       required bool isEof});
 
-  void crateApiPlayerRustMiniaudioPlayerSeek(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSeek(
       {required RustMiniaudioPlayer that, required PlatformInt64 positionMs});
 
-  void crateApiPlayerRustMiniaudioPlayerSetBalance(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetBalance(
       {required RustMiniaudioPlayer that, required double balance});
 
-  void crateApiPlayerRustMiniaudioPlayerSetBufferSize(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetBufferSize(
       {required RustMiniaudioPlayer that, required int bufferSizeFrames});
 
-  void crateApiPlayerRustMiniaudioPlayerSetCrossfade(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetCrossfade(
       {required RustMiniaudioPlayer that, required RustCrossfadeConfig config});
 
-  void crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
       {required RustMiniaudioPlayer that, required RustCrossfeedConfig config});
 
-  void crateApiPlayerRustMiniaudioPlayerSetDefaultReplayGain(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetDefaultReplayGain(
       {required RustMiniaudioPlayer that,
       required double gainDb,
       required double peak});
 
-  void crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
       {required RustMiniaudioPlayer that,
       required double factor,
       required double speedOfSound});
 
-  void crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required double balance});
 
-  void crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       RustSpatialEmitter? emitter});
 
-  void crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required double pitch});
 
-  void crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required double volume});
@@ -239,80 +239,80 @@ abstract class RustLibApi extends BaseApi {
       {required RustMiniaudioPlayer that,
       required List<RustAudioEffect> effects});
 
-  void crateApiPlayerRustMiniaudioPlayerSetEqualizer(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEqualizer(
       {required RustMiniaudioPlayer that, required RustEqualizerParams params});
 
-  void crateApiPlayerRustMiniaudioPlayerSetInfiniteMix(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetInfiniteMix(
       {required RustMiniaudioPlayer that,
       required RustInfiniteMixConfig config});
 
-  void crateApiPlayerRustMiniaudioPlayerSetInputs(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetInputs(
       {required RustMiniaudioPlayer that,
       required List<RustAudioInput> inputs});
 
-  void crateApiPlayerRustMiniaudioPlayerSetLimiter(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetLimiter(
       {required RustMiniaudioPlayer that, required bool enabled});
 
-  void crateApiPlayerRustMiniaudioPlayerSetListener(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetListener(
       {required RustMiniaudioPlayer that,
       required RustSpatialListener listener});
 
-  void crateApiPlayerRustMiniaudioPlayerSetLoopMode(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetLoopMode(
       {required RustMiniaudioPlayer that, required int mode});
 
-  void crateApiPlayerRustMiniaudioPlayerSetMetadataEnabled(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetMetadataEnabled(
       {required RustMiniaudioPlayer that, required bool enabled});
 
-  void crateApiPlayerRustMiniaudioPlayerSetMono(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetMono(
       {required RustMiniaudioPlayer that, required bool enabled});
 
-  void crateApiPlayerRustMiniaudioPlayerSetOutputs(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetOutputs(
       {required RustMiniaudioPlayer that,
       required List<RustAudioOutput> outputs});
 
-  void crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
       {required RustMiniaudioPlayer that, required bool enabled});
 
-  void crateApiPlayerRustMiniaudioPlayerSetPitch(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetPitch(
       {required RustMiniaudioPlayer that, required double pitch});
 
-  void crateApiPlayerRustMiniaudioPlayerSetPreamp(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetPreamp(
       {required RustMiniaudioPlayer that, required double preampDb});
 
   Future<void> crateApiPlayerRustMiniaudioPlayerSetQueue(
       {required RustMiniaudioPlayer that,
       required List<RustAudioSource> queue});
 
-  void crateApiPlayerRustMiniaudioPlayerSetRate(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetRate(
       {required RustMiniaudioPlayer that, required double rate});
 
-  void crateApiPlayerRustMiniaudioPlayerSetReplayGain(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetReplayGain(
       {required RustMiniaudioPlayer that,
       RustReplayGainConfig? config,
       PlatformInt64? id,
       BigInt? position});
 
-  void crateApiPlayerRustMiniaudioPlayerSetReplayGainMode(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetReplayGainMode(
       {required RustMiniaudioPlayer that, required int mode});
 
-  void crateApiPlayerRustMiniaudioPlayerSetReverb(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetReverb(
       {required RustMiniaudioPlayer that, required RustReverbParams params});
 
-  void crateApiPlayerRustMiniaudioPlayerSetShuffle(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetShuffle(
       {required RustMiniaudioPlayer that, required bool enabled});
 
-  void crateApiPlayerRustMiniaudioPlayerSetSilenceConfig(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetSilenceConfig(
       {required RustMiniaudioPlayer that, required RustSilenceConfig config});
 
-  void crateApiPlayerRustMiniaudioPlayerSetSpatializer(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetSpatializer(
       {required RustMiniaudioPlayer that,
       required bool enabled,
       required double width});
 
-  void crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
       {required RustMiniaudioPlayer that, required bool enabled});
 
-  void crateApiPlayerRustMiniaudioPlayerSetVolume(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetVolume(
       {required RustMiniaudioPlayer that, required double volume});
 
   Future<void> crateApiPlayerRustMiniaudioPlayerStartRecording(
@@ -321,13 +321,13 @@ abstract class RustLibApi extends BaseApi {
       required int format,
       required int source});
 
-  void crateApiPlayerRustMiniaudioPlayerStop(
+  Future<void> crateApiPlayerRustMiniaudioPlayerStop(
       {required RustMiniaudioPlayer that});
 
-  void crateApiPlayerRustMiniaudioPlayerStopAllEffects(
+  Future<void> crateApiPlayerRustMiniaudioPlayerStopAllEffects(
       {required RustMiniaudioPlayer that, required BigInt fadeOutMs});
 
-  void crateApiPlayerRustMiniaudioPlayerStopEffect(
+  Future<void> crateApiPlayerRustMiniaudioPlayerStopEffect(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required BigInt fadeOutMs});
@@ -560,15 +560,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerAddInput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerAddInput(
       {required RustMiniaudioPlayer that, required RustAudioInput input}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_audio_input(input, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 5, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -587,15 +588,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerAddOutput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerAddOutput(
       {required RustMiniaudioPlayer that, required RustAudioOutput output}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_audio_output(output, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 6, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -614,16 +616,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerAppend(
+  Future<void> crateApiPlayerRustMiniaudioPlayerAppend(
       {required RustMiniaudioPlayer that,
       required List<RustAudioSource> sources}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_list_rust_audio_source(sources, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 7, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -642,15 +645,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerClearQueue(
+  Future<void> crateApiPlayerRustMiniaudioPlayerClearQueue(
       {required RustMiniaudioPlayer that, required bool keepCurrent}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(keepCurrent, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 8, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -669,18 +673,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerConfigureInput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerConfigureInput(
       {required RustMiniaudioPlayer that,
       required String deviceId,
       required RustAudioInputConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_String(deviceId, serializer);
         sse_encode_box_autoadd_rust_audio_input_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 9, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -937,15 +942,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerInsertNext(
+  Future<void> crateApiPlayerRustMiniaudioPlayerInsertNext(
       {required RustMiniaudioPlayer that, required RustAudioSource source}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_audio_source(source, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 19, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1032,14 +1038,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerPause(
+  Future<void> crateApiPlayerRustMiniaudioPlayerPause(
       {required RustMiniaudioPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 22, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1093,20 +1100,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  int crateApiPlayerRustMiniaudioPlayerPlayEffect(
+  Future<int> crateApiPlayerRustMiniaudioPlayerPlayEffect(
       {required RustMiniaudioPlayer that,
       required String id,
       required int dspRouting,
       required RustEffectConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_String(id, serializer);
         sse_encode_i_32(dspRouting, serializer);
         sse_encode_box_autoadd_rust_effect_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 24, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -1152,15 +1160,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  bool crateApiPlayerRustMiniaudioPlayerRemoveAt(
+  Future<bool> crateApiPlayerRustMiniaudioPlayerRemoveAt(
       {required RustMiniaudioPlayer that, required BigInt index}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_usize(index, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 26, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -1179,15 +1188,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerRemoveInput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerRemoveInput(
       {required RustMiniaudioPlayer that, required RustAudioInput input}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_audio_input(input, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 27, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1206,15 +1216,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerRemoveOutput(
+  Future<void> crateApiPlayerRustMiniaudioPlayerRemoveOutput(
       {required RustMiniaudioPlayer that, required RustAudioOutput output}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_audio_output(output, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 28, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1233,18 +1244,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  bool crateApiPlayerRustMiniaudioPlayerReorder(
+  Future<bool> crateApiPlayerRustMiniaudioPlayerReorder(
       {required RustMiniaudioPlayer that,
       required BigInt oldIndex,
       required BigInt newIndex}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_usize(oldIndex, serializer);
         sse_encode_usize(newIndex, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 29, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -1263,15 +1275,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  bool crateApiPlayerRustMiniaudioPlayerReorderByIds(
+  Future<bool> crateApiPlayerRustMiniaudioPlayerReorderByIds(
       {required RustMiniaudioPlayer that, required Int64List ids}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_list_prim_i_64_strict(ids, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 30, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -1324,15 +1337,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSeek(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSeek(
       {required RustMiniaudioPlayer that, required PlatformInt64 positionMs}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_i_64(positionMs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 32, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1351,15 +1365,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetBalance(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetBalance(
       {required RustMiniaudioPlayer that, required double balance}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(balance, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 33, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1378,15 +1393,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetBufferSize(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetBufferSize(
       {required RustMiniaudioPlayer that, required int bufferSizeFrames}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(bufferSizeFrames, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 34, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1405,16 +1421,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetCrossfade(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetCrossfade(
       {required RustMiniaudioPlayer that,
       required RustCrossfadeConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_crossfade_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 35, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1433,16 +1450,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
       {required RustMiniaudioPlayer that,
       required RustCrossfeedConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_crossfeed_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 36, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1461,18 +1479,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetDefaultReplayGain(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetDefaultReplayGain(
       {required RustMiniaudioPlayer that,
       required double gainDb,
       required double peak}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(gainDb, serializer);
         sse_encode_f_32(peak, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 37, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1493,18 +1512,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
       {required RustMiniaudioPlayer that,
       required double factor,
       required double speedOfSound}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(factor, serializer);
         sse_encode_f_32(speedOfSound, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 38, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1525,18 +1545,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required double balance}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(voiceId, serializer);
         sse_encode_f_32(balance, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 39, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1556,18 +1577,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       RustSpatialEmitter? emitter}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(voiceId, serializer);
         sse_encode_opt_box_autoadd_rust_spatial_emitter(emitter, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 40, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1587,18 +1609,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required double pitch}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(voiceId, serializer);
         sse_encode_f_32(pitch, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 41, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1617,18 +1640,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required double volume}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(voiceId, serializer);
         sse_encode_f_32(volume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 42, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1677,16 +1701,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetEqualizer(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetEqualizer(
       {required RustMiniaudioPlayer that,
       required RustEqualizerParams params}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_equalizer_params(params, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 44, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1705,16 +1730,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetInfiniteMix(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetInfiniteMix(
       {required RustMiniaudioPlayer that,
       required RustInfiniteMixConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_infinite_mix_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 45)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 45, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1733,16 +1759,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetInputs(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetInputs(
       {required RustMiniaudioPlayer that,
       required List<RustAudioInput> inputs}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_list_rust_audio_input(inputs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 46)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 46, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1761,15 +1788,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetLimiter(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetLimiter(
       {required RustMiniaudioPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 47)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 47, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1788,16 +1816,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetListener(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetListener(
       {required RustMiniaudioPlayer that,
       required RustSpatialListener listener}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_spatial_listener(listener, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 48, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1816,15 +1845,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetLoopMode(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetLoopMode(
       {required RustMiniaudioPlayer that, required int mode}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_i_32(mode, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 49, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1843,15 +1873,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetMetadataEnabled(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetMetadataEnabled(
       {required RustMiniaudioPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 50)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 50, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1871,15 +1902,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetMono(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetMono(
       {required RustMiniaudioPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 51)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 51, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1898,16 +1930,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetOutputs(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetOutputs(
       {required RustMiniaudioPlayer that,
       required List<RustAudioOutput> outputs}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_list_rust_audio_output(outputs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 52)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 52, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1926,15 +1959,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
       {required RustMiniaudioPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 53)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 53, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1955,15 +1989,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetPitch(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetPitch(
       {required RustMiniaudioPlayer that, required double pitch}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(pitch, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 54)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 54, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1982,15 +2017,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetPreamp(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetPreamp(
       {required RustMiniaudioPlayer that, required double preampDb}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(preampDb, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 55)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 55, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2038,15 +2074,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetRate(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetRate(
       {required RustMiniaudioPlayer that, required double rate}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(rate, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 57, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2065,20 +2102,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetReplayGain(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetReplayGain(
       {required RustMiniaudioPlayer that,
       RustReplayGainConfig? config,
       PlatformInt64? id,
       BigInt? position}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_opt_box_autoadd_rust_replay_gain_config(config, serializer);
         sse_encode_opt_box_autoadd_i_64(id, serializer);
         sse_encode_opt_box_autoadd_usize(position, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 58)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 58, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2097,15 +2135,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetReplayGainMode(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetReplayGainMode(
       {required RustMiniaudioPlayer that, required int mode}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(mode, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 59)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 59, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2125,15 +2164,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetReverb(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetReverb(
       {required RustMiniaudioPlayer that, required RustReverbParams params}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_reverb_params(params, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 60)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 60, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2152,15 +2192,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetShuffle(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetShuffle(
       {required RustMiniaudioPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 61)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 61, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2179,15 +2220,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetSilenceConfig(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetSilenceConfig(
       {required RustMiniaudioPlayer that, required RustSilenceConfig config}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_box_autoadd_rust_silence_config(config, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 62)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 62, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2207,18 +2249,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetSpatializer(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetSpatializer(
       {required RustMiniaudioPlayer that,
       required bool enabled,
       required double width}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
         sse_encode_f_32(width, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 63)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 63, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2237,15 +2280,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
       {required RustMiniaudioPlayer that, required bool enabled}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_bool(enabled, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 64)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 64, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2266,15 +2310,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerSetVolume(
+  Future<void> crateApiPlayerRustMiniaudioPlayerSetVolume(
       {required RustMiniaudioPlayer that, required double volume}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_f_32(volume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 65)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 65, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2326,14 +2371,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerStop(
+  Future<void> crateApiPlayerRustMiniaudioPlayerStop(
       {required RustMiniaudioPlayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 67, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2352,15 +2398,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerStopAllEffects(
+  Future<void> crateApiPlayerRustMiniaudioPlayerStopAllEffects(
       {required RustMiniaudioPlayer that, required BigInt fadeOutMs}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_64(fadeOutMs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 68)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 68, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2379,18 +2426,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiPlayerRustMiniaudioPlayerStopEffect(
+  Future<void> crateApiPlayerRustMiniaudioPlayerStopEffect(
       {required RustMiniaudioPlayer that,
       required int voiceId,
       required BigInt fadeOutMs}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_u_32(voiceId, serializer);
         sse_encode_u_64(fadeOutMs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 69, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -8267,24 +8315,26 @@ class RustMiniaudioPlayerImpl extends RustOpaque
   );
 
   /// Adds an audio input capture node.
-  void addInput({required RustAudioInput input}) => RustLib.instance.api
+  Future<void> addInput({required RustAudioInput input}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerAddInput(that: this, input: input);
 
   /// Adds or routes an audio output destination to the output matrix.
-  void addOutput({required RustAudioOutput output}) => RustLib.instance.api
+  Future<void> addOutput({required RustAudioOutput output}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerAddOutput(that: this, output: output);
 
   /// Appends a batch of audio sources to the end of the playlist queue.
-  void append({required List<RustAudioSource> sources}) => RustLib.instance.api
+  Future<void> append({required List<RustAudioSource> sources}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerAppend(that: this, sources: sources);
 
   /// Clears pending tracks from the queue, optionally preserving the currently active track.
-  void clearQueue({required bool keepCurrent}) =>
+  Future<void> clearQueue({required bool keepCurrent}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerClearQueue(
           that: this, keepCurrent: keepCurrent);
 
   /// Configures runtime parameters for an existing capture node without reopening hardware.
-  void configureInput(
+  Future<void> configureInput(
           {required String deviceId, required RustAudioInputConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerConfigureInput(
           that: this, deviceId: deviceId, config: config);
@@ -8314,7 +8364,8 @@ class RustMiniaudioPlayerImpl extends RustOpaque
       );
 
   /// Inserts an audio source directly after the currently playing track.
-  void insertNext({required RustAudioSource source}) => RustLib.instance.api
+  Future<void> insertNext({required RustAudioSource source}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerInsertNext(that: this, source: source);
 
   /// Skips to the next track in the queue, optionally overriding crossfade duration.
@@ -8323,7 +8374,8 @@ class RustMiniaudioPlayerImpl extends RustOpaque
           that: this, crossfadeDurationMs: crossfadeDurationMs);
 
   /// Pauses playback on the active audio deck without releasing resources.
-  void pause() => RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPause(
+  Future<void> pause() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPause(
         that: this,
       );
 
@@ -8343,7 +8395,7 @@ class RustMiniaudioPlayerImpl extends RustOpaque
 
   /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
   /// returning the assigned voice ID.
-  int playEffect(
+  Future<int> playEffect(
           {required String id,
           required int dspRouting,
           required RustEffectConfig config}) =>
@@ -8357,25 +8409,26 @@ class RustMiniaudioPlayerImpl extends RustOpaque
       );
 
   /// Removes an audio source at the specified index from the playlist queue.
-  bool removeAt({required BigInt index}) => RustLib.instance.api
+  Future<bool> removeAt({required BigInt index}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerRemoveAt(that: this, index: index);
 
   /// Removes an audio input capture node by matching device identifier.
-  void removeInput({required RustAudioInput input}) => RustLib.instance.api
+  Future<void> removeInput({required RustAudioInput input}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerRemoveInput(that: this, input: input);
 
   /// Removes an audio output destination from the output matrix.
-  void removeOutput({required RustAudioOutput output}) =>
+  Future<void> removeOutput({required RustAudioOutput output}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerRemoveOutput(
           that: this, output: output);
 
   /// Reorders a track within the queue from `old_index` to `new_index`.
-  bool reorder({required BigInt oldIndex, required BigInt newIndex}) =>
+  Future<bool> reorder({required BigInt oldIndex, required BigInt newIndex}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerReorder(
           that: this, oldIndex: oldIndex, newIndex: newIndex);
 
   /// Reorders the playlist queue to match the specified list of track IDs.
-  bool reorderByIds({required Int64List ids}) => RustLib.instance.api
+  Future<bool> reorderByIds({required Int64List ids}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerReorderByIds(that: this, ids: ids);
 
   /// Responds to a pending custom stream byte read request from Dart.
@@ -8388,60 +8441,64 @@ class RustMiniaudioPlayerImpl extends RustOpaque
               that: this, requestId: requestId, bytes: bytes, isEof: isEof);
 
   /// Seeks to the specified position in milliseconds within the current track.
-  void seek({required PlatformInt64 positionMs}) =>
+  Future<void> seek({required PlatformInt64 positionMs}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSeek(
           that: this, positionMs: positionMs);
 
   /// Sets the stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
-  void setBalance({required double balance}) =>
+  Future<void> setBalance({required double balance}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetBalance(
           that: this, balance: balance);
 
   /// Adjusts the audio stream buffer frame size.
-  void setBufferSize({required int bufferSizeFrames}) =>
+  Future<void> setBufferSize({required int bufferSizeFrames}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetBufferSize(
           that: this, bufferSizeFrames: bufferSizeFrames);
 
   /// Configures automatic and manual crossfade durations and curve formulas.
-  void setCrossfade({required RustCrossfadeConfig config}) =>
+  Future<void> setCrossfade({required RustCrossfadeConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetCrossfade(
           that: this, config: config);
 
   /// Sets the Bauer binaural headphone crossfeed configuration.
-  void setCrossfeed({required RustCrossfeedConfig config}) =>
+  Future<void> setCrossfeed({required RustCrossfeedConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetCrossfeed(
           that: this, config: config);
 
   /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
-  void setDefaultReplayGain({required double gainDb, required double peak}) =>
+  Future<void> setDefaultReplayGain(
+          {required double gainDb, required double peak}) =>
       RustLib.instance.api
           .crateApiPlayerRustMiniaudioPlayerSetDefaultReplayGain(
               that: this, gainDb: gainDb, peak: peak);
 
   /// Configures global Doppler factor and medium speed of sound in meters per second.
-  void setDopplerParameters(
+  Future<void> setDopplerParameters(
           {required double factor, required double speedOfSound}) =>
       RustLib.instance.api
           .crateApiPlayerRustMiniaudioPlayerSetDopplerParameters(
               that: this, factor: factor, speedOfSound: speedOfSound);
 
   /// Adjusts stereo pan balance of an active sound effect voice.
-  void setEffectBalance({required int voiceId, required double balance}) =>
+  Future<void> setEffectBalance(
+          {required int voiceId, required double balance}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectBalance(
           that: this, voiceId: voiceId, balance: balance);
 
   /// Updates the 3D spatial emitter parameters for an active sound effect voice.
-  void setEffectEmitter({required int voiceId, RustSpatialEmitter? emitter}) =>
+  Future<void> setEffectEmitter(
+          {required int voiceId, RustSpatialEmitter? emitter}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectEmitter(
           that: this, voiceId: voiceId, emitter: emitter);
 
   /// Modulates the pitch multiplier of an active sound effect voice.
-  void setEffectPitch({required int voiceId, required double pitch}) =>
+  Future<void> setEffectPitch({required int voiceId, required double pitch}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectPitch(
           that: this, voiceId: voiceId, pitch: pitch);
 
   /// Modulates the volume of an active sound effect voice.
-  void setEffectVolume({required int voiceId, required double volume}) =>
+  Future<void> setEffectVolume(
+          {required int voiceId, required double volume}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEffectVolume(
           that: this, voiceId: voiceId, volume: volume);
 
@@ -8451,58 +8508,60 @@ class RustMiniaudioPlayerImpl extends RustOpaque
           that: this, effects: effects);
 
   /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
-  void setEqualizer({required RustEqualizerParams params}) =>
+  Future<void> setEqualizer({required RustEqualizerParams params}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetEqualizer(
           that: this, params: params);
 
   /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
-  void setInfiniteMix({required RustInfiniteMixConfig config}) =>
+  Future<void> setInfiniteMix({required RustInfiniteMixConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetInfiniteMix(
           that: this, config: config);
 
   /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
-  void setInputs({required List<RustAudioInput> inputs}) => RustLib.instance.api
+  Future<void> setInputs({required List<RustAudioInput> inputs}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerSetInputs(that: this, inputs: inputs);
 
   /// Enables or disables the output brickwall peak limiter.
-  void setLimiter({required bool enabled}) =>
+  Future<void> setLimiter({required bool enabled}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetLimiter(
           that: this, enabled: enabled);
 
   /// Updates the global 3D audio listener position, velocity, and orientation vectors.
-  void setListener({required RustSpatialListener listener}) =>
+  Future<void> setListener({required RustSpatialListener listener}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetListener(
           that: this, listener: listener);
 
   /// Sets the queue loop policy (0: off, 1: one, 2: all).
-  void setLoopMode({required int mode}) => RustLib.instance.api
+  Future<void> setLoopMode({required int mode}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerSetLoopMode(that: this, mode: mode);
 
   /// Enables or disables forwarding of audio metadata payloads.
-  void setMetadataEnabled({required bool enabled}) =>
+  Future<void> setMetadataEnabled({required bool enabled}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetMetadataEnabled(
           that: this, enabled: enabled);
 
   /// Toggles mono downmixing of multi-channel audio.
-  void setMono({required bool enabled}) => RustLib.instance.api
+  Future<void> setMono({required bool enabled}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerSetMono(that: this, enabled: enabled);
 
   /// Replaces the active audio output destinations in the multi-sink matrix.
-  void setOutputs({required List<RustAudioOutput> outputs}) =>
+  Future<void> setOutputs({required List<RustAudioOutput> outputs}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetOutputs(
           that: this, outputs: outputs);
 
   /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
-  void setPauseOnDeviceChange({required bool enabled}) => RustLib.instance.api
-      .crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
-          that: this, enabled: enabled);
+  Future<void> setPauseOnDeviceChange({required bool enabled}) =>
+      RustLib.instance.api
+          .crateApiPlayerRustMiniaudioPlayerSetPauseOnDeviceChange(
+              that: this, enabled: enabled);
 
   /// Sets the pitch shift frequency multiplier independently of playback speed.
-  void setPitch({required double pitch}) => RustLib.instance.api
+  Future<void> setPitch({required double pitch}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerSetPitch(that: this, pitch: pitch);
 
   /// Sets the equalizer pre-amplification gain in decibels.
-  void setPreamp({required double preampDb}) =>
+  Future<void> setPreamp({required double preampDb}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetPreamp(
           that: this, preampDb: preampDb);
 
@@ -8512,12 +8571,11 @@ class RustMiniaudioPlayerImpl extends RustOpaque
           .crateApiPlayerRustMiniaudioPlayerSetQueue(that: this, queue: queue);
 
   /// Sets the playback speed multiplier with automatic pitch compensation.
-  void setRate({required double rate}) => RustLib.instance.api
+  Future<void> setRate({required double rate}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerSetRate(that: this, rate: rate);
 
-  /// Applies ReplayGain loudness normalization settings.
   /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
-  void setReplayGain(
+  Future<void> setReplayGain(
           {RustReplayGainConfig? config,
           PlatformInt64? id,
           BigInt? position}) =>
@@ -8525,36 +8583,38 @@ class RustMiniaudioPlayerImpl extends RustOpaque
           that: this, config: config, id: id, position: position);
 
   /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
-  void setReplayGainMode({required int mode}) =>
+  Future<void> setReplayGainMode({required int mode}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetReplayGainMode(
           that: this, mode: mode);
 
   /// Updates studio reverberation acoustic parameters.
-  void setReverb({required RustReverbParams params}) => RustLib.instance.api
+  Future<void> setReverb({required RustReverbParams params}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerSetReverb(that: this, params: params);
 
   /// Enables or disables playlist shuffle mode.
-  void setShuffle({required bool enabled}) =>
+  Future<void> setShuffle({required bool enabled}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetShuffle(
           that: this, enabled: enabled);
 
   /// Configures automatic silence skipping and trimming parameters.
-  void setSilenceConfig({required RustSilenceConfig config}) =>
+  Future<void> setSilenceConfig({required RustSilenceConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetSilenceConfig(
           that: this, config: config);
 
   /// Enables or disables 3D stereo widening spatializer with width multiplier.
-  void setSpatializer({required bool enabled, required double width}) =>
+  Future<void> setSpatializer({required bool enabled, required double width}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerSetSpatializer(
           that: this, enabled: enabled, width: width);
 
   /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
-  void setVisualizerEnabled({required bool enabled}) => RustLib.instance.api
+  Future<void> setVisualizerEnabled({required bool enabled}) => RustLib
+      .instance.api
       .crateApiPlayerRustMiniaudioPlayerSetVisualizerEnabled(
           that: this, enabled: enabled);
 
   /// Sets the master output volume level (0.0 to 1.0+).
-  void setVolume({required double volume}) => RustLib.instance.api
+  Future<void> setVolume({required double volume}) => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerSetVolume(that: this, volume: volume);
 
   /// Begins recording rendered audio to a WAV file at `path` with a selective source.
@@ -8564,17 +8624,18 @@ class RustMiniaudioPlayerImpl extends RustOpaque
           that: this, path: path, format: format, source: source);
 
   /// Stops playback and resets elapsed position to the beginning.
-  void stop() => RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStop(
+  Future<void> stop() =>
+      RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStop(
         that: this,
       );
 
   /// Stops all actively playing sound effect voices with an optional fade-out ramp in milliseconds.
-  void stopAllEffects({required BigInt fadeOutMs}) =>
+  Future<void> stopAllEffects({required BigInt fadeOutMs}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStopAllEffects(
           that: this, fadeOutMs: fadeOutMs);
 
   /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.
-  void stopEffect({required int voiceId, required BigInt fadeOutMs}) =>
+  Future<void> stopEffect({required int voiceId, required BigInt fadeOutMs}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerStopEffect(
           that: this, voiceId: voiceId, fadeOutMs: fadeOutMs);
 

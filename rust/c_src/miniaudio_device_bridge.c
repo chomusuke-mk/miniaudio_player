@@ -301,6 +301,18 @@ int32_t map_device_destroy(map_device_context_t *ctx)
             ctx, (int)ctx->is_device_init, (int)ctx->has_context);
     if (ctx->is_device_init)
     {
+        /* 1. Stop device if active so the backend worker thread transitions cleanly */
+        if (ma_device_is_started(&ctx->device))
+        {
+            fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] Stopping device prior to uninit...\n");
+            ma_device_stop(&ctx->device);
+        }
+        /* 2. Defensively wake up synchronous audio main loop (essential for PulseAudio pa_mainloop_wakeup) */
+        if (ctx->device.pContext != NULL && ctx->device.pContext->callbacks.onDeviceDataLoopWakeup != NULL)
+        {
+            fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] Waking up backend data loop...\n");
+            ctx->device.pContext->callbacks.onDeviceDataLoopWakeup(&ctx->device);
+        }
         fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] Calling ma_device_uninit(&ctx->device)...\n");
         ma_device_uninit(&ctx->device);
         fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] ma_device_uninit completed successfully\n");
@@ -344,6 +356,14 @@ int32_t map_device_set_device(map_device_context_t *ctx, const char *device_id)
     ma_bool32 was_started = (ctx->is_device_init && ma_device_is_started(&ctx->device));
     if (ctx->is_device_init)
     {
+        if (was_started)
+        {
+            ma_device_stop(&ctx->device);
+        }
+        if (ctx->device.pContext != NULL && ctx->device.pContext->callbacks.onDeviceDataLoopWakeup != NULL)
+        {
+            ctx->device.pContext->callbacks.onDeviceDataLoopWakeup(&ctx->device);
+        }
         ma_device_uninit(&ctx->device);
         ctx->is_device_init = MA_FALSE;
     }

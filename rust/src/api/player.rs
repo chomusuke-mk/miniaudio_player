@@ -1084,7 +1084,6 @@ impl RustMiniaudioPlayer {
     }
 
     /// Pauses playback on the active audio deck without releasing resources.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn pause(&self) {
         map_log!(3, "[NATIVE:PAUSE:START] pause() requested from Dart. Acquiring player inner lock...");
         let t0 = Instant::now();
@@ -1109,7 +1108,6 @@ impl RustMiniaudioPlayer {
     }
 
     /// Stops playback and resets elapsed position to the beginning.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn stop(&self) {
         map_log!(3, "[NATIVE:STOP:START] stop() requested from Dart. Acquiring player inner lock...");
         let t0 = Instant::now();
@@ -1140,7 +1138,6 @@ impl RustMiniaudioPlayer {
     }
 
     /// Seeks to the specified position in milliseconds within the current track.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn seek(&self, position_ms: i64) -> Result<(), String> {
         map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Acquiring inner lock...", position_ms);
         let t0 = Instant::now();
@@ -1226,7 +1223,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Appends a batch of audio sources to the end of the playlist queue.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn append(&self, sources: Vec<RustAudioSource>) {
         let core_sources: Vec<AudioSourceCore> = sources.into_iter().map(Into::into).collect();
         self.inner.lock().unwrap().music_manager.append(core_sources);
@@ -1234,14 +1230,12 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Inserts an audio source directly after the currently playing track.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn insert_next(&self, source: RustAudioSource) {
         self.inner.lock().unwrap().music_manager.insert_next(source.into());
         self.emit_queue();
     }
 
     /// Removes an audio source at the specified index from the playlist queue.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn remove_at(&self, index: usize) -> bool {
         let (res, idx) = {
             let mut ply = self.inner.lock().unwrap();
@@ -1257,7 +1251,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Reorders a track within the queue from `old_index` to `new_index`.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn reorder(&self, old_index: usize, new_index: usize) -> bool {
         let (res, idx) = {
             let mut ply = self.inner.lock().unwrap();
@@ -1273,7 +1266,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Reorders the playlist queue to match the specified list of track IDs.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn reorder_by_ids(&self, ids: Vec<i64>) -> bool {
         let (res, idx) = {
             let mut ply = self.inner.lock().unwrap();
@@ -1289,7 +1281,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Clears pending tracks from the queue, optionally preserving the currently active track.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn clear_queue(&self, keep_current: bool) {
         let idx = {
             let mut ply = self.inner.lock().unwrap();
@@ -1359,7 +1350,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the queue loop policy (0: off, 1: one, 2: all).
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_loop_mode(&self, mode: i32) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.music_manager.inner.loop_mode.load(std::sync::atomic::Ordering::Relaxed);
@@ -1370,7 +1360,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Enables or disables playlist shuffle mode.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_shuffle(&self, enabled: bool) {
         let changed_idx = {
             let mut ply = self.inner.lock().unwrap();
@@ -1390,7 +1379,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_infinite_mix(&self, config: RustInfiniteMixConfig) {
         let ply = self.inner.lock().unwrap();
         ply.music_manager.inner.infinite_mix_enabled.store(config.enabled, Ordering::Release);
@@ -1403,7 +1391,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Configures automatic and manual crossfade durations and curve formulas.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_crossfade(&self, config: RustCrossfadeConfig) {
         self.inner.lock().unwrap().music_manager.set_crossfade(
             config.auto_duration_ms,
@@ -1418,7 +1405,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     // =========================================================================
 
     /// Sets the master output volume level (0.0 to 1.0+).
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_volume(&self, volume: f32) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.music_dsp.volume;
@@ -1429,7 +1415,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the playback speed multiplier with automatic pitch compensation.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_rate(&self, rate: f32) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.music_manager.rate();
@@ -1440,7 +1425,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the pitch shift frequency multiplier independently of playback speed.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_pitch(&self, pitch: f32) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.music_manager.pitch();
@@ -1451,7 +1435,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_balance(&self, balance: f32) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.music_dsp.balance;
@@ -1463,7 +1446,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Toggles mono downmixing of multi-channel audio.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_mono(&self, enabled: bool) {
         let mut ply = self.inner.lock().unwrap();
         if ply.music_dsp.mono != enabled {
@@ -1473,7 +1455,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the equalizer pre-amplification gain in decibels.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_preamp(&self, preamp_db: f32) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.music_dsp.equalizer.preamp_db();
@@ -1484,7 +1465,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the Bauer binaural headphone crossfeed configuration.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_crossfeed(&self, config: RustCrossfeedConfig) {
         let mut ply = self.inner.lock().unwrap();
         let core_cfg: crate::dsp::crossfeed::CrossfeedConfig = config.into();
@@ -1498,7 +1478,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Enables or disables 3D stereo widening spatializer with width multiplier.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_spatializer(&self, enabled: bool, width: f32) {
         let mut ply = self.inner.lock().unwrap();
         let w = width.clamp(0.0, 2.0);
@@ -1510,10 +1489,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         }
     }
 
-    /// Applies ReplayGain loudness normalization settings.
-    #[flutter_rust_bridge::frb(sync)]
     /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_replay_gain(
         &self,
         config: Option<RustReplayGainConfig>,
@@ -1588,7 +1564,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_replay_gain_mode(&self, mode: u32) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         ply.replay_gain_mode = mode;
@@ -1602,7 +1577,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_default_replay_gain(&self, gain_db: f32, peak: f32) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         ply.default_replay_gain = (gain_db, peak);
@@ -1616,7 +1590,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Configures automatic silence skipping and trimming parameters.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_silence_config(&self, config: RustSilenceConfig) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         let sc = SilenceConfig::from(config.clone());
@@ -1627,7 +1600,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_equalizer(&self, params: RustEqualizerParams) -> Result<(), String> {
         let eq = EqualizerParams::from(params.clone());
         let mut ply = self.inner.lock().unwrap();
@@ -1640,7 +1612,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Updates studio reverberation acoustic parameters.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_reverb(&self, params: RustReverbParams) -> Result<(), String> {
         let conf = ReverbConfig {
             enabled: if params.enabled { 1 } else { 0 },
@@ -1657,7 +1628,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Enables or disables the output brickwall peak limiter.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_limiter(&self, enabled: bool) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.master_limiter.is_enabled();
@@ -1668,7 +1638,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_visualizer_enabled(&self, enabled: bool) {
         let mut ply = self.inner.lock().unwrap();
         let prev = ply.output_manager.visualizer_enabled.load(std::sync::atomic::Ordering::Relaxed);
@@ -1682,7 +1651,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Enables or disables forwarding of audio metadata payloads.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_metadata_enabled(&self, enabled: bool) {
         let prev = self.metadata_enabled.swap(enabled, std::sync::atomic::Ordering::Relaxed);
         if prev != enabled {
@@ -1699,7 +1667,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Adjusts the audio stream buffer frame size.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_buffer_size(&self, buffer_size_frames: u32) {
         let mut ply = self.inner.lock().unwrap();
         ply.music_manager.inner.deck_a.set_buffer_size(buffer_size_frames);
@@ -1747,7 +1714,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
     /// returning the assigned voice ID.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn play_effect(
         &self,
         id: String,
@@ -1785,7 +1751,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn stop_effect(&self, voice_id: u32, fade_out_ms: u64) {
         let sr = self.inner.lock().unwrap().sample_rate;
         let fade_samples = (fade_out_ms as f64 * (sr as f64 / 1000.0)) as usize;
@@ -1793,7 +1758,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Stops all actively playing sound effect voices with an optional fade-out ramp in milliseconds.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn stop_all_effects(&self, fade_out_ms: u64) {
         let sr = self.inner.lock().unwrap().sample_rate;
         let fade_samples = (fade_out_ms as f64 * (sr as f64 / 1000.0)) as usize;
@@ -1801,25 +1765,21 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Modulates the volume of an active sound effect voice.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_effect_volume(&self, voice_id: u32, volume: f32) {
         self.inner.lock().unwrap().effects_manager.set_voice_volume(voice_id, volume);
     }
 
     /// Modulates the pitch multiplier of an active sound effect voice.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_effect_pitch(&self, voice_id: u32, pitch: f32) {
         self.inner.lock().unwrap().effects_manager.set_voice_pitch(voice_id, pitch);
     }
 
     /// Adjusts stereo pan balance of an active sound effect voice.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_effect_balance(&self, voice_id: u32, balance: f32) {
         self.inner.lock().unwrap().effects_manager.set_voice_balance(voice_id, balance);
     }
 
     /// Updates the 3D spatial emitter parameters for an active sound effect voice.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_effect_emitter(&self, voice_id: u32, emitter: Option<RustSpatialEmitter>) {
         self.inner.lock().unwrap().effects_manager.set_voice_emitter(
             voice_id,
@@ -1828,13 +1788,11 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Updates the global 3D audio listener position, velocity, and orientation vectors.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_listener(&self, listener: RustSpatialListener) {
         self.inner.lock().unwrap().effects_manager.set_listener(listener.into());
     }
 
     /// Configures global Doppler factor and medium speed of sound in meters per second.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_doppler_parameters(&self, factor: f32, speed_of_sound: f32) {
         self.inner.lock().unwrap().effects_manager.set_doppler_parameters(factor, speed_of_sound);
     }
@@ -1844,7 +1802,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     // =========================================================================
 
     /// Replaces the active audio output destinations in the multi-sink matrix.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         map_log!(3, "[NATIVE:SET_OUTPUTS:START] set_outputs() called with {} outputs. Acquiring inner lock...", outputs.len());
         let t0 = Instant::now();
@@ -1873,7 +1830,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Adds or routes an audio output destination to the output matrix.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn add_output(&self, output: RustAudioOutput) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         let mut current = ply.output_manager.outputs.clone();
@@ -1894,7 +1850,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Removes an audio output destination from the output matrix.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn remove_output(&self, output: RustAudioOutput) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         let mut current = ply.output_manager.outputs.clone();
@@ -1954,7 +1909,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     // =========================================================================
 
     /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_inputs(&self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
         map_log!(3, "[NATIVE:SET_INPUTS:START] set_inputs() called with {} inputs. Acquiring inner lock...", inputs.len());
         let t0 = Instant::now();
@@ -1978,7 +1932,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Adds an audio input capture node.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn add_input(&self, input: RustAudioInput) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         ply.input_manager.add_input(input)?;
@@ -1990,7 +1943,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Removes an audio input capture node by matching device identifier.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn remove_input(&self, input: RustAudioInput) -> Result<(), String> {
         let mut ply = self.inner.lock().unwrap();
         ply.input_manager.remove_input(input.device_id)?;
@@ -2002,7 +1954,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Configures runtime parameters for an existing capture node without reopening hardware.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn configure_input(
         &self,
         device_id: String,
@@ -2018,7 +1969,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     }
 
     /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn set_pause_on_device_change(&self, enabled: bool) {
         let ply = self.inner.lock().unwrap();
         let prev = ply.output_manager.pause_on_device_change.load(std::sync::atomic::Ordering::Relaxed);

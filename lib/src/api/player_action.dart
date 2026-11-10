@@ -136,7 +136,6 @@ class PlayerAction<T> {
           if (e is MiniaudioPlayerException) rethrow;
           throw MiniaudioPlayerException.fromRustError(e);
         }
-        await Future<void>.delayed(const Duration(milliseconds: 10));
       });
 
   /// Pauses audio playback at current position.
@@ -144,11 +143,10 @@ class PlayerAction<T> {
         _player._ensureNotDisposed();
         MapLogger.info('[ACTION:PAUSE] pause() requested. Calling native rust.pause()...');
         final sw = Stopwatch()..start();
-        _rust.pause();
+        await _rust.pause();
         MapLogger.info(
           '[ACTION:PAUSE] native rust.pause() returned successfully in ${sw.elapsedMilliseconds}ms',
         );
-        await Future<void>.delayed(Duration.zero);
       });
 
   /// Stops playback and rewinds position to zero.
@@ -156,11 +154,10 @@ class PlayerAction<T> {
         _player._ensureNotDisposed();
         MapLogger.info('[ACTION:STOP] stop() requested. Calling native rust.stop()...');
         final sw = Stopwatch()..start();
-        _rust.stop();
+        await _rust.stop();
         MapLogger.info(
           '[ACTION:STOP] native rust.stop() returned successfully in ${sw.elapsedMilliseconds}ms',
         );
-        await Future<void>.delayed(Duration.zero);
       });
 
   /// Seeks to specified position in the currently playing track.
@@ -172,11 +169,10 @@ class PlayerAction<T> {
           '[ACTION:SEEK] seek() requested -> ${targetPosition.inMilliseconds}ms. Calling native rust.seek()...',
         );
         final sw = Stopwatch()..start();
-        _rust.seek(positionMs: targetPosition.inMilliseconds);
+        await _rust.seek(positionMs: targetPosition.inMilliseconds);
         MapLogger.info(
           '[ACTION:SEEK] native rust.seek() returned successfully in ${sw.elapsedMilliseconds}ms',
         );
-        await Future<void>.delayed(Duration.zero);
       });
 
   // =========================================================================
@@ -211,8 +207,6 @@ class PlayerAction<T> {
         if (e is MiniaudioPlayerException) rethrow;
         throw MiniaudioPlayerException.fromRustError(e);
       }
-
-      await Future<void>.delayed(const Duration(milliseconds: 10));
     });
   }
 
@@ -232,8 +226,7 @@ class PlayerAction<T> {
       ..._player.state.queue,
       ...normalized,
     ]);
-    _rust.append(sources: rustSources);
-    await Future<void>.delayed(Duration.zero);
+    await _rust.append(sources: rustSources);
   }
 
   /// Inserts a track immediately after the active playing track.
@@ -247,8 +240,7 @@ class PlayerAction<T> {
         : currentQueue.length;
     currentQueue.insert(insertIdx, retained);
     _player.state._queue = List.unmodifiable(currentQueue);
-    _rust.insertNext(source: rustSource);
-    await Future<void>.delayed(Duration.zero);
+    await _rust.insertNext(source: rustSource);
   }
 
   /// Removes a track at [index] from the playlist queue.
@@ -262,8 +254,7 @@ class PlayerAction<T> {
         _player._customProviders.remove(removed.id);
       }
       _player.state._queue = List.unmodifiable(currentQueue);
-      _rust.removeAt(index: BigInt.from(index));
-      await Future<void>.delayed(Duration.zero);
+      await _rust.removeAt(index: BigInt.from(index));
     }
   }
 
@@ -279,8 +270,7 @@ class PlayerAction<T> {
       currentQueue.insert(newIndex, item);
       _player.state._queue = List.unmodifiable(currentQueue);
       final ids = currentQueue.map((s) => s.id ?? 0).toList();
-      _rust.reorderByIds(ids: Int64List.fromList(ids));
-      await Future<void>.delayed(Duration.zero);
+      await _rust.reorderByIds(ids: Int64List.fromList(ids));
     }
   }
 
@@ -295,8 +285,7 @@ class PlayerAction<T> {
     if (reordered.length == _player.state.queue.length) {
       _player.state._queue = List.unmodifiable(reordered);
     }
-    _rust.reorderByIds(ids: Int64List.fromList(ids));
-    await Future<void>.delayed(Duration.zero);
+    await _rust.reorderByIds(ids: Int64List.fromList(ids));
   }
 
   /// Clears the playlist queue. If [keepCurrent] is true, retains the playing track.
@@ -320,8 +309,7 @@ class PlayerAction<T> {
       _player._sourceRegistry.clear();
       _player._customProviders.clear();
     }
-    _rust.clearQueue(keepCurrent: keepCurrent);
-    await Future<void>.delayed(Duration.zero);
+    await _rust.clearQueue(keepCurrent: keepCurrent);
   }
 
   /// Advances to the next track in the playlist queue.
@@ -332,28 +320,24 @@ class PlayerAction<T> {
               ? BigInt.from(crossfadeDuration.inMilliseconds)
               : null,
         );
-        await Future<void>.delayed(Duration.zero);
       });
 
   /// Skips back to the previous track, or start of current track if > 3s played.
   Future<void> previous() => _serialize(() async {
         _player._ensureNotDisposed();
         await _rust.previous();
-        await Future<void>.delayed(Duration.zero);
       });
 
   /// Configures playlist repeat mode ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
   Future<void> setLoopMode(LoopMode mode) async {
     _player._ensureNotDisposed();
-    _rust.setLoopMode(mode: mode.index);
-    await Future<void>.delayed(Duration.zero);
+    await _rust.setLoopMode(mode: mode.index);
   }
 
   /// Enables or disables non-destructive shuffle on the playlist queue.
   Future<void> setShuffle(bool enabled) async {
     _player._ensureNotDisposed();
-    _rust.setShuffle(enabled: enabled);
-    await Future<void>.delayed(Duration.zero);
+    await _rust.setShuffle(enabled: enabled);
   }
 
   /// Sets the dynamic queue replenishment provider callback for Infinite Mix.
@@ -366,19 +350,18 @@ class PlayerAction<T> {
   /// Configures infinite queue replenishment when playback approaches the end of the queue.
   Future<void> setInfiniteMix(InfiniteMixConfig config) async {
     _player._ensureNotDisposed();
-    _rust.setInfiniteMix(
+    await _rust.setInfiniteMix(
       config: rust_types.RustInfiniteMixConfig(
         enabled: config.enabled,
         remainingTracksThreshold: config.remainingTracksThreshold,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures crossfade duration and curve between queue tracks.
   Future<void> setCrossfade(CrossfadeConfig config) async {
     _player._ensureNotDisposed();
-    _rust.setCrossfade(
+    await _rust.setCrossfade(
       config: rust_types.RustCrossfadeConfig(
         autoDurationMs: BigInt.from(
           config.autoDuration.inMilliseconds < 0
@@ -406,8 +389,7 @@ class PlayerAction<T> {
       throw ArgumentError.value(volume, 'volume', 'Volume must be >= 0.0');
     }
     MapLogger.info('setVolume() -> $volume');
-    _rust.setVolume(volume: volume.toDouble());
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setVolume(volume: volume.toDouble());
   }
 
   /// Modulates playback rate multiplier preserving pitch (`> 0.0`).
@@ -416,8 +398,7 @@ class PlayerAction<T> {
     if (rate.isNaN || rate.isInfinite || rate <= 0.0) {
       throw ArgumentError.value(rate, 'rate', 'Rate must be > 0.0');
     }
-    _rust.setRate(rate: rate.toDouble());
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setRate(rate: rate.toDouble());
   }
 
   /// Modulates musical pitch multiplier (`> 0.0`).
@@ -426,40 +407,36 @@ class PlayerAction<T> {
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Pitch must be > 0.0');
     }
-    _rust.setPitch(pitch: pitch.toDouble());
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setPitch(pitch: pitch.toDouble());
   }
 
   /// Sets stereo balance / pan (`-1.0` left to `+1.0` right).
   Future<void> setBalance(double balance) async {
     _player._ensureNotDisposed();
-    _rust.setBalance(balance: balance.toDouble());
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setBalance(balance: balance.toDouble());
   }
 
   /// Toggles monophonic downmixing of stereo channels.
   Future<void> setMono(bool enabled) async {
     _player._ensureNotDisposed();
-    _rust.setMono(enabled: enabled);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setMono(enabled: enabled);
   }
 
   /// Applies 10-band ISO peaking equalizer configuration.
   Future<void> setEqualizer(Equalizer equalizer) async {
     _player._ensureNotDisposed();
-    _rust.setEqualizer(
+    await _rust.setEqualizer(
       params: rust_types.RustEqualizerParams(
         gains: Float32List.fromList(equalizer.toList()),
         enabled: equalizer.enabled,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures algorithmic studio reverberation.
   Future<void> setReverb(Reverb reverb) async {
     _player._ensureNotDisposed();
-    _rust.setReverb(
+    await _rust.setReverb(
       params: rust_types.RustReverbParams(
         roomSize: reverb.roomSize,
         damping: reverb.damping,
@@ -470,14 +447,12 @@ class PlayerAction<T> {
         enabled: reverb.enabled,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Toggles master True-Peak brickwall limiter protector.
   Future<void> setLimiter(bool enabled) async {
     _player._ensureNotDisposed();
-    _rust.setLimiter(enabled: enabled);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setLimiter(enabled: enabled);
   }
 
   /// Enables or disables real-time 10-band FFT spectrum visualizer calculation in the native engine.
@@ -486,8 +461,7 @@ class PlayerAction<T> {
   /// Defaults to `false`.
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player._ensureNotDisposed();
-    _rust.setVisualizerEnabled(enabled: enabled);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setVisualizerEnabled(enabled: enabled);
   }
 
   /// Enables or disables metadata dispatch from the native audio engine.
@@ -498,14 +472,13 @@ class PlayerAction<T> {
   /// Defaults to `false` to avoid saturating the event bus.
   Future<void> setMetadataEnabled(bool enabled) async {
     _player._ensureNotDisposed();
-    _rust.setMetadataEnabled(enabled: enabled);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setMetadataEnabled(enabled: enabled);
   }
 
   /// Configures intelligent silence detection and skipping.
   Future<void> setSilenceConfig(SilenceSkipConfig config) async {
     _player._ensureNotDisposed();
-    _rust.setSilenceConfig(
+    await _rust.setSilenceConfig(
       config: rust_types.RustSilenceConfig(
         thresholdDb: config.thresholdDb,
         minSilenceDurationMs: config.minSilenceDuration.inMilliseconds,
@@ -514,7 +487,6 @@ class PlayerAction<T> {
         mode: config.mode.value,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
@@ -528,7 +500,7 @@ class PlayerAction<T> {
   }) async {
     _player._ensureNotDisposed();
     return _serialize(() async {
-      _rust.setReplayGain(
+      await _rust.setReplayGain(
         config: config != null
             ? rust_types.RustReplayGainConfig(
                 gainDb: config.gainDb,
@@ -563,29 +535,25 @@ class PlayerAction<T> {
         target._replayGainDb = config?.gainDb;
         target._replayPeak = config?.peak;
       }
-
-      await Future<void>.delayed(const Duration(milliseconds: 10));
     });
   }
 
   /// Sets preamplifier gain in decibels.
   Future<void> setPreamp(double preampDb) async {
     _player._ensureNotDisposed();
-    _rust.setPreamp(preampDb: preampDb.toDouble());
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setPreamp(preampDb: preampDb.toDouble());
   }
 
   /// Configures Bauer stereophonic-to-binaural (BS2B) crossfeed filtering.
   Future<void> setCrossfeed(Crossfeed crossfeed) async {
     _player._ensureNotDisposed();
-    _rust.setCrossfeed(
+    await _rust.setCrossfeed(
       config: rust_types.RustCrossfeedConfig(
         enabled: crossfeed.enabled,
         cutoffHz: crossfeed.cutoffHz,
         feedDb: crossfeed.feedDb,
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Configures stereo widener spatializer.
@@ -594,22 +562,19 @@ class PlayerAction<T> {
     double width = 1.0,
   }) async {
     _player._ensureNotDisposed();
-    _rust.setSpatializer(enabled: enabled, width: width.toDouble());
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setSpatializer(enabled: enabled, width: width.toDouble());
   }
 
   /// Sets default ReplayGain fallback adjustment in dB and peak.
   Future<void> setDefaultReplayGain(double gainDb, {double peak = 1.0}) async {
     _player._ensureNotDisposed();
-    _rust.setDefaultReplayGain(gainDb: gainDb, peak: peak);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setDefaultReplayGain(gainDb: gainDb, peak: peak);
   }
 
   /// Sets ReplayGain calculation mode.
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
     _player._ensureNotDisposed();
-    _rust.setReplayGainMode(mode: mode.index);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setReplayGainMode(mode: mode.index);
   }
 
   /// Configures resilience behavior when audio playback devices change.
@@ -618,8 +583,7 @@ class PlayerAction<T> {
     MapLogger.info(
       '[ACTION:SET_PAUSE_ON_DEVICE_CHANGE] setPauseOnDeviceChange($enabled) requested',
     );
-    _rust.setPauseOnDeviceChange(enabled: enabled);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setPauseOnDeviceChange(enabled: enabled);
   }
 
   /// Updates playback buffer period size.
@@ -632,8 +596,7 @@ class PlayerAction<T> {
         'Buffer size must be non-negative',
       );
     }
-    _rust.setBufferSize(bufferSizeFrames: size);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await _rust.setBufferSize(bufferSizeFrames: size);
   }
 
   // =========================================================================
@@ -667,7 +630,6 @@ class PlayerAction<T> {
     _player.state._loadedEffectIds =
         List.unmodifiable(_rust.getLoadedEffectIds());
     _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
-    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 
   /// Triggers playback of a polyphonic sound effect and returns a live [Voice] handle.
@@ -727,7 +689,7 @@ class PlayerAction<T> {
       );
     }
 
-    final voiceId = _rust.playEffect(
+    final voiceId = await _rust.playEffect(
       id: id,
       dspRouting: dspRouting.value,
       config: rust_types.RustEffectConfig(
@@ -757,7 +719,7 @@ class PlayerAction<T> {
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
     _player._ensureNotDisposed();
-    _rust.stopEffect(
+    await _rust.stopEffect(
       voiceId: voiceId,
       fadeOutMs: BigInt.from(fadeOut.inMilliseconds),
     );
@@ -769,7 +731,7 @@ class PlayerAction<T> {
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
     _player._ensureNotDisposed();
-    _rust.stopAllEffects(fadeOutMs: BigInt.from(fadeOut.inMilliseconds));
+    await _rust.stopAllEffects(fadeOutMs: BigInt.from(fadeOut.inMilliseconds));
     _player.state._activeVoicesCount = _rust.getActiveVoicesCount().toInt();
   }
 
@@ -779,7 +741,7 @@ class PlayerAction<T> {
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(volume, 'volume', 'Voice volume must be >= 0.0');
     }
-    _rust.setEffectVolume(voiceId: voiceId, volume: volume.toDouble());
+    await _rust.setEffectVolume(voiceId: voiceId, volume: volume.toDouble());
   }
 
   /// Modulates the pitch of an active polyphonic voice in real time (`> 0.0`).
@@ -788,13 +750,13 @@ class PlayerAction<T> {
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Voice pitch must be > 0.0');
     }
-    _rust.setEffectPitch(voiceId: voiceId, pitch: pitch.toDouble());
+    await _rust.setEffectPitch(voiceId: voiceId, pitch: pitch.toDouble());
   }
 
   /// Modulates the stereo balance of an active polyphonic voice (`-1.0` to `1.0`).
   Future<void> _setVoiceBalance(int voiceId, double balance) async {
     _player._ensureNotDisposed();
-    _rust.setEffectBalance(voiceId: voiceId, balance: balance.toDouble());
+    await _rust.setEffectBalance(voiceId: voiceId, balance: balance.toDouble());
   }
 
   /// Updates the 3D position and velocity of an active polyphonic voice.
@@ -803,7 +765,7 @@ class PlayerAction<T> {
     SpatialEmitter emitter,
   ) async {
     _player._ensureNotDisposed();
-    _rust.setEffectEmitter(
+    await _rust.setEffectEmitter(
       voiceId: voiceId,
       emitter: _toRustEmitter(emitter),
     );
@@ -812,7 +774,7 @@ class PlayerAction<T> {
   /// Updates the 3D spatial position, orientation, and velocity of the global listener.
   Future<void> setListener(SpatialListener listener) async {
     _player._ensureNotDisposed();
-    _rust.setListener(listener: _toRustListener(listener));
+    await _rust.setListener(listener: _toRustListener(listener));
   }
 
   /// Calibrates the global physics of the 3D Doppler effect.
@@ -821,7 +783,7 @@ class PlayerAction<T> {
     double speedOfSound = 343.3,
   }) async {
     _player._ensureNotDisposed();
-    _rust.setDopplerParameters(
+    await _rust.setDopplerParameters(
       factor: factor,
       speedOfSound: speedOfSound,
     );
@@ -855,7 +817,7 @@ class PlayerAction<T> {
         source: out.source.value,
       );
     }).toList();
-    _rust.setOutputs(outputs: rustOutputs);
+    await _rust.setOutputs(outputs: rustOutputs);
     MapLogger.info(
       '[ACTION:SET_OUTPUTS] native rust.setOutputs() returned successfully in ${sw.elapsedMilliseconds}ms',
     );
@@ -864,7 +826,7 @@ class PlayerAction<T> {
   /// Adds an output destination to this player's active outputs.
   Future<void> addOutput(AudioOutput output) async {
     _player._ensureNotDisposed();
-    _rust.addOutput(
+    await _rust.addOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
         source: output.source.value,
@@ -875,7 +837,7 @@ class PlayerAction<T> {
   /// Removes an output destination from this player's active outputs.
   Future<void> removeOutput(AudioOutput output) async {
     _player._ensureNotDisposed();
-    _rust.removeOutput(
+    await _rust.removeOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
         source: output.source.value,
@@ -895,14 +857,12 @@ class PlayerAction<T> {
       format: format.index,
       source: source.value,
     );
-    await Future<void>.delayed(Duration.zero);
   }
 
   /// Stops live disk recording and returns an immutable [RecordingResult].
   Future<RecordingResult> stopRecording() async {
     _player._ensureNotDisposed();
     final res = await _rust.stopRecording();
-    await Future<void>.delayed(Duration.zero);
     return RecordingResult(
       path: res.path,
       duration: Duration(milliseconds: res.durationMs.toInt()),
@@ -965,7 +925,7 @@ class PlayerAction<T> {
     );
     final sw = Stopwatch()..start();
     final rustList = inputs.map(_toRustInput).toList();
-    _rust.setInputs(inputs: rustList);
+    await _rust.setInputs(inputs: rustList);
     MapLogger.info(
       '[ACTION:SET_INPUTS] native rust.setInputs() returned successfully in ${sw.elapsedMilliseconds}ms',
     );
@@ -981,13 +941,13 @@ class PlayerAction<T> {
         'Input with deviceId ${input.deviceId} is already active. Use configureInput to modify it.',
       );
     }
-    _rust.addInput(input: _toRustInput(input));
+    await _rust.addInput(input: _toRustInput(input));
   }
 
   /// Removes an audio input capture node from the player.
   Future<void> removeInput(AudioInput input) async {
     _player._ensureNotDisposed();
-    _rust.removeInput(input: _toRustInput(input));
+    await _rust.removeInput(input: _toRustInput(input));
   }
 
   /// Modulates runtime parameters of an already active audio input capture node without reopening hardware.
@@ -1005,7 +965,7 @@ class PlayerAction<T> {
         'Cannot configure input: deviceId $targetId is not currently active.',
       );
     }
-    _rust.configureInput(
+    await _rust.configureInput(
       deviceId: targetId,
       config: _toRustInputConfig(config),
     );
