@@ -815,6 +815,16 @@ class PlayerAction<T> {
   // =========================================================================
 
   /// Sets the active outputs for this player instance, replacing any existing ones.
+  ///
+  /// If [outputs] is empty (`{}`), all physical audio output devices are closed
+  /// and zero audio is rendered to hardware.
+  ///
+  /// ### Physical Endpoint Collision Resolution
+  /// If [outputs] contains both `'AUTO'` and an explicit device identifier that resolves
+  /// to the same physical OS endpoint, the native Rust audio engine deduplicates the
+  /// hardware endpoint so that only one hardware context is opened. The `'AUTO'` output
+  /// configuration takes strict precedence over the specific device configuration.
+  /// The declared set in [PlayerState.outputs] and [PlayerStream.outputs] remains intact.
   Future<void> setOutputs(Set<AudioOutput> outputs) async {
     _player._ensureNotDisposed();
     final rustOutputs = outputs.map((out) {
@@ -913,6 +923,15 @@ class PlayerAction<T> {
   }
 
   /// Sets the active audio capture inputs, reconciling them in the Rust engine.
+  ///
+  /// If [inputs] is empty (`{}`), all capture nodes are closed.
+  ///
+  /// ### Physical Endpoint Collision Resolution
+  /// If [inputs] contains both `'AUTO'` and an explicit device identifier that resolves
+  /// to the same physical OS capture endpoint, the native Rust audio engine deduplicates the
+  /// hardware endpoint so that only one capture stream is opened. The `'AUTO'` input
+  /// configuration takes strict precedence over the specific device configuration.
+  /// The declared set in [PlayerState.inputs] and [PlayerStream.inputs] remains intact.
   Future<void> setInputs(Set<AudioInput> inputs) async {
     _player._ensureNotDisposed();
     final rustList = inputs.map(_toRustInput).toList();

@@ -313,17 +313,10 @@ impl RustMiniaudioPlayer {
             .name("map-device-watcher".to_string())
             .spawn(move || {
                 let (lock, cvar) = &*watcher_trigger;
-                let initial_devs = Self::get_all_devices_sync().unwrap_or_else(|_| (Vec::new(), Vec::new()));
-                let mut last_out_devices: Vec<RustAudioDevice> = initial_devs.0;
-                let mut last_in_devices: Vec<RustAudioDevice> = initial_devs.1;
-                let mut last_default_out_id: Option<String> = last_out_devices
-                    .iter()
-                    .find(|d| d.is_default && !d.is_auto)
-                    .map(|d| d.effective_id.clone());
-                let mut last_default_in_id: Option<String> = last_in_devices
-                    .iter()
-                    .find(|d| d.is_default && !d.is_auto)
-                    .map(|d| d.effective_id.clone());
+                let mut last_out_devices: Option<Vec<RustAudioDevice>> = None;
+                let mut last_in_devices: Option<Vec<RustAudioDevice>> = None;
+                let mut last_default_out_id: Option<String> = None;
+                let mut last_default_in_id: Option<String> = None;
 
                 while watcher_running.load(Ordering::Relaxed) {
                     let mut triggered = lock.lock().unwrap();
@@ -356,8 +349,11 @@ impl RustMiniaudioPlayer {
                     // =========================================================================
                     // 1. RECONCILIATION OF OUTPUTS
                     // =========================================================================
-                    if out_devs != last_out_devices {
-                        last_out_devices = out_devs.clone();
+                    let is_first_out_check = last_out_devices.is_none();
+                    let out_devices_changed = last_out_devices.as_ref() != Some(&out_devs);
+
+                    if is_first_out_check || out_devices_changed {
+                        let prev_out_devices = last_out_devices.replace(out_devs.clone());
                         watcher_reporter.emit(RustPlayerEvent::OutputDevices(out_devs.clone()));
 
                         let cur_out_def = out_devs.iter().find(|d| d.is_default && !d.is_auto);
@@ -371,19 +367,25 @@ impl RustMiniaudioPlayer {
                         let mut outputs_mutated = false;
                         let mut device_disconnected = false;
 
-                        outputs.retain(|out| {
-                            if out.device_id != "AUTO" {
-                                let exists = out_devs.iter().any(|d| {
-                                    d.id == out.device_id || d.effective_id == out.device_id || d.name == out.device_id
-                                });
-                                if !exists {
-                                    device_disconnected = true;
-                                    outputs_mutated = true;
-                                    return false; // Evict disconnected device
+                        // Only evict non-AUTO devices that were physically present before and have disappeared
+                        if let Some(ref prev_devs) = prev_out_devices {
+                            outputs.retain(|out| {
+                                if out.device_id != "AUTO" {
+                                    let was_in_prev = prev_devs.iter().any(|d| {
+                                        d.id == out.device_id || d.effective_id == out.device_id || d.name == out.device_id
+                                    });
+                                    let is_in_cur = out_devs.iter().any(|d| {
+                                        d.id == out.device_id || d.effective_id == out.device_id || d.name == out.device_id
+                                    });
+                                    if was_in_prev && !is_in_cur {
+                                        device_disconnected = true;
+                                        outputs_mutated = true;
+                                        return false; // Evict disconnected device
+                                    }
                                 }
-                            }
-                            true
-                        });
+                                true
+                            });
+                        }
 
                         let has_auto_output = outputs.iter().any(|o| o.device_id == "AUTO");
 
@@ -413,8 +415,11 @@ impl RustMiniaudioPlayer {
                     // =========================================================================
                     // 2. RECONCILIATION OF INPUTS (Deterministic Symmetry)
                     // =========================================================================
-                    if in_devs != last_in_devices {
-                        last_in_devices = in_devs.clone();
+                    let is_first_in_check = last_in_devices.is_none();
+                    let in_devices_changed = last_in_devices.as_ref() != Some(&in_devs);
+
+                    if is_first_in_check || in_devices_changed {
+                        let prev_in_devices = last_in_devices.replace(in_devs.clone());
                         watcher_reporter.emit(RustPlayerEvent::InputDevices(in_devs.clone()));
 
                         let cur_in_def = in_devs.iter().find(|d| d.is_default && !d.is_auto);
@@ -427,18 +432,24 @@ impl RustMiniaudioPlayer {
                         let mut inputs = ply.input_manager.current_inputs();
                         let mut inputs_mutated = false;
 
-                        inputs.retain(|inp| {
-                            if inp.device_id != "AUTO" {
-                                let exists = in_devs.iter().any(|d| {
-                                    d.id == inp.device_id || d.effective_id == inp.device_id || d.name == inp.device_id
-                                });
-                                if !exists {
-                                    inputs_mutated = true;
-                                    return false; // Evict disconnected microphone
+                        // Only evict non-AUTO inputs that were physically present before and have disappeared
+                        if let Some(ref prev_devs) = prev_in_devices {
+                            inputs.retain(|inp| {
+                                if inp.device_id != "AUTO" {
+                                    let was_in_prev = prev_devs.iter().any(|d| {
+                                        d.id == inp.device_id || d.effective_id == inp.device_id || d.name == inp.device_id
+                                    });
+                                    let is_in_cur = in_devs.iter().any(|d| {
+                                        d.id == inp.device_id || d.effective_id == inp.device_id || d.name == inp.device_id
+                                    });
+                                    if was_in_prev && !is_in_cur {
+                                        inputs_mutated = true;
+                                        return false; // Evict disconnected microphone
+                                    }
                                 }
-                            }
-                            true
-                        });
+                                true
+                            });
+                        }
 
                         let has_auto_input = inputs.iter().any(|i| i.device_id == "AUTO");
 
@@ -825,6 +836,9 @@ impl RustMiniaudioPlayer {
 
         let current_outputs = self.inner.lock().unwrap().output_manager.outputs.clone();
         self.reporter.emit(RustPlayerEvent::Outputs(current_outputs));
+
+        let current_inputs = self.inner.lock().unwrap().input_manager.current_inputs();
+        self.reporter.emit(RustPlayerEvent::Inputs(current_inputs));
 
         // Asynchronously notify background device watcher to deliver initial device snapshot
         let (lock, cvar) = &*self.device_trigger;
@@ -1845,21 +1859,65 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             return Err(format!("Unified device enumeration failed with code {}", res));
         }
 
-        let mut out_devs = Vec::with_capacity(all.playback_count as usize);
+        let mut out_devs = Vec::with_capacity(all.playback_count as usize + 1);
+        let mut default_out_name = String::new();
+        let mut default_out_effective_id = String::new();
+
         if !all.playback_devices.is_null() && all.playback_count > 0 {
             let slice = unsafe { std::slice::from_raw_parts(all.playback_devices, all.playback_count as usize) };
             for d in slice {
-                out_devs.push(RustAudioDevice::from(d));
+                let dev = RustAudioDevice::from(d);
+                if dev.is_default && default_out_name.is_empty() {
+                    default_out_name = dev.name.clone();
+                    default_out_effective_id = dev.effective_id.clone();
+                }
+                out_devs.push(dev);
             }
         }
 
-        let mut in_devs = Vec::with_capacity(all.capture_count as usize);
+        if default_out_name.is_empty() && !out_devs.is_empty() {
+            default_out_name = out_devs[0].name.clone();
+            default_out_effective_id = out_devs[0].effective_id.clone();
+        }
+
+        let auto_out = RustAudioDevice {
+            id: "AUTO".to_string(),
+            effective_id: default_out_effective_id,
+            name: if default_out_name.is_empty() { "SYSTEM DEFAULT".to_string() } else { default_out_name },
+            is_default: true,
+            is_auto: true,
+        };
+        out_devs.insert(0, auto_out);
+
+        let mut in_devs = Vec::with_capacity(all.capture_count as usize + 1);
+        let mut default_in_name = String::new();
+        let mut default_in_effective_id = String::new();
+
         if !all.capture_devices.is_null() && all.capture_count > 0 {
             let slice = unsafe { std::slice::from_raw_parts(all.capture_devices, all.capture_count as usize) };
             for d in slice {
-                in_devs.push(RustAudioDevice::from(d));
+                let dev = RustAudioDevice::from(d);
+                if dev.is_default && default_in_name.is_empty() {
+                    default_in_name = dev.name.clone();
+                    default_in_effective_id = dev.effective_id.clone();
+                }
+                in_devs.push(dev);
             }
         }
+
+        if default_in_name.is_empty() && !in_devs.is_empty() {
+            default_in_name = in_devs[0].name.clone();
+            default_in_effective_id = in_devs[0].effective_id.clone();
+        }
+
+        let auto_in = RustAudioDevice {
+            id: "AUTO".to_string(),
+            effective_id: default_in_effective_id,
+            name: if default_in_name.is_empty() { "DEFAULT MICROPHONE".to_string() } else { default_in_name },
+            is_default: true,
+            is_auto: true,
+        };
+        in_devs.insert(0, auto_in);
 
         unsafe { crate::bridge::ffi::map_device_free_all(&mut all) };
         Ok((out_devs, in_devs))

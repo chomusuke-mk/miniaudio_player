@@ -191,7 +191,7 @@ class PlayerState<T> {
   /// The currently applied 10-band equalizer settings.
   Equalizer get equalizer => _equalizer;
 
-  List<AudioDevice> _globalOutputDevices = const [AudioDevice.auto];
+  List<AudioDevice> _globalOutputDevices = const [];
 
   /// Global system-wide audio output hardware endpoints (speakers, headphones, HDMI, Bluetooth)
   /// currently connected and detected by the operating system.
@@ -199,9 +199,7 @@ class PlayerState<T> {
   /// NOTE: This lists external OS hardware devices, NOT the player's active outputs.
   List<AudioDevice> get globalOutputDevices => _globalOutputDevices;
 
-  List<AudioDevice> _globalInputDevices = const [
-    AudioDevice(id: 'auto', name: 'DEFAULT MICROPHONE', isAuto: true)
-  ];
+  List<AudioDevice> _globalInputDevices = const [];
 
   /// Global system-wide audio input hardware endpoints (microphones, line-in interfaces)
   /// currently connected and detected by the operating system.
@@ -360,6 +358,13 @@ class PlayerState<T> {
   /// (e.g. default system audio output, specific hardware device, headphone CUE).
   ///
   /// Defaults to a Set containing the default system output: `{const AudioOutput()}`.
+  ///
+  /// ### Physical Endpoint Collision Resolution
+  /// If this set contains both `'AUTO'` and a specific physical device ID that resolves
+  /// to the same underlying OS endpoint, the native Rust audio engine deduplicates the
+  /// physical hardware endpoint, prioritizing `'AUTO'` and its configuration so only
+  /// one audio stream is rendered to the hardware DAC. This set retains all items as
+  /// declared by the user without modification.
   Set<AudioOutput> get outputs => _outputs;
 
   Set<AudioInput> _inputs = const {};
@@ -368,6 +373,12 @@ class PlayerState<T> {
   /// (e.g. microphones, line-in).
   ///
   /// Defaults to an empty Set `{}`.
+  ///
+  /// ### Physical Endpoint Collision Resolution
+  /// If this set contains both `'AUTO'` and a specific physical device ID that resolves
+  /// to the same underlying OS capture endpoint, the native Rust audio engine deduplicates
+  /// the physical hardware endpoint, prioritizing `'AUTO'` and its configuration. This set
+  /// retains all items as declared by the user without modification.
   Set<AudioInput> get inputs => _inputs;
 
   bool _isRecording = false;

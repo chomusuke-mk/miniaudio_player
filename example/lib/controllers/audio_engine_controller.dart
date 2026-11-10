@@ -91,8 +91,6 @@ class AudioEngineController extends ChangeNotifier {
   String _selectedPreset = 'flat';
   String _selectedReverbPreset = 'Off';
 
-  List<AudioDevice> _audioDevices = [AudioDevice.auto];
-  List<AudioDevice> _inputDevices = [];
   final List<StreamSubscription<dynamic>> _subscriptions = [];
 
   bool get isReady => _isReady;
@@ -188,8 +186,8 @@ class AudioEngineController extends ChangeNotifier {
   int get selectedBufferSize => engine.state.bufferSize;
 
   // --- Output and Input Routing Matrix ---
-  List<AudioDevice> get audioDevices => _audioDevices;
-  List<AudioDevice> get inputDevices => _inputDevices;
+  List<AudioDevice> get audioDevices => engine.state.globalOutputDevices;
+  List<AudioDevice> get inputDevices => engine.state.globalInputDevices;
   Set<AudioOutput> get outputs => engine.state.outputs;
   Set<AudioInput> get inputs => engine.state.inputs;
   final Map<String, AudioInputConfig> _inputConfigs = {};
@@ -242,13 +240,6 @@ class AudioEngineController extends ChangeNotifier {
 
   Future<void> init() async {
     _cachedTracks = await MockData.loadTracks();
-
-    try {
-      final outDevs = engine.state.globalOutputDevices;
-      if (outDevs.isNotEmpty) _audioDevices = outDevs;
-      final inDevs = engine.state.globalInputDevices;
-      if (inDevs.isNotEmpty) _inputDevices = inDevs;
-    } catch (_) {}
 
     _bindSubscriptions();
 
@@ -367,18 +358,8 @@ class AudioEngineController extends ChangeNotifier {
     _subscriptions.add(engine.stream.isDuckingActive.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.micRmsLevel.listen((_) => notifyListeners()));
     _subscriptions.add(engine.stream.pauseOnDeviceChange.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.globalOutputDevices.listen((list) {
-      if (list.isNotEmpty) {
-        _audioDevices = list;
-        notifyListeners();
-      }
-    }));
-    _subscriptions.add(engine.stream.globalInputDevices.listen((list) {
-      if (list.isNotEmpty) {
-        _inputDevices = list;
-        notifyListeners();
-      }
-    }));
+    _subscriptions.add(engine.stream.globalOutputDevices.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.globalInputDevices.listen((_) => notifyListeners()));
   }
 
   // --- Multi-Destination Output Management ---
@@ -387,9 +368,6 @@ class AudioEngineController extends ChangeNotifier {
     final exists = curOutputs.any((o) => o.deviceId == device.id);
     if (exists) {
       curOutputs.removeWhere((o) => o.deviceId == device.id);
-      if (curOutputs.isEmpty) {
-        curOutputs.add(const AudioOutput());
-      }
     } else {
       curOutputs.add(AudioOutput(deviceId: device.id, source: source));
     }

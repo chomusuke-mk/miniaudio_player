@@ -64,14 +64,26 @@ enum AudioOutputSource {
 
 /// Represents a hardware or virtual audio playback destination.
 ///
-/// When [deviceId] is null, the player routes audio to the operating system's
-/// default audio output endpoint (automatic routing).
+/// When [deviceId] is `'AUTO'`, the player routes audio dynamically to the operating system's
+/// default audio output endpoint.
 ///
 /// [source] determines which audio stream is routed to this endpoint:
 /// - [AudioOutputSource.all]: Complete master mix (playback tracks + sound effects + mic).
 /// - [AudioOutputSource.musicMix]: Pure music mix from decks, excluding SFX and mic.
 /// - [AudioOutputSource.activeTrack]: Active deck track only.
 /// - [AudioOutputSource.standbyTrack]: Standby deck track only (pre-listening / cueing).
+///
+/// ### Physical Endpoint Collision Resolution
+/// If the player's active outputs contain both `'AUTO'` and a specific physical device ID
+/// whose internal hardware endpoint matches the OS default endpoint (for example, `'AUTO'`
+/// routing to default device ID 3, alongside an explicit output targeting device ID 3 with
+/// different sources), the native Rust audio engine deduplicates the physical endpoint to
+/// prevent double-streaming audio to the same hardware DAC.
+///
+/// In this scenario, `'AUTO'` and its associated configuration (source stream) take strict
+/// precedence over specific device configurations for physical hardware rendering.
+/// The declared set in `state.outputs` and `stream.outputs` remains completely intact and
+/// unmodified, preserving all user-selected items.
 class AudioOutput {
   /// The operating system hardware device identifier, or 'AUTO' for system default.
   final String deviceId;
@@ -163,6 +175,21 @@ class AudioInputConfig {
 }
 
 /// Represents an active or requested hardware audio capture source.
+///
+/// When [deviceId] is `'AUTO'`, the player captures audio from the operating system's
+/// default microphone / input endpoint.
+///
+/// ### Physical Endpoint Collision Resolution
+/// If the player's active inputs contain both `'AUTO'` and a specific physical device ID
+/// whose internal hardware endpoint matches the OS default capture endpoint (for example,
+/// `'AUTO'` alongside an explicit input targeting the same physical microphone), the native
+/// Rust audio engine deduplicates physical endpoints to prevent duplicate hardware capture
+/// and driver lock contention.
+///
+/// In this scenario, `'AUTO'` and its associated configuration (gain, ducking parameters)
+/// take strict precedence over specific input configurations for physical capture.
+/// The declared set in `state.inputs` and `stream.inputs` remains completely intact and
+/// unmodified, preserving all user-selected items.
 class AudioInput {
   final String _deviceId;
 

@@ -209,22 +209,45 @@ impl OutputManager {
         let current_auto_def = pre_resolved_auto_id
             .or_else(|| Self::resolve_physical_output_id("AUTO"));
 
-        // 1. Evict active devices no longer present in outputs or whose AUTO resolved ID changed
-        self.active_devices.retain_mut(|dev| {
-            let still_exists = self.outputs.iter().any(|cfg| {
-                if cfg.device_id != dev.device_id || cfg.source != (dev.source as i32) {
-                    return false;
+        // Deduplicate physical hardware targets:
+        // If both AUTO and a specific device resolve to the same physical OS endpoint,
+        // prioritize AUTO and its configuration over specific/explicit devices.
+        // The user's declared `self.outputs` list remains completely intact.
+        let mut effective_configs: Vec<(RustAudioOutput, String)> = Vec::new();
+
+        // 1. Prioritize AUTO outputs first
+        for cfg in &self.outputs {
+            if cfg.device_id == "AUTO" {
+                let auto_res_id = current_auto_def.clone().unwrap_or_else(|| "AUTO".to_string());
+                if !effective_configs.iter().any(|(_, r)| r == &auto_res_id) {
+                    effective_configs.push((cfg.clone(), auto_res_id));
                 }
-                if cfg.device_id == "AUTO" {
-                    if let Some(ref def_id) = current_auto_def {
-                        return dev.resolved_id == *def_id;
+            }
+        }
+
+        // 2. Add specific physical devices whose endpoints are not already claimed by AUTO
+        for cfg in &self.outputs {
+            if cfg.device_id != "AUTO" {
+                if let Some(res_id) = Self::resolve_physical_output_id(&cfg.device_id) {
+                    let already_claimed = effective_configs.iter().any(|(c, r)| {
+                        r == &res_id || (c.device_id == "AUTO" && current_auto_def.as_ref() == Some(&res_id))
+                    });
+                    if !already_claimed {
+                        effective_configs.push((cfg.clone(), res_id));
                     }
-                    return false;
                 }
-                true
+            }
+        }
+
+        // 3. Evict active devices no longer present in effective_configs
+        self.active_devices.retain_mut(|dev| {
+            let still_active = effective_configs.iter().any(|(cfg, res_id)| {
+                *res_id == dev.resolved_id
+                    && cfg.device_id == dev.device_id
+                    && cfg.source == (dev.source as i32)
             });
 
-            if !still_exists {
+            if !still_active {
                 unsafe {
                     map_device_destroy(dev.device_ctx);
                     drop(Box::from_raw(dev.renderer_ptr as *mut OutputDeviceRenderer));
@@ -235,21 +258,12 @@ impl OutputManager {
             }
         });
 
-        // 2. Open newly requested devices
-        for cfg in &self.outputs {
-            let target_resolved_id = if cfg.device_id == "AUTO" {
-                current_auto_def.clone()
-            } else {
-                Self::resolve_physical_output_id(&cfg.device_id)
-            };
-            let Some(target_resolved_id) = target_resolved_id else {
-                continue;
-            };
-
+        // 4. Open newly requested devices
+        for (cfg, target_resolved_id) in &effective_configs {
             let already_open = self.active_devices.iter().any(|dev| {
-                dev.device_id == cfg.device_id
+                dev.resolved_id == *target_resolved_id
+                    && dev.device_id == cfg.device_id
                     && (dev.source as i32) == cfg.source
-                    && dev.resolved_id == target_resolved_id
             });
 
             if !already_open {
@@ -266,7 +280,11 @@ impl OutputManager {
                 });
                 let renderer_ptr = Box::into_raw(renderer);
 
-                let dev_c = CString::new(target_resolved_id.as_str()).ok();
+                let dev_c = if target_resolved_id == "AUTO" {
+                    None
+                } else {
+                    CString::new(target_resolved_id.as_str()).ok()
+                };
                 let dev_ptr = dev_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
 
                 let mut dev_res = 0;
@@ -287,7 +305,7 @@ impl OutputManager {
                     }
                     self.active_devices.push(ActiveOutputDevice {
                         device_id: cfg.device_id.clone(),
-                        resolved_id: target_resolved_id,
+                        resolved_id: target_resolved_id.clone(),
                         source: AudioOutputSource::from(cfg.source),
                         device_ctx: ctx,
                         renderer_ptr: renderer_ptr as *mut c_void,

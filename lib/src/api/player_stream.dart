@@ -197,9 +197,17 @@ class PlayerStream<T> {
   Stream<Equalizer> get equalizer => _equalizerController.stream;
 
   /// Reactive broadcast stream emitting this player's active output destinations.
+  ///
+  /// Note: When both `'AUTO'` and a matching physical device ID are active simultaneously,
+  /// the native Rust audio engine deduplicates the hardware endpoint (prioritizing `'AUTO'`),
+  /// while this stream continues to emit the full declared set configured by the user.
   Stream<Set<AudioOutput>> get outputs => _outputsController.stream;
 
   /// Reactive broadcast stream emitting this player's active input sources.
+  ///
+  /// Note: When both `'AUTO'` and a matching physical capture device ID are active simultaneously,
+  /// the native Rust audio engine deduplicates the hardware endpoint (prioritizing `'AUTO'`),
+  /// while this stream continues to emit the full declared set configured by the user.
   Stream<Set<AudioInput>> get inputs => _inputsController.stream;
 
   /// Reactive broadcast stream emitting updates to the global system output devices list.
@@ -208,7 +216,7 @@ class PlayerStream<T> {
   Stream<List<AudioDevice>> get globalOutputDevices =>
       _createImmediateReplayStream(
         _globalOutputDevicesController.stream,
-        () => _player?.state.globalOutputDevices ?? const [AudioDevice.auto],
+        () => _player?.state.globalOutputDevices ?? const [],
       );
 
   /// Reactive broadcast stream emitting updates to the global system input devices list.
@@ -217,7 +225,7 @@ class PlayerStream<T> {
   Stream<List<AudioDevice>> get globalInputDevices =>
       _createImmediateReplayStream(
         _globalInputDevicesController.stream,
-        () => _player?.state.globalInputDevices ?? const [AudioDevice.auto],
+        () => _player?.state.globalInputDevices ?? const [],
       );
 
   Stream<R> _createImmediateReplayStream<R>(

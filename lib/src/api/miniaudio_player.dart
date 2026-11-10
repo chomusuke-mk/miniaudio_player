@@ -459,6 +459,13 @@ class MiniaudioPlayer<T> {
   ///
   /// The optional [effectMemoryLimitMb] parameter overrides `config.effectMemoryLimitMb`
   /// when provided.
+  ///
+  /// ### Physical Endpoint Collision Resolution
+  /// If [outputs] or [inputs] contain both `'AUTO'` and a specific physical device ID
+  /// that resolves to the same underlying OS hardware endpoint, the native Rust audio engine
+  /// deduplicates the hardware endpoint, prioritizing `'AUTO'` and its configuration so only
+  /// one audio stream is rendered/captured. The declared sets in `state.outputs` and
+  /// `state.inputs` remain completely intact and preserve all items selected by the user.
   MiniaudioPlayer({
     List<AudioSource<T>> queue = const [],
     List<AudioEffect> effects = const [],
@@ -469,7 +476,7 @@ class MiniaudioPlayer<T> {
     int? bufferSize,
     bool pauseOnDeviceChange = false,
     CrossfadeConfig? crossfadeConfig,
-  }) {
+  }){
     if (!RustLib.instance.initialized) {
       throw StateError(
         'MiniaudioPlayer requires initialization before instantiation. '
@@ -489,7 +496,14 @@ class MiniaudioPlayer<T> {
         : config.resolvedMaxRamBytes;
     state._maxRamBytes = resolvedMaxRamBytes;
 
+    state._globalOutputDevices = getOutputDevicesSync();
+    state._globalInputDevices = getInputDevicesSync();
+
     final resolvedOutputs = outputs ?? {const AudioOutput()};
+    state._outputs = Set.unmodifiable(resolvedOutputs);
+
+    state._inputs = Set.unmodifiable(inputs);
+
     final rustOutputs = resolvedOutputs
         .map((out) => rust_types.RustAudioOutput(
               deviceId: out.deviceId,
@@ -934,9 +948,14 @@ class MiniaudioPlayer<T> {
   // Model Mappers
   static AudioDevice _toAudioDevice(rust_types.RustAudioDevice dev) {
     final isAuto = dev.isAuto || dev.id == 'AUTO' || dev.id == 'auto';
+    final hasResolvedName = isAuto &&
+        dev.name.isNotEmpty &&
+        dev.name != 'SYSTEM DEFAULT' &&
+        dev.name != 'DEFAULT MICROPHONE';
     return AudioDevice(
       id: isAuto ? 'AUTO' : dev.id,
-      name: dev.name,
+      name: isAuto ? 'SYSTEM DEFAULT' : dev.name,
+      resolvedName: hasResolvedName ? dev.name : null,
       isAuto: isAuto,
       effectiveId: dev.effectiveId,
     );
