@@ -34,6 +34,10 @@ name = "core_and_lifecycle_test"
 path = "../test/rust/core_and_lifecycle_test.rs"
 
 [[test]]
+name = "telemetry_event_deduplication_test"
+path = "../test/rust/telemetry_event_deduplication_test.rs"
+
+[[test]]
 name = "benchmark_test"
 path = "../test/rust/benchmark_test.rs"
 

@@ -462,6 +462,12 @@ impl RustMiniaudioPlayer {
         let monitor_thread = thread::Builder::new()
             .name("map-telemetry-monitor".to_string())
             .spawn(move || {
+                // Dedicated metadata single-emission state registers to guarantee zero per-tick parsing/serialization overhead
+                let mut last_emitted_meta_deck = -1i32;
+                let mut last_emitted_meta_version = u32::MAX;
+                let mut last_emitted_meta_flush = u64::MAX;
+                let mut last_meta_enabled = false;
+
                 while worker_running.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(16));
 
@@ -677,7 +683,20 @@ impl RustMiniaudioPlayer {
                     let is_rec = ply.output_manager.is_recording();
                     let is_ducking = ply.input_manager.is_ducking_active();
                     let mic_rms = ply.input_manager.last_rms_db();
-                    let meta_to_send = if meta_enabled.load(Ordering::Relaxed) {
+
+                    let cur_meta_enabled = meta_enabled.load(Ordering::Relaxed);
+                    let active_deck_idx = ply.music_manager.inner.active_deck.load(Ordering::Relaxed);
+                    let cur_flush = active_deck.flush_generation.load(Ordering::Acquire);
+                    let cur_meta_ver = active_deck.get_meta_bytes_version();
+
+                    let should_emit_meta = cur_meta_enabled && (
+                        !last_meta_enabled
+                        || active_deck_idx != last_emitted_meta_deck
+                        || cur_flush != last_emitted_meta_flush
+                        || cur_meta_ver != last_emitted_meta_version
+                    );
+
+                    let meta_to_send = if should_emit_meta {
                         active_deck.get_parsed_metadata()
                     } else {
                         None
@@ -726,7 +745,14 @@ impl RustMiniaudioPlayer {
                         worker_reporter.emit(RustPlayerEvent::MicRmsLevel(mic_rms));
                     }
                     if let Some(meta) = meta_to_send {
+                        last_emitted_meta_deck = active_deck_idx;
+                        last_emitted_meta_version = cur_meta_ver;
+                        last_emitted_meta_flush = cur_flush;
+                        last_meta_enabled = true;
                         worker_reporter.emit(RustPlayerEvent::AudioMetadata(meta));
+                    } else if !cur_meta_enabled && last_meta_enabled {
+                        last_meta_enabled = false;
+                        last_emitted_meta_version = u32::MAX;
                     }
                     worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
                         gain_db: rg.gain_db,

@@ -1,17 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
 import '../common/compact_slider_overlay.dart';
+import '../common/metadata_inspector_modal.dart';
 import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
 import '../painters/waveform_painter.dart';
 
 class PlaybackEngineCard extends StatelessWidget {
   final AudioEngineController controller;
+  final AudioAnalyzerController? analyzerController;
 
-  const PlaybackEngineCard({super.key, required this.controller});
+  const PlaybackEngineCard({
+    super.key,
+    required this.controller,
+    this.analyzerController,
+  });
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -32,7 +39,10 @@ class PlaybackEngineCard extends StatelessWidget {
     final engine = controller.engine;
 
     return ListenableBuilder(
-      listenable: controller,
+      listenable: Listenable.merge([
+        controller,
+        ?analyzerController,
+      ]),
       builder: (context, _) {
         final track = controller.selectedTrack;
 
@@ -63,65 +73,149 @@ class PlaybackEngineCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Current Track Display (No dropdown, clean active track banner)
+              // 1. Current Track Display (No dropdown, clean active track banner with reactive thumbnail & metadata inspector)
               StreamBuilder<AudioSource<AudioTrack>?>(
                 stream: engine.stream.currentItem,
                 initialData: engine.state.currentItem,
                 builder: (context, currentSnap) {
                   final activeTrack = currentSnap.data?.data ?? track;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0A0F1D),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: StudioColors.cardBorder, width: 1.0),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          activeTrack?.icon ?? Icons.audiotrack,
-                          color: activeTrack?.iconColor ?? StudioColors.accentCyan,
-                          size: 22,
+                  return StreamBuilder<AudioMetadata?>(
+                    stream: engine.stream.metadata,
+                    initialData: engine.state.metadata,
+                    builder: (context, metaSnap) {
+                      final dynamicMeta = metaSnap.data ?? engine.state.metadata;
+                      final analysis = analyzerController?.getResultForTrack(activeTrack);
+
+                      final frontCover = dynamicMeta?.frontCover ?? analysis?.metadata?.frontCover;
+
+                      final displayTitle = (dynamicMeta?.title != null && dynamicMeta!.title!.isNotEmpty)
+                          ? dynamicMeta.title!
+                          : (analysis?.metadata?.title != null && analysis!.metadata!.title!.isNotEmpty)
+                              ? analysis.metadata!.title!
+                              : (activeTrack?.title ?? 'No track selected');
+
+                      final displayArtist = (dynamicMeta?.artist != null && dynamicMeta!.artist!.isNotEmpty)
+                          ? dynamicMeta.artist!
+                          : (analysis?.metadata?.artist != null && analysis!.metadata!.artist!.isNotEmpty)
+                              ? analysis.metadata!.artist!
+                              : (activeTrack?.artist ?? 'Select a track from the queue');
+
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0A0F1D),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: StudioColors.cardBorder, width: 1.0),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                activeTrack?.title ?? 'No track selected',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Thumbnail / Embedded Artwork or Fallback Icon
+                            Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF080D1A),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: activeTrack != null
+                                      ? StudioColors.accentCyan.withValues(alpha: 0.6)
+                                      : StudioColors.cardBorder,
+                                  width: 0.8,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                activeTrack != null
-                                    ? '${activeTrack.artist ?? "Unknown"} • ${activeTrack.displayType}'
-                                    : 'Select a track from the queue',
-                                style: const TextStyle(
-                                  fontSize: 9.5,
-                                  color: StudioColors.textSecondary,
+                              child: frontCover != null && frontCover.bytes.isNotEmpty
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(5),
+                                      child: Image.memory(
+                                        frontCover.bytes,
+                                        width: 38,
+                                        height: 38,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    )
+                                  : Icon(
+                                      activeTrack?.icon ?? Icons.audiotrack,
+                                      color: activeTrack?.iconColor ?? StudioColors.accentCyan,
+                                      size: 20,
+                                    ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    displayTitle,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    displayArtist,
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      color: StudioColors.textSecondary,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Trailing Actions: Metadata Inspector & Resource Badge neatly aligned
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                if (activeTrack != null) ...[
+                                  SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: IconButton.filledTonal(
+                                      icon: const Icon(Icons.info_outline, size: 15),
+                                      tooltip: 'Inspect Metadata (Static vs Dynamic)',
+                                      visualDensity: VisualDensity.compact,
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: StudioColors.accentCyan.withValues(alpha: 0.15),
+                                        foregroundColor: StudioColors.accentCyan,
+                                        padding: EdgeInsets.zero,
+                                      ),
+                                      onPressed: () {
+                                        showDialog(
+                                          context: context,
+                                          builder: (_) => MetadataInspectorModal(
+                                            track: activeTrack,
+                                            staticMetadata: analysis?.metadata,
+                                            dynamicMetadata: engine.state.metadata,
+                                            staticAudioInfo: analysis?.audioInfo,
+                                            dynamicAudioInfo: engine.state.audioInfo,
+                                            staticReplayGain: analysis?.replayGain,
+                                            dynamicReplayGain: engine.state.replayGain,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                StudioBadge(
+                                  label: activeTrack?.resourceBadge ?? 'EMPTY',
+                                  color: activeTrack?.iconColor ?? StudioColors.accentCyan,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: StudioBadge(
-                            label: activeTrack?.resourceBadge ?? 'EMPTY',
-                            color: activeTrack?.iconColor ?? StudioColors.accentCyan,
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   );
                 },
               ),

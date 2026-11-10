@@ -27,7 +27,10 @@ class StudioConsoleView extends StatelessWidget {
   Widget build(BuildContext context) {
     return ResponsiveGrid(
       leftColumn: [
-        PlaybackEngineCard(controller: playerController),
+        PlaybackEngineCard(
+          controller: playerController,
+          analyzerController: analyzerController,
+        ),
         PlaylistQueueCard(
           controller: playerController,
           analyzerController: analyzerController,

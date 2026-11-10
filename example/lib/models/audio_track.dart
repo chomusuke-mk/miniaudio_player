@@ -116,7 +116,7 @@ abstract final class TrackFormatInfo {
       return 'ICY STREAM LIVE';
     }
     if (track.isGenerated) {
-      return 'PCM SINTETIZADO';
+      return 'SYNTHESIZED PCM';
     }
     return 'HI-RES STEREO';
   }

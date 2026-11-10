@@ -339,41 +339,66 @@ class HardwareRoutingCard extends StatelessWidget {
                               style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
                             ),
                       trailing: isSelected
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0F172A),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: StudioColors.cardBorder),
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<AudioOutputSource>(
-                                  value: matchingOutput?.source ?? AudioOutputSource.all,
-                                  icon: const Icon(Icons.arrow_drop_down, size: 14),
-                                  dropdownColor: const Color(0xFF0F172A),
-                                  items: const [
-                                    DropdownMenuItem(
-                                      value: AudioOutputSource.all,
-                                      child: Text('All Mix', style: TextStyle(fontSize: 9.5)),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: AudioOutputSource.musicMix,
-                                      child: Text('Music Only', style: TextStyle(fontSize: 9.5)),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: AudioOutputSource.activeTrack,
-                                      child: Text('Active Deck', style: TextStyle(fontSize: 9.5)),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: AudioOutputSource.standbyTrack,
-                                      child: Text('Cue Deck', style: TextStyle(fontSize: 9.5)),
-                                    ),
-                                  ],
-                                  onChanged: (src) {
-                                    if (src != null) {
-                                      controller.setOutputSource(dev.id, src);
-                                    }
-                                  },
+                          ? SizedBox(
+                              width: 96,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0F172A),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: StudioColors.cardBorder),
+                                ),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<AudioOutputSource>(
+                                    value: matchingOutput?.source ?? AudioOutputSource.all,
+                                    icon: const Icon(Icons.arrow_drop_down, size: 14),
+                                    dropdownColor: const Color(0xFF0F172A),
+                                    isExpanded: true,
+                                    isDense: true,
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: AudioOutputSource.all,
+                                        child: Text(
+                                          'All Mix',
+                                          style: TextStyle(fontSize: 9.5),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: AudioOutputSource.musicMix,
+                                        child: Text(
+                                          'Music Only',
+                                          style: TextStyle(fontSize: 9.5),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: AudioOutputSource.activeTrack,
+                                        child: Text(
+                                          'Active Deck',
+                                          style: TextStyle(fontSize: 9.5),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: AudioOutputSource.standbyTrack,
+                                        child: Text(
+                                          'Cue Deck',
+                                          style: TextStyle(fontSize: 9.5),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                    onChanged: (src) {
+                                      if (src != null) {
+                                        controller.setOutputSource(dev.id, src);
+                                      }
+                                    },
+                                  ),
                                 ),
                               ),
                             )

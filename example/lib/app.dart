@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'controllers/audio_analyzer_controller.dart';
 import 'controllers/audio_engine_controller.dart';
-import 'models/audio_track.dart';
 import 'theme/studio_colors.dart';
 import 'theme/studio_theme.dart';
 import 'views/ingest_matrix_view.dart';
@@ -36,8 +35,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   ViewMode _currentMode = ViewMode.studioConsole;
 
-  AudioTrack? _lastAnalyzedTrack;
-
   @override
   void initState() {
     super.initState();
@@ -62,13 +59,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() {});
     }
     final curTrack = _playerController.selectedTrack;
-    if (curTrack != null && curTrack.id != _lastAnalyzedTrack?.id) {
-      _lastAnalyzedTrack = curTrack;
-      _analyzerController.setCurrentTrack(curTrack, _playerController.engine);
-      if (curTrack.canAnalyze &&
-          !_analyzerController.hasResultForTrack(curTrack)) {
-        _analyzerController.analyze(curTrack);
-      }
+    if (curTrack != null &&
+        curTrack.canAnalyze &&
+        !_analyzerController.hasResultForTrack(curTrack) &&
+        !_analyzerController.isAnalyzing) {
+      _analyzerController.analyze(curTrack, engine: _playerController.engine);
     }
   }
 
@@ -76,13 +71,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _playerController.init();
     if (mounted) {
       final curTrack = _playerController.selectedTrack;
-      if (curTrack != null) {
-        _lastAnalyzedTrack = curTrack;
-        _analyzerController.setCurrentTrack(curTrack, _playerController.engine);
-        if (curTrack.canAnalyze &&
-            !_analyzerController.hasResultForTrack(curTrack)) {
-          _analyzerController.analyze(curTrack);
-        }
+      if (curTrack != null &&
+          curTrack.canAnalyze &&
+          !_analyzerController.hasResultForTrack(curTrack)) {
+        _analyzerController.analyze(curTrack, engine: _playerController.engine);
       }
       setState(() {});
     }

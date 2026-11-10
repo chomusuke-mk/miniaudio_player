@@ -31,13 +31,6 @@ class PlaylistQueueCard extends StatelessWidget {
         final tracks = controller.availableTracks;
         final xfade = controller.crossfadeConfig;
 
-        // Auto-analyze all tracks in queue if not already analyzed
-        if (analyzerController != null && tracks.isNotEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            analyzerController!.analyzeAll(tracks);
-          });
-        }
-
         return StudioCard(
           icon: Icons.queue_music,
           title: 'DYNAMIC PLAYLIST QUEUE & TRANSITIONS',
@@ -77,7 +70,7 @@ class PlaylistQueueCard extends StatelessWidget {
                       onTrackAdded: (t) async {
                         await controller.addTrack(t);
                         if (analyzerController != null) {
-                          analyzerController!.analyze(t);
+                          analyzerController!.analyze(t, engine: controller.engine);
                         }
                       },
                     ),
@@ -217,14 +210,18 @@ class PlaylistQueueCard extends StatelessWidget {
                                   : 'track_${track.id}_$index';
 
                               final analysis = analyzerController?.getResultForTrack(track);
-                              final frontCover = analysis?.metadata?.frontCover;
-                              final displayTitle = analysis?.metadata?.title != null &&
-                                      analysis!.metadata!.title!.isNotEmpty
-                                  ? analysis.metadata!.title!
-                                  : track.title;
-                              final displayArtist = analysis?.metadata?.artist ??
-                                  track.artist ??
-                                  'Audio Track';
+                              final dynamicMeta = isPlayingThis ? controller.engine.state.metadata : null;
+                              final frontCover = dynamicMeta?.frontCover ?? analysis?.metadata?.frontCover;
+                              final displayTitle = (dynamicMeta?.title != null && dynamicMeta!.title!.isNotEmpty)
+                                  ? dynamicMeta.title!
+                                  : (analysis?.metadata?.title != null && analysis!.metadata!.title!.isNotEmpty)
+                                      ? analysis.metadata!.title!
+                                      : track.title;
+                              final displayArtist = (dynamicMeta?.artist != null && dynamicMeta!.artist!.isNotEmpty)
+                                  ? dynamicMeta.artist!
+                                  : (analysis?.metadata?.artist != null && analysis!.metadata!.artist!.isNotEmpty)
+                                      ? analysis.metadata!.artist!
+                                      : (track.artist ?? 'Audio Track');
 
                               return Padding(
                                 key: ValueKey(itemKey),
@@ -338,7 +335,7 @@ class PlaylistQueueCard extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     subtitle: Text(
-                                      '$displayArtist • ${track.displayType}',
+                                      displayArtist,
                                       style: const TextStyle(
                                         fontSize: 9,
                                         color: StudioColors.textSecondary,

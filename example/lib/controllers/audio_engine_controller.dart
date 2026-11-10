@@ -73,11 +73,17 @@ class AudioEngineController extends ChangeNotifier {
   double get defaultReplayGain => engine.state.defaultReplayGain;
 
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
+    MapLogger.info(
+      '[REPLAY_GAIN:MODE] Operating mode changed to: ${mode.name.toUpperCase()}',
+    );
     await engine.action.setReplayGainMode(mode);
     notifyListeners();
   }
 
   Future<void> setDefaultReplayGain(double gainDb) async {
+    MapLogger.info(
+      '[REPLAY_GAIN:DEFAULT] Fallback target gain set to: $gainDb dB',
+    );
     await engine.action.setDefaultReplayGain(gainDb);
     notifyListeners();
   }
@@ -715,12 +721,18 @@ class AudioEngineController extends ChangeNotifier {
   Future<void> setVisualizerEnabled(bool enabled) async {
     _visualizerEnabledOverride = enabled;
     notifyListeners();
+    MapLogger.debug(
+      '[VISUALIZER:STATE] Real-time 10-band FFT visualizer: ${enabled ? "ENABLED" : "DISABLED"}',
+    );
     await engine.action.setVisualizerEnabled(enabled);
   }
 
   Future<void> setMetadataEnabled(bool enabled) async {
     _metadataEnabledOverride = enabled;
     notifyListeners();
+    MapLogger.info(
+      '[METADATA:STREAM] Real-time live stream metadata parser: ${enabled ? "ENABLED" : "SUSPENDED"}',
+    );
     await engine.action.setMetadataEnabled(enabled);
   }
 

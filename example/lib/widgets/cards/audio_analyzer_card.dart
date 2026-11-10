@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:miniaudio_player/miniaudio_player.dart';
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
 import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
 
+/// Card hosting the ITU-R BS.1770-4 / EBU R128 Unified Audio Analyzer,
+/// native ReplayGain operating modes with comprehensive English descriptions,
+/// and live streaming metadata extraction controls.
 class AudioAnalyzerCard extends StatelessWidget {
   final AudioEngineController playerController;
   final AudioAnalyzerController analyzerController;
@@ -15,6 +19,17 @@ class AudioAnalyzerCard extends StatelessWidget {
     required this.analyzerController,
   });
 
+  String _getReplayGainModeDescription(ReplayGainMode mode) {
+    switch (mode) {
+      case ReplayGainMode.track:
+        return 'Automatically applies individual ITU-R BS.1770-4 / EBU R128 loudness normalization metadata per track. Falling back to defaultReplayGain if not analyzed.';
+      case ReplayGainMode.forced:
+        return 'Enforces a uniform global target gain adjustment across all tracks indiscriminately, overriding individual per-track acoustic metadata.';
+      case ReplayGainMode.disabled:
+        return 'Completely bypasses ReplayGain loudness normalization. Audio plays at native unity gain (0.0 dB) with raw container levels.';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -23,6 +38,10 @@ class AudioAnalyzerCard extends StatelessWidget {
         final track = playerController.selectedTrack;
         final canAnalyze = track != null && track.canAnalyze;
         final result = analyzerController.getResultForTrack(track);
+        final isTrackRgActive = analyzerController.isReplayGainActiveForTrack(
+          track,
+          playerController.engine,
+        );
 
         final badge = !canAnalyze
             ? const StudioBadge(
@@ -96,7 +115,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                                 : (analyzerController.isAnalyzing ? '...' : '--'))
                             : 'N/A',
                         subtext: canAnalyze
-                            ? 'Target: -14 LUFS (EBU R128)'
+                            ? 'Target: -18.0 LUFS (EBU R128)'
                             : 'Not available (${track?.resourceBadge ?? "Stream"})',
                         color: canAnalyze
                             ? StudioColors.accentCyan
@@ -136,8 +155,8 @@ class AudioAnalyzerCard extends StatelessWidget {
                                 : (analyzerController.isAnalyzing ? '...' : '--'))
                             : 'N/A',
                         subtext: canAnalyze
-                            ? (analyzerController.replayGainActive
-                                ? 'Compensation active'
+                            ? (isTrackRgActive
+                                ? 'Compensation applied'
                                 : 'Bypass mode')
                             : 'Not available (${track?.resourceBadge ?? "Stream"})',
                         color: canAnalyze
@@ -174,182 +193,302 @@ class AudioAnalyzerCard extends StatelessWidget {
               ),
               const SizedBox(height: 14),
 
-              // ReplayGain & Anti-Clipping Control Panels
-              Opacity(
-                opacity: canAnalyze ? 1.0 : 0.45,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isNarrow = constraints.maxWidth < 460;
+              // ReplayGain Operating Mode Panel with English Descriptions
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF070B14),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: StudioColors.cardBorder),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, modeConstraints) {
+                        final isNarrowMode = modeConstraints.maxWidth < 420;
+                        Widget buildDropdown({required bool isExpanded}) {
+                          return DropdownButtonHideUnderline(
+                            child: DropdownButton<ReplayGainMode>(
+                              value: playerController.replayGainMode,
+                              dropdownColor: const Color(0xFF0E1424),
+                              borderRadius: BorderRadius.circular(8),
+                              isDense: true,
+                              isExpanded: isExpanded,
+                              items: ReplayGainMode.values.map((mode) {
+                                final label = switch (mode) {
+                                  ReplayGainMode.track => 'TRACK (AUTO)',
+                                  ReplayGainMode.forced => 'FORCED UNIFORM',
+                                  ReplayGainMode.disabled => 'DISABLED (BYPASS)',
+                                };
+                                return DropdownMenuItem(
+                                  value: mode,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      label,
+                                      style: const TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (newMode) {
+                                if (newMode != null) {
+                                  playerController.setReplayGainMode(newMode);
+                                }
+                              },
+                            ),
+                          );
+                        }
 
-                    final replayGainSubtitle = !canAnalyze
-                        ? 'Disabled for live / remote streams'
-                        : (result?.replayGain != null
-                            ? (analyzerController.replayGainActive
-                                ? 'Active compensation: ${result!.replayGain!.gainDb.toStringAsFixed(1)} dB'
-                                : 'Bypass mode without compensation')
-                            : 'Analysis pending for this track');
+                        if (isNarrowMode) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.tune,
+                                    size: 16,
+                                    color: StudioColors.accentPurple,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'REPLAYGAIN NORMALIZATION',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                        letterSpacing: 0.4,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              buildDropdown(isExpanded: true),
+                            ],
+                          );
+                        }
 
-                    final replayGainCard = _buildControlPanel(
-                      icon: Icons.tune,
-                      title: 'NATIVE REPLAYGAIN NORMALIZATION',
-                      subtitle: replayGainSubtitle,
-                      isActive: canAnalyze && analyzerController.replayGainActive,
-                      activeColor: StudioColors.accentPurple,
-                      statusText: !canAnalyze
-                          ? 'DISABLED'
-                          : (analyzerController.replayGainActive
-                              ? 'ACTIVE (EBU R128)'
-                              : 'BYPASSED'),
-                      onToggle: canAnalyze
-                          ? () {
-                              analyzerController.setReplayGainActive(
-                                !analyzerController.replayGainActive,
-                                playerController.engine,
-                              );
-                            }
-                          : () {},
-                    );
+                        return Row(
+                          children: [
+                            const Icon(
+                              Icons.tune,
+                              size: 16,
+                              color: StudioColors.accentPurple,
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'REPLAYGAIN NORMALIZATION',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: 0.5,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 180),
+                              child: buildDropdown(isExpanded: true),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _getReplayGainModeDescription(playerController.replayGainMode),
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        color: StudioColors.textSecondary,
+                        height: 1.35,
+                      ),
+                    ),
+                    const Divider(height: 16, color: StudioColors.cardBorder),
 
-                    final antiClippingCard = _buildControlPanel(
-                      icon: Icons.shield,
-                      title: 'ANTI-CLIPPING TRUE-PEAK GUARD',
-                      subtitle: !canAnalyze
-                          ? 'Disabled for live / remote streams'
-                          : (analyzerController.preventClipping
-                              ? 'Ceiling -1.0 dBFS • Safe DAC'
-                              : 'Disabled (Risk of inter-sample clipping)'),
-                      isActive: canAnalyze && analyzerController.preventClipping,
-                      activeColor: StudioColors.accentEmerald,
-                      statusText: !canAnalyze
-                          ? 'DISABLED'
-                          : (analyzerController.preventClipping
-                              ? 'PROTECTED'
-                              : 'OFF'),
-                      onToggle: canAnalyze
-                          ? () {
-                              analyzerController.setPreventClipping(
-                                !analyzerController.preventClipping,
-                                playerController.engine,
-                              );
-                            }
-                          : () {},
-                    );
-
-                    if (isNarrow) {
-                      return Column(
-                        children: [
-                          replayGainCard,
-                          const SizedBox(height: 8),
-                          antiClippingCard,
-                        ],
-                      );
-                    }
-
-                    return Row(
+                    // Track-level ReplayGain toggle and Re-Analyze Button
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        Expanded(child: replayGainCard),
-                        const SizedBox(width: 8),
-                        Expanded(child: antiClippingCard),
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: [
+                            const Text(
+                              'Track Normalization: ',
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                                color: StudioColors.textMuted,
+                              ),
+                            ),
+                            InkWell(
+                              onTap: canAnalyze
+                                  ? () => analyzerController.toggleReplayGainForTrack(
+                                        track,
+                                        playerController.engine,
+                                      )
+                                  : null,
+                              borderRadius: BorderRadius.circular(4),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isTrackRgActive
+                                      ? StudioColors.accentPurple.withValues(alpha: 0.2)
+                                      : StudioColors.cardBorder,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: isTrackRgActive
+                                        ? StudioColors.accentPurple
+                                        : Colors.transparent,
+                                  ),
+                                ),
+                                child: Text(
+                                  isTrackRgActive ? 'ACTIVE' : 'BYPASSED',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    color: isTrackRgActive
+                                        ? StudioColors.accentPurple
+                                        : StudioColors.textMuted,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (canAnalyze)
+                          TextButton.icon(
+                            icon: const Icon(Icons.refresh, size: 14),
+                            label: const Text(
+                              'RE-ANALYZE TRACK',
+                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700),
+                            ),
+                            style: TextButton.styleFrom(
+                              foregroundColor: StudioColors.accentCyan,
+                              backgroundColor: StudioColors.accentCyan.withValues(alpha: 0.1),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: analyzerController.isAnalyzing
+                                ? null
+                                : () => analyzerController.analyze(
+                                      track,
+                                      engine: playerController.engine,
+                                    ),
+                          ),
                       ],
-                    );
-                  },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Real-Time Dynamic Stream Metadata Extraction Switch
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF070B14),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: StudioColors.cardBorder),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.sensors,
+                      size: 18,
+                      color: playerController.metadataEnabled
+                          ? StudioColors.accentEmerald
+                          : StudioColors.textMuted,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 6,
+                            runSpacing: 3,
+                            children: [
+                              const Text(
+                                'REAL-TIME STREAM METADATA',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: playerController.metadataEnabled
+                                      ? StudioColors.accentEmerald.withValues(alpha: 0.2)
+                                      : StudioColors.cardBorder,
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: Text(
+                                  playerController.metadataEnabled
+                                      ? 'STREAMING PARSER: ACTIVE'
+                                      : 'PARSER: SUSPENDED',
+                                  style: TextStyle(
+                                    fontSize: 7.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: playerController.metadataEnabled
+                                        ? StudioColors.accentEmerald
+                                        : StudioColors.textMuted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'Parses live ICY radio headers and dynamic ID3v2 tags during playback',
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: StudioColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: playerController.metadataEnabled,
+                      activeThumbColor: StudioColors.accentEmerald,
+                      onChanged: (enabled) {
+                        playerController.setMetadataEnabled(enabled);
+                      },
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
         );
       },
-    );
-  }
-
-  Widget _buildControlPanel({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool isActive,
-    required Color activeColor,
-    required String statusText,
-    required VoidCallback onToggle,
-  }) {
-    return InkWell(
-      onTap: onToggle,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: isActive
-              ? activeColor.withValues(alpha: 0.1)
-              : const Color(0xFF0A0F1D),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isActive ? activeColor : StudioColors.cardBorder,
-            width: isActive ? 1.4 : 1.0,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isActive
-                    ? activeColor.withValues(alpha: 0.2)
-                    : StudioColors.backgroundDark,
-              ),
-              child: Icon(
-                icon,
-                size: 16,
-                color: isActive ? activeColor : StudioColors.textMuted,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      color: isActive ? Colors.white : StudioColors.textSecondary,
-                      letterSpacing: 0.3,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      fontSize: 8.5,
-                      color: StudioColors.textMuted,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              decoration: BoxDecoration(
-                color: isActive ? activeColor : StudioColors.cardBorder,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                statusText,
-                style: TextStyle(
-                  fontSize: 8,
-                  fontWeight: FontWeight.w900,
-                  color: isActive ? Colors.black : StudioColors.textMuted,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

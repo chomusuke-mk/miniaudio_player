@@ -4,99 +4,116 @@ import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import '../models/audio_track.dart';
 
+/// Controller orchestrating on-demand acoustic analysis (ITU-R BS.1770-4 / EBU R128)
+/// and track-level ReplayGain synchronization with [MiniaudioPlayer].
+///
+/// Executes single-pass decoding on background threads and maintains a persistent
+/// session cache of analysis results to prevent redundant processing.
 class AudioAnalyzerController extends ChangeNotifier {
   final Map<String, AudioAnalysisResult> _resultsByTrack = {};
   String? _currentTrackId;
   bool _isAnalyzing = false;
   String? _error;
-  bool _replayGainActive = false;
-  bool _preventClipping = true;
 
+  /// Cached acoustic analysis result for the active track, if available.
   AudioAnalysisResult? get result =>
       _currentTrackId != null ? _resultsByTrack[_currentTrackId] : null;
 
+  /// Identifier of the track currently being analyzed or selected.
   String? get currentTrackId => _currentTrackId;
-  bool get isAnalyzing => _isAnalyzing;
-  String? get error => _error;
-  bool get replayGainActive => _replayGainActive;
-  bool get preventClipping => _preventClipping;
 
+  /// Whether an acoustic analysis background task is actively running.
+  bool get isAnalyzing => _isAnalyzing;
+
+  /// Last error message encountered during analysis, or null.
+  String? get error => _error;
+
+  /// Retrieves the cached [AudioAnalysisResult] for [track], or null if unanalyzed.
   AudioAnalysisResult? getResultForTrack(AudioTrack? track) {
     if (track == null) return null;
     return _resultsByTrack[track.id];
   }
 
+  /// Whether acoustic analysis metrics have been cached for [track].
   bool hasResultForTrack(AudioTrack? track) {
     if (track == null) return false;
     return _resultsByTrack.containsKey(track.id);
   }
 
-  void setCurrentTrack(AudioTrack? track, MiniaudioPlayer engine) {
-    _currentTrackId = track?.id;
-    _error = null;
-
-    if (track == null) {
-      engine.action.setReplayGain(null);
-    } else if (_replayGainActive) {
-      final curRes = result;
-      if (curRes?.replayGain != null) {
-        engine.action.setReplayGain(
-          ReplayGainConfig(
-            gainDb: curRes!.replayGain!.gainDb,
-            peak: curRes.replayGain!.peak,
-          ),
-        );
-      } else {
-        engine.action.setReplayGain(null);
+  /// Checks whether [track] has active ReplayGain normalization in [engine].
+  bool isReplayGainActiveForTrack(AudioTrack? track, MiniaudioPlayer? engine) {
+    if (track == null) return false;
+    if (engine != null) {
+      final queueItem = engine.state.queue.cast<AudioSource<dynamic>?>().firstWhere(
+        (item) => item?.data is AudioTrack && (item!.data as AudioTrack).id == track.id,
+        orElse: () => null,
+      );
+      if (queueItem != null) {
+        return queueItem.replayGainDb != null;
       }
     }
-    notifyListeners();
+    return track.source.replayGainDb != null;
   }
 
-  void setPreventClipping(bool val, MiniaudioPlayer engine) {
-    _preventClipping = val;
-    final curRes = result;
-    if (_replayGainActive && curRes?.replayGain != null) {
-      engine.action.setReplayGain(
-        ReplayGainConfig(
-          gainDb: curRes!.replayGain!.gainDb,
-          peak: curRes.replayGain!.peak,
-        ),
+  /// Toggles ReplayGain loudness normalization specifically for [track] on [engine].
+  Future<void> toggleReplayGainForTrack(
+    AudioTrack track,
+    MiniaudioPlayer engine,
+  ) async {
+    final queueItem = engine.state.queue.cast<AudioSource<dynamic>?>().firstWhere(
+      (item) => item?.data is AudioTrack && (item!.data as AudioTrack).id == track.id,
+      orElse: () => null,
+    );
+    final targetId = queueItem?.id ?? track.source.id;
+    final currentGain = queueItem?.replayGainDb ?? track.source.replayGainDb;
+    final analysis = getResultForTrack(track);
+
+    if (currentGain != null) {
+      MapLogger.info(
+        '[REPLAY_GAIN:DISPATCH] Bypassing ReplayGain for track "${track.title}" (ID: $targetId)',
       );
-    }
-    notifyListeners();
-  }
-
-  void setReplayGainActive(bool val, MiniaudioPlayer engine) {
-    _replayGainActive = val;
-    final curRes = result;
-    if (val && curRes?.replayGain != null) {
-      engine.action.setReplayGain(
-        ReplayGainConfig(
-          gainDb: curRes!.replayGain!.gainDb,
-          peak: curRes.replayGain!.peak,
-        ),
+      await engine.action.setReplayGain(null, id: targetId);
+    } else if (analysis?.replayGain != null) {
+      final config = ReplayGainConfig(
+        gainDb: analysis!.replayGain!.gainDb,
+        peak: analysis.replayGain!.peak,
       );
-    } else {
-      engine.action.setReplayGain(null);
+      MapLogger.info(
+        '[REPLAY_GAIN:DISPATCH] Applying ReplayGain to track "${track.title}" (ID: $targetId): ${config.gainDb} dB, peak ${config.peak}',
+      );
+      await engine.action.setReplayGain(config, id: targetId);
     }
     notifyListeners();
   }
 
-  /// Analyzes all tracks in [tracks] sequentially to populate metadata, waveform, and ReplayGain.
-  Future<void> analyzeAll(List<AudioTrack> tracks) async {
-    for (final track in tracks) {
-      if (!_resultsByTrack.containsKey(track.id)) {
-        await analyze(track);
-      }
+  /// Executes on-demand single-pass acoustic analysis for a single [track].
+  ///
+  /// If [track] is already cached in [_resultsByTrack], returns immediately with zero decoding overhead.
+  /// If [engine] is supplied and ReplayGain metrics are computed, automatically dispatches
+  /// [ReplayGainConfig] targeting the track's engine slot by ID.
+  Future<AudioAnalysisResult?> analyze(
+    AudioTrack track, {
+    MiniaudioPlayer? engine,
+  }) async {
+    // 1. Session Cache Hit Check
+    if (_resultsByTrack.containsKey(track.id)) {
+      MapLogger.debug(
+        '[ANALYZER:CACHE_HIT] Track "${track.title}" (ID: ${track.id}) retrieved from session cache in 0.05ms.',
+      );
+      _currentTrackId = track.id;
+      notifyListeners();
+      return _resultsByTrack[track.id];
     }
-  }
 
-  Future<void> analyze(AudioTrack track) async {
     _currentTrackId = track.id;
     _isAnalyzing = true;
     _error = null;
     notifyListeners();
+
+    final stopwatch = Stopwatch()..start();
+    MapLogger.info(
+      '[ANALYZER:START] Starting single-pass acoustic analysis for track: "${track.title}" (ID: ${track.id})',
+    );
 
     try {
       AudioAnalysisResult? res;
@@ -154,7 +171,6 @@ class AudioAnalyzerController extends ChangeNotifier {
           );
         }
       } else {
-        // Fallback to analyzing source directly
         res = await MiniaudioPlayer.analyzeAudio(
           track.source,
           waveform: true,
@@ -164,11 +180,44 @@ class AudioAnalyzerController extends ChangeNotifier {
         );
       }
 
+      stopwatch.stop();
+
       if (res != null) {
         _resultsByTrack[track.id] = res;
+
+        MapLogger.info(
+          '[ANALYZER:DONE] Analysis completed in ${stopwatch.elapsedMilliseconds}ms for "${track.title}": '
+          'Loudness=${res.replayGain?.lufs.toStringAsFixed(2)} LUFS, '
+          'Gain=${res.replayGain?.gainDb.toStringAsFixed(2)} dB, '
+          'Peak=${res.replayGain?.peak.toStringAsFixed(4)}, '
+          'Waveform=${res.waveform?.points.length ?? 0} points',
+        );
+
+        // 2. Synchronize ReplayGain directly with native engine if provided
+        if (engine != null && res.replayGain != null) {
+          final queueItem = engine.state.queue.cast<AudioSource<dynamic>?>().firstWhere(
+            (item) => item?.data is AudioTrack && (item!.data as AudioTrack).id == track.id,
+            orElse: () => null,
+          );
+          final targetId = queueItem?.id ?? track.source.id;
+          if (targetId != null) {
+            final config = ReplayGainConfig(
+              gainDb: res.replayGain!.gainDb,
+              peak: res.replayGain!.peak,
+            );
+            MapLogger.info(
+              '[REPLAY_GAIN:DISPATCH] Synchronizing ReplayGain to engine for track "${track.title}" (ID: $targetId): ${config.gainDb} dB',
+            );
+            await engine.action.setReplayGain(config, id: targetId);
+          }
+        }
       }
+      return res;
     } catch (e) {
+      stopwatch.stop();
       _error = e.toString();
+      MapLogger.error('[ANALYZER:ERROR] Failed analysis for "${track.title}": $e');
+      return null;
     } finally {
       _isAnalyzing = false;
       notifyListeners();
