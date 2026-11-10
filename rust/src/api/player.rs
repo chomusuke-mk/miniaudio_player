@@ -16,6 +16,7 @@ use crate::dsp::equalizer::EqualizerParams;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
 use crate::frb_generated::StreamSink;
+use crate::map_log;
 
 use super::types::*;
 
@@ -334,17 +335,37 @@ impl RustMiniaudioPlayer {
                     *triggered = false;
                     drop(triggered);
 
+                    map_log!(
+                        4,
+                        "[WATCHER] Woke up (reason: urgent_disconnect={})",
+                        urgent_disconnect
+                    );
+
                     // If not an urgent hardware disconnection, sleep 50ms for USB bus to negotiate
                     if !urgent_disconnect {
                         thread::sleep(Duration::from_millis(50));
                     }
 
+                    let t_scan = Instant::now();
                     let Ok((out_devs, in_devs)) = Self::get_all_devices_sync() else {
-                        // Transient failure in audio daemon or enumeration: keep last known state and retry next tick
+                        map_log!(2, "[WATCHER] Device enumeration failed or transient daemon error");
                         continue;
                     };
+                    map_log!(
+                        4,
+                        "[WATCHER] Enumeration completed in {}ms: {} outputs, {} inputs",
+                        t_scan.elapsed().as_millis(),
+                        out_devs.len(),
+                        in_devs.len()
+                    );
 
+                    let t_lock = Instant::now();
                     let mut ply = watcher_inner.lock().unwrap();
+                    map_log!(
+                        4,
+                        "[WATCHER] Acquired inner player lock in {}ms",
+                        t_lock.elapsed().as_millis()
+                    );
 
                     // =========================================================================
                     // 1. RECONCILIATION OF OUTPUTS
@@ -354,6 +375,19 @@ impl RustMiniaudioPlayer {
 
                     if is_first_out_check || out_devices_changed {
                         let prev_out_devices = last_out_devices.replace(out_devs.clone());
+                        map_log!(
+                            3,
+                            "[WATCHER:OUTPUTS] Output hardware list changed! (first_check={}, found={})",
+                            is_first_out_check,
+                            out_devs.len()
+                        );
+                        for (i, d) in out_devs.iter().enumerate() {
+                            map_log!(
+                                3,
+                                "  [WATCHER:OUT #{}] id='{}', name='{}', effective_id='{}', is_default={}, is_auto={}",
+                                i, d.id, d.name, d.effective_id, d.is_default, d.is_auto
+                            );
+                        }
                         watcher_reporter.emit(RustPlayerEvent::OutputDevices(out_devs.clone()));
 
                         let cur_out_def = out_devs.iter().find(|d| d.is_default && !d.is_auto);
@@ -361,6 +395,21 @@ impl RustMiniaudioPlayer {
                         let default_out_changed = last_default_out_id.is_some()
                             && last_default_out_id != cur_out_def_id;
                         let initial_or_dormant_attach = last_default_out_id.is_none() && cur_out_def_id.is_some();
+
+                        if default_out_changed {
+                            map_log!(
+                                2,
+                                "[WATCHER:DEFAULT_OUT] Default output endpoint CHANGED: last={:?}, current={:?}",
+                                last_default_out_id,
+                                cur_out_def_id
+                            );
+                        } else if initial_or_dormant_attach {
+                            map_log!(
+                                3,
+                                "[WATCHER:DEFAULT_OUT] Default output initial attach: {:?}",
+                                cur_out_def_id
+                            );
+                        }
                         last_default_out_id = cur_out_def_id.clone();
 
                         let mut outputs = ply.output_manager.outputs.clone();
@@ -380,6 +429,11 @@ impl RustMiniaudioPlayer {
                                     if was_in_prev && !is_in_cur {
                                         device_disconnected = true;
                                         outputs_mutated = true;
+                                        map_log!(
+                                            2,
+                                            "[WATCHER:EVICT_OUT] Evicting disconnected physical output device ID '{}'",
+                                            out.device_id
+                                        );
                                         return false; // Evict disconnected device
                                     }
                                 }
@@ -391,10 +445,21 @@ impl RustMiniaudioPlayer {
 
                         // Handle pause_on_device_change:
                         let should_pause = device_disconnected || (has_auto_output && default_out_changed);
+                        map_log!(
+                            3,
+                            "[WATCHER:PAUSE_CHECK] should_pause={}, pause_on_device_change={}, deck_state={}",
+                            should_pause,
+                            ply.output_manager.pause_on_device_change.load(Ordering::Relaxed),
+                            ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed)
+                        );
                         if should_pause {
                             if ply.output_manager.pause_on_device_change.load(Ordering::Relaxed) {
                                 let deck = ply.music_manager.active_deck_ref();
                                 if deck.state.load(Ordering::Relaxed) == crate::core::dual_source::STATE_PLAYING {
+                                    map_log!(
+                                        2,
+                                        "[WATCHER:PAUSE] Auto-pausing playback deck due to output device change/disconnect!"
+                                    );
                                     let _ = ply.music_manager.pause();
                                     ply.music_manager.inner.phase.store(
                                         crate::core::dual_source::ENGINE_PHASE_PAUSED,
@@ -407,7 +472,19 @@ impl RustMiniaudioPlayer {
 
                         // Synchronize output manager with pre-resolved auto ID bypass
                         if outputs_mutated || (has_auto_output && (default_out_changed || initial_or_dormant_attach)) {
+                            map_log!(
+                                3,
+                                "[WATCHER:RECONCILE_OUTPUTS:START] Calling set_outputs_with_resolved ({} outputs, cur_def={:?})...",
+                                outputs.len(),
+                                cur_out_def_id
+                            );
+                            let t_reconcile = Instant::now();
                             let _ = ply.output_manager.set_outputs_with_resolved(outputs.clone(), cur_out_def_id);
+                            map_log!(
+                                3,
+                                "[WATCHER:RECONCILE_OUTPUTS:DONE] set_outputs_with_resolved finished in {}ms",
+                                t_reconcile.elapsed().as_millis()
+                            );
                             watcher_reporter.emit(RustPlayerEvent::Outputs(outputs));
                         }
                     }
@@ -420,6 +497,19 @@ impl RustMiniaudioPlayer {
 
                     if is_first_in_check || in_devices_changed {
                         let prev_in_devices = last_in_devices.replace(in_devs.clone());
+                        map_log!(
+                            3,
+                            "[WATCHER:INPUTS] Input hardware list changed! (first_check={}, found={})",
+                            is_first_in_check,
+                            in_devs.len()
+                        );
+                        for (i, d) in in_devs.iter().enumerate() {
+                            map_log!(
+                                3,
+                                "  [WATCHER:IN #{}] id='{}', name='{}', effective_id='{}', is_default={}, is_auto={}",
+                                i, d.id, d.name, d.effective_id, d.is_default, d.is_auto
+                            );
+                        }
                         watcher_reporter.emit(RustPlayerEvent::InputDevices(in_devs.clone()));
 
                         let cur_in_def = in_devs.iter().find(|d| d.is_default && !d.is_auto);
@@ -427,6 +517,20 @@ impl RustMiniaudioPlayer {
                         let default_in_changed = last_default_in_id.is_some()
                             && last_default_in_id != cur_in_def_id;
                         let initial_or_dormant_attach_in = last_default_in_id.is_none() && cur_in_def_id.is_some();
+                        if default_in_changed {
+                            map_log!(
+                                2,
+                                "[WATCHER:DEFAULT_IN] Default input endpoint CHANGED: last={:?}, current={:?}",
+                                last_default_in_id,
+                                cur_in_def_id
+                            );
+                        } else if initial_or_dormant_attach_in {
+                            map_log!(
+                                3,
+                                "[WATCHER:DEFAULT_IN] Default input initial attach: {:?}",
+                                cur_in_def_id
+                            );
+                        }
                         last_default_in_id = cur_in_def_id.clone();
 
                         let mut inputs = ply.input_manager.current_inputs();
@@ -444,6 +548,11 @@ impl RustMiniaudioPlayer {
                                     });
                                     if was_in_prev && !is_in_cur {
                                         inputs_mutated = true;
+                                        map_log!(
+                                            2,
+                                            "[WATCHER:EVICT_IN] Evicting missing physical input device ID '{}'",
+                                            inp.device_id
+                                        );
                                         return false; // Evict disconnected microphone
                                     }
                                 }
@@ -455,7 +564,19 @@ impl RustMiniaudioPlayer {
 
                         // Synchronize input manager with pre-resolved auto ID bypass
                         if inputs_mutated || (has_auto_input && (default_in_changed || initial_or_dormant_attach_in)) {
+                            map_log!(
+                                3,
+                                "[WATCHER:RECONCILE_INPUTS:START] Calling set_inputs_with_resolved ({} inputs, cur_def={:?})...",
+                                inputs.len(),
+                                cur_in_def_id
+                            );
+                            let t_reconcile = Instant::now();
                             let _ = ply.input_manager.set_inputs_with_resolved(inputs.clone(), cur_in_def_id);
+                            map_log!(
+                                3,
+                                "[WATCHER:RECONCILE_INPUTS:DONE] set_inputs_with_resolved finished in {}ms",
+                                t_reconcile.elapsed().as_millis()
+                            );
                             watcher_reporter.emit(RustPlayerEvent::Inputs(inputs));
                         }
                     }
@@ -965,11 +1086,23 @@ impl RustMiniaudioPlayer {
     /// Pauses playback on the active audio deck without releasing resources.
     #[flutter_rust_bridge::frb(sync)]
     pub fn pause(&self) {
+        map_log!(3, "[NATIVE:PAUSE:START] pause() requested from Dart. Acquiring player inner lock...");
+        let t0 = Instant::now();
         let mut ply = self.inner.lock().unwrap();
+        map_log!(
+            3,
+            "[NATIVE:PAUSE] Player inner lock acquired in {}ms. Calling music_manager.pause()...",
+            t0.elapsed().as_millis()
+        );
         ply.music_manager.pause();
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
         drop(ply);
+        map_log!(
+            3,
+            "[NATIVE:PAUSE:DONE] pause() completed and lock released in {}ms. Emitting events...",
+            t0.elapsed().as_millis()
+        );
         self.emit_event(RustPlayerEvent::PlaybackState(state));
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
@@ -978,7 +1111,14 @@ impl RustMiniaudioPlayer {
     /// Stops playback and resets elapsed position to the beginning.
     #[flutter_rust_bridge::frb(sync)]
     pub fn stop(&self) {
+        map_log!(3, "[NATIVE:STOP:START] stop() requested from Dart. Acquiring player inner lock...");
+        let t0 = Instant::now();
         let mut ply = self.inner.lock().unwrap();
+        map_log!(
+            3,
+            "[NATIVE:STOP] Player inner lock acquired in {}ms. Calling music_manager.stop()...",
+            t0.elapsed().as_millis()
+        );
         ply.music_manager.stop();
         ply.output_manager
             .visualizer_seqlock
@@ -986,6 +1126,11 @@ impl RustMiniaudioPlayer {
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
         drop(ply);
+        map_log!(
+            3,
+            "[NATIVE:STOP:DONE] stop() completed and lock released in {}ms. Emitting events...",
+            t0.elapsed().as_millis()
+        );
         self.emit_event(RustPlayerEvent::PlaybackState(state));
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::Position(0));
@@ -997,14 +1142,26 @@ impl RustMiniaudioPlayer {
     /// Seeks to the specified position in milliseconds within the current track.
     #[flutter_rust_bridge::frb(sync)]
     pub fn seek(&self, position_ms: i64) -> Result<(), String> {
+        map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Acquiring inner lock...", position_ms);
+        let t0 = Instant::now();
         let mut ply = self.inner.lock().unwrap();
+        map_log!(
+            3,
+            "[NATIVE:SEEK] Player inner lock acquired in {}ms. Calling music_manager.seek()...",
+            t0.elapsed().as_millis()
+        );
         let res = ply.music_manager.seek(position_ms)?;
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let cur_idx = ply.music_manager.current_index();
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        drop(ply);
+        map_log!(
+            3,
+            "[NATIVE:SEEK:DONE] seek() completed in {}ms. Emitting events...",
+            t0.elapsed().as_millis()
+        );
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
         let is_completed = state == crate::core::dual_source::STATE_COMPLETED;
-        drop(ply);
         self.emit_event(RustPlayerEvent::Position(position_ms));
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
@@ -1689,9 +1846,21 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Replaces the active audio output destinations in the multi-sink matrix.
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
+        map_log!(3, "[NATIVE:SET_OUTPUTS:START] set_outputs() called with {} outputs. Acquiring inner lock...", outputs.len());
+        let t0 = Instant::now();
         let mut ply = self.inner.lock().unwrap();
+        map_log!(
+            3,
+            "[NATIVE:SET_OUTPUTS] Inner lock acquired in {}ms. Calling output_manager.set_outputs()...",
+            t0.elapsed().as_millis()
+        );
         ply.output_manager.set_outputs(outputs.clone())?;
         drop(ply);
+        map_log!(
+            3,
+            "[NATIVE:SET_OUTPUTS:DONE] set_outputs() finished in {}ms. Emitting event...",
+            t0.elapsed().as_millis()
+        );
 
         self.emit_event(RustPlayerEvent::Outputs(outputs));
 
@@ -1787,10 +1956,22 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
     #[flutter_rust_bridge::frb(sync)]
     pub fn set_inputs(&self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
+        map_log!(3, "[NATIVE:SET_INPUTS:START] set_inputs() called with {} inputs. Acquiring inner lock...", inputs.len());
+        let t0 = Instant::now();
         let mut ply = self.inner.lock().unwrap();
+        map_log!(
+            3,
+            "[NATIVE:SET_INPUTS] Inner lock acquired in {}ms. Calling input_manager.set_inputs()...",
+            t0.elapsed().as_millis()
+        );
         ply.input_manager.set_inputs(inputs)?;
         let current = ply.input_manager.current_inputs();
         drop(ply);
+        map_log!(
+            3,
+            "[NATIVE:SET_INPUTS:DONE] set_inputs() finished in {}ms. Emitting event...",
+            t0.elapsed().as_millis()
+        );
 
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())

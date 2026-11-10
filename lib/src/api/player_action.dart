@@ -142,16 +142,24 @@ class PlayerAction<T> {
   /// Pauses audio playback at current position.
   Future<void> pause() => _serialize(() async {
         _player._ensureNotDisposed();
-        MapLogger.info('pause() requested');
+        MapLogger.info('[ACTION:PAUSE] pause() requested. Calling native rust.pause()...');
+        final sw = Stopwatch()..start();
         _rust.pause();
+        MapLogger.info(
+          '[ACTION:PAUSE] native rust.pause() returned successfully in ${sw.elapsedMilliseconds}ms',
+        );
         await Future<void>.delayed(Duration.zero);
       });
 
   /// Stops playback and rewinds position to zero.
   Future<void> stop() => _serialize(() async {
         _player._ensureNotDisposed();
-        MapLogger.info('stop() requested');
+        MapLogger.info('[ACTION:STOP] stop() requested. Calling native rust.stop()...');
+        final sw = Stopwatch()..start();
         _rust.stop();
+        MapLogger.info(
+          '[ACTION:STOP] native rust.stop() returned successfully in ${sw.elapsedMilliseconds}ms',
+        );
         await Future<void>.delayed(Duration.zero);
       });
 
@@ -160,8 +168,14 @@ class PlayerAction<T> {
         _player._ensureNotDisposed();
         final targetPosition =
             position < Duration.zero ? Duration.zero : position;
-        MapLogger.info('seek() requested -> ${targetPosition.inMilliseconds}ms');
+        MapLogger.info(
+          '[ACTION:SEEK] seek() requested -> ${targetPosition.inMilliseconds}ms. Calling native rust.seek()...',
+        );
+        final sw = Stopwatch()..start();
         _rust.seek(positionMs: targetPosition.inMilliseconds);
+        MapLogger.info(
+          '[ACTION:SEEK] native rust.seek() returned successfully in ${sw.elapsedMilliseconds}ms',
+        );
         await Future<void>.delayed(Duration.zero);
       });
 
@@ -601,6 +615,9 @@ class PlayerAction<T> {
   /// Configures resilience behavior when audio playback devices change.
   Future<void> setPauseOnDeviceChange(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.info(
+      '[ACTION:SET_PAUSE_ON_DEVICE_CHANGE] setPauseOnDeviceChange($enabled) requested',
+    );
     _rust.setPauseOnDeviceChange(enabled: enabled);
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
@@ -827,6 +844,11 @@ class PlayerAction<T> {
   /// The declared set in [PlayerState.outputs] and [PlayerStream.outputs] remains intact.
   Future<void> setOutputs(Set<AudioOutput> outputs) async {
     _player._ensureNotDisposed();
+    MapLogger.info(
+      '[ACTION:SET_OUTPUTS] setOutputs() requested with ${outputs.length} outputs: '
+      '${outputs.map((o) => '${o.deviceId}(${o.source.name})').toList()}',
+    );
+    final sw = Stopwatch()..start();
     final rustOutputs = outputs.map((out) {
       return rust_types.RustAudioOutput(
         deviceId: out.deviceId,
@@ -834,6 +856,9 @@ class PlayerAction<T> {
       );
     }).toList();
     _rust.setOutputs(outputs: rustOutputs);
+    MapLogger.info(
+      '[ACTION:SET_OUTPUTS] native rust.setOutputs() returned successfully in ${sw.elapsedMilliseconds}ms',
+    );
   }
 
   /// Adds an output destination to this player's active outputs.
@@ -934,8 +959,16 @@ class PlayerAction<T> {
   /// The declared set in [PlayerState.inputs] and [PlayerStream.inputs] remains intact.
   Future<void> setInputs(Set<AudioInput> inputs) async {
     _player._ensureNotDisposed();
+    MapLogger.info(
+      '[ACTION:SET_INPUTS] setInputs() requested with ${inputs.length} inputs: '
+      '${inputs.map((i) => i.deviceId).toList()}',
+    );
+    final sw = Stopwatch()..start();
     final rustList = inputs.map(_toRustInput).toList();
     _rust.setInputs(inputs: rustList);
+    MapLogger.info(
+      '[ACTION:SET_INPUTS] native rust.setInputs() returned successfully in ${sw.elapsedMilliseconds}ms',
+    );
   }
 
   /// Adds an audio input capture node to the player.

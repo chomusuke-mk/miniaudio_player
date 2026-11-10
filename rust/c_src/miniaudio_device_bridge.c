@@ -131,6 +131,7 @@ static void map_device_notification_callback(const ma_device_notification *pNoti
     {
         return;
     }
+    fprintf(stderr, "[miniaudio_player][WARN] [C_BRIDGE:NOTIF] ma_device_notification callback received: type=%d\n", (int)pNotification->type);
     map_device_context_t *ctx = (map_device_context_t *)pNotification->pDevice->pUserData;
     if (ctx != NULL)
     {
@@ -158,6 +159,9 @@ map_device_context_t *map_device_create(
     ctx->sample_rate = sample_rate ? sample_rate : 44100;
     ctx->channels = channels ? channels : 2;
     ctx->period_size_in_frames = period_size_in_frames;
+
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:CREATE:START] map_device_create starting for device '%s' (sr=%u, ch=%u, period=%u)...\n",
+            playback_device_id ? playback_device_id : "auto", ctx->sample_rate, ctx->channels, ctx->period_size_in_frames);
 
     ma_context_config ctx_cfg = ma_context_config_init();
     ma_result res = ma_context_init(NULL, 0, &ctx_cfg, &ctx->context);
@@ -227,18 +231,22 @@ map_device_context_t *map_device_create(
     res = ma_device_init(&ctx->context, &dev_cfg, &ctx->device);
     if (res != MA_SUCCESS && dev_cfg.playback.pDeviceID != NULL)
     {
+        fprintf(stderr, "[miniaudio_player][WARN] [C_BRIDGE:CREATE] ma_device_init failed for specific device (%d), retrying with system default...\n", (int)res);
         dev_cfg.playback.pDeviceID = NULL;
         playback_device_id = "auto";
         res = ma_device_init(&ctx->context, &dev_cfg, &ctx->device);
     }
     if (res != MA_SUCCESS)
     {
+        fprintf(stderr, "[miniaudio_player][ERROR] [C_BRIDGE:CREATE:FAIL] ma_device_init failed with code %d\n", (int)res);
         ma_context_uninit(&ctx->context);
         free(ctx);
         if (out_result)
             *out_result = -4; /* ENGINE_INIT */
         return NULL;
     }
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:CREATE:DONE] ma_device_init succeeded (backend=%d, name='%s')\n",
+            (int)ctx->context.backend, ctx->device.playback.name);
     ctx->is_device_init = MA_TRUE;
     ctx->sample_rate = ctx->device.sampleRate;
     ctx->channels = ctx->device.playback.channels;
@@ -269,31 +277,44 @@ int32_t map_device_start(map_device_context_t *ctx)
 {
     if (ctx == NULL || !ctx->is_device_init)
         return -2;
-    return (int32_t)ma_device_start(&ctx->device);
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:START] Calling ma_device_start(ctx=%p)...\n", ctx);
+    int32_t res = (int32_t)ma_device_start(&ctx->device);
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:START] ma_device_start returned %d\n", res);
+    return res;
 }
 
 int32_t map_device_stop(map_device_context_t *ctx)
 {
     if (ctx == NULL || !ctx->is_device_init)
         return -2;
-    return (int32_t)ma_device_stop(&ctx->device);
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:STOP] Calling ma_device_stop(ctx=%p)...\n", ctx);
+    int32_t res = (int32_t)ma_device_stop(&ctx->device);
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:STOP] ma_device_stop returned %d\n", res);
+    return res;
 }
 
 int32_t map_device_destroy(map_device_context_t *ctx)
 {
     if (ctx == NULL)
         return 0;
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY:START] map_device_destroy starting (ctx=%p, is_init=%d, has_ctx=%d)...\n",
+            ctx, (int)ctx->is_device_init, (int)ctx->has_context);
     if (ctx->is_device_init)
     {
+        fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] Calling ma_device_uninit(&ctx->device)...\n");
         ma_device_uninit(&ctx->device);
+        fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] ma_device_uninit completed successfully\n");
         ctx->is_device_init = MA_FALSE;
     }
     if (ctx->has_context)
     {
+        fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] Calling ma_context_uninit(&ctx->context)...\n");
         ma_context_uninit(&ctx->context);
+        fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY] ma_context_uninit completed successfully\n");
         ctx->has_context = MA_FALSE;
     }
     free(ctx);
+    fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY:DONE] map_device_destroy completed successfully\n");
     return 0;
 }
 

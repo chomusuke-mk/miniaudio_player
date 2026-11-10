@@ -217,7 +217,10 @@ class MiniaudioPlayer<T> {
     if (defaultBufferSize != null) {
       _globalConfig.defaultBufferSize = defaultBufferSize;
     }
-    if (logLevel != null) _globalConfig.logLevel = logLevel;
+    if (logLevel != null) {
+      _globalConfig.logLevel = logLevel;
+      setLogLevel(logLevel);
+    }
     if (defaultDeviceDisplayNameResolver != null) {
       _globalConfig.defaultDeviceDisplayNameResolver =
           defaultDeviceDisplayNameResolver;
@@ -248,7 +251,10 @@ class MiniaudioPlayer<T> {
   static void resetGlobalConfig() => _globalConfig.reset();
 
   /// Ensures native Rust audio player backend is initialized.
-  static Future<void> ensureInitialized() async => ensureRustInitialized();
+  static Future<void> ensureInitialized() async {
+    await ensureRustInitialized();
+    setLogLevel(_globalConfig.logLevel);
+  }
 
   // =========================================================================
   // System Audio Device Discovery
@@ -571,6 +577,7 @@ class MiniaudioPlayer<T> {
         state._playbackState = val;
         state._isPaused = val == PlaybackState.paused;
         state._isOpening = val == PlaybackState.opening;
+        MapLogger.info('[EVENT:PLAYBACK_STATE] Engine playback state -> ${val.name}');
         stream._playbackStateController.add(val);
       case rust_types.RustPlayerEvent_IsPlaying(:final field0):
         state._isPlaying = field0;
@@ -677,13 +684,22 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_OutputDevices(:final field0):
         final list = field0.map(_toAudioDevice).toList();
         state._globalOutputDevices = list;
+        MapLogger.info(
+          '[EVENT:OUTPUT_DEVICES] Discovered ${list.length} global outputs: '
+          '${list.map((d) => '${d.displayName}(id=${d.id}, effectiveId=${d.effectiveId}, isAuto=${d.isAuto})').toList()}',
+        );
         stream._globalOutputDevicesController.add(list);
       case rust_types.RustPlayerEvent_InputDevices(:final field0):
         final list = field0.map(_toAudioDevice).toList();
         state._globalInputDevices = list;
+        MapLogger.info(
+          '[EVENT:INPUT_DEVICES] Discovered ${list.length} global inputs: '
+          '${list.map((d) => '${d.displayName}(id=${d.id}, effectiveId=${d.effectiveId}, isAuto=${d.isAuto})').toList()}',
+        );
         stream._globalInputDevicesController.add(list);
       case rust_types.RustPlayerEvent_PauseOnDeviceChange(:final field0):
         state._pauseOnDeviceChange = field0;
+        MapLogger.info('[EVENT:PAUSE_ON_DEVICE_CHANGE] pauseOnDeviceChange -> $field0');
         stream._pauseOnDeviceChangeController.add(field0);
       case rust_types.RustPlayerEvent_Outputs(:final field0):
         final outs = field0
@@ -693,6 +709,10 @@ class MiniaudioPlayer<T> {
                 ))
             .toSet();
         state._outputs = Set.unmodifiable(outs);
+        MapLogger.info(
+          '[EVENT:OUTPUTS] Active player outputs updated (${outs.length}): '
+          '${outs.map((o) => '${o.deviceId}(${o.source.name})').toList()}',
+        );
         stream._outputsController.add(state.outputs);
       case rust_types.RustPlayerEvent_RecordingState(
           :final isRecording,
@@ -742,6 +762,10 @@ class MiniaudioPlayer<T> {
                 ))
             .toSet();
         state._inputs = Set.unmodifiable(inps);
+        MapLogger.info(
+          '[EVENT:INPUTS] Active player inputs updated (${inps.length}): '
+          '${inps.map((i) => i.deviceId).toList()}',
+        );
         stream._inputsController.add(state.inputs);
       case rust_types.RustPlayerEvent_IsCrossfading(:final field0):
         state._isCrossfading = field0;

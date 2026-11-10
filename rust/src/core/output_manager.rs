@@ -7,6 +7,7 @@ use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
 
 use crate::api::types::{AudioOutputSource, RustAudioOutput};
 use crate::bridge::ffi::{
@@ -16,6 +17,7 @@ use crate::bridge::ffi::{
 use crate::core::recording::{LiveRecorder, WavFormat};
 use crate::core::renderer::PcmRendererHeader;
 use crate::dsp::visualizer::{Visualizer, VisualizerData};
+use crate::map_log;
 use crate::sync::seqlock::CachePaddedSeqlock;
 
 /// Real-time safe audio renderer reading from an SPSC ring buffer for an active output device.
@@ -209,6 +211,14 @@ impl OutputManager {
         let current_auto_def = pre_resolved_auto_id
             .or_else(|| Self::resolve_physical_output_id("AUTO"));
 
+        map_log!(
+            3,
+            "[OUTPUT_MGR:SET_OUTPUTS:START] Setting {} outputs (current active={}), auto_endpoint={:?}",
+            self.outputs.len(),
+            self.active_devices.len(),
+            current_auto_def
+        );
+
         // Deduplicate physical hardware targets:
         // If both AUTO and a specific device resolve to the same physical OS endpoint,
         // prioritize AUTO and its configuration over specific/explicit devices.
@@ -239,6 +249,12 @@ impl OutputManager {
             }
         }
 
+        map_log!(
+            3,
+            "[OUTPUT_MGR:EFFECTIVE] Resolved {} effective physical target endpoints",
+            effective_configs.len()
+        );
+
         // 3. Evict active devices no longer present in effective_configs
         self.active_devices.retain_mut(|dev| {
             let still_active = effective_configs.iter().any(|(cfg, res_id)| {
@@ -248,10 +264,23 @@ impl OutputManager {
             });
 
             if !still_active {
+                map_log!(
+                    2,
+                    "[OUTPUT_MGR:DESTROY:START] Evicting active device '{}' (resolved '{}', source={:?}). Calling map_device_destroy...",
+                    dev.device_id,
+                    dev.resolved_id,
+                    dev.source
+                );
+                let t_dest = Instant::now();
                 unsafe {
                     map_device_destroy(dev.device_ctx);
                     drop(Box::from_raw(dev.renderer_ptr as *mut OutputDeviceRenderer));
                 }
+                map_log!(
+                    2,
+                    "[OUTPUT_MGR:DESTROY:DONE] map_device_destroy completed in {}ms",
+                    t_dest.elapsed().as_millis()
+                );
                 false
             } else {
                 true
@@ -267,6 +296,13 @@ impl OutputManager {
             });
 
             if !already_open {
+                map_log!(
+                    3,
+                    "[OUTPUT_MGR:CREATE:START] Opening new physical output device '{}' (target resolved '{}', source={:?})...",
+                    cfg.device_id,
+                    target_resolved_id,
+                    AudioOutputSource::from(cfg.source)
+                );
                 let buffer_capacity = self.sample_rate as usize * self.channels * 2;
                 let (prod, cons) = rtrb::RingBuffer::new(buffer_capacity);
                 let renderer = Box::new(OutputDeviceRenderer {
@@ -288,6 +324,7 @@ impl OutputManager {
                 let dev_ptr = dev_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
 
                 let mut dev_res = 0;
+                let t_create = Instant::now();
                 let ctx = unsafe {
                     map_device_create(
                         self.sample_rate,
@@ -299,10 +336,24 @@ impl OutputManager {
                     )
                 };
 
+                map_log!(
+                    3,
+                    "[OUTPUT_MGR:CREATE:DONE] map_device_create returned result={} (ctx={:?}) in {}ms",
+                    dev_res,
+                    ctx,
+                    t_create.elapsed().as_millis()
+                );
+
                 if !ctx.is_null() && dev_res == 0 {
+                    let t_start = Instant::now();
                     unsafe {
                         map_device_start(ctx);
                     }
+                    map_log!(
+                        3,
+                        "[OUTPUT_MGR:START:DONE] map_device_start succeeded in {}ms",
+                        t_start.elapsed().as_millis()
+                    );
                     self.active_devices.push(ActiveOutputDevice {
                         device_id: cfg.device_id.clone(),
                         resolved_id: target_resolved_id.clone(),
@@ -312,12 +363,24 @@ impl OutputManager {
                         producer: prod,
                     });
                 } else {
+                    map_log!(
+                        1,
+                        "[OUTPUT_MGR:CREATE:FAIL] Failed to open physical device '{}' (code {})",
+                        target_resolved_id,
+                        dev_res
+                    );
                     unsafe {
                         drop(Box::from_raw(renderer_ptr));
                     }
                 }
             }
         }
+
+        map_log!(
+            3,
+            "[OUTPUT_MGR:SET_OUTPUTS:DONE] set_outputs_with_resolved completed successfully. Active devices: {}",
+            self.active_devices.len()
+        );
 
         Ok(())
     }
