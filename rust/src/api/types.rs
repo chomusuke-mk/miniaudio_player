@@ -706,68 +706,6 @@ pub struct RustAudioAnalysisResult {
     pub metadata: Option<RustAudioMetadata>,
 }
 
-impl From<crate::dsp::analysis::AudioAnalysisResult> for RustAudioAnalysisResult {
-    fn from(result: crate::dsp::analysis::AudioAnalysisResult) -> Self {
-        let has_waveform = result.has_waveform != 0;
-        let has_replay_gain = result.has_replay_gain != 0;
-        let has_metadata = result.has_metadata != 0;
-        let waveform_peaks = if has_waveform {
-            result.waveform.points
-        } else {
-            Vec::new()
-        };
-        let metadata = if has_metadata && !result.metadata_bytes.is_empty() {
-            Some(crate::metadata::parse_full_metadata::<std::io::Cursor<&[u8]>>(
-                None,
-                result.metadata_bytes,
-                "",
-                None,
-                None,
-            ))
-        } else {
-            None
-        };
-        Self {
-            audio_info: RustAudioInfo {
-                duration_ms: (result.duration_ms > 0).then_some(result.duration_ms),
-                sample_rate: result.sample_rate,
-                raw_sample_rate: (result.sample_rate > 0).then_some(result.sample_rate),
-                channels: result.channels,
-                bits_per_sample: None,
-                bitrate: result.bitrate,
-                format: result.format,
-                codec: String::new(),
-                container_format: String::new(),
-                lossless: false,
-                bitrate_mode: RustBitrateMode::Unknown,
-                file_size: None,
-            },
-            has_replay_gain,
-            integrated_lufs: if has_replay_gain {
-                result.replay_gain.lufs
-            } else {
-                0.0
-            },
-            replay_gain_db: if has_replay_gain {
-                result.replay_gain.gain_db
-            } else {
-                0.0
-            },
-            replay_gain_peak: if has_replay_gain {
-                result.replay_gain.peak
-            } else {
-                0.0
-            },
-            has_waveform,
-            spectral_centroid: 0.0,
-            frequency_bands: Vec::new(),
-            waveform_peaks,
-            has_metadata,
-            metadata,
-        }
-    }
-}
-
 /// Configuration governing crossfade transition durations and gain curves.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RustCrossfadeConfig {

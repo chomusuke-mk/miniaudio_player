@@ -2,46 +2,15 @@
 //!
 //! Decomposes audio analysis into single-responsibility pipeline components:
 //! - [`Bs1770LoudnessAnalyzer`]: K-weighting biquad cascade + 400 ms dual-gated LUFS integrator.
-//! - [`WaveformAccumulator`]: Frame peak collector and deterministic downsampler.
+//! - [`AdaptiveWaveformAccumulator`]: Dynamic decimation peak collector with bounded memory.
 
 use std::f64::consts::PI;
-use std::fs::File;
-use std::io::Cursor;
-use symphonia::core::io::MediaSource;
 
 use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult};
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 use crate::decoder::sniffer::FormatSniffer;
-use crate::decoder::SymphoniaEngine;
 
 use super::biquad::BiquadDf2t;
-
-/// Flag enabling ITU-R BS.1770-4 LUFS and ReplayGain calculation.
-pub const MAP_ANALYSIS_FLAG_REPLAY_GAIN: u32 = 1 << 0;
-/// Flag enabling peak waveform envelope extraction.
-pub const MAP_ANALYSIS_FLAG_WAVEFORM: u32 = 1 << 1;
-
-/// Configuration parameters governing offline audio analysis.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct AudioAnalysisConfig {
-    /// Bitmask of analysis flags (`MAP_ANALYSIS_FLAG_*`).
-    pub flags: u32,
-    /// Target integrated loudness level in LUFS (typically -14.0 or -18.0).
-    pub target_lufs: f32,
-    /// Target number of downsampled waveform points to extract.
-    pub waveform_points: u32,
-}
-
-impl Default for AudioAnalysisConfig {
-    fn default() -> Self {
-        Self {
-            flags: MAP_ANALYSIS_FLAG_REPLAY_GAIN | MAP_ANALYSIS_FLAG_WAVEFORM,
-            target_lufs: -18.0,
-            waveform_points: 100,
-        }
-    }
-}
 
 /// Computed ReplayGain loudness metrics.
 #[repr(C)]
@@ -53,51 +22,6 @@ pub struct ReplayGainData {
     pub peak: f32,
     /// Integrated loudness in LUFS according to ITU-R BS.1770-4.
     pub lufs: f32,
-}
-
-/// Downsampled waveform envelope points for UI visualization.
-#[repr(C)]
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct WaveformData {
-    /// Number of points contained in the envelope vector.
-    pub point_count: u32,
-    /// Normalized amplitude envelope points (0.0 to 1.0).
-    pub points: Vec<f32>,
-}
-
-/// Comprehensive analysis results containing loudness, waveform, and audio stream metrics.
-#[repr(C)]
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct AudioAnalysisResult {
-    /// Status code (0 for success, non-zero for error).
-    pub status: i32,
-    /// Total duration in milliseconds.
-    pub duration_ms: i64,
-    /// Sample rate in Hz.
-    pub sample_rate: u32,
-    /// Audio channel count.
-    pub channels: u32,
-    /// Estimated nominal bitrate in bps.
-    pub bitrate: u32,
-    /// Container or codec format string.
-    pub format: Option<String>,
-    /// Peak sample amplitude.
-    pub peak: f32,
-
-    /// Non-zero if ReplayGain analysis was performed.
-    pub has_replay_gain: i32,
-    /// ReplayGain analysis metrics.
-    pub replay_gain: ReplayGainData,
-
-    /// Non-zero if waveform envelope points were extracted.
-    pub has_waveform: i32,
-    /// Downsampled waveform envelope data.
-    pub waveform: WaveformData,
-
-    /// Non-zero if metadata bytes were extracted.
-    pub has_metadata: i32,
-    /// Raw metadata bytes.
-    pub metadata_bytes: Vec<u8>,
 }
 
 /// ITU-R BS.1770-4 K-Weighting Filter Pair and Dual-Gated Loudness Integrator.
@@ -273,49 +197,6 @@ impl Bs1770LoudnessAnalyzer {
             z_unmasked
         };
         (-0.691 + 10.0 * final_energy.log10()) as f32
-    }
-}
-
-/// Deterministic Waveform Peak Accumulator and Downsampler.
-#[derive(Default)]
-pub struct WaveformAccumulator {
-    peaks: Vec<f32>,
-}
-
-impl WaveformAccumulator {
-    #[inline]
-    pub fn push_peak(&mut self, frame_peak: f32) {
-        self.peaks.push(frame_peak);
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.peaks.is_empty()
-    }
-
-    pub fn finalize(self, target_points: u32) -> WaveformData {
-        if self.peaks.is_empty() {
-            return WaveformData::default();
-        }
-        let n_points = target_points.max(1) as usize;
-        let mut points = Vec::with_capacity(n_points);
-        let chunk_size = (self.peaks.len() as f64) / (n_points as f64);
-
-        for i in 0..n_points {
-            let start = (i as f64 * chunk_size) as usize;
-            let end = (((i + 1) as f64 * chunk_size) as usize).min(self.peaks.len());
-            let chunk_peak = self.peaks[start..end]
-                .iter()
-                .copied()
-                .fold(0.0f32, f32::max)
-                .clamp(0.0, 1.0);
-            points.push(chunk_peak);
-        }
-
-        WaveformData {
-            point_count: n_points as u32,
-            points,
-        }
     }
 }
 
@@ -570,151 +451,4 @@ pub fn analyze_audio_source(
         has_metadata: metadata.is_some(),
         metadata,
     })
-}
-
-pub fn analyze_media_source<M: MediaSource + 'static>(
-    source: M,
-    hint_ext: Option<&str>,
-    config: &AudioAnalysisConfig,
-    byte_size: u64,
-) -> Result<AudioAnalysisResult, i32> {
-    let mut engine = match SymphoniaEngine::new(source, hint_ext) {
-        Ok(e) => e,
-        Err(_) => {
-            crate::map_log!(1, "analyze_media_source failed: SymphoniaEngine::new failed");
-            return Err(-6);
-        }
-    };
-
-    let sample_rate = engine.sample_rate();
-    let channels = engine.channels().max(1);
-    let ch_usize = channels as usize;
-    let mut duration_ms = engine.duration_ms().unwrap_or(0) as i64;
-    crate::map_log!(
-        3,
-        "analyze_media_source started: sr={}, ch={}, dur={}ms, hint={:?}",
-        sample_rate,
-        channels,
-        duration_ms,
-        hint_ext
-    );
-
-    let calc_rg = (config.flags & MAP_ANALYSIS_FLAG_REPLAY_GAIN) != 0;
-    let calc_wf = (config.flags & MAP_ANALYSIS_FLAG_WAVEFORM) != 0;
-
-    let mut rg_analyzer = calc_rg.then(|| Bs1770LoudnessAnalyzer::new(sample_rate));
-    let mut wf_accumulator = WaveformAccumulator::default();
-    let mut peak = 0.0f32;
-    let mut frame_buf = Vec::new();
-    let mut total_decoded_frames = 0u64;
-
-    while let Ok(true) = engine.decode_next_frame(&mut frame_buf) {
-        total_decoded_frames += (frame_buf.len() / ch_usize) as u64;
-        for frame in frame_buf.chunks_exact(ch_usize) {
-            let s_l = frame[0].clamp(-1.0, 1.0);
-            let s_r = if ch_usize > 1 {
-                frame[1].clamp(-1.0, 1.0)
-            } else {
-                s_l
-            };
-
-            let frame_max = s_l.abs().max(s_r.abs());
-            if frame_max > peak {
-                peak = frame_max;
-            }
-            if calc_wf {
-                wf_accumulator.push_peak(frame_max);
-            }
-            if let Some(ref mut rg) = rg_analyzer {
-                rg.push_stereo_frame(s_l, s_r);
-            }
-        }
-    }
-
-    if sample_rate > 0 && total_decoded_frames > 0 {
-        let decoded_dur_ms = (total_decoded_frames as f64 * 1000.0 / sample_rate as f64).round() as i64;
-        if duration_ms <= 0 || (decoded_dur_ms - duration_ms).abs() > 100 {
-            duration_ms = decoded_dur_ms;
-        }
-    }
-
-    let bitrate = if duration_ms > 0 && byte_size > 0 {
-        ((byte_size * 8000) / (duration_ms as u64)) as u32
-    } else {
-        0
-    };
-
-    let (has_replay_gain, replay_gain) = match rg_analyzer {
-        Some(rg) => (1, rg.finalize(config.target_lufs, peak)),
-        None => (0, ReplayGainData::default()),
-    };
-
-    let (has_waveform, waveform) = if calc_wf && !wf_accumulator.is_empty() {
-        (1, wf_accumulator.finalize(config.waveform_points))
-    } else {
-        (0, WaveformData::default())
-    };
-
-    crate::map_log!(
-        3,
-        "analyze_media_source completed: peak={:.4}, lufs={:.2}, rg_gain={:.2}dB, wf_points={}",
-        peak,
-        replay_gain.lufs,
-        replay_gain.gain_db,
-        waveform.point_count
-    );
-
-    Ok(AudioAnalysisResult {
-        status: 0,
-        duration_ms,
-        sample_rate,
-        channels,
-        bitrate,
-        format: hint_ext.map(|s| s.to_string()),
-        peak,
-        has_replay_gain,
-        replay_gain,
-        has_waveform,
-        waveform,
-        has_metadata: 0,
-        metadata_bytes: Vec::new(),
-    })
-}
-
-/// Decodes and performs offline acoustic loudness and waveform analysis on an audio file on disk.
-pub fn analyze_file(path: &str, config: &AudioAnalysisConfig) -> Result<AudioAnalysisResult, i32> {
-    crate::map_log!(3, "analyze_file: path={}", path);
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(_) => {
-            crate::map_log!(1, "analyze_file failed: could not open file {}", path);
-            return Err(-5);
-        }
-    };
-    let byte_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-    if byte_size == 0 {
-        crate::map_log!(1, "analyze_file failed: file is empty: {}", path);
-        return Err(-6);
-    }
-    let ext = FormatSniffer::extract_extension_hint(path);
-    analyze_media_source(file, ext, config, byte_size)
-}
-
-/// Decodes and performs offline acoustic loudness and waveform analysis on an in-memory byte buffer.
-pub fn analyze_memory(
-    data: &[u8],
-    config: &AudioAnalysisConfig,
-) -> Result<AudioAnalysisResult, i32> {
-    let byte_size = data.len() as u64;
-    let (_status, boundary) = FormatSniffer::detect_head_boundary(data, byte_size as i64);
-    let sniffer_hint = boundary.container.hint_extension();
-    let cursor = Cursor::new(data.to_vec());
-    analyze_media_source(cursor, sniffer_hint, config, byte_size)
-}
-
-/// Clears allocated waveform buffers inside an `AudioAnalysisResult`.
-pub fn free_analysis_result(result: &mut AudioAnalysisResult) {
-    result.waveform.points.clear();
-    result.waveform.point_count = 0;
-    result.has_waveform = 0;
 }

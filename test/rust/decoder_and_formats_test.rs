@@ -364,17 +364,24 @@ fn test_adts_aac_exact_duration_calculation() {
         eng_dur
     );
 
-    // 4. Test analyze_file
-    let config = miniaudio_player::dsp::AudioAnalysisConfig {
-        flags: 0,
-        waveform_points: 0,
+    // 4. Test analyze_audio_source
+    let config = miniaudio_player::api::types::RustAnalysisConfig {
+        replay_gain: false,
+        waveform: false,
+        metadata: false,
         target_lufs: -14.0,
+        waveform_points: 0,
+        max_duration_ms: None,
     };
-    let analysis = miniaudio_player::dsp::analyze_file(path.to_str().unwrap(), &config)
-        .expect("analyze_file must succeed");
+    let source = miniaudio_player::core::dual_source::AudioSourceCore {
+        source: path.to_str().unwrap().to_string(),
+        ..Default::default()
+    };
+    let analysis = miniaudio_player::dsp::analyze_audio_source(source, config)
+        .expect("analyze_audio_source must succeed");
     assert_eq!(
-        analysis.duration_ms, 68736,
-        "Analysis duration must be 68736 ms (~1:08.7), was {}",
-        analysis.duration_ms
+        analysis.audio_info.duration_ms.unwrap_or(0), 68736,
+        "Analysis duration must be 68736 ms (~1:08.7), was {:?}",
+        analysis.audio_info.duration_ms
     );
 }

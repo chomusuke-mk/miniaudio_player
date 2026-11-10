@@ -123,12 +123,11 @@ void main() {
       if (!file.existsSync()) return;
 
       await player.action.setQueue([AudioSource(file.path)]);
+      await player.action.play();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(player.state.audioInfo?.sampleRate, greaterThan(0));
       expect(player.state.audioInfo?.channels, greaterThan(0));
-
-      await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       final buf = player.state.buffer;
       expect(buf, isNotNull);
