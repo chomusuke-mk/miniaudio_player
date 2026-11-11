@@ -39,4 +39,3 @@ migrate_working_dir/
 /test/fixtures/*
 !/test/fixtures/MANIFEST.md
 /docs/*
-!/docs/*.md

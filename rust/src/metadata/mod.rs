@@ -149,116 +149,127 @@ impl SymphoniaExtractedMeta {
     }
 }
 
-/// Parses complete [`RustAudioMetadata`] from a seekable reader and/or synthesized metadata bytes,
-/// merging Symphonia fallback metadata and live ICY stream metadata when present.
-pub fn parse_full_metadata<R: Read + Seek>(
-    mut seekable: Option<&mut R>,
-    meta_bytes: Vec<u8>,
-    container_format: &str,
-    symphonia_meta: Option<&SymphoniaExtractedMeta>,
-    icy_meta: Option<RustIcyMetadata>,
-) -> RustAudioMetadata {
-    let mut out = RustAudioMetadata {
-        bytes: meta_bytes,
-        icy: icy_meta.clone(),
-        ..Default::default()
-    };
+/// Universal metadata extractor operating exclusively on a [`crate::buffer::StreamBuffer`]
+/// (`Sparse` virtual address space) across local files, memory buffers, and network streams.
+pub struct UniversalMetadataExtractor;
 
-    let mut consumed_custom_keys: HashSet<String> = HashSet::new();
-    let mut parsed_any_lofty = false;
-
-    // 1. Try Lofty on seekable source first (most complete for local files / memory buffers)
-    if let Some(ref mut reader) = seekable {
-        if reader.seek(SeekFrom::Start(0)).is_ok() {
-            parsed_any_lofty = try_parse_with_lofty(*reader, &mut out, &mut consumed_custom_keys);
-        }
-        // Check for DSF trailing ID3v2 chunk or RF64/RIFX/W64/BWF embedded chunks
-        if reader.seek(SeekFrom::Start(0)).is_ok() {
-            try_parse_special_containers_seekable(*reader, &mut out, &mut consumed_custom_keys);
-        }
-        // Extract binary ID3v2 version & CHAP chapters from seekable
-        if out.id3v2_version.is_none() || out.chapters.is_empty() {
-            if reader.seek(SeekFrom::Start(0)).is_ok() {
-                extract_id3v2_header_and_chapters_from_reader(*reader, &mut out);
-            }
-        }
-    }
-
-    // 2. If not parsed from seekable (or if streaming from network with synthesized meta_bytes),
-    // run Lofty & special extractors on `out.bytes`
-    if !out.bytes.is_empty() {
-        let bytes_snapshot = if !parsed_any_lofty
-            || out.id3v2_version.is_none()
-            || out.chapters.is_empty()
-            || out.pictures.is_empty()
-        {
-            Some(out.bytes.clone())
-        } else {
-            None
+impl UniversalMetadataExtractor {
+    /// Extracts complete [`RustAudioMetadata`] from `metadata_buffer` (`StreamBuffer` in `Sparse` mode),
+    /// merging Symphonia container metadata and live ICY stream metadata when present.
+    pub fn extract(
+        metadata_buffer: &std::sync::Arc<crate::buffer::StreamBuffer>,
+        container_format: &str,
+        symphonia_meta: Option<&SymphoniaExtractedMeta>,
+        icy_meta: Option<RustIcyMetadata>,
+    ) -> RustAudioMetadata {
+        let meta_bytes = metadata_buffer.synthesize_meta_bytes();
+        let mut out = RustAudioMetadata {
+            bytes: meta_bytes,
+            icy: icy_meta.clone(),
+            ..Default::default()
         };
 
-        if let Some(ref raw) = bytes_snapshot {
-            if !parsed_any_lofty {
-                let mut cursor = Cursor::new(raw.as_slice());
-                let _ = try_parse_with_lofty(&mut cursor, &mut out, &mut consumed_custom_keys);
-            }
-            let mut cursor = Cursor::new(raw.as_slice());
+        let mut consumed_custom_keys: HashSet<String> = HashSet::new();
+        let mut parsed_any_lofty = false;
+
+        // 1. Parse directly over the sparse virtual `MetadataStreamReader`
+        let mut reader = crate::buffer::MetadataStreamReader::new(metadata_buffer.clone());
+        if reader.seek(SeekFrom::Start(0)).is_ok() {
+            parsed_any_lofty =
+                try_parse_with_lofty(&mut reader, &mut out, &mut consumed_custom_keys);
+        }
+        if reader.seek(SeekFrom::Start(0)).is_ok() {
             try_parse_special_containers_seekable(
-                &mut cursor,
+                &mut reader,
                 &mut out,
                 &mut consumed_custom_keys,
             );
-            extract_id3v2_header_and_chapters_from_slice(raw, &mut out);
         }
-    }
+        if out.id3v2_version.is_none() || out.chapters.is_empty() {
+            if reader.seek(SeekFrom::Start(0)).is_ok() {
+                extract_id3v2_header_and_chapters_from_reader(&mut reader, &mut out);
+            }
+        }
 
-    // 3. Bridge Symphonia metadata (essential for Matroska/WebM/MKA, CAF, Ogg, and fallback tags/visuals)
-    if let Some(sym) = symphonia_meta {
-        if !sym.is_empty() {
-            merge_symphonia_metadata(&mut out, sym, container_format, &consumed_custom_keys);
-        }
-    }
+        // 2. Fallback / supplement on synthesized compact container `out.bytes`
+        if !out.bytes.is_empty() {
+            let bytes_snapshot = if !parsed_any_lofty
+                || out.id3v2_version.is_none()
+                || out.chapters.is_empty()
+                || out.pictures.is_empty()
+            {
+                Some(out.bytes.clone())
+            } else {
+                None
+            };
 
-    // 4. Merge ICY Live Stream Metadata (Shoutcast / Icecast)
-    if let Some(ref icy) = out.icy {
-        if !out.tag_formats.iter().any(|f| f == "ICY") {
-            out.tag_formats.push("ICY".to_string());
+            if let Some(ref raw) = bytes_snapshot {
+                if !parsed_any_lofty {
+                    let mut cursor = Cursor::new(raw.as_slice());
+                    parsed_any_lofty =
+                        try_parse_with_lofty(&mut cursor, &mut out, &mut consumed_custom_keys);
+                    if !parsed_any_lofty {
+                        parse_raw_id3v2_slice(raw, &mut out, &mut consumed_custom_keys);
+                    }
+                }
+                let mut cursor = Cursor::new(raw.as_slice());
+                try_parse_special_containers_seekable(
+                    &mut cursor,
+                    &mut out,
+                    &mut consumed_custom_keys,
+                );
+                extract_id3v2_header_and_chapters_from_slice(raw, &mut out);
+            }
         }
-        if let Some(ref st) = icy.stream_title {
-            let trimmed = st.trim();
-            if !trimmed.is_empty() {
-                if let Some((artist_part, title_part)) = trimmed.split_once(" - ") {
-                    let a = artist_part.trim();
-                    let t = title_part.trim();
-                    if !a.is_empty() && out.track_artist.is_none() {
-                        out.track_artist = Some(a.to_string());
+
+        // 3. Bridge Symphonia metadata (authoritative for Matroska/WebM/MKA, CAF, Ogg, and fallback visuals)
+        if let Some(sym) = symphonia_meta {
+            if !sym.is_empty() {
+                merge_symphonia_metadata(&mut out, sym, container_format, &consumed_custom_keys);
+            }
+        }
+
+        // 4. Merge ICY Live Stream Metadata (Shoutcast / Icecast)
+        if let Some(ref icy) = out.icy {
+            if !out.tag_formats.iter().any(|f| f == "ICY") {
+                out.tag_formats.push("ICY".to_string());
+            }
+            if let Some(ref st) = icy.stream_title {
+                let trimmed = st.trim();
+                if !trimmed.is_empty() {
+                    if let Some((artist_part, title_part)) = trimmed.split_once(" - ") {
+                        let a = artist_part.trim();
+                        let t = title_part.trim();
+                        if !a.is_empty() && out.track_artist.is_none() {
+                            out.track_artist = Some(a.to_string());
+                        }
+                        if !t.is_empty() {
+                            out.title = Some(t.to_string());
+                        }
+                    } else if out.title.is_none() {
+                        out.title = Some(trimmed.to_string());
                     }
-                    if !t.is_empty() {
-                        out.title = Some(t.to_string());
-                    }
-                } else if out.title.is_none() {
-                    out.title = Some(trimmed.to_string());
+                }
+            }
+            if let Some(ref station) = icy.station_name {
+                if out.album.is_none() && !station.trim().is_empty() {
+                    out.album = Some(station.trim().to_string());
+                }
+            }
+            if let Some(ref genre) = icy.station_genre {
+                if out.genre.is_none() && !genre.trim().is_empty() {
+                    out.genre = Some(genre.trim().to_string());
+                }
+            }
+            if let Some(ref url) = icy.station_url {
+                if out.extended.radio_station_url.is_none() && !url.trim().is_empty() {
+                    out.extended.radio_station_url = Some(url.trim().to_string());
                 }
             }
         }
-        if let Some(ref station) = icy.station_name {
-            if out.album.is_none() && !station.trim().is_empty() {
-                out.album = Some(station.trim().to_string());
-            }
-        }
-        if let Some(ref genre) = icy.station_genre {
-            if out.genre.is_none() && !genre.trim().is_empty() {
-                out.genre = Some(genre.trim().to_string());
-            }
-        }
-        if let Some(ref url) = icy.station_url {
-            if out.extended.radio_station_url.is_none() && !url.trim().is_empty() {
-                out.extended.radio_station_url = Some(url.trim().to_string());
-            }
-        }
-    }
 
-    out
+        out
+    }
 }
 
 fn try_parse_with_lofty<R: Read + Seek>(
@@ -1189,15 +1200,32 @@ fn parse_raw_id3v2_slice(
     out: &mut RustAudioMetadata,
     consumed: &mut HashSet<String>,
 ) {
-    if !id3_slice.starts_with(b"ID3") || id3_slice.len() < 10 {
+    let has_leading_id3v2 = id3_slice.starts_with(b"ID3") && id3_slice.len() >= 10;
+    let has_trailing_tag = id3_slice.starts_with(b"APETAGEX")
+        || (id3_slice.len() >= 128
+            && &id3_slice[id3_slice.len() - 128..id3_slice.len() - 125] == b"TAG");
+    if !has_leading_id3v2 && !has_trailing_tag {
         return;
     }
-    extract_id3v2_header_and_chapters_from_slice(id3_slice, out);
 
-    // Wrap the raw ID3v2 block with two minimal valid MPEG1 Layer3 128kbps 44.1kHz frames
-    // so `lofty` can parse the ID3v2 tag through its standard MPEG reader.
+    if has_leading_id3v2 {
+        extract_id3v2_header_and_chapters_from_slice(id3_slice, out);
+    }
+
+    let id3_end = if has_leading_id3v2 {
+        let tag_size = decode_synchsafe(&id3_slice[6..10]) as usize;
+        let footer = if (id3_slice[5] & 0x10) != 0 { 10 } else { 0 };
+        (10 + tag_size + footer).min(id3_slice.len())
+    } else {
+        0
+    };
+
+    // Wrap the raw ID3v2 / trailing APEv2 / ID3v1 block with two minimal valid
+    // MPEG1 Layer3 128kbps 44.1kHz frames so `lofty` can parse all tags through its MPEG reader.
     let mut synthetic_mp3 = Vec::with_capacity(id3_slice.len() + 836);
-    synthetic_mp3.extend_from_slice(id3_slice);
+    if id3_end > 0 {
+        synthetic_mp3.extend_from_slice(&id3_slice[..id3_end]);
+    }
     let mut frame = [0u8; 418];
     frame[0] = 0xFF;
     frame[1] = 0xFB;
@@ -1205,6 +1233,9 @@ fn parse_raw_id3v2_slice(
     frame[3] = 0x64;
     synthetic_mp3.extend_from_slice(&frame);
     synthetic_mp3.extend_from_slice(&frame);
+    if id3_slice.len() > id3_end {
+        synthetic_mp3.extend_from_slice(&id3_slice[id3_end..]);
+    }
 
     let mut cursor = Cursor::new(synthetic_mp3.as_slice());
     let options = ParseOptions::new()

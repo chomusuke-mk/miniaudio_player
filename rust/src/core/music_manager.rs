@@ -1,6 +1,6 @@
 //! Music Stream & Queue Domain Manager (`MusicManager`).
 //!
-//! Encapsulates Deck A and Deck B streaming, Symphonia demuxing, TripartiteBuffer,
+//! Encapsulates Deck A and Deck B streaming, Symphonia demuxing, StreamSession,
 //! playlist/queue management, and atomic crossfading.
 
 use std::sync::atomic::Ordering;

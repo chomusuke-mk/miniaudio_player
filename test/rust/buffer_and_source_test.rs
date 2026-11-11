@@ -1,25 +1,27 @@
-//! Tripartite Buffer, ByteSource Abstraction, and Structural Edge-Case Fixture Tests.
+//! StreamSession, StreamBuffer, ByteSource Abstraction, and Structural Edge-Case Fixture Tests.
 
 mod common;
 
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use common::FixtureResolver;
 use miniaudio_player::buffer::{
-    BufferError, BufferStreamReader, ByteSource, ByteSourceStream, CustomDartByteSource,
-    DartReadRequest, FileByteSource, MemoryByteSource, SourceKind, TripartiteBuffer,
-    TripartiteByteSource,
+    BufferError, ByteSource, ByteSourceStream, CustomDartByteSource, DartReadRequest,
+    DemuxedStreamReader, FileByteSource, MemoryByteSource, MetadataStreamReader, SourceKind,
+    StreamBuffer, StreamByteSource, StreamSession,
 };
-use miniaudio_player::decoder::sniffer::{BoundaryStatus, ContainerFormat, FormatSniffer};
+use miniaudio_player::decoder::classifier::{BoundaryStatus, ContainerFormat, StreamClassifier};
 use miniaudio_player::decoder::symphonia_engine::SymphoniaEngine;
 use symphonia::core::io::MediaSource;
 
 #[test]
 fn test_pinned_head_read() {
-    let buffer = TripartiteBuffer::new(1024 * 1024, Some(5000), false);
+    let buffer = StreamSession::new(1024 * 1024, Some(5000), false);
     let head = b"ID3\x03\x00\x00\x00\x00\x00\x0aHEADERDATA";
     buffer.set_head(head);
     buffer.set_audio_start(head.len() as u64);
@@ -38,7 +40,7 @@ fn test_pinned_head_read() {
 #[test]
 fn test_pure_audio_ring_feed_and_read() {
     let capacity = 1024;
-    let buffer = TripartiteBuffer::new(capacity, Some(10000), false);
+    let buffer = StreamSession::new(capacity, Some(10000), false);
     buffer.set_audio_start(0);
 
     let chunk = b"AUDIO_CHUNK_0123456789";
@@ -53,7 +55,7 @@ fn test_pure_audio_ring_feed_and_read() {
 
 #[test]
 fn test_deterministic_write_at_offset_zero_and_arbitrary() {
-    let buffer = TripartiteBuffer::new(1024, Some(1000), false);
+    let buffer = StreamSession::new(1024, Some(1000), false);
     buffer.set_audio_start(0);
 
     // Deterministic write_at at offset 0
@@ -73,7 +75,7 @@ fn test_deterministic_write_at_offset_zero_and_arbitrary() {
 
 #[test]
 fn test_contiguous_spanning_read_head_into_ring() {
-    let buffer = TripartiteBuffer::new(1024, Some(10000), false);
+    let buffer = StreamSession::new(1024, Some(10000), false);
     let head = b"HEAD";
     buffer.set_head(head);
     buffer.set_audio_start(4);
@@ -89,7 +91,7 @@ fn test_contiguous_spanning_read_head_into_ring() {
 
 #[test]
 fn test_tail_buffer_and_audio_eof_protection() {
-    let buffer = TripartiteBuffer::new(1024, Some(100), false);
+    let buffer = StreamSession::new(1024, Some(100), false);
     buffer.set_audio_start(0);
     buffer.set_audio_end(50);
 
@@ -107,13 +109,13 @@ fn test_tail_buffer_and_audio_eof_protection() {
 }
 
 #[test]
-fn test_buffer_stream_reader_preserves_eof_on_read() {
-    let buffer = TripartiteBuffer::new(1024, Some(16), false);
+fn test_demuxed_stream_reader_preserves_eof_on_read() {
+    let buffer = StreamSession::new(1024, Some(16), false);
     buffer.set_audio_start(0);
     buffer.feed_chunk(b"0123456789ABCDEF").unwrap();
     buffer.mark_eof();
 
-    let mut reader = BufferStreamReader::new(buffer.clone());
+    let mut reader = DemuxedStreamReader::new(buffer.clone());
     assert!(reader.is_seekable());
     assert_eq!(reader.byte_len(), Some(16));
 
@@ -146,7 +148,7 @@ fn test_buffer_stream_reader_preserves_eof_on_read() {
 #[test]
 fn test_backpressure_busy() {
     let capacity = 64;
-    let buffer = TripartiteBuffer::new(capacity, Some(1000), false);
+    let buffer = StreamSession::new(capacity, Some(1000), false);
     buffer.set_audio_start(0);
 
     let chunk = vec![0xAA; 40];
@@ -163,7 +165,7 @@ fn test_backpressure_busy() {
 
 #[test]
 fn test_flush_and_cached_seek() {
-    let buffer = TripartiteBuffer::new(1024, Some(5000), false);
+    let buffer = StreamSession::new(1024, Some(5000), false);
     buffer.set_audio_start(0);
     buffer.feed_chunk(b"INITIAL_DATA_FOR_BUFFER").unwrap();
 
@@ -180,6 +182,69 @@ fn test_flush_and_cached_seek() {
     assert_eq!(range.end_byte, 2000);
     assert_eq!(range.read_cursor_byte, 2000);
     assert_eq!(range.is_buffering, 1);
+}
+
+#[test]
+fn test_stream_buffer_linear_sparse_and_circular_real_bytes() {
+    // 1. Linear StreamBuffer (head) with initial_capacity and min_growth
+    let head_buf = StreamBuffer::new_linear(16, 32);
+    head_buf.commit_chunk(0, b"0123456789ABCDEF").unwrap();
+    head_buf.commit_chunk(16, b"GHIJKL").unwrap();
+    assert_eq!(head_buf.linear_len(), 22);
+    let mut l_out = [0u8; 6];
+    assert_eq!(head_buf.read_at(16, &mut l_out).unwrap(), 6);
+    assert_eq!(&l_out, b"GHIJKL");
+
+    // 2. Sparse StreamBuffer (metadata) with chunk coalescing and null/WouldBlock on unbuffered seek
+    let meta_buf = StreamBuffer::new_sparse(64, 64, Some(1000));
+    meta_buf.commit_chunk(0, b"HEAD_META_").unwrap();
+    meta_buf.commit_chunk(10, b"CONTIGUOUS").unwrap();
+    meta_buf.commit_chunk(900, b"TAIL_TAG").unwrap();
+
+    let mut m_reader = MetadataStreamReader::new(meta_buf.clone());
+    let mut m_out = [0u8; 20];
+    assert_eq!(m_reader.read(&mut m_out).unwrap(), 20);
+    assert_eq!(&m_out, b"HEAD_META_CONTIGUOUS");
+
+    // Seek to unbuffered middle offset 500 -> returns UnexpectedEof immediately (no network stall)
+    m_reader.seek(SeekFrom::Start(500)).unwrap();
+    let mut m_miss = [0u8; 8];
+    assert_eq!(
+        m_reader.read(&mut m_miss).unwrap_err().kind(),
+        std::io::ErrorKind::UnexpectedEof
+    );
+
+    // Seek to buffered tail offset 900 -> succeeds
+    m_reader.seek(SeekFrom::Start(900)).unwrap();
+    assert_eq!(m_reader.read(&mut m_miss).unwrap(), 8);
+    assert_eq!(&m_miss, b"TAIL_TAG");
+
+    // 3. Circular StreamBuffer (body) with getRealBytes (ByteFetchTask) and watermark prefetch
+    let fetch_calls = Arc::new(AtomicUsize::new(0));
+    let fetch_calls_clone = fetch_calls.clone();
+    let backing_store: Arc<Vec<u8>> = Arc::new((0..1024usize).map(|i| (i & 0xFF) as u8).collect());
+    let store_clone = backing_store.clone();
+
+    let fetcher = Arc::new(move |pos: u64, size: usize| -> std::io::Result<Vec<u8>> {
+        fetch_calls_clone.fetch_add(1, Ordering::SeqCst);
+        let start = (pos as usize).min(store_clone.len());
+        let end = (start + size).min(store_clone.len());
+        Ok(store_clone[start..end].to_vec())
+    });
+
+    let body_buf = StreamBuffer::new_circular(128, 0.50, Some(fetcher));
+    // Cache miss at offset 200 triggers getRealBytes(200, 128)
+    let mut c_out = [0u8; 32];
+    let n = body_buf.read_at(200, &mut c_out).unwrap();
+    assert_eq!(n, 32);
+    assert_eq!(c_out[0], (200 & 0xFF) as u8);
+    assert_eq!(fetch_calls.load(Ordering::SeqCst), 1);
+
+    // Reading past 50% watermark (offset 200 + 64 = 264) triggers proactive watermark refill
+    let mut c_out2 = [0u8; 40];
+    let n2 = body_buf.read_at(240, &mut c_out2).unwrap();
+    assert_eq!(n2, 40);
+    assert!(fetch_calls.load(Ordering::SeqCst) >= 2);
 }
 
 #[test]
@@ -231,13 +296,13 @@ fn test_memory_and_file_byte_sources() {
 }
 
 #[test]
-fn test_tripartite_and_custom_dart_byte_sources() {
-    let trip = TripartiteBuffer::new(4096, Some(8192), false);
-    trip.set_head(b"HEADER_PREFIX");
-    trip.set_audio_start(13);
-    trip.feed_chunk(b"_AUDIO_PAYLOAD_CHUNK").unwrap();
+fn test_stream_and_custom_dart_byte_sources() {
+    let session = StreamSession::new(4096, Some(8192), false);
+    session.set_head(b"HEADER_PREFIX");
+    session.set_audio_start(13);
+    session.feed_chunk(b"_AUDIO_PAYLOAD_CHUNK").unwrap();
 
-    let mut source = TripartiteByteSource::new(trip);
+    let mut source = StreamByteSource::new(session);
     assert_eq!(source.total_bytes(), Some(8192));
     assert!(ByteSource::is_seekable(&source));
     assert_eq!(source.source_kind(), SourceKind::HttpVod);
@@ -302,23 +367,23 @@ fn test_tripartite_and_custom_dart_byte_sources() {
 }
 
 #[test]
-fn test_tripartite_edge_case_fixtures_from_manifest() {
+fn test_stream_session_edge_case_fixtures_from_manifest() {
     // 1. Giant Cover MP3 (> 350 KB ID3v2 APIC)
     let giant_mp3 = std::fs::read(FixtureResolver::resolve("tripartite/giant_cover.mp3")).unwrap();
     let (status_partial, info_partial) =
-        FormatSniffer::detect_head_boundary(&giant_mp3[..64], giant_mp3.len() as i64);
+        StreamClassifier::detect_head_boundary(&giant_mp3[..64], giant_mp3.len() as i64);
     assert_eq!(status_partial, BoundaryStatus::NeedMore);
     assert!(info_partial.needed_bytes > 350_000);
 
     let (status_full, info_full) =
-        FormatSniffer::detect_head_boundary(&giant_mp3, giant_mp3.len() as i64);
+        StreamClassifier::detect_head_boundary(&giant_mp3, giant_mp3.len() as i64);
     assert_eq!(status_full, BoundaryStatus::Found);
     assert_eq!(info_full.container, ContainerFormat::Mp3);
     assert!(info_full.audio_start > 350_000);
 
     // 2. Giant Cover FLAC (> 300 KB PICTURE block)
     let giant_flac = std::fs::read(FixtureResolver::resolve("tripartite/giant_cover.flac")).unwrap();
-    let (f_status, f_info) = FormatSniffer::detect_head_boundary(&giant_flac, giant_flac.len() as i64);
+    let (f_status, f_info) = StreamClassifier::detect_head_boundary(&giant_flac, giant_flac.len() as i64);
     assert_eq!(f_status, BoundaryStatus::Found);
     assert_eq!(f_info.container, ContainerFormat::Flac);
     assert!(f_info.audio_start > 300_000);
@@ -327,7 +392,7 @@ fn test_tripartite_edge_case_fixtures_from_manifest() {
     let eof_mp3 = std::fs::read(FixtureResolver::resolve("tripartite/eof_chirp.mp3")).unwrap();
     let total_len = eof_mp3.len() as i64;
     let tail_slice = &eof_mp3[eof_mp3.len() - 4096..];
-    let (t_status, audio_end) = FormatSniffer::detect_tail_boundary(
+    let (t_status, audio_end) = StreamClassifier::detect_tail_boundary(
         ContainerFormat::Mp3,
         tail_slice,
         total_len - 4096,
@@ -347,7 +412,7 @@ fn test_tripartite_edge_case_fixtures_from_manifest() {
 
     // 5. Trailing Chunks WAV (LIST/INFO after data)
     let wav_trailing = std::fs::read(FixtureResolver::resolve("tripartite/trailing_chunks.wav")).unwrap();
-    let (w_status, w_info) = FormatSniffer::detect_head_boundary(&wav_trailing[..128], wav_trailing.len() as i64);
+    let (w_status, w_info) = StreamClassifier::detect_head_boundary(&wav_trailing[..128], wav_trailing.len() as i64);
     assert_eq!(w_status, BoundaryStatus::Found);
     assert_eq!(w_info.container, ContainerFormat::Wav);
     assert!(w_info.audio_end < wav_trailing.len() as i64);

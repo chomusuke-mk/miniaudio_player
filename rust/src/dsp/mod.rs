@@ -19,8 +19,7 @@ pub mod visualizer;
 pub mod voice_pool;
 
 pub use analysis::{
-    analyze_audio_source, analyze_head_info, AdaptiveWaveformAccumulator, Bs1770LoudnessAnalyzer,
-    HeadAnalysisInfo, ReplayGainData,
+    analyze_audio_source, AdaptiveWaveformAccumulator, Bs1770LoudnessAnalyzer, ReplayGainData,
 };
 pub use biquad::BiquadDf2t;
 pub use chain::DspChain;

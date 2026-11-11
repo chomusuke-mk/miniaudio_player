@@ -8,7 +8,6 @@ use std::f64::consts::PI;
 
 use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult, RustChromaprintResult};
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
-use crate::decoder::sniffer::FormatSniffer;
 
 use super::biquad::BiquadDf2t;
 
@@ -256,12 +255,6 @@ impl AdaptiveWaveformAccumulator {
         }
     }
 
-    /// Feeds a single mono peak (for backwards compatibility).
-    #[inline]
-    pub fn push_frame_peak(&mut self, peak: f32) {
-        self.push_frame(peak, peak);
-    }
-
     /// Resamples accumulated energy into normalized `[0.0, 1.0]` points matching `target_points`.
     pub fn finalize(mut self) -> Vec<f32> {
         if !self.has_samples {
@@ -295,56 +288,6 @@ impl AdaptiveWaveformAccumulator {
         }
 
         points
-    }
-}
-
-/// Standalone, reusable metadata and format extraction information from audio container headers.
-#[derive(Debug, Clone, Default)]
-pub struct HeadAnalysisInfo {
-    /// Inferred container or codec format name (e.g., "mp3", "flac").
-    pub format: Option<String>,
-    /// Estimated nominal bitrate in bits per second.
-    pub bitrate: u32,
-    /// Estimated audio duration in milliseconds.
-    pub duration_ms: i64,
-    /// Byte offset where audio payload begins.
-    pub audio_start: i64,
-    /// Byte offset where audio payload ends.
-    pub audio_end: i64,
-    /// Raw metadata tag bytes extracted from header.
-    pub metadata_bytes: Option<Vec<u8>>,
-}
-
-/// Safely inspects and extracts format and metadata information from audio header bytes.
-/// Designed for modular reuse in both offline analysis and stream metadata inspection.
-pub fn analyze_head_info(
-    head_data: &[u8],
-    total_byte_size: i64,
-    extract_metadata: bool,
-) -> HeadAnalysisInfo {
-    let (_status, boundary) = FormatSniffer::detect_head_boundary(head_data, total_byte_size);
-    let sniffed = FormatSniffer::sniff_stream_info(head_data, total_byte_size);
-    let (bitrate, duration_ms) = sniffed.unwrap_or((0, 0));
-    let format = boundary.container.hint_extension().map(|s| s.to_string());
-
-    let metadata_bytes = if extract_metadata && !head_data.is_empty() {
-        let meta_len = if boundary.audio_start > 0 {
-            (boundary.audio_start as usize).min(head_data.len())
-        } else {
-            head_data.len().min(65536)
-        };
-        Some(head_data[..meta_len].to_vec())
-    } else {
-        None
-    };
-
-    HeadAnalysisInfo {
-        format,
-        bitrate,
-        duration_ms,
-        audio_start: boundary.audio_start,
-        audio_end: boundary.audio_end,
-        metadata_bytes,
     }
 }
 

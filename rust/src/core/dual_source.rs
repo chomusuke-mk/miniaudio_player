@@ -1,7 +1,7 @@
 //! Central thread-safe player coordinator integrating decoding, DSP, buffering, and device output.
 
 use std::fs::File;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 #[cfg(not(target_arch = "wasm32"))]
@@ -10,9 +10,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::bridge::ffi::*;
-use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, TripartiteBuffer};
+use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, StreamBuffer, StreamSession};
 use crate::core::renderer::{AudioRenderer, DspCommand};
-use crate::decoder::{BoundaryInfo, ContainerFormat, FormatSniffer, SymphoniaEngine};
+use crate::decoder::{BoundaryInfo, BoundaryStatus, StreamClassifier, SymphoniaEngine};
 use crate::dsp::channel_matrix::ChannelMatrix;
 use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -302,7 +302,7 @@ struct IcyDemuxReader {
     inner: Box<dyn Read + Send>,
     metaint: usize,
     bytes_until_meta: usize,
-    trip_slot: Arc<Mutex<Option<TripartiteBuffer>>>,
+    session_slot: Arc<Mutex<Option<StreamSession>>>,
     latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
     icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
 }
@@ -312,7 +312,7 @@ impl IcyDemuxReader {
     fn new(
         inner: Box<dyn Read + Send>,
         metaint: usize,
-        trip_slot: Arc<Mutex<Option<TripartiteBuffer>>>,
+        session_slot: Arc<Mutex<Option<StreamSession>>>,
         latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
         icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
     ) -> Self {
@@ -320,7 +320,7 @@ impl IcyDemuxReader {
             inner,
             metaint,
             bytes_until_meta: metaint,
-            trip_slot,
+            session_slot,
             latest_icy,
             icy_metadata,
         }
@@ -374,9 +374,9 @@ impl Read for IcyDemuxReader {
                     if let Ok(mut latest) = self.latest_icy.lock() {
                         *latest = Some(synthesized.clone());
                     }
-                    if let Ok(guard) = self.trip_slot.lock() {
-                        if let Some(ref trip) = *guard {
-                            trip.set_icy_meta(&synthesized);
+                    if let Ok(guard) = self.session_slot.lock() {
+                        if let Some(ref session) = *guard {
+                            session.set_icy_meta(&synthesized);
                         }
                     }
                 }
@@ -489,8 +489,8 @@ fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) ->
                 }
                 if initial_data.len() >= 65536 {
                     let (status, boundary) =
-                        FormatSniffer::detect_head_boundary(&initial_data, content_length);
-                    if status != crate::decoder::sniffer::BoundaryStatus::NeedMore {
+                        StreamClassifier::detect_head_boundary(&initial_data, content_length);
+                    if status != crate::decoder::classifier::BoundaryStatus::NeedMore {
                         let min_required = (boundary.audio_start.max(0) as usize)
                             .saturating_add(32768)
                             .min(if content_length > 0 {
@@ -525,7 +525,7 @@ fn prefetch_initial_stream_bytes(reader: &mut impl Read, content_length: i64) ->
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn_network_streamer_thread(
     mut reader: Box<dyn Read + Send>,
-    trip: TripartiteBuffer,
+    session: StreamSession,
     abort_stream: Arc<AtomicBool>,
     decoder_running: Arc<AtomicBool>,
 ) {
@@ -538,7 +538,7 @@ fn spawn_network_streamer_thread(
                 match reader.read(&mut chunk) {
                     Ok(0) => {
                         crate::map_log!(3, "Network streamer reached EOF");
-                        trip.mark_eof();
+                        session.mark_eof();
                         break;
                     }
                     Ok(n) => {
@@ -548,7 +548,7 @@ fn spawn_network_streamer_thread(
                             && !abort_stream.load(Ordering::Relaxed)
                             && decoder_running.load(Ordering::Relaxed)
                         {
-                            match trip.feed_chunk(&chunk[offset..n]) {
+                            match session.feed_chunk(&chunk[offset..n]) {
                                 Ok(0) => {
                                     std::thread::sleep(Duration::from_millis(10));
                                 }
@@ -734,7 +734,7 @@ struct DecoderWorker {
     silence_cfg_arc: Arc<RwLock<SilenceConfig>>,
     silence_saved_arc: Arc<AtomicI64>,
     is_stream_arc: Arc<AtomicBool>,
-    trip_buf_arc: Arc<RwLock<Option<TripartiteBuffer>>>,
+    session_arc: Arc<RwLock<Option<StreamSession>>>,
     decoder_eof_arc: Arc<AtomicBool>,
     tele: Arc<TelemetryDispatcher>,
     completed_flag: Arc<AtomicBool>,
@@ -875,19 +875,19 @@ impl DecoderWorker {
         if let Ok(mut eng_lock) = self.engine_arc.lock() {
             let mut reinit = false;
             if target_seek == 0 && self.is_stream_arc.load(Ordering::Relaxed) {
-                if let Ok(guard) = self.trip_buf_arc.read() {
-                    if let Some(ref trip) = *guard {
-                        let (hit, contig) = trip.try_seek_cached(0);
+                if let Ok(guard) = self.session_arc.read() {
+                    if let Some(ref session) = *guard {
+                        let (hit, contig) = session.try_seek_cached(0);
                         if !hit || !contig {
-                            trip.flush(0);
+                            session.flush(0);
                         }
-                        trip.set_decoding_audio(false);
-                        let reader = trip.create_reader();
+                        session.set_decoding_audio(false);
+                        let reader = session.create_reader();
                         if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
                             *eng_lock = Some(new_eng);
                             reinit = true;
                         }
-                        trip.set_decoding_audio(true);
+                        session.set_decoding_audio(true);
                     }
                 }
             }
@@ -929,12 +929,13 @@ impl DecoderWorker {
             return true;
         }
 
-        let maybe_reader = self.trip_buf_arc.read().ok().and_then(|guard| {
-            let trip = guard.as_ref()?;
-            let has_data =
-                trip.head_size() > 0 || trip.range_end() > trip.range_start() || trip.is_eof();
+        let maybe_reader = self.session_arc.read().ok().and_then(|guard| {
+            let session = guard.as_ref()?;
+            let has_data = session.head_size() > 0
+                || session.range_end() > session.range_start()
+                || session.is_eof();
             if has_data {
-                Some(trip.create_reader())
+                Some(session.create_reader())
             } else {
                 None
             }
@@ -1030,7 +1031,7 @@ impl DecoderWorker {
         }
         if self.is_stream_arc.load(Ordering::Relaxed) {
             let is_buf_eof = self
-                .trip_buf_arc
+                .session_arc
                 .read()
                 .ok()
                 .and_then(|g| g.as_ref().map(|b| b.is_eof()))
@@ -1228,16 +1229,6 @@ impl DecoderWorker {
     }
 }
 
-/// Origin of the currently opened source on a [`StreamingDeck`], enabling on-demand seekable metadata parsing.
-#[derive(Clone, Default)]
-pub enum DeckSourceOrigin {
-    #[default]
-    None,
-    File(std::path::PathBuf),
-    Memory(Arc<Vec<u8>>),
-    Stream,
-}
-
 /// Self-contained audio playback deck driving background decoding, buffering, DSP, and ring-buffer production.
 pub struct StreamingDeck {
     /// Zero-based numerical deck identifier (0: Deck A, 1: Deck B).
@@ -1292,18 +1283,14 @@ pub struct StreamingDeck {
     /// Whether FFT visualizer computation is active.
     pub visualizer_enabled: Arc<AtomicBool>,
 
-    /// Whether this deck is streaming from a network tripartite buffer.
+    /// Whether this deck is streaming from a network stream session.
     pub is_stream: Arc<AtomicBool>,
-    /// Optional progressive HTTP tripartite buffer.
-    pub trip_buffer: Arc<RwLock<Option<TripartiteBuffer>>>,
-    /// Audio boundary information discovered by format sniffing.
+    /// Unified stream session (`head`, `body`, `metadata` `StreamBuffer`s).
+    pub stream_session: Arc<RwLock<Option<StreamSession>>>,
+    /// Audio boundary information discovered by stream classification.
     pub boundary_info: Arc<RwLock<Option<BoundaryInfo>>>,
-    /// Header metadata bytes read from the audio source during initial probing.
-    pub head_bytes: Arc<RwLock<Vec<u8>>>,
     /// Container/codec format string (e.g. "mp3", "flac", "wav").
     pub format: Arc<RwLock<Option<String>>>,
-    /// Origin of the currently opened source.
-    pub source_origin: Arc<RwLock<DeckSourceOrigin>>,
     /// Metadata revisions, visuals, and chapters captured by Symphonia during probing.
     pub symphonia_meta: Arc<RwLock<crate::metadata::SymphoniaExtractedMeta>>,
     /// Live Shoutcast / Icecast ICY stream metadata and station headers.
@@ -1460,11 +1447,9 @@ impl StreamingDeck {
         let visualizer_enabled = Arc::new(AtomicBool::new(false));
 
         let is_stream = Arc::new(AtomicBool::new(false));
-        let trip_buffer = Arc::new(RwLock::new(None));
+        let stream_session = Arc::new(RwLock::new(None));
         let boundary_info = Arc::new(RwLock::new(None));
-        let head_bytes = Arc::new(RwLock::new(Vec::new()));
         let format = Arc::new(RwLock::new(None));
-        let source_origin = Arc::new(RwLock::new(DeckSourceOrigin::None));
         let symphonia_meta = Arc::new(RwLock::new(crate::metadata::SymphoniaExtractedMeta::default()));
         let icy_metadata = Arc::new(RwLock::new(None));
         let cached_metadata = Arc::new(Mutex::new(None));
@@ -1596,11 +1581,9 @@ impl StreamingDeck {
             silence_saved_ms,
             visualizer_enabled,
             is_stream,
-            trip_buffer,
+            stream_session,
             boundary_info,
-            head_bytes,
             format,
-            source_origin,
             symphonia_meta,
             icy_metadata,
             cached_metadata,
@@ -1698,7 +1681,7 @@ impl StreamingDeck {
             silence_cfg_arc: self.silence_config.clone(),
             silence_saved_arc: self.silence_saved_ms.clone(),
             is_stream_arc: self.is_stream.clone(),
-            trip_buf_arc: self.trip_buffer.clone(),
+            session_arc: self.stream_session.clone(),
             decoder_eof_arc: self.decoder_eof.clone(),
             tele: self.telemetry.clone(),
             completed_flag: self.completed_flag.clone(),
@@ -1746,17 +1729,14 @@ impl StreamingDeck {
         let _ = self.stop();
         self.network_streamer_abort.store(true, Ordering::Release);
         self.is_stream.store(false, Ordering::Release);
-        if let Ok(mut guard) = self.trip_buffer.write() {
-            if let Some(ref trip) = *guard {
-                trip.abort();
+        if let Ok(mut guard) = self.stream_session.write() {
+            if let Some(ref session) = *guard {
+                session.abort();
             }
             *guard = None;
         }
         if let Ok(mut guard) = self.boundary_info.write() {
             *guard = None;
-        }
-        if let Ok(mut guard) = self.source_origin.write() {
-            *guard = DeckSourceOrigin::None;
         }
         if let Ok(mut guard) = self.symphonia_meta.write() {
             *guard = crate::metadata::SymphoniaExtractedMeta::default();
@@ -1933,7 +1913,7 @@ impl StreamingDeck {
         let new_abort = Arc::new(AtomicBool::new(false));
         self.network_streamer_abort = new_abort.clone();
 
-        if let Some(trip) = self.trip_buffer.read().unwrap().clone() {
+        if let Some(session) = self.stream_session.read().unwrap().clone() {
             let remaining_urls: Vec<String> = segments
                 .iter()
                 .skip(1)
@@ -1959,7 +1939,7 @@ impl StreamingDeck {
                                 && !new_abort.load(Ordering::Relaxed)
                                 && dec_running.load(Ordering::Relaxed)
                             {
-                                match trip.feed_chunk(&audio_bytes[offset..]) {
+                                match session.feed_chunk(&audio_bytes[offset..]) {
                                     Ok(written) => offset += written,
                                     Err(crate::buffer::BufferError::Busy) => {
                                         std::thread::sleep(Duration::from_millis(20));
@@ -1969,7 +1949,7 @@ impl StreamingDeck {
                             }
                         }
                     }
-                    trip.mark_eof();
+                    session.mark_eof();
                 });
         }
 
@@ -2057,14 +2037,14 @@ impl StreamingDeck {
             icy_metaint
         );
 
-        let trip_slot: Arc<Mutex<Option<TripartiteBuffer>>> = Arc::new(Mutex::new(None));
+        let session_slot: Arc<Mutex<Option<StreamSession>>> = Arc::new(Mutex::new(None));
         let latest_icy: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
 
         let mut reader: Box<dyn Read + Send> = if icy_metaint > 0 {
             Box::new(IcyDemuxReader::new(
                 Box::new(res.into_reader()),
                 icy_metaint,
-                trip_slot.clone(),
+                session_slot.clone(),
                 latest_icy.clone(),
                 self.icy_metadata.clone(),
             ))
@@ -2087,7 +2067,7 @@ impl StreamingDeck {
 
         if content_length > 0 && (initial_data.len() as i64) < content_length {
             let (_status, boundary) =
-                FormatSniffer::detect_head_boundary(&initial_data, content_length);
+                StreamClassifier::detect_head_boundary(&initial_data, content_length);
             if boundary.audio_end > 0
                 && boundary.audio_end < content_length
                 && (content_length - boundary.audio_end) <= 4 * 1024 * 1024
@@ -2098,7 +2078,7 @@ impl StreamingDeck {
                     tail_data = Some(tail);
                     forced_audio_end = Some(boundary.audio_end as u64);
                 }
-            } else if FormatSniffer::container_needs_tail_scan(boundary.container) {
+            } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
                 let floor = boundary.audio_start.max(0);
                 let probe_len = 65536i64.min(content_length - floor);
                 if probe_len > 0 {
@@ -2106,7 +2086,7 @@ impl StreamingDeck {
                     if let Some(probed) =
                         fetch_range_bytes(&agent, url, headers, tail_offset, content_length - 1)
                     {
-                        let (_t_status, audio_end) = FormatSniffer::detect_tail_boundary(
+                        let (_t_status, audio_end) = StreamClassifier::detect_tail_boundary(
                             boundary.container,
                             &probed,
                             tail_offset,
@@ -2142,11 +2122,11 @@ impl StreamingDeck {
             return res_code;
         }
 
-        if let Some(trip) = self.trip_buffer.read().unwrap().clone() {
+        if let Some(session) = self.stream_session.read().unwrap().clone() {
             if let Some(ae) = forced_audio_end {
-                trip.set_audio_end(ae);
+                session.set_audio_end(ae);
                 if let Some(ref td) = tail_data {
-                    trip.set_tail(td, Some(ae));
+                    session.set_tail(td, Some(ae));
                 }
                 if let Ok(mut b_guard) = self.boundary_info.write() {
                     if let Some(ref mut b) = *b_guard {
@@ -2156,18 +2136,18 @@ impl StreamingDeck {
             }
             if let Ok(guard) = latest_icy.lock() {
                 if let Some(ref icy_bytes) = *guard {
-                    trip.set_icy_meta(icy_bytes);
+                    session.set_icy_meta(icy_bytes);
                 }
             }
-            if let Ok(mut slot) = trip_slot.lock() {
-                *slot = Some(trip.clone());
+            if let Ok(mut slot) = session_slot.lock() {
+                *slot = Some(session.clone());
             }
 
             self.network_streamer_abort.store(true, Ordering::Release);
             let new_abort = Arc::new(AtomicBool::new(false));
             self.network_streamer_abort = new_abort.clone();
 
-            spawn_network_streamer_thread(reader, trip, new_abort, self.decoder_running.clone());
+            spawn_network_streamer_thread(reader, session, new_abort, self.decoder_running.clone());
         }
 
         crate::map_log!(
@@ -2179,6 +2159,119 @@ impl StreamingDeck {
         );
 
         MAP_SUCCESS
+    }
+
+    fn extract_seekable_head_and_tail<R: Read + Seek>(
+        reader: &mut R,
+        total_size: i64,
+    ) -> (Vec<u8>, Option<(Vec<u8>, Option<u64>)>, BoundaryInfo) {
+        let init_cap = 65536usize.min(total_size.max(0) as usize).max(16);
+        let mut initial_buf = vec![0u8; init_cap];
+        let _ = reader.seek(SeekFrom::Start(0));
+        let mut read_total = 0;
+        while read_total < initial_buf.len() {
+            match reader.read(&mut initial_buf[read_total..]) {
+                Ok(0) => break,
+                Ok(n) => read_total += n,
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        initial_buf.truncate(read_total);
+        if initial_buf.is_empty() {
+            return (initial_buf, None, BoundaryInfo::new());
+        }
+
+        let (mut status, mut boundary) =
+            StreamClassifier::detect_head_boundary(&initial_buf, total_size);
+        while status == BoundaryStatus::NeedMore
+            && boundary.needed_bytes > initial_buf.len() as i64
+            && boundary.needed_bytes <= 16 * 1024 * 1024
+        {
+            let target_len =
+                ((boundary.needed_bytes as usize) + 16384).min(total_size.max(0) as usize);
+            if target_len <= initial_buf.len() {
+                break;
+            }
+            let prev_len = initial_buf.len();
+            initial_buf.resize(target_len, 0);
+            let mut got = 0;
+            while prev_len + got < target_len {
+                match reader.read(&mut initial_buf[prev_len + got..]) {
+                    Ok(0) => break,
+                    Ok(n) => got += n,
+                    Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            initial_buf.truncate(prev_len + got);
+            if got == 0 {
+                break;
+            }
+            let res = StreamClassifier::detect_head_boundary(&initial_buf, total_size);
+            status = res.0;
+            boundary = res.1;
+        }
+
+        let mut tail_out: Option<(Vec<u8>, Option<u64>)> = None;
+        if total_size > 0 {
+            if boundary.audio_end > 0
+                && boundary.audio_end < total_size
+                && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
+            {
+                let tail_off = boundary.audio_end as u64;
+                let tail_len = (total_size - boundary.audio_end) as usize;
+                if reader.seek(SeekFrom::Start(tail_off)).is_ok() {
+                    let mut tbuf = vec![0u8; tail_len];
+                    let mut tgot = 0;
+                    while tgot < tail_len {
+                        match reader.read(&mut tbuf[tgot..]) {
+                            Ok(0) => break,
+                            Ok(n) => tgot += n,
+                            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                            Err(_) => break,
+                        }
+                    }
+                    tbuf.truncate(tgot);
+                    if !tbuf.is_empty() {
+                        tail_out = Some((tbuf, Some(tail_off)));
+                    }
+                }
+            } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
+                let floor = boundary.audio_start.max(0);
+                let probe_len = 65536i64.min(total_size - floor);
+                if probe_len > 0 {
+                    let tail_offset = total_size - probe_len;
+                    if reader.seek(SeekFrom::Start(tail_offset as u64)).is_ok() {
+                        let mut tbuf = vec![0u8; probe_len as usize];
+                        let mut tgot = 0;
+                        while tgot < tbuf.len() {
+                            match reader.read(&mut tbuf[tgot..]) {
+                                Ok(0) => break,
+                                Ok(n) => tgot += n,
+                                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                                Err(_) => break,
+                            }
+                        }
+                        tbuf.truncate(tgot);
+                        let (_ts, audio_end) = StreamClassifier::detect_tail_boundary(
+                            boundary.container,
+                            &tbuf,
+                            tail_offset,
+                            total_size,
+                            boundary.audio_start,
+                        );
+                        if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
+                            let rel = (audio_end - tail_offset) as usize;
+                            tail_out = Some((tbuf[rel..].to_vec(), Some(audio_end as u64)));
+                            boundary.audio_end = audio_end;
+                        }
+                    }
+                }
+            }
+        }
+
+        (initial_buf, tail_out, boundary)
     }
 
     pub fn open_file(&mut self, path: &str) -> i32 {
@@ -2198,16 +2291,12 @@ impl StreamingDeck {
             .extension()
             .and_then(|e| e.to_str());
 
-        let mut header = [0u8; 8192];
-        let mut header_len = 0;
-        if let Ok(mut f) = File::open(path) {
-            if let Ok(n) = f.read(&mut header) {
-                header_len = n;
-            }
-        }
+        let (initial_buf, tail_data, boundary) = if let Ok(mut f) = File::open(path) {
+            Self::extract_seekable_head_and_tail(&mut f, file_size as i64)
+        } else {
+            (Vec::new(), None, BoundaryInfo::new())
+        };
 
-        let (_status, boundary) =
-            FormatSniffer::detect_head_boundary(&header[..header_len], file_size as i64);
         let effective_hint = boundary.container.hint_extension().or(ext);
         crate::map_log!(
             4,
@@ -2225,10 +2314,16 @@ impl StreamingDeck {
             }
         };
 
-        if let Ok(mut origin) = self.source_origin.write() {
-            *origin = DeckSourceOrigin::File(std::path::PathBuf::from(path));
-        }
-        self.init_engine(eng, false, file_size, &header[..header_len]);
+        let session = StreamSession::new(65536, Some(file_size), false);
+        let classified_boundary = session.ingest_classified(
+            &initial_buf,
+            tail_data.as_ref().map(|(v, off)| (v.as_slice(), *off)),
+        );
+        session.mark_eof();
+        *self.boundary_info.write().unwrap() = Some(classified_boundary);
+        *self.stream_session.write().unwrap() = Some(session);
+
+        self.init_engine(eng, false, file_size, &initial_buf);
         crate::map_log!(3, "open_file successfully opened: {}", path);
         MAP_SUCCESS
     }
@@ -2241,7 +2336,8 @@ impl StreamingDeck {
         let _ = self.begin_open();
         crate::map_log!(3, "open_memory: size={}, hint={:?}", data.len(), hint_ext);
 
-        let (_status, boundary) = FormatSniffer::detect_head_boundary(data, data.len() as i64);
+        let total_size = data.len() as i64;
+        let (_status, boundary) = StreamClassifier::detect_head_boundary(data, total_size);
         let effective_hint = boundary.container.hint_extension().or(hint_ext);
         crate::map_log!(
             4,
@@ -2251,7 +2347,7 @@ impl StreamingDeck {
         );
 
         let mem_vec = data.to_vec();
-        let cursor = Cursor::new(mem_vec.clone());
+        let cursor = Cursor::new(mem_vec);
         let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
             Err(e) => {
@@ -2260,9 +2356,44 @@ impl StreamingDeck {
             }
         };
 
-        if let Ok(mut origin) = self.source_origin.write() {
-            *origin = DeckSourceOrigin::Memory(Arc::new(mem_vec));
+        let head_keep = if boundary.audio_start > 0 {
+            ((boundary.audio_start as usize) + 16384).min(data.len())
+        } else {
+            data.len().min(65536)
+        };
+        let mut tail_slice: Option<(&[u8], Option<u64>)> = None;
+        if total_size > 0 {
+            if boundary.audio_end > 0
+                && boundary.audio_end < total_size
+                && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
+            {
+                let off = boundary.audio_end as usize;
+                tail_slice = Some((&data[off..], Some(off as u64)));
+            } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
+                let floor = boundary.audio_start.max(0);
+                let probe_len = 65536i64.min(total_size - floor);
+                if probe_len > 0 {
+                    let tail_offset = total_size - probe_len;
+                    let (_ts, audio_end) = StreamClassifier::detect_tail_boundary(
+                        boundary.container,
+                        &data[tail_offset as usize..],
+                        tail_offset,
+                        total_size,
+                        boundary.audio_start,
+                    );
+                    if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
+                        tail_slice = Some((&data[audio_end as usize..], Some(audio_end as u64)));
+                    }
+                }
+            }
         }
+
+        let session = StreamSession::new(65536, Some(data.len() as u64), false);
+        let classified_boundary = session.ingest_classified(&data[..head_keep], tail_slice);
+        session.mark_eof();
+        *self.boundary_info.write().unwrap() = Some(classified_boundary);
+        *self.stream_session.write().unwrap() = Some(session);
+
         self.init_engine(eng, false, data.len() as u64, data);
         crate::map_log!(3, "open_memory successfully opened: size={}", data.len());
         MAP_SUCCESS
@@ -2282,7 +2413,7 @@ impl StreamingDeck {
         let cap = if buffer_capacity_bytes > 0 {
             buffer_capacity_bytes
         } else {
-            TripartiteBuffer::DEFAULT_RING_CAPACITY
+            StreamSession::DEFAULT_RING_CAPACITY
         };
         crate::map_log!(
             3,
@@ -2298,42 +2429,19 @@ impl StreamingDeck {
         } else {
             None
         };
-        let trip = TripartiteBuffer::new(cap, tot, is_live);
+        let session = StreamSession::new(cap, tot, is_live);
 
-        let mut container = ContainerFormat::Unknown;
+        let boundary = session.ingest_classified(initial_data, tail_data.map(|t| (t, None)));
+        let container = boundary.container;
         if !initial_data.is_empty() {
-            let (_status, boundary) = FormatSniffer::detect_head_boundary(initial_data, total_size);
-            container = boundary.container;
-            if boundary.audio_start > 0 {
-                let head_len = (boundary.audio_start as usize).min(initial_data.len());
-                trip.set_head(&initial_data[..head_len]);
-                trip.set_audio_start(boundary.audio_start as u64);
-                if initial_data.len() > head_len {
-                    let _ = trip.feed_chunk(&initial_data[head_len..]);
-                }
-            } else if boundary.audio_start == 0 {
-                trip.set_audio_start(0);
-                let _ = trip.feed_chunk(initial_data);
-            } else {
-                let _ = trip.feed_chunk(initial_data);
-            }
-            if boundary.audio_end > 0 {
-                trip.set_audio_end(boundary.audio_end as u64);
-            }
             *self.boundary_info.write().unwrap() = Some(boundary);
-        }
-
-        if let Some(tail) = tail_data {
-            if !tail.is_empty() {
-                trip.set_tail(tail, None);
-            }
         }
 
         let hint = container
             .hint_extension()
             .or_else(|| encoding_format_to_extension(encoding_format));
 
-        let reader = trip.create_reader();
+        let reader = session.create_reader();
         let eng = match SymphoniaEngine::new(reader, hint) {
             Ok(e) => e,
             Err(e) => {
@@ -2341,13 +2449,10 @@ impl StreamingDeck {
                 return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
             }
         };
-        trip.set_decoding_audio(true);
+        session.set_decoding_audio(true);
 
-        let tot = trip.total_size().unwrap_or(0);
-        if let Ok(mut origin) = self.source_origin.write() {
-            *origin = DeckSourceOrigin::Stream;
-        }
-        *self.trip_buffer.write().unwrap() = Some(trip);
+        let tot = session.total_size().unwrap_or(0);
+        *self.stream_session.write().unwrap() = Some(session);
         self.init_engine(eng, true, tot, initial_data);
         crate::map_log!(3, "open_stream_ex successfully opened (hint={:?})", hint);
         MAP_SUCCESS
@@ -2379,9 +2484,6 @@ impl StreamingDeck {
             }
         };
 
-        if let Ok(mut origin) = self.source_origin.write() {
-            *origin = DeckSourceOrigin::Stream;
-        }
         self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), &[]);
         crate::map_log!(3, "open_custom_source successfully opened");
         MAP_SUCCESS
@@ -2440,13 +2542,13 @@ impl StreamingDeck {
         };
 
         if !is_live && dur <= 0 {
-            if let Ok(guard) = self.trip_buffer.read() {
-                if let Some(ref trip) = *guard {
-                    let tail = trip.tail_data();
+            if let Ok(guard) = self.stream_session.read() {
+                if let Some(ref session) = *guard {
+                    let tail = session.tail_data();
                     if !tail.is_empty() {
                         if let Ok(b_guard) = self.boundary_info.read() {
                             if let Some(boundary) = *b_guard {
-                                if let Some(d) = FormatSniffer::extract_tail_duration_ms(
+                                if let Some(d) = StreamClassifier::extract_tail_duration_ms(
                                     boundary.container,
                                     sr,
                                     &tail,
@@ -2463,7 +2565,7 @@ impl StreamingDeck {
         let mut sniffed_bitrate: Option<u32> = None;
         if !initial_data.is_empty() {
             if let Some((br, d)) =
-                FormatSniffer::sniff_stream_info(initial_data, total_bytes as i64)
+                StreamClassifier::sniff_stream_info(initial_data, total_bytes as i64)
             {
                 if br > 0 {
                     sniffed_bitrate = Some(br);
@@ -2475,7 +2577,7 @@ impl StreamingDeck {
         }
 
         let boundary = if !initial_data.is_empty() {
-            FormatSniffer::detect_head_boundary(initial_data, total_bytes as i64).1
+            StreamClassifier::detect_head_boundary(initial_data, total_bytes as i64).1
         } else {
             BoundaryInfo::new()
         };
@@ -2517,7 +2619,7 @@ impl StreamingDeck {
             0
         };
 
-        let br_mode = FormatSniffer::detect_bitrate_mode(
+        let br_mode = StreamClassifier::detect_bitrate_mode(
             initial_data,
             boundary.container,
             codec_str,
@@ -2530,9 +2632,6 @@ impl StreamingDeck {
         };
 
         {
-            if let Ok(mut hb) = self.head_bytes.write() {
-                *hb = initial_data.to_vec();
-            }
             if let Ok(mut fmt_guard) = self.format.write() {
                 *fmt_guard = boundary
                     .container
@@ -2614,15 +2713,15 @@ impl StreamingDeck {
     }
 
     pub fn is_live_stream(&self) -> bool {
-        self.trip_buffer
+        self.stream_session
             .read()
-            .map(|g| g.as_ref().map(|t| t.is_live()).unwrap_or(false))
+            .map(|g| g.as_ref().map(|s| s.is_live()).unwrap_or(false))
             .unwrap_or(false)
     }
 
     pub fn stream_feed(&mut self, data: &[u8]) -> i32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            match trip.feed_chunk(data) {
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            match session.feed_chunk(data) {
                 Ok(_) => {
                     let (_, cvar) = &*self.decoder_wake;
                     cvar.notify_all();
@@ -2637,12 +2736,12 @@ impl StreamingDeck {
     }
 
     pub fn stream_flush(&mut self, new_stream_offset: i64) -> i32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.flush(new_stream_offset as u64);
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.flush(new_stream_offset as u64);
             self.decoder_eof.store(false, Ordering::Relaxed);
             self.flush_generation.fetch_add(1, Ordering::Release);
             self.acknowledge_renderer_flush();
-            if trip.is_live() {
+            if session.is_live() {
                 self.stream_reinit_needed.store(true, Ordering::Release);
             }
             let (_, cvar) = &*self.decoder_wake;
@@ -2726,8 +2825,8 @@ impl StreamingDeck {
 
     pub fn stream_seek(&mut self, position_ms: i64, new_stream_offset: i64) -> i32 {
         let (is_hit, is_contiguous) = {
-            if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-                trip.try_seek_cached(new_stream_offset as u64)
+            if let Some(ref session) = *self.stream_session.read().unwrap() {
+                session.try_seek_cached(new_stream_offset as u64)
             } else {
                 return MAP_ERROR_INVALID_STATE;
             }
@@ -2749,8 +2848,8 @@ impl StreamingDeck {
     }
 
     pub fn stream_end(&mut self) -> i32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.mark_eof();
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.mark_eof();
             let (_, cvar) = &*self.decoder_wake;
             cvar.notify_all();
             MAP_SUCCESS
@@ -2760,9 +2859,9 @@ impl StreamingDeck {
     }
 
     pub fn stream_get_status(&self, out_status: &mut MiniaudioStreamStatus) -> i32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            let r = trip.get_range();
-            let cap = trip.ring_capacity();
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            let r = session.get_range();
+            let cap = session.ring_capacity();
             out_status.buffer_capacity = cap;
             out_status.buffer_fill = (r.end_byte.saturating_sub(r.start_byte)).max(0) as usize;
             out_status.fill_percentage = r.fill_percentage * 100.0;
@@ -2780,23 +2879,25 @@ impl StreamingDeck {
 
     pub fn get_buffered_range(&self, out_range: &mut MiniaudioBufferedRange) -> i32 {
         let duration = self.duration_ms.load(Ordering::Relaxed);
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            let r = trip.get_range();
-            out_range.start_ms = 0;
-            if r.total_bytes > 0 && duration > 0 {
-                out_range.end_ms =
-                    ((r.end_byte as f64 / r.total_bytes as f64) * duration as f64) as i64;
-            } else {
-                out_range.end_ms = 0;
+        if self.is_stream.load(Ordering::Relaxed) {
+            if let Some(ref session) = *self.stream_session.read().unwrap() {
+                let r = session.get_range();
+                out_range.start_ms = 0;
+                if r.total_bytes > 0 && duration > 0 {
+                    out_range.end_ms =
+                        ((r.end_byte as f64 / r.total_bytes as f64) * duration as f64) as i64;
+                } else {
+                    out_range.end_ms = 0;
+                }
+                out_range.is_buffering =
+                    (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
+                return MAP_SUCCESS;
             }
-            out_range.is_buffering = (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
-            MAP_SUCCESS
-        } else {
-            out_range.start_ms = 0;
-            out_range.end_ms = duration.max(0);
-            out_range.is_buffering = 0;
-            MAP_SUCCESS
         }
+        out_range.start_ms = 0;
+        out_range.end_ms = duration.max(0);
+        out_range.is_buffering = 0;
+        MAP_SUCCESS
     }
 
     pub fn stream_get_seek_byte(&self, position_ms: i64) -> i64 {
@@ -2804,9 +2905,9 @@ impl StreamingDeck {
         if dur <= 0 {
             return -1;
         }
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            if let Some(tot) = trip.total_size() {
-                let start = trip.audio_start() as i64;
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            if let Some(tot) = session.total_size() {
+                let start = session.audio_start() as i64;
                 let audio_len = (tot as i64) - start;
                 let raw_byte = start + ((position_ms * audio_len) / dur);
 
@@ -2823,201 +2924,45 @@ impl StreamingDeck {
     }
 
     pub fn get_audio_data_offset(&self) -> i64 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.audio_start() as i64
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.audio_start() as i64
         } else {
             0
         }
     }
 
     pub fn stream_get_pinned_head_size(&self) -> i64 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.head_size() as i64
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.head_size() as i64
         } else {
             0
         }
     }
 
     pub fn get_meta_bytes_version(&self) -> u32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.meta_version()
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.meta_version()
         } else {
             0
         }
     }
 
     pub fn get_meta_bytes_size(&self) -> usize {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.get_meta_bytes().len()
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.get_meta_bytes().len()
         } else {
             0
         }
     }
 
     pub fn get_meta_bytes(&self) -> Option<Vec<u8>> {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            let bytes = trip.get_meta_bytes();
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            let bytes = session.get_meta_bytes();
             if !bytes.is_empty() {
                 return Some(bytes);
             }
         }
-        if let Ok(origin_guard) = self.source_origin.read() {
-            match &*origin_guard {
-                DeckSourceOrigin::File(path) => {
-                    if let Some(synthesized) = Self::synthesize_file_meta_bytes(path) {
-                        return Some(synthesized);
-                    }
-                }
-                DeckSourceOrigin::Memory(mem) => {
-                    if let Some(synthesized) = Self::synthesize_slice_meta_bytes(mem) {
-                        return Some(synthesized);
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Ok(guard) = self.head_bytes.read() {
-            if !guard.is_empty() {
-                return Some(guard.clone());
-            }
-        }
         None
-    }
-
-    fn synthesize_file_meta_bytes(path: &std::path::Path) -> Option<Vec<u8>> {
-        use std::io::{Seek, SeekFrom};
-        let mut file = File::open(path).ok()?;
-        let total_size = file.metadata().ok()?.len() as i64;
-        if total_size <= 0 {
-            return None;
-        }
-        let mut head_probe = vec![0u8; (total_size as usize).min(65536)];
-        let n = file.read(&mut head_probe).ok()?;
-        head_probe.truncate(n);
-        let (mut status, mut boundary) = FormatSniffer::detect_head_boundary(&head_probe, total_size);
-        while status == crate::decoder::sniffer::BoundaryStatus::NeedMore
-            && boundary.needed_bytes > head_probe.len() as i64
-            && boundary.needed_bytes <= 16 * 1024 * 1024
-        {
-            let target = (boundary.needed_bytes as usize).min(total_size as usize);
-            let old_len = head_probe.len();
-            head_probe.resize(target, 0);
-            let read_n = file.read(&mut head_probe[old_len..]).ok()?;
-            if read_n == 0 {
-                head_probe.truncate(old_len);
-                break;
-            }
-            head_probe.truncate(old_len + read_n);
-            let res = FormatSniffer::detect_head_boundary(&head_probe, total_size);
-            status = res.0;
-            boundary = res.1;
-        }
-
-        let head_len = if boundary.audio_start > 0 {
-            (boundary.audio_start as usize).min(head_probe.len())
-        } else {
-            head_probe.len().min(8192)
-        };
-        let mut out = head_probe[..head_len].to_vec();
-        Self::patch_synthesized_head(&mut out);
-
-        if boundary.audio_end > 0
-            && boundary.audio_end < total_size
-            && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
-        {
-            if file.seek(SeekFrom::Start(boundary.audio_end as u64)).is_ok() {
-                let _ = file.read_to_end(&mut out);
-            }
-        } else if FormatSniffer::container_needs_tail_scan(boundary.container) {
-            let floor = boundary.audio_start.max(0);
-            let probe_len = 65536i64.min(total_size - floor);
-            if probe_len > 0 {
-                let tail_offset = total_size - probe_len;
-                if file.seek(SeekFrom::Start(tail_offset as u64)).is_ok() {
-                    let mut tail_buf = Vec::with_capacity(probe_len as usize);
-                    if file.read_to_end(&mut tail_buf).is_ok() {
-                        let (_ts, audio_end) = FormatSniffer::detect_tail_boundary(
-                            boundary.container,
-                            &tail_buf,
-                            tail_offset,
-                            total_size,
-                            boundary.audio_start,
-                        );
-                        if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
-                            let rel = (audio_end - tail_offset) as usize;
-                            out.extend_from_slice(&tail_buf[rel..]);
-                        }
-                    }
-                }
-            }
-        }
-
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
-    }
-
-    fn synthesize_slice_meta_bytes(data: &[u8]) -> Option<Vec<u8>> {
-        if data.is_empty() {
-            return None;
-        }
-        let total_size = data.len() as i64;
-        let (_status, boundary) = FormatSniffer::detect_head_boundary(data, total_size);
-        let head_len = if boundary.audio_start > 0 {
-            (boundary.audio_start as usize).min(data.len())
-        } else {
-            data.len().min(8192)
-        };
-        let mut out = data[..head_len].to_vec();
-        Self::patch_synthesized_head(&mut out);
-
-        if boundary.audio_end > 0
-            && boundary.audio_end < total_size
-            && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
-        {
-            out.extend_from_slice(&data[boundary.audio_end as usize..]);
-        } else if FormatSniffer::container_needs_tail_scan(boundary.container) {
-            let floor = boundary.audio_start.max(0);
-            let probe_len = 65536i64.min(total_size - floor);
-            if probe_len > 0 {
-                let tail_offset = total_size - probe_len;
-                let tail_slice = &data[tail_offset as usize..];
-                let (_ts, audio_end) = FormatSniffer::detect_tail_boundary(
-                    boundary.container,
-                    tail_slice,
-                    tail_offset,
-                    total_size,
-                    boundary.audio_start,
-                );
-                if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
-                    out.extend_from_slice(&data[audio_end as usize..]);
-                }
-            }
-        }
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
-    }
-
-    fn patch_synthesized_head(out: &mut [u8]) {
-        let head_len = out.len();
-        if head_len >= 12
-            && (out.starts_with(b"RIFF") || out.starts_with(b"RF64"))
-            && &out[8..12] == b"WAVE"
-            && &out[head_len - 8..head_len - 4] == b"data"
-        {
-            out[head_len - 4..head_len].copy_from_slice(&0u32.to_le_bytes());
-        } else if head_len >= 16 && &out[4..8] == b"ftyp" {
-            if &out[head_len - 4..head_len] == b"mdat" {
-                out[head_len - 8..head_len - 4].copy_from_slice(&8u32.to_be_bytes());
-            } else if &out[head_len - 12..head_len - 8] == b"mdat" {
-                out[head_len - 8..head_len].copy_from_slice(&16u64.to_be_bytes());
-            }
-        }
     }
 
     /// Returns a zero-cost snapshot of the current track's [`RustAudioInfo`].
@@ -3089,7 +3034,6 @@ impl StreamingDeck {
             }
         }
 
-        let meta_bytes = self.get_meta_bytes().unwrap_or_default();
         let container_format = self
             .container_format
             .read()
@@ -3098,53 +3042,19 @@ impl StreamingDeck {
             .unwrap_or_default();
         let sym_meta = self.symphonia_meta.read().ok().map(|g| g.clone());
         let icy_meta = self.icy_metadata.read().ok().and_then(|g| g.clone());
-        let origin = self
-            .source_origin
+        let meta_buf = self
+            .stream_session
             .read()
             .ok()
-            .map(|g| g.clone())
-            .unwrap_or_default();
+            .and_then(|g| g.as_ref().map(|s| s.metadata.clone()))
+            .unwrap_or_else(|| StreamBuffer::new_sparse(0, 4096, None));
 
-        let parsed = match origin {
-            DeckSourceOrigin::File(ref path) => {
-                if let Ok(mut file) = File::open(path) {
-                    crate::metadata::parse_full_metadata(
-                        Some(&mut file),
-                        meta_bytes,
-                        &container_format,
-                        sym_meta.as_ref(),
-                        icy_meta,
-                    )
-                } else {
-                    crate::metadata::parse_full_metadata::<Cursor<&[u8]>>(
-                        None,
-                        meta_bytes,
-                        &container_format,
-                        sym_meta.as_ref(),
-                        icy_meta,
-                    )
-                }
-            }
-            DeckSourceOrigin::Memory(ref bytes) => {
-                let mut cursor = Cursor::new(bytes.as_slice());
-                crate::metadata::parse_full_metadata(
-                    Some(&mut cursor),
-                    meta_bytes,
-                    &container_format,
-                    sym_meta.as_ref(),
-                    icy_meta,
-                )
-            }
-            DeckSourceOrigin::Stream | DeckSourceOrigin::None => {
-                crate::metadata::parse_full_metadata::<Cursor<&[u8]>>(
-                    None,
-                    meta_bytes,
-                    &container_format,
-                    sym_meta.as_ref(),
-                    icy_meta,
-                )
-            }
-        };
+        let parsed = crate::metadata::UniversalMetadataExtractor::extract(
+            &meta_buf,
+            &container_format,
+            sym_meta.as_ref(),
+            icy_meta,
+        );
 
         let is_non_empty = !parsed.bytes.is_empty() || Self::has_any_parsed_fields(&parsed);
         if let Ok(mut guard) = self.cached_metadata.lock() {
@@ -3180,16 +3090,16 @@ impl StreamingDeck {
     }
 
     pub fn copy_meta_bytes(&self, out: &mut [u8]) -> usize {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.copy_meta_bytes(out)
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.copy_meta_bytes(out)
         } else {
             0
         }
     }
 
     pub fn set_icy_meta(&mut self, data: &[u8]) -> i32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.set_icy_meta(data);
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.set_icy_meta(data);
             MAP_SUCCESS
         } else {
             MAP_ERROR_INVALID_STATE
@@ -3197,13 +3107,13 @@ impl StreamingDeck {
     }
 
     pub fn probe_tail(&mut self, tail_data: &[u8], tail_offset: i64) -> i32 {
-        if let Some(ref trip) = *self.trip_buffer.read().unwrap() {
-            trip.probe_tail(tail_data, tail_offset as u64);
+        if let Some(ref session) = *self.stream_session.read().unwrap() {
+            session.set_tail(tail_data, Some(tail_offset as u64));
             if self.duration_ms.load(Ordering::Relaxed) <= 0 {
                 let sr = self.sample_rate.load(Ordering::Relaxed);
                 if let Ok(b_guard) = self.boundary_info.read() {
                     if let Some(boundary) = *b_guard {
-                        if let Some(dur) = FormatSniffer::extract_tail_duration_ms(
+                        if let Some(dur) = StreamClassifier::extract_tail_duration_ms(
                             boundary.container,
                             sr,
                             tail_data,
@@ -3233,9 +3143,9 @@ impl StreamingDeck {
             let _ = self.seek(0);
         }
 
-        if let Ok(guard) = self.trip_buffer.read() {
-            if let Some(ref trip) = *guard {
-                trip.clear_abort();
+        if let Ok(guard) = self.stream_session.read() {
+            if let Some(ref session) = *guard {
+                session.clear_abort();
             }
         }
         self.decoder_eof.store(false, Ordering::Relaxed);
@@ -3286,10 +3196,10 @@ impl StreamingDeck {
         self.buffering_flag.store(false, Ordering::Release);
         self.buffering_resumed_flag.store(false, Ordering::Release);
         self.completed_flag.store(false, Ordering::Release);
-        if let Ok(guard) = self.trip_buffer.read() {
-            if let Some(ref trip) = *guard {
-                trip.abort();
-                if trip.is_live() {
+        if let Ok(guard) = self.stream_session.read() {
+            if let Some(ref session) = *guard {
+                session.abort();
+                if session.is_live() {
                     self.stream_reinit_needed.store(true, Ordering::Release);
                 }
             }
@@ -3699,9 +3609,9 @@ impl StreamingDeck {
     pub fn destroy(&mut self) {
         let _ = self.stop();
         self.network_streamer_abort.store(true, Ordering::Release);
-        if let Ok(guard) = self.trip_buffer.read() {
-            if let Some(ref trip) = *guard {
-                trip.abort();
+        if let Ok(guard) = self.stream_session.read() {
+            if let Some(ref session) = *guard {
+                session.abort();
             }
         }
         self.telemetry.stop();
@@ -4022,7 +3932,7 @@ impl DualSource {
             return MAP_ERROR_UNSUPPORTED;
         }
         if let Some(ref data) = item.data_bytes {
-            let ext_hint = FormatSniffer::extract_extension_hint(&item.source);
+            let ext_hint = StreamClassifier::extract_extension_hint(&item.source);
             deck.open_memory_with_hint(data, ext_hint)
         } else {
             deck.open_source(&item.source, item.headers.as_deref())

@@ -45,7 +45,7 @@ impl SoundBuffer {
 
     /// Decodes an audio file in memory (MP3, WAV, FLAC, OGG, AAC) into a `SoundBuffer`.
     pub fn decode_from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        use crate::decoder::sniffer::FormatSniffer;
+        use crate::decoder::classifier::StreamClassifier;
         use crate::decoder::symphonia_engine::SymphoniaEngine;
         use std::io::Cursor;
 
@@ -53,7 +53,7 @@ impl SoundBuffer {
             return Err("Cannot decode sound buffer from empty byte slice".to_string());
         }
 
-        let (_status, boundary) = FormatSniffer::detect_head_boundary(bytes, bytes.len() as i64);
+        let (_status, boundary) = StreamClassifier::detect_head_boundary(bytes, bytes.len() as i64);
         let hint = boundary.container.hint_extension();
 
         let cursor = Cursor::new(bytes.to_vec());

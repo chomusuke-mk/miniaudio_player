@@ -18,7 +18,10 @@ pub mod metadata;
 pub mod sync;
 
 pub use bridge::ffi::*;
-pub use buffer::{BufferError, BufferRange, BufferState, TripartiteBuffer};
+pub use buffer::{
+    BufferBackend, BufferError, BufferRange, BufferState, ByteFetchTask, DemuxedStreamReader,
+    MetadataStreamReader, StreamBuffer, StreamSession,
+};
 pub use core::*;
 pub use dsp::analysis::*;
 

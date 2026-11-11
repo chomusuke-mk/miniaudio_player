@@ -3,7 +3,7 @@
 //! Provides a unified `ByteSource` trait hierarchy across:
 //! - `FileByteSource`: Buffered local filesystem access.
 //! - `MemoryByteSource`: In-memory cursor access.
-//! - `TripartiteByteSource`: Progressive HTTP streaming with sliding cache.
+//! - `StreamByteSource`: Progressive HTTP streaming over `StreamSession` (`Head` + `Body`).
 //! - `CustomDartByteSource`: Asynchronous Pull-with-Prefetch bridge for Dart DRM/decryption.
 
 use std::fs::File;
@@ -17,8 +17,8 @@ use symphonia::core::io::MediaSource;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::sync::MonotonicInstant;
 
-use super::stream_reader::BufferStreamReader;
-use super::tripartite::TripartiteBuffer;
+use super::demux_reader::DemuxedStreamReader;
+use super::stream_buffer::StreamSession;
 
 /// Discriminator for source kinds for telemetry, logging, and metrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,54 +225,54 @@ impl MediaSource for MemoryByteSource {
 }
 
 // ----------------------------------------------------------------------------
-// 3. TripartiteByteSource (Progressive HTTP & Sliding Buffer)
+// 3. StreamByteSource (Progressive HTTP & Sliding Buffer)
 // ----------------------------------------------------------------------------
 
-/// Byte source reading progressively downloaded stream data from a `TripartiteBuffer`.
-pub struct TripartiteByteSource {
-    reader: BufferStreamReader,
+/// Byte source reading progressively downloaded stream data from a `StreamSession`.
+pub struct StreamByteSource {
+    reader: DemuxedStreamReader,
 }
 
-impl TripartiteByteSource {
-    /// Creates a new `TripartiteByteSource` wrapping the tripartite buffer.
-    pub fn new(buffer: TripartiteBuffer) -> Self {
+impl StreamByteSource {
+    /// Creates a new `StreamByteSource` wrapping the `StreamSession`.
+    pub fn new(session: StreamSession) -> Self {
         Self {
-            reader: BufferStreamReader::new(buffer),
+            reader: DemuxedStreamReader::new(session),
         }
     }
 
-    /// Returns a reference to the underlying tripartite buffer.
+    /// Returns a reference to the underlying `StreamSession`.
     #[inline]
-    pub fn buffer(&self) -> &TripartiteBuffer {
-        self.reader.buffer()
+    pub fn session(&self) -> &StreamSession {
+        self.reader.session()
     }
 }
 
-impl Read for TripartiteByteSource {
+impl Read for StreamByteSource {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.reader.read(buf)
     }
 }
 
-impl Seek for TripartiteByteSource {
+impl Seek for StreamByteSource {
     #[inline]
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
         self.reader.seek(pos)
     }
 }
 
-impl ByteSource for TripartiteByteSource {
+impl ByteSource for StreamByteSource {
     fn total_bytes(&self) -> Option<u64> {
-        self.reader.buffer().total_size()
+        self.reader.session().total_size()
     }
 
     fn is_seekable(&self) -> bool {
-        !self.reader.buffer().is_live()
+        !self.reader.session().is_live()
     }
 
     fn source_kind(&self) -> SourceKind {
-        if self.reader.buffer().is_live() {
+        if self.reader.session().is_live() {
             SourceKind::HttpLive
         } else {
             SourceKind::HttpVod
@@ -280,20 +280,20 @@ impl ByteSource for TripartiteByteSource {
     }
 
     fn abort(&mut self) -> IoResult<()> {
-        self.reader.buffer().abort();
+        self.reader.session().abort();
         Ok(())
     }
 }
 
-impl MediaSource for TripartiteByteSource {
+impl MediaSource for StreamByteSource {
     #[inline]
     fn is_seekable(&self) -> bool {
-        !self.reader.buffer().is_live()
+        !self.reader.session().is_live()
     }
 
     #[inline]
     fn byte_len(&self) -> Option<u64> {
-        self.reader.buffer().total_size()
+        self.reader.session().total_size()
     }
 }
 

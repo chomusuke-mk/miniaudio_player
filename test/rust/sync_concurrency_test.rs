@@ -5,7 +5,7 @@
 //! - `CachePaddedSeqlock` tear-free concurrent writes and multi-threaded reads.
 //! - `TelemetryDispatcher` concurrent multi-producer event dispatch and ring arena polling.
 //! - `CaptureReceiver` lock-free real-time PCM frame transfer.
-//! - `TripartiteBuffer` concurrent producer feeding and consumer reading.
+//! - `StreamSession` concurrent producer feeding and consumer reading.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 use miniaudio_player::bridge::ffi::PcmCaptureHeader;
-use miniaudio_player::buffer::{BufferError, TripartiteBuffer};
+use miniaudio_player::buffer::{BufferError, StreamSession};
 use miniaudio_player::core::capture::{
     capture_receiver_capture_trampoline, capture_receiver_notif_trampoline, CaptureReceiver,
 };
@@ -235,9 +235,9 @@ fn test_capture_receiver_transfers_frames_lock_free() {
 }
 
 #[test]
-fn test_tripartite_buffer_concurrent_feed_and_read() {
+fn test_stream_session_concurrent_feed_and_read() {
     let total_bytes = 64 * 1024usize;
-    let buffer = TripartiteBuffer::new(4096, Some(total_bytes as u64), false);
+    let buffer = StreamSession::new(4096, Some(total_bytes as u64), false);
     buffer.set_audio_start(0);
     let barrier = Arc::new(Barrier::new(2));
 

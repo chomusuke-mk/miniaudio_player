@@ -1,4 +1,4 @@
-//! Deterministic Audio Stream Format Detection, Header Sniffing, and Boundary Calculation.
+//! Deterministic Audio Stream Classification, Header Demuxing, and Boundary Calculation.
 
 use std::io::{Read, Seek, SeekFrom};
 
@@ -130,9 +130,59 @@ const W64_WAVE_MAGIC: [u8; 16] = [
     0x77, 0x61, 0x76, 0x65, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
 ];
 
-pub struct FormatSniffer;
+/// Classified stream region emitted by [`StreamClassifier`] during byte ingestion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassifiedSlice<'a> {
+    /// Minimal container and codec header configuration (`Head`).
+    DecoderHead(&'a [u8]),
+    /// Framed audio payload (`Body`).
+    AudioPayload(&'a [u8]),
+    /// Metadata chunk (ID3, VorbisComment, RIFF INFO, MP4 moov, ICY) with its virtual stream offset (`Metadata`).
+    MetadataChunk { offset: u64, data: &'a [u8] },
+}
 
-impl FormatSniffer {
+/// Zero-copy stream classifier separating container headers, pure audio payloads, and sparse metadata.
+pub struct StreamClassifier;
+
+impl StreamClassifier {
+    /// Classifies an initial stream buffer and optional trailing chunk into `Head`, `Body`, and `Metadata` slices.
+    pub fn classify_initial_stream<'a>(
+        initial_data: &'a [u8],
+        tail_data: Option<(&'a [u8], u64)>,
+        total_size: i64,
+    ) -> (BoundaryInfo, Vec<ClassifiedSlice<'a>>) {
+        let mut slices = Vec::new();
+        if initial_data.is_empty() {
+            return (BoundaryInfo::new(), slices);
+        }
+
+        let (_status, boundary) = Self::detect_head_boundary(initial_data, total_size);
+        if boundary.audio_start > 0 {
+            let head_len = (boundary.audio_start as usize).min(initial_data.len());
+            let head_slice = &initial_data[..head_len];
+            slices.push(ClassifiedSlice::DecoderHead(head_slice));
+            slices.push(ClassifiedSlice::MetadataChunk {
+                offset: 0,
+                data: head_slice,
+            });
+            if initial_data.len() > head_len {
+                slices.push(ClassifiedSlice::AudioPayload(&initial_data[head_len..]));
+            }
+        } else {
+            slices.push(ClassifiedSlice::AudioPayload(initial_data));
+        }
+
+        if let Some((tail_bytes, tail_offset)) = tail_data {
+            if !tail_bytes.is_empty() {
+                slices.push(ClassifiedSlice::MetadataChunk {
+                    offset: tail_offset,
+                    data: tail_bytes,
+                });
+            }
+        }
+
+        (boundary, slices)
+    }
     /// Extracts a normalized file extension hint from a path or URL (ignoring query strings).
     pub fn extract_extension_hint(source: &str) -> Option<&'static str> {
         let clean = source.split('?').next().unwrap_or(source);
@@ -208,17 +258,24 @@ impl FormatSniffer {
             return (BoundaryStatus::Found, info);
         }
         if let Some(container) = Self::match_lossless_magic(data) {
-            let audio_end = if container == ContainerFormat::Dsf && avail >= 28 {
+            let mut audio_start = 0i64;
+            let mut audio_end = total_size;
+            if container == ContainerFormat::Dsf && avail >= 28 {
                 let meta_off = le64(&data[20..28]) as i64;
                 if meta_off > 0 && (total_size <= 0 || meta_off < total_size) {
-                    meta_off
-                } else {
-                    total_size
+                    audio_end = meta_off;
                 }
-            } else {
-                total_size
-            };
-            info.set_direct_container(container, 0, audio_end);
+                let fmt_size = if avail >= 40 && &data[28..32] == b"fmt " {
+                    le64(&data[32..40]).clamp(52, 4096) as usize
+                } else {
+                    52
+                };
+                let dsf_data_start = 28 + fmt_size + 12;
+                if avail >= dsf_data_start {
+                    audio_start = dsf_data_start as i64;
+                }
+            }
+            info.set_direct_container(container, audio_start, audio_end);
             return (BoundaryStatus::Found, info);
         }
 
@@ -242,17 +299,24 @@ impl FormatSniffer {
             );
         }
         if let Some(container) = Self::match_lossless_magic(&data[p..]) {
-            let audio_end = if container == ContainerFormat::Dsf && avail >= p + 28 {
+            let mut audio_start = p as i64;
+            let mut audio_end = total_size;
+            if container == ContainerFormat::Dsf && avail >= p + 28 {
                 let meta_off = le64(&data[p + 20..p + 28]) as i64;
                 if meta_off > 0 && (total_size <= 0 || meta_off < total_size) {
-                    meta_off
-                } else {
-                    total_size
+                    audio_end = meta_off;
                 }
-            } else {
-                total_size
-            };
-            info.set_direct_container(container, p as i64, audio_end);
+                let fmt_size = if avail >= p + 40 && &data[p + 28..p + 32] == b"fmt " {
+                    le64(&data[p + 32..p + 40]).clamp(52, 4096) as usize
+                } else {
+                    52
+                };
+                let dsf_data_start = p + 28 + fmt_size + 12;
+                if avail >= dsf_data_start {
+                    audio_start = dsf_data_start as i64;
+                }
+            }
+            info.set_direct_container(container, audio_start, audio_end);
             return (BoundaryStatus::Found, info);
         }
 

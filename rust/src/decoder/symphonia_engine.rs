@@ -500,7 +500,7 @@ impl SymphoniaEngine {
         };
 
         let adts_info = if boxed_source.is_seekable() {
-            crate::decoder::sniffer::FormatSniffer::scan_adts_stream(&mut boxed_source)
+            crate::decoder::classifier::StreamClassifier::scan_adts_stream(&mut boxed_source)
         } else {
             None
         };

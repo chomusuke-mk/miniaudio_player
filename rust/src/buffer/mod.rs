@@ -1,12 +1,16 @@
-//! Ingestion buffering, elastic tripartite caching, and byte source abstraction.
+//! Unified Stream Buffering (`StreamBuffer`, `StreamSession`), Virtual Demux Readers,
+//! and Byte Source Abstraction.
 
+pub mod demux_reader;
 pub mod source;
-pub mod stream_reader;
-pub mod tripartite;
+pub mod stream_buffer;
 
+pub use demux_reader::{DemuxedStreamReader, MetadataStreamReader};
 pub use source::{
     ByteSource, ByteSourceStream, CustomByteSourceHandle, CustomDartByteSource, DartReadRequest,
-    FileByteSource, MemoryByteSource, SourceKind, TripartiteByteSource,
+    FileByteSource, MemoryByteSource, SourceKind, StreamByteSource,
 };
-pub use stream_reader::BufferStreamReader;
-pub use tripartite::{BufferError, BufferRange, BufferState, TripartiteBuffer};
+pub use stream_buffer::{
+    BufferBackend, BufferError, BufferRange, BufferState, ByteFetchTask, StreamBuffer,
+    StreamSession,
+};

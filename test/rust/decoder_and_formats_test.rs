@@ -9,9 +9,9 @@ use std::fs::File;
 use std::io::{Read, Seek};
 
 use common::{FixtureResolver, SignalGenerator};
-use miniaudio_player::buffer::{BufferStreamReader, TripartiteBuffer};
+use miniaudio_player::buffer::{DemuxedStreamReader, StreamSession};
+use miniaudio_player::decoder::classifier::{BoundaryStatus, ContainerFormat, StreamClassifier};
 use miniaudio_player::decoder::dsf::{DsfProbe, DsfReader};
-use miniaudio_player::decoder::sniffer::{BoundaryStatus, ContainerFormat, FormatSniffer};
 use miniaudio_player::decoder::symphonia_engine::{create_codec_registry, SymphoniaEngine};
 use miniaudio_player::dsp::channel_matrix::ChannelMatrix;
 use miniaudio_player::dsp::resampler::RubatoResampler;
@@ -20,9 +20,9 @@ use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia::core::io::MediaSource;
 
 #[test]
-fn test_sniffer_wav_and_id3v1_tail_detection() {
+fn test_classifier_wav_and_id3v1_tail_detection() {
     let wav_data = SignalGenerator::pcm16_wav_bytes(500, 48000, 2);
-    let (status, info) = FormatSniffer::detect_head_boundary(&wav_data, wav_data.len() as i64);
+    let (status, info) = StreamClassifier::detect_head_boundary(&wav_data, wav_data.len() as i64);
 
     assert_eq!(status, BoundaryStatus::Found);
     assert_eq!(info.container, ContainerFormat::Wav);
@@ -43,7 +43,7 @@ fn test_sniffer_wav_and_id3v1_tail_detection() {
     let tail_offset = total_size - 256;
     let tail = &data[tail_offset as usize..];
 
-    let (t_status, audio_end) = FormatSniffer::detect_tail_boundary(
+    let (t_status, audio_end) = StreamClassifier::detect_tail_boundary(
         ContainerFormat::Mp3,
         tail,
         tail_offset,
@@ -64,14 +64,14 @@ fn test_symphonia_registry_and_synthetic_wav_stream() {
     let num_frames = 4800;
     let wav_bytes = SignalGenerator::pcm16_wav_bytes(num_frames, sample_rate, channels);
 
-    let buf = TripartiteBuffer::new(wav_bytes.len(), Some(wav_bytes.len() as u64), false);
+    let buf = StreamSession::new(wav_bytes.len(), Some(wav_bytes.len() as u64), false);
     buf.set_head(&wav_bytes[0..44]);
     buf.set_audio_start(44);
     buf.set_audio_end(wav_bytes.len() as u64);
     buf.feed_chunk(&wav_bytes[44..]).unwrap();
     buf.mark_eof();
 
-    let reader = BufferStreamReader::new(buf);
+    let reader = DemuxedStreamReader::new(buf);
     let mut engine = SymphoniaEngine::new(reader, Some("wav")).unwrap();
 
     assert_eq!(engine.sample_rate(), sample_rate);
@@ -167,7 +167,7 @@ fn test_all_manifest_audio_formats_decode_and_seek() {
     for filename in &all_fixtures {
         let path = FixtureResolver::resolve(filename);
         let file = File::open(&path).unwrap_or_else(|e| panic!("Failed to open {}: {}", filename, e));
-        let ext = FormatSniffer::extract_extension_hint(filename);
+        let ext = StreamClassifier::extract_extension_hint(filename);
 
         let mut engine = SymphoniaEngine::new(file, ext)
             .unwrap_or_else(|e| panic!("SymphoniaEngine failed to open {}: {}", filename, e));
@@ -302,8 +302,8 @@ fn test_stream_chunk_probing_mp3_and_aiff() {
         let n = file.read(&mut initial_data).unwrap();
         initial_data.truncate(n);
 
-        let buf = TripartiteBuffer::new(2 * 1024 * 1024, Some(total_len), false);
-        let (_, boundary) = FormatSniffer::detect_head_boundary(&initial_data, total_len as i64);
+        let buf = StreamSession::new(2 * 1024 * 1024, Some(total_len), false);
+        let (_, boundary) = StreamClassifier::detect_head_boundary(&initial_data, total_len as i64);
         if boundary.audio_start > 0 {
             let head_len = (boundary.audio_start as usize).min(initial_data.len());
             buf.set_head(&initial_data[..head_len]);
@@ -316,7 +316,7 @@ fn test_stream_chunk_probing_mp3_and_aiff() {
             buf.feed_chunk(&initial_data).unwrap();
         }
 
-        let reader = BufferStreamReader::new(buf);
+        let reader = DemuxedStreamReader::new(buf);
         let engine = SymphoniaEngine::new(reader, *hint)
             .unwrap_or_else(|e| panic!("Stream probe failed for {}: {}", filename, e));
         assert!(engine.sample_rate() > 0);
@@ -330,9 +330,9 @@ fn test_adts_aac_exact_duration_calculation() {
     let mut file = File::open(&path).expect("Failed to open salida.aac");
     let total_len = file.metadata().expect("Failed metadata").len();
 
-    // 1. Test FormatSniffer::scan_adts_stream
-    let adts_info = FormatSniffer::scan_adts_stream(&mut file)
-        .expect("FormatSniffer::scan_adts_stream must detect ADTS");
+    // 1. Test StreamClassifier::scan_adts_stream
+    let adts_info = StreamClassifier::scan_adts_stream(&mut file)
+        .expect("StreamClassifier::scan_adts_stream must detect ADTS");
     assert_eq!(adts_info.0, 48000, "Sample rate must be 48000");
     assert_eq!(adts_info.1, 2, "Channel count must be 2");
     assert_eq!(
@@ -341,11 +341,11 @@ fn test_adts_aac_exact_duration_calculation() {
         adts_info.2
     );
 
-    // 2. Test FormatSniffer::sniff_adts_stream_info
+    // 2. Test StreamClassifier::sniff_adts_stream_info
     let mut data = Vec::new();
     file.seek(std::io::SeekFrom::Start(0)).unwrap();
     file.read_to_end(&mut data).unwrap();
-    let (bitrate, dur_ms) = FormatSniffer::sniff_adts_stream_info(&data, total_len as i64)
+    let (bitrate, dur_ms) = StreamClassifier::sniff_adts_stream_info(&data, total_len as i64)
         .expect("sniff_adts_stream_info must succeed");
     assert_eq!(
         dur_ms, 68736,
