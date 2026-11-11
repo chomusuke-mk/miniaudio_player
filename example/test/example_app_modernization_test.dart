@@ -100,7 +100,12 @@ void main() {
 
         final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
         expect(rockChipFinder, findsOneWidget);
+        await tester.scrollUntilVisible(rockChipFinder, 200, scrollable: scrollable);
         await tester.tap(rockChipFinder);
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(milliseconds: 300));
+        });
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
 
         final rockChip = tester.widget<ChoiceChip>(rockChipFinder);

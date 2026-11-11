@@ -41,9 +41,9 @@ void main() {
       expect(result.replayGain, isNotNull);
       final rg = result.replayGain!;
       expect(rg.peak, greaterThan(0.9));
-      expect(rg.peak, lessThanOrEqualTo(1.05));
+      expect(rg.peak, closeTo(1.46, 0.05)); // True unclipped peak for salida.mp3 (matches ffmpeg track_peak 1.461720)
       expect(rg.lufs, closeTo(-4.7, 0.5)); // Expected ~ -4.7 LUFS (matches ffmpeg ebur128)
-      expect(rg.gainDb, closeTo(-13.3, 0.5)); // Target -18 - (-4.7) = -13.3 dB
+      expect(rg.gainDb, closeTo(-10.41, 0.5)); // Matches ffmpeg replaygain track_gain -10.41 dB
 
       // Check recommended volume
       final volWithClippingDefense = rg.getRecommendedVolume(preventClipping: true);
@@ -115,8 +115,8 @@ void main() {
 
       expect(result.replayGain, isNotNull);
       expect(result.replayGain!.peak, greaterThan(0.9));
-      expect(result.replayGain!.lufs, closeTo(-4.7, 0.5));
-      expect(result.replayGain!.gainDb, closeTo(-9.3, 0.5)); // Target -14 - (-4.7) = -9.3 dB
+      expect(result.replayGain!.lufs, closeTo(-4.8, 0.5));
+      expect(result.replayGain!.gainDb, closeTo(-10.36, 0.5)); // Matches ffmpeg replaygain -10.36 dB
 
       expect(result.waveform, isNotNull);
       expect(result.waveform!.length, equals(50));

@@ -391,7 +391,7 @@ class PlaylistQueueCard extends StatelessWidget {
                                       ],
                                     ),
                                     onTap: () async {
-                                      await controller.engine.action.play(position: index);
+                                      await controller.selectTrack(track, autoPlay: true);
                                     },
                                   ),
                                   ),

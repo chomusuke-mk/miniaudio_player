@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'controllers/audio_analyzer_controller.dart';
 import 'controllers/audio_engine_controller.dart';
+import 'models/audio_track.dart';
 import 'theme/studio_colors.dart';
 import 'theme/studio_theme.dart';
 import 'views/ingest_matrix_view.dart';
@@ -43,14 +44,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _initApp();
   }
 
+  void _syncWaveformForTrack(AudioTrack track) {
+    _analyzerController.selectTrack(track);
+    final res = _analyzerController.getResultForTrack(track);
+    final pts = res?.waveform?.points;
+    if (pts != null && pts.isNotEmpty) {
+      _playerController.updateWaveformPoints(pts, trackId: track.id);
+    } else if (_playerController.hasCachedWaveform(track.id)) {
+      final cached = _playerController.getCachedWaveform(track.id)!;
+      _playerController.updateWaveformPoints(cached, trackId: track.id);
+    } else {
+      _playerController.resetWaveformToSinusoidal();
+    }
+  }
+
   void _onAnalyzerUpdate() {
     final curTrack = _playerController.selectedTrack;
     if (curTrack != null) {
-      final res = _analyzerController.getResultForTrack(curTrack);
-      final pts = res?.waveform?.points;
-      if (pts != null && pts.isNotEmpty) {
-        _playerController.updateWaveformPoints(pts, trackId: curTrack.id);
-      }
+      _syncWaveformForTrack(curTrack);
     }
   }
 
@@ -59,11 +70,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() {});
     }
     final curTrack = _playerController.selectedTrack;
-    if (curTrack != null &&
-        curTrack.canAnalyze &&
-        !_analyzerController.hasResultForTrack(curTrack) &&
-        !_analyzerController.isAnalyzing) {
-      _analyzerController.analyze(curTrack, engine: _playerController.engine);
+    if (curTrack != null) {
+      _syncWaveformForTrack(curTrack);
+      if (curTrack.canAnalyze &&
+          !_analyzerController.hasResultForTrack(curTrack) &&
+          !_analyzerController.isAnalyzing) {
+        _analyzerController.analyze(curTrack, engine: _playerController.engine);
+      }
     }
   }
 
@@ -71,10 +84,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _playerController.init();
     if (mounted) {
       final curTrack = _playerController.selectedTrack;
-      if (curTrack != null &&
-          curTrack.canAnalyze &&
-          !_analyzerController.hasResultForTrack(curTrack)) {
-        _analyzerController.analyze(curTrack, engine: _playerController.engine);
+      if (curTrack != null) {
+        _syncWaveformForTrack(curTrack);
+        if (curTrack.canAnalyze &&
+            !_analyzerController.hasResultForTrack(curTrack)) {
+          _analyzerController.analyze(curTrack, engine: _playerController.engine);
+        }
       }
       setState(() {});
     }

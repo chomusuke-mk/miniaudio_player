@@ -45,6 +45,21 @@ class AudioAnalyzerController extends ChangeNotifier {
     return _resultsByTrack.containsKey(track.id);
   }
 
+  /// Sets the currently active track ID for inspection without triggering re-analysis.
+  void selectTrack(AudioTrack? track) {
+    if (track == null) {
+      if (_currentTrackId != null) {
+        _currentTrackId = null;
+        notifyListeners();
+      }
+      return;
+    }
+    if (_currentTrackId != track.id) {
+      _currentTrackId = track.id;
+      notifyListeners();
+    }
+  }
+
   /// Checks whether [track] has active ReplayGain normalization in [engine].
   bool isReplayGainActiveForTrack(AudioTrack? track, MiniaudioPlayer? engine) {
     if (track == null) return false;

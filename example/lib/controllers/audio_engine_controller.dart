@@ -48,16 +48,26 @@ class AudioEngineController extends ChangeNotifier {
         _waveformCache[id] = unmod;
       }
       if (trackId == null || trackId == selectedTrack?.id) {
-        _waveformPoints = unmod;
-        notifyListeners();
+        if (!listEquals(_waveformPoints, unmod)) {
+          _waveformPoints = unmod;
+          notifyListeners();
+        }
       }
     }
   }
 
   void resetWaveformToSinusoidal() {
-    _waveformPoints = null;
-    notifyListeners();
+    if (_waveformPoints != null) {
+      _waveformPoints = null;
+      notifyListeners();
+    }
   }
+
+  /// Checks whether waveform points have been cached in the engine for [trackId].
+  bool hasCachedWaveform(String trackId) => _waveformCache.containsKey(trackId);
+
+  /// Retrieves the cached waveform points for [trackId], or null if unanalyzed.
+  List<double>? getCachedWaveform(String trackId) => _waveformCache[trackId];
 
   double? _preampOverride;
   double get preampDb => _preampOverride ?? engine.state.preamp;
@@ -276,8 +286,14 @@ class AudioEngineController extends ChangeNotifier {
 
   void _bindSubscriptions() {
     _subscriptions.add(engine.stream.currentItem.listen((item) {
-      if (item?.data != null) {
-        _currentTrack = item!.data;
+      if (item?.data != null && item!.data is AudioTrack) {
+        final track = item.data as AudioTrack;
+        _currentTrack = track;
+        if (_waveformCache.containsKey(track.id)) {
+          _waveformPoints = _waveformCache[track.id];
+        } else {
+          _waveformPoints = null;
+        }
       }
       notifyListeners();
     }));
@@ -516,9 +532,9 @@ class AudioEngineController extends ChangeNotifier {
         final item = track.source.withData<AudioTrack>(track);
         await engine.action.insertNext(item);
         await engine.action.next();
-      }
-      if (autoPlay) {
-        await engine.action.play();
+        if (autoPlay) {
+          await engine.action.play();
+        }
       }
     } catch (e) {
       debugPrint('Error selecting track in engine: $e');

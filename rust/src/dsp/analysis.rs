@@ -204,12 +204,12 @@ impl Bs1770LoudnessAnalyzer {
 }
 
 /// Adaptive Bounded Waveform Accumulator with 2:1 dynamic decimation.
-/// Ensures peak accumulation memory remains strictly bounded (< 16 KB)
+/// Ensures energy/waveform accumulation memory remains strictly bounded (< 16 KB)
 /// across any file duration from seconds to 10+ hours.
 pub struct AdaptiveWaveformAccumulator {
     target_points: usize,
     buckets: Vec<f32>,
-    current_block_peak: f32,
+    current_block_sq: f64,
     current_block_frames: usize,
     frames_per_block: usize,
     has_samples: bool,
@@ -224,30 +224,31 @@ impl AdaptiveWaveformAccumulator {
         Self {
             target_points: target_points.max(1),
             buckets: Vec::with_capacity(Self::MAX_BUCKETS),
-            current_block_peak: 0.0,
+            current_block_sq: 0.0,
             current_block_frames: 0,
             frames_per_block: 256,
             has_samples: false,
         }
     }
 
-    /// Feeds an instantaneous absolute frame peak value into the accumulator.
+    /// Feeds an instantaneous stereo frame into the accumulator.
     #[inline]
-    pub fn push_frame_peak(&mut self, peak: f32) {
+    pub fn push_frame(&mut self, s_l: f32, s_r: f32) {
         self.has_samples = true;
-        if peak > self.current_block_peak {
-            self.current_block_peak = peak;
-        }
+        let power = (s_l as f64 * s_l as f64 + s_r as f64 * s_r as f64) * 0.5;
+        self.current_block_sq += power;
         self.current_block_frames += 1;
         if self.current_block_frames >= self.frames_per_block {
-            self.buckets.push(self.current_block_peak);
-            self.current_block_peak = 0.0;
+            let rms = (self.current_block_sq / self.current_block_frames as f64).sqrt() as f32;
+            self.buckets.push(rms);
+            self.current_block_sq = 0.0;
             self.current_block_frames = 0;
 
             if self.buckets.len() >= Self::MAX_BUCKETS {
                 let mut decimated = Vec::with_capacity(self.buckets.len() / 2);
                 for chunk in self.buckets.chunks_exact(2) {
-                    decimated.push(chunk[0].max(chunk[1]));
+                    let avg_sq = (chunk[0] * chunk[0] + chunk[1] * chunk[1]) * 0.5;
+                    decimated.push(avg_sq.sqrt());
                 }
                 self.buckets = decimated;
                 self.frames_per_block *= 2;
@@ -255,13 +256,20 @@ impl AdaptiveWaveformAccumulator {
         }
     }
 
-    /// Resamples accumulated peaks into normalized `[0.0, 1.0]` points matching `target_points`.
+    /// Feeds a single mono peak (for backwards compatibility).
+    #[inline]
+    pub fn push_frame_peak(&mut self, peak: f32) {
+        self.push_frame(peak, peak);
+    }
+
+    /// Resamples accumulated energy into normalized `[0.0, 1.0]` points matching `target_points`.
     pub fn finalize(mut self) -> Vec<f32> {
         if !self.has_samples {
             return Vec::new();
         }
         if self.current_block_frames > 0 {
-            self.buckets.push(self.current_block_peak);
+            let rms = (self.current_block_sq / self.current_block_frames as f64).sqrt() as f32;
+            self.buckets.push(rms);
         }
         if self.buckets.is_empty() {
             return Vec::new();
@@ -274,16 +282,9 @@ impl AdaptiveWaveformAccumulator {
         for i in 0..n {
             let start = (i as f64 * chunk_size) as usize;
             let end = (((i + 1) as f64 * chunk_size) as usize).min(self.buckets.len());
-            let chunk_peak = if start < self.buckets.len() {
-                self.buckets[start..end.max(start + 1).min(self.buckets.len())]
-                    .iter()
-                    .copied()
-                    .fold(0.0f32, f32::max)
-                    .clamp(0.0, 1.0)
-            } else {
-                *self.buckets.last().unwrap_or(&0.0)
-            };
-            points.push(chunk_peak);
+            let slice = &self.buckets[start..end.max(start + 1).min(self.buckets.len())];
+            let mean_sq = slice.iter().map(|&x| (x * x) as f64).sum::<f64>() / (slice.len() as f64);
+            points.push(mean_sq.sqrt() as f32);
         }
 
         let max_pt = points.iter().copied().fold(0.0f32, f32::max);
@@ -393,6 +394,7 @@ pub fn analyze_audio_source(
     // Phase 2: Acoustic DSP Pull Loop at maximum CPU speed
     let ch_usize = channels as usize;
     let mut rg_analyzer = config.replay_gain.then(|| Bs1770LoudnessAnalyzer::new(sample_rate));
+    let mut rg_scanner = config.replay_gain.then(|| crate::dsp::replaygain::ReplayGainScanner::new(sample_rate));
     let mut wf_accumulator = config.waveform.then(|| AdaptiveWaveformAccumulator::new(config.waveform_points as usize));
     let mut chromaprinter = if config.chromaprint && sample_rate > 0 {
         let mut fp = chromaprint::Fingerprinter::new(chromaprint::types::Algorithm::default());
@@ -418,12 +420,13 @@ pub fn analyze_audio_source(
         total_decoded_frames += chunk_frames;
 
         for frame in frame_buf.chunks_exact(ch_usize) {
-            let s_l = frame[0].clamp(-1.0, 1.0);
-            let s_r = if ch_usize > 1 { frame[1].clamp(-1.0, 1.0) } else { s_l };
+            let s_l = frame[0];
+            let s_r = if ch_usize > 1 { frame[1] } else { s_l };
             let frame_max = s_l.abs().max(s_r.abs());
             if frame_max > peak { peak = frame_max; }
-            if let Some(ref mut wf) = wf_accumulator { wf.push_frame_peak(frame_max); }
+            if let Some(ref mut wf) = wf_accumulator { wf.push_frame(s_l, s_r); }
             if let Some(ref mut rg) = rg_analyzer { rg.push_stereo_frame(s_l, s_r); }
+            if let Some(ref mut rgs) = rg_scanner { rgs.push_stereo_frame(s_l, s_r); }
         }
 
         if let Some(ref mut fp) = chromaprinter {
@@ -460,7 +463,21 @@ pub fn analyze_audio_source(
     }
 
     let (has_replay_gain, replay_gain) = match rg_analyzer {
-        Some(rg) => (true, rg.finalize(config.target_lufs, peak)),
+        Some(rg) => {
+            let bs_data = rg.finalize(config.target_lufs, peak);
+            let (scanner_gain, scanner_peak) = match rg_scanner {
+                Some(s) => s.finalize(),
+                None => (bs_data.gain_db, peak),
+            };
+            (
+                true,
+                ReplayGainData {
+                    gain_db: scanner_gain,
+                    peak: scanner_peak.max(peak),
+                    lufs: bs_data.lufs,
+                },
+            )
+        }
         None => (false, ReplayGainData::default()),
     };
 

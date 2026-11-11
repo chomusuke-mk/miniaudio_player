@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/app.dart';
 import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
+import 'package:miniaudio_player_example/models/audio_track.dart';
 import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/playlist_queue_card.dart';
 import 'package:miniaudio_player_example/widgets/painters/waveform_painter.dart';
@@ -31,6 +33,47 @@ void main() {
       controller.resetWaveformToSinusoidal();
       expect(controller.waveformPoints.length, equals(72));
       expect(controller.waveformPoints, isNot(equals(customPoints)));
+    });
+
+    test('Cached waveform switching updates waveformPoints immediately for previously analyzed tracks', () async {
+      final controller = AudioEngineController();
+      addTearDown(() {
+        controller.dispose();
+      });
+
+      final trackA = AudioTrack(
+        id: 'track_a',
+        title: 'Track A',
+        artist: 'Artist A',
+        source: AudioSource('/tmp/track_a.mp3'),
+      );
+      final trackB = AudioTrack(
+        id: 'track_b',
+        title: 'Track B',
+        artist: 'Artist B',
+        source: AudioSource('/tmp/track_b.mp3'),
+      );
+
+      final pointsA = List.generate(72, (i) => 0.1 + 0.2 * (i / 72.0));
+      final pointsB = List.generate(72, (i) => 0.7 - 0.4 * (i / 72.0));
+
+      // 1. First track analyzed & cached
+      controller.updateWaveformPoints(pointsA, trackId: trackA.id);
+      expect(controller.hasCachedWaveform('track_a'), isTrue);
+      expect(controller.getCachedWaveform('track_a'), equals(pointsA));
+
+      // 2. Second track analyzed & cached
+      controller.updateWaveformPoints(pointsB, trackId: trackB.id);
+      expect(controller.hasCachedWaveform('track_b'), isTrue);
+      expect(controller.getCachedWaveform('track_b'), equals(pointsB));
+
+      // 3. Select track A (now cached) -> waveformPoints must switch to pointsA
+      await controller.selectTrack(trackA);
+      expect(controller.waveformPoints, equals(pointsA));
+
+      // 4. Select track B (now cached) -> waveformPoints must switch to pointsB
+      await controller.selectTrack(trackB);
+      expect(controller.waveformPoints, equals(pointsB));
     });
 
     testWidgets('Queue drag handle uses left 6-dots and buildDefaultDragHandles is false', (tester) async {

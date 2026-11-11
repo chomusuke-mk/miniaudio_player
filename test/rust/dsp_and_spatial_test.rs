@@ -406,3 +406,155 @@ fn test_core_voice_pool_reactive_eviction_and_memory_immunity() {
     assert!(!pool.loaded_effect_ids().contains(&"disk_a".to_string()));
     assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
 }
+
+/// Helper to parse substring between two delimiters in command output.
+fn parse_between<'a>(text: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
+    let start = text.find(prefix)? + prefix.len();
+    let rest = &text[start..];
+    let end = rest.find(suffix)?;
+    Some(rest[..end].trim())
+}
+
+#[test]
+fn test_audio_analysis_ffmpeg_reference_comparison() {
+    // Verify ffmpeg availability
+    let ffmpeg_check = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output();
+    let ffmpeg_available = match ffmpeg_check {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    };
+
+    if !ffmpeg_available {
+        eprintln!("SKIPPING test_audio_analysis_ffmpeg_reference_comparison: ffmpeg is not installed or not in PATH.");
+        return;
+    }
+
+    struct TestCase {
+        filename: &'static str,
+        float_decoder: bool,
+    }
+
+    let cases = [
+        TestCase { filename: "salida.wav", float_decoder: true },
+        TestCase { filename: "salida.flac", float_decoder: true },
+        TestCase { filename: "salida.mp3", float_decoder: true },
+        TestCase { filename: "salida.ogg", float_decoder: true },
+        TestCase { filename: "salida.opus", float_decoder: true },
+        TestCase { filename: "salida_aac.m4a", float_decoder: false },
+        TestCase { filename: "la_isla_bonita.m4a", float_decoder: false },
+    ];
+
+    for case in cases {
+        let path = common::FixtureResolver::resolve(case.filename);
+        let path_str = path.to_str().expect("Valid UTF-8 fixture path");
+
+        // Execute ffmpeg with replaygain and ebur128 filters
+        let output = std::process::Command::new("ffmpeg")
+            .args(["-i", path_str, "-af", "replaygain,ebur128=peak=true", "-f", "null", "-"])
+            .output()
+            .expect("Failed to execute ffmpeg process");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // 1. Parse track_gain
+        let ffmpeg_gain: f32 = parse_between(&stderr, "track_gain = ", " dB")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("Could not parse track_gain from ffmpeg for {}", case.filename));
+
+        // 2. Parse track_peak
+        let ffmpeg_peak: f32 = parse_between(&stderr, "track_peak = ", "\n")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("Could not parse track_peak from ffmpeg for {}", case.filename));
+
+        // 3. Parse summary integrated loudness (I: ... LUFS after 'Summary:')
+        let summary_idx = stderr.rfind("Summary:").expect("ffmpeg output must contain Summary section");
+        let ffmpeg_lufs: f32 = parse_between(&stderr[summary_idx..], "I:", "LUFS")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("Could not parse integrated LUFS from ffmpeg for {}", case.filename));
+
+        // Execute application analysis
+        let config = miniaudio_player::api::types::RustAnalysisConfig {
+            replay_gain: true,
+            waveform: true,
+            metadata: false,
+            chromaprint: false,
+            target_lufs: -18.0,
+            waveform_points: 72,
+            max_duration_ms: None,
+        };
+        let source = miniaudio_player::core::dual_source::AudioSourceCore {
+            source: path_str.to_string(),
+            ..Default::default()
+        };
+        let analysis = miniaudio_player::dsp::analyze_audio_source(source, config)
+            .expect("Audio analysis failed");
+
+        println!(
+            "[{:18}] App: gain={:6.2} dB, peak={:8.6}, lufs={:5.1} | FFmpeg: gain={:6.2} dB, peak={:8.6}, lufs={:5.1}",
+            case.filename,
+            analysis.replay_gain_db,
+            analysis.replay_gain_peak,
+            analysis.integrated_lufs,
+            ffmpeg_gain,
+            ffmpeg_peak,
+            ffmpeg_lufs,
+        );
+
+        // 1. ReplayGain dB comparison (practically identical, <= 0.15 dB delta across all formats)
+        let gain_delta = (analysis.replay_gain_db - ffmpeg_gain).abs();
+        assert!(
+            gain_delta < 0.15,
+            "ReplayGain dB mismatch for {}: app={}, ffmpeg={}, delta={}",
+            case.filename, analysis.replay_gain_db, ffmpeg_gain, gain_delta
+        );
+
+        // 2. Integrated LUFS comparison (practically identical, <= 0.2 LUFS delta across all formats)
+        let lufs_delta = (analysis.integrated_lufs - ffmpeg_lufs).abs();
+        assert!(
+            lufs_delta < 0.2,
+            "Integrated LUFS mismatch for {}: app={}, ffmpeg={}, delta={}",
+            case.filename, analysis.integrated_lufs, ffmpeg_lufs, lufs_delta
+        );
+
+        // 3. Peak comparison
+        if case.float_decoder {
+            // For formats with float decoders (WAV, FLAC, MP3, OGG, OPUS), peak matches FFmpeg closely
+            let peak_delta = (analysis.replay_gain_peak - ffmpeg_peak).abs();
+            assert!(
+                peak_delta < 0.01,
+                "Peak mismatch for {}: app={}, ffmpeg={}, delta={}",
+                case.filename, analysis.replay_gain_peak, ffmpeg_peak, peak_delta
+            );
+        } else {
+            // For AAC/M4A via symphonia-adapter-fdk-aac, the C library outputs 16-bit signed PCM (AudioBuffer<i16>),
+            // which saturates at 32767 / 32768.0 = 0.99997 ~= 1.0000.
+            assert!(
+                analysis.replay_gain_peak <= 1.0001 && analysis.replay_gain_peak >= 0.99,
+                "AAC peak expected ~1.0 for clamped 16-bit integer PCM: app={}",
+                analysis.replay_gain_peak
+            );
+        }
+
+        // 4. Waveform validation: ensure waveform has true musical energy dynamics (not a flat tube)
+        assert_eq!(analysis.waveform_peaks.len(), 72);
+        let min_wf = analysis.waveform_peaks.iter().copied().fold(f32::INFINITY, f32::min);
+        let max_wf = analysis.waveform_peaks.iter().copied().fold(0.0f32, f32::max);
+        assert!(
+            max_wf >= 0.99,
+            "Waveform should normalize peak to 1.0: got max={}",
+            max_wf
+        );
+        assert!(
+            min_wf < 0.45,
+            "Waveform should have quiet sections, not be a flat tube: got min={}",
+            min_wf
+        );
+        let spread = max_wf - min_wf;
+        assert!(
+            spread > 0.3,
+            "Waveform should have significant dynamic range: got spread={}",
+            spread
+        );
+    }
+}
