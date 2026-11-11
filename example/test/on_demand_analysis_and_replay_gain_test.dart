@@ -171,7 +171,10 @@ void main() {
       expect(find.text('Thumbnails'), findsOneWidget);
       expect(find.text('Extended Tags'), findsOneWidget);
 
-      // Now pump with active analysis containing extended metadata and waveform
+      // Verify Part 5: Chromaprint
+      expect(find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'), findsOneWidget);
+
+      // Now pump with active analysis containing extended metadata, waveform, and chromaprint
       final sampleAnalysis = AudioAnalysisResult(
         audioInfo: const AudioInfo(
           sampleRate: 44100,
@@ -190,6 +193,11 @@ void main() {
           album: 'Studio Album',
           extended: const ExtendedMetadata(isrc: 'US-XYZ-26-00001'),
         ),
+        chromaprint: const ChromaprintResult(
+          fingerprint: 'AQADtEmyREmURImC5_jx',
+          raw: [123456, 789012],
+          algorithm: 1,
+        ),
       );
 
       await tester.pumpWidget(
@@ -199,6 +207,7 @@ void main() {
               child: AudioAnalyzerCard(
                 analysis: sampleAnalysis,
                 isLoading: false,
+                analyzerController: analyzerController,
               ),
             ),
           ),
@@ -211,6 +220,9 @@ void main() {
       expect(find.text('VBR'), findsOneWidget);
       expect(find.text('Master Track'), findsOneWidget);
       expect(find.textContaining('VIEW EXTENDED (1)'), findsOneWidget);
+      expect(find.text('ALGORITHM TEST2 (1)'), findsOneWidget);
+      expect(find.text('AQADtEmyREmURImC5_jx'), findsOneWidget);
+      expect(find.text('IDENTIFY TRACK (AcoustID API)'), findsOneWidget);
     });
 
     testWidgets('Full app mounts and displays acoustic analysis without errors', (tester) async {

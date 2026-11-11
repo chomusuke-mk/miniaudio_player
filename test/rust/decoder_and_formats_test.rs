@@ -369,6 +369,7 @@ fn test_adts_aac_exact_duration_calculation() {
         replay_gain: false,
         waveform: false,
         metadata: false,
+        chromaprint: false,
         target_lufs: -14.0,
         waveform_points: 0,
         max_duration_ms: None,
@@ -384,4 +385,41 @@ fn test_adts_aac_exact_duration_calculation() {
         "Analysis duration must be 68736 ms (~1:08.7), was {:?}",
         analysis.audio_info.duration_ms
     );
+    assert!(!analysis.has_chromaprint);
+    assert!(analysis.chromaprint.is_none());
 }
+
+#[test]
+fn test_chromaprint_analysis_generation() {
+    let wav_data = SignalGenerator::pcm16_wav_bytes(44100 * 4, 44100, 2);
+    let scratch = FixtureResolver::scratch_file_path("chromaprint_test.wav");
+    std::fs::write(&scratch, wav_data).unwrap();
+
+    let config = miniaudio_player::api::types::RustAnalysisConfig {
+        replay_gain: true,
+        waveform: true,
+        metadata: false,
+        chromaprint: true,
+        target_lufs: -18.0,
+        waveform_points: 50,
+        max_duration_ms: None,
+    };
+    let source = miniaudio_player::core::dual_source::AudioSourceCore {
+        source: scratch.to_str().unwrap().to_string(),
+        ..Default::default()
+    };
+    let analysis = miniaudio_player::dsp::analyze_audio_source(source, config)
+        .expect("analyze_audio_source with chromaprint must succeed");
+
+    let _ = std::fs::remove_file(&scratch);
+
+    assert!(analysis.has_replay_gain);
+    assert!(analysis.has_waveform);
+    assert!(analysis.has_chromaprint, "Chromaprint flag must be true");
+
+    let cp = analysis.chromaprint.expect("Chromaprint result must be present");
+    assert!(!cp.fingerprint.is_empty(), "Fingerprint string must not be empty");
+    assert!(!cp.raw.is_empty(), "Raw fingerprint hashes must not be empty");
+    assert!(cp.algorithm >= 0, "Algorithm must be valid (>= 0)");
+}
+

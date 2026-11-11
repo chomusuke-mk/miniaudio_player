@@ -6,7 +6,7 @@
 
 use std::f64::consts::PI;
 
-use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult};
+use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult, RustChromaprintResult};
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 use crate::decoder::sniffer::FormatSniffer;
 
@@ -366,8 +366,8 @@ pub fn analyze_audio_source(
     let channels = audio_info.channels.max(1);
     let mut duration_ms = audio_info.duration_ms.unwrap_or(0);
 
-    // Fast path: if neither ReplayGain nor Waveform is requested, return early
-    if !config.replay_gain && !config.waveform {
+    // Fast path: if neither ReplayGain, Waveform, nor Chromaprint is requested, return early
+    if !config.replay_gain && !config.waveform && !config.chromaprint {
         let metadata = if config.metadata {
             deck.get_parsed_metadata()
         } else {
@@ -385,6 +385,8 @@ pub fn analyze_audio_source(
             waveform_peaks: Vec::new(),
             has_metadata: metadata.is_some(),
             metadata,
+            has_chromaprint: false,
+            chromaprint: None,
         });
     }
 
@@ -392,6 +394,17 @@ pub fn analyze_audio_source(
     let ch_usize = channels as usize;
     let mut rg_analyzer = config.replay_gain.then(|| Bs1770LoudnessAnalyzer::new(sample_rate));
     let mut wf_accumulator = config.waveform.then(|| AdaptiveWaveformAccumulator::new(config.waveform_points as usize));
+    let mut chromaprinter = if config.chromaprint && sample_rate > 0 {
+        let mut fp = chromaprint::Fingerprinter::new(chromaprint::types::Algorithm::default());
+        if fp.start(sample_rate, channels as u16).is_ok() {
+            Some(fp)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let mut pcm_i16_buf = Vec::new();
     let mut peak = 0.0f32;
     let mut total_decoded_frames = 0u64;
 
@@ -411,6 +424,17 @@ pub fn analyze_audio_source(
             if frame_max > peak { peak = frame_max; }
             if let Some(ref mut wf) = wf_accumulator { wf.push_frame_peak(frame_max); }
             if let Some(ref mut rg) = rg_analyzer { rg.push_stereo_frame(s_l, s_r); }
+        }
+
+        if let Some(ref mut fp) = chromaprinter {
+            pcm_i16_buf.clear();
+            pcm_i16_buf.reserve(frame_buf.len());
+            for &sample in &frame_buf {
+                let clamped = sample.clamp(-1.0, 1.0);
+                let sample_i16 = (clamped * 32767.0) as i16;
+                pcm_i16_buf.push(sample_i16);
+            }
+            let _ = fp.feed(&pcm_i16_buf);
         }
 
         if let Some(limit) = max_frames {
@@ -445,6 +469,33 @@ pub fn analyze_audio_source(
         None => (false, Vec::new()),
     };
 
+    let (has_chromaprint, chromaprint) = match chromaprinter {
+        Some(mut fp) => {
+            if fp.finish().is_ok() {
+                let fingerprint = fp.encode();
+                let raw = fp.fingerprint().to_vec();
+                let algorithm = match fp.algorithm() {
+                    chromaprint::types::Algorithm::Test1 => 0,
+                    chromaprint::types::Algorithm::Test2 => 1,
+                    chromaprint::types::Algorithm::Test3 => 2,
+                    chromaprint::types::Algorithm::Test4 => 3,
+                    chromaprint::types::Algorithm::Test5 => 4,
+                };
+                (
+                    true,
+                    Some(RustChromaprintResult {
+                        fingerprint,
+                        raw,
+                        algorithm,
+                    }),
+                )
+            } else {
+                (false, None)
+            }
+        }
+        None => (false, None),
+    };
+
     let metadata = if config.metadata {
         deck.get_parsed_metadata()
     } else {
@@ -463,5 +514,7 @@ pub fn analyze_audio_source(
         waveform_peaks,
         has_metadata: metadata.is_some(),
         metadata,
+        has_chromaprint,
+        chromaprint,
     })
 }

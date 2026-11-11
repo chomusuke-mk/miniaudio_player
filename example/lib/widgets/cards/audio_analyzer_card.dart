@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
+import '../common/acoustid_lookup_dialog.dart';
 import '../common/extended_metadata_dialog.dart';
 import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
@@ -318,6 +320,10 @@ class AudioAnalyzerCard extends StatelessWidget {
               );
             },
           ),
+          const SizedBox(height: 14),
+
+          // 5. CHROMAPRINT / ACOUSTID FINGERPRINT SECTION
+          _buildChromaprintSection(context, analysis, isLoading, track),
         ],
       ),
     );
@@ -1078,6 +1084,222 @@ class AudioAnalyzerCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // 5. CHROMAPRINT / ACOUSTID FINGERPRINT SECTION
+  // ===========================================================================
+  Widget _buildChromaprintSection(
+    BuildContext context,
+    AudioAnalysisResult? analysis,
+    bool isLoading,
+    AudioTrack? track,
+  ) {
+    final chromaprint = analysis?.chromaprint;
+    final fpString = chromaprint?.fingerprint;
+    final algorithm = chromaprint?.algorithm;
+    final durationSeconds =
+        (analysis?.audioInfo.duration?.inMilliseconds ?? 0) / 1000.0;
+
+    String algoBadge;
+    Color algoColor;
+    if (isLoading) {
+      algoBadge = 'loading...';
+      algoColor = const Color(0xFF64748B);
+    } else if (chromaprint != null) {
+      algoBadge = 'ALGORITHM TEST2 ($algorithm)';
+      algoColor = StudioColors.accentCyan;
+    } else {
+      algoBadge = '--';
+      algoColor = StudioColors.textMuted;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF070B14),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: StudioColors.cardBorder, width: 0.8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.fingerprint, size: 14, color: StudioColors.accentCyan),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'CHROMAPRINT / ACOUSTID FINGERPRINT',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                    color: Colors.white,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                algoBadge,
+                style: TextStyle(
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.w700,
+                  color: algoColor,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Digital acoustic fingerprint generated via Chromaprint for automated AcoustID track identification and MusicBrainz metadata cross-referencing.',
+            style: TextStyle(
+              fontSize: 9,
+              color: StudioColors.textMuted,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Monospace Fingerprint Preview Box
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0A0F1D),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: StudioColors.cardBorder, width: 0.8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: isLoading
+                      ? const Text(
+                          'loading...',
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: Color(0xFF64748B),
+                            fontFamily: 'monospace',
+                          ),
+                        )
+                      : (fpString != null && fpString.isNotEmpty
+                          ? SelectableText(
+                              fpString,
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontFamily: 'monospace',
+                                color: Colors.white,
+                                height: 1.25,
+                              ),
+                              maxLines: 2,
+                            )
+                          : const Text(
+                              '--',
+                              style: TextStyle(
+                                fontSize: 9,
+                                color: StudioColors.textMuted,
+                                fontFamily: 'monospace',
+                              ),
+                            )),
+                ),
+                if (!isLoading && fpString != null && fpString.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 13),
+                    color: StudioColors.accentCyan,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                    tooltip: 'Copy Fingerprint',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: fpString));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Chromaprint fingerprint copied to clipboard'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Identify Track Button (Web API with cache protection against rebuilds)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                onTap: (!isLoading &&
+                        fpString != null &&
+                        fpString.isNotEmpty &&
+                        analyzerController != null)
+                    ? () {
+                        showDialog(
+                          context: context,
+                          builder: (_) => AcoustIdLookupDialog(
+                            fingerprint: fpString,
+                            durationSeconds: durationSeconds,
+                            trackTitle: track?.title ?? 'Track',
+                            analyzerController: analyzerController!,
+                          ),
+                        );
+                      }
+                    : null,
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                        ? StudioColors.accentCyan.withValues(alpha: 0.15)
+                        : StudioColors.cardBorder.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                          ? StudioColors.accentCyan.withValues(alpha: 0.5)
+                          : StudioColors.cardBorder.withValues(alpha: 0.3),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.travel_explore,
+                        size: 13,
+                        color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                            ? StudioColors.accentCyan
+                            : (isLoading ? const Color(0xFF64748B) : StudioColors.textMuted),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        isLoading
+                            ? 'loading...'
+                            : (fpString != null && fpString.isNotEmpty
+                                ? 'IDENTIFY TRACK (AcoustID API)'
+                                : '--'),
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                          color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                              ? StudioColors.accentCyan
+                              : (isLoading ? const Color(0xFF64748B) : StudioColors.textMuted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ],

@@ -111,6 +111,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustBuffer dco_decode_box_autoadd_rust_buffer(dynamic raw);
 
   @protected
+  RustChromaprintResult dco_decode_box_autoadd_rust_chromaprint_result(
+      dynamic raw);
+
+  @protected
   RustCrossfadeConfig dco_decode_box_autoadd_rust_crossfade_config(dynamic raw);
 
   @protected
@@ -198,6 +202,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
 
   @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
@@ -253,6 +260,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustAudioMetadata? dco_decode_opt_box_autoadd_rust_audio_metadata(
+      dynamic raw);
+
+  @protected
+  RustChromaprintResult? dco_decode_opt_box_autoadd_rust_chromaprint_result(
       dynamic raw);
 
   @protected
@@ -344,6 +355,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustBuffer dco_decode_rust_buffer(dynamic raw);
+
+  @protected
+  RustChromaprintResult dco_decode_rust_chromaprint_result(dynamic raw);
 
   @protected
   RustCrossfadeConfig dco_decode_rust_crossfade_config(dynamic raw);
@@ -544,6 +558,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustBuffer sse_decode_box_autoadd_rust_buffer(SseDeserializer deserializer);
 
   @protected
+  RustChromaprintResult sse_decode_box_autoadd_rust_chromaprint_result(
+      SseDeserializer deserializer);
+
+  @protected
   RustCrossfadeConfig sse_decode_box_autoadd_rust_crossfade_config(
       SseDeserializer deserializer);
 
@@ -647,6 +665,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
 
   @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
@@ -713,6 +734,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustAudioMetadata? sse_decode_opt_box_autoadd_rust_audio_metadata(
+      SseDeserializer deserializer);
+
+  @protected
+  RustChromaprintResult? sse_decode_opt_box_autoadd_rust_chromaprint_result(
       SseDeserializer deserializer);
 
   @protected
@@ -812,6 +837,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustBuffer sse_decode_rust_buffer(SseDeserializer deserializer);
+
+  @protected
+  RustChromaprintResult sse_decode_rust_chromaprint_result(
+      SseDeserializer deserializer);
 
   @protected
   RustCrossfadeConfig sse_decode_rust_crossfade_config(
@@ -1033,6 +1062,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustBuffer self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_chromaprint_result(
+      RustChromaprintResult self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_crossfade_config(
       RustCrossfadeConfig self, SseSerializer serializer);
 
@@ -1138,6 +1171,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       Int64List self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_prim_u_32_strict(
+      Uint32List self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
@@ -1207,6 +1244,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_rust_audio_metadata(
       RustAudioMetadata? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_chromaprint_result(
+      RustChromaprintResult? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_rust_ducking_config(
@@ -1314,6 +1355,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_rust_buffer(RustBuffer self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_chromaprint_result(
+      RustChromaprintResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_crossfade_config(

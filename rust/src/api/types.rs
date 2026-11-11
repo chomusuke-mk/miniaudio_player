@@ -658,6 +658,8 @@ pub struct RustAnalysisConfig {
     pub waveform: bool,
     /// Whether to extract raw metadata bytes.
     pub metadata: bool,
+    /// Whether to compute a Chromaprint / AcoustID audio fingerprint.
+    pub chromaprint: bool,
     /// Number of normalized waveform buckets to compute.
     pub waveform_points: u32,
     /// Reference target loudness in LUFS (defaults to -18.0).
@@ -672,11 +674,23 @@ impl Default for RustAnalysisConfig {
             replay_gain: true,
             waveform: true,
             metadata: false,
+            chromaprint: false,
             waveform_points: 100,
             target_lufs: -18.0,
             max_duration_ms: None,
         }
     }
+}
+
+/// Digital acoustic fingerprint generated via Chromaprint / AcoustID.
+#[derive(Debug, Clone, Default)]
+pub struct RustChromaprintResult {
+    /// Compressed Base64-encoded fingerprint string compatible with AcoustID API and fpcalc.
+    pub fingerprint: String,
+    /// Raw 32-bit unsigned integer array representing the acoustic fingerprint.
+    pub raw: Vec<u32>,
+    /// Algorithm version code used.
+    pub algorithm: i32,
 }
 
 /// Offline acoustic analysis results containing format, loudness, waveform, and metadata.
@@ -704,6 +718,10 @@ pub struct RustAudioAnalysisResult {
     pub has_metadata: bool,
     /// Encapsulated metadata bytes.
     pub metadata: Option<RustAudioMetadata>,
+    /// Whether Chromaprint analysis was performed and populated.
+    pub has_chromaprint: bool,
+    /// Digital acoustic fingerprint generated via Chromaprint.
+    pub chromaprint: Option<RustChromaprintResult>,
 }
 
 /// Configuration governing crossfade transition durations and gain curves.

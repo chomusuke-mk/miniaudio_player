@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Configuration parameters for offline acoustic and metadata analysis.
 class RustAnalysisConfig {
@@ -22,6 +22,9 @@ class RustAnalysisConfig {
 
   /// Whether to extract raw metadata bytes.
   final bool metadata;
+
+  /// Whether to compute a Chromaprint / AcoustID audio fingerprint.
+  final bool chromaprint;
 
   /// Number of normalized waveform buckets to compute.
   final int waveformPoints;
@@ -36,6 +39,7 @@ class RustAnalysisConfig {
     required this.replayGain,
     required this.waveform,
     required this.metadata,
+    required this.chromaprint,
     required this.waveformPoints,
     required this.targetLufs,
     this.maxDurationMs,
@@ -49,6 +53,7 @@ class RustAnalysisConfig {
       replayGain.hashCode ^
       waveform.hashCode ^
       metadata.hashCode ^
+      chromaprint.hashCode ^
       waveformPoints.hashCode ^
       targetLufs.hashCode ^
       maxDurationMs.hashCode;
@@ -61,6 +66,7 @@ class RustAnalysisConfig {
           replayGain == other.replayGain &&
           waveform == other.waveform &&
           metadata == other.metadata &&
+          chromaprint == other.chromaprint &&
           waveformPoints == other.waveformPoints &&
           targetLufs == other.targetLufs &&
           maxDurationMs == other.maxDurationMs;
@@ -101,6 +107,12 @@ class RustAudioAnalysisResult {
   /// Encapsulated metadata bytes.
   final RustAudioMetadata? metadata;
 
+  /// Whether Chromaprint analysis was performed and populated.
+  final bool hasChromaprint;
+
+  /// Digital acoustic fingerprint generated via Chromaprint.
+  final RustChromaprintResult? chromaprint;
+
   const RustAudioAnalysisResult({
     required this.audioInfo,
     required this.hasReplayGain,
@@ -113,6 +125,8 @@ class RustAudioAnalysisResult {
     required this.waveformPeaks,
     required this.hasMetadata,
     this.metadata,
+    required this.hasChromaprint,
+    this.chromaprint,
   });
 
   static Future<RustAudioAnalysisResult> default_() =>
@@ -130,7 +144,9 @@ class RustAudioAnalysisResult {
       frequencyBands.hashCode ^
       waveformPeaks.hashCode ^
       hasMetadata.hashCode ^
-      metadata.hashCode;
+      metadata.hashCode ^
+      hasChromaprint.hashCode ^
+      chromaprint.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -147,7 +163,9 @@ class RustAudioAnalysisResult {
           frequencyBands == other.frequencyBands &&
           waveformPeaks == other.waveformPeaks &&
           hasMetadata == other.hasMetadata &&
-          metadata == other.metadata;
+          metadata == other.metadata &&
+          hasChromaprint == other.hasChromaprint &&
+          chromaprint == other.chromaprint;
 }
 
 /// Chapter marker embedded in the audio file.
@@ -760,6 +778,39 @@ class RustBuffer {
           startMs == other.startMs &&
           endMs == other.endMs &&
           isBuffering == other.isBuffering;
+}
+
+/// Digital acoustic fingerprint generated via Chromaprint / AcoustID.
+class RustChromaprintResult {
+  /// Compressed Base64-encoded fingerprint string compatible with AcoustID API and fpcalc.
+  final String fingerprint;
+
+  /// Raw 32-bit unsigned integer array representing the acoustic fingerprint.
+  final Uint32List raw;
+
+  /// Algorithm version code used.
+  final int algorithm;
+
+  const RustChromaprintResult({
+    required this.fingerprint,
+    required this.raw,
+    required this.algorithm,
+  });
+
+  static Future<RustChromaprintResult> default_() =>
+      RustLib.instance.api.crateApiTypesRustChromaprintResultDefault();
+
+  @override
+  int get hashCode => fingerprint.hashCode ^ raw.hashCode ^ algorithm.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustChromaprintResult &&
+          runtimeType == other.runtimeType &&
+          fingerprint == other.fingerprint &&
+          raw == other.raw &&
+          algorithm == other.algorithm;
 }
 
 /// Configuration governing crossfade transition durations and gain curves.

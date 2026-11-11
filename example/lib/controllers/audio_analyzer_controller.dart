@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:miniaudio_player/miniaudio_player.dart';
+import '../models/acoustid_result.dart';
 import '../models/audio_track.dart';
 
 /// Controller orchestrating on-demand acoustic analysis (ITU-R BS.1770-4 / EBU R128)
@@ -11,6 +14,8 @@ import '../models/audio_track.dart';
 /// session cache of analysis results to prevent redundant processing.
 class AudioAnalyzerController extends ChangeNotifier {
   final Map<String, AudioAnalysisResult> _resultsByTrack = {};
+  final Map<String, AcoustIdLookupResult> _acoustIdCache = {};
+  final Map<String, Future<AcoustIdLookupResult>> _pendingAcoustIdLookups = {};
   String? _currentTrackId;
   bool _isAnalyzing = false;
   String? _error;
@@ -124,6 +129,7 @@ class AudioAnalyzerController extends ChangeNotifier {
           waveform: true,
           replayGain: true,
           metadata: true,
+          chromaprint: true,
           waveformPoints: 72,
         );
       } else if (track.source.uri != null) {
@@ -145,6 +151,7 @@ class AudioAnalyzerController extends ChangeNotifier {
               waveform: true,
               replayGain: true,
               metadata: true,
+              chromaprint: true,
               waveformPoints: 72,
             );
           } catch (_) {
@@ -154,6 +161,7 @@ class AudioAnalyzerController extends ChangeNotifier {
                 waveform: true,
                 replayGain: true,
                 metadata: true,
+                chromaprint: true,
                 waveformPoints: 72,
               );
             }
@@ -167,6 +175,7 @@ class AudioAnalyzerController extends ChangeNotifier {
             waveform: true,
             replayGain: true,
             metadata: true,
+            chromaprint: true,
             waveformPoints: 72,
           );
         }
@@ -176,6 +185,7 @@ class AudioAnalyzerController extends ChangeNotifier {
           waveform: true,
           replayGain: true,
           metadata: true,
+          chromaprint: true,
           waveformPoints: 72,
         );
       }
@@ -221,6 +231,146 @@ class AudioAnalyzerController extends ChangeNotifier {
     } finally {
       _isAnalyzing = false;
       notifyListeners();
+    }
+  }
+
+  /// Retrieves cached AcoustID lookup result for [fingerprint], if previously fetched.
+  AcoustIdLookupResult? getAcoustIdFromCache(String? fingerprint) {
+    if (fingerprint == null) return null;
+    return _acoustIdCache[fingerprint];
+  }
+
+  /// Queries AcoustID API for track identification with in-memory session caching
+  /// and concurrency deduplication to prevent redundant network calls across rebuilds.
+  Future<AcoustIdLookupResult> lookupAcoustId({
+    required String fingerprint,
+    required double durationSeconds,
+  }) async {
+    // 1. Session Cache Check
+    if (_acoustIdCache.containsKey(fingerprint)) {
+      MapLogger.debug(
+        '[ACOUSTID:CACHE_HIT] Fingerprint "$fingerprint" retrieved from in-memory session cache.',
+      );
+      return _acoustIdCache[fingerprint]!.withCacheFlag(true);
+    }
+
+    // 2. Concurrency Deduplication (re-use in-flight future if already executing)
+    if (_pendingAcoustIdLookups.containsKey(fingerprint)) {
+      MapLogger.debug(
+        '[ACOUSTID:IN_FLIGHT] Re-using in-flight network request for fingerprint "$fingerprint".',
+      );
+      return await _pendingAcoustIdLookups[fingerprint]!;
+    }
+
+    final future = _performAcoustIdLookup(fingerprint, durationSeconds);
+    _pendingAcoustIdLookups[fingerprint] = future;
+
+    try {
+      final result = await future;
+      _acoustIdCache[fingerprint] = result;
+      notifyListeners();
+      return result;
+    } finally {
+      _pendingAcoustIdLookups.remove(fingerprint);
+    }
+  }
+
+  Future<AcoustIdLookupResult> _performAcoustIdLookup(
+    String fingerprint,
+    double durationSeconds,
+  ) async {
+    final client = http.Client();
+    try {
+      final dur = durationSeconds.round();
+      final body = <String, String>{
+        'meta': 'recordings releasegroups tracks usermeta releases',
+        'duration': dur > 0 ? '$dur' : '1',
+        'fingerprint': fingerprint,
+      };
+
+      // Primary endpoint: VideoLAN public AcoustID proxy (used by VLC media player)
+      final primaryUri = Uri.parse('https://fingerprint.videolan.org/acoustid.php');
+      // Secondary fallback endpoint: upstream AcoustID API
+      final fallbackUri = Uri.parse('https://api.acoustid.org/v2/lookup');
+
+      http.Response? response;
+      String currentEndpoint = primaryUri.toString();
+
+      MapLogger.info(
+        '[ACOUSTID:REQUEST] POST $currentEndpoint | duration: ${dur}s, fingerprint length: ${fingerprint.length} chars',
+      );
+
+      try {
+        response = await client.post(
+          primaryUri,
+          body: body,
+          headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'},
+        ).timeout(const Duration(seconds: 12));
+      } catch (primaryErr) {
+        MapLogger.warn(
+          '[ACOUSTID:FALLBACK] Primary endpoint failed ($primaryErr). Attempting fallback to $fallbackUri...',
+        );
+        currentEndpoint = fallbackUri.toString();
+        response = await client.post(
+          fallbackUri,
+          body: body,
+          headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'},
+        ).timeout(const Duration(seconds: 12));
+      }
+
+      MapLogger.info(
+        '[ACOUSTID:RESPONSE] HTTP ${response.statusCode} from $currentEndpoint | Content-Length: ${response.body.length} bytes',
+      );
+
+      if (response.statusCode != 200) {
+        String detail = 'AcoustID HTTP Error: status code ${response.statusCode}';
+        try {
+          final errData = jsonDecode(response.body);
+          if (errData is Map && errData['error'] is Map) {
+            final msg = errData['error']['message'];
+            if (msg != null) {
+              detail = '$detail ($msg)';
+            }
+          }
+        } catch (_) {}
+        MapLogger.error('[ACOUSTID:ERROR_BODY] $detail: ${response.body}');
+        return AcoustIdLookupResult.failure(detail);
+      }
+
+      final dynamic data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) {
+        MapLogger.error('[ACOUSTID:PARSE_ERROR] Invalid JSON payload received: ${response.body}');
+        return AcoustIdLookupResult.failure('Invalid JSON response received from AcoustID API');
+      }
+
+      if (data['status'] != 'ok') {
+        final errorMsg =
+            data['error']?['message'] ?? 'AcoustID API returned status "${data['status']}"';
+        MapLogger.warn('[ACOUSTID:STATUS_ERROR] $errorMsg');
+        return AcoustIdLookupResult.failure(errorMsg.toString());
+      }
+
+      final resultsList = <AcoustIdMatch>[];
+      if (data['results'] is List) {
+        for (final r in data['results']) {
+          if (r is Map) {
+            resultsList.add(AcoustIdMatch.fromJson(r.cast<String, dynamic>()));
+          }
+        }
+      }
+
+      final topTitle = resultsList.isNotEmpty && resultsList.first.recordings.isNotEmpty
+          ? resultsList.first.recordings.first.title
+          : 'no recordings';
+      MapLogger.info(
+        '[ACOUSTID:DONE] Lookup succeeded: ${resultsList.length} clusters found. Top match: "$topTitle".',
+      );
+      return AcoustIdLookupResult.success(resultsList, isFromCache: false);
+    } catch (e) {
+      MapLogger.error('[ACOUSTID:EXCEPTION] AcoustID lookup failed: $e');
+      return AcoustIdLookupResult.failure('Network or decoding error: $e');
+    } finally {
+      client.close();
     }
   }
 }

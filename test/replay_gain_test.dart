@@ -268,6 +268,24 @@ void main() {
       expect(cappedRes.replayGain?.peak, greaterThan(0.0));
       expect(cappedRes.audioInfo.sampleRate, equals(fullRes.audioInfo.sampleRate));
     });
+
+    test('analyzeAudio with chromaprint calculates acoustic fingerprint', () async {
+      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      expect(mp3.existsSync(), isTrue);
+
+      final noCp = await MiniaudioPlayer.analyzeAudio(mp3.path, chromaprint: false);
+      expect(noCp.chromaprint, isNull);
+
+      final withCp = await MiniaudioPlayer.analyzeAudio(
+        mp3.path,
+        chromaprint: true,
+        maxAnalysisDuration: const Duration(seconds: 5),
+      );
+      expect(withCp.chromaprint, isNotNull);
+      expect(withCp.chromaprint!.fingerprint.isNotEmpty, isTrue);
+      expect(withCp.chromaprint!.raw.isNotEmpty, isTrue);
+      expect(withCp.chromaprint!.algorithm, greaterThanOrEqualTo(0));
+    });
   });
 
   group('MiniaudioPlayer Metadata and AudioInfo state and stream integration', () {

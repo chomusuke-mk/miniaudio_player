@@ -329,6 +329,8 @@ class MiniaudioPlayer<T> {
   ///   [waveformPoints] for rendering seekbars and waveform visualizations.
   /// - [metadata]: When `true` (defaults to `false`), extracts container/header metadata bytes
   ///   into [AudioAnalysisResult.metadata].
+  /// - [chromaprint]: When `true` (defaults to `false`), computes a Chromaprint / AcoustID digital
+  ///   audio fingerprint for track identification into [AudioAnalysisResult.chromaprint].
   /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
   /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
   /// - [maxAnalysisDuration]: Optional maximum duration to analyze (e.g. for live or unbounded streams).
@@ -337,6 +339,7 @@ class MiniaudioPlayer<T> {
     bool replayGain = true,
     bool waveform = true,
     bool metadata = false,
+    bool chromaprint = false,
     int waveformPoints = 100,
     double targetLufs = -18.0,
     Duration? maxAnalysisDuration,
@@ -348,6 +351,7 @@ class MiniaudioPlayer<T> {
       replayGain: replayGain,
       waveform: waveform,
       metadata: metadata,
+      chromaprint: chromaprint,
       waveformPoints: waveformPoints > 0 ? waveformPoints : 100,
       targetLufs: targetLufs,
       maxDurationMs: maxAnalysisDuration?.inMilliseconds,
@@ -376,6 +380,8 @@ class MiniaudioPlayer<T> {
   ///   [waveformPoints] for rendering seekbars and waveform visualizations.
   /// - [metadata]: When `true` (defaults to `false`), extracts container/header metadata bytes
   ///   into [AudioAnalysisResult.metadata].
+  /// - [chromaprint]: When `true` (defaults to `false`), computes a Chromaprint / AcoustID digital
+  ///   audio fingerprint for track identification into [AudioAnalysisResult.chromaprint].
   /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
   /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
   /// - [maxAnalysisDuration]: Optional maximum duration to analyze.
@@ -384,6 +390,7 @@ class MiniaudioPlayer<T> {
     bool replayGain = true,
     bool waveform = true,
     bool metadata = false,
+    bool chromaprint = false,
     int waveformPoints = 100,
     double targetLufs = -18.0,
     Duration? maxAnalysisDuration,
@@ -400,6 +407,7 @@ class MiniaudioPlayer<T> {
       replayGain: replayGain,
       waveform: waveform,
       metadata: metadata,
+      chromaprint: chromaprint,
       waveformPoints: waveformPoints > 0 ? waveformPoints : 100,
       targetLufs: targetLufs,
       maxDurationMs: maxAnalysisDuration?.inMilliseconds,
@@ -1003,12 +1011,20 @@ class MiniaudioPlayer<T> {
     final md = res.hasMetadata && res.metadata != null
         ? AudioMetadata.fromRust(res.metadata!)
         : null;
+    final cp = res.hasChromaprint && res.chromaprint != null
+        ? ChromaprintResult(
+            fingerprint: res.chromaprint!.fingerprint,
+            raw: res.chromaprint!.raw.toList(),
+            algorithm: res.chromaprint!.algorithm,
+          )
+        : null;
     final info = AudioInfo.fromRust(res.audioInfo);
     return AudioAnalysisResult(
       audioInfo: info,
       replayGain: rg,
       waveform: wf,
       metadata: md,
+      chromaprint: cp,
     );
   }
 }

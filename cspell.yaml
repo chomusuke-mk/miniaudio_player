@@ -80,6 +80,7 @@ words:
   - cfgs
   - chomusuke
   - chpl
+  - chromaprint
   - ciphertext
   - classpath
   - CLEVEL
@@ -241,6 +242,7 @@ words:
   - formants
   - formulars
   - Foxo
+  - fpcalc
   - FPCR
   - FPSCR
   - frbgen
@@ -271,6 +273,7 @@ words:
   - Hadamard
   - Hammerton
   - hann
+  - haudiotagger
   - hdrs
   - headret
   - HEAPF
@@ -510,6 +513,7 @@ words:
   - reinicios
   - reinit
   - Reintenta
+  - releasegroups
   - remixer
   - remuestreador
   - remuestreo
