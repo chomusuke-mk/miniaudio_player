@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
 

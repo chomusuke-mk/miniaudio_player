@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../models/audio_track.dart';
@@ -23,10 +24,7 @@ class PlaylistQueueCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        controller,
-        ?analyzerController,
-      ]),
+      listenable: Listenable.merge([controller, ?analyzerController]),
       builder: (context, _) {
         final tracks = controller.availableTracks;
         final xfade = controller.crossfadeConfig;
@@ -70,7 +68,10 @@ class PlaylistQueueCard extends StatelessWidget {
                       onTrackAdded: (t) async {
                         await controller.addTrack(t);
                         if (analyzerController != null) {
-                          analyzerController!.analyze(t, engine: controller.engine);
+                          analyzerController!.analyze(
+                            t,
+                            engine: controller.engine,
+                          );
                         }
                       },
                     ),
@@ -88,7 +89,10 @@ class PlaylistQueueCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: const Color(0xFF0A0F1D),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: StudioColors.cardBorder, width: 1.0),
+                  border: Border.all(
+                    color: StudioColors.cardBorder,
+                    width: 1.0,
+                  ),
                 ),
                 child: Wrap(
                   alignment: WrapAlignment.start,
@@ -113,9 +117,13 @@ class PlaylistQueueCard extends StatelessWidget {
                       selectedColor: StudioColors.accentCyan,
                       backgroundColor: StudioColors.backgroundDark,
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                      onSelected: (_) =>
-                          controller.setCrossfadeCurve(CrossfadeCurve.equalPower),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 0,
+                      ),
+                      onSelected: (_) => controller.setCrossfadeCurve(
+                        CrossfadeCurve.equalPower,
+                      ),
                     ),
                     ChoiceChip(
                       label: const Text(
@@ -126,7 +134,10 @@ class PlaylistQueueCard extends StatelessWidget {
                       selectedColor: StudioColors.accentCyan,
                       backgroundColor: StudioColors.backgroundDark,
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 0,
+                      ),
                       onSelected: (_) =>
                           controller.setCrossfadeCurve(CrossfadeCurve.linear),
                     ),
@@ -167,7 +178,10 @@ class PlaylistQueueCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: const Color(0xFF070B14),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: StudioColors.cardBorder, width: 1.0),
+                  border: Border.all(
+                    color: StudioColors.cardBorder,
+                    width: 1.0,
+                  ),
                 ),
                 child: StreamBuilder<List<AudioSource<AudioTrack>>>(
                   stream: controller.engine.stream.queue,
@@ -175,14 +189,20 @@ class PlaylistQueueCard extends StatelessWidget {
                   builder: (context, queueSnap) {
                     final queue = queueSnap.data ?? [];
                     final tracks = queue.isNotEmpty
-                        ? queue.where((e) => e.data != null).map((e) => e.data!).toList()
+                        ? queue
+                              .where((e) => e.data != null)
+                              .map((e) => e.data!)
+                              .toList()
                         : controller.availableTracks;
 
                     if (tracks.isEmpty) {
                       return const Center(
                         child: Text(
                           'Queue is empty. Add tracks with the + button',
-                          style: TextStyle(color: StudioColors.textMuted, fontSize: 11),
+                          style: TextStyle(
+                            color: StudioColors.textMuted,
+                            fontSize: 11,
+                          ),
                         ),
                       );
                     }
@@ -191,12 +211,13 @@ class PlaylistQueueCard extends StatelessWidget {
                       stream: controller.engine.stream.currentIndex,
                       initialData: controller.engine.state.currentIndex,
                       builder: (context, idxSnap) {
-                        final currentIdx = idxSnap.data ?? controller.engine.state.currentIndex;
+                        final currentIdx =
+                            idxSnap.data ??
+                            controller.engine.state.currentIndex;
 
                         return Theme(
-                          data: Theme.of(context).copyWith(
-                            canvasColor: const Color(0xFF10162A),
-                          ),
+                          data: Theme.of(context)
+                              .copyWith(canvasColor: const Color(0xFF10162A)),
                           child: ReorderableListView.builder(
                             buildDefaultDragHandles: false,
                             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -204,24 +225,37 @@ class PlaylistQueueCard extends StatelessWidget {
                             onReorderItem: controller.reorderTrack,
                             itemBuilder: (context, index) {
                               final track = tracks[index];
-                              final isPlayingThis = currentIdx != null && index == currentIdx;
-                              final itemKey = queue.isNotEmpty && index < queue.length
+                              final isPlayingThis =
+                                  currentIdx != null && index == currentIdx;
+                              final itemKey =
+                                  queue.isNotEmpty && index < queue.length
                                   ? 'q_${queue[index].id ?? index}_${track.id}'
                                   : 'track_${track.id}_$index';
 
-                              final analysis = analyzerController?.getResultForTrack(track);
-                              final dynamicMeta = isPlayingThis ? controller.engine.state.metadata : null;
-                              final frontCover = dynamicMeta?.frontCover ?? analysis?.metadata?.frontCover;
-                              final displayTitle = (dynamicMeta?.title != null && dynamicMeta!.title!.isNotEmpty)
+                              final analysis = analyzerController
+                                  ?.getResultForTrack(track);
+                              final dynamicMeta = isPlayingThis
+                                  ? controller.engine.state.metadata
+                                  : null;
+                              final frontCover =
+                                  dynamicMeta?.frontCover ??
+                                  analysis?.metadata?.frontCover;
+                              final displayTitle =
+                                  (dynamicMeta?.title != null &&
+                                      dynamicMeta!.title!.isNotEmpty)
                                   ? dynamicMeta.title!
-                                  : (analysis?.metadata?.title != null && analysis!.metadata!.title!.isNotEmpty)
-                                      ? analysis.metadata!.title!
-                                      : track.title;
-                              final displayArtist = (dynamicMeta?.artist != null && dynamicMeta!.artist!.isNotEmpty)
+                                  : (analysis?.metadata?.title != null &&
+                                        analysis!.metadata!.title!.isNotEmpty)
+                                  ? analysis.metadata!.title!
+                                  : track.title;
+                              final displayArtist =
+                                  (dynamicMeta?.artist != null &&
+                                      dynamicMeta!.artist!.isNotEmpty)
                                   ? dynamicMeta.artist!
-                                  : (analysis?.metadata?.artist != null && analysis!.metadata!.artist!.isNotEmpty)
-                                      ? analysis.metadata!.artist!
-                                      : (track.artist ?? 'Audio Track');
+                                  : (analysis?.metadata?.artist != null &&
+                                        analysis!.metadata!.artist!.isNotEmpty)
+                                  ? analysis.metadata!.artist!
+                                  : (track.artist ?? 'Audio Track');
 
                               return Padding(
                                 key: ValueKey(itemKey),
@@ -245,155 +279,196 @@ class PlaylistQueueCard extends StatelessWidget {
                                   child: Material(
                                     color: Colors.transparent,
                                     child: ListTile(
-                                    dense: true,
-                                    visualDensity: VisualDensity.compact,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 2,
-                                    ),
-                                    leading: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        ReorderableDragStartListener(
-                                          index: index,
-                                          child: MouseRegion(
-                                            cursor: SystemMouseCursors.grab,
-                                            child: const Padding(
-                                              padding: EdgeInsets.symmetric(
-                                                horizontal: 2,
-                                                vertical: 4,
-                                              ),
-                                              child: Icon(
-                                                Icons.drag_indicator,
-                                                size: 16,
-                                                color: StudioColors.textMuted,
-                                              ),
-                                            ),
+                                      dense: true,
+                                      visualDensity: VisualDensity.compact,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 2,
                                           ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          '${index + 1}'.padLeft(2, '0'),
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600,
-                                            color: isPlayingThis
-                                                ? StudioColors.accentCyan
-                                                : StudioColors.textMuted,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-
-                                        // Thumbnail / Embedded Artwork or Fallback Icon
-                                        Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF080D1A),
-                                            borderRadius: BorderRadius.circular(4),
-                                            border: Border.all(
-                                              color: isPlayingThis
-                                                  ? StudioColors.accentCyan.withValues(alpha: 0.5)
-                                                  : StudioColors.cardBorder,
-                                              width: 0.8,
-                                            ),
-                                          ),
-                                          child: frontCover != null && frontCover.bytes.isNotEmpty
-                                              ? ClipRRect(
-                                                  borderRadius: BorderRadius.circular(3),
-                                                  child: Image.memory(
-                                                    frontCover.bytes,
-                                                    width: 32,
-                                                    height: 32,
-                                                    fit: BoxFit.cover,
-                                                  ),
-                                                )
-                                              : Icon(
-                                                  isPlayingThis
-                                                      ? Icons.equalizer
-                                                      : track.icon,
-                                                  size: 16,
-                                                  color: isPlayingThis
-                                                      ? StudioColors.accentCyan
-                                                      : track.iconColor,
+                                      leading: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          ReorderableDragStartListener(
+                                            index: index,
+                                            child: MouseRegion(
+                                              cursor: SystemMouseCursors.grab,
+                                              child: const Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                  horizontal: 2,
+                                                  vertical: 4,
                                                 ),
-                                        ),
-                                      ],
-                                    ),
-                                    title: Text(
-                                      displayTitle,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: isPlayingThis
-                                            ? FontWeight.bold
-                                            : FontWeight.w500,
-                                        color: isPlayingThis
-                                            ? StudioColors.accentCyan
-                                            : Colors.white,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    subtitle: Text(
-                                      displayArtist,
-                                      style: const TextStyle(
-                                        fontSize: 9,
-                                        color: StudioColors.textSecondary,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    trailing: Wrap(
-                                      crossAxisAlignment: WrapCrossAlignment.center,
-                                      spacing: 4,
-                                      children: [
-                                        // Button on current playing item to open Metadata Inspector Modal
-                                        if (isPlayingThis)
-                                          SizedBox(
-                                            width: 26,
-                                            height: 26,
-                                            child: IconButton.filledTonal(
-                                              icon: const Icon(Icons.info_outline, size: 15),
-                                              tooltip: 'Inspect Metadata (Static vs Dynamic)',
-                                              visualDensity: VisualDensity.compact,
-                                              style: IconButton.styleFrom(
-                                                backgroundColor: StudioColors.accentCyan.withValues(alpha: 0.15),
-                                                foregroundColor: StudioColors.accentCyan,
-                                                padding: EdgeInsets.zero,
+                                                child: Icon(
+                                                  Icons.drag_indicator,
+                                                  size: 16,
+                                                  color: StudioColors.textMuted,
+                                                ),
                                               ),
-                                              onPressed: () {
-                                                showDialog(
-                                                  context: context,
-                                                  builder: (_) => MetadataInspectorModal(
-                                                    track: track,
-                                                    staticMetadata: analysis?.metadata,
-                                                    dynamicMetadata: controller.engine.state.metadata,
-                                                    staticAudioInfo: analysis?.audioInfo,
-                                                    dynamicAudioInfo: controller.engine.state.audioInfo,
-                                                    staticReplayGain: analysis?.replayGain,
-                                                    dynamicReplayGain: controller.engine.state.replayGain,
-                                                  ),
-                                                );
-                                              },
                                             ),
                                           ),
-                                        if (queue.isNotEmpty &&
-                                            index < queue.length &&
-                                            queue[index].id != null)
-                                          StudioBadge(
-                                            label: 'ID #${queue[index].id}',
-                                            color: StudioColors.accentPurple,
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            '${index + 1}'.padLeft(2, '0'),
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              color: isPlayingThis
+                                                  ? StudioColors.accentCyan
+                                                  : StudioColors.textMuted,
+                                            ),
                                           ),
-                                        StudioBadge(
-                                          label: track.resourceBadge,
-                                          color: track.iconColor,
+                                          const SizedBox(width: 6),
+
+                                          // Thumbnail / Embedded Artwork or Fallback Icon
+                                          Container(
+                                            width: 32,
+                                            height: 32,
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF080D1A),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                color: isPlayingThis
+                                                    ? StudioColors.accentCyan
+                                                          .withValues(
+                                                            alpha: 0.5,
+                                                          )
+                                                    : StudioColors.cardBorder,
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                            child:
+                                                frontCover != null &&
+                                                    frontCover.bytes.isNotEmpty
+                                                ? ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          3,
+                                                        ),
+                                                    child: Image.memory(
+                                                      frontCover.bytes,
+                                                      width: 32,
+                                                      height: 32,
+                                                      fit: BoxFit.cover,
+                                                    ),
+                                                  )
+                                                : Icon(
+                                                    isPlayingThis
+                                                        ? Icons.equalizer
+                                                        : track.icon,
+                                                    size: 16,
+                                                    color: isPlayingThis
+                                                        ? StudioColors
+                                                              .accentCyan
+                                                        : track.iconColor,
+                                                  ),
+                                          ),
+                                        ],
+                                      ),
+                                      title: Text(
+                                        displayTitle,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: isPlayingThis
+                                              ? FontWeight.bold
+                                              : FontWeight.w500,
+                                          color: isPlayingThis
+                                              ? StudioColors.accentCyan
+                                              : Colors.white,
                                         ),
-                                      ],
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      subtitle: Text(
+                                        displayArtist,
+                                        style: const TextStyle(
+                                          fontSize: 9,
+                                          color: StudioColors.textSecondary,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      trailing: Wrap(
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        spacing: 4,
+                                        children: [
+                                          // Button on current playing item to open Metadata Inspector Modal
+                                          if (isPlayingThis)
+                                            SizedBox(
+                                              width: 26,
+                                              height: 26,
+                                              child: IconButton.filledTonal(
+                                                icon: const Icon(
+                                                  Icons.info_outline,
+                                                  size: 15,
+                                                ),
+                                                tooltip: 'Inspect Metadata (Static vs Dynamic)',
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                style: IconButton.styleFrom(
+                                                  backgroundColor: StudioColors
+                                                      .accentCyan
+                                                      .withValues(alpha: 0.15),
+                                                  foregroundColor:
+                                                      StudioColors.accentCyan,
+                                                  padding: EdgeInsets.zero,
+                                                ),
+                                                onPressed: () {
+                                                  showDialog(
+                                                    context: context,
+                                                    builder: (_) =>
+                                                        MetadataInspectorModal(
+                                                          track: track,
+                                                          staticMetadata:
+                                                              analysis
+                                                                  ?.metadata,
+                                                          dynamicMetadata:
+                                                              controller
+                                                                  .engine
+                                                                  .state
+                                                                  .metadata,
+                                                          staticAudioInfo:
+                                                              analysis
+                                                                  ?.audioInfo,
+                                                          dynamicAudioInfo:
+                                                              controller
+                                                                  .engine
+                                                                  .state
+                                                                  .audioInfo,
+                                                          staticReplayGain:
+                                                              analysis
+                                                                  ?.replayGain,
+                                                          dynamicReplayGain:
+                                                              controller
+                                                                  .engine
+                                                                  .state
+                                                                  .replayGain,
+                                                        ),
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          if (queue.isNotEmpty &&
+                                              index < queue.length &&
+                                              queue[index].id != null)
+                                            StudioBadge(
+                                              label: 'ID #${queue[index].id}',
+                                              color: StudioColors.accentPurple,
+                                            ),
+                                          StudioBadge(
+                                            label: track.resourceBadge,
+                                            color: track.iconColor,
+                                          ),
+                                        ],
+                                      ),
+                                      onTap: () async {
+                                        await controller.selectTrack(
+                                          track,
+                                          autoPlay: true,
+                                        );
+                                      },
                                     ),
-                                    onTap: () async {
-                                      await controller.selectTrack(track, autoPlay: true);
-                                    },
-                                  ),
                                   ),
                                 ),
                               );

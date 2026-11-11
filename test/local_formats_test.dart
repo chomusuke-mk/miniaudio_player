@@ -12,7 +12,8 @@ class LocalChaosTrace {
 
   void log(String action, [Map<String, dynamic>? details]) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
-    final detailStr = details != null ? ' | details=${jsonEncode(details)}' : '';
+    final detailStr =
+        details != null ? ' | details=${jsonEncode(details)}' : '';
     _entries.add('[$ts] $action$detailStr');
   }
 
@@ -77,7 +78,8 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
           final posAfterSeek = player.state.position.inMilliseconds;
           expect((posAfterSeek - 2000).abs(), lessThanOrEqualTo(1000),
-              reason: '$fileName position after seek should be near 2000 ms (was $posAfterSeek)');
+              reason:
+                  '$fileName position after seek should be near 2000 ms (was $posAfterSeek)');
         }
         // 4. pause
         await player.action.pause();
@@ -122,7 +124,8 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
           final posAfterSeek = player.state.position.inMilliseconds;
           expect((posAfterSeek - 2000).abs(), lessThanOrEqualTo(1000),
-              reason: '$fileName in-memory position after seek should be near 2000 ms (was $posAfterSeek)');
+              reason:
+                  '$fileName in-memory position after seek should be near 2000 ms (was $posAfterSeek)');
         }
 
         await player.action.stop();
@@ -215,7 +218,8 @@ void main() {
     });
 
     test('4.4: Raw path String passed to player.action.setQueue()', () async {
-      await player.action.setQueue([AudioSource('test/fixtures/salida_aac.m4a')]);
+      await player.action
+          .setQueue([AudioSource('test/fixtures/salida_aac.m4a')]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -234,9 +238,11 @@ void main() {
     setUp(() async {
       player = MiniaudioPlayer(
           queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
-      corruptFile = File('${Directory.systemTemp.path}/temp_corrupt_test_file.mp3');
+      corruptFile =
+          File('${Directory.systemTemp.path}/temp_corrupt_test_file.mp3');
       // Create artificial garbage file
-      await corruptFile.writeAsBytes(List<int>.generate(2048, (i) => (i * 7 + 13) % 256));
+      await corruptFile
+          .writeAsBytes(List<int>.generate(2048, (i) => (i * 7 + 13) % 256));
     });
 
     tearDown(() async {
@@ -246,7 +252,9 @@ void main() {
       }
     });
 
-    test('5.1: Corrupt local file throws controlled exception on play() without breaking player', () async {
+    test(
+        '5.1: Corrupt local file throws controlled exception on play() without breaking player',
+        () async {
       // 1. Set queue with corrupt local file and attempt to play
       await player.action.setQueue([AudioSource(corruptFile.path)]);
       await expectLater(
@@ -279,7 +287,9 @@ void main() {
         queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
-    test('6.1: Playing unsupported format throws MiniaudioPlayerException gracefully', () async {
+    test(
+        '6.1: Playing unsupported format throws MiniaudioPlayerException gracefully',
+        () async {
       final dummyFile = File('${Directory.systemTemp.path}/unsupported.xyz');
       await dummyFile.writeAsString('not a real audio stream');
       try {
@@ -290,7 +300,8 @@ void main() {
         );
 
         // Player must be immediately reusable
-        await player.action.setQueue([AudioSource('test/fixtures/salida_alac.m4a')]);
+        await player.action
+            .setQueue([AudioSource('test/fixtures/salida_alac.m4a')]);
         await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
         await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -314,7 +325,9 @@ void main() {
         queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
-    test('7.1: Comprehensive chaotic commands loop with detailed trace validation', () async {
+    test(
+        '7.1: Comprehensive chaotic commands loop with detailed trace validation',
+        () async {
       final trace = LocalChaosTrace();
 
       try {
@@ -329,14 +342,17 @@ void main() {
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
-        trace.log('Step 1.2: state verified playing', {'position': player.state.position.inMilliseconds});
+        trace.log('Step 1.2: state verified playing',
+            {'position': player.state.position.inMilliseconds});
 
         // Step 2: Seek forward while playing
         trace.log('Step 2: seek(2s)');
         await player.action.seek(const Duration(seconds: 2));
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(1500));
-        trace.log('Step 2.1: seek position verified', {'position': player.state.position.inMilliseconds});
+        expect(
+            player.state.position.inMilliseconds, greaterThanOrEqualTo(1500));
+        trace.log('Step 2.1: seek position verified',
+            {'position': player.state.position.inMilliseconds});
 
         // Step 3: Pause while playing
         trace.log('Step 3: pause()');
@@ -345,7 +361,8 @@ void main() {
         trace.log('Step 3.1: paused verified');
 
         // Step 4: Seek near end while paused
-        final nearEnd = (player.state.duration ?? Duration.zero) - const Duration(milliseconds: 300);
+        final nearEnd = (player.state.duration ?? Duration.zero) -
+            const Duration(milliseconds: 300);
         trace.log('Step 4: seek near end', {'target': nearEnd.inMilliseconds});
         await player.action.seek(nearEnd);
 
@@ -366,7 +383,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
         expect(player.state.isCompleted, isFalse);
-        trace.log('Step 6.1: auto-rewind replay verified', {'position': player.state.position.inMilliseconds});
+        trace.log('Step 6.1: auto-rewind replay verified',
+            {'position': player.state.position.inMilliseconds});
 
         // Step 7: Switch in flight to M4A (AAC) track B
         trace.log('Step 7: switch to track B (M4A AAC)');
@@ -375,14 +393,17 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.isPlaying, isTrue);
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
-        trace.log('Step 7.1: track B playing verified', {'duration': player.state.duration?.inMilliseconds});
+        trace.log('Step 7.1: track B playing verified',
+            {'duration': player.state.duration?.inMilliseconds});
 
         // Step 8: Seek on track B
         trace.log('Step 8: seek(2s) on track B');
         await player.action.seek(const Duration(seconds: 2));
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect((player.state.position.inMilliseconds - 2000).abs(), lessThanOrEqualTo(1000));
-        trace.log('Step 8.1: track B seek verified', {'position': player.state.position.inMilliseconds});
+        expect((player.state.position.inMilliseconds - 2000).abs(),
+            lessThanOrEqualTo(1000));
+        trace.log('Step 8.1: track B seek verified',
+            {'position': player.state.position.inMilliseconds});
 
         // Step 9: Switch in flight to M4A (ALAC) track C
         trace.log('Step 9: switch to track C (M4A ALAC)');
@@ -390,7 +411,8 @@ void main() {
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.isPlaying, isTrue);
-        trace.log('Step 9.1: track C playing verified', {'duration': player.state.duration?.inMilliseconds});
+        trace.log('Step 9.1: track C playing verified',
+            {'duration': player.state.duration?.inMilliseconds});
 
         // Step 10: Final clean stop
         trace.log('Step 10: stop()');

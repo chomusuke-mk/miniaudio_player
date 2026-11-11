@@ -294,6 +294,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustVector3? dco_decode_opt_box_autoadd_rust_vector_3(dynamic raw);
 
   @protected
+  RustVisualizerData? dco_decode_opt_box_autoadd_rust_visualizer_data(
+      dynamic raw);
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
@@ -768,6 +772,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustVector3? sse_decode_opt_box_autoadd_rust_vector_3(
+      SseDeserializer deserializer);
+
+  @protected
+  RustVisualizerData? sse_decode_opt_box_autoadd_rust_visualizer_data(
       SseDeserializer deserializer);
 
   @protected
@@ -1278,6 +1286,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_rust_vector_3(
       RustVector3? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_visualizer_data(
+      RustVisualizerData? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);

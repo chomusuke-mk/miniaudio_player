@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 class StudioCard extends StatelessWidget {
@@ -26,10 +27,7 @@ class StudioCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(
-          color: StudioColors.cardBorder,
-          width: 1.2,
-        ),
+        side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
       ),
       child: Container(
         decoration: BoxDecoration(
@@ -95,10 +93,7 @@ class StudioCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: trailing!,
-                      ),
+                      Align(alignment: Alignment.centerLeft, child: trailing!),
                     ],
                   )
                 else
@@ -106,11 +101,7 @@ class StudioCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       if (icon != null) ...[
-                        Icon(
-                          icon,
-                          size: 18,
-                          color: StudioColors.accentCyan,
-                        ),
+                        Icon(icon, size: 18, color: StudioColors.accentCyan),
                         const SizedBox(width: 8),
                       ],
                       Expanded(

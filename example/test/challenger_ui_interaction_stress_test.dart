@@ -18,22 +18,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const requiredViewports = <String, ({Size size, double dpr})>{
-    '280x653 (Ultra-Narrow foldable outer)': (
-      size: Size(280, 653),
-      dpr: 2.0,
-    ),
+    '280x653 (Ultra-Narrow foldable outer)': (size: Size(280, 653), dpr: 2.0),
     '320x568 (Compact Mobile - iPhone SE 1st gen)': (
       size: Size(320, 568),
       dpr: 2.0,
     ),
-    '360x640 (Standard Android compact)': (
-      size: Size(360, 640),
-      dpr: 2.0,
-    ),
-    '390x844 (Modern iPhone 12/13/14)': (
-      size: Size(390, 844),
-      dpr: 3.0,
-    ),
+    '360x640 (Standard Android compact)': (size: Size(360, 640), dpr: 2.0),
+    '390x844 (Modern iPhone 12/13/14)': (size: Size(390, 844), dpr: 3.0),
     '412x915 (Android Standard - Pixel 7 / Galaxy S)': (
       size: Size(412, 915),
       dpr: 2.625,
@@ -83,7 +74,8 @@ void main() {
             expect(
               find.text('miniaudio_player'),
               findsOneWidget,
-              reason: 'App failed to mount ready screen on ${entry.key} @ ${scale}x',
+              reason:
+                  'App failed to mount ready screen on ${entry.key} @ ${scale}x',
             );
 
             expect(
@@ -103,7 +95,8 @@ void main() {
               expect(
                 tester.takeException(),
                 isNull,
-                reason: 'Overflow during downward scroll step $i on ${entry.key} @ ${scale}x',
+                reason:
+                    'Overflow during downward scroll step $i on ${entry.key} @ ${scale}x',
               );
             }
 
@@ -114,7 +107,8 @@ void main() {
               expect(
                 tester.takeException(),
                 isNull,
-                reason: 'Overflow during upward scroll step $i on ${entry.key} @ ${scale}x',
+                reason:
+                    'Overflow during upward scroll step $i on ${entry.key} @ ${scale}x',
               );
             }
 
@@ -126,9 +120,145 @@ void main() {
     }
   });
 
-  group('Challenger Suite 2: Dropdown & Control Tap & Selection Interactions', () {
+  group(
+    'Challenger Suite 2: Dropdown & Control Tap & Selection Interactions',
+    () {
+      testWidgets(
+        'Verify all dropdowns and sleek overlays can be tapped and manipulated without exceptions',
+        (tester) async {
+          tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
+          tester.view.devicePixelRatio = 3.0;
+          addTearDown(() async {
+            tester.view.resetPhysicalSize();
+            tester.view.resetDevicePixelRatio();
+            await tester.pumpWidget(const SizedBox());
+            await tester.pump(const Duration(milliseconds: 100));
+          });
+
+          await tester.pumpWidget(const MiniaudioPlayerExampleApp());
+          await tester.pump();
+          await tester.runAsync(() async {
+            await Future.delayed(const Duration(seconds: 2));
+          });
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 100));
+
+          final scrollable = find.byType(Scrollable).first;
+
+          // 1. Crossfeed Mode Preset Selection
+          final crossfeedChip = find.textContaining('Moffat-Bauer');
+          expect(crossfeedChip, findsOneWidget);
+          await tester.scrollUntilVisible(
+            crossfeedChip,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(crossfeedChip);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          // 2. Buffer Size Dropdown
+          final bufDropdown = find.byWidgetPredicate(
+            (w) => w is DropdownButtonFormField<int>,
+          );
+          expect(bufDropdown, findsOneWidget);
+          await tester.scrollUntilVisible(
+            bufDropdown,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(bufDropdown);
+          await settleFrames(tester, frames: 5);
+          final bufItem = find.text('512 frames (~11.6ms @ 44.1kHz)').last;
+          await tester.tap(bufItem, warnIfMissed: false);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          // 3. Hardware I/O Routing Lists (Multi-output & multi-input)
+          final hardwareCard = find.ancestor(
+            of: find.text('AUDIO HARDWARE ROUTING MATRIX'),
+            matching: find.byType(Card),
+          );
+          expect(hardwareCard, findsOneWidget);
+          await tester.scrollUntilVisible(
+            hardwareCard,
+            200,
+            scrollable: scrollable,
+          );
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          // 4. EQ Preset ChoiceChip Selection
+          final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
+          await tester.scrollUntilVisible(
+            rockChipFinder,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(rockChipFinder);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          // 5. Silence Skip Mode Dropdown
+          final skipSection = find
+              .ancestor(
+                of: find.text('Smart Silence Skipping'),
+                matching: find.byType(Container),
+              )
+              .first;
+          final skipSwitch = find.descendant(
+            of: skipSection,
+            matching: find.byType(Switch),
+          );
+          await tester.scrollUntilVisible(
+            skipSwitch,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(skipSwitch);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          final silenceDropdown = find.byWidgetPredicate(
+            (w) => w is DropdownButtonFormField<SilenceSkipMode>,
+          );
+          expect(silenceDropdown, findsOneWidget);
+          await tester.scrollUntilVisible(
+            silenceDropdown,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(silenceDropdown);
+          await settleFrames(tester, frames: 5);
+          final silenceItem = find.text('Trim Edges (Intro & Outro)').last;
+          await tester.tap(silenceItem, warnIfMissed: false);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          // 6. Sleek CompactSliderControl Overlay Interaction
+          final sliderControls = find.byType(CompactSliderControl);
+          expect(sliderControls, findsWidgets);
+          await tester.scrollUntilVisible(
+            sliderControls.first,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(sliderControls.first);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+
+          // Tap again to toggle closed
+          await tester.tap(sliderControls.first);
+          await settleFrames(tester, frames: 5);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    },
+  );
+
+  group('Challenger Suite 3: Switch Toggling Stress & State Validation', () {
     testWidgets(
-      'Verify all dropdowns and sleek overlays can be tapped and manipulated without exceptions',
+      'Skip Silence Switch: ON/OFF toggling and rapid toggle stress',
       (tester) async {
         tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
         tester.view.devicePixelRatio = 3.0;
@@ -148,151 +278,68 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
 
         final scrollable = find.byType(Scrollable).first;
-
-        // 1. Crossfeed Mode Preset Selection
-        final crossfeedChip = find.textContaining('Moffat-Bauer');
-        expect(crossfeedChip, findsOneWidget);
-        await tester.scrollUntilVisible(crossfeedChip, 200, scrollable: scrollable);
-        await tester.tap(crossfeedChip);
-        await settleFrames(tester, frames: 5);
-        expect(tester.takeException(), isNull);
-
-        // 2. Buffer Size Dropdown
-        final bufDropdown = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<int>,
-        );
-        expect(bufDropdown, findsOneWidget);
-        await tester.scrollUntilVisible(bufDropdown, 200, scrollable: scrollable);
-        await tester.tap(bufDropdown);
-        await settleFrames(tester, frames: 5);
-        final bufItem = find.text('512 frames (~11.6ms @ 44.1kHz)').last;
-        await tester.tap(bufItem, warnIfMissed: false);
-        await settleFrames(tester, frames: 5);
-        expect(tester.takeException(), isNull);
-
-        // 3. Hardware I/O Routing Lists (Multi-output & multi-input)
-        final hardwareCard = find.ancestor(
-          of: find.text('AUDIO HARDWARE ROUTING MATRIX'),
-          matching: find.byType(Card),
-        );
-        expect(hardwareCard, findsOneWidget);
-        await tester.scrollUntilVisible(hardwareCard, 200, scrollable: scrollable);
-        await settleFrames(tester, frames: 5);
-        expect(tester.takeException(), isNull);
-
-        // 4. EQ Preset ChoiceChip Selection
-        final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
-        await tester.scrollUntilVisible(rockChipFinder, 200, scrollable: scrollable);
-        await tester.tap(rockChipFinder);
-        await settleFrames(tester, frames: 5);
-        expect(tester.takeException(), isNull);
-
-        // 5. Silence Skip Mode Dropdown
-        final skipSection = find.ancestor(
-          of: find.text('Smart Silence Skipping'),
-          matching: find.byType(Container),
-        ).first;
+        final skipSection = find
+            .ancestor(
+              of: find.text('Smart Silence Skipping'),
+              matching: find.byType(Container),
+            )
+            .first;
         final skipSwitch = find.descendant(
           of: skipSection,
           matching: find.byType(Switch),
         );
-        await tester.scrollUntilVisible(skipSwitch, 200, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          skipSwitch,
+          200,
+          scrollable: scrollable,
+        );
+
+        // Verify initially OFF
+        expect(
+          find.descendant(of: skipSection, matching: find.text('OFF')),
+          findsOneWidget,
+        );
+
+        // Toggle ON
         await tester.tap(skipSwitch);
         await settleFrames(tester, frames: 5);
-        expect(tester.takeException(), isNull);
-
-        final silenceDropdown = find.byWidgetPredicate(
-          (w) => w is DropdownButtonFormField<SilenceSkipMode>,
+        expect(
+          find.descendant(of: skipSection, matching: find.text('ON')),
+          findsOneWidget,
         );
-        expect(silenceDropdown, findsOneWidget);
-        await tester.scrollUntilVisible(silenceDropdown, 200, scrollable: scrollable);
-        await tester.tap(silenceDropdown);
-        await settleFrames(tester, frames: 5);
-        final silenceItem = find.text('Trim Edges (Intro & Outro)').last;
-        await tester.tap(silenceItem, warnIfMissed: false);
-        await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
 
-        // 6. Sleek CompactSliderControl Overlay Interaction
-        final sliderControls = find.byType(CompactSliderControl);
-        expect(sliderControls, findsWidgets);
-        await tester.scrollUntilVisible(sliderControls.first, 200, scrollable: scrollable);
-        await tester.tap(sliderControls.first);
+        // Verify subcontrols enabled (IgnorePointer is NOT ignoring)
+        final subcolumnIgnorePointer = find.descendant(
+          of: skipSection,
+          matching: find.byWidgetPredicate(
+            (w) => w is IgnorePointer && w.ignoring == false,
+          ),
+        );
+        expect(subcolumnIgnorePointer, findsWidgets);
+
+        // Toggle OFF
+        await tester.tap(skipSwitch);
         await settleFrames(tester, frames: 5);
+        expect(
+          find.descendant(of: skipSection, matching: find.text('OFF')),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
 
-        // Tap again to toggle closed
-        await tester.tap(sliderControls.first);
+        // Rapid toggling 6 times
+        for (int i = 0; i < 6; i++) {
+          await tester.tap(skipSwitch);
+          await tester.pump(const Duration(milliseconds: 50));
+        }
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
       },
     );
-  });
 
-  group('Challenger Suite 3: Switch Toggling Stress & State Validation', () {
-    testWidgets('Skip Silence Switch: ON/OFF toggling and rapid toggle stress', (tester) async {
-      tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
-      tester.view.devicePixelRatio = 3.0;
-      addTearDown(() async {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-        await tester.pumpWidget(const SizedBox());
-        await tester.pump(const Duration(milliseconds: 100));
-      });
-
-      await tester.pumpWidget(const MiniaudioPlayerExampleApp());
-      await tester.pump();
-      await tester.runAsync(() async {
-        await Future.delayed(const Duration(seconds: 2));
-      });
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      final scrollable = find.byType(Scrollable).first;
-      final skipSection = find.ancestor(
-        of: find.text('Smart Silence Skipping'),
-        matching: find.byType(Container),
-      ).first;
-      final skipSwitch = find.descendant(
-        of: skipSection,
-        matching: find.byType(Switch),
-      );
-      await tester.scrollUntilVisible(skipSwitch, 200, scrollable: scrollable);
-
-      // Verify initially OFF
-      expect(find.descendant(of: skipSection, matching: find.text('OFF')), findsOneWidget);
-
-      // Toggle ON
-      await tester.tap(skipSwitch);
-      await settleFrames(tester, frames: 5);
-      expect(find.descendant(of: skipSection, matching: find.text('ON')), findsOneWidget);
-      expect(tester.takeException(), isNull);
-
-      // Verify subcontrols enabled (IgnorePointer is NOT ignoring)
-      final subcolumnIgnorePointer = find.descendant(
-        of: skipSection,
-        matching: find.byWidgetPredicate(
-          (w) => w is IgnorePointer && w.ignoring == false,
-        ),
-      );
-      expect(subcolumnIgnorePointer, findsWidgets);
-
-      // Toggle OFF
-      await tester.tap(skipSwitch);
-      await settleFrames(tester, frames: 5);
-      expect(find.descendant(of: skipSection, matching: find.text('OFF')), findsOneWidget);
-      expect(tester.takeException(), isNull);
-
-      // Rapid toggling 6 times
-      for (int i = 0; i < 6; i++) {
-        await tester.tap(skipSwitch);
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-      await settleFrames(tester, frames: 5);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('Visualizer Switch: ON/OFF toggling and rapid toggle stress', (tester) async {
+    testWidgets('Visualizer Switch: ON/OFF toggling and rapid toggle stress', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(390 * 3.0, 844 * 3.0);
       tester.view.devicePixelRatio = 3.0;
       addTearDown(() async {
@@ -319,22 +366,35 @@ void main() {
         of: visualizerCard,
         matching: find.byType(Switch),
       );
-      await tester.scrollUntilVisible(visualizerSwitch, 200, scrollable: scrollable);
+      await tester.scrollUntilVisible(
+        visualizerSwitch,
+        200,
+        scrollable: scrollable,
+      );
       await settleFrames(tester, frames: 3);
 
       // Verify initially OFF
-      expect(find.descendant(of: visualizerCard, matching: find.text('OFF')), findsOneWidget);
+      expect(
+        find.descendant(of: visualizerCard, matching: find.text('OFF')),
+        findsOneWidget,
+      );
 
       // Toggle ON
       await tester.tap(visualizerSwitch);
       await settleFrames(tester, frames: 5);
-      expect(find.descendant(of: visualizerCard, matching: find.text('ON')), findsOneWidget);
+      expect(
+        find.descendant(of: visualizerCard, matching: find.text('ON')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
 
       // Toggle OFF
       await tester.tap(visualizerSwitch);
       await settleFrames(tester, frames: 5);
-      expect(find.descendant(of: visualizerCard, matching: find.text('OFF')), findsOneWidget);
+      expect(
+        find.descendant(of: visualizerCard, matching: find.text('OFF')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
 
       // Rapid toggling 6 times
@@ -353,7 +413,10 @@ void main() {
       (tester) async {
         const viewportSize = Size(280, 653);
         const dpr = 2.0;
-        tester.view.physicalSize = Size(viewportSize.width * dpr, viewportSize.height * dpr);
+        tester.view.physicalSize = Size(
+          viewportSize.width * dpr,
+          viewportSize.height * dpr,
+        );
         tester.view.devicePixelRatio = dpr;
         addTearDown(() async {
           tester.view.resetPhysicalSize();
@@ -392,15 +455,21 @@ void main() {
         }
 
         // Toggle Skip Silence ON under 1.5x TextScaler
-        final skipSection = find.ancestor(
-          of: find.text('Smart Silence Skipping'),
-          matching: find.byType(Container),
-        ).first;
+        final skipSection = find
+            .ancestor(
+              of: find.text('Smart Silence Skipping'),
+              matching: find.byType(Container),
+            )
+            .first;
         final skipSwitch = find.descendant(
           of: skipSection,
           matching: find.byType(Switch),
         );
-        await tester.scrollUntilVisible(skipSwitch, 200, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          skipSwitch,
+          200,
+          scrollable: scrollable,
+        );
         await tester.tap(skipSwitch);
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);
@@ -409,7 +478,11 @@ void main() {
         final silenceDropdown = find.byWidgetPredicate(
           (w) => w is DropdownButtonFormField<SilenceSkipMode>,
         );
-        await tester.scrollUntilVisible(silenceDropdown, 200, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          silenceDropdown,
+          200,
+          scrollable: scrollable,
+        );
         await tester.tap(silenceDropdown);
         await settleFrames(tester, frames: 5);
         final silenceItem = find.text('All (Edges + In-Between Pauses)').last;
@@ -426,7 +499,11 @@ void main() {
           of: visualizerCard,
           matching: find.byType(Switch),
         );
-        await tester.scrollUntilVisible(visualizerSwitch, 200, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          visualizerSwitch,
+          200,
+          scrollable: scrollable,
+        );
         await tester.tap(visualizerSwitch);
         await settleFrames(tester, frames: 5);
         expect(tester.takeException(), isNull);

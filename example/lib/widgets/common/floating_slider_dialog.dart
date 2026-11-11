@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 /// Floating modal dialog for continuous parameter adjustments (Speed, Pitch, Crossfade).
@@ -69,13 +70,17 @@ class _FloatingSliderDialogState extends State<FloatingSliderDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final valueText = '${_currentVal.toStringAsFixed(widget.decimals)}${widget.unit}';
+    final valueText =
+        '${_currentVal.toStringAsFixed(widget.decimals)}${widget.unit}';
 
     return Dialog(
       backgroundColor: StudioColors.cardBackground,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: StudioColors.cardBorderFocused, width: 1.5),
+        side: const BorderSide(
+          color: StudioColors.cardBorderFocused,
+          width: 1.5,
+        ),
       ),
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: ConstrainedBox(
@@ -128,7 +133,10 @@ class _FloatingSliderDialogState extends State<FloatingSliderDialog> {
               // Big readout value
               Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: StudioColors.backgroundDark,
                     borderRadius: BorderRadius.circular(8),
@@ -175,11 +183,17 @@ class _FloatingSliderDialogState extends State<FloatingSliderDialog> {
                   children: [
                     Text(
                       '${widget.min.toStringAsFixed(widget.decimals)}${widget.unit}',
-                      style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                      style: const TextStyle(
+                        fontSize: 9,
+                        color: StudioColors.textMuted,
+                      ),
                     ),
                     Text(
                       '${widget.max.toStringAsFixed(widget.decimals)}${widget.unit}',
-                      style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                      style: const TextStyle(
+                        fontSize: 9,
+                        color: StudioColors.textMuted,
+                      ),
                     ),
                   ],
                 ),
@@ -199,15 +213,22 @@ class _FloatingSliderDialogState extends State<FloatingSliderDialog> {
                         preset.label,
                         style: TextStyle(
                           fontSize: 9.5,
-                          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                          color: isCurrent ? Colors.black : StudioColors.textSecondary,
+                          fontWeight: isCurrent
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: isCurrent
+                              ? Colors.black
+                              : StudioColors.textSecondary,
                         ),
                       ),
                       backgroundColor: isCurrent
                           ? StudioColors.accentCyan
                           : StudioColors.backgroundDark,
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 0,
+                      ),
                       onPressed: () {
                         setState(() => _currentVal = preset.value);
                         widget.onChanged(preset.value);

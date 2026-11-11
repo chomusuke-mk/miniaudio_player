@@ -173,7 +173,8 @@ void main() {
 
       // Validation errors
       expect(() => controller.setDopplerFactor(-0.5), throwsArgumentError);
-      expect(() => controller.setDopplerFactor(double.nan), throwsArgumentError);
+      expect(
+          () => controller.setDopplerFactor(double.nan), throwsArgumentError);
       expect(() => controller.setSpeedOfSound(0.0), throwsArgumentError);
       expect(() => controller.setSpeedOfSound(-10.0), throwsArgumentError);
     });

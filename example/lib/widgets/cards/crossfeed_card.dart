@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
 import '../common/studio_badge.dart';
@@ -39,25 +40,35 @@ class CrossfeedCard extends StatelessWidget {
           subtitle: 'Acoustic Left-Right Interaural Time & Amplitude Blending for Headphones',
           trailing: StudioBadge(
             label: cf.enabled ? currentPreset.toUpperCase() : 'BYPASS',
-            color: cf.enabled ? StudioColors.accentCyan : StudioColors.textMuted,
+            color: cf.enabled
+                ? StudioColors.accentCyan
+                : StudioColors.textMuted,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // 1. Master On/Off Switch & Presets Bar
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF0A0F1D),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: StudioColors.cardBorder, width: 1.0),
+                  border: Border.all(
+                    color: StudioColors.cardBorder,
+                    width: 1.0,
+                  ),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       Icons.headphones,
                       size: 16,
-                      color: cf.enabled ? StudioColors.accentCyan : StudioColors.textMuted,
+                      color: cf.enabled
+                          ? StudioColors.accentCyan
+                          : StudioColors.textMuted,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -76,7 +87,10 @@ class CrossfeedCard extends StatelessWidget {
                             cf.enabled
                                 ? 'Simulating loudspeaker acoustic bleed (${cf.cutoffHz.round()}Hz, ${cf.feedDb.toStringAsFixed(1)}dB)'
                                 : 'Disabled: pure discrete channel stereo isolation',
-                            style: const TextStyle(fontSize: 9.5, color: StudioColors.textSecondary),
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: StudioColors.textSecondary,
+                            ),
                           ),
                         ],
                       ),
@@ -97,7 +111,10 @@ class CrossfeedCard extends StatelessWidget {
                 runSpacing: 4,
                 children: [
                   ChoiceChip(
-                    label: const Text('Off (Bypass)', style: TextStyle(fontSize: 9.5)),
+                    label: const Text(
+                      'Off (Bypass)',
+                      style: TextStyle(fontSize: 9.5),
+                    ),
                     selected: !cf.enabled,
                     selectedColor: StudioColors.accentRose,
                     backgroundColor: StudioColors.backgroundDark,
@@ -106,22 +123,30 @@ class CrossfeedCard extends StatelessWidget {
                     onSelected: (_) => controller.setCrossfeed(Crossfeed.off),
                   ),
                   ChoiceChip(
-                    label: const Text('Moffat-Bauer (700Hz, 4.5dB)', style: TextStyle(fontSize: 9.5)),
+                    label: const Text(
+                      'Moffat-Bauer (700Hz, 4.5dB)',
+                      style: TextStyle(fontSize: 9.5),
+                    ),
                     selected: cf.enabled && currentPreset == 'Moffat-Bauer',
                     selectedColor: StudioColors.accentCyan,
                     backgroundColor: StudioColors.backgroundDark,
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onSelected: (_) => controller.setCrossfeed(Crossfeed.moffatBauer),
+                    onSelected: (_) =>
+                        controller.setCrossfeed(Crossfeed.moffatBauer),
                   ),
                   ChoiceChip(
-                    label: const Text('Chu Moy (700Hz, 6.0dB)', style: TextStyle(fontSize: 9.5)),
+                    label: const Text(
+                      'Chu Moy (700Hz, 6.0dB)',
+                      style: TextStyle(fontSize: 9.5),
+                    ),
                     selected: cf.enabled && currentPreset == 'Chu Moy',
                     selectedColor: StudioColors.accentCyan,
                     backgroundColor: StudioColors.backgroundDark,
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onSelected: (_) => controller.setCrossfeed(Crossfeed.chuMoy),
+                    onSelected: (_) =>
+                        controller.setCrossfeed(Crossfeed.chuMoy),
                   ),
                 ],
               ),
@@ -146,7 +171,11 @@ class CrossfeedCard extends StatelessWidget {
                           const Expanded(
                             child: Text(
                               'Lowpass Cutoff Frequency',
-                              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.white),
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -168,7 +197,9 @@ class CrossfeedCard extends StatelessWidget {
                         max: 2000.0,
                         divisions: 34,
                         activeColor: StudioColors.accentCyan,
-                        onChanged: cf.enabled ? (v) => controller.setCrossfeedCutoff(v) : null,
+                        onChanged: cf.enabled
+                            ? (v) => controller.setCrossfeedCutoff(v)
+                            : null,
                       ),
                       const SizedBox(height: 4),
 
@@ -179,7 +210,11 @@ class CrossfeedCard extends StatelessWidget {
                           const Expanded(
                             child: Text(
                               'Crossfeed Level (Feed dB)',
-                              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.white),
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -201,7 +236,9 @@ class CrossfeedCard extends StatelessWidget {
                         max: 15.0,
                         divisions: 28,
                         activeColor: StudioColors.accentCyan,
-                        onChanged: cf.enabled ? (v) => controller.setCrossfeedFeed(v) : null,
+                        onChanged: cf.enabled
+                            ? (v) => controller.setCrossfeedFeed(v)
+                            : null,
                       ),
                     ],
                   ),
@@ -211,22 +248,35 @@ class CrossfeedCard extends StatelessWidget {
 
               // 4. Acoustic Binaural Bleed Visual Diagram
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF070B14),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: StudioColors.cardBorder, width: 0.8),
+                  border: Border.all(
+                    color: StudioColors.cardBorder,
+                    width: 0.8,
+                  ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.compare_arrows, size: 14, color: StudioColors.accentCyan),
+                    const Icon(
+                      Icons.compare_arrows,
+                      size: 14,
+                      color: StudioColors.accentCyan,
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         cf.enabled
                             ? 'L ↔ R acoustic bleed: ~${(cf.feedDb / 15.0 * 100).round()}% blend below ${cf.cutoffHz.round()} Hz'
                             : 'Left and Right audio channels are completely isolated',
-                        style: const TextStyle(fontSize: 9.5, color: StudioColors.textSecondary),
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          color: StudioColors.textSecondary,
+                        ),
                       ),
                     ),
                   ],

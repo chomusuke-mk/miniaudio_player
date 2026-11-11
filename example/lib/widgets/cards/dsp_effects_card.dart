@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
 import '../common/studio_badge.dart';
@@ -48,7 +49,10 @@ class DspEffectsCard extends StatelessWidget {
                   final isCompact = constraints.maxWidth < 360;
 
                   final limiterWidget = Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFF0A0F1D),
                       borderRadius: BorderRadius.circular(8),
@@ -82,7 +86,10 @@ class DspEffectsCard extends StatelessWidget {
                                 controller.limiterEnabled
                                     ? 'Active: 0.0 dBFS ceiling'
                                     : 'Disabled / Bypass',
-                                style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  color: StudioColors.textMuted,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -99,7 +106,10 @@ class DspEffectsCard extends StatelessWidget {
                   );
 
                   final monoWidget = Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFF0A0F1D),
                       borderRadius: BorderRadius.circular(8),
@@ -130,8 +140,13 @@ class DspEffectsCard extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               Text(
-                                controller.monoDownmix ? 'L+R downmixed' : 'Stereo discrete',
-                                style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                                controller.monoDownmix
+                                    ? 'L+R downmixed'
+                                    : 'Stereo discrete',
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  color: StudioColors.textMuted,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -207,7 +222,10 @@ class DspEffectsCard extends StatelessWidget {
                                 controller.spatializerEnabled
                                     ? 'Width factor: ${controller.spatializerWidth.toStringAsFixed(2)}x'
                                     : 'Inactive / Standard Stereo Field',
-                                style: const TextStyle(fontSize: 9.5, color: StudioColors.textSecondary),
+                                style: const TextStyle(
+                                  fontSize: 9.5,
+                                  color: StudioColors.textSecondary,
+                                ),
                               ),
                             ],
                           ),
@@ -227,7 +245,10 @@ class DspEffectsCard extends StatelessWidget {
                           const Flexible(
                             child: Text(
                               'Narrow (0.0x)',
-                              style: TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                              style: TextStyle(
+                                fontSize: 9,
+                                color: StudioColors.textMuted,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -245,7 +266,10 @@ class DspEffectsCard extends StatelessWidget {
                           const Flexible(
                             child: Text(
                               'Wide (2.0x)',
-                              style: TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                              style: TextStyle(
+                                fontSize: 9,
+                                color: StudioColors.textMuted,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -303,7 +327,10 @@ class DspEffectsCard extends StatelessWidget {
                                 controller.silenceEnabled
                                     ? 'Skipped: ${_formatDuration(controller.silenceSavedDuration)} saved'
                                     : 'Inactive: plays full timeline without skipping',
-                                style: const TextStyle(fontSize: 9.5, color: StudioColors.textSecondary),
+                                style: const TextStyle(
+                                  fontSize: 9.5,
+                                  color: StudioColors.textSecondary,
+                                ),
                               ),
                             ],
                           ),
@@ -347,25 +374,38 @@ class DspEffectsCard extends StatelessWidget {
                               dropdownColor: const Color(0xFF0E1424),
                               decoration: const InputDecoration(
                                 labelText: 'Silence Skip Mode',
-                                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
                               ),
                               items: const [
                                 DropdownMenuItem(
                                   value: SilenceSkipMode.all,
-                                  child: Text('All (Edges + In-Between Pauses)', style: TextStyle(fontSize: 10)),
+                                  child: Text(
+                                    'All (Edges + In-Between Pauses)',
+                                    style: TextStyle(fontSize: 10),
+                                  ),
                                 ),
                                 DropdownMenuItem(
                                   value: SilenceSkipMode.trimEdges,
-                                  child: Text('Trim Edges (Intro & Outro)', style: TextStyle(fontSize: 10)),
+                                  child: Text(
+                                    'Trim Edges (Intro & Outro)',
+                                    style: TextStyle(fontSize: 10),
+                                  ),
                                 ),
                                 DropdownMenuItem(
                                   value: SilenceSkipMode.continuous,
-                                  child: Text('Continuous Pauses (Middle Only)', style: TextStyle(fontSize: 10)),
+                                  child: Text(
+                                    'Continuous Pauses (Middle Only)',
+                                    style: TextStyle(fontSize: 10),
+                                  ),
                                 ),
                               ],
                               onChanged: controller.silenceEnabled
                                   ? (m) {
-                                      if (m != null) controller.setSilenceMode(m);
+                                      if (m != null)
+                                        controller.setSilenceMode(m);
                                     }
                                   : null,
                             ),
@@ -376,23 +416,35 @@ class DspEffectsCard extends StatelessWidget {
                                 const Expanded(
                                   child: Text(
                                     'Threshold',
-                                    style: TextStyle(fontSize: 10, color: StudioColors.textMuted),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: StudioColors.textMuted,
+                                    ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   '${controller.silenceThresholdDb.toStringAsFixed(1)} dB',
-                                  style: const TextStyle(fontSize: 10, color: StudioColors.accentPurple, fontFamily: 'monospace'),
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: StudioColors.accentPurple,
+                                    fontFamily: 'monospace',
+                                  ),
                                 ),
                               ],
                             ),
                             Slider(
-                              value: controller.silenceThresholdDb.clamp(-90.0, -20.0),
+                              value: controller.silenceThresholdDb.clamp(
+                                -90.0,
+                                -20.0,
+                              ),
                               min: -90.0,
                               max: -20.0,
                               activeColor: StudioColors.accentPurple,
-                              onChanged: controller.silenceEnabled ? controller.setSilenceThresholdDb : null,
+                              onChanged: controller.silenceEnabled
+                                  ? controller.setSilenceThresholdDb
+                                  : null,
                             ),
                           ],
                         ),
@@ -422,7 +474,11 @@ class DspEffectsCard extends StatelessWidget {
                         const Expanded(
                           child: Text(
                             'Preamp Gain',
-                            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.white),
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -454,7 +510,11 @@ class DspEffectsCard extends StatelessWidget {
                         const Expanded(
                           child: Text(
                             'Stereo Balance / Pan',
-                            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.white),
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -463,8 +523,8 @@ class DspEffectsCard extends StatelessWidget {
                           controller.stereoBalance == 0.0
                               ? 'Center'
                               : (controller.stereoBalance < 0
-                                  ? 'L ${(controller.stereoBalance.abs() * 100).round()}%'
-                                  : 'R ${(controller.stereoBalance * 100).round()}%'),
+                                    ? 'L ${(controller.stereoBalance.abs() * 100).round()}%'
+                                    : 'R ${(controller.stereoBalance * 100).round()}%'),
                           style: const TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.bold,
@@ -514,7 +574,10 @@ class DspEffectsCard extends StatelessWidget {
                           ),
                           Text(
                             'Operating Mode: ${controller.replayGainMode.name.toUpperCase()}',
-                            style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: StudioColors.textMuted,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ],
@@ -530,7 +593,10 @@ class DspEffectsCard extends StatelessWidget {
                             value: m,
                             child: Text(
                               m.name.toUpperCase(),
-                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           );
                         }).toList(),

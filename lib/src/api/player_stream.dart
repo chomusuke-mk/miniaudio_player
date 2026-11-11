@@ -250,7 +250,8 @@ class PlayerStream<T> {
   Stream<bool> get skipSilence => _skipSilenceController.stream;
 
   /// Broadcast stream emitting silence skipping configuration updates.
-  Stream<SilenceSkipConfig> get silenceConfig => _silenceConfigController.stream;
+  Stream<SilenceSkipConfig> get silenceConfig =>
+      _silenceConfigController.stream;
 
   /// Broadcast stream emitting cumulative playback time saved by skipping silence.
   Stream<Duration> get silenceSavedDuration =>
@@ -320,7 +321,8 @@ class PlayerStream<T> {
   Stream<bool> get isCrossfading => _isCrossfadingController.stream;
 
   /// Broadcast stream emitting crossfade duration and curve configuration updates.
-  Stream<CrossfadeConfig> get crossfadeConfig => _crossfadeConfigController.stream;
+  Stream<CrossfadeConfig> get crossfadeConfig =>
+      _crossfadeConfigController.stream;
 
   /// Broadcast stream emitting whether live audio recording to a file sink is actively running.
   Stream<bool> get isRecording => _isRecordingController.stream;

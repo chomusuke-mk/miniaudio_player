@@ -12,7 +12,8 @@ enum BitrateMode {
   vbr;
 
   /// Converts a native [rust_types.RustBitrateMode] into a [BitrateMode].
-  static BitrateMode fromRust(rust_types.RustBitrateMode mode) => switch (mode) {
+  static BitrateMode fromRust(rust_types.RustBitrateMode mode) =>
+      switch (mode) {
         rust_types.RustBitrateMode.cbr => BitrateMode.cbr,
         rust_types.RustBitrateMode.vbr => BitrateMode.vbr,
         rust_types.RustBitrateMode.unknown => BitrateMode.unknown,
@@ -86,10 +87,12 @@ class AudioInfo {
     final durMs = r.durationMs?.toInt();
     final dur =
         (durMs != null && durMs > 0) ? Duration(milliseconds: durMs) : null;
-    final rawSr =
-        (r.rawSampleRate != null && r.rawSampleRate! > 0) ? r.rawSampleRate : null;
-    final bps =
-        (r.bitsPerSample != null && r.bitsPerSample! > 0) ? r.bitsPerSample : null;
+    final rawSr = (r.rawSampleRate != null && r.rawSampleRate! > 0)
+        ? r.rawSampleRate
+        : null;
+    final bps = (r.bitsPerSample != null && r.bitsPerSample! > 0)
+        ? r.bitsPerSample
+        : null;
     final fSize = r.fileSize?.toInt();
     return AudioInfo(
       duration: dur,

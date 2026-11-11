@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 class StudioBadge extends StatelessWidget {
@@ -20,19 +21,13 @@ class StudioBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: color.withValues(alpha: 0.35),
-          width: 1.0,
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 1.0),
       ),
       child: Text.rich(
         TextSpan(
           children: [
             if (emoji != null) ...[
-              TextSpan(
-                text: '$emoji ',
-                style: const TextStyle(fontSize: 10),
-              ),
+              TextSpan(text: '$emoji ', style: const TextStyle(fontSize: 10)),
             ],
             TextSpan(
               text: label,

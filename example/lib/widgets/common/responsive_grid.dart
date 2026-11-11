@@ -33,7 +33,10 @@ class ResponsiveGrid extends StatelessWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: _intersperse(rightColumn, SizedBox(height: spacing)),
+                  children: _intersperse(
+                    rightColumn,
+                    SizedBox(height: spacing),
+                  ),
                 ),
               ),
             ],

@@ -19,7 +19,8 @@ void main() {
   }
 
   group('Real-Time Audio Visualizer (10 Bands & Volume Metrics)', () {
-    test('VisualizerData model correctly maps 10 bands and volume properties', () {
+    test('VisualizerData model correctly maps 10 bands and volume properties',
+        () {
       final data = VisualizerData(
         bands: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         rms: 0.55,
@@ -52,7 +53,9 @@ void main() {
 
     final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
 
-    test('Visualizer is inactive by default and can be manually enabled/disabled', () async {
+    test(
+        'Visualizer is inactive by default and can be manually enabled/disabled',
+        () async {
       final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
@@ -66,7 +69,9 @@ void main() {
       expect(player.state.visualizerEnabled, isFalse);
     });
 
-    test('Listening to player.stream.visualizer does NOT auto-enable visualizer; requires action.setVisualizerEnabled(true)', () async {
+    test(
+        'Listening to player.stream.visualizer does NOT auto-enable visualizer; requires action.setVisualizerEnabled(true)',
+        () async {
       final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
@@ -87,9 +92,12 @@ void main() {
       expect(player.state.visualizerEnabled, isFalse);
     });
 
-    test('Plays audio file and emits reactive visualizer data with active frequency bands', () async {
+    test(
+        'Plays audio file and emits reactive visualizer data with active frequency bands',
+        () async {
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
-      expect(mp3.existsSync(), isTrue, reason: 'salida.mp3 test asset must exist');
+      expect(mp3.existsSync(), isTrue,
+          reason: 'salida.mp3 test asset must exist');
 
       final player = MiniaudioPlayer(queue: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
@@ -113,7 +121,8 @@ void main() {
 
       // Check that during active music playback, RMS and bands are active
       final activeFrames = emittedData.where((d) => d.rms > 0.001).toList();
-      expect(activeFrames, isNotEmpty, reason: 'Visualizer should produce non-zero energy during playback');
+      expect(activeFrames, isNotEmpty,
+          reason: 'Visualizer should produce non-zero energy during playback');
 
       final latest = activeFrames.last;
       expect(latest.peak, greaterThan(0.0));
@@ -131,7 +140,9 @@ void main() {
       expect(player.state.visualizer.rms, equals(0.0));
     });
 
-    test('setVisualizerEnabled controls visualizer DSP and emits empty visualizer when disabled', () async {
+    test(
+        'setVisualizerEnabled controls visualizer DSP and emits empty visualizer when disabled',
+        () async {
       final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
@@ -158,7 +169,8 @@ void main() {
       expect(player.state.visualizerEnabled, isFalse);
     });
 
-    test('stream.visualizerEnabled emits boolean transitions on action calls', () async {
+    test('stream.visualizerEnabled emits boolean transitions on action calls',
+        () async {
       final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 
@@ -174,7 +186,9 @@ void main() {
       expect(enabledStates, equals([true, false, true, false]));
     });
 
-    test('Playback visualizer stream receives empty data when force-disabled mid-playback', () async {
+    test(
+        'Playback visualizer stream receives empty data when force-disabled mid-playback',
+        () async {
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
       expect(mp3.existsSync(), isTrue);
 
@@ -205,7 +219,9 @@ void main() {
       expect(emitted.last.bands.every((b) => b == 0.0), isTrue);
     });
 
-    test('visualizerEnabled broadcast stream and state snapshot maintain parity', () async {
+    test(
+        'visualizerEnabled broadcast stream and state snapshot maintain parity',
+        () async {
       final player = MiniaudioPlayer(queue: [dummySource]);
       addTearDown(() => player.dispose());
 

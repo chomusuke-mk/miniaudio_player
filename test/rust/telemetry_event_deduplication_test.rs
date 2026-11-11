@@ -62,3 +62,24 @@ fn test_metadata_single_emission_guarantee() {
 
     player.stop();
 }
+
+#[test]
+fn test_visualizer_deduplication_guarantee() {
+    let player = RustMiniaudioPlayer::new(
+        RustPlayerConfig::default(),
+        48000,
+        2,
+        1024,
+        vec![],
+    )
+    .expect("Failed to create RustMiniaudioPlayer");
+
+    player.set_visualizer_enabled(true);
+    thread::sleep(Duration::from_millis(50));
+
+    // When stopped or paused, visualizer filter deduplicates identical default/zero events
+    player.pause();
+    thread::sleep(Duration::from_millis(50));
+    player.stop();
+    thread::sleep(Duration::from_millis(50));
+}

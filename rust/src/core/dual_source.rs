@@ -4477,6 +4477,7 @@ impl DualSource {
             let curve = self.crossfade_curve.load(Ordering::Relaxed);
             self.crossfade_target_id.store(item.id, Ordering::Release);
             self.crossfade.begin(active_deck, to_deck, total_frames, curve);
+            self.active_deck.store(to_deck, Ordering::Release);
             self.current_index.store(index as i64, Ordering::Release);
             self.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
         } else {

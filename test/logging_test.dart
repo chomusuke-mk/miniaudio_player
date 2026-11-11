@@ -144,7 +144,8 @@ void main() {
       );
     });
 
-    test('Player lifecycle and actions generate structured logs when enabled (queue)',
+    test(
+        'Player lifecycle and actions generate structured logs when enabled (queue)',
         () async {
       MiniaudioPlayer.config(logLevel: MiniaudioLogLevel.verbose);
       final messages = <String>[];

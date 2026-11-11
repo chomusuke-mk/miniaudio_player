@@ -1,5 +1,7 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 /// Studio Console Rotary Knob / Circular Slider for Reverb & DSP parameters.
@@ -128,7 +130,7 @@ class _KnobPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = (size.width - 8) / 2;
     const startAngle = 0.75 * math.pi; // 135 deg
-    const sweepRange = 1.5 * math.pi;  // 270 deg
+    const sweepRange = 1.5 * math.pi; // 270 deg
 
     final trackPaint = Paint()
       ..color = trackColor

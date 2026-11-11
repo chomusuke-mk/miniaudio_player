@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'controllers/audio_analyzer_controller.dart';
 import 'controllers/audio_engine_controller.dart';
 import 'models/audio_track.dart';
@@ -58,6 +59,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  bool _lastReady = false;
+
   void _onAnalyzerUpdate() {
     final curTrack = _playerController.selectedTrack;
     if (curTrack != null) {
@@ -66,8 +69,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPlayerUpdate() {
-    if (mounted) {
-      setState(() {});
+    if (!_lastReady && _playerController.isReady) {
+      _lastReady = true;
+      if (mounted) setState(() {});
     }
     final curTrack = _playerController.selectedTrack;
     if (curTrack != null) {
@@ -88,7 +92,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _syncWaveformForTrack(curTrack);
         if (curTrack.canAnalyze &&
             !_analyzerController.hasResultForTrack(curTrack)) {
-          _analyzerController.analyze(curTrack, engine: _playerController.engine);
+          _analyzerController.analyze(
+            curTrack,
+            engine: _playerController.engine,
+          );
         }
       }
       setState(() {});
@@ -113,11 +120,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_playerController.isReady) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
@@ -149,10 +152,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               height: 24,
                               errorBuilder: (context, error, stackTrace) =>
                                   const Icon(
-                                Icons.graphic_eq,
-                                color: StudioColors.accentCyan,
-                                size: 24,
-                              ),
+                                    Icons.graphic_eq,
+                                    color: StudioColors.accentCyan,
+                                    size: 24,
+                                  ),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -161,8 +164,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               fit: BoxFit.scaleDown,
                               alignment: Alignment.centerLeft,
                               child: ShaderMask(
-                                shaderCallback: (bounds) =>
-                                    StudioColors.titleGradient.createShader(bounds),
+                                shaderCallback: (bounds) => StudioColors
+                                    .titleGradient
+                                    .createShader(bounds),
                                 child: const Text(
                                   'miniaudio_player',
                                   style: TextStyle(
@@ -241,9 +245,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             const SizedBox(height: 16),
             switch (_currentMode) {
               ViewMode.studioConsole => StudioConsoleView(
-                  playerController: _playerController,
-                  analyzerController: _analyzerController,
-                ),
+                playerController: _playerController,
+                analyzerController: _analyzerController,
+              ),
               ViewMode.ingestMatrix => const IngestMatrixView(),
             },
             const SizedBox(height: 24),

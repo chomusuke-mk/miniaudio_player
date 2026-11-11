@@ -25,9 +25,7 @@ void main() {
 
         // Verify specific form fields exist
         expect(
-          find.byWidgetPredicate(
-            (w) => w is DropdownButtonFormField<int>,
-          ),
+          find.byWidgetPredicate((w) => w is DropdownButtonFormField<int>),
           findsOneWidget,
           reason: 'Buffer selector must be a DropdownButtonFormField<int>',
         );
@@ -68,7 +66,10 @@ void main() {
           of: find.text('DYNAMIC DSP & SPATIAL MASTERING'),
           matching: find.byType(Card),
         );
-        expect(find.descendant(of: dspCard, matching: find.byType(ActionChip)), findsNothing);
+        expect(
+          find.descendant(of: dspCard, matching: find.byType(ActionChip)),
+          findsNothing,
+        );
       },
     );
 
@@ -93,14 +94,22 @@ void main() {
         // Locate Flat and Rock ChoiceChips in Equalizer card
         final flatChipFinder = find.widgetWithText(ChoiceChip, 'Flat');
         expect(flatChipFinder, findsOneWidget);
-        await tester.scrollUntilVisible(flatChipFinder, 200, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          flatChipFinder,
+          200,
+          scrollable: scrollable,
+        );
 
         final flatChip = tester.widget<ChoiceChip>(flatChipFinder);
         expect(flatChip.selected, isTrue);
 
         final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
         expect(rockChipFinder, findsOneWidget);
-        await tester.scrollUntilVisible(rockChipFinder, 200, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          rockChipFinder,
+          200,
+          scrollable: scrollable,
+        );
         await tester.tap(rockChipFinder);
         await tester.runAsync(() async {
           await Future.delayed(const Duration(milliseconds: 300));
@@ -139,9 +148,10 @@ void main() {
         );
         expect(modeDropdownFinder, findsOneWidget);
 
-        final modeDropdown = tester.widget<DropdownButtonFormField<SilenceSkipMode>>(
-          modeDropdownFinder,
-        );
+        final modeDropdown = tester
+            .widget<DropdownButtonFormField<SilenceSkipMode>>(
+              modeDropdownFinder,
+            );
         // By default, skip silence is disabled (OFF), so onChanged must be null
         expect(
           modeDropdown.onChanged,
@@ -159,7 +169,8 @@ void main() {
         expect(
           ignorePointerFinder,
           findsWidgets,
-          reason: 'Sub-controls must be wrapped in active IgnorePointer when OFF',
+          reason:
+              'Sub-controls must be wrapped in active IgnorePointer when OFF',
         );
 
         // An AnimatedOpacity must be set to 0.38 when OFF
@@ -198,8 +209,7 @@ void main() {
         // Find the visualizer AnimatedOpacity
         final opacityFinder = find.byWidgetPredicate(
           (w) =>
-              w is AnimatedOpacity &&
-              (w.opacity == 1.0 || w.opacity == 0.38),
+              w is AnimatedOpacity && (w.opacity == 1.0 || w.opacity == 0.38),
         );
         expect(opacityFinder, findsWidgets);
       },
@@ -227,21 +237,30 @@ void main() {
         final scrollable = find.byType(Scrollable).first;
 
         // Find Switch for Pause on Device Change
-        final pauseRow = find.ancestor(
-          of: find.text('Pause on Device Change'),
-          matching: find.byType(Container),
-        ).first;
+        final pauseRow = find
+            .ancestor(
+              of: find.text('Pause on Device Change'),
+              matching: find.byType(Container),
+            )
+            .first;
         final switchFinder = find.descendant(
           of: pauseRow,
           matching: find.byType(Switch),
         );
         expect(switchFinder, findsOneWidget);
-        await tester.scrollUntilVisible(switchFinder, 100, scrollable: scrollable);
+        await tester.scrollUntilVisible(
+          switchFinder,
+          100,
+          scrollable: scrollable,
+        );
 
         // Initial state is false (OFF)
         Switch pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isFalse);
-        expect(find.descendant(of: pauseRow, matching: find.text('OFF')), findsOneWidget);
+        expect(
+          find.descendant(of: pauseRow, matching: find.text('OFF')),
+          findsOneWidget,
+        );
 
         // Tap the switch to enable
         await tester.tap(switchFinder);
@@ -250,7 +269,10 @@ void main() {
 
         pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isTrue);
-        expect(find.descendant(of: pauseRow, matching: find.text('ON')), findsOneWidget);
+        expect(
+          find.descendant(of: pauseRow, matching: find.text('ON')),
+          findsOneWidget,
+        );
 
         // Tap the switch again to disable
         await tester.tap(switchFinder);
@@ -259,7 +281,10 @@ void main() {
 
         pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isFalse);
-        expect(find.descendant(of: pauseRow, matching: find.text('OFF')), findsOneWidget);
+        expect(
+          find.descendant(of: pauseRow, matching: find.text('OFF')),
+          findsOneWidget,
+        );
       },
     );
   });

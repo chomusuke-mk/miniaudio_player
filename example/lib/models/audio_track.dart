@@ -26,12 +26,15 @@ class AudioTrack {
 
   bool get _isNetwork {
     final s = _sourceString.toLowerCase();
-    return s.startsWith('http://') || s.startsWith('https://') || s.startsWith('icy://');
+    return s.startsWith('http://') ||
+        s.startsWith('https://') ||
+        s.startsWith('icy://');
   }
 
   bool get isLive {
     final s = _sourceString.toLowerCase();
-    return _isNetwork && (s.contains('/live') || s.contains('.m3u8') || s.contains('icecast'));
+    return _isNetwork &&
+        (s.contains('/live') || s.contains('.m3u8') || s.contains('icecast'));
   }
 
   bool get canAnalyze => true;
@@ -42,7 +45,9 @@ class AudioTrack {
     if (source.isMemory) return 'MEMORY';
     if (isLive) return 'LIVE STREAM';
     if (_isNetwork) return 'NETWORK';
-    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) return 'ASSET';
+    if (_sourceString.startsWith('asset:') ||
+        _sourceString.startsWith('assets/'))
+      return 'ASSET';
     return 'FILE';
   }
 
@@ -52,7 +57,9 @@ class AudioTrack {
     if (source.isMemory) return 'RAM Memory';
     if (isLive) return 'icy:// (Live)';
     if (_isNetwork) return 'https://';
-    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) return 'asset://';
+    if (_sourceString.startsWith('asset:') ||
+        _sourceString.startsWith('assets/'))
+      return 'asset://';
     return 'file://';
   }
 
@@ -62,7 +69,8 @@ class AudioTrack {
     if (isLive) return Icons.radio;
     if (_isNetwork) return Icons.cloud_outlined;
     if (source.isMemory) return Icons.memory;
-    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) {
+    if (_sourceString.startsWith('asset:') ||
+        _sourceString.startsWith('assets/')) {
       return Icons.audiotrack;
     }
     return Icons.insert_drive_file_outlined;
@@ -74,7 +82,8 @@ class AudioTrack {
     if (isLive) return Colors.redAccent;
     if (_isNetwork) return Colors.lightBlueAccent;
     if (source.isMemory) return Colors.purpleAccent;
-    if (_sourceString.startsWith('asset:') || _sourceString.startsWith('assets/')) {
+    if (_sourceString.startsWith('asset:') ||
+        _sourceString.startsWith('assets/')) {
       return Colors.tealAccent;
     }
     return Colors.greenAccent;
@@ -90,12 +99,19 @@ class AudioTrack {
 }
 
 abstract final class TrackFormatInfo {
-  static String deduceFormatBadge(AudioTrack? track, {int sampleRate = 0, int channels = 0, int bitrate = 0}) {
+  static String deduceFormatBadge(
+    AudioTrack? track, {
+    int sampleRate = 0,
+    int channels = 0,
+    int bitrate = 0,
+  }) {
     if (track == null) return 'AUDIO ENGINE';
     final name = (track.source.uri ?? track.title).toLowerCase();
 
     if (name.endsWith('.flac')) {
-      final rateStr = sampleRate > 0 ? '${(sampleRate / 1000).toStringAsFixed(0)}kHz' : '96kHz';
+      final rateStr = sampleRate > 0
+          ? '${(sampleRate / 1000).toStringAsFixed(0)}kHz'
+          : '96kHz';
       return 'FLAC $rateStr / 24-bit';
     }
     if (name.endsWith('.mp3')) {
@@ -103,7 +119,9 @@ abstract final class TrackFormatInfo {
       return 'MP3 $brStr CBR';
     }
     if (name.endsWith('.wav')) {
-      final rateStr = sampleRate > 0 ? '${(sampleRate / 1000).toStringAsFixed(1)}kHz' : '44.1kHz';
+      final rateStr = sampleRate > 0
+          ? '${(sampleRate / 1000).toStringAsFixed(1)}kHz'
+          : '44.1kHz';
       return 'WAV $rateStr 16-bit';
     }
     if (name.endsWith('.ogg') || name.endsWith('.opus')) {
@@ -121,4 +139,3 @@ abstract final class TrackFormatInfo {
     return 'HI-RES STEREO';
   }
 }
-

@@ -407,7 +407,8 @@ class PlayerState<T> {
   double get micRmsLevel => _micRmsLevel;
 
   /// Whether there is a subsequent track available in the playlist.
-  bool get hasNext => _currentIndex != null && _currentIndex! < _queue.length - 1;
+  bool get hasNext =>
+      _currentIndex != null && _currentIndex! < _queue.length - 1;
 
   /// Whether there is a preceding track available in the playlist.
   bool get hasPrevious => _currentIndex != null && _currentIndex! > 0;

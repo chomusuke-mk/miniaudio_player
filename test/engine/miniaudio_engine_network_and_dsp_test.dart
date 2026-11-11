@@ -49,7 +49,8 @@ void main() {
 
     serverPort = await completer.future.timeout(
       const Duration(seconds: 5),
-      onTimeout: () => throw TimeoutException('Failed to start python test HTTP server'),
+      onTimeout: () =>
+          throw TimeoutException('Failed to start python test HTTP server'),
     );
   });
 
@@ -57,7 +58,8 @@ void main() {
     if (serverPort != null) {
       try {
         final client = HttpClient();
-        final req = await client.getUrl(Uri.parse('http://127.0.0.1:$serverPort/shutdown'));
+        final req = await client
+            .getUrl(Uri.parse('http://127.0.0.1:$serverPort/shutdown'));
         final res = await req.close();
         await res.drain<void>();
       } catch (_) {}
@@ -66,7 +68,8 @@ void main() {
     await serverProcess?.exitCode;
   });
 
-  group('2.3 Network & Web Audio: Strict Separation of setQueue and play()', () {
+  group('2.3 Network & Web Audio: Strict Separation of setQueue and play()',
+      () {
     late MiniaudioPlayer<String> engine;
 
     setUp(() {
@@ -79,7 +82,9 @@ void main() {
       }
     });
 
-    test('setQueue only prepares queue and leaves currentIndex == null and isPlaying == false', () async {
+    test(
+        'setQueue only prepares queue and leaves currentIndex == null and isPlaying == false',
+        () async {
       await engine.action.setQueue([
         AudioSource(localWavFile1.path, data: 'Track 1'),
         AudioSource(localWavFile2.path, data: 'Track 2'),
@@ -96,14 +101,17 @@ void main() {
       expect(engine.state.phase, equals(EnginePhase.playing));
     });
 
-    test('setQueue with file, memory, and URL leaves engine idle without autoplay', () async {
+    test(
+        'setQueue with file, memory, and URL leaves engine idle without autoplay',
+        () async {
       // 1. Local file
       await engine.action.setQueue([AudioSource(localWavFile1.path)]);
       expect(engine.state.isPlaying, isFalse);
       expect(engine.state.currentIndex, isNull);
 
       // 2. Memory bytes
-      await engine.action.setQueue([AudioSource(Uint8List.fromList(memoryWavBytes))]);
+      await engine.action
+          .setQueue([AudioSource(Uint8List.fromList(memoryWavBytes))]);
       expect(engine.state.isPlaying, isFalse);
       expect(engine.state.currentIndex, isNull);
 
@@ -114,7 +122,9 @@ void main() {
       expect(engine.state.currentIndex, isNull);
     });
 
-    test('play(position: ...) navigates to target track and crossfades when already playing', () async {
+    test(
+        'play(position: ...) navigates to target track and crossfades when already playing',
+        () async {
       await engine.action.setQueue([
         AudioSource(localWavFile1.path, data: 'Track 1'),
         AudioSource(localWavFile2.path, data: 'Track 2'),
@@ -164,7 +174,9 @@ void main() {
       }
     });
 
-    test('LiveStreamAudioSource reports duration == null and seek is a safe no-op', () async {
+    test(
+        'LiveStreamAudioSource reports duration == null and seek is a safe no-op',
+        () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.setQueue([
         AudioSource<String>(
@@ -184,7 +196,9 @@ void main() {
       expect(engine.state.isPlaying, isTrue);
     });
 
-    test('previous() on livestream bypasses 3-second restartThreshold and steps back', () async {
+    test(
+        'previous() on livestream bypasses 3-second restartThreshold and steps back',
+        () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.setQueue([
         AudioSource(localWavFile1.path, data: 'Local Track 1'),
@@ -209,7 +223,8 @@ void main() {
       expect(engine.state.duration, isNotNull);
     });
 
-    test('manual crossfade between livestream and local file runs smoothly', () async {
+    test('manual crossfade between livestream and local file runs smoothly',
+        () async {
       final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
       await engine.action.setQueue([
         AudioSource(liveUri, data: 'Live Stream'),
@@ -251,7 +266,9 @@ void main() {
       }
     });
 
-    test('ReplayGain metadata applied to deck on setQueue/play without altering master volume', () async {
+    test(
+        'ReplayGain metadata applied to deck on setQueue/play without altering master volume',
+        () async {
       await engine.action.setQueue([
         AudioSource(
           localWavFile1.path,
@@ -281,7 +298,8 @@ void main() {
       expect(engine.state.volume, closeTo(0.85, 1e-4));
     });
 
-    test('setReplayGainMode(disabled) clears ReplayGain, track restores it', () async {
+    test('setReplayGainMode(disabled) clears ReplayGain, track restores it',
+        () async {
       await engine.action.setQueue([
         AudioSource<String>(
           localWavFile1.path,
@@ -304,7 +322,8 @@ void main() {
       expect(engine.state.replayGain.gainDb, closeTo(-4.5, 1e-2));
     });
 
-    test('defaultReplayGain acts as fallback for tracks lacking metadata', () async {
+    test('defaultReplayGain acts as fallback for tracks lacking metadata',
+        () async {
       await engine.action.setDefaultReplayGain(-5.0);
       expect(engine.state.defaultReplayGain, closeTo(-5.0, 1e-2));
 
@@ -330,7 +349,9 @@ void main() {
       expect(engine.state.replayGain.gainDb, closeTo(-8.0, 1e-2));
     });
 
-    test('forcedReplayGain forces uniform gain across all tracks, ignoring metadata', () async {
+    test(
+        'forcedReplayGain forces uniform gain across all tracks, ignoring metadata',
+        () async {
       await engine.action.setQueue([
         AudioSource(
           localWavFile1.path,
@@ -366,7 +387,9 @@ void main() {
       expect(engine.state.replayGain.gainDb, closeTo(-10.0, 1e-2));
     });
 
-    test('Preamp and ReplayGain are completely decoupled and do not clobber each other', () async {
+    test(
+        'Preamp and ReplayGain are completely decoupled and do not clobber each other',
+        () async {
       await engine.action.setQueue([
         AudioSource<String>(
           localWavFile1.path,
@@ -408,7 +431,9 @@ void main() {
       }
     });
 
-    test('DSP settings (equalizer, reverb, preamp, balance, mono, crossfeed, limiter) persist across deck swaps', () async {
+    test(
+        'DSP settings (equalizer, reverb, preamp, balance, mono, crossfeed, limiter) persist across deck swaps',
+        () async {
       await engine.action.setQueue([
         AudioSource(localWavFile1.path, data: 'Track 1'),
         AudioSource(localWavFile2.path, data: 'Track 2'),
@@ -451,7 +476,9 @@ void main() {
       expect(engine.state.spatializerWidth, closeTo(1.5, 1e-4));
     });
 
-    test('Visualizer FFT computation is controlled via action.setVisualizerEnabled and persists across deck swaps', () async {
+    test(
+        'Visualizer FFT computation is controlled via action.setVisualizerEnabled and persists across deck swaps',
+        () async {
       await engine.action.setQueue([
         AudioSource(localWavFile1.path, data: 'Track 1'),
         AudioSource(localWavFile2.path, data: 'Track 2'),

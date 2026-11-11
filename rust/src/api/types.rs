@@ -306,6 +306,26 @@ pub struct RustVisualizerData {
     pub right: f32,
 }
 
+impl PartialEq for RustVisualizerData {
+    fn eq(&self, other: &Self) -> bool {
+        const EPSILON: f32 = 0.0005;
+        if (self.rms - other.rms).abs() > EPSILON
+            || (self.peak - other.peak).abs() > EPSILON
+            || (self.left - other.left).abs() > EPSILON
+            || (self.right - other.right).abs() > EPSILON
+            || self.bands.len() != other.bands.len()
+        {
+            return false;
+        }
+        for (a, b) in self.bands.iter().zip(other.bands.iter()) {
+            if (a - b).abs() > EPSILON {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 impl From<crate::dsp::visualizer::VisualizerData> for RustVisualizerData {
     fn from(vis: crate::dsp::visualizer::VisualizerData) -> Self {
         Self {

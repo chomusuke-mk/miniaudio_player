@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../theme/studio_colors.dart';
 import 'studio_badge.dart';
 
@@ -37,10 +38,7 @@ class ExtendedMetadataDialog extends StatelessWidget {
         side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 800,
-          maxHeight: 700,
-        ),
+        constraints: const BoxConstraints(maxWidth: 800, maxHeight: 700),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -50,7 +48,9 @@ class ExtendedMetadataDialog extends StatelessWidget {
               decoration: const BoxDecoration(
                 color: Color(0xFF0F172A),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(11)),
-                border: Border(bottom: BorderSide(color: StudioColors.cardBorder)),
+                border: Border(
+                  bottom: BorderSide(color: StudioColors.cardBorder),
+                ),
               ),
               child: Row(
                 children: [
@@ -85,7 +85,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                         const SizedBox(height: 2),
                         const Text(
                           'Full acoustic credits, identifiers, licensing, chapters, and container tags',
-                          style: TextStyle(fontSize: 10, color: StudioColors.textSecondary),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: StudioColors.textSecondary,
+                          ),
                         ),
                       ],
                     ),
@@ -106,7 +109,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                   ? const Center(
                       child: Text(
                         'No metadata available for this track.',
-                        style: TextStyle(fontSize: 11, color: StudioColors.textMuted),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: StudioColors.textMuted,
+                        ),
                       ),
                     )
                   : SingleChildScrollView(
@@ -136,7 +142,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                               ('Recording ID', ext?.musicBrainzRecordingId),
                               ('Release ID', ext?.musicBrainzReleaseId),
                               ('Artist ID', ext?.musicBrainzArtistId),
-                              ('Release Artist ID', ext?.musicBrainzReleaseArtistId),
+                              (
+                                'Release Artist ID',
+                                ext?.musicBrainzReleaseArtistId,
+                              ),
                               ('Work ID', ext?.musicBrainzWorkId),
                               ('Release Type', ext?.musicBrainzReleaseType),
                               ('AcoustID', ext?.acoustId),
@@ -167,10 +176,18 @@ class ExtendedMetadataDialog extends StatelessWidget {
                             color: StudioColors.accentAmber,
                             rows: [
                               ('Release Date', ext?.releaseDate),
-                              ('Original Release Date', ext?.originalReleaseDate),
+                              (
+                                'Original Release Date',
+                                ext?.originalReleaseDate,
+                              ),
                               ('Recording Date', ext?.recordingDate),
                               ('Initial Key', ext?.initialKey),
-                              ('BPM (Tempo)', metadata?.bpm != null ? '${metadata!.bpm} BPM' : null),
+                              (
+                                'BPM (Tempo)',
+                                metadata?.bpm != null
+                                    ? '${metadata!.bpm} BPM'
+                                    : null,
+                              ),
                               ('Mood / Color', ext?.mood ?? ext?.color),
                             ],
                           ),
@@ -183,7 +200,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                               ('Copyright Message', ext?.copyrightMessage),
                               ('License', ext?.license),
                               ('Copyright URL', ext?.copyrightUrl),
-                              ('Commercial Info URL', ext?.commercialInformationUrl),
+                              (
+                                'Commercial Info URL',
+                                ext?.commercialInformationUrl,
+                              ),
                             ],
                           ),
 
@@ -220,7 +240,9 @@ class ExtendedMetadataDialog extends StatelessWidget {
     required Color color,
     required List<(String, String?)> rows,
   }) {
-    final activeRows = rows.where((r) => r.$2 != null && r.$2!.trim().isNotEmpty).toList();
+    final activeRows = rows
+        .where((r) => r.$2 != null && r.$2!.trim().isNotEmpty)
+        .toList();
 
     return Container(
       decoration: BoxDecoration(
@@ -235,8 +257,14 @@ class ExtendedMetadataDialog extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: Row(
               children: [
@@ -254,7 +282,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                 const Spacer(),
                 Text(
                   '${activeRows.length} active',
-                  style: const TextStyle(fontSize: 8.5, color: StudioColors.textMuted),
+                  style: const TextStyle(
+                    fontSize: 8.5,
+                    color: StudioColors.textMuted,
+                  ),
                 ),
               ],
             ),
@@ -264,13 +295,20 @@ class ExtendedMetadataDialog extends StatelessWidget {
               padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Text(
                 'None populated in container',
-                style: TextStyle(fontSize: 9.5, color: StudioColors.textMuted, fontStyle: FontStyle.italic),
+                style: TextStyle(
+                  fontSize: 9.5,
+                  color: StudioColors.textMuted,
+                  fontStyle: FontStyle.italic,
+                ),
               ),
             )
           else
             ...activeRows.map((r) {
               return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -319,12 +357,22 @@ class ExtendedMetadataDialog extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: Row(
               children: [
-                const Icon(Icons.bookmark_outline, size: 14, color: StudioColors.accentCyan),
+                const Icon(
+                  Icons.bookmark_outline,
+                  size: 14,
+                  color: StudioColors.accentCyan,
+                ),
                 const SizedBox(width: 6),
                 const Text(
                   'EMBEDDED CHAPTERS',
@@ -338,7 +386,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                 const Spacer(),
                 Text(
                   '${chapters.length} chapters',
-                  style: const TextStyle(fontSize: 8.5, color: StudioColors.textMuted),
+                  style: const TextStyle(
+                    fontSize: 8.5,
+                    color: StudioColors.textMuted,
+                  ),
                 ),
               ],
             ),
@@ -348,7 +399,8 @@ class ExtendedMetadataDialog extends StatelessWidget {
             physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.all(8),
             itemCount: chapters.length,
-            separatorBuilder: (context, index) => const Divider(height: 8, color: StudioColors.cardBorder),
+            separatorBuilder: (context, index) =>
+                const Divider(height: 8, color: StudioColors.cardBorder),
             itemBuilder: (context, idx) {
               final ch = chapters[idx];
               final startStr = _formatDuration(ch.startTime);
@@ -356,7 +408,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
               return Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: StudioColors.accentCyan.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
@@ -383,7 +438,11 @@ class ExtendedMetadataDialog extends StatelessWidget {
                   Expanded(
                     child: Text(
                       ch.title.isNotEmpty ? ch.title : 'Chapter ${idx + 1}',
-                      style: const TextStyle(fontSize: 9.5, color: Colors.white, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -410,12 +469,22 @@ class ExtendedMetadataDialog extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: const Row(
               children: [
-                Icon(Icons.lyrics_outlined, size: 14, color: StudioColors.accentEmerald),
+                Icon(
+                  Icons.lyrics_outlined,
+                  size: 14,
+                  color: StudioColors.accentEmerald,
+                ),
                 SizedBox(width: 6),
                 Text(
                   'SYNCHRONIZED / UNSYNCHRONIZED LYRICS',
@@ -436,7 +505,9 @@ class ExtendedMetadataDialog extends StatelessWidget {
               decoration: BoxDecoration(
                 color: const Color(0xFF05070D),
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: StudioColors.cardBorder.withValues(alpha: 0.4)),
+                border: Border.all(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.4),
+                ),
               ),
               child: SelectableText(
                 lyrics,
@@ -468,12 +539,22 @@ class ExtendedMetadataDialog extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: Row(
               children: [
-                const Icon(Icons.code, size: 14, color: StudioColors.accentAmber),
+                const Icon(
+                  Icons.code,
+                  size: 14,
+                  color: StudioColors.accentAmber,
+                ),
                 const SizedBox(width: 6),
                 const Text(
                   'CUSTOM USER TAGS (TXXX / VORBIS COMMENTS)',
@@ -487,7 +568,10 @@ class ExtendedMetadataDialog extends StatelessWidget {
                 const Spacer(),
                 Text(
                   '${customTags.length} tags',
-                  style: const TextStyle(fontSize: 8.5, color: StudioColors.textMuted),
+                  style: const TextStyle(
+                    fontSize: 8.5,
+                    color: StudioColors.textMuted,
+                  ),
                 ),
               ],
             ),

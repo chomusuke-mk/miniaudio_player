@@ -13,6 +13,7 @@ class PlayerAction<T> {
   PlayerAction(this._player, this._rust);
 
   Future<void> _commandTail = Future.value();
+  int _activePlayEpoch = 0;
 
   Future<R> _serialize<R>(Future<R> Function() action) {
     final completer = Completer<R>();
@@ -109,39 +110,48 @@ class PlayerAction<T> {
     int? position,
     bool? shuffled,
     Duration? seek,
-  }) =>
-      _serialize(() async {
-        _player._ensureNotDisposed();
-        if (position != null && position < 0) {
-          throw RangeError.value(
-            position,
-            'position',
-            'Queue position must be non-negative',
-          );
-        }
-        final seekMs = seek != null
-            ? (seek < Duration.zero ? 0 : seek.inMilliseconds)
-            : null;
+  }) {
+    final currentEpoch = ++_activePlayEpoch;
+    return _serialize(() async {
+      if (currentEpoch != _activePlayEpoch) {
         MapLogger.info(
-          'play(id: $id, position: $position, shuffled: $shuffled, seekMs: $seekMs) requested',
+          'play(id: $id, position: $position) skipped (superseded by newer request epoch $currentEpoch < $_activePlayEpoch)',
         );
-        try {
-          await _rust.play(
-            id: id,
-            position: position != null ? BigInt.from(position) : null,
-            shuffled: shuffled,
-            seekMs: seekMs,
-          );
-        } catch (e) {
-          if (e is MiniaudioPlayerException) rethrow;
-          throw MiniaudioPlayerException.fromRustError(e);
-        }
-      });
+        return;
+      }
+      _player._ensureNotDisposed();
+      if (position != null && position < 0) {
+        throw RangeError.value(
+          position,
+          'position',
+          'Queue position must be non-negative',
+        );
+      }
+      final seekMs = seek != null
+          ? (seek < Duration.zero ? 0 : seek.inMilliseconds)
+          : null;
+      MapLogger.info(
+        'play(id: $id, position: $position, shuffled: $shuffled, seekMs: $seekMs) requested',
+      );
+      try {
+        await _rust.play(
+          id: id,
+          position: position != null ? BigInt.from(position) : null,
+          shuffled: shuffled,
+          seekMs: seekMs,
+        );
+      } catch (e) {
+        if (e is MiniaudioPlayerException) rethrow;
+        throw MiniaudioPlayerException.fromRustError(e);
+      }
+    });
+  }
 
   /// Pauses audio playback at current position.
   Future<void> pause() => _serialize(() async {
         _player._ensureNotDisposed();
-        MapLogger.info('[ACTION:PAUSE] pause() requested. Calling native rust.pause()...');
+        MapLogger.info(
+            '[ACTION:PAUSE] pause() requested. Calling native rust.pause()...');
         final sw = Stopwatch()..start();
         await _rust.pause();
         MapLogger.info(
@@ -150,15 +160,19 @@ class PlayerAction<T> {
       });
 
   /// Stops playback and rewinds position to zero.
-  Future<void> stop() => _serialize(() async {
-        _player._ensureNotDisposed();
-        MapLogger.info('[ACTION:STOP] stop() requested. Calling native rust.stop()...');
-        final sw = Stopwatch()..start();
-        await _rust.stop();
-        MapLogger.info(
-          '[ACTION:STOP] native rust.stop() returned successfully in ${sw.elapsedMilliseconds}ms',
-        );
-      });
+  Future<void> stop() {
+    ++_activePlayEpoch;
+    return _serialize(() async {
+      _player._ensureNotDisposed();
+      MapLogger.info(
+          '[ACTION:STOP] stop() requested. Calling native rust.stop()...');
+      final sw = Stopwatch()..start();
+      await _rust.stop();
+      MapLogger.info(
+        '[ACTION:STOP] native rust.stop() returned successfully in ${sw.elapsedMilliseconds}ms',
+      );
+    });
+  }
 
   /// Seeks to specified position in the currently playing track.
   Future<void> seek(Duration position) => _serialize(() async {
@@ -183,6 +197,7 @@ class PlayerAction<T> {
   ///
   /// Resets `state.currentIndex` to `null` until [play] is invoked.
   Future<void> setQueue(List<AudioSource<T>> sources) {
+    ++_activePlayEpoch;
     return _serialize(() async {
       _player._ensureNotDisposed();
       MapLogger.info('setQueue() requested with ${sources.length} items');
@@ -235,9 +250,10 @@ class PlayerAction<T> {
     final (retained, rustSource) = _prepareSource(source);
     final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
     final curIdx = _player.state.currentIndex;
-    final insertIdx = (curIdx != null && curIdx >= 0 && curIdx < currentQueue.length)
-        ? curIdx + 1
-        : currentQueue.length;
+    final insertIdx =
+        (curIdx != null && curIdx >= 0 && curIdx < currentQueue.length)
+            ? curIdx + 1
+            : currentQueue.length;
     currentQueue.insert(insertIdx, retained);
     _player.state._queue = List.unmodifiable(currentQueue);
     await _rust.insertNext(source: rustSource);
@@ -461,6 +477,10 @@ class PlayerAction<T> {
   /// Defaults to `false`.
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player._ensureNotDisposed();
+    _player.state._visualizerEnabled = enabled;
+    if (!enabled) {
+      _player.state._visualizer = VisualizerData.empty();
+    }
     await _rust.setVisualizerEnabled(enabled: enabled);
   }
 
@@ -739,7 +759,8 @@ class PlayerAction<T> {
   Future<void> _setVoiceVolume(int voiceId, double volume) async {
     _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
-      throw ArgumentError.value(volume, 'volume', 'Voice volume must be >= 0.0');
+      throw ArgumentError.value(
+          volume, 'volume', 'Voice volume must be >= 0.0');
     }
     await _rust.setEffectVolume(voiceId: voiceId, volume: volume.toDouble());
   }
@@ -876,7 +897,9 @@ class PlayerAction<T> {
   // =========================================================================
 
   rust_types.RustAudioInputConfig _toRustInputConfig(AudioInputConfig config) {
-    if (config.volume.isNaN || config.volume.isInfinite || config.volume < 0.0) {
+    if (config.volume.isNaN ||
+        config.volume.isInfinite ||
+        config.volume < 0.0) {
       throw ArgumentError.value(
         config.volume,
         'volume',

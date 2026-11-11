@@ -4065,6 +4065,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustVisualizerData? dco_decode_opt_box_autoadd_rust_visualizer_data(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_rust_visualizer_data(raw);
+  }
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
@@ -5023,8 +5032,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TelemetryFilter dco_decode_telemetry_filter(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 15)
-      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
     return TelemetryFilter(
       state: dco_decode_opt_box_autoadd_i_32(arr[0]),
       phase: dco_decode_opt_box_autoadd_i_32(arr[1]),
@@ -5041,6 +5050,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       metadata: dco_decode_opt_box_autoadd_rust_audio_metadata(arr[12]),
       audioInfo: dco_decode_opt_box_autoadd_rust_audio_info(arr[13]),
       activeVoices: dco_decode_opt_box_autoadd_u_32(arr[14]),
+      visualizer: dco_decode_opt_box_autoadd_rust_visualizer_data(arr[15]),
     );
   }
 
@@ -5763,6 +5773,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_rust_vector_3(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  RustVisualizerData? sse_decode_opt_box_autoadd_rust_visualizer_data(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_rust_visualizer_data(deserializer));
     } else {
       return null;
     }
@@ -6852,6 +6874,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_audioInfo =
         sse_decode_opt_box_autoadd_rust_audio_info(deserializer);
     var var_activeVoices = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_visualizer =
+        sse_decode_opt_box_autoadd_rust_visualizer_data(deserializer);
     return TelemetryFilter(
         state: var_state,
         phase: var_phase,
@@ -6867,7 +6891,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         replayGain: var_replayGain,
         metadata: var_metadata,
         audioInfo: var_audioInfo,
-        activeVoices: var_activeVoices);
+        activeVoices: var_activeVoices,
+        visualizer: var_visualizer);
   }
 
   @protected
@@ -7564,6 +7589,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_rust_vector_3(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_rust_visualizer_data(
+      RustVisualizerData? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_rust_visualizer_data(self, serializer);
     }
   }
 
@@ -8372,6 +8408,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_rust_audio_metadata(self.metadata, serializer);
     sse_encode_opt_box_autoadd_rust_audio_info(self.audioInfo, serializer);
     sse_encode_opt_box_autoadd_u_32(self.activeVoices, serializer);
+    sse_encode_opt_box_autoadd_rust_visualizer_data(
+        self.visualizer, serializer);
   }
 
   @protected

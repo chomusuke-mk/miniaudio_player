@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -24,51 +25,56 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Example App First-Class URI Integration Tests', () {
-    testWidgets('Initial tracks are prepared using unified AudioSource without hacks', (tester) async {
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox());
+    testWidgets(
+      'Initial tracks are prepared using unified AudioSource without hacks',
+      (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+
+        await tester.pumpWidget(const MiniaudioPlayerExampleApp());
         await tester.pump();
-      });
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(seconds: 2));
+        });
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      await tester.pumpWidget(const MiniaudioPlayerExampleApp());
-      await tester.pump();
-      await tester.runAsync(() async {
-        await Future.delayed(const Duration(seconds: 2));
-      });
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        // Verify that PlaylistQueueCard renders the queue
+        expect(find.byType(PlaylistQueueCard), findsOneWidget);
 
-      // Verify that PlaylistQueueCard renders the queue
-      expect(find.byType(PlaylistQueueCard), findsOneWidget);
+        // Verify track items loaded from MockData
+        final tracks = await MockData.loadTracks();
+        expect(tracks, isNotEmpty);
 
-      // Verify track items loaded from MockData
-      final tracks = await MockData.loadTracks();
-      expect(tracks, isNotEmpty);
+        // Verify asset URI track presence
+        final assetTrack = tracks.firstWhere((t) => t.resourceBadge == 'ASSET');
+        expect(assetTrack.source.uri, startsWith('asset:'));
+        expect(assetTrack.resourceBadge, equals('ASSET'));
 
-      // Verify asset URI track presence
-      final assetTrack = tracks.firstWhere((t) => t.resourceBadge == 'ASSET');
-      expect(assetTrack.source.uri, startsWith('asset:'));
-      expect(assetTrack.resourceBadge, equals('ASSET'));
+        // Verify remote MP3 track
+        final networkTrack = tracks.firstWhere(
+          (t) => t.resourceBadge == 'NETWORK' && !t.isLive,
+        );
+        expect(networkTrack.source.isNetwork, isTrue);
+        expect(networkTrack.source.uri, startsWith('https:'));
+        expect(networkTrack.resourceBadge, equals('NETWORK'));
 
-      // Verify remote MP3 track
-      final networkTrack = tracks.firstWhere((t) => t.resourceBadge == 'NETWORK' && !t.isLive);
-      expect(networkTrack.source.isNetwork, isTrue);
-      expect(networkTrack.source.uri, startsWith('https:'));
-      expect(networkTrack.resourceBadge, equals('NETWORK'));
+        // Verify live stream track
+        final liveTrack = tracks.firstWhere((t) => t.isLive);
+        expect(liveTrack.source.uri, startsWith('icy:'));
+        expect(liveTrack.resourceBadge, equals('LIVE STREAM'));
 
-      // Verify live stream track
-      final liveTrack = tracks.firstWhere((t) => t.isLive);
-      expect(liveTrack.source.uri, startsWith('icy:'));
-      expect(liveTrack.resourceBadge, equals('LIVE STREAM'));
+        // Verify data: RFC 2397 URI synth track
+        final synthTrack = tracks.firstWhere((t) => t.isGenerated);
+        expect(synthTrack.source.isMemory, isTrue);
+        expect(synthTrack.resourceBadge, equals('DATA URI'));
 
-      // Verify data: RFC 2397 URI synth track
-      final synthTrack = tracks.firstWhere((t) => t.isGenerated);
-      expect(synthTrack.source.isMemory, isTrue);
-      expect(synthTrack.resourceBadge, equals('DATA URI'));
-
-      // Verify badges are rendered in the UI
-      expect(find.text('ASSET'), findsWidgets);
-    });
+        // Verify badges are rendered in the UI
+        expect(find.text('ASSET'), findsWidgets);
+      },
+    );
 
     test('AudioSource polymorphically builds first-class sources for all schemes and bytes', () {
       final assetSource = AudioSource('asset://assets/music/salida.mp3');

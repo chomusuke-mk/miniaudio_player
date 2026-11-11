@@ -47,7 +47,8 @@ class AudioEffectNotFoundException extends MiniaudioPlayerException {
 
   /// Creates an [AudioEffectNotFoundException] for the given [effectId].
   const AudioEffectNotFoundException(this.effectId)
-      : super('Audio effect not found: $effectId', errorCode: MapResult.errorFileNotFound);
+      : super('Audio effect not found: $effectId',
+            errorCode: MapResult.errorFileNotFound);
 }
 
 /// Exception thrown when loading an audio effect exceeds the configured RAM budget.
@@ -60,7 +61,8 @@ class RamBudgetExceededException extends MiniaudioPlayerException {
 
   /// Creates a [RamBudgetExceededException] indicating memory budget exhaustion.
   const RamBudgetExceededException(this.requestedBytes, this.maxBytes)
-      : super('RAM budget exceeded: requested $requestedBytes bytes, max budget is $maxBytes bytes',
+      : super(
+            'RAM budget exceeded: requested $requestedBytes bytes, max budget is $maxBytes bytes',
             errorCode: MapResult.errorOutOfMemory);
 }
 

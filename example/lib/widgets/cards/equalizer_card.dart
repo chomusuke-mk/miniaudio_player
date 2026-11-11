@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
 import '../common/compact_slider_overlay.dart';
@@ -10,7 +11,16 @@ class EqualizerCard extends StatelessWidget {
   final AudioEngineController controller;
 
   static const List<String> frequencyLabels = [
-    '31', '63', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'
+    '31',
+    '63',
+    '125',
+    '250',
+    '500',
+    '1k',
+    '2k',
+    '4k',
+    '8k',
+    '16k',
   ];
 
   static const List<({String key, String label})> presets = [
@@ -166,16 +176,25 @@ class EqualizerCard extends StatelessWidget {
                   return GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTapDown: (details) {
-                      _handleGraphInteraction(details.localPosition, Size(width, graphHeight));
+                      _handleGraphInteraction(
+                        details.localPosition,
+                        Size(width, graphHeight),
+                      );
                     },
                     onPanUpdate: (details) {
-                      _handleGraphInteraction(details.localPosition, Size(width, graphHeight));
+                      _handleGraphInteraction(
+                        details.localPosition,
+                        Size(width, graphHeight),
+                      );
                     },
                     child: Container(
                       height: graphHeight,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: StudioColors.cardBorder, width: 1.0),
+                        border: Border.all(
+                          color: StudioColors.cardBorder,
+                          width: 1.0,
+                        ),
                       ),
                       child: CustomPaint(
                         painter: EqCurvePainter(

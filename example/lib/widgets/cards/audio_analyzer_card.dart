@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../models/audio_track.dart';
@@ -158,7 +159,11 @@ class AudioAnalyzerCard extends StatelessWidget {
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_circle_outline, size: 11, color: StudioColors.accentEmerald),
+            Icon(
+              Icons.check_circle_outline,
+              size: 11,
+              color: StudioColors.accentEmerald,
+            ),
             SizedBox(width: 4),
             Text(
               'READY',
@@ -184,7 +189,11 @@ class AudioAnalyzerCard extends StatelessWidget {
       child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.hourglass_empty, size: 10, color: StudioColors.accentAmber),
+          Icon(
+            Icons.hourglass_empty,
+            size: 10,
+            color: StudioColors.accentAmber,
+          ),
           SizedBox(width: 4),
           Text(
             'STANDBY',
@@ -212,17 +221,19 @@ class AudioAnalyzerCard extends StatelessWidget {
         listenable: Listenable.merge(listenables),
         builder: (context, _) {
           final effectiveTrack = track ?? playerController?.selectedTrack;
-          final effectiveCanAnalyze = canAnalyze && (effectiveTrack?.canAnalyze ?? true);
+          final effectiveCanAnalyze =
+              canAnalyze && (effectiveTrack?.canAnalyze ?? true);
           final effectiveAnalysis =
               analysis ?? analyzerController?.getResultForTrack(effectiveTrack);
           final effectiveIsLoading =
               isLoading || (analyzerController?.isAnalyzing ?? false);
-          final effectiveOnReanalyze = onReanalyze ??
+          final effectiveOnReanalyze =
+              onReanalyze ??
               (effectiveCanAnalyze && effectiveTrack != null
                   ? () => analyzerController?.analyze(
-                        effectiveTrack,
-                        engine: playerController?.engine,
-                      )
+                      effectiveTrack,
+                      engine: playerController?.engine,
+                    )
                   : null);
 
           return _buildContent(
@@ -274,7 +285,9 @@ class AudioAnalyzerCard extends StatelessWidget {
           const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 18),
-            color: canAnalyze && !isLoading ? StudioColors.accentCyan : StudioColors.textMuted,
+            color: canAnalyze && !isLoading
+                ? StudioColors.accentCyan
+                : StudioColors.textMuted,
             tooltip: 'Re-analyze Track',
             visualDensity: VisualDensity.compact,
             onPressed: canAnalyze && !isLoading ? onReanalyze : null,
@@ -296,8 +309,16 @@ class AudioAnalyzerCard extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final isSideBySide = constraints.maxWidth >= 540;
-              final audioInfoWidget = _buildAudioInfoSection(analysis, isLoading);
-              final metadataWidget = _buildMetadataSection(context, analysis, isLoading, track);
+              final audioInfoWidget = _buildAudioInfoSection(
+                analysis,
+                isLoading,
+              );
+              final metadataWidget = _buildMetadataSection(
+                context,
+                analysis,
+                isLoading,
+                track,
+              );
 
               if (isSideBySide) {
                 return Row(
@@ -433,22 +454,26 @@ class AudioAnalyzerCard extends StatelessWidget {
               if (isNarrow) {
                 return Column(
                   children: tiles
-                      .map((t) => Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: t,
-                          ))
+                      .map(
+                        (t) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: t,
+                        ),
+                      )
                       .toList(),
                 );
               }
 
               return Row(
                 children: tiles
-                    .map((t) => Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: t,
-                          ),
-                        ))
+                    .map(
+                      (t) => Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: t,
+                        ),
+                      ),
+                    )
                     .toList(),
               );
             },
@@ -504,10 +529,7 @@ class AudioAnalyzerCard extends StatelessWidget {
   // ===========================================================================
   // 2. WAVEFORM SECTION
   // ===========================================================================
-  Widget _buildWaveformSection(
-    AudioAnalysisResult? analysis,
-    bool isLoading,
-  ) {
+  Widget _buildWaveformSection(AudioAnalysisResult? analysis, bool isLoading) {
     final points = analysis?.waveform?.points ?? const <double>[];
 
     return Container(
@@ -522,7 +544,11 @@ class AudioAnalyzerCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.graphic_eq, size: 14, color: StudioColors.accentCyan),
+              const Icon(
+                Icons.graphic_eq,
+                size: 14,
+                color: StudioColors.accentCyan,
+              ),
               const SizedBox(width: 6),
               const Expanded(
                 child: Text(
@@ -539,7 +565,10 @@ class AudioAnalyzerCard extends StatelessWidget {
               if (points.isNotEmpty && !isLoading)
                 Text(
                   '${points.length} blocks',
-                  style: const TextStyle(fontSize: 8.5, color: StudioColors.textMuted),
+                  style: const TextStyle(
+                    fontSize: 8.5,
+                    color: StudioColors.textMuted,
+                  ),
                 ),
             ],
           ),
@@ -578,7 +607,9 @@ class AudioAnalyzerCard extends StatelessWidget {
                         isLoading ? 'loading...' : '--',
                         style: TextStyle(
                           fontSize: 9.5,
-                          color: isLoading ? const Color(0xFF64748B) : StudioColors.textMuted,
+                          color: isLoading
+                              ? const Color(0xFF64748B)
+                              : StudioColors.textMuted,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -616,51 +647,57 @@ class AudioAnalyzerCard extends StatelessWidget {
         'Sample Rate',
         isLoading
             ? 'loading...'
-            : (info != null && info.sampleRate > 0 ? '${info.sampleRate} Hz' : '--')
+            : (info != null && info.sampleRate > 0
+                  ? '${info.sampleRate} Hz'
+                  : '--'),
       ),
       (
         'Channels',
         isLoading
             ? 'loading...'
-            : (info != null && info.channels > 0 ? '${info.channels} ch' : '--')
+            : (info != null && info.channels > 0
+                  ? '${info.channels} ch'
+                  : '--'),
       ),
       (
         'Bit Depth',
         isLoading
             ? 'loading...'
             : (info?.bitsPerSample != null && info!.bitsPerSample! > 0
-                ? '${info.bitsPerSample}-bit'
-                : '--')
+                  ? '${info.bitsPerSample}-bit'
+                  : '--'),
       ),
       (
         'Bitrate',
         isLoading
             ? 'loading...'
             : (info?.bitrate != null && info!.bitrate > 0
-                ? '${(info.bitrate / 1000).round()} kbps'
-                : '--')
+                  ? '${(info.bitrate / 1000).round()} kbps'
+                  : '--'),
       ),
       (
         'Bitrate Mode',
         isLoading
             ? 'loading...'
             : (info != null && info.bitrateMode != BitrateMode.unknown
-                ? info.bitrateMode.name.toUpperCase()
-                : '--')
+                  ? info.bitrateMode.name.toUpperCase()
+                  : '--'),
       ),
       (
         'Duration',
         isLoading
             ? 'loading...'
             : (info != null && info.duration != Duration.zero
-                ? _formatDuration(info.duration)
-                : '--')
+                  ? _formatDuration(info.duration)
+                  : '--'),
       ),
       (
         'Lossless',
         isLoading
             ? 'loading...'
-            : (info?.lossless == true ? 'Lossless' : (info?.lossless == false ? 'Lossy' : '--'))
+            : (info?.lossless == true
+                  ? 'Lossless'
+                  : (info?.lossless == false ? 'Lossy' : '--')),
       ),
     ];
 
@@ -678,15 +715,25 @@ class AudioAnalyzerCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(Icons.info_outline, size: 14, color: StudioColors.accentCyan),
+                    Icon(
+                      Icons.info_outline,
+                      size: 14,
+                      color: StudioColors.accentCyan,
+                    ),
                     SizedBox(width: 6),
                     Text(
                       'AUDIO INFO',
@@ -718,7 +765,10 @@ class AudioAnalyzerCard extends StatelessWidget {
             child: Column(
               children: rows.map((r) {
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
                   child: Row(
                     children: [
                       SizedBox(
@@ -737,7 +787,9 @@ class AudioAnalyzerCard extends StatelessWidget {
                           r.$2,
                           style: TextStyle(
                             fontSize: 9,
-                            color: isLoading ? const Color(0xFF64748B) : Colors.white,
+                            color: isLoading
+                                ? const Color(0xFF64748B)
+                                : Colors.white,
                             fontFamily: 'monospace',
                             fontWeight: FontWeight.w600,
                           ),
@@ -780,7 +832,9 @@ class AudioAnalyzerCard extends StatelessWidget {
       ('Album', resolve(metadata?.album)),
       (
         'Year / Date',
-        resolve(metadata?.year?.toString() ?? metadata?.extended.originalReleaseDate)
+        resolve(
+          metadata?.year?.toString() ?? metadata?.extended.originalReleaseDate,
+        ),
       ),
       ('Genre', resolve(metadata?.genre)),
       (
@@ -788,8 +842,8 @@ class AudioAnalyzerCard extends StatelessWidget {
         isLoading
             ? 'loading...'
             : (metadata?.trackNumber != null
-                ? '${metadata!.trackNumber}/${metadata.trackTotal ?? "-"}'
-                : '--')
+                  ? '${metadata!.trackNumber}/${metadata.trackTotal ?? "-"}'
+                  : '--'),
       ),
     ];
 
@@ -807,15 +861,25 @@ class AudioAnalyzerCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(Icons.library_music_outlined, size: 14, color: StudioColors.accentPurple),
+                    Icon(
+                      Icons.library_music_outlined,
+                      size: 14,
+                      color: StudioColors.accentPurple,
+                    ),
                     SizedBox(width: 6),
                     Text(
                       'METADATA',
@@ -848,7 +912,10 @@ class AudioAnalyzerCard extends StatelessWidget {
               children: [
                 ...rows.map((r) {
                   return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
                     child: Row(
                       children: [
                         SizedBox(
@@ -867,7 +934,9 @@ class AudioAnalyzerCard extends StatelessWidget {
                             r.$2,
                             style: TextStyle(
                               fontSize: 9,
-                              color: isLoading ? const Color(0xFF64748B) : Colors.white,
+                              color: isLoading
+                                  ? const Color(0xFF64748B)
+                                  : Colors.white,
                               fontFamily: 'monospace',
                               fontWeight: FontWeight.w600,
                             ),
@@ -881,7 +950,10 @@ class AudioAnalyzerCard extends StatelessWidget {
 
                 // Thumbnails Row (Interactive list with overflow & modal on tap)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
                   child: Row(
                     children: [
                       const SizedBox(
@@ -906,86 +978,109 @@ class AudioAnalyzerCard extends StatelessWidget {
                                 ),
                               )
                             : (pictures.isEmpty
-                                ? const Text(
-                                    '--',
-                                    style: TextStyle(
-                                      fontSize: 9,
-                                      color: StudioColors.textMuted,
-                                      fontFamily: 'monospace',
-                                    ),
-                                  )
-                                : Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: FittedBox(
-                                      fit: BoxFit.scaleDown,
+                                  ? const Text(
+                                      '--',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        color: StudioColors.textMuted,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    )
+                                  : Align(
                                       alignment: Alignment.centerLeft,
-                                      child: InkWell(
-                                        onTap: () {
-                                          showDialog(
-                                            context: context,
-                                            builder: (_) => ThumbnailsViewerDialog(
-                                              pictures: pictures,
-                                              trackTitle: track?.title ?? 'Track',
-                                            ),
-                                          );
-                                        },
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            ...pictures.take(3).map((pic) {
-                                              return Padding(
-                                                padding: const EdgeInsets.only(right: 4),
-                                                child: ClipRRect(
-                                                  borderRadius: BorderRadius.circular(3),
-                                                  child: Container(
-                                                    width: 20,
-                                                    height: 20,
-                                                    color: const Color(0xFF0E1424),
-                                                    child: Image.memory(
-                                                      pic.bytes,
-                                                      fit: BoxFit.cover,
-                                                      errorBuilder: (context, error, stackTrace) =>
-                                                          const Icon(
-                                                        Icons.image,
-                                                        size: 14,
-                                                        color: StudioColors.textMuted,
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.centerLeft,
+                                        child: InkWell(
+                                          onTap: () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (_) =>
+                                                  ThumbnailsViewerDialog(
+                                                    pictures: pictures,
+                                                    trackTitle:
+                                                        track?.title ?? 'Track',
+                                                  ),
+                                            );
+                                          },
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              ...pictures.take(3).map((pic) {
+                                                return Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        right: 4,
+                                                      ),
+                                                  child: ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          3,
+                                                        ),
+                                                    child: Container(
+                                                      width: 20,
+                                                      height: 20,
+                                                      color: const Color(
+                                                        0xFF0E1424,
+                                                      ),
+                                                      child: Image.memory(
+                                                        pic.bytes,
+                                                        fit: BoxFit.cover,
+                                                        errorBuilder:
+                                                            (
+                                                              context,
+                                                              error,
+                                                              stackTrace,
+                                                            ) => const Icon(
+                                                              Icons.image,
+                                                              size: 14,
+                                                              color: StudioColors
+                                                                  .textMuted,
+                                                            ),
                                                       ),
                                                     ),
                                                   ),
-                                                ),
-                                              );
-                                            }),
-                                            if (pictures.length > 3)
-                                              Container(
-                                                padding: const EdgeInsets.symmetric(
-                                                  horizontal: 4,
-                                                  vertical: 1.5,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: StudioColors.cardBorder,
-                                                  borderRadius: BorderRadius.circular(3),
-                                                ),
-                                                child: Text(
-                                                  '+${pictures.length - 3}...',
-                                                  style: const TextStyle(
-                                                    fontSize: 7.5,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: Colors.white,
+                                                );
+                                              }),
+                                              if (pictures.length > 3)
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 4,
+                                                        vertical: 1.5,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        StudioColors.cardBorder,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          3,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    '+${pictures.length - 3}...',
+                                                    style: const TextStyle(
+                                                      fontSize: 7.5,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: Colors.white,
+                                                    ),
                                                   ),
                                                 ),
+                                              const SizedBox(width: 4),
+                                              const Icon(
+                                                Icons.open_in_new,
+                                                size: 11,
+                                                color: StudioColors.accentCyan,
                                               ),
-                                            const SizedBox(width: 4),
-                                            const Icon(
-                                              Icons.open_in_new,
-                                              size: 11,
-                                              color: StudioColors.accentCyan,
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  )),
+                                    )),
                       ),
                     ],
                   ),
@@ -993,7 +1088,10 @@ class AudioAnalyzerCard extends StatelessWidget {
 
                 // Extended Metadata Row (Button opening modal)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
                   child: Row(
                     children: [
                       const SizedBox(
@@ -1018,67 +1116,76 @@ class AudioAnalyzerCard extends StatelessWidget {
                                 ),
                               )
                             : (extendedCount == 0
-                                ? const Text(
-                                    '--',
-                                    style: TextStyle(
-                                      fontSize: 9,
-                                      color: StudioColors.textMuted,
-                                      fontFamily: 'monospace',
-                                    ),
-                                  )
-                                : Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: FittedBox(
-                                      fit: BoxFit.scaleDown,
+                                  ? const Text(
+                                      '--',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        color: StudioColors.textMuted,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    )
+                                  : Align(
                                       alignment: Alignment.centerLeft,
-                                      child: InkWell(
-                                        onTap: () {
-                                          showDialog(
-                                            context: context,
-                                            builder: (_) => ExtendedMetadataDialog(
-                                              metadata: metadata,
-                                              trackTitle: track?.title ?? 'Track',
-                                            ),
-                                          );
-                                        },
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 7,
-                                            vertical: 2,
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.centerLeft,
+                                        child: InkWell(
+                                          onTap: () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (_) =>
+                                                  ExtendedMetadataDialog(
+                                                    metadata: metadata,
+                                                    trackTitle:
+                                                        track?.title ?? 'Track',
+                                                  ),
+                                            );
+                                          },
+                                          borderRadius: BorderRadius.circular(
+                                            4,
                                           ),
-                                          decoration: BoxDecoration(
-                                            color: StudioColors.accentPurple.withValues(alpha: 0.15),
-                                            borderRadius: BorderRadius.circular(4),
-                                            border: Border.all(
-                                              color: StudioColors.accentPurple.withValues(alpha: 0.4),
-                                              width: 0.8,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 7,
+                                              vertical: 2,
                                             ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Icon(
-                                                Icons.open_in_new,
-                                                size: 10,
-                                                color: StudioColors.accentPurple,
+                                            decoration: BoxDecoration(
+                                              color: StudioColors.accentPurple
+                                                  .withValues(alpha: 0.15),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                color: StudioColors.accentPurple
+                                                    .withValues(alpha: 0.4),
+                                                width: 0.8,
                                               ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                'VIEW EXTENDED ($extendedCount)',
-                                                style: const TextStyle(
-                                                  fontSize: 8.5,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: StudioColors.accentPurple,
-                                                  letterSpacing: 0.3,
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  Icons.open_in_new,
+                                                  size: 10,
+                                                  color:
+                                                      StudioColors.accentPurple,
                                                 ),
-                                              ),
-                                            ],
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'VIEW EXTENDED ($extendedCount)',
+                                                  style: const TextStyle(
+                                                    fontSize: 8.5,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: StudioColors
+                                                        .accentPurple,
+                                                    letterSpacing: 0.3,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  )),
+                                    )),
                       ),
                     ],
                   ),
@@ -1131,7 +1238,11 @@ class AudioAnalyzerCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.fingerprint, size: 14, color: StudioColors.accentCyan),
+              const Icon(
+                Icons.fingerprint,
+                size: 14,
+                color: StudioColors.accentCyan,
+              ),
               const SizedBox(width: 6),
               const Expanded(
                 child: Text(
@@ -1189,24 +1300,24 @@ class AudioAnalyzerCard extends StatelessWidget {
                           ),
                         )
                       : (fpString != null && fpString.isNotEmpty
-                          ? SelectableText(
-                              fpString,
-                              style: const TextStyle(
-                                fontSize: 9,
-                                fontFamily: 'monospace',
-                                color: Colors.white,
-                                height: 1.25,
-                              ),
-                              maxLines: 2,
-                            )
-                          : const Text(
-                              '--',
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: StudioColors.textMuted,
-                                fontFamily: 'monospace',
-                              ),
-                            )),
+                            ? SelectableText(
+                                fpString,
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  fontFamily: 'monospace',
+                                  color: Colors.white,
+                                  height: 1.25,
+                                ),
+                                maxLines: 2,
+                              )
+                            : const Text(
+                                '--',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: StudioColors.textMuted,
+                                  fontFamily: 'monospace',
+                                ),
+                              )),
                 ),
                 if (!isLoading && fpString != null && fpString.isNotEmpty) ...[
                   const SizedBox(width: 6),
@@ -1214,13 +1325,18 @@ class AudioAnalyzerCard extends StatelessWidget {
                     icon: const Icon(Icons.copy, size: 13),
                     color: StudioColors.accentCyan,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
                     tooltip: 'Copy Fingerprint',
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: fpString));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Chromaprint fingerprint copied to clipboard'),
+                          content: Text(
+                            'Chromaprint fingerprint copied to clipboard',
+                          ),
                           duration: Duration(seconds: 2),
                         ),
                       );
@@ -1239,7 +1355,8 @@ class AudioAnalyzerCard extends StatelessWidget {
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
               child: InkWell(
-                onTap: (!isLoading &&
+                onTap:
+                    (!isLoading &&
                         fpString != null &&
                         fpString.isNotEmpty &&
                         analyzerController != null)
@@ -1257,14 +1374,21 @@ class AudioAnalyzerCard extends StatelessWidget {
                     : null,
                 borderRadius: BorderRadius.circular(6),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
-                    color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                    color:
+                        (!isLoading && fpString != null && fpString.isNotEmpty)
                         ? StudioColors.accentCyan.withValues(alpha: 0.15)
                         : StudioColors.cardBorder.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                      color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                      color:
+                          (!isLoading &&
+                              fpString != null &&
+                              fpString.isNotEmpty)
                           ? StudioColors.accentCyan.withValues(alpha: 0.5)
                           : StudioColors.cardBorder.withValues(alpha: 0.3),
                       width: 0.8,
@@ -1276,24 +1400,34 @@ class AudioAnalyzerCard extends StatelessWidget {
                       Icon(
                         Icons.travel_explore,
                         size: 13,
-                        color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                        color:
+                            (!isLoading &&
+                                fpString != null &&
+                                fpString.isNotEmpty)
                             ? StudioColors.accentCyan
-                            : (isLoading ? const Color(0xFF64748B) : StudioColors.textMuted),
+                            : (isLoading
+                                  ? const Color(0xFF64748B)
+                                  : StudioColors.textMuted),
                       ),
                       const SizedBox(width: 6),
                       Text(
                         isLoading
                             ? 'loading...'
                             : (fpString != null && fpString.isNotEmpty
-                                ? 'IDENTIFY TRACK (AcoustID API)'
-                                : '--'),
+                                  ? 'IDENTIFY TRACK (AcoustID API)'
+                                  : '--'),
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.4,
-                          color: (!isLoading && fpString != null && fpString.isNotEmpty)
+                          color:
+                              (!isLoading &&
+                                  fpString != null &&
+                                  fpString.isNotEmpty)
                               ? StudioColors.accentCyan
-                              : (isLoading ? const Color(0xFF64748B) : StudioColors.textMuted),
+                              : (isLoading
+                                    ? const Color(0xFF64748B)
+                                    : StudioColors.textMuted),
                         ),
                       ),
                     ],

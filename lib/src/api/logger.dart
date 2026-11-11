@@ -55,5 +55,6 @@ abstract final class MapLogger {
   static void debug(String message) => log(MiniaudioLogLevel.debug, message);
 
   /// Logs verbose, fine-grained telemetry or stream diagnostics (`level = 5`).
-  static void verbose(String message) => log(MiniaudioLogLevel.verbose, message);
+  static void verbose(String message) =>
+      log(MiniaudioLogLevel.verbose, message);
 }

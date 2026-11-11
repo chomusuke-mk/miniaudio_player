@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../../models/audio_track.dart';
@@ -39,10 +40,7 @@ class PlaybackEngineCard extends StatelessWidget {
     final engine = controller.engine;
 
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        controller,
-        ?analyzerController,
-      ]),
+      listenable: Listenable.merge([controller, ?analyzerController]),
       builder: (context, _) {
         final track = controller.selectedTrack;
 
@@ -83,29 +81,47 @@ class PlaybackEngineCard extends StatelessWidget {
                     stream: engine.stream.metadata,
                     initialData: engine.state.metadata,
                     builder: (context, metaSnap) {
-                      final dynamicMeta = metaSnap.data ?? engine.state.metadata;
-                      final analysis = analyzerController?.getResultForTrack(activeTrack);
+                      final dynamicMeta =
+                          metaSnap.data ?? engine.state.metadata;
+                      final analysis = analyzerController?.getResultForTrack(
+                        activeTrack,
+                      );
 
-                      final frontCover = dynamicMeta?.frontCover ?? analysis?.metadata?.frontCover;
+                      final frontCover =
+                          dynamicMeta?.frontCover ??
+                          analysis?.metadata?.frontCover;
 
-                      final displayTitle = (dynamicMeta?.title != null && dynamicMeta!.title!.isNotEmpty)
+                      final displayTitle =
+                          (dynamicMeta?.title != null &&
+                              dynamicMeta!.title!.isNotEmpty)
                           ? dynamicMeta.title!
-                          : (analysis?.metadata?.title != null && analysis!.metadata!.title!.isNotEmpty)
-                              ? analysis.metadata!.title!
-                              : (activeTrack?.title ?? 'No track selected');
+                          : (analysis?.metadata?.title != null &&
+                                analysis!.metadata!.title!.isNotEmpty)
+                          ? analysis.metadata!.title!
+                          : (activeTrack?.title ?? 'No track selected');
 
-                      final displayArtist = (dynamicMeta?.artist != null && dynamicMeta!.artist!.isNotEmpty)
+                      final displayArtist =
+                          (dynamicMeta?.artist != null &&
+                              dynamicMeta!.artist!.isNotEmpty)
                           ? dynamicMeta.artist!
-                          : (analysis?.metadata?.artist != null && analysis!.metadata!.artist!.isNotEmpty)
-                              ? analysis.metadata!.artist!
-                              : (activeTrack?.artist ?? 'Select a track from the queue');
+                          : (analysis?.metadata?.artist != null &&
+                                analysis!.metadata!.artist!.isNotEmpty)
+                          ? analysis.metadata!.artist!
+                          : (activeTrack?.artist ??
+                                'Select a track from the queue');
 
                       return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF0A0F1D),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: StudioColors.cardBorder, width: 1.0),
+                          border: Border.all(
+                            color: StudioColors.cardBorder,
+                            width: 1.0,
+                          ),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
@@ -119,12 +135,16 @@ class PlaybackEngineCard extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(6),
                                 border: Border.all(
                                   color: activeTrack != null
-                                      ? StudioColors.accentCyan.withValues(alpha: 0.6)
+                                      ? StudioColors.accentCyan.withValues(
+                                          alpha: 0.6,
+                                        )
                                       : StudioColors.cardBorder,
                                   width: 0.8,
                                 ),
                               ),
-                              child: frontCover != null && frontCover.bytes.isNotEmpty
+                              child:
+                                  frontCover != null &&
+                                      frontCover.bytes.isNotEmpty
                                   ? ClipRRect(
                                       borderRadius: BorderRadius.circular(5),
                                       child: Image.memory(
@@ -136,7 +156,9 @@ class PlaybackEngineCard extends StatelessWidget {
                                     )
                                   : Icon(
                                       activeTrack?.icon ?? Icons.audiotrack,
-                                      color: activeTrack?.iconColor ?? StudioColors.accentCyan,
+                                      color:
+                                          activeTrack?.iconColor ??
+                                          StudioColors.accentCyan,
                                       size: 20,
                                     ),
                             ),
@@ -180,26 +202,38 @@ class PlaybackEngineCard extends StatelessWidget {
                                     width: 28,
                                     height: 28,
                                     child: IconButton.filledTonal(
-                                      icon: const Icon(Icons.info_outline, size: 15),
+                                      icon: const Icon(
+                                        Icons.info_outline,
+                                        size: 15,
+                                      ),
                                       tooltip: 'Inspect Metadata (Static vs Dynamic)',
                                       visualDensity: VisualDensity.compact,
                                       style: IconButton.styleFrom(
-                                        backgroundColor: StudioColors.accentCyan.withValues(alpha: 0.15),
-                                        foregroundColor: StudioColors.accentCyan,
+                                        backgroundColor: StudioColors.accentCyan
+                                            .withValues(alpha: 0.15),
+                                        foregroundColor:
+                                            StudioColors.accentCyan,
                                         padding: EdgeInsets.zero,
                                       ),
                                       onPressed: () {
                                         showDialog(
                                           context: context,
-                                          builder: (_) => MetadataInspectorModal(
-                                            track: activeTrack,
-                                            staticMetadata: analysis?.metadata,
-                                            dynamicMetadata: engine.state.metadata,
-                                            staticAudioInfo: analysis?.audioInfo,
-                                            dynamicAudioInfo: engine.state.audioInfo,
-                                            staticReplayGain: analysis?.replayGain,
-                                            dynamicReplayGain: engine.state.replayGain,
-                                          ),
+                                          builder: (_) =>
+                                              MetadataInspectorModal(
+                                                track: activeTrack,
+                                                staticMetadata:
+                                                    analysis?.metadata,
+                                                dynamicMetadata:
+                                                    engine.state.metadata,
+                                                staticAudioInfo:
+                                                    analysis?.audioInfo,
+                                                dynamicAudioInfo:
+                                                    engine.state.audioInfo,
+                                                staticReplayGain:
+                                                    analysis?.replayGain,
+                                                dynamicReplayGain:
+                                                    engine.state.replayGain,
+                                              ),
                                         );
                                       },
                                     ),
@@ -208,7 +242,9 @@ class PlaybackEngineCard extends StatelessWidget {
                                 ],
                                 StudioBadge(
                                   label: activeTrack?.resourceBadge ?? 'EMPTY',
-                                  color: activeTrack?.iconColor ?? StudioColors.accentCyan,
+                                  color:
+                                      activeTrack?.iconColor ??
+                                      StudioColors.accentCyan,
                                 ),
                               ],
                             ),
@@ -222,163 +258,198 @@ class PlaybackEngineCard extends StatelessWidget {
               const SizedBox(height: 10),
 
               // 2. Waveform Progress Bar & Seek
-              StreamBuilder<Duration>(
-                stream: engine.stream.position,
-                initialData: engine.state.position,
-                builder: (context, posSnap) {
-                  final pos = posSnap.data ?? Duration.zero;
-                  final dur = engine.state.duration;
-                  final progress = (dur != null && dur.inMilliseconds > 0)
-                      ? (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0)
-                      : 0.0;
+              StreamBuilder<Duration?>(
+                stream: engine.stream.duration,
+                initialData: engine.state.duration,
+                builder: (context, durSnap) {
+                  final dur = durSnap.data ?? engine.state.duration;
+                  return StreamBuilder<Duration>(
+                    stream: engine.stream.position,
+                    initialData: engine.state.position,
+                    builder: (context, posSnap) {
+                      final pos = posSnap.data ?? Duration.zero;
+                      final progress = (dur != null && dur.inMilliseconds > 0)
+                          ? (pos.inMilliseconds / dur.inMilliseconds).clamp(
+                              0.0,
+                              1.0,
+                            )
+                          : 0.0;
 
-                  return StreamBuilder<Buffer>(
-                    stream: engine.stream.buffer,
-                    initialData: engine.state.buffer,
-                    builder: (context, bufSnap) {
-                      final buf = bufSnap.data ?? engine.state.buffer;
-                      final isLocal = track?.source.isMemory == true ||
-                          (track?.source.uri != null &&
-                              !track!.source.uri!.toLowerCase().startsWith('http'));
-                      final bufferedProgress = isLocal
-                          ? 1.0
-                          : (dur != null && dur.inMilliseconds > 0
-                              ? (buf.end.inMilliseconds / dur.inMilliseconds)
-                                  .clamp(0.0, 1.0)
-                              : 0.0);
+                      return StreamBuilder<Buffer>(
+                        stream: engine.stream.buffer,
+                        initialData: engine.state.buffer,
+                        builder: (context, bufSnap) {
+                          final buf = bufSnap.data ?? engine.state.buffer;
+                          final isLocal =
+                              track?.source.isMemory == true ||
+                              (track?.source.uri != null &&
+                                  !track!.source.uri!.toLowerCase().startsWith(
+                                    'http',
+                                  ));
+                          final bufferedProgress = isLocal
+                              ? 1.0
+                              : (dur != null && dur.inMilliseconds > 0
+                                    ? (buf.end.inMilliseconds /
+                                              dur.inMilliseconds)
+                                          .clamp(0.0, 1.0)
+                                    : 0.0);
 
-                      return Column(
-                        children: [
-                          LayoutBuilder(
-                            builder: (ctx, constraints) {
-                              return GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTapDown: (details) {
-                                  if (dur == null) return;
-                                  final frac = details.localPosition.dx /
-                                      constraints.maxWidth;
-                                  _seekToFraction(context, frac, dur);
-                                },
-                                onHorizontalDragStart: (details) {
-                                  if (dur == null) return;
-                                  final frac = details.localPosition.dx /
-                                      constraints.maxWidth;
-                                  _seekToFraction(context, frac, dur);
-                                },
-                                onHorizontalDragUpdate: (details) {
-                                  if (dur == null) return;
-                                  final frac = details.localPosition.dx /
-                                      constraints.maxWidth;
-                                  _seekToFraction(context, frac, dur);
-                                },
-                                child: Container(
-                                  height: 44,
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF070B14),
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: StudioColors.cardBorder,
-                                      width: 1.0,
-                                    ),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(5),
-                                    child: CustomPaint(
-                                      size: Size(constraints.maxWidth, 44),
-                                      painter: WaveformPainter(
-                                        points: controller.waveformPoints,
-                                        progress: progress,
-                                        bufferedProgress: bufferedProgress,
-                                        playedColor: StudioColors.accentCyan,
-                                        unplayedColor:
-                                            StudioColors.cardBorderFocused,
+                          return Column(
+                            children: [
+                              LayoutBuilder(
+                                builder: (ctx, constraints) {
+                                  return GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTapDown: (details) {
+                                      if (dur == null) return;
+                                      final frac =
+                                          details.localPosition.dx /
+                                          constraints.maxWidth;
+                                      _seekToFraction(context, frac, dur);
+                                    },
+                                    onHorizontalDragStart: (details) {
+                                      if (dur == null) return;
+                                      final frac =
+                                          details.localPosition.dx /
+                                          constraints.maxWidth;
+                                      _seekToFraction(context, frac, dur);
+                                    },
+                                    onHorizontalDragUpdate: (details) {
+                                      if (dur == null) return;
+                                      final frac =
+                                          details.localPosition.dx /
+                                          constraints.maxWidth;
+                                      _seekToFraction(context, frac, dur);
+                                    },
+                                    child: Container(
+                                      height: 44,
+                                      width: double.infinity,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF070B14),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: StudioColors.cardBorder,
+                                          width: 1.0,
+                                        ),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(5),
+                                        child: RepaintBoundary(
+                                          child: CustomPaint(
+                                            size: Size(
+                                              constraints.maxWidth,
+                                              44,
+                                            ),
+                                            painter: WaveformPainter(
+                                              points: controller.waveformPoints,
+                                              progress: progress,
+                                              bufferedProgress:
+                                                  bufferedProgress,
+                                              playedColor:
+                                                  StudioColors.accentCyan,
+                                              unplayedColor: StudioColors
+                                                  .cardBorderFocused,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 4),
-
-                          // Current time (left) and total time (right) under waveform
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  _formatDuration(pos),
-                                  style: const TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: StudioColors.accentCyan,
-                                    fontFamily: 'monospace',
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                  );
+                                },
                               ),
-                              Flexible(
-                                child: Text(
-                                  dur != null ? _formatDuration(dur) : 'LIVE',
-                                  style: const TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: StudioColors.textSecondary,
-                                    fontFamily: 'monospace',
+                              const SizedBox(height: 4),
+
+                              // Current time (left) and total time (right) under waveform
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      _formatDuration(pos),
+                                      style: const TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: StudioColors.accentCyan,
+                                        fontFamily: 'monospace',
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                  overflow: TextOverflow.ellipsis,
+                                  Flexible(
+                                    child: Text(
+                                      dur != null
+                                          ? _formatDuration(dur)
+                                          : 'LIVE',
+                                      style: const TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: StudioColors.textSecondary,
+                                        fontFamily: 'monospace',
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+
+                              // Continuous Buffer Range & Telemetry HUD
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF070B14),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: StudioColors.cardBorder,
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      buf.isBuffering
+                                          ? Icons.sync
+                                          : Icons.download_done,
+                                      size: 13,
+                                      color: buf.isBuffering
+                                          ? StudioColors.accentAmber
+                                          : StudioColors.accentCyan,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Expanded(
+                                      child: Text(
+                                        'Buffer: ${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}',
+                                        style: const TextStyle(
+                                          fontSize: 9.5,
+                                          fontFamily: 'monospace',
+                                          color: StudioColors.textPrimary,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: buf.isBuffering
+                                          ? const StudioBadge(
+                                              label: 'BUFFERING',
+                                              color: StudioColors.accentAmber,
+                                            )
+                                          : StudioBadge(
+                                              label:
+                                                  '${_formatDuration(buf.end - buf.start)} cached',
+                                              color: StudioColors.accentEmerald,
+                                            ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
-                          ),
-                          const SizedBox(height: 4),
-
-                          // Continuous Buffer Range & Telemetry HUD
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF070B14),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: StudioColors.cardBorder, width: 0.8),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  buf.isBuffering ? Icons.sync : Icons.download_done,
-                                  size: 13,
-                                  color: buf.isBuffering
-                                      ? StudioColors.accentAmber
-                                      : StudioColors.accentCyan,
-                                ),
-                                const SizedBox(width: 5),
-                                Expanded(
-                                  child: Text(
-                                    'Buffer: ${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}',
-                                    style: const TextStyle(
-                                      fontSize: 9.5,
-                                      fontFamily: 'monospace',
-                                      color: StudioColors.textPrimary,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Flexible(
-                                  child: buf.isBuffering
-                                      ? const StudioBadge(
-                                          label: 'BUFFERING',
-                                          color: StudioColors.accentAmber,
-                                        )
-                                      : StudioBadge(
-                                          label: '${_formatDuration(buf.end - buf.start)} cached',
-                                          color: StudioColors.accentEmerald,
-                                        ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                          );
+                        },
                       );
                     },
                   );
@@ -409,7 +480,10 @@ class PlaybackEngineCard extends StatelessWidget {
                               color: StudioColors.textPrimary,
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
                               tooltip: 'Previous',
                               onPressed: controller.previousTrack,
                             ),
@@ -423,7 +497,10 @@ class PlaybackEngineCard extends StatelessWidget {
                               color: StudioColors.accentCyan,
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                              constraints: const BoxConstraints(
+                                minWidth: 36,
+                                minHeight: 36,
+                              ),
                               tooltip: isPlaying ? 'Pause' : 'Play',
                               onPressed: () {
                                 if (isPlaying) {
@@ -438,7 +515,10 @@ class PlaybackEngineCard extends StatelessWidget {
                               color: StudioColors.textPrimary,
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
                               tooltip: 'Next',
                               onPressed: controller.nextTrack,
                             ),
@@ -447,7 +527,10 @@ class PlaybackEngineCard extends StatelessWidget {
                               color: StudioColors.accentRose,
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
                               tooltip: 'Stop',
                               onPressed: engine.action.stop,
                             ),
@@ -463,8 +546,13 @@ class PlaybackEngineCard extends StatelessWidget {
                                       : StudioColors.textMuted,
                                   visualDensity: VisualDensity.compact,
                                   padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                  tooltip: isShuffle ? 'Shuffle (On)' : 'Shuffle (Off)',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 32,
+                                    minHeight: 32,
+                                  ),
+                                  tooltip: isShuffle
+                                      ? 'Shuffle (On)'
+                                      : 'Shuffle (Off)',
                                   onPressed: controller.toggleShuffle,
                                 );
                               },
@@ -487,8 +575,12 @@ class PlaybackEngineCard extends StatelessWidget {
                                       : StudioColors.textMuted,
                                   visualDensity: VisualDensity.compact,
                                   padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                  tooltip: 'Loop Mode: ${mode.name.toUpperCase()}',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 32,
+                                    minHeight: 32,
+                                  ),
+                                  tooltip:
+                                      'Loop Mode: ${mode.name.toUpperCase()}',
                                   onPressed: controller.toggleLoop,
                                 );
                               },
@@ -581,7 +673,10 @@ class PlaybackEngineCard extends StatelessWidget {
                 decoration: const InputDecoration(
                   labelText: 'Hardware Buffer Period',
                   prefixIcon: Icon(Icons.memory, size: 16),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                 ),
                 items: const [
                   DropdownMenuItem(
@@ -633,7 +728,10 @@ class PlaybackEngineCard extends StatelessWidget {
 
               // 5. Native Pause on Device Disconnect Toggle
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: StudioColors.cardBackgroundDark,
                   borderRadius: BorderRadius.circular(8),
@@ -701,7 +799,8 @@ class PlaybackEngineCard extends StatelessWidget {
                         Switch(
                           value: controller.pauseOnDeviceChange,
                           activeThumbColor: StudioColors.accentCyan,
-                          onChanged: (val) => controller.setPauseOnDeviceChange(val),
+                          onChanged: (val) =>
+                              controller.setPauseOnDeviceChange(val),
                         ),
                       ],
                     ),
@@ -712,7 +811,10 @@ class PlaybackEngineCard extends StatelessWidget {
 
               // 6. Dynamic Metadata Event Dispatch Toggle
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: StudioColors.cardBackgroundDark,
                   borderRadius: BorderRadius.circular(8),
@@ -780,7 +882,8 @@ class PlaybackEngineCard extends StatelessWidget {
                         Switch(
                           value: controller.metadataEnabled,
                           activeThumbColor: StudioColors.accentAmber,
-                          onChanged: (val) => controller.setMetadataEnabled(val),
+                          onChanged: (val) =>
+                              controller.setMetadataEnabled(val),
                         ),
                       ],
                     ),
@@ -827,29 +930,44 @@ class PlaybackEngineCard extends StatelessWidget {
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.5,
-                    color: isRec ? StudioColors.accentRose : StudioColors.accentCyan,
+                    color: isRec
+                        ? StudioColors.accentRose
+                        : StudioColors.accentCyan,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               if (isRec) ...[
                 const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: StudioColors.accentRose.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: StudioColors.accentRose, width: 0.8),
-                  ),
-                  child: Text(
-                    _formatDuration(dur),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'monospace',
-                      color: StudioColors.accentRose,
-                    ),
-                  ),
+                StreamBuilder<Duration>(
+                  stream: controller.engine.stream.recordedDuration,
+                  initialData: controller.engine.state.recordedDuration,
+                  builder: (context, snap) {
+                    final d = snap.data ?? dur;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: StudioColors.accentRose.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: StudioColors.accentRose,
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Text(
+                        _formatDuration(d),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'monospace',
+                          color: StudioColors.accentRose,
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ],
@@ -866,13 +984,20 @@ class PlaybackEngineCard extends StatelessWidget {
                   backgroundColor: isRec
                       ? StudioColors.accentRose
                       : const Color(0xFF1E283E),
-                  foregroundColor: isRec ? Colors.white : StudioColors.accentRose,
+                  foregroundColor: isRec
+                      ? Colors.white
+                      : StudioColors.accentRose,
                   visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(6),
                     side: BorderSide(
-                      color: isRec ? StudioColors.accentRose : StudioColors.cardBorder,
+                      color: isRec
+                          ? StudioColors.accentRose
+                          : StudioColors.cardBorder,
                     ),
                   ),
                 ),
@@ -883,7 +1008,10 @@ class PlaybackEngineCard extends StatelessWidget {
                 ),
                 label: Text(
                   isRec ? 'STOP' : 'RECORD',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 onPressed: () async {
                   if (isRec) {
@@ -894,7 +1022,9 @@ class PlaybackEngineCard extends StatelessWidget {
                           backgroundColor: const Color(0xFF0E172A),
                           content: Text(
                             'Recorded ${_formatDuration(res.duration)} (${(res.bytesWritten / 1024).round()} KB) to ${res.path.split("/").last}',
-                            style: const TextStyle(color: StudioColors.accentEmerald),
+                            style: const TextStyle(
+                              color: StudioColors.accentEmerald,
+                            ),
                           ),
                           duration: const Duration(seconds: 4),
                         ),
@@ -926,7 +1056,10 @@ class PlaybackEngineCard extends StatelessWidget {
                           value: f,
                           child: Text(
                             f.name.toUpperCase(),
-                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         );
                       }).toList(),
@@ -957,28 +1090,40 @@ class PlaybackEngineCard extends StatelessWidget {
                           value: AudioOutputSource.all,
                           child: Text(
                             'All Mix',
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         DropdownMenuItem(
                           value: AudioOutputSource.musicMix,
                           child: Text(
                             'Music',
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         DropdownMenuItem(
                           value: AudioOutputSource.activeTrack,
                           child: Text(
                             'Active',
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         DropdownMenuItem(
                           value: AudioOutputSource.standbyTrack,
                           child: Text(
                             'Cue',
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],

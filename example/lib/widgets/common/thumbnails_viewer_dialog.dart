@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../theme/studio_colors.dart';
 import 'studio_badge.dart';
 
@@ -51,10 +52,7 @@ class ThumbnailsViewerDialog extends StatelessWidget {
         side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 720,
-          maxHeight: 640,
-        ),
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 640),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -64,7 +62,9 @@ class ThumbnailsViewerDialog extends StatelessWidget {
               decoration: const BoxDecoration(
                 color: Color(0xFF0F172A),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(11)),
-                border: Border(bottom: BorderSide(color: StudioColors.cardBorder)),
+                border: Border(
+                  bottom: BorderSide(color: StudioColors.cardBorder),
+                ),
               ),
               child: Row(
                 children: [
@@ -91,7 +91,8 @@ class ThumbnailsViewerDialog extends StatelessWidget {
                             ),
                             const SizedBox(width: 8),
                             StudioBadge(
-                              label: '${pictures.length} ${pictures.length == 1 ? "IMAGE" : "IMAGES"}',
+                              label:
+                                  '${pictures.length} ${pictures.length == 1 ? "IMAGE" : "IMAGES"}',
                               color: StudioColors.accentCyan,
                             ),
                           ],
@@ -99,7 +100,10 @@ class ThumbnailsViewerDialog extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           'Artwork extracted from container for "$trackTitle"',
-                          style: const TextStyle(fontSize: 10, color: StudioColors.textSecondary),
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: StudioColors.textSecondary,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -122,24 +126,34 @@ class ThumbnailsViewerDialog extends StatelessWidget {
                   ? const Center(
                       child: Text(
                         'No embedded pictures detected in this audio file.',
-                        style: TextStyle(fontSize: 11, color: StudioColors.textMuted),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: StudioColors.textMuted,
+                        ),
                       ),
                     )
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
                       itemCount: pictures.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 16),
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 16),
                       itemBuilder: (context, index) {
                         final picture = pictures[index];
-                        final kb = (picture.bytes.lengthInBytes / 1024).toStringAsFixed(1);
-                        final typeLabel = _formatPictureType(picture.pictureType);
+                        final kb = (picture.bytes.lengthInBytes / 1024)
+                            .toStringAsFixed(1);
+                        final typeLabel = _formatPictureType(
+                          picture.pictureType,
+                        );
 
                         return Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: const Color(0xFF070B14),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: StudioColors.cardBorder, width: 0.8),
+                            border: Border.all(
+                              color: StudioColors.cardBorder,
+                              width: 0.8,
+                            ),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -153,13 +167,15 @@ class ThumbnailsViewerDialog extends StatelessWidget {
                                   child: Image.memory(
                                     picture.bytes,
                                     fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) => const Center(
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        size: 24,
-                                        color: StudioColors.textMuted,
-                                      ),
-                                    ),
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const Center(
+                                              child: Icon(
+                                                Icons.broken_image_outlined,
+                                                size: 24,
+                                                color: StudioColors.textMuted,
+                                              ),
+                                            ),
                                   ),
                                 ),
                               ),
@@ -176,10 +192,14 @@ class ThumbnailsViewerDialog extends StatelessWidget {
                                             vertical: 2,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: StudioColors.accentCyan.withValues(alpha: 0.15),
-                                            borderRadius: BorderRadius.circular(4),
+                                            color: StudioColors.accentCyan
+                                                .withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
                                             border: Border.all(
-                                              color: StudioColors.accentCyan.withValues(alpha: 0.3),
+                                              color: StudioColors.accentCyan
+                                                  .withValues(alpha: 0.3),
                                             ),
                                           ),
                                           child: Text(
@@ -204,12 +224,22 @@ class ThumbnailsViewerDialog extends StatelessWidget {
                                       ],
                                     ),
                                     const SizedBox(height: 8),
-                                    _buildMetaRow('MIME Type', picture.mimeType?.name ?? 'image/jpeg'),
+                                    _buildMetaRow(
+                                      'MIME Type',
+                                      picture.mimeType?.name ?? 'image/jpeg',
+                                    ),
                                     const SizedBox(height: 4),
-                                    _buildMetaRow('Payload Size', '$kb KB (${picture.bytes.lengthInBytes} bytes)'),
-                                    if (picture.description != null && picture.description!.isNotEmpty) ...[
+                                    _buildMetaRow(
+                                      'Payload Size',
+                                      '$kb KB (${picture.bytes.lengthInBytes} bytes)',
+                                    ),
+                                    if (picture.description != null &&
+                                        picture.description!.isNotEmpty) ...[
                                       const SizedBox(height: 4),
-                                      _buildMetaRow('Description', picture.description!),
+                                      _buildMetaRow(
+                                        'Description',
+                                        picture.description!,
+                                      ),
                                     ],
                                   ],
                                 ),

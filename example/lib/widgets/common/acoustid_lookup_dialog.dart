@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../models/acoustid_result.dart';
 import '../../theme/studio_colors.dart';
@@ -53,10 +54,7 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
         side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 720,
-          maxHeight: 650,
-        ),
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 650),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -66,7 +64,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
               decoration: const BoxDecoration(
                 color: Color(0xFF0F172A),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(11)),
-                border: Border(bottom: BorderSide(color: StudioColors.cardBorder)),
+                border: Border(
+                  bottom: BorderSide(color: StudioColors.cardBorder),
+                ),
               ),
               child: Row(
                 children: [
@@ -106,7 +106,10 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                     color: StudioColors.textMuted,
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -128,7 +131,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                             height: 28,
                             child: CircularProgressIndicator(
                               strokeWidth: 2.2,
-                              valueColor: AlwaysStoppedAnimation<Color>(StudioColors.accentCyan),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                StudioColors.accentCyan,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 14),
@@ -155,7 +160,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
 
                   final result = snapshot.data;
                   if (result == null || !result.success) {
-                    final errorText = result?.errorMessage ?? 'Unknown error occurred while contacting AcoustID';
+                    final errorText =
+                        result?.errorMessage ??
+                        'Unknown error occurred while contacting AcoustID';
                     return Center(
                       child: Padding(
                         padding: const EdgeInsets.all(24.0),
@@ -189,7 +196,10 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                             TextButton.icon(
                               onPressed: _fetch,
                               icon: const Icon(Icons.refresh, size: 14),
-                              label: const Text('Retry Lookup', style: TextStyle(fontSize: 10)),
+                              label: const Text(
+                                'Retry Lookup',
+                                style: TextStyle(fontSize: 10),
+                              ),
                               style: TextButton.styleFrom(
                                 foregroundColor: StudioColors.accentCyan,
                                 backgroundColor: const Color(0xFF0F172A),
@@ -263,7 +273,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: const BoxDecoration(
                 color: Color(0xFF070B14),
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(11)),
+                borderRadius: BorderRadius.vertical(
+                  bottom: Radius.circular(11),
+                ),
                 border: Border(top: BorderSide(color: StudioColors.cardBorder)),
               ),
               child: Row(
@@ -302,7 +314,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                     tooltip: 'Copy Fingerprint',
                     visualDensity: VisualDensity.compact,
                     onPressed: () {
-                      Clipboard.setData(ClipboardData(text: widget.fingerprint));
+                      Clipboard.setData(
+                        ClipboardData(text: widget.fingerprint),
+                      );
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Chromaprint copied to clipboard'),
@@ -316,7 +330,10 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                     onPressed: () => Navigator.of(context).pop(),
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF1E293B),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                     ),
                     child: const Text('Close', style: TextStyle(fontSize: 10)),
                   ),
@@ -348,7 +365,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
             decoration: const BoxDecoration(
               color: Color(0xFF131D33),
               borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder)),
+              border: Border(
+                bottom: BorderSide(color: StudioColors.cardBorder),
+              ),
             ),
             child: Row(
               children: [
@@ -356,7 +375,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                   label: '$pctScore% MATCH',
                   color: pctScore >= 90
                       ? StudioColors.accentEmerald
-                      : (pctScore >= 70 ? StudioColors.accentCyan : StudioColors.accentAmber),
+                      : (pctScore >= 70
+                            ? StudioColors.accentCyan
+                            : StudioColors.accentAmber),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -393,7 +414,9 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
               padding: const EdgeInsets.all(10.0),
               child: Column(
                 children: recordings.map((rec) {
-                  final artistsStr = rec.artists.isNotEmpty ? rec.artists.join(', ') : 'Unknown Artist';
+                  final artistsStr = rec.artists.isNotEmpty
+                      ? rec.artists.join(', ')
+                      : 'Unknown Artist';
                   final rgs = rec.releaseGroups;
 
                   return Container(
@@ -402,18 +425,26 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                     decoration: BoxDecoration(
                       color: const Color(0xFF090D18),
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: StudioColors.cardBorder.withValues(alpha: 0.5)),
+                      border: Border.all(
+                        color: StudioColors.cardBorder.withValues(alpha: 0.5),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.music_note, size: 13, color: StudioColors.accentCyan),
+                            const Icon(
+                              Icons.music_note,
+                              size: 13,
+                              color: StudioColors.accentCyan,
+                            ),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
-                                rec.title.isNotEmpty ? rec.title : 'Untitled Recording',
+                                rec.title.isNotEmpty
+                                    ? rec.title
+                                    : 'Untitled Recording',
                                 style: const TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
@@ -446,12 +477,18 @@ class _AcoustIdLookupDialogState extends State<AcoustIdLookupDialog> {
                               runSpacing: 4,
                               children: rgs.map((rg) {
                                 return Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 1.5,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: StudioColors.accentPurple.withValues(alpha: 0.15),
+                                    color: StudioColors.accentPurple.withValues(
+                                      alpha: 0.15,
+                                    ),
                                     borderRadius: BorderRadius.circular(3),
                                     border: Border.all(
-                                      color: StudioColors.accentPurple.withValues(alpha: 0.3),
+                                      color: StudioColors.accentPurple
+                                          .withValues(alpha: 0.3),
                                       width: 0.6,
                                     ),
                                   ),

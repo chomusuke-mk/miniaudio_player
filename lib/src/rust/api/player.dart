@@ -333,6 +333,9 @@ class TelemetryFilter {
   /// Cached count of concurrent active sound effect voices.
   final int? activeVoices;
 
+  /// Cached visualizer data metrics.
+  final RustVisualizerData? visualizer;
+
   const TelemetryFilter({
     this.state,
     this.phase,
@@ -349,6 +352,7 @@ class TelemetryFilter {
     this.metadata,
     this.audioInfo,
     this.activeVoices,
+    this.visualizer,
   });
 
   static Future<TelemetryFilter> default_() =>
@@ -370,7 +374,8 @@ class TelemetryFilter {
       replayGain.hashCode ^
       metadata.hashCode ^
       audioInfo.hashCode ^
-      activeVoices.hashCode;
+      activeVoices.hashCode ^
+      visualizer.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -391,5 +396,6 @@ class TelemetryFilter {
           replayGain == other.replayGain &&
           metadata == other.metadata &&
           audioInfo == other.audioInfo &&
-          activeVoices == other.activeVoices;
+          activeVoices == other.activeVoices &&
+          visualizer == other.visualizer;
 }

@@ -109,8 +109,7 @@ class AudioOutput {
   int get hashCode => Object.hash(deviceId, source);
 
   @override
-  String toString() =>
-      'AudioOutput(deviceId: $deviceId, source: $source)';
+  String toString() => 'AudioOutput(deviceId: $deviceId, source: $source)';
 }
 
 /// Real-time capture configuration parameters for an [AudioInput].
@@ -230,8 +229,7 @@ class AudioInput {
   int get hashCode => _deviceId.hashCode;
 
   @override
-  String toString() =>
-      'AudioInput(deviceId: $_deviceId, config: $_config)';
+  String toString() => 'AudioInput(deviceId: $_deviceId, config: $_config)';
 }
 
 /// Descriptor of an audio effect registered in the player's sound effects catalog.

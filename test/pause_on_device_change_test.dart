@@ -9,13 +9,17 @@ void main() {
   });
 
   group('AudioDevice effectiveId and endpoint resolution', () {
-    test('AudioDevice.auto has canonical auto id and empty effectiveId by default', () {
+    test(
+        'AudioDevice.auto has canonical auto id and empty effectiveId by default',
+        () {
       expect(AudioDevice.auto.id, equals('AUTO'));
       expect(AudioDevice.auto.isAuto, isTrue);
       expect(AudioDevice.auto.effectiveId, isEmpty);
     });
 
-    test('isSameEndpoint returns true for matching effectiveIds regardless of auto', () {
+    test(
+        'isSameEndpoint returns true for matching effectiveIds regardless of auto',
+        () {
       const dev1 = AudioDevice(
         id: 'auto',
         effectiveId: 'endpoint-speakers-01',
@@ -39,7 +43,8 @@ void main() {
       expect(dev2.isSameEndpoint(dev3), isFalse);
     });
 
-    test('isSameEndpoint falls back to id / equality if effectiveId is empty', () {
+    test('isSameEndpoint falls back to id / equality if effectiveId is empty',
+        () {
       const devA = AudioDevice(id: 'devA', name: 'Device A');
       const devA2 = AudioDevice(id: 'devA', name: 'Device A (copy)');
       const devB = AudioDevice(id: 'devB', name: 'Device B');
@@ -48,9 +53,13 @@ void main() {
       expect(devA.isSameEndpoint(devB), isFalse);
     });
 
-    test('AudioDevice equality treats both id: auto and isAuto templates as equal', () {
-      const autoEmpty = AudioDevice(id: '', name: 'SYSTEM DEFAULT', isAuto: true);
-      const autoNamed = AudioDevice(id: 'auto', name: 'SYSTEM DEFAULT', isAuto: true);
+    test(
+        'AudioDevice equality treats both id: auto and isAuto templates as equal',
+        () {
+      const autoEmpty =
+          AudioDevice(id: '', name: 'SYSTEM DEFAULT', isAuto: true);
+      const autoNamed =
+          AudioDevice(id: 'auto', name: 'SYSTEM DEFAULT', isAuto: true);
 
       expect(autoEmpty == AudioDevice.auto, isTrue);
       expect(autoNamed == AudioDevice.auto, isTrue);
@@ -77,8 +86,10 @@ void main() {
       expect(player.state.pauseOnDeviceChange, isTrue);
     });
 
-    test('action.setPauseOnDeviceChange updates state and emits to stream', () async {
-      player = MiniaudioPlayer(queue: [dummySource], pauseOnDeviceChange: false);
+    test('action.setPauseOnDeviceChange updates state and emits to stream',
+        () async {
+      player =
+          MiniaudioPlayer(queue: [dummySource], pauseOnDeviceChange: false);
       expect(player.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -118,12 +129,15 @@ void main() {
       expect(engine.state.pauseOnDeviceChange, isFalse);
     });
 
-    test('pauseOnDeviceChange constructor option propagates to child decks', () {
+    test('pauseOnDeviceChange constructor option propagates to child decks',
+        () {
       engine = MiniaudioPlayer(pauseOnDeviceChange: true);
       expect(engine.state.pauseOnDeviceChange, isTrue);
     });
 
-    test('action.setPauseOnDeviceChange updates engine state and emits to stream', () async {
+    test(
+        'action.setPauseOnDeviceChange updates engine state and emits to stream',
+        () async {
       engine = MiniaudioPlayer(pauseOnDeviceChange: false);
       expect(engine.state.pauseOnDeviceChange, isFalse);
 
@@ -170,9 +184,11 @@ void main() {
         isAuto: true,
       );
 
-      final samePhysicalEndpoint = currentActiveEndpoint.isSameEndpoint(fallbackResolvedEndpoint);
+      final samePhysicalEndpoint =
+          currentActiveEndpoint.isSameEndpoint(fallbackResolvedEndpoint);
       expect(samePhysicalEndpoint, isTrue,
-          reason: 'Fallback landed on the same physical hardware endpoint; playback must NOT pause.');
+          reason:
+              'Fallback landed on the same physical hardware endpoint; playback must NOT pause.');
     });
 
     test('Fallback landing on DIFFERENT endpoint triggers pause condition', () {
@@ -191,25 +207,31 @@ void main() {
         isAuto: true,
       );
 
-      final samePhysicalEndpoint = currentActiveEndpoint.isSameEndpoint(fallbackResolvedEndpoint);
+      final samePhysicalEndpoint =
+          currentActiveEndpoint.isSameEndpoint(fallbackResolvedEndpoint);
       expect(samePhysicalEndpoint, isFalse,
-          reason: 'Fallback landed on a different physical endpoint; pauseOnDeviceChange must pause.');
+          reason:
+              'Fallback landed on a different physical endpoint; pauseOnDeviceChange must pause.');
     });
   });
 
-  group('Playback, seek, and leaf call safety with pauseOnDeviceChange enabled', () {
+  group('Playback, seek, and leaf call safety with pauseOnDeviceChange enabled',
+      () {
     late File testWavFile;
 
     setUpAll(() async {
       testWavFile = File('test/fixtures/salida.wav');
     });
 
-    test('MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error', () async {
+    test(
+        'MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error',
+        () async {
       final player = MiniaudioPlayer(
           queue: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
       try {
         await player.action.play();
-        expect(player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
+        expect(
+            player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
         for (int i = 0; i < 20 && !player.state.isPlaying; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
@@ -225,7 +247,8 @@ void main() {
 
         // Seek while paused (calls streamSeek and duration/position getters)
         await player.action.seek(const Duration(milliseconds: 2500));
-        expect(player.state.position.inMilliseconds, inInclusiveRange(2400, 2600));
+        expect(
+            player.state.position.inMilliseconds, inInclusiveRange(2400, 2600));
 
         // Resume play after seek
         await player.action.play();
@@ -243,12 +266,15 @@ void main() {
       }
     });
 
-    test('MiniaudioPlayer with pauseOnDeviceChange handles seek and resume properly', () async {
+    test(
+        'MiniaudioPlayer with pauseOnDeviceChange handles seek and resume properly',
+        () async {
       final engine = MiniaudioPlayer(pauseOnDeviceChange: true);
       try {
         await engine.action.setQueue([AudioSource(testWavFile.path)]);
         await engine.action.play();
-        expect(engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
+        expect(
+            engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
         expect(engine.state.phase, equals(EnginePhase.playing));
 
         await Future.delayed(const Duration(milliseconds: 100));
@@ -258,7 +284,8 @@ void main() {
 
         // Seek while paused
         await engine.action.seek(const Duration(milliseconds: 2000));
-        expect(engine.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
+        expect(
+            engine.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
 
         // Resume play
         await engine.action.play();

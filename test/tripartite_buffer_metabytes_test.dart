@@ -16,7 +16,8 @@ void main() {
   Future<Map<String, dynamic>> getServerStats(int port) async {
     final client = HttpClient();
     try {
-      final req = await client.getUrl(Uri.parse('http://127.0.0.1:$port/stats'));
+      final req =
+          await client.getUrl(Uri.parse('http://127.0.0.1:$port/stats'));
       final res = await req.close();
       final body = await utf8.decoder.bind(res).join();
       return jsonDecode(body) as Map<String, dynamic>;
@@ -28,7 +29,8 @@ void main() {
   Future<void> resetServerStats(int port) async {
     final client = HttpClient();
     try {
-      final req = await client.getUrl(Uri.parse('http://127.0.0.1:$port/reset_stats'));
+      final req =
+          await client.getUrl(Uri.parse('http://127.0.0.1:$port/reset_stats'));
       final res = await req.close();
       await res.drain<void>();
     } finally {
@@ -41,7 +43,8 @@ void main() {
     // Generate fixtures if not present
     final fixtureCheck = File('test/fixtures/tripartite/giant_cover.mp3');
     if (!fixtureCheck.existsSync()) {
-      final genResult = await Process.run('python3', ['test/helpers/generate_tripartite_fixtures.py']);
+      final genResult = await Process.run(
+          'python3', ['test/helpers/generate_tripartite_fixtures.py']);
       if (genResult.exitCode != 0) {
         throw StateError('Failed to generate fixtures: ${genResult.stderr}');
       }
@@ -74,7 +77,8 @@ void main() {
 
     serverPort = await completer.future.timeout(
       const Duration(seconds: 5),
-      onTimeout: () => throw TimeoutException('Failed to start python test HTTP server'),
+      onTimeout: () =>
+          throw TimeoutException('Failed to start python test HTTP server'),
     );
   });
 
@@ -82,7 +86,8 @@ void main() {
     if (serverPort != null) {
       try {
         final client = HttpClient();
-        final req = await client.getUrl(Uri.parse('http://127.0.0.1:$serverPort/shutdown'));
+        final req = await client
+            .getUrl(Uri.parse('http://127.0.0.1:$serverPort/shutdown'));
         final res = await req.close();
         await res.drain<void>();
       } catch (_) {}
@@ -91,7 +96,9 @@ void main() {
     await serverProcess?.exitCode;
   });
 
-  group('BUFFER_AND_METADATA_SPEC: Tripartite Buffer & .metadata Intensive Verification', () {
+  group(
+      'BUFFER_AND_METADATA_SPEC: Tripartite Buffer & .metadata Intensive Verification',
+      () {
     late MiniaudioPlayer player;
 
     setUp(() async {
@@ -103,7 +110,8 @@ void main() {
       await player.dispose();
     });
 
-    test('Test 1.1: Giant Cover Art (> 256 KB) in MP3 & .metadata synthesis', () async {
+    test('Test 1.1: Giant Cover Art (> 256 KB) in MP3 & .metadata synthesis',
+        () async {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
@@ -112,15 +120,19 @@ void main() {
 
       // Check metadata immediately after opening
       final meta = player.state.metadata?.bytes;
-      expect(meta, isNotNull, reason: 'metadata must not be null for track with ID3v2 metadata');
-      expect(meta!.length, greaterThan(350000), reason: 'metadata must retain full > 350 KB ID3v2 tag');
+      expect(meta, isNotNull,
+          reason: 'metadata must not be null for track with ID3v2 metadata');
+      expect(meta!.length, greaterThan(350000),
+          reason: 'metadata must retain full > 350 KB ID3v2 tag');
 
       // Verify ID3v2 signature and APIC frame header
       final headerStr = ascii.decode(meta.sublist(0, 3));
-      expect(headerStr, equals('ID3'), reason: 'metadata must begin with ID3 tag signature');
+      expect(headerStr, equals('ID3'),
+          reason: 'metadata must begin with ID3 tag signature');
 
       final metaLatin1 = latin1.decode(meta.sublist(0, 100));
-      expect(metaLatin1.contains('APIC'), isTrue, reason: 'metadata must contain APIC picture frame');
+      expect(metaLatin1.contains('APIC'), isTrue,
+          reason: 'metadata must contain APIC picture frame');
 
       // Verify playback proceeds from pure audio ring
       int elapsed = 0;
@@ -129,32 +141,41 @@ void main() {
         elapsed += 50;
       }
       expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
-      expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Audio frames must decode cleanly');
+      expect(player.state.position.inMilliseconds, greaterThan(0),
+          reason: 'Audio frames must decode cleanly');
 
       // Seek to Duration.zero: must hit Pinned Head cache with 0 range requests
       await resetServerStats(serverPort!);
       await player.action.seek(Duration.zero);
 
       final stats = await getServerStats(serverPort!);
-      final rangeRequests = (stats['range_requests_by_path'] as Map<String, dynamic>?) ?? {};
+      final rangeRequests =
+          (stats['range_requests_by_path'] as Map<String, dynamic>?) ?? {};
       final testRanges = rangeRequests['/music/giant_cover.mp3'] as int? ?? 0;
-      expect(testRanges, equals(0), reason: 'seek(0) must be served from Pinned Head without Range request');
+      expect(testRanges, equals(0),
+          reason:
+              'seek(0) must be served from Pinned Head without Range request');
 
       await player.action.stop();
     });
 
-    test('Test 1.2: Giant Picture Block (> 256 KB) in FLAC & .metadata synthesis', () async {
+    test(
+        'Test 1.2: Giant Picture Block (> 256 KB) in FLAC & .metadata synthesis',
+        () async {
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.flac';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
       final meta = player.state.metadata?.bytes;
-      expect(meta, isNotNull, reason: 'metadata must not be null for FLAC track');
-      expect(meta!.length, greaterThan(300000), reason: 'metadata must retain full > 300 KB PICTURE metadata block');
+      expect(meta, isNotNull,
+          reason: 'metadata must not be null for FLAC track');
+      expect(meta!.length, greaterThan(300000),
+          reason: 'metadata must retain full > 300 KB PICTURE metadata block');
 
       // Verify FLAC signature
       final signature = ascii.decode(meta.sublist(0, 4));
-      expect(signature, equals('fLaC'), reason: 'metadata must begin with fLaC signature');
+      expect(signature, equals('fLaC'),
+          reason: 'metadata must begin with fLaC signature');
 
       // Verify playback proceeds
       int elapsed = 0;
@@ -163,21 +184,26 @@ void main() {
         elapsed += 50;
       }
       expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
-      expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Audio frames must decode cleanly');
+      expect(player.state.position.inMilliseconds, greaterThan(0),
+          reason: 'Audio frames must decode cleanly');
 
       await player.action.stop();
     });
 
-    test('Test 2: EOF Chirp Prevention (Tail Protection against fake 0xFF 0xFB syncwords)', () async {
+    test(
+        'Test 2: EOF Chirp Prevention (Tail Protection against fake 0xFF 0xFB syncwords)',
+        () async {
       final url = 'http://127.0.0.1:$serverPort/music/eof_chirp.mp3';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
       // Verify metadata has tail tags synthesized
       final meta = player.state.metadata?.bytes;
-      expect(meta, isNotNull, reason: 'metadata should contain synthesized metadata');
+      expect(meta, isNotNull,
+          reason: 'metadata should contain synthesized metadata');
       final metaLatin1 = latin1.decode(meta!);
-      expect(metaLatin1.contains('APETAGEX') || metaLatin1.contains('TAG'), isTrue,
+      expect(
+          metaLatin1.contains('APETAGEX') || metaLatin1.contains('TAG'), isTrue,
           reason: 'metadata should contain trailing APEv2 or ID3v1 tags');
 
       // Seek near end of track to test EOF boundary
@@ -195,12 +221,14 @@ void main() {
         waitMs += 100;
       }
       expect(player.state.isCompleted, isTrue,
-          reason: 'Track must reach completion cleanly without decoding fake syncwords');
+          reason:
+              'Track must reach completion cleanly without decoding fake syncwords');
 
       await player.action.stop();
     });
 
-    test('Test 3: Non-Fast-Start MP4 / M4A Probing & .metadata Synthesis', () async {
+    test('Test 3: Non-Fast-Start MP4 / M4A Probing & .metadata Synthesis',
+        () async {
       final url = 'http://127.0.0.1:$serverPort/music/non_faststart.m4a';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
@@ -208,21 +236,27 @@ void main() {
       // Verify track opens and duration is determined
       expect(player.state.duration, isNotNull);
       expect(player.state.duration!, greaterThan(Duration.zero),
-          reason: 'Non-faststart MP4 must initialize duration after moov probe');
+          reason:
+              'Non-faststart MP4 must initialize duration after moov probe');
 
       // Verify synthesized metadata has faststart layout: ftyp + empty mdat (8B) + moov
       final meta = player.state.metadata?.bytes;
       expect(meta, isNotNull, reason: 'metadata must be synthesized for MP4');
       expect(meta!.length, lessThan(30000),
-          reason: 'Synthesized metadata must be compact (~14 KB), not containing audio mdat payload');
-      expect(meta.length, greaterThan(13000), reason: 'Synthesized metadata must contain full moov atom');
+          reason:
+              'Synthesized metadata must be compact (~14 KB), not containing audio mdat payload');
+      expect(meta.length, greaterThan(13000),
+          reason: 'Synthesized metadata must contain full moov atom');
 
       final metaLatin1 = latin1.decode(meta.sublist(0, 100));
-      expect(metaLatin1.contains('ftyp'), isTrue, reason: 'Must begin with ftyp box');
-      expect(metaLatin1.contains('mdat'), isTrue, reason: 'Must contain empty mdat box header');
+      expect(metaLatin1.contains('ftyp'), isTrue,
+          reason: 'Must begin with ftyp box');
+      expect(metaLatin1.contains('mdat'), isTrue,
+          reason: 'Must contain empty mdat box header');
 
       final moovCheck = latin1.decode(meta);
-      expect(moovCheck.contains('moov'), isTrue, reason: 'Must contain full moov atom from tail');
+      expect(moovCheck.contains('moov'), isTrue,
+          reason: 'Must contain full moov atom from tail');
 
       // Verify playback works
       int elapsed = 0;
@@ -230,8 +264,10 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsed += 50;
       }
-      expect(player.state.isPlaying, isTrue, reason: 'Non-faststart MP4 must play cleanly');
-      expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Position must advance');
+      expect(player.state.isPlaying, isTrue,
+          reason: 'Non-faststart MP4 must play cleanly');
+      expect(player.state.position.inMilliseconds, greaterThan(0),
+          reason: 'Position must advance');
 
       await player.action.stop();
     });
@@ -242,23 +278,32 @@ void main() {
       await player.action.play();
 
       final meta = player.state.metadata?.bytes;
-      expect(meta, isNotNull, reason: 'metadata must not be null for WAV with metadata');
+      expect(meta, isNotNull,
+          reason: 'metadata must not be null for WAV with metadata');
 
       final metaLatin1 = latin1.decode(meta!);
-      expect(metaLatin1.startsWith('RIFF'), isTrue, reason: 'WAV metadata must start with RIFF header');
-      expect(metaLatin1.contains('WAVE'), isTrue, reason: 'Must contain WAVE format code');
-      expect(metaLatin1.contains('fmt '), isTrue, reason: 'Must contain fmt subchunk');
-      expect(metaLatin1.contains('data'), isTrue, reason: 'Must contain data subchunk header');
-      expect(metaLatin1.contains('LIST'), isTrue, reason: 'Must contain trailing LIST chunk from Tail');
-      expect(metaLatin1.contains('INAM'), isTrue, reason: 'Must contain INAM chunk');
-      expect(metaLatin1.contains('Test Title 1234'), isTrue, reason: 'Must preserve track title tag');
+      expect(metaLatin1.startsWith('RIFF'), isTrue,
+          reason: 'WAV metadata must start with RIFF header');
+      expect(metaLatin1.contains('WAVE'), isTrue,
+          reason: 'Must contain WAVE format code');
+      expect(metaLatin1.contains('fmt '), isTrue,
+          reason: 'Must contain fmt subchunk');
+      expect(metaLatin1.contains('data'), isTrue,
+          reason: 'Must contain data subchunk header');
+      expect(metaLatin1.contains('LIST'), isTrue,
+          reason: 'Must contain trailing LIST chunk from Tail');
+      expect(metaLatin1.contains('INAM'), isTrue,
+          reason: 'Must contain INAM chunk');
+      expect(metaLatin1.contains('Test Title 1234'), isTrue,
+          reason: 'Must preserve track title tag');
 
       // Verify data chunk size is patched to 0 in synthesized metadata
       final dataIdx = metaLatin1.indexOf('data');
       expect(dataIdx, isNonNegative);
       final byteData = ByteData.sublistView(meta);
       final dataSize = byteData.getUint32(dataIdx + 4, Endian.little);
-      expect(dataSize, equals(0), reason: 'Synthesized WAV metadata must patch data chunk size to 0');
+      expect(dataSize, equals(0),
+          reason: 'Synthesized WAV metadata must patch data chunk size to 0');
 
       // Verify playback and completion
       int elapsed = 0;
@@ -267,13 +312,15 @@ void main() {
         elapsed += 50;
       }
       expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
-      expect(player.state.position.inMilliseconds, greaterThan(0), reason: 'Audio frames must decode cleanly');
+      expect(player.state.position.inMilliseconds, greaterThan(0),
+          reason: 'Audio frames must decode cleanly');
 
       await player.action.stop();
     });
 
     test('Test 5: ICY Livestream Demuxing & Live metadata Stream', () async {
-      final url = 'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
+      final url =
+          'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
 
       final receivedMeta = <Uint8List>[];
       final metaSub = player.stream.metadata.listen((meta) {
@@ -287,7 +334,8 @@ void main() {
 
       // Wait for at least 2 ICY metadata blocks to be demuxed from the audio stream and synthesized
       int waitMs = 0;
-      while (receivedMeta.where((m) => m.length > 128).length < 2 && waitMs < 4000) {
+      while (receivedMeta.where((m) => m.length > 128).length < 2 &&
+          waitMs < 4000) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         waitMs += 100;
       }
@@ -296,18 +344,24 @@ void main() {
 
       final icyContainers = receivedMeta.where((m) => m.length > 128).toList();
       expect(icyContainers.length, greaterThanOrEqualTo(2),
-          reason: 'Livestream demuxer must extract ICY metadata blocks outside audio ring');
+          reason:
+              'Livestream demuxer must extract ICY metadata blocks outside audio ring');
 
       for (final meta in icyContainers) {
         expect(meta.length, greaterThan(128));
         // Must start with ID3 container header
         expect(utf8.decode(meta.sublist(0, 3)), equals('ID3'),
-            reason: 'Livestream metadata must synthesize a valid ID3 container');
+            reason:
+                'Livestream metadata must synthesize a valid ID3 container');
 
         final metaStr = utf8.decode(meta, allowMalformed: true);
         expect(metaStr.contains('TIT2'), isTrue,
             reason: 'Synthesized container must contain TIT2 frame');
-        expect(metaStr.contains('ICY Track') || metaStr.contains('Artist') || metaStr.contains('Band'), isTrue,
+        expect(
+            metaStr.contains('ICY Track') ||
+                metaStr.contains('Artist') ||
+                metaStr.contains('Band'),
+            isTrue,
             reason: 'Synthesized container must contain parsed ICY song title');
 
         // Must end with valid 128-byte ID3v1 trailer
@@ -320,11 +374,14 @@ void main() {
       final currentStateMeta = player.state.metadata?.bytes;
       expect(currentStateMeta, isNotNull);
       expect(utf8.decode(currentStateMeta!.sublist(0, 3)), equals('ID3'),
-          reason: 'PlayerState.metadata must hold current synthesized ID3 container');
-      final currentMetaStr = utf8.decode(currentStateMeta, allowMalformed: true);
+          reason:
+              'PlayerState.metadata must hold current synthesized ID3 container');
+      final currentMetaStr =
+          utf8.decode(currentStateMeta, allowMalformed: true);
       expect(currentMetaStr.contains('TIT2'), isTrue);
 
-      expect(player.state.isPlaying, isTrue, reason: 'Stream must remain playing without decoder errors');
+      expect(player.state.isPlaying, isTrue,
+          reason: 'Stream must remain playing without decoder errors');
 
       await player.action.stop();
     });
@@ -340,19 +397,22 @@ void main() {
         }
       });
 
-      final url = 'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
+      final url =
+          'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
       await engine.action.setQueue([AudioSource(Uri.parse(url))]);
       await engine.action.play();
 
       int waitMs = 0;
-      while (receivedEngineMeta.where((m) => m.length > 128).isEmpty && waitMs < 3000) {
+      while (receivedEngineMeta.where((m) => m.length > 128).isEmpty &&
+          waitMs < 3000) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         waitMs += 100;
       }
 
       await engineMetaSub.cancel();
 
-      final icyContainers = receivedEngineMeta.where((m) => m.length > 128).toList();
+      final icyContainers =
+          receivedEngineMeta.where((m) => m.length > 128).toList();
       expect(icyContainers, isNotEmpty,
           reason: 'MiniaudioPlayer must forward metadata from active deck');
 
@@ -362,17 +422,20 @@ void main() {
 
       final engineMetaStr = utf8.decode(firstMeta, allowMalformed: true);
       expect(engineMetaStr.contains('TIT2'), isTrue,
-          reason: 'Player metadata must contain TIT2 frame with ICY stream title');
+          reason:
+              'Player metadata must contain TIT2 frame with ICY stream title');
 
       expect(engine.state.metadata?.bytes, isNotNull,
           reason: 'PlayerState.metadata must expose current metadata snapshot');
-      expect(utf8.decode(engine.state.metadata!.bytes.sublist(0, 3)), equals('ID3'));
+      expect(utf8.decode(engine.state.metadata!.bytes.sublist(0, 3)),
+          equals('ID3'));
 
       await engine.action.stop();
       await engine.dispose();
     });
 
-    test('Test 7: 3 MB Head & 25 KB Tail with 5-Second Buffer Integrity', () async {
+    test('Test 7: 3 MB Head & 25 KB Tail with 5-Second Buffer Integrity',
+        () async {
       // Small 1 MB circular buffer (~5 seconds at 44.1kHz 16-bit stereo)
       final smallBufferPlayer = MiniaudioPlayer(bufferSize: 1);
       await smallBufferPlayer.action.setMetadataEnabled(true);
@@ -385,7 +448,8 @@ void main() {
       final meta = smallBufferPlayer.state.metadata?.bytes;
       expect(meta, isNotNull);
       expect(meta!.length, greaterThan(3 * 1000 * 1000),
-          reason: 'Head must retain full 3 MB of metadata without truncation to 256 KB');
+          reason:
+              'Head must retain full 3 MB of metadata without truncation to 256 KB');
       expect(meta.length, greaterThanOrEqualTo(3 * 1024 * 1024),
           reason: '.metadata must contain the entire 3 MB metadata');
 
@@ -406,7 +470,9 @@ void main() {
       await smallBufferPlayer.dispose();
     });
 
-    test('Test 8: Metadata Lifecycle: play() & dispose() reset, stop() preserves', () async {
+    test(
+        'Test 8: Metadata Lifecycle: play() & dispose() reset, stop() preserves',
+        () async {
       final lifecyclePlayer = MiniaudioPlayer();
       await lifecyclePlayer.action.setMetadataEnabled(true);
       final url = 'http://127.0.0.1:$serverPort/music/giant_cover.mp3';
@@ -428,12 +494,15 @@ void main() {
           reason: 'stop() must preserve metadata for fast replay');
 
       // 3. Open second track -> opening MUST reset metadata to null during loading
-      await lifecyclePlayer.action.setQueue([AudioSource('http://127.0.0.1:$serverPort/music/trailing_chunks.wav')]);
+      await lifecyclePlayer.action.setQueue([
+        AudioSource('http://127.0.0.1:$serverPort/music/trailing_chunks.wav')
+      ]);
       final playFuture = lifecyclePlayer.action.play();
       // During opening phase or stream, null was emitted
       await playFuture;
       expect(metaEmissions.any((m) => m == null), isTrue,
-          reason: 'play() on new track must emit null to reset metadata from previous track');
+          reason:
+              'play() on new track must emit null to reset metadata from previous track');
 
       // 4. Dispose player -> metadata MUST be cleaned to null
       await lifecyclePlayer.dispose();

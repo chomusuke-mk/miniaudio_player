@@ -13,7 +13,8 @@ void main() {
       const config = SilenceSkipConfig();
       expect(config.mode, equals(SilenceSkipMode.disabled));
       expect(config.thresholdDb, equals(-45.0));
-      expect(config.minSilenceDuration, equals(const Duration(milliseconds: 300)));
+      expect(
+          config.minSilenceDuration, equals(const Duration(milliseconds: 300)));
       expect(config.padding, equals(const Duration(milliseconds: 50)));
     });
 
@@ -26,7 +27,8 @@ void main() {
         minSilenceDuration: Duration(milliseconds: 250),
       );
       expect(continuous.mode, equals(SilenceSkipMode.continuous));
-      expect(continuous.minSilenceDuration, equals(const Duration(milliseconds: 250)));
+      expect(continuous.minSilenceDuration,
+          equals(const Duration(milliseconds: 250)));
 
       const all = SilenceSkipConfig.all(padding: Duration(milliseconds: 40));
       expect(all.mode, equals(SilenceSkipMode.all));
@@ -78,18 +80,22 @@ void main() {
       await player.dispose();
     });
 
-    test('initial state has silence skipping disabled and 0 saved duration', () {
+    test('initial state has silence skipping disabled and 0 saved duration',
+        () {
       expect(player.state.skipSilence, isFalse);
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.disabled));
       expect(player.state.silenceConfig.mode, equals(SilenceSkipMode.disabled));
       expect(player.state.silenceSavedDuration, equals(Duration.zero));
     });
 
-    test('setSilenceConfig enables and disables silence skipping with reactive streams', () async {
+    test(
+        'setSilenceConfig enables and disables silence skipping with reactive streams',
+        () async {
       final skipEvents = <bool>[];
       final sub = player.stream.skipSilence.listen(skipEvents.add);
 
-      await player.action.setSilenceConfig(const SilenceSkipConfig.continuous());
+      await player.action
+          .setSilenceConfig(const SilenceSkipConfig.continuous());
       expect(player.state.skipSilence, isTrue);
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.continuous));
 
@@ -103,7 +109,9 @@ void main() {
       expect(skipEvents, equals([true, false]));
     });
 
-    test('setSilenceConfig applies customized thresholds and emits config stream', () async {
+    test(
+        'setSilenceConfig applies customized thresholds and emits config stream',
+        () async {
       final configEvents = <SilenceSkipConfig>[];
       final sub = player.stream.silenceConfig.listen(configEvents.add);
 
@@ -133,11 +141,13 @@ void main() {
       expect(configEvents, contains(targetConfig));
     });
 
-    test('setSilenceConfig with copyWith updates individual fields selectively', () async {
+    test('setSilenceConfig with copyWith updates individual fields selectively',
+        () async {
       await player.action.setSilenceConfig(const SilenceSkipConfig.all());
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.all));
 
-      await player.action.setSilenceConfig(player.state.silenceConfig.copyWith(thresholdDb: -38.0));
+      await player.action.setSilenceConfig(
+          player.state.silenceConfig.copyWith(thresholdDb: -38.0));
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.all));
       expect(player.state.silenceConfig.thresholdDb, equals(-38.0));
       expect(
@@ -146,12 +156,15 @@ void main() {
       );
     });
 
-    test('dynamic toggling of skipSilence mid-playback engages without crashing', () async {
+    test(
+        'dynamic toggling of skipSilence mid-playback engages without crashing',
+        () async {
       await player.action.setQueue([AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();
 
       // Toggle silence skip ON while playing
-      await player.action.setSilenceConfig(const SilenceSkipConfig.continuous());
+      await player.action
+          .setSilenceConfig(const SilenceSkipConfig.continuous());
       expect(player.state.skipSilence, isTrue);
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -163,7 +176,8 @@ void main() {
       await player.action.stop();
     });
 
-    test('seeking resets silence detector and preserves engine stability', () async {
+    test('seeking resets silence detector and preserves engine stability',
+        () async {
       await player.action.setSilenceConfig(const SilenceSkipConfig.all());
       await player.action.setQueue([AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();

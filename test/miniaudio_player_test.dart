@@ -16,7 +16,9 @@ void main() {
     await player.dispose();
   });
 
-  test('AudioDevice correctly handles UTF-8 device names with accented characters', () {
+  test(
+      'AudioDevice correctly handles UTF-8 device names with accented characters',
+      () {
     const deviceName = 'Audio Interno Estéreo analógico';
     const device = AudioDevice(
       id: 'hw_1',
@@ -55,21 +57,25 @@ void main() {
     expect(AudioDevice.auto.toString().toUpperCase(), contains('AUTO'));
   });
 
-  test('AudioDevice displayName uses defaultDeviceDisplayNameResolver for auto devices', () {
+  test(
+      'AudioDevice displayName uses defaultDeviceDisplayNameResolver for auto devices',
+      () {
     const autoDevice = AudioDevice(
       id: '',
       name: 'SYSTEM DEFAULT',
       resolvedName: 'Speakers (Realtek)',
       isAuto: true,
     );
-    expect(autoDevice.displayName, equals('System Default (Speakers (Realtek))'));
+    expect(
+        autoDevice.displayName, equals('System Default (Speakers (Realtek))'));
 
     // Custom resolver
     MiniaudioPlayer.config(
       defaultDeviceDisplayNameResolver: (resolved) =>
           resolved.isEmpty ? 'Predeterminado' : 'Predeterminado: $resolved',
     );
-    expect(autoDevice.displayName, equals('Predeterminado: Speakers (Realtek)'));
+    expect(
+        autoDevice.displayName, equals('Predeterminado: Speakers (Realtek)'));
 
     // Non-auto device returns name directly
     const hardwareDevice = AudioDevice(
@@ -119,7 +125,9 @@ void main() {
     expect(autoA, equals(AudioDevice.auto));
   });
 
-  test('player.state.globalOutputDevices and globalInputDevices hold snapshot of devices', () async {
+  test(
+      'player.state.globalOutputDevices and globalInputDevices hold snapshot of devices',
+      () async {
     final player = MiniaudioPlayer();
     final syncDevices = player.state.globalOutputDevices;
 
@@ -132,14 +140,17 @@ void main() {
     await player.dispose();
   });
 
-  test('stream.globalOutputDevices and stream.globalInputDevices return broadcast streams', () async {
+  test(
+      'stream.globalOutputDevices and stream.globalInputDevices return broadcast streams',
+      () async {
     final player = MiniaudioPlayer();
     expect(player.stream.globalOutputDevices.isBroadcast, isTrue);
     expect(player.stream.globalInputDevices.isBroadcast, isTrue);
     await player.dispose();
   });
 
-  test('stream.globalOutputDevices handles listen and cancel lifecycle cleanly', () async {
+  test('stream.globalOutputDevices handles listen and cancel lifecycle cleanly',
+      () async {
     final player = MiniaudioPlayer();
     final stream = player.stream.globalOutputDevices;
     final sub1 = stream.listen((_) {});
@@ -152,7 +163,9 @@ void main() {
     await player.dispose();
   });
 
-  test('stream.globalOutputDevices and globalInputDevices immediately deliver current snapshot on subscription', () async {
+  test(
+      'stream.globalOutputDevices and globalInputDevices immediately deliver current snapshot on subscription',
+      () async {
     final player = MiniaudioPlayer();
 
     List<AudioDevice>? receivedOutputs;
@@ -179,7 +192,9 @@ void main() {
     await player.dispose();
   });
 
-  test('MiniaudioPlayer static device discovery methods return valid devices with fallback safety', () async {
+  test(
+      'MiniaudioPlayer static device discovery methods return valid devices with fallback safety',
+      () async {
     final syncOut = MiniaudioPlayer.getOutputDevicesSync();
     expect(syncOut, isNotEmpty);
     expect(syncOut.first.name, isNotEmpty);
@@ -203,14 +218,17 @@ void main() {
     final player = MiniaudioPlayer(queue: [AudioSource(bytes)]);
     try {
       await player.action.play();
-      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
+      expect(player.state.duration?.inMilliseconds,
+          inInclusiveRange(10000, 10100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.seek(const Duration(milliseconds: 2000));
-      expect(player.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
+      expect(
+          player.state.position.inMilliseconds, inInclusiveRange(1900, 2100));
 
       await player.action.seek(const Duration(milliseconds: 4000));
-      expect(player.state.position.inMilliseconds, inInclusiveRange(3900, 4100));
+      expect(
+          player.state.position.inMilliseconds, inInclusiveRange(3900, 4100));
 
       await player.action.seek(Duration.zero);
       expect(player.state.position.inMilliseconds, inInclusiveRange(0, 200));
@@ -222,11 +240,13 @@ void main() {
 
       // Seek to 3.5 seconds during active playback
       await player.action.seek(const Duration(milliseconds: 3500));
-      expect(player.state.position.inMilliseconds, inInclusiveRange(3400, 3600));
+      expect(
+          player.state.position.inMilliseconds, inInclusiveRange(3400, 3600));
 
       await Future<void>.delayed(const Duration(milliseconds: 500));
       // Must NOT jump to EOF (10031ms)
-      expect(player.state.position.inMilliseconds, inInclusiveRange(3800, 4500));
+      expect(
+          player.state.position.inMilliseconds, inInclusiveRange(3800, 4500));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.pause();
@@ -236,7 +256,8 @@ void main() {
     }
   });
 
-  test('switching memory tracks does not crash and updates correctly', () async {
+  test('switching memory tracks does not crash and updates correctly',
+      () async {
     final file1 = File('test/fixtures/cbr_noxing.mp3');
     final file2 = File('test/fixtures/salida.mp3');
     expect(file1.existsSync(), isTrue);
@@ -250,26 +271,31 @@ void main() {
     try {
       // 1. Play track 1
       await player.action.play();
-      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
+      expect(player.state.duration?.inMilliseconds,
+          inInclusiveRange(10000, 10100));
       expect(player.state.isPlaying, isTrue);
 
       // 2. Switch directly to track 2 while playing
       await player.action.setQueue([AudioSource(Uint8List.fromList(bytes2))]);
       await player.action.play();
-      expect(player.state.duration?.inMilliseconds, inInclusiveRange(65000, 72000));
+      expect(player.state.duration?.inMilliseconds,
+          inInclusiveRange(65000, 72000));
       expect(player.state.isPlaying, isTrue);
 
       // 3. Switch back to track 1
       await player.action.setQueue([AudioSource(Uint8List.fromList(bytes1))]);
       await player.action.play();
-      expect(player.state.duration?.inMilliseconds, inInclusiveRange(10000, 10100));
+      expect(player.state.duration?.inMilliseconds,
+          inInclusiveRange(10000, 10100));
     } finally {
       await player.dispose();
     }
   });
 
   group('AudioSource generic specialization and type casting', () {
-    test('AudioSource withData<R> specializes generic type cleanly without re-wrapping', () {
+    test(
+        'AudioSource withData<R> specializes generic type cleanly without re-wrapping',
+        () {
       // Create an untyped / dynamic AudioSource
       final AudioSource rawSource = AudioSource(
         'test/fixtures/salida.mp3',
@@ -281,7 +307,8 @@ void main() {
 
       // Specialize with specific type parameter AudioSource<Map<String, String>> via withData
       final dataMap = {'artist': 'Test Artist', 'track': 'Salida'};
-      final specializedSource = rawSource.withData<Map<String, String>>(dataMap);
+      final specializedSource =
+          rawSource.withData<Map<String, String>>(dataMap);
 
       expect(specializedSource, isA<AudioSource<Map<String, String>>>());
       expect(specializedSource.data, equals(dataMap));

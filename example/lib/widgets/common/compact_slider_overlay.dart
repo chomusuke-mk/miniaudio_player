@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 /// Ultra-compact, elegant floating slider overlay control for Speed, Pitch, Volume, and Crossfade.
@@ -77,8 +78,14 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
     final pos = renderBox.localToGlobal(Offset.zero);
     final screenSize = MediaQuery.of(context).size;
 
-    final targetLeft = (pos.dx - 20).clamp(8.0, (screenSize.width - 190).clamp(8.0, double.infinity));
-    final targetTop = (pos.dy - 44).clamp(8.0, (screenSize.height - 44).clamp(8.0, double.infinity));
+    final targetLeft = (pos.dx - 20).clamp(
+      8.0,
+      (screenSize.width - 190).clamp(8.0, double.infinity),
+    );
+    final targetTop = (pos.dy - 44).clamp(
+      8.0,
+      (screenSize.height - 44).clamp(8.0, double.infinity),
+    );
 
     _overlayEntry = OverlayEntry(
       builder: (context) {
@@ -140,13 +147,17 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                                 ),
                                 activeTrackColor: widget.activeColor,
                                 thumbColor: widget.activeColor,
-                                inactiveTrackColor: StudioColors.cardBorderFocused,
+                                inactiveTrackColor:
+                                    StudioColors.cardBorderFocused,
                                 overlayShape: const RoundSliderOverlayShape(
                                   overlayRadius: 10,
                                 ),
                               ),
                               child: Slider(
-                                value: _currentVal.clamp(widget.min, widget.max),
+                                value: _currentVal.clamp(
+                                  widget.min,
+                                  widget.max,
+                                ),
                                 min: widget.min,
                                 max: widget.max,
                                 onChanged: (val) {
@@ -202,7 +213,9 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
               : StudioColors.backgroundDark,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
-            color: _isOpen ? widget.activeColor : StudioColors.cardBorderFocused,
+            color: _isOpen
+                ? widget.activeColor
+                : StudioColors.cardBorderFocused,
             width: 1.0,
           ),
         ),

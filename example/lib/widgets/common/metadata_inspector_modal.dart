@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
 import 'studio_badge.dart';
@@ -44,10 +45,7 @@ class MetadataInspectorModal extends StatelessWidget {
         side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 960,
-          maxHeight: 750,
-        ),
+        constraints: const BoxConstraints(maxWidth: 960, maxHeight: 750),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -57,11 +55,17 @@ class MetadataInspectorModal extends StatelessWidget {
               decoration: const BoxDecoration(
                 color: Color(0xFF0F172A),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(11)),
-                border: Border(bottom: BorderSide(color: StudioColors.cardBorder)),
+                border: Border(
+                  bottom: BorderSide(color: StudioColors.cardBorder),
+                ),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.analytics_outlined, color: StudioColors.accentCyan, size: 20),
+                  const Icon(
+                    Icons.analytics_outlined,
+                    color: StudioColors.accentCyan,
+                    size: 20,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -88,7 +92,10 @@ class MetadataInspectorModal extends StatelessWidget {
                         const SizedBox(height: 2),
                         const Text(
                           'Comparative Matrix: Offline Header Probing (Static) vs Live Engine Demuxing (Dynamic)',
-                          style: TextStyle(fontSize: 10, color: StudioColors.textSecondary),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: StudioColors.textSecondary,
+                          ),
                         ),
                       ],
                     ),
@@ -112,7 +119,8 @@ class MetadataInspectorModal extends StatelessWidget {
                   final staticCol = _buildMetadataColumn(
                     context: context,
                     title: 'STATIC METADATA (audioAnalysis)',
-                    subtitle: 'Extracted offline via MiniaudioPlayer.analyzeAudio',
+                    subtitle:
+                        'Extracted offline via MiniaudioPlayer.analyzeAudio',
                     accentColor: StudioColors.accentCyan,
                     metadata: staticMetadata,
                     info: staticAudioInfo,
@@ -127,7 +135,8 @@ class MetadataInspectorModal extends StatelessWidget {
                   final dynamicCol = _buildMetadataColumn(
                     context: context,
                     title: 'DYNAMIC METADATA (Playback Engine)',
-                    subtitle: 'Demuxed in real-time from active playback stream',
+                    subtitle:
+                        'Demuxed in real-time from active playback stream',
                     accentColor: StudioColors.accentEmerald,
                     metadata: dynamicMetadata,
                     info: dynamicAudioInfo,
@@ -218,7 +227,10 @@ class MetadataInspectorModal extends StatelessWidget {
               const SizedBox(height: 1),
               Text(
                 subtitle,
-                style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                style: const TextStyle(
+                  fontSize: 9,
+                  color: StudioColors.textMuted,
+                ),
               ),
             ],
           ),
@@ -261,18 +273,28 @@ class MetadataInspectorModal extends StatelessWidget {
                           const SizedBox(height: 3),
                           Text(
                             'MIME: ${cover.mimeType?.name ?? "image/jpeg"}',
-                            style: const TextStyle(fontSize: 9.5, color: Colors.white),
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: Colors.white,
+                            ),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             'Size: ${(cover.bytes.lengthInBytes / 1024).toStringAsFixed(1)} KB',
-                            style: const TextStyle(fontSize: 9.5, color: StudioColors.textSecondary),
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: StudioColors.textSecondary,
+                            ),
                           ),
-                          if (cover.description != null && cover.description!.isNotEmpty) ...[
+                          if (cover.description != null &&
+                              cover.description!.isNotEmpty) ...[
                             const SizedBox(height: 2),
                             Text(
                               'Desc: ${cover.description}',
-                              style: const TextStyle(fontSize: 9, color: StudioColors.textMuted),
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: StudioColors.textMuted,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -288,11 +310,18 @@ class MetadataInspectorModal extends StatelessWidget {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: const [
-                      Icon(Icons.image_not_supported_outlined, size: 18, color: StudioColors.textMuted),
+                      Icon(
+                        Icons.image_not_supported_outlined,
+                        size: 18,
+                        color: StudioColors.textMuted,
+                      ),
                       SizedBox(width: 8),
                       Text(
                         'No embedded cover art detected',
-                        style: TextStyle(fontSize: 10, color: StudioColors.textMuted),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: StudioColors.textMuted,
+                        ),
                       ),
                     ],
                   ),
@@ -309,12 +338,26 @@ class MetadataInspectorModal extends StatelessWidget {
             ('Artist', metadata?.trackArtist ?? metadata?.artist ?? '--'),
             ('Album', metadata?.album ?? '--'),
             ('Album Artist', metadata?.albumArtist ?? '--'),
-            ('Year / Date', metadata?.year?.toString() ?? metadata?.extended.originalReleaseDate ?? '--'),
+            (
+              'Year / Date',
+              metadata?.year?.toString() ??
+                  metadata?.extended.originalReleaseDate ??
+                  '--',
+            ),
             ('Genre', metadata?.genre ?? '--'),
-            ('Track #', '${metadata?.trackNumber ?? "-"}/${metadata?.trackTotal ?? "-"}'),
-            ('Disc #', '${metadata?.discNumber ?? "-"}/${metadata?.discTotal ?? "-"}'),
+            (
+              'Track #',
+              '${metadata?.trackNumber ?? "-"}/${metadata?.trackTotal ?? "-"}',
+            ),
+            (
+              'Disc #',
+              '${metadata?.discNumber ?? "-"}/${metadata?.discTotal ?? "-"}',
+            ),
             if (metadata?.lyrics != null && metadata!.lyrics!.isNotEmpty)
-              ('Lyrics', '${metadata.lyrics!.substring(0, metadata.lyrics!.length > 40 ? 40 : metadata.lyrics!.length)}...'),
+              (
+                'Lyrics',
+                '${metadata.lyrics!.substring(0, metadata.lyrics!.length > 40 ? 40 : metadata.lyrics!.length)}...',
+              ),
           ],
         ),
         const SizedBox(height: 10),
@@ -326,12 +369,37 @@ class MetadataInspectorModal extends StatelessWidget {
           rows: [
             ('Container Format', info?.containerFormat ?? info?.format ?? '--'),
             ('Audio Codec', info?.codec ?? '--'),
-            ('Sample Rate', info?.sampleRate != null && info!.sampleRate > 0 ? '${info.sampleRate} Hz' : '--'),
-            ('Channels', info?.channels != null && info!.channels > 0 ? '${info.channels} ch' : '--'),
-            ('Bit Depth', info?.bitsPerSample != null && info!.bitsPerSample! > 0 ? '${info.bitsPerSample}-bit' : '--'),
-            ('Bitrate', info?.bitrate != null && info!.bitrate > 0 ? '${(info.bitrate / 1000).round()} kbps' : '--'),
+            (
+              'Sample Rate',
+              info?.sampleRate != null && info!.sampleRate > 0
+                  ? '${info.sampleRate} Hz'
+                  : '--',
+            ),
+            (
+              'Channels',
+              info?.channels != null && info!.channels > 0
+                  ? '${info.channels} ch'
+                  : '--',
+            ),
+            (
+              'Bit Depth',
+              info?.bitsPerSample != null && info!.bitsPerSample! > 0
+                  ? '${info.bitsPerSample}-bit'
+                  : '--',
+            ),
+            (
+              'Bitrate',
+              info?.bitrate != null && info!.bitrate > 0
+                  ? '${(info.bitrate / 1000).round()} kbps'
+                  : '--',
+            ),
             ('Duration', _formatDuration(info?.duration)),
-            ('Lossless', info?.lossless == true ? 'Lossless (Bit-perfect)' : 'Lossy / Unknown'),
+            (
+              'Lossless',
+              info?.lossless == true
+                  ? 'Lossless (Bit-perfect)'
+                  : 'Lossy / Unknown',
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -383,8 +451,14 @@ class MetadataInspectorModal extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
-              border: Border(bottom: BorderSide(color: StudioColors.cardBorder.withValues(alpha: 0.6))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(5),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
+                ),
+              ),
             ),
             child: Text(
               title,

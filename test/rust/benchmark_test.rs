@@ -96,3 +96,39 @@ fn test_benchmark_wav_fixtures() {
 fn test_benchmark_flac_fixtures() {
     run_format_benchmark("library/flac", "flac", 10);
 }
+
+#[test]
+fn test_benchmark_extended_pcm_rf64_rifx_w64() {
+    for ext in &["rf64", "rifx", "w64"] {
+        let path = FixtureResolver::resolve(&format!("salida.{}", ext));
+
+        let core_src = miniaudio_player::core::dual_source::AudioSourceCore {
+            id: 1,
+            source: path.to_str().unwrap().to_string(),
+            headers: None,
+            data_bytes: None,
+            replay_gain_db: None,
+            replay_peak: None,
+        };
+        let cfg = miniaudio_player::api::types::RustAnalysisConfig {
+            waveform: true,
+            waveform_points: 72,
+            replay_gain: true,
+            metadata: true,
+            chromaprint: true,
+            max_duration_ms: None,
+            target_lufs: -14.0,
+        };
+        let t = Instant::now();
+        let an_res = miniaudio_player::dsp::analysis::analyze_audio_source(core_src, cfg);
+        let elapsed = t.elapsed();
+        assert!(an_res.is_ok(), "[{}] analyze_audio_source failed", ext);
+        assert!(
+            elapsed < std::time::Duration::from_millis(800),
+            "[{}] analyze_audio_source took too long: {:?}",
+            ext,
+            elapsed
+        );
+    }
+}
+

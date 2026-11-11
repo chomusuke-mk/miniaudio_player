@@ -5593,6 +5593,19 @@ impl SseDecode for Option<crate::api::types::RustVector3> {
     }
 }
 
+impl SseDecode for Option<crate::api::types::RustVisualizerData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::types::RustVisualizerData>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<u32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -6892,6 +6905,8 @@ impl SseDecode for crate::api::player::TelemetryFilter {
         let mut var_audioInfo =
             <Option<crate::api::types::RustAudioInfo>>::sse_decode(deserializer);
         let mut var_activeVoices = <Option<u32>>::sse_decode(deserializer);
+        let mut var_visualizer =
+            <Option<crate::api::types::RustVisualizerData>>::sse_decode(deserializer);
         return crate::api::player::TelemetryFilter {
             state: var_state,
             phase: var_phase,
@@ -6908,6 +6923,7 @@ impl SseDecode for crate::api::player::TelemetryFilter {
             metadata: var_metadata,
             audio_info: var_audioInfo,
             active_voices: var_activeVoices,
+            visualizer: var_visualizer,
         };
     }
 }
@@ -8991,6 +9007,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::player::TelemetryFilter {
             self.metadata.into_into_dart().into_dart(),
             self.audio_info.into_into_dart().into_dart(),
             self.active_voices.into_into_dart().into_dart(),
+            self.visualizer.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9390,6 +9407,16 @@ impl SseEncode for Option<crate::api::types::RustVector3> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::types::RustVector3>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::types::RustVisualizerData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::types::RustVisualizerData>::sse_encode(value, serializer);
         }
     }
 }
@@ -10348,6 +10375,7 @@ impl SseEncode for crate::api::player::TelemetryFilter {
         <Option<crate::api::types::RustAudioMetadata>>::sse_encode(self.metadata, serializer);
         <Option<crate::api::types::RustAudioInfo>>::sse_encode(self.audio_info, serializer);
         <Option<u32>>::sse_encode(self.active_voices, serializer);
+        <Option<crate::api::types::RustVisualizerData>>::sse_encode(self.visualizer, serializer);
     }
 }
 

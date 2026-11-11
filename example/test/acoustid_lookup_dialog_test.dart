@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player_example/controllers/audio_analyzer_controller.dart';
@@ -25,7 +26,9 @@ void main() {
       expect(controller.getAcoustIdFromCache('non_existent_hash'), isNull);
     });
 
-    testWidgets('Renders AcoustIdLookupDialog and displays loaded match data', (tester) async {
+    testWidgets('Renders AcoustIdLookupDialog and displays loaded match data', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(800, 1000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {

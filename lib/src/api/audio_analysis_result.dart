@@ -102,7 +102,8 @@ class ChromaprintResult {
   int get hashCode => Object.hash(fingerprint, algorithm, Object.hashAll(raw));
 
   @override
-  String toString() => 'ChromaprintResult(algorithm: $algorithm, fingerprint: $fingerprint)';
+  String toString() =>
+      'ChromaprintResult(algorithm: $algorithm, fingerprint: $fingerprint)';
 
   static bool _listEquals(List<int> a, List<int> b) {
     if (identical(a, b)) return true;

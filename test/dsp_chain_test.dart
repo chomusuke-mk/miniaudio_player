@@ -38,7 +38,8 @@ void main() {
       expect(Crossfeed.chuMoy.cutoffHz, equals(700.0));
       expect(Crossfeed.chuMoy.feedDb, equals(6.0));
 
-      final custom = defaultCf.copyWith(enabled: true, cutoffHz: 800.0, feedDb: 5.0);
+      final custom =
+          defaultCf.copyWith(enabled: true, cutoffHz: 800.0, feedDb: 5.0);
       expect(custom.enabled, isTrue);
       expect(custom.cutoffHz, equals(800.0));
       expect(custom.feedDb, equals(5.0));
@@ -120,9 +121,13 @@ void main() {
       expect(player.state.replayGain.gainDb, closeTo(0.0, 0.01));
     });
 
-    test('setReplayGain updates targeted AudioSource by id, position and current track', () async {
-      final track1 = AudioSource('test/fixtures/salida.wav', id: 101, replayGainDb: -2.0, replayPeak: 0.9);
-      final track2 = AudioSource('test/fixtures/salida.wav', id: 102, replayGainDb: -4.0, replayPeak: 0.8);
+    test(
+        'setReplayGain updates targeted AudioSource by id, position and current track',
+        () async {
+      final track1 = AudioSource('test/fixtures/salida.wav',
+          id: 101, replayGainDb: -2.0, replayPeak: 0.9);
+      final track2 = AudioSource('test/fixtures/salida.wav',
+          id: 102, replayGainDb: -4.0, replayPeak: 0.8);
       await player.action.setQueue([track1, track2]);
       await player.action.play();
 
@@ -130,18 +135,23 @@ void main() {
       expect(track2.replayGainDb, closeTo(-4.0, 0.01));
 
       // Update track1 by id
-      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -7.5, peak: 0.95), id: 101);
+      await player.action.setReplayGain(
+          const ReplayGainConfig(gainDb: -7.5, peak: 0.95),
+          id: 101);
       expect(track1.replayGainDb, closeTo(-7.5, 0.01));
       expect(track1.replayPeak, closeTo(0.95, 0.01));
       expect(track2.replayGainDb, closeTo(-4.0, 0.01));
 
       // Update track2 by position
-      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -6.0, peak: 0.85), position: 1);
+      await player.action.setReplayGain(
+          const ReplayGainConfig(gainDb: -6.0, peak: 0.85),
+          position: 1);
       expect(track2.replayGainDb, closeTo(-6.0, 0.01));
       expect(track2.replayPeak, closeTo(0.85, 0.01));
 
       // Update current track (which is track1 at index 0) without specifying id or position
-      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -8.0, peak: 0.99));
+      await player.action
+          .setReplayGain(const ReplayGainConfig(gainDb: -8.0, peak: 0.99));
       expect(track1.replayGainDb, closeTo(-8.0, 0.01));
       expect(track1.replayPeak, closeTo(0.99, 0.01));
 
@@ -151,7 +161,8 @@ void main() {
       expect(track1.replayPeak, isNull);
     });
 
-    test('Preamp control updates state and native engine independently', () async {
+    test('Preamp control updates state and native engine independently',
+        () async {
       expect(player.state.preamp, equals(0.0));
 
       await player.action.setPreamp(3.5);
@@ -213,7 +224,8 @@ void main() {
       expect(player.state.spatializerEnabled, isFalse);
     });
 
-    test('Reverb controls and presets update state and native engine', () async {
+    test('Reverb controls and presets update state and native engine',
+        () async {
       expect(player.state.reverb.enabled, isFalse);
 
       await player.action.setReverb(Reverb.concertHall);
@@ -243,11 +255,14 @@ void main() {
       expect(player.state.limiterEnabled, isTrue);
     });
 
-    test('Playback with full DSP chain enabled streams smoothly without crashing', () async {
+    test(
+        'Playback with full DSP chain enabled streams smoothly without crashing',
+        () async {
       await player.action.setQueue([AudioSource(testWavFile.path)]);
 
       // Configure complete DSP chain including Reverb
-      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -10.0, peak: 0.95));
+      await player.action
+          .setReplayGain(const ReplayGainConfig(gainDb: -10.0, peak: 0.95));
       await player.action.setPreamp(1.0);
       await player.action.setBalance(-0.2);
       await player.action.setCrossfeed(Crossfeed.moffatBauer);
@@ -283,13 +298,16 @@ void main() {
         player.stream.balance.listen((v) => streamBalance = v),
         player.stream.mono.listen((v) => streamMono = v),
         player.stream.crossfeed.listen((v) => streamCrossfeed = v),
-        player.stream.spatializerEnabled.listen((v) => streamSpatializerEnabled = v),
-        player.stream.spatializerWidth.listen((v) => streamSpatializerWidth = v),
+        player.stream.spatializerEnabled
+            .listen((v) => streamSpatializerEnabled = v),
+        player.stream.spatializerWidth
+            .listen((v) => streamSpatializerWidth = v),
         player.stream.limiterEnabled.listen((v) => streamLimiter = v),
         player.stream.reverb.listen((v) => streamReverb = v),
       ];
 
-      await player.action.setReplayGain(const ReplayGainConfig(gainDb: -6.0, peak: 0.9));
+      await player.action
+          .setReplayGain(const ReplayGainConfig(gainDb: -6.0, peak: 0.9));
       await player.action.setPreamp(2.5);
       await player.action.setBalance(0.4);
       await player.action.setMono(true);
@@ -338,17 +356,23 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(balanceEvents, equals(1));
-      expect(positionEvents, equals(0), reason: 'position should not emit on balance change');
-      expect(playingEvents, equals(0), reason: 'playing should not emit on balance change');
-      expect(preampEvents, equals(0), reason: 'preamp should not emit on balance change');
-      expect(reverbEvents, equals(0), reason: 'reverb should not emit on balance change');
+      expect(positionEvents, equals(0),
+          reason: 'position should not emit on balance change');
+      expect(playingEvents, equals(0),
+          reason: 'playing should not emit on balance change');
+      expect(preampEvents, equals(0),
+          reason: 'preamp should not emit on balance change');
+      expect(reverbEvents, equals(0),
+          reason: 'reverb should not emit on balance change');
 
       for (final s in subs) {
         await s.cancel();
       }
     });
 
-    test('Distinct deduplication prevents duplicate emissions for identical values', () async {
+    test(
+        'Distinct deduplication prevents duplicate emissions for identical values',
+        () async {
       int volumeEvents = 0;
       int balanceEvents = 0;
       int preampEvents = 0;
@@ -380,10 +404,14 @@ void main() {
       await player.action.setLimiter(false);
       await Future<void>.delayed(const Duration(milliseconds: 30));
 
-      expect(volumeEvents, equals(1), reason: 'volume stream should deduplicate identical values');
-      expect(balanceEvents, equals(1), reason: 'balance stream should deduplicate identical values');
-      expect(preampEvents, equals(1), reason: 'preamp stream should deduplicate identical values');
-      expect(limiterEvents, equals(1), reason: 'limiter stream should deduplicate identical values');
+      expect(volumeEvents, equals(1),
+          reason: 'volume stream should deduplicate identical values');
+      expect(balanceEvents, equals(1),
+          reason: 'balance stream should deduplicate identical values');
+      expect(preampEvents, equals(1),
+          reason: 'preamp stream should deduplicate identical values');
+      expect(limiterEvents, equals(1),
+          reason: 'limiter stream should deduplicate identical values');
 
       for (final s in subs) {
         await s.cancel();

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 import '../widgets/common/studio_badge.dart';
 import '../widgets/common/studio_card.dart';
@@ -86,7 +87,10 @@ class IngestMatrixView extends StatelessWidget {
                 height: 48,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: StudioColors.cardBorder, width: 1.2),
+                  border: Border.all(
+                    color: StudioColors.cardBorder,
+                    width: 1.2,
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -94,14 +98,21 @@ class IngestMatrixView extends StatelessWidget {
                       flex: 2,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: StudioColors.accentCyan.withValues(alpha: 0.25),
-                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(5)),
+                          color: StudioColors.accentCyan.withValues(
+                            alpha: 0.25,
+                          ),
+                          borderRadius: const BorderRadius.horizontal(
+                            left: Radius.circular(5),
+                          ),
                         ),
                         child: const Center(
                           child: Text(
                             '1. Pinned Head\n(Headers & ID3v2)',
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -109,12 +120,17 @@ class IngestMatrixView extends StatelessWidget {
                     Expanded(
                       flex: 6,
                       child: Container(
-                        color: StudioColors.accentViolet.withValues(alpha: 0.20),
+                        color: StudioColors.accentViolet.withValues(
+                          alpha: 0.20,
+                        ),
                         child: const Center(
                           child: Text(
                             '2. Pure Audio Ring Buffer\n(Sliding Frame Window)',
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -123,14 +139,21 @@ class IngestMatrixView extends StatelessWidget {
                       flex: 2,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: StudioColors.accentAmber.withValues(alpha: 0.25),
-                          borderRadius: const BorderRadius.horizontal(right: Radius.circular(5)),
+                          color: StudioColors.accentAmber.withValues(
+                            alpha: 0.25,
+                          ),
+                          borderRadius: const BorderRadius.horizontal(
+                            right: Radius.circular(5),
+                          ),
                         ),
                         child: const Center(
                           child: Text(
                             '3. Tail Buffer\n(moov atom & ID3v1)',
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -143,7 +166,11 @@ class IngestMatrixView extends StatelessWidget {
                 '• Pinned Head: Never overwritten; allows decoders to re-read sample tables.\n'
                 '• Pure Audio Ring: Modular circular indexing; discards data behind cursor and absorbs jitter.\n'
                 '• Tail Buffer: Final probe (probeTail) for MP4 files with trailing moov atoms without downloading the entire file.',
-                style: TextStyle(fontSize: 10, color: StudioColors.textSecondary, height: 1.5),
+                style: TextStyle(
+                  fontSize: 10,
+                  color: StudioColors.textSecondary,
+                  height: 1.5,
+                ),
               ),
             ],
           ),
@@ -179,7 +206,11 @@ class IngestMatrixView extends StatelessWidget {
               ),
               child: Text(
                 level,
-                style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: color),
+                style: TextStyle(
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -191,19 +222,30 @@ class IngestMatrixView extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: StudioColors.textPrimary),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: StudioColors.textPrimary,
+                        ),
                       ),
                       const SizedBox(width: 6),
                       Text(
                         '($scheme)',
-                        style: TextStyle(fontSize: 9.5, color: color, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          color: color,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 2),
                   Text(
                     desc,
-                    style: const TextStyle(fontSize: 9, color: StudioColors.textSecondary),
+                    style: const TextStyle(
+                      fontSize: 9,
+                      color: StudioColors.textSecondary,
+                    ),
                   ),
                 ],
               ),

@@ -266,6 +266,23 @@ fn try_parse_with_lofty<R: Read + Seek>(
     out: &mut RustAudioMetadata,
     consumed_custom_keys: &mut HashSet<String>,
 ) -> bool {
+    let mut header = [0u8; 16];
+    if reader.read_exact(&mut header).is_ok() {
+        let _ = reader.seek(SeekFrom::Start(0));
+        if (&header[0..4] == b"RF64" || &header[0..4] == b"RIFX") && &header[8..12] == b"WAVE" {
+            return false;
+        }
+        const W64_RIFF_GUID: [u8; 16] = [
+            0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00,
+            0x00,
+        ];
+        if header == W64_RIFF_GUID {
+            return false;
+        }
+    } else {
+        let _ = reader.seek(SeekFrom::Start(0));
+    }
+
     let options = ParseOptions::new()
         .read_properties(false)
         .parsing_mode(ParsingMode::Relaxed);

@@ -1,15 +1,14 @@
 import 'dart:math';
+
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 class ImpulseDecayPainter extends CustomPainter {
   final double roomSize;
   final double damping;
 
-  const ImpulseDecayPainter({
-    required this.roomSize,
-    required this.damping,
-  });
+  const ImpulseDecayPainter({required this.roomSize, required this.damping});
 
   @override
   void paint(Canvas canvas, Size size) {

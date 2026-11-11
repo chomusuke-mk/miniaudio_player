@@ -103,7 +103,8 @@ class WaveformPainter extends CustomPainter {
       );
 
       final bufferPaint = Paint()
-        ..color = const Color(0x55FFFFFF) // Soft white halo
+        ..color =
+            const Color(0x55FFFFFF) // Soft white halo
         ..style = PaintingStyle.fill;
       canvas.drawPath(path, bufferPaint);
 

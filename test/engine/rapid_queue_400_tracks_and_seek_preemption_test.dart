@@ -9,7 +9,9 @@ void main() {
   });
 
   group('Rapid 400 Track Queue Navigation & Seek Preemption', () {
-    test('Queue of 400 tracks updates currentIndex immediately at t=0 on next()', () async {
+    test(
+        'Queue of 400 tracks updates currentIndex immediately at t=0 on next()',
+        () async {
       final engine = MiniaudioPlayer<String>();
 
       // Populate a 400 track queue
@@ -39,7 +41,9 @@ void main() {
       await engine.dispose();
     });
 
-    test('Rapid consecutive seeks preempt previous in-flight seeks without delay', () async {
+    test(
+        'Rapid consecutive seeks preempt previous in-flight seeks without delay',
+        () async {
       final player =
           MiniaudioPlayer(queue: [AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();

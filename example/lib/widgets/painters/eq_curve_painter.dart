@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../../theme/studio_colors.dart';
 
 class EqCurvePainter extends CustomPainter {
@@ -32,7 +33,11 @@ class EqCurvePainter extends CustomPainter {
     final zeroLinePaint = Paint()
       ..color = const Color(0xFF26324A)
       ..strokeWidth = 1.2;
-    canvas.drawLine(Offset(0, centerY), Offset(size.width, centerY), zeroLinePaint);
+    canvas.drawLine(
+      Offset(0, centerY),
+      Offset(size.width, centerY),
+      zeroLinePaint,
+    );
 
     // Subtle guide lines for +12 dB and -12 dB
     final guideLinePaint = Paint()
@@ -40,8 +45,16 @@ class EqCurvePainter extends CustomPainter {
       ..strokeWidth = 1.0;
     final topLimitY = centerY - verticalAmplitude;
     final bottomLimitY = centerY + verticalAmplitude;
-    canvas.drawLine(Offset(0, topLimitY), Offset(size.width, topLimitY), guideLinePaint);
-    canvas.drawLine(Offset(0, bottomLimitY), Offset(size.width, bottomLimitY), guideLinePaint);
+    canvas.drawLine(
+      Offset(0, topLimitY),
+      Offset(size.width, topLimitY),
+      guideLinePaint,
+    );
+    canvas.drawLine(
+      Offset(0, bottomLimitY),
+      Offset(size.width, bottomLimitY),
+      guideLinePaint,
+    );
 
     // 2. Internal left labels: +12dB (top), 0dB (center), -12dB (bottom)
     _drawInternalLabel(canvas, '+12dB', const Offset(8, 4));
@@ -153,6 +166,7 @@ class EqCurvePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant EqCurvePainter oldDelegate) {
-    return oldDelegate.equalizer != equalizer || oldDelegate.activeColor != activeColor;
+    return oldDelegate.equalizer != equalizer ||
+        oldDelegate.activeColor != activeColor;
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'studio_colors.dart';
 
 abstract final class StudioTheme {
@@ -23,10 +24,7 @@ abstract final class StudioTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(
-            color: StudioColors.cardBorder,
-            width: 1.2,
-          ),
+          side: const BorderSide(color: StudioColors.cardBorder, width: 1.2),
         ),
       ),
       sliderTheme: SliderThemeData(

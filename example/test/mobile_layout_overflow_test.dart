@@ -56,7 +56,8 @@ void main() {
         expect(
           find.text('miniaudio_player'),
           findsOneWidget,
-          reason: 'App failed to mount the main screen (_isReady remained false)',
+          reason:
+              'App failed to mount the main screen (_isReady remained false)',
         );
 
         // 4. Systematically scroll through all cards to trigger build & layout

@@ -32,13 +32,16 @@ void main() {
       }
     });
 
-    test('globalInputDevices capture device enumeration returns valid devices', () async {
+    test('globalInputDevices capture device enumeration returns valid devices',
+        () async {
       final captureDevices = engine.state.globalInputDevices;
       expect(captureDevices, isNotEmpty);
       expect(captureDevices.any((d) => d.isAuto), isTrue);
     });
 
-    test('Live recording to 16-bit PCM WAV captures audio with valid RIFF headers', () async {
+    test(
+        'Live recording to 16-bit PCM WAV captures audio with valid RIFF headers',
+        () async {
       final tempDir = await Directory.systemTemp.createTemp('map_rec_test_');
       final recordFile = File('${tempDir.path}/live_rec.wav');
 
@@ -90,7 +93,9 @@ void main() {
       }
     });
 
-    test('Microphone capture and auto-ducking configuration reacts to state and streams', () async {
+    test(
+        'Microphone capture and auto-ducking configuration reacts to state and streams',
+        () async {
       expect(engine.state.inputs.isNotEmpty, isFalse);
 
       final duckingStates = <bool>[];
@@ -127,7 +132,8 @@ void main() {
       await Future.wait([sub1.cancel(), sub2.cancel()]);
     });
 
-    test('AudioInput direct instantiation, routing and state updates', () async {
+    test('AudioInput direct instantiation, routing and state updates',
+        () async {
       expect(engine.state.inputs, isEmpty);
 
       final micInput = AudioInput(
@@ -166,7 +172,8 @@ void main() {
       expect(engine.state.inputs, isEmpty);
     });
 
-    test('Selective AudioOutputSource configuration and output routing', () async {
+    test('Selective AudioOutputSource configuration and output routing',
+        () async {
       const headphoneOutput = AudioOutput(
         deviceId: 'headphone_device',
         source: AudioOutputSource.standbyTrack,
@@ -199,14 +206,19 @@ void main() {
       );
     });
 
-    test('Unified setOutputs configures audio outputs, while selective startRecording handles disk recording', () async {
-      final tempDir = await Directory.systemTemp.createTemp('map_multi_out_test_');
+    test(
+        'Unified setOutputs configures audio outputs, while selective startRecording handles disk recording',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('map_multi_out_test_');
       final recFile = File('${tempDir.path}/multi_out.wav');
 
       try {
         await engine.action.setOutputs({
           const AudioOutput(),
-          const AudioOutput(deviceId: 'headphone_dev', source: AudioOutputSource.standbyTrack),
+          const AudioOutput(
+              deviceId: 'headphone_dev',
+              source: AudioOutputSource.standbyTrack),
         });
         await Future.delayed(const Duration(milliseconds: 50));
 
@@ -216,7 +228,8 @@ void main() {
           isTrue,
         );
         expect(
-          engine.state.outputs.any((o) => o.source == AudioOutputSource.standbyTrack),
+          engine.state.outputs
+              .any((o) => o.source == AudioOutputSource.standbyTrack),
           isTrue,
         );
 
@@ -226,7 +239,8 @@ void main() {
           source: AudioOutputSource.musicMix,
         );
         expect(engine.state.isRecording, isTrue);
-        expect(engine.state.recordingSource, equals(AudioOutputSource.musicMix));
+        expect(
+            engine.state.recordingSource, equals(AudioOutputSource.musicMix));
 
         final recResult = await engine.action.stopRecording();
         expect(engine.state.isRecording, isFalse);
@@ -240,12 +254,14 @@ void main() {
       }
     });
 
-    test('Zero hardware outputs (outputs: {}) runs in pure recording mode', () async {
+    test('Zero hardware outputs (outputs: {}) runs in pure recording mode',
+        () async {
       final recEngine = MiniaudioPlayer<String>(outputs: const {});
       await Future.delayed(const Duration(milliseconds: 50));
       expect(recEngine.state.outputs, isEmpty);
 
-      final tempDir = await Directory.systemTemp.createTemp('map_rec_only_test_');
+      final tempDir =
+          await Directory.systemTemp.createTemp('map_rec_only_test_');
       final recFile = File('${tempDir.path}/rec_only.wav');
       try {
         await recEngine.action.startRecording(

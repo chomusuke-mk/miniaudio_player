@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// Renders audio waveform as discrete, un-smoothed rectangular blocks.
@@ -54,12 +55,7 @@ class DiscreteWaveformPainter extends CustomPainter {
       final x = i * (barWidth + effectiveGap);
       final rawPoint = points[i].clamp(0.0, 1.0);
       final amp = math.max(1.5, rawPoint * maxHalfHeight);
-      final rect = Rect.fromLTWH(
-        x,
-        centerY - amp,
-        barWidth,
-        amp * 2,
-      );
+      final rect = Rect.fromLTWH(x, centerY - amp, barWidth, amp * 2);
       canvas.drawRect(rect, barPaint);
     }
   }

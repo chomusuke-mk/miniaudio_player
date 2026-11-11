@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 class VuMeterPainter extends CustomPainter {
@@ -33,10 +34,7 @@ class VuMeterPainter extends CustomPainter {
       ),
     );
     textPainter.layout();
-    textPainter.paint(
-      canvas,
-      Offset((size.width - textPainter.width) / 2, 6),
-    );
+    textPainter.paint(canvas, Offset((size.width - textPainter.width) / 2, 6));
 
     // dB ticks on the left: 0dB, -6dB, -18dB, -36dB
     const ticks = [

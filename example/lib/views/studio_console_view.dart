@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../widgets/cards/algorithmic_reverb_card.dart';
@@ -27,27 +28,41 @@ class StudioConsoleView extends StatelessWidget {
   Widget build(BuildContext context) {
     return ResponsiveGrid(
       leftColumn: [
-        PlaybackEngineCard(
-          controller: playerController,
-          analyzerController: analyzerController,
+        RepaintBoundary(
+          child: PlaybackEngineCard(
+            controller: playerController,
+            analyzerController: analyzerController,
+          ),
         ),
-        PlaylistQueueCard(
-          controller: playerController,
-          analyzerController: analyzerController,
+        RepaintBoundary(
+          child: PlaylistQueueCard(
+            controller: playerController,
+            analyzerController: analyzerController,
+          ),
         ),
-        HardwareRoutingCard(controller: playerController),
-        SpectrumVisualizerCard(controller: playerController),
+        RepaintBoundary(
+          child: HardwareRoutingCard(controller: playerController),
+        ),
+        RepaintBoundary(
+          child: SpectrumVisualizerCard(controller: playerController),
+        ),
       ],
       rightColumn: [
-        AudioAnalyzerCard(
-          playerController: playerController,
-          analyzerController: analyzerController,
+        RepaintBoundary(
+          child: AudioAnalyzerCard(
+            playerController: playerController,
+            analyzerController: analyzerController,
+          ),
         ),
-        CrossfeedCard(controller: playerController),
-        DspEffectsCard(controller: playerController),
-        EqualizerCard(controller: playerController),
-        AlgorithmicReverbCard(controller: playerController),
-        RamSoundEffectsCard(controller: playerController),
+        RepaintBoundary(child: CrossfeedCard(controller: playerController)),
+        RepaintBoundary(child: DspEffectsCard(controller: playerController)),
+        RepaintBoundary(child: EqualizerCard(controller: playerController)),
+        RepaintBoundary(
+          child: AlgorithmicReverbCard(controller: playerController),
+        ),
+        RepaintBoundary(
+          child: RamSoundEffectsCard(controller: playerController),
+        ),
       ],
     );
   }

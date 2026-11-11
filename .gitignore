@@ -32,7 +32,11 @@ migrate_working_dir/
 /temp/
 /.agents/
 
+# Widget Preview related
+.widget_preview/
+
 # Test audio fixtures (exclude binary audio files, track only MANIFEST.md)
 /test/fixtures/*
 !/test/fixtures/MANIFEST.md
 /docs/*
+!/docs/*.md

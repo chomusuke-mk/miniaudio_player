@@ -27,7 +27,8 @@ void main() {
       }
     });
 
-    test('Plays MP3 correctly when file is renamed with wrong extension (.wav)', () async {
+    test('Plays MP3 correctly when file is renamed with wrong extension (.wav)',
+        () async {
       final srcFile = File('test/fixtures/salida.mp3');
       if (!srcFile.existsSync()) return;
 
@@ -98,12 +99,19 @@ void main() {
         bufferBehindLiveStreamDuration: const Duration(seconds: 6),
       );
 
-      expect(MiniaudioPlayer.globalConfig.bufferLocalDuration.inSeconds, equals(8));
-      expect(MiniaudioPlayer.globalConfig.bufferNetworkDuration.inSeconds, equals(30));
-      expect(MiniaudioPlayer.globalConfig.bufferLiveStreamDuration.inSeconds, equals(15));
-      expect(MiniaudioPlayer.globalConfig.bufferBehindLocalDuration.inSeconds, equals(4));
-      expect(MiniaudioPlayer.globalConfig.bufferBehindNetworkDuration.inSeconds, equals(12));
-      expect(MiniaudioPlayer.globalConfig.bufferBehindLiveStreamDuration.inSeconds, equals(6));
+      expect(MiniaudioPlayer.globalConfig.bufferLocalDuration.inSeconds,
+          equals(8));
+      expect(MiniaudioPlayer.globalConfig.bufferNetworkDuration.inSeconds,
+          equals(30));
+      expect(MiniaudioPlayer.globalConfig.bufferLiveStreamDuration.inSeconds,
+          equals(15));
+      expect(MiniaudioPlayer.globalConfig.bufferBehindLocalDuration.inSeconds,
+          equals(4));
+      expect(MiniaudioPlayer.globalConfig.bufferBehindNetworkDuration.inSeconds,
+          equals(12));
+      expect(
+          MiniaudioPlayer.globalConfig.bufferBehindLiveStreamDuration.inSeconds,
+          equals(6));
     });
 
     test('Buffer telemetry properties', () {
@@ -118,7 +126,8 @@ void main() {
       expect(buffer.isBuffering, isFalse);
     });
 
-    test('Playback populates sampleRate, channels, and buffered telemetry', () async {
+    test('Playback populates sampleRate, channels, and buffered telemetry',
+        () async {
       final file = File('test/fixtures/salida.mp3');
       if (!file.existsSync()) return;
 

@@ -1,5 +1,7 @@
 import 'dart:math';
+
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
 class SpectrumPainter extends CustomPainter {
@@ -7,13 +9,19 @@ class SpectrumPainter extends CustomPainter {
   final bool isActive;
 
   static const List<String> frequencyLabels = [
-    '31', '63', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'
+    '31',
+    '63',
+    '125',
+    '250',
+    '500',
+    '1k',
+    '2k',
+    '4k',
+    '8k',
+    '16k',
   ];
 
-  const SpectrumPainter({
-    required this.magnitudes,
-    this.isActive = true,
-  });
+  const SpectrumPainter({required this.magnitudes, this.isActive = true});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -109,6 +117,7 @@ class SpectrumPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant SpectrumPainter oldDelegate) {
-    return oldDelegate.isActive != isActive || oldDelegate.magnitudes != magnitudes;
+    return oldDelegate.isActive != isActive ||
+        oldDelegate.magnitudes != magnitudes;
   }
 }

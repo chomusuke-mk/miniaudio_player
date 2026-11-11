@@ -490,7 +490,7 @@ class MiniaudioPlayer<T> {
     int? bufferSize,
     bool pauseOnDeviceChange = false,
     CrossfadeConfig? crossfadeConfig,
-  }){
+  }) {
     if (!RustLib.instance.initialized) {
       throw StateError(
         'MiniaudioPlayer requires initialization before instantiation. '
@@ -585,7 +585,8 @@ class MiniaudioPlayer<T> {
         state._playbackState = val;
         state._isPaused = val == PlaybackState.paused;
         state._isOpening = val == PlaybackState.opening;
-        MapLogger.info('[EVENT:PLAYBACK_STATE] Engine playback state -> ${val.name}');
+        MapLogger.info(
+            '[EVENT:PLAYBACK_STATE] Engine playback state -> ${val.name}');
         stream._playbackStateController.add(val);
       case rust_types.RustPlayerEvent_IsPlaying(:final field0):
         state._isPlaying = field0;
@@ -707,7 +708,8 @@ class MiniaudioPlayer<T> {
         stream._globalInputDevicesController.add(list);
       case rust_types.RustPlayerEvent_PauseOnDeviceChange(:final field0):
         state._pauseOnDeviceChange = field0;
-        MapLogger.info('[EVENT:PAUSE_ON_DEVICE_CHANGE] pauseOnDeviceChange -> $field0');
+        MapLogger.info(
+            '[EVENT:PAUSE_ON_DEVICE_CHANGE] pauseOnDeviceChange -> $field0');
         stream._pauseOnDeviceChangeController.add(field0);
       case rust_types.RustPlayerEvent_Outputs(:final field0):
         final outs = field0
@@ -865,6 +867,7 @@ class MiniaudioPlayer<T> {
         stream._bufferSizeController.add(field0);
       case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
         final idx = field0 >= 0 ? field0 : null;
+        final indexChanged = state._currentIndex != idx;
         state._currentIndex = idx;
         stream._currentIndexController.add(idx);
         state._currentItem = idx != null && idx >= 0 && idx < state.queue.length
@@ -872,6 +875,16 @@ class MiniaudioPlayer<T> {
             : null;
         final curSource = state.currentItem;
         stream._currentItemController.add(curSource);
+        if (indexChanged) {
+          state._metadata = null;
+          stream._metadataController.add(null);
+          state._audioInfo = null;
+          stream._audioInfoController.add(null);
+          state._duration = Duration.zero;
+          stream._durationController.add(Duration.zero);
+          state._position = Duration.zero;
+          stream._positionController.add(Duration.zero);
+        }
       case rust_types.RustPlayerEvent_Queue(:final queue, :final currentIndex):
         final reconciled = <AudioSource<T>>[];
         for (var i = 0; i < queue.length; i++) {

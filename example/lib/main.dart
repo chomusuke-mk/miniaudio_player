@@ -14,6 +14,6 @@ void main() async {
     defaultBufferSize: 0,
     logLevel: MiniaudioLogLevel.verbose,
   );
-  
+
   runApp(const MiniaudioPlayerExampleApp());
 }

@@ -184,7 +184,9 @@ void main() {
   }
 
   group('AudioInfo Zero-Cost Complete Properties', () {
-    test('populates codec, containerFormat, lossless, bitrateMode, bitsPerSample, fileSize across formats', () async {
+    test(
+        'populates codec, containerFormat, lossless, bitrateMode, bitsPerSample, fileSize across formats',
+        () async {
       // 1. MP3 (lossy, MP3 codec & container)
       final mp3 = resolveAsset('test/fixtures/salida.mp3');
       final mp3Res = await MiniaudioPlayer.analyzeAudio(
@@ -263,7 +265,9 @@ void main() {
       }
     });
 
-    test('DSF (DSD64) exposes rawSampleRate (2822400 Hz), decimated sampleRate (88200 Hz), bitsPerSample (1), and trailing ID3v2 metadata', () async {
+    test(
+        'DSF (DSD64) exposes rawSampleRate (2822400 Hz), decimated sampleRate (88200 Hz), bitsPerSample (1), and trailing ID3v2 metadata',
+        () async {
       // Construct a synthetic valid DSF (DSD64 stereo) with a trailing ID3v2.3 chunk
       final id3Bytes = _buildId3v23Tag([
         _id3TextFrame('TIT2', 'DSD Audiophile Master'),
@@ -275,7 +279,8 @@ void main() {
       const int channels = 2;
       const int rawSampleRate = 2822400; // DSD64
       const int blockSizePerChannel = 4096;
-      const int audioDataBytes = blockSizePerChannel * channels; // 8192 bytes = 65536 bits = 32768 samples/ch
+      const int audioDataBytes = blockSizePerChannel *
+          channels; // 8192 bytes = 65536 bits = 32768 samples/ch
       const int sampleCountPerChannel = blockSizePerChannel * 8;
       const int dsdChunkSize = 28;
       const int fmtChunkSize = 52;
@@ -334,9 +339,14 @@ void main() {
     });
   });
 
-  group('AudioMetadata Full Parsing (Core, Pictures, 63 Extended Tags, Chapters, Custom Tags)', () {
-    test('parses all 17 core tags, front/back cover pictures, extended tags, chapters, and custom tags from ID3v2 MP3', () async {
-      final rawMp3 = resolveAsset('test/fixtures/cbr_noxing.mp3').readAsBytesSync();
+  group(
+      'AudioMetadata Full Parsing (Core, Pictures, 63 Extended Tags, Chapters, Custom Tags)',
+      () {
+    test(
+        'parses all 17 core tags, front/back cover pictures, extended tags, chapters, and custom tags from ID3v2 MP3',
+        () async {
+      final rawMp3 =
+          resolveAsset('test/fixtures/cbr_noxing.mp3').readAsBytesSync();
       // Strip any existing ID3v2 tag on the fixture so our synthetic ID3v2 tag is the sole header tag
       final int existingId3Len = (rawMp3.length >= 10 &&
               rawMp3[0] == 0x49 &&
@@ -351,11 +361,36 @@ void main() {
       final baseMp3 = rawMp3.sublist(existingId3Len);
 
       final frontPng = Uint8List.fromList([
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x89,
+        0x50,
+        0x4E,
+        0x47,
+        0x0D,
+        0x0A,
+        0x1A,
+        0x0A,
+        0x00,
+        0x00,
+        0x00,
+        0x0D,
+        0x49,
+        0x48,
+        0x44,
+        0x52,
       ]);
       final backJpeg = Uint8List.fromList([
-        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0xFF, 0xD9,
+        0xFF,
+        0xD8,
+        0xFF,
+        0xE0,
+        0x00,
+        0x10,
+        0x4A,
+        0x46,
+        0x49,
+        0x46,
+        0xFF,
+        0xD9,
       ]);
 
       final id3 = _buildId3v23Tag([
@@ -389,7 +424,8 @@ void main() {
         _id3TextFrame('TSSE', 'LAME 3.100 -V0'),
         _id3TextFrame('TIT1', 'Main Suite'),
         _id3TextFrame('TIT3', 'Op. 42'),
-        _id3TxxxFrame('MUSICBRAINZ_TRACKID', 'f4e7c9d8-1234-5678-9abc-def012345678'),
+        _id3TxxxFrame(
+            'MUSICBRAINZ_TRACKID', 'f4e7c9d8-1234-5678-9abc-def012345678'),
         _id3TxxxFrame('BARCODE', '0123456789012'),
         _id3TxxxFrame('CATALOGNUMBER', 'DM-2026-LP'),
         // Custom user tags
@@ -448,7 +484,8 @@ void main() {
       expect(meta.trackTotal, equals(12));
       expect(meta.discNumber, equals(1));
       expect(meta.discTotal, equals(2));
-      expect(meta.lyrics, equals('Line 1: Fearless concurrency\nLine 2: Memory safety'));
+      expect(meta.lyrics,
+          equals('Line 1: Fearless concurrency\nLine 2: Memory safety'));
       expect(meta.comment, equals('Recorded in 32-bit float'));
       expect(meta.bpm, closeTo(128.5, 0.01));
       expect(meta.replayGainTrackGain, equals('-6.42 dB'));
@@ -485,7 +522,8 @@ void main() {
       expect(meta.extended.encoderSettings, equals('LAME 3.100 -V0'));
       expect(meta.extended.contentGroup, equals('Main Suite'));
       expect(meta.extended.trackSubtitle, equals('Op. 42'));
-      expect(meta.extended.musicBrainzRecordingId, equals('f4e7c9d8-1234-5678-9abc-def012345678'));
+      expect(meta.extended.musicBrainzRecordingId,
+          equals('f4e7c9d8-1234-5678-9abc-def012345678'));
       expect(meta.extended.barcode, equals('0123456789012'));
       expect(meta.extended.catalogNumber, equals('DM-2026-LP'));
       expect(meta.extended['isrc'], equals('USRC17607839'));
@@ -496,7 +534,8 @@ void main() {
       expect(meta.chapters[0].title, equals('I. Overture'));
       expect(meta.chapters[0].startMs, equals(0));
       expect(meta.chapters[0].endMs, equals(1200));
-      expect(meta.chapters[0].duration, equals(const Duration(milliseconds: 1200)));
+      expect(meta.chapters[0].duration,
+          equals(const Duration(milliseconds: 1200)));
       expect(meta.chapters[1].title, equals('II. Finale'));
       expect(meta.chapters[1].startMs, equals(1200));
       expect(meta.chapters[1].endMs, equals(2500));
@@ -510,8 +549,10 @@ void main() {
       expect(meta.id3v2Version, equals(Id3v2Version.v3));
     });
 
-    test('parses giant FLAC PICTURE block and WAV trailing LIST/INFO chunks', () async {
-      final giantFlac = resolveAsset('test/fixtures/tripartite/giant_cover.flac');
+    test('parses giant FLAC PICTURE block and WAV trailing LIST/INFO chunks',
+        () async {
+      final giantFlac =
+          resolveAsset('test/fixtures/tripartite/giant_cover.flac');
       if (giantFlac.existsSync()) {
         final flacRes = await MiniaudioPlayer.analyzeAudio(
           giantFlac.path,
@@ -528,7 +569,8 @@ void main() {
         expect(cover.bytes.length, greaterThan(290000));
       }
 
-      final trailingWav = resolveAsset('test/fixtures/tripartite/trailing_chunks.wav');
+      final trailingWav =
+          resolveAsset('test/fixtures/tripartite/trailing_chunks.wav');
       if (trailingWav.existsSync()) {
         final wavRes = await MiniaudioPlayer.analyzeAudio(
           trailingWav.path,
@@ -543,8 +585,11 @@ void main() {
       }
     });
 
-    test('player emits full AudioInfo always and full AudioMetadata when setMetadataEnabled(true) is toggled', () async {
-      final baseMp3 = resolveAsset('test/fixtures/cbr_noxing.mp3').readAsBytesSync();
+    test(
+        'player emits full AudioInfo always and full AudioMetadata when setMetadataEnabled(true) is toggled',
+        () async {
+      final baseMp3 =
+          resolveAsset('test/fixtures/cbr_noxing.mp3').readAsBytesSync();
       final id3 = _buildId3v23Tag([
         _id3TextFrame('TIT2', 'Live Deck Track'),
         _id3TextFrame('TPE1', 'Deck Artist'),
@@ -562,7 +607,8 @@ void main() {
         await player.action.play();
 
         final sw = Stopwatch()..start();
-        while (player.state.audioInfo == null && sw.elapsedMilliseconds < 2000) {
+        while (
+            player.state.audioInfo == null && sw.elapsedMilliseconds < 2000) {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
 

@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
+
 import '../../theme/studio_colors.dart';
 
-enum ViewMode {
-  studioConsole,
-  ingestMatrix,
-}
+enum ViewMode { studioConsole, ingestMatrix }
 
 class ConsoleHeader extends StatelessWidget {
   final ViewMode currentMode;
@@ -56,7 +54,9 @@ class ConsoleHeader extends StatelessWidget {
               : StudioColors.cardBackgroundDark,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected ? StudioColors.accentCyan : StudioColors.cardBorder,
+            color: isSelected
+                ? StudioColors.accentCyan
+                : StudioColors.cardBorder,
             width: 1.2,
           ),
         ),
@@ -66,7 +66,9 @@ class ConsoleHeader extends StatelessWidget {
             Icon(
               icon,
               size: 14,
-              color: isSelected ? StudioColors.accentCyan : StudioColors.textSecondary,
+              color: isSelected
+                  ? StudioColors.accentCyan
+                  : StudioColors.textSecondary,
             ),
             const SizedBox(width: 6),
             Text(
@@ -74,7 +76,9 @@ class ConsoleHeader extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                color: isSelected ? StudioColors.accentCyan : StudioColors.textSecondary,
+                color: isSelected
+                    ? StudioColors.accentCyan
+                    : StudioColors.textSecondary,
               ),
             ),
           ],

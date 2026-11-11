@@ -38,9 +38,11 @@ void main() {
     await MiniaudioPlayer.ensureInitialized();
   });
 
-  test('CustomDartByteSource asynchronous pull-with-prefetch bridge test', () async {
+  test('CustomDartByteSource asynchronous pull-with-prefetch bridge test',
+      () async {
     final file = File('test/fixtures/tripartite/trailing_chunks.wav');
-    expect(file.existsSync(), isTrue, reason: 'Test fixture wav file must exist');
+    expect(file.existsSync(), isTrue,
+        reason: 'Test fixture wav file must exist');
     final bytes = await file.readAsBytes();
 
     final player = MiniaudioPlayer();
@@ -57,6 +59,7 @@ void main() {
     await player.dispose();
 
     expect(provider.requestedOffsets.isNotEmpty, isTrue,
-        reason: 'Rust engine should have requested audio chunks from Dart provider');
+        reason:
+            'Rust engine should have requested audio chunks from Dart provider');
   });
 }

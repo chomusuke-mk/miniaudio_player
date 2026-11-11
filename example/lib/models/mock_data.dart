@@ -1,8 +1,10 @@
 import 'dart:convert' show base64Encode;
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import 'audio_track.dart';
 
 abstract final class MockData {
@@ -22,8 +24,8 @@ abstract final class MockData {
     byteData.setUint8(2, 0x46); // 'F'
     byteData.setUint8(3, 0x46); // 'F'
     byteData.setUint32(4, fileSize - 8, Endian.little);
-    byteData.setUint8(8, 0x57);  // 'W'
-    byteData.setUint8(9, 0x41);  // 'A'
+    byteData.setUint8(8, 0x57); // 'W'
+    byteData.setUint8(9, 0x41); // 'A'
     byteData.setUint8(10, 0x56); // 'V'
     byteData.setUint8(11, 0x45); // 'E'
 

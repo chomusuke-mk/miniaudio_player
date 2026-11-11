@@ -716,7 +716,8 @@ class ExtendedMetadata {
           encoderSettings == other.encoderSettings;
 
   @override
-  int get hashCode => Object.hashAll(toMap().entries.map((e) => Object.hash(e.key, e.value)));
+  int get hashCode =>
+      Object.hashAll(toMap().entries.map((e) => Object.hash(e.key, e.value)));
 
   @override
   String toString() => 'ExtendedMetadata(${toMap()})';

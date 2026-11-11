@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
 import '../common/studio_badge.dart';
@@ -61,14 +62,21 @@ class AlgorithmicReverbCard extends StatelessWidget {
                             preset,
                             style: TextStyle(
                               fontSize: 9.5,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                              color: isSelected ? Colors.black : StudioColors.textSecondary,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                              color: isSelected
+                                  ? Colors.black
+                                  : StudioColors.textSecondary,
                             ),
                           ),
                           selected: isSelected,
                           selectedColor: StudioColors.accentViolet,
                           backgroundColor: StudioColors.cardBackgroundDark,
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 0,
+                          ),
                           visualDensity: VisualDensity.compact,
                           onSelected: (_) => controller.setReverbPreset(preset),
                         ),
@@ -92,7 +100,8 @@ class AlgorithmicReverbCard extends StatelessWidget {
                       min: 0.0,
                       max: 1.0,
                       activeColor: StudioColors.accentCyan,
-                      onChanged: (val) => controller.setReverbParams(roomSize: val),
+                      onChanged: (val) =>
+                          controller.setReverbParams(roomSize: val),
                     ),
                     StudioKnob(
                       label: 'DAMPING',
@@ -100,7 +109,8 @@ class AlgorithmicReverbCard extends StatelessWidget {
                       min: 0.0,
                       max: 1.0,
                       activeColor: StudioColors.accentViolet,
-                      onChanged: (val) => controller.setReverbParams(damping: val),
+                      onChanged: (val) =>
+                          controller.setReverbParams(damping: val),
                     ),
                     StudioKnob(
                       label: 'WIDTH',
@@ -108,7 +118,8 @@ class AlgorithmicReverbCard extends StatelessWidget {
                       min: 0.0,
                       max: 1.0,
                       activeColor: StudioColors.accentEmerald,
-                      onChanged: (val) => controller.setReverbParams(width: val),
+                      onChanged: (val) =>
+                          controller.setReverbParams(width: val),
                     ),
                     StudioKnob(
                       label: 'WET LEVEL',

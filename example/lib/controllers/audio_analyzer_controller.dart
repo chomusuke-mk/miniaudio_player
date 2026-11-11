@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:miniaudio_player/miniaudio_player.dart';
+
 import '../models/acoustid_result.dart';
 import '../models/audio_track.dart';
 
@@ -64,10 +66,14 @@ class AudioAnalyzerController extends ChangeNotifier {
   bool isReplayGainActiveForTrack(AudioTrack? track, MiniaudioPlayer? engine) {
     if (track == null) return false;
     if (engine != null) {
-      final queueItem = engine.state.queue.cast<AudioSource<dynamic>?>().firstWhere(
-        (item) => item?.data is AudioTrack && (item!.data as AudioTrack).id == track.id,
-        orElse: () => null,
-      );
+      final queueItem = engine.state.queue
+          .cast<AudioSource<dynamic>?>()
+          .firstWhere(
+            (item) =>
+                item?.data is AudioTrack &&
+                (item!.data as AudioTrack).id == track.id,
+            orElse: () => null,
+          );
       if (queueItem != null) {
         return queueItem.replayGainDb != null;
       }
@@ -80,10 +86,14 @@ class AudioAnalyzerController extends ChangeNotifier {
     AudioTrack track,
     MiniaudioPlayer engine,
   ) async {
-    final queueItem = engine.state.queue.cast<AudioSource<dynamic>?>().firstWhere(
-      (item) => item?.data is AudioTrack && (item!.data as AudioTrack).id == track.id,
-      orElse: () => null,
-    );
+    final queueItem = engine.state.queue
+        .cast<AudioSource<dynamic>?>()
+        .firstWhere(
+          (item) =>
+              item?.data is AudioTrack &&
+              (item!.data as AudioTrack).id == track.id,
+          orElse: () => null,
+        );
     final targetId = queueItem?.id ?? track.source.id;
     final currentGain = queueItem?.replayGainDb ?? track.source.replayGainDb;
     final analysis = getResultForTrack(track);
@@ -149,37 +159,39 @@ class AudioAnalyzerController extends ChangeNotifier {
         );
       } else if (track.source.uri != null) {
         final s = track.source.uri!;
-        if (s.startsWith('asset://') || s.startsWith('asset:') || s.startsWith('assets/')) {
+        if (s.startsWith('asset://') ||
+            s.startsWith('asset:') ||
+            s.startsWith('assets/')) {
           final assetPath = s.startsWith('asset://')
               ? s.substring('asset://'.length)
               : s.startsWith('asset:')
-                  ? s.substring('asset:'.length)
-                  : s;
-          try {
-            final byteData = await rootBundle.load(assetPath);
-            final bytes = byteData.buffer.asUint8List(
-              byteData.offsetInBytes,
-              byteData.lengthInBytes,
-            );
+              ? s.substring('asset:'.length)
+              : s;
+          if (!kIsWeb && File(assetPath).existsSync()) {
             res = await MiniaudioPlayer.analyzeAudio(
-              bytes,
+              assetPath,
               waveform: true,
               replayGain: true,
               metadata: true,
               chromaprint: true,
               waveformPoints: 72,
             );
-          } catch (_) {
-            if (!kIsWeb && File(assetPath).existsSync()) {
+          } else {
+            try {
+              final byteData = await rootBundle.load(assetPath);
+              final bytes = byteData.buffer.asUint8List(
+                byteData.offsetInBytes,
+                byteData.lengthInBytes,
+              );
               res = await MiniaudioPlayer.analyzeAudio(
-                assetPath,
+                bytes,
                 waveform: true,
                 replayGain: true,
                 metadata: true,
                 chromaprint: true,
                 waveformPoints: 72,
               );
-            }
+            } catch (_) {}
           }
         } else {
           final filePath = (!kIsWeb && s.startsWith('file://'))
@@ -220,10 +232,14 @@ class AudioAnalyzerController extends ChangeNotifier {
 
         // 2. Synchronize ReplayGain directly with native engine if provided
         if (engine != null && res.replayGain != null) {
-          final queueItem = engine.state.queue.cast<AudioSource<dynamic>?>().firstWhere(
-            (item) => item?.data is AudioTrack && (item!.data as AudioTrack).id == track.id,
-            orElse: () => null,
-          );
+          final queueItem = engine.state.queue
+              .cast<AudioSource<dynamic>?>()
+              .firstWhere(
+                (item) =>
+                    item?.data is AudioTrack &&
+                    (item!.data as AudioTrack).id == track.id,
+                orElse: () => null,
+              );
           final targetId = queueItem?.id ?? track.source.id;
           if (targetId != null) {
             final config = ReplayGainConfig(
@@ -240,12 +256,18 @@ class AudioAnalyzerController extends ChangeNotifier {
       return res;
     } catch (e) {
       stopwatch.stop();
-      _error = e.toString();
-      MapLogger.error('[ANALYZER:ERROR] Failed analysis for "${track.title}": $e');
+      if (_currentTrackId == track.id) {
+        _error = e.toString();
+      }
+      MapLogger.error(
+        '[ANALYZER:ERROR] Failed analysis for "${track.title}": $e',
+      );
       return null;
     } finally {
-      _isAnalyzing = false;
-      notifyListeners();
+      if (_currentTrackId == track.id) {
+        _isAnalyzing = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -304,7 +326,9 @@ class AudioAnalyzerController extends ChangeNotifier {
       };
 
       // Primary endpoint: VideoLAN public AcoustID proxy (used by VLC media player)
-      final primaryUri = Uri.parse('https://fingerprint.videolan.org/acoustid.php');
+      final primaryUri = Uri.parse(
+        'https://fingerprint.videolan.org/acoustid.php',
+      );
       // Secondary fallback endpoint: upstream AcoustID API
       final fallbackUri = Uri.parse('https://api.acoustid.org/v2/lookup');
 
@@ -316,21 +340,31 @@ class AudioAnalyzerController extends ChangeNotifier {
       );
 
       try {
-        response = await client.post(
-          primaryUri,
-          body: body,
-          headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'},
-        ).timeout(const Duration(seconds: 12));
+        response = await client
+            .post(
+              primaryUri,
+              body: body,
+              headers: {
+                'Content-Type':
+                    'application/x-www-form-urlencoded; charset=utf-8',
+              },
+            )
+            .timeout(const Duration(seconds: 12));
       } catch (primaryErr) {
         MapLogger.warn(
           '[ACOUSTID:FALLBACK] Primary endpoint failed ($primaryErr). Attempting fallback to $fallbackUri...',
         );
         currentEndpoint = fallbackUri.toString();
-        response = await client.post(
-          fallbackUri,
-          body: body,
-          headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'},
-        ).timeout(const Duration(seconds: 12));
+        response = await client
+            .post(
+              fallbackUri,
+              body: body,
+              headers: {
+                'Content-Type':
+                    'application/x-www-form-urlencoded; charset=utf-8',
+              },
+            )
+            .timeout(const Duration(seconds: 12));
       }
 
       MapLogger.info(
@@ -338,7 +372,8 @@ class AudioAnalyzerController extends ChangeNotifier {
       );
 
       if (response.statusCode != 200) {
-        String detail = 'AcoustID HTTP Error: status code ${response.statusCode}';
+        String detail =
+            'AcoustID HTTP Error: status code ${response.statusCode}';
         try {
           final errData = jsonDecode(response.body);
           if (errData is Map && errData['error'] is Map) {
@@ -354,13 +389,18 @@ class AudioAnalyzerController extends ChangeNotifier {
 
       final dynamic data = jsonDecode(response.body);
       if (data is! Map<String, dynamic>) {
-        MapLogger.error('[ACOUSTID:PARSE_ERROR] Invalid JSON payload received: ${response.body}');
-        return AcoustIdLookupResult.failure('Invalid JSON response received from AcoustID API');
+        MapLogger.error(
+          '[ACOUSTID:PARSE_ERROR] Invalid JSON payload received: ${response.body}',
+        );
+        return AcoustIdLookupResult.failure(
+          'Invalid JSON response received from AcoustID API',
+        );
       }
 
       if (data['status'] != 'ok') {
         final errorMsg =
-            data['error']?['message'] ?? 'AcoustID API returned status "${data['status']}"';
+            data['error']?['message'] ??
+            'AcoustID API returned status "${data['status']}"';
         MapLogger.warn('[ACOUSTID:STATUS_ERROR] $errorMsg');
         return AcoustIdLookupResult.failure(errorMsg.toString());
       }
@@ -374,7 +414,8 @@ class AudioAnalyzerController extends ChangeNotifier {
         }
       }
 
-      final topTitle = resultsList.isNotEmpty && resultsList.first.recordings.isNotEmpty
+      final topTitle =
+          resultsList.isNotEmpty && resultsList.first.recordings.isNotEmpty
           ? resultsList.first.recordings.first.title
           : 'no recordings';
       MapLogger.info(

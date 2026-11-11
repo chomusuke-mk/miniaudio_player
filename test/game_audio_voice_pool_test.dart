@@ -12,7 +12,8 @@ void main() {
 
     setUpAll(() async {
       await MiniaudioPlayer.ensureInitialized();
-      wavBytes = await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
+      wavBytes =
+          await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
     });
 
     setUp(() async {
@@ -30,7 +31,9 @@ void main() {
       await player.dispose();
     });
 
-    test('Registers sound effects catalog via setEffects and replaces catalog cleanly', () async {
+    test(
+        'Registers sound effects catalog via setEffects and replaces catalog cleanly',
+        () async {
       await player.action.setEffects([
         AudioEffect(
           id: 'test_sound',
@@ -46,7 +49,9 @@ void main() {
       expect(player.state.loadedEffectIds, isNot(contains('test_sound')));
     });
 
-    test('Plays sounds concurrently within voice pool capacity and returns Voice handles', () async {
+    test(
+        'Plays sounds concurrently within voice pool capacity and returns Voice handles',
+        () async {
       await player.action.setEffects([
         AudioEffect(
           id: 'laser',
@@ -112,14 +117,19 @@ void main() {
       expect(v2.id, greaterThan(0));
     });
 
-    test('Plays synchronized stem layers and modulates live Voice handles', () async {
+    test('Plays synchronized stem layers and modulates live Voice handles',
+        () async {
       await player.action.setEffects([
-        AudioEffect(id: 'stemA', source: AudioSource(Uint8List.fromList(wavBytes))),
-        AudioEffect(id: 'stemB', source: AudioSource(Uint8List.fromList(wavBytes))),
+        AudioEffect(
+            id: 'stemA', source: AudioSource(Uint8List.fromList(wavBytes))),
+        AudioEffect(
+            id: 'stemB', source: AudioSource(Uint8List.fromList(wavBytes))),
       ]);
 
-      final vA = await player.action.playEffect('stemA', volume: 0.7, looping: true);
-      final vB = await player.action.playEffect('stemB', volume: 0.4, looping: true);
+      final vA =
+          await player.action.playEffect('stemA', volume: 0.7, looping: true);
+      final vB =
+          await player.action.playEffect('stemB', volume: 0.4, looping: true);
 
       expect(vA.id, greaterThan(0));
       expect(vB.id, greaterThan(0));
@@ -133,9 +143,12 @@ void main() {
       await vB.stop();
     });
 
-    test('Integrates 3D spatial listener and voice emitters with Doppler', () async {
+    test('Integrates 3D spatial listener and voice emitters with Doppler',
+        () async {
       await player.action.setEffects([
-        AudioEffect(id: 'spatial_hit', source: AudioSource(Uint8List.fromList(wavBytes))),
+        AudioEffect(
+            id: 'spatial_hit',
+            source: AudioSource(Uint8List.fromList(wavBytes))),
       ]);
 
       await player.action.setListener(const SpatialListener(
@@ -168,7 +181,9 @@ void main() {
       );
     });
 
-    test('Playing an effect 10 times concurrently produces 10 unique Voice handles and modulating/stopping one does not affect others', () async {
+    test(
+        'Playing an effect 10 times concurrently produces 10 unique Voice handles and modulating/stopping one does not affect others',
+        () async {
       final multiPlayer = MiniaudioPlayer(
         config: const PlayerConfig(
           sampleRate: 44100,
@@ -236,7 +251,8 @@ void main() {
 
       expect(
         () => player.action.setEffects([
-          AudioEffect(id: 'x', source: AudioSource(Uint8List.fromList(wavBytes))),
+          AudioEffect(
+              id: 'x', source: AudioSource(Uint8List.fromList(wavBytes))),
         ]),
         throwsStateError,
       );

@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player_example/main.dart';
@@ -104,63 +105,58 @@ void main() {
 
   group('Adversarial Viewport Boundaries & Text Scaler Stress Tests', () {
     const stressViewports = <String, ({Size size, double dpr})>{
-      '640x360 (Landscape Mobile Compact)': (
-        size: Size(640, 360),
-        dpr: 2.0,
-      ),
-      '844x390 (Landscape Mobile Standard)': (
-        size: Size(844, 390),
-        dpr: 3.0,
-      ),
+      '640x360 (Landscape Mobile Compact)': (size: Size(640, 360), dpr: 2.0),
+      '844x390 (Landscape Mobile Standard)': (size: Size(844, 390), dpr: 3.0),
     };
 
     for (final entry in stressViewports.entries) {
-      testWidgets(
-        'Mounted UI under stress viewport ${entry.key}',
-        (tester) async {
-          final viewport = entry.value;
-          tester.view.physicalSize = Size(
-            viewport.size.width * viewport.dpr,
-            viewport.size.height * viewport.dpr,
-          );
-          tester.view.devicePixelRatio = viewport.dpr;
-          addTearDown(() async {
-            tester.view.resetPhysicalSize();
-            tester.view.resetDevicePixelRatio();
-            await tester.pumpWidget(const SizedBox());
-            await tester.pump(const Duration(milliseconds: 100));
-          });
-
-          await tester.pumpWidget(const MiniaudioPlayerExampleApp());
-          await tester.pump();
-
-          await tester.runAsync(() async {
-            await Future.delayed(const Duration(seconds: 2));
-          });
+      testWidgets('Mounted UI under stress viewport ${entry.key}', (
+        tester,
+      ) async {
+        final viewport = entry.value;
+        tester.view.physicalSize = Size(
+          viewport.size.width * viewport.dpr,
+          viewport.size.height * viewport.dpr,
+        );
+        tester.view.devicePixelRatio = viewport.dpr;
+        addTearDown(() async {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+          await tester.pumpWidget(const SizedBox());
           await tester.pump(const Duration(milliseconds: 100));
-          await tester.pump(const Duration(milliseconds: 100));
+        });
 
-          expect(find.text('miniaudio_player'), findsOneWidget);
+        await tester.pumpWidget(const MiniaudioPlayerExampleApp());
+        await tester.pump();
 
-          final scrollables = find.byType(Scrollable);
-          if (scrollables.evaluate().isNotEmpty) {
-            final verticalScrollable = scrollables.first;
-            for (int i = 0; i < 6; i++) {
-              await tester.drag(verticalScrollable, const Offset(0, -300));
-              await tester.pump();
-            }
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(seconds: 2));
+        });
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('miniaudio_player'), findsOneWidget);
+
+        final scrollables = find.byType(Scrollable);
+        if (scrollables.evaluate().isNotEmpty) {
+          final verticalScrollable = scrollables.first;
+          for (int i = 0; i < 6; i++) {
+            await tester.drag(verticalScrollable, const Offset(0, -300));
+            await tester.pump();
           }
+        }
 
-          expect(
-            tester.takeException(),
-            isNull,
-            reason: 'Layout exception on stress viewport ${entry.key}',
-          );
-        },
-      );
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'Layout exception on stress viewport ${entry.key}',
+        );
+      });
     }
 
-    testWidgets('Mounted UI with 1.3x TextScaler on 320x568 compact viewport', (tester) async {
+    testWidgets('Mounted UI with 1.3x TextScaler on 320x568 compact viewport', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(320 * 2.0, 568 * 2.0);
       tester.view.devicePixelRatio = 2.0;
       addTearDown(() async {
@@ -203,38 +199,41 @@ void main() {
   });
 
   group('WaveformPainter Geometry Clamp Adversarial Suite', () {
-    test('Non-positive and zero sizes early-return without exception or draw call', () {
-      final invalidSizes = <Size>[
-        Size.zero,
-        const Size(0, 50),
-        const Size(50, 0),
-        const Size(-100, 50),
-        const Size(100, -50),
-        const Size(-100, -100),
-        const Size(-0.0001, 10),
-        const Size(10, -0.0001),
-      ];
+    test(
+      'Non-positive and zero sizes early-return without exception or draw call',
+      () {
+        final invalidSizes = <Size>[
+          Size.zero,
+          const Size(0, 50),
+          const Size(50, 0),
+          const Size(-100, 50),
+          const Size(100, -50),
+          const Size(-100, -100),
+          const Size(-0.0001, 10),
+          const Size(10, -0.0001),
+        ];
 
-      final points = [0.1, 0.5, 0.9, 0.4];
-      final painter = WaveformPainter(
-        points: points,
-        progress: 0.5,
-        playedColor: Colors.deepPurple,
-        unplayedColor: Colors.grey,
-      );
-
-      for (final size in invalidSizes) {
-        final recorder = PictureRecorder();
-        final canvas = Canvas(recorder);
-        expect(
-          () => painter.paint(canvas, size),
-          returnsNormally,
-          reason: 'Failed on invalid size: $size',
+        final points = [0.1, 0.5, 0.9, 0.4];
+        final painter = WaveformPainter(
+          points: points,
+          progress: 0.5,
+          playedColor: Colors.deepPurple,
+          unplayedColor: Colors.grey,
         );
-        final picture = recorder.endRecording();
-        expect(picture, isNotNull);
-      }
-    });
+
+        for (final size in invalidSizes) {
+          final recorder = PictureRecorder();
+          final canvas = Canvas(recorder);
+          expect(
+            () => painter.paint(canvas, size),
+            returnsNormally,
+            reason: 'Failed on invalid size: $size',
+          );
+          final picture = recorder.endRecording();
+          expect(picture, isNotNull);
+        }
+      },
+    );
 
     test('Empty points list early-returns without exception', () {
       final painter = WaveformPainter(
@@ -281,12 +280,22 @@ void main() {
       final adversarialPoints = <List<double>>[
         [0.05, 0.5, 1.0],
         [0.00001, 0.02, 0.049], // Below 0.05 min clamp
-        [1.001, 2.5, 100.0],    // Above 1.0 max clamp
-        [-10.0, 0.0, 1.0],      // Negative and zero points
+        [1.001, 2.5, 100.0], // Above 1.0 max clamp
+        [-10.0, 0.0, 1.0], // Negative and zero points
         List.generate(100, (i) => (i % 10) / 10.0), // Dense points
       ];
 
-      final progressValues = <double>[-5.0, -0.1, 0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 10.0];
+      final progressValues = <double>[
+        -5.0,
+        -0.1,
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        10.0,
+      ];
 
       for (final h in testHeights) {
         for (final pts in adversarialPoints) {
@@ -305,7 +314,8 @@ void main() {
             expect(
               () => painter.paint(canvas, size),
               returnsNormally,
-              reason: 'WaveformPainter threw on height=$h, progress=$prog, points=$pts',
+              reason:
+                  'WaveformPainter threw on height=$h, progress=$prog, points=$pts',
             );
 
             final picture = recorder.endRecording();
@@ -380,7 +390,10 @@ void main() {
         unplayedColor: Colors.black,
       );
 
-      expect(pSame.shouldRepaint(p1), isTrue); // List comparison is reference inequality
+      expect(
+        pSame.shouldRepaint(p1),
+        isTrue,
+      ); // List comparison is reference inequality
       expect(pDiffProgress.shouldRepaint(p1), isTrue);
       expect(pDiffPoints.shouldRepaint(p1), isTrue);
       expect(pDiffPlayedColor.shouldRepaint(p1), isTrue);

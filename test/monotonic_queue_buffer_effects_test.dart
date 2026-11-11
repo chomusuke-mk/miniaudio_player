@@ -35,7 +35,10 @@ void main() {
       expect(b1, equals(b2));
       expect(b1.hashCode, equals(b2.hashCode));
       expect(b1, isNot(equals(b3)));
-      expect(b1.toString(), contains('Buffer(start: 0:00:01.000000, end: 0:00:10.000000, isBuffering: true)'));
+      expect(
+          b1.toString(),
+          contains(
+              'Buffer(start: 0:00:01.000000, end: 0:00:10.000000, isBuffering: true)'));
     });
 
     test('PlayerState initial buffer is empty and clean', () async {
@@ -56,7 +59,8 @@ void main() {
       await player.dispose();
     });
 
-    test('Assigns monotonically increasing unique IDs across queue operations', () async {
+    test('Assigns monotonically increasing unique IDs across queue operations',
+        () async {
       final s1 = AudioSource('test/fixtures/salida.mp3', data: 'Track 1');
       final s2 = AudioSource('test/fixtures/salida.wav', data: 'Track 2');
 
@@ -81,7 +85,8 @@ void main() {
       await player.action.insertNext(s4);
 
       expect(player.state.queue.length, equals(4));
-      final inserted = player.state.queue.firstWhere((s) => s.data == 'Track 4');
+      final inserted =
+          player.state.queue.firstWhere((s) => s.data == 'Track 4');
       expect(inserted.id!, greaterThan(id3));
     });
 
@@ -108,11 +113,15 @@ void main() {
       expect(player.state.queue[2].data, equals('T2'));
     });
 
-    test('Unified AudioSource transfers bytes to Rust and frees Dart RAM in queue', () async {
-      final wavBytes = await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
+    test(
+        'Unified AudioSource transfers bytes to Rust and frees Dart RAM in queue',
+        () async {
+      final wavBytes =
+          await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
       expect(wavBytes.isNotEmpty, isTrue);
 
-      final memSource = AudioSource(Uint8List.fromList(wavBytes), data: 'Memory Song');
+      final memSource =
+          AudioSource(Uint8List.fromList(wavBytes), data: 'Memory Song');
       expect(memSource.isMemory, isTrue);
       expect(memSource.bytes, isNotNull);
 
@@ -145,7 +154,9 @@ void main() {
       await player.dispose();
     });
 
-    test('Rust decodes AudioSource directly on setEffects/playEffect and reports real allocated RAM bytes', () async {
+    test(
+        'Rust decodes AudioSource directly on setEffects/playEffect and reports real allocated RAM bytes',
+        () async {
       final file = File('test/fixtures/test_24bit_stereo.wav');
       expect(file.existsSync(), isTrue);
 
@@ -169,7 +180,9 @@ void main() {
       expect(player.state.allocatedRamBytes, equals(0));
     });
 
-    test('Memory effects are immune to eviction while file effects evict by multi-factor score', () async {
+    test(
+        'Memory effects are immune to eviction while file effects evict by multi-factor score',
+        () async {
       final file = File('test/fixtures/tripartite/eof_chirp.mp3');
       final memBytes = await file.readAsBytes();
 

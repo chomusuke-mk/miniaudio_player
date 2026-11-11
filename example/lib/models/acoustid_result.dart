@@ -59,7 +59,9 @@ class AcoustIdRecording {
     if (json['releasegroups'] is List) {
       for (final rg in json['releasegroups']) {
         if (rg is Map) {
-          rgsList.add(AcoustIdReleaseGroup.fromJson(rg.cast<String, dynamic>()));
+          rgsList.add(
+            AcoustIdReleaseGroup.fromJson(rg.cast<String, dynamic>()),
+          );
         }
       }
     }
@@ -133,7 +135,10 @@ class AcoustIdLookupResult {
     required this.timestamp,
   });
 
-  factory AcoustIdLookupResult.failure(String message, {bool isFromCache = false}) {
+  factory AcoustIdLookupResult.failure(
+    String message, {
+    bool isFromCache = false,
+  }) {
     return AcoustIdLookupResult(
       success: false,
       errorMessage: message,
@@ -143,7 +148,10 @@ class AcoustIdLookupResult {
     );
   }
 
-  factory AcoustIdLookupResult.success(List<AcoustIdMatch> matches, {bool isFromCache = false}) {
+  factory AcoustIdLookupResult.success(
+    List<AcoustIdMatch> matches, {
+    bool isFromCache = false,
+  }) {
     return AcoustIdLookupResult(
       success: true,
       matches: matches,

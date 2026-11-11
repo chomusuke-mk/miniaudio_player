@@ -26,7 +26,8 @@ class ReplayGainConfig {
   });
 
   /// Default unity gain config (0.0 dB, 1.0 peak).
-  static const ReplayGainConfig unity = ReplayGainConfig(gainDb: 0.0, peak: 1.0);
+  static const ReplayGainConfig unity =
+      ReplayGainConfig(gainDb: 0.0, peak: 1.0);
 
   @override
   bool operator ==(Object other) =>

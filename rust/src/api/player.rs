@@ -52,6 +52,8 @@ pub struct TelemetryFilter {
     pub audio_info: Option<RustAudioInfo>,
     /// Cached count of concurrent active sound effect voices.
     pub active_voices: Option<u32>,
+    /// Cached visualizer data metrics.
+    pub visualizer: Option<RustVisualizerData>,
 }
 
 impl Default for TelemetryFilter {
@@ -72,6 +74,7 @@ impl Default for TelemetryFilter {
             metadata: None,
             audio_info: None,
             active_voices: None,
+            visualizer: None,
         }
     }
 }
@@ -230,6 +233,14 @@ impl EventReporter {
                     false
                 } else {
                     filter.metadata = Some(m.clone());
+                    true
+                }
+            }
+            RustPlayerEvent::Visualizer(v) => {
+                if filter.visualizer.as_ref() == Some(v) {
+                    false
+                } else {
+                    filter.visualizer = Some(v.clone());
                     true
                 }
             }
@@ -836,8 +847,15 @@ impl RustMiniaudioPlayer {
                     let rg = ply.music_dsp.equalizer.replay_gain();
                     let active_voices = ply.effects_manager.active_voices_count();
 
+                    let is_active_audio = (state == crate::core::dual_source::STATE_PLAYING && phase != crate::core::dual_source::ENGINE_PHASE_COMPLETED)
+                        || is_rec
+                        || active_voices > 0;
                     let vis_data = if ply.output_manager.visualizer_enabled.load(Ordering::Relaxed) {
-                        Some(ply.output_manager.visualizer_seqlock.read())
+                        if is_active_audio {
+                            Some(ply.output_manager.visualizer_seqlock.read())
+                        } else {
+                            Some(crate::dsp::visualizer::VisualizerData::default())
+                        }
                     } else {
                         None
                     };
@@ -876,15 +894,20 @@ impl RustMiniaudioPlayer {
                     if mic_rms > -90.0 {
                         worker_reporter.emit(RustPlayerEvent::MicRmsLevel(mic_rms));
                     }
-                    if let Some(meta) = meta_to_send {
+                    if should_emit_meta {
                         last_emitted_meta_deck = active_deck_idx;
                         last_emitted_meta_version = cur_meta_ver;
                         last_emitted_meta_flush = cur_flush;
                         last_meta_enabled = true;
-                        worker_reporter.emit(RustPlayerEvent::AudioMetadata(meta));
+                        if let Some(meta) = meta_to_send {
+                            worker_reporter.emit(RustPlayerEvent::AudioMetadata(meta));
+                        } else {
+                            worker_reporter.emit(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+                        }
                     } else if !cur_meta_enabled && last_meta_enabled {
                         last_meta_enabled = false;
                         last_emitted_meta_version = u32::MAX;
+                        worker_reporter.emit(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
                     }
                     worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
                         gain_db: rg.gain_db,
@@ -1094,6 +1117,9 @@ impl RustMiniaudioPlayer {
             t0.elapsed().as_millis()
         );
         ply.music_manager.pause();
+        ply.output_manager
+            .visualizer_seqlock
+            .write(|d| *d = crate::dsp::visualizer::VisualizerData::default());
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
         drop(ply);
@@ -1105,6 +1131,7 @@ impl RustMiniaudioPlayer {
         self.emit_event(RustPlayerEvent::PlaybackState(state));
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
+        self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
     }
 
     /// Stops playback and resets elapsed position to the beginning.
@@ -1297,8 +1324,16 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         ply.music_manager.next(crossfade_duration_ms)?;
         let idx = ply.music_manager.current_index();
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        let active_deck = ply.music_manager.active_deck_ref();
+        let state = active_deck.state.load(Ordering::Relaxed);
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
+        let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
+        let initial_info = active_deck.get_audio_info();
+        let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
+            active_deck.get_parsed_metadata()
+        } else {
+            None
+        };
         let rg = if idx >= 0 {
             Some(Self::sync_deck_replay_gain(&mut ply, idx as usize))
         } else {
@@ -1312,10 +1347,20 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             }));
         }
         self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+        self.emit_event(RustPlayerEvent::IsCompleted(false));
+        if self.metadata_enabled.load(Ordering::Relaxed) {
+            self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+            if let Some(meta) = initial_meta {
+                self.emit_event(RustPlayerEvent::AudioMetadata(meta));
+            }
+        }
+        self.emit_event(RustPlayerEvent::Position(initial_pos));
+        if initial_info.sample_rate > 0 {
+            self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
+        }
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
         self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
         Ok(())
     }
 
@@ -1325,9 +1370,16 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         ply.music_manager.previous()?;
         let idx = ply.music_manager.current_index();
         let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-        let pos = ply.music_manager.active_deck_ref().position_ms.load(Ordering::Relaxed);
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        let active_deck = ply.music_manager.active_deck_ref();
+        let state = active_deck.state.load(Ordering::Relaxed);
         let is_playing = state == crate::core::dual_source::STATE_PLAYING;
+        let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
+        let initial_info = active_deck.get_audio_info();
+        let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
+            active_deck.get_parsed_metadata()
+        } else {
+            None
+        };
         let rg = if idx >= 0 {
             Some(Self::sync_deck_replay_gain(&mut ply, idx as usize))
         } else {
@@ -1341,11 +1393,20 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             }));
         }
         self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
-        self.emit_event(RustPlayerEvent::Position(pos));
+        self.emit_event(RustPlayerEvent::IsCompleted(false));
+        if self.metadata_enabled.load(Ordering::Relaxed) {
+            self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+            if let Some(meta) = initial_meta {
+                self.emit_event(RustPlayerEvent::AudioMetadata(meta));
+            }
+        }
+        self.emit_event(RustPlayerEvent::Position(initial_pos));
+        if initial_info.sample_rate > 0 {
+            self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
+        }
         self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
         self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
         Ok(())
     }
 
