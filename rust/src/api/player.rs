@@ -911,14 +911,7 @@ impl RustMiniaudioPlayer {
 
                 while clock_running.load(Ordering::Relaxed) {
                     if let Ok(mut ply) = clock_inner.lock() {
-                        let deck_state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
-                        let is_rec = ply.output_manager.is_recording.load(Ordering::Relaxed);
-                        let has_voices = ply.effects_manager.active_voices_count() > 0;
-                        let has_inputs = ply.input_manager.has_active_inputs();
-                        let is_active = deck_state == crate::core::dual_source::STATE_PLAYING || is_rec || has_voices || has_inputs;
-                        if is_active {
-                            ply.render_pcm(clock_period as usize);
-                        }
+                        ply.render_pcm(clock_period as usize);
                     }
 
                     next_tick += period_duration;
@@ -1477,6 +1470,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let mut ply = self.inner.lock().unwrap();
         if ply.music_dsp.mono != enabled {
             ply.music_dsp.set_mono(enabled);
+            ply.inherit_dsp.set_mono(enabled);
             self.emit_event(RustPlayerEvent::Mono(enabled));
         }
     }
@@ -1487,6 +1481,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let prev = ply.music_dsp.equalizer.preamp_db();
         if (prev - preamp_db).abs() > 1e-5 {
             ply.music_dsp.set_preamp(preamp_db);
+            ply.inherit_dsp.set_preamp(preamp_db);
             self.emit_event(RustPlayerEvent::Preamp(preamp_db));
         }
     }
@@ -1512,6 +1507,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let prev_w = ply.music_dsp.equalizer.spatializer_width();
         if prev_en != enabled || (prev_w - w).abs() > 1e-5 {
             ply.music_dsp.equalizer.set_spatializer(enabled, w);
+            ply.inherit_dsp.equalizer.set_spatializer(enabled, w);
             self.emit_event(RustPlayerEvent::Spatializer { enabled, width: w });
         }
     }
@@ -1631,6 +1627,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let eq = EqualizerParams::from(params.clone());
         let mut ply = self.inner.lock().unwrap();
         ply.music_dsp.set_equalizer(&eq);
+        ply.inherit_dsp.set_equalizer(&eq);
         ply.music_manager.inner.deck_a.set_equalizer(&eq);
         ply.music_manager.inner.deck_b.set_equalizer(&eq);
         drop(ply);
@@ -1650,6 +1647,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         };
         let mut ply = self.inner.lock().unwrap();
         ply.music_dsp.set_reverb(conf);
+        ply.inherit_dsp.set_reverb(conf);
         self.emit_event(RustPlayerEvent::Reverb(params));
         Ok(())
     }

@@ -299,10 +299,20 @@ Sums audio buses (music, sound effects, and microphone monitoring) using target-
 
 ### 5.8. Multi-Destination Output Matrix & Live Recording (`OutputManager`)
 
-- **Multi-Sink Routing**: Distributes the master mix across multiple physical soundcards and endpoints simultaneously.
-- **DJ CUE Pre-Listening**: Routes the standby track, active track, or master mix to a secondary output device (e.g., DJ headphones).
-- **Lock-Free WAV Disk Recorder**: Streams rendered audio frames through a single-producer single-consumer (`rtrb`) ring buffer to a background file writer thread, completely shielding the audio thread from disk I/O latency.
+- **Multi-Sink Routing**: Distributes decoupled audio streams across multiple physical soundcards and endpoints simultaneously. Each output endpoint independently selects its signal routing source:
+  - **`AudioOutputSource.all` (All Mix)**: Complete master mix (playback tracks + all sound effects + microphone + auto-ducking + master limiter).
+  - **`AudioOutputSource.musicMix` (Music Only)**: Pure music mix from decks with master music DSP (EQ, Reverb, Crossfeed, Sonic, ReplayGain), strictly isolated from sound effects (SFX) and microphone auto-ducking attenuation.
+  - **`AudioOutputSource.activeTrack` (Active Deck)**: Isolated active deck track only, bypassing music DSP and mixing.
+  - **`AudioOutputSource.standbyTrack` (Standby Deck / DJ Cue)**: Isolated standby deck track only for pre-listening and headphone cueing.
+- **DJ CUE Pre-Listening**: Routes the standby track, active track, pure music mix, or master mix to a secondary output device (e.g., DJ headphones).
+- **Lock-Free WAV Disk Recorder**: Streams rendered audio frames through a single-producer single-consumer (`rtrb`) ring buffer to a background file writer thread, capturing any of the four selective routing sources without disk I/O latency on the audio thread.
 - **60 FPS FFT Spectrum Analyzer**: Computes 10-band perceptual frequency magnitudes and pushes updates via a `CachePaddedSeqlock` for lock-free UI consumption.
+
+### 5.9. Continuous Engine Clock & Smart Acoustic Decay (`Freeverb` & `DspProcessor`)
+
+- **Continuous Engine Clock (`map-engine-clock`)**: The master audio timing heartbeat runs continuously at the configured period (e.g., ~23.2 ms for 1024 frames at 44.1 kHz), decoupling audio routing from track playback states. When decks are paused or stopped, they write pure digital silence (`0.0`) without advancing playback position or decoding frames.
+- **Natural Acoustic Reverb Tail Preservation**: When playback pauses or an SFX voice finishes, the `Freeverb` comb and allpass delay networks continue processing incoming zeros, allowing the physical reverberation impulse response to ring down smoothly and decay naturally to silence (RT60 decay) without artificial cutoffs or timer hacks.
+- **Smart DSP Dormancy Bypass**: Both `Freeverb` and `DspProcessor` monitor energy levels. Once the reverberation tail decays below the digital silence threshold (< 1e-5 / -100 dBFS across 4 consecutive blocks), the DSP transitions to a dormant state (`is_dormant = true`). Subsequent periods of silence completely bypass biquad filters, delay lines, and gain loops, yielding virtually 0.0% CPU consumption during idle states while maintaining instantaneous 0 ms wake-up for new SFX, mic input, or playback.
 
 ---
 
@@ -319,28 +329,47 @@ flowchart LR
     DeckA["Deck A (PCM)"] --> XFade["Crossfade Engine\n(crossfade_target_id)"]
     DeckB["Deck B (PCM)"] --> XFade
     
-    XFade -->|"Music Bus"| InheritSum(( + ))
-    VoicesInherit["SFX (DspRouting.inherit)"] --> InheritSum
+    XFade -->|"Pure Music"| MusicDSP["Master Music DSP\n(EQ, Reverb, Crossfeed, Sonic, ReplayGain)"]
     
-    InheritSum --> MusicDSP["Master Music DSP\n(EQ, Reverb, Crossfeed, Sonic, ReplayGain)"]
-    MusicDSP --> AutoDucker["Auto-Ducker Sidechain\n(Microphone Attenuation)"]
+    MusicDSP -->|"Pure Music Bus (Zero SFX, Zero Ducking)"| SrcMusic["AudioOutputSource.musicMix"]
+    MusicDSP -->|"Sidechain"| AutoDucker["Auto-Ducker Sidechain\n(Max Attenuation Arbitration)"]
     
-    VoicesIsolate["SFX (DspRouting.isolate)"] --> IsolateDSP["Dedicated SFX DSP"]
+    AutoDucker -->|"Ducked Music"| SIMDSum(( + SIMD Mixer ))
+    VoicesInherit["SFX (DspRouting.inherit)"] --> InheritDSP["Inherited SFX DSP\n(Shares Music EQ & Reverb)"] --> SIMDSum
     
-    VoicesBypass["SFX (DspRouting.bypass)"] --> SIMDSum(( + SIMD Mixer ))
-    AutoDucker --> SIMDSum
-    IsolateDSP --> SIMDSum
+    VoicesIsolate["SFX (DspRouting.isolate)"] --> IsolateDSP["Dedicated SFX DSP"] --> SIMDSum
+    VoicesBypass["SFX (DspRouting.bypass)"] --> SIMDSum
     DirectMic["Direct Mic Monitor"] --> SIMDSum
     
     SIMDSum --> SoftKnee["Soft-Knee Saturation"]
     SoftKnee --> Brickwall["True-Peak Brickwall Limiter\n(0 dBFS)"]
     
-    Brickwall --> MasterOut["Primary Output Device"]
-    Brickwall --> RecSink["Lock-Free WAV Disk Recorder"]
-    Brickwall --> FFTVisualizer["FFT Spectrum Visualizer (Seqlock)"]
+    subgraph OutputMatrix["Symmetric Multi-Destination Output Matrix (OutputManager)"]
+        direction TB
+        SrcAll["AudioOutputSource.all\n(Complete Master Mix)"]
+        SrcMusic
+        SrcActive["AudioOutputSource.activeTrack\n(Active Deck Isolated)"]
+        SrcStandby["AudioOutputSource.standbyTrack\n(Standby Deck / DJ Cue)"]
+    end
     
-    XFade -.->|"Standby Track"| CueOut["DJ Headphone CUE Output"]
+    Brickwall -->|"Master Mix"| SrcAll
+    DeckA -.->|"Active Track"| SrcActive
+    DeckB -.->|"Standby Track"| SrcStandby
+    
+    SrcAll --> Endpoints["Hardware Output Devices & Disk Recording"]
+    SrcMusic --> Endpoints
+    SrcActive --> Endpoints
+    SrcStandby --> Endpoints
+    
+    Brickwall --> FFTVisualizer["FFT Spectrum Visualizer (Seqlock)"]
 ```
+
+### Signal Bus Isolation & DSP Routing Guarantee
+To ensure accurate audio routing and prevent sound effects from bleeding into endpoints configured for background music or clean recording:
+- **`DspRouting.inherit` (Default)**: SFX voices inherit the active master music DSP settings (Reverb, 10-band Equalizer, Preamp, Mono, Spatializer) through a synchronized `InheritDSP` processor, while retaining their per-voice parameters (volume, pitch, balance, spatial positioning). This ensures sound effects naturally share acoustic environment properties (e.g. room reverb) with the music while their output sums exclusively into `SIMDSum` (`AudioOutputSource.all` / "All Mix").
+- **`AudioOutputSource.musicMix` ("Music Only")**: Taps directly from the Pure Music Bus downstream of `MusicDSP` before any auto-ducking or SFX summation. It contains strictly pure deck audio with music DSP, **completely unattenuated by microphone auto-ducking** and with **guaranteed zero sound effect samples**.
+- **`AudioOutputSource.all` ("All Mix")**: Receives the full vectorized SIMD sum of music (attenuated by microphone auto-ducking using Max-Attenuation Arbitration), polyphonic sound effects (all DSP routing modes: `inherit`, `isolate`, `bypass`), and direct microphone monitoring, finalized by soft-knee saturation and the true-peak brickwall limiter. Sound effects and ducking are routed exclusively to this master bus.
+- **Multi-Microphone Auto-Ducking (Max Attenuation Arbitration)**: When multiple physical microphone inputs have ducking enabled, their sidechain envelopes are arbitrated via minimum gain ($\min_i g_i$), ensuring that simultaneous speech across N microphones attenuates background music by the maximum configured ducking depth rather than cascading or multiplying into silence.
 
 ---
 

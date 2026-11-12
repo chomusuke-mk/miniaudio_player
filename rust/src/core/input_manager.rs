@@ -27,6 +27,10 @@ pub struct InputManager {
     pub active_inputs: Vec<ActiveInputNode>,
     /// Declarative configurations of requested inputs.
     pub inputs: Vec<RustAudioInput>,
+    /// Preallocated scratch envelope buffer for arbitrated auto-ducking.
+    pub ducking_envelope: Vec<f32>,
+    /// Preallocated scratch envelope buffer for per-node ducking calculations.
+    pub node_envelope: Vec<f32>,
     /// Audio sample rate in Hz.
     pub sample_rate: u32,
     /// Output channel count.
@@ -39,6 +43,8 @@ impl InputManager {
         Self {
             active_inputs: Vec::new(),
             inputs: Vec::new(),
+            ducking_envelope: vec![1.0; 2048],
+            node_envelope: vec![1.0; 2048],
             sample_rate,
             channels,
         }
@@ -275,7 +281,8 @@ impl InputManager {
     /// Processes multi-input capture:
     /// - Drains lock-free SPSC consumer queues.
     /// - Scales by per-input volume.
-    /// - Applies sidechain Auto-Ducking per active ducker on `music_buffer`.
+    /// - Computes sidechain Auto-Ducking with multi-microphone max-attenuation (min-gain) arbitration.
+    /// - Applies ducking to `music_buffer` without exponential compounding across multiple mics.
     /// - Sums direct monitoring into `scratch_voice_out` with zero latency.
     pub fn process(&mut self, music_buffer: &mut [f32], scratch_voice_out: &mut [f32]) {
         let frame_count = music_buffer.len() / self.channels;
@@ -286,6 +293,13 @@ impl InputManager {
         if self.active_inputs.is_empty() {
             return;
         }
+
+        if self.ducking_envelope.len() < frame_count {
+            self.ducking_envelope.resize(frame_count, 1.0);
+            self.node_envelope.resize(frame_count, 1.0);
+        }
+        self.ducking_envelope[..frame_count].fill(1.0);
+        let mut any_ducking = false;
 
         for node in &mut self.active_inputs {
             if node.scratch_buffer.len() < frame_count {
@@ -304,14 +318,17 @@ impl InputManager {
                 }
             }
 
-            // Sidechain auto-ducking
+            // Sidechain auto-ducking with multi-microphone arbitration (taking maximum attenuation / minimum gain)
             if let Some(ref ducking) = node.config.ducking {
                 if ducking.enabled {
-                    node.ducker.process_sidechain(
+                    any_ducking = true;
+                    node.ducker.compute_gain_envelope(
                         &node.scratch_buffer[..frame_count],
-                        music_buffer,
-                        self.channels,
+                        &mut self.node_envelope[..frame_count],
                     );
+                    for k in 0..frame_count {
+                        self.ducking_envelope[k] = self.ducking_envelope[k].min(self.node_envelope[k]);
+                    }
                 }
             }
 
@@ -326,6 +343,18 @@ impl InputManager {
                     if out_idx + 1 < out_len {
                         scratch_voice_out[out_idx] += val;
                         scratch_voice_out[out_idx + 1] += val;
+                    }
+                }
+            }
+        }
+
+        // Apply arbitrated ducking envelope (maximum attenuation, never cascading or multiplying across microphones)
+        if any_ducking {
+            for k in 0..frame_count {
+                let g = self.ducking_envelope[k];
+                if (g - 1.0).abs() > 1e-4 {
+                    for c in 0..self.channels {
+                        music_buffer[k * self.channels + c] *= g;
                     }
                 }
             }

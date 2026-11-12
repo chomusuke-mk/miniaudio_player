@@ -98,8 +98,19 @@ impl DspProcessor {
             return;
         }
 
+        let is_dormant = self.reverb.is_dormant();
+        let has_input = samples.iter().any(|&s| s.abs() > 1e-6);
+
+        // If dormant (reverb delay buffers empty) and no incoming signal,
+        // the entire DSP chain is a no-op: early return with zero CPU cost.
+        if is_dormant && !has_input {
+            return;
+        }
+
         // 1. Equalizer (Preamp, ReplayGain, 10-band ISO biquad, Stereo Balance/Mono)
-        self.equalizer.process_interleaved(samples);
+        if has_input {
+            self.equalizer.process_interleaved(samples);
+        }
 
         // 2. Algorithmic Stereo Reverb (Freeverb)
         self.reverb.process_frames(samples, self.channels);

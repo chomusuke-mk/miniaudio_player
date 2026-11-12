@@ -162,12 +162,12 @@ impl EffectsManager {
     // =========================================================================
 
     /// Renders active polyphonic voices using In-Place Buffer Reuse:
-    /// - `music_buffer`: Receives voices with `DspRouting::Inherit` mixed directly in-place.
+    /// - `inherit_buffer`: Receives voices with `DspRouting::Inherit`.
     /// - `super_flow`: Receives voices with `DspRouting::Bypass` mixed directly without DSP.
     /// - `effects_work_buffer`: Receives voices with `DspRouting::Isolate` for isolated DSP processing.
     pub fn render_with_reuse(
         &mut self,
-        music_buffer: &mut [f32],
+        inherit_buffer: &mut [f32],
         super_flow: &mut [f32],
         frame_count: usize,
     ) {
@@ -180,7 +180,7 @@ impl EffectsManager {
         if let Ok(mut pool) = self.pool.try_lock() {
             // pool.render takes: inherit_buf, isolate_buf, bypass_buf, frame_count
             pool.render(
-                &mut music_buffer[..sample_count],
+                &mut inherit_buffer[..sample_count],
                 &mut self.effects_work_buffer[..sample_count],
                 &mut super_flow[..sample_count],
                 frame_count,

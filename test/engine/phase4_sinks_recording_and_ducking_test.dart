@@ -283,5 +283,65 @@ void main() {
         await recEngine.dispose();
       }
     });
+
+    test(
+        'AudioOutputSource.musicMix strictly excludes sound effects, while all includes them',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('map_sfx_music_mix_test_');
+      final recMusicOnlyFile = File('${tempDir.path}/rec_music_only.wav');
+      final recAllMixFile = File('${tempDir.path}/rec_all_mix.wav');
+
+      try {
+        await engine.action.setEffects([
+          AudioEffect(
+            id: 'sfx_test',
+            source: AudioSource(trackA.path),
+            pinned: true,
+          ),
+        ]);
+
+        // 1. Record Music Only while triggering sound effect (no music playing in queue)
+        await engine.action.startRecording(
+          recMusicOnlyFile.path,
+          source: AudioOutputSource.musicMix,
+        );
+        final voice1 = await engine.action.playEffect('sfx_test', volume: 1.0);
+        await Future.delayed(const Duration(milliseconds: 300));
+        await voice1.stop();
+        final recRes1 = await engine.action.stopRecording();
+        expect(recRes1.bytesWritten, greaterThan(44));
+
+        final bytes1 = await recMusicOnlyFile.readAsBytes();
+        final pcm1 = bytes1.sublist(44);
+        final maxAmpMusicOnly =
+            pcm1.fold<int>(0, (prev, elem) => elem > prev ? elem : prev);
+        expect(maxAmpMusicOnly, equals(0),
+            reason:
+                'Music Only must contain zero sound effect samples (pure silence when no music is playing)');
+
+        // 2. Record All Mix while triggering sound effect
+        await engine.action.startRecording(
+          recAllMixFile.path,
+          source: AudioOutputSource.all,
+        );
+        final voice2 = await engine.action.playEffect('sfx_test', volume: 1.0);
+        await Future.delayed(const Duration(milliseconds: 300));
+        await voice2.stop();
+        final recRes2 = await engine.action.stopRecording();
+        expect(recRes2.bytesWritten, greaterThan(44));
+
+        final bytes2 = await recAllMixFile.readAsBytes();
+        final pcm2 = bytes2.sublist(44);
+        final maxAmpAllMix =
+            pcm2.fold<int>(0, (prev, elem) => elem > prev ? elem : prev);
+        expect(maxAmpAllMix, greaterThan(0),
+            reason: 'All Mix must capture sound effect audio');
+      } finally {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      }
+    });
   });
 }

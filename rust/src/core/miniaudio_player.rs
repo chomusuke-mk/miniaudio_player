@@ -24,6 +24,8 @@ pub struct MiniaudioPlayer {
     pub music_manager: MusicManager,
     /// Vectorized DSP processing chain for music playback.
     pub music_dsp: DspProcessor,
+    /// Inherited DSP processing chain for sound effects (shares music Reverb, EQ, etc.).
+    pub inherit_dsp: DspProcessor,
     /// Domain manager for 64-voice polyphonic RAM sound effects.
     pub effects_manager: EffectsManager,
     /// Isolated DSP chain for dedicated sound effects.
@@ -42,6 +44,8 @@ pub struct MiniaudioPlayer {
     pub scratch_music: Vec<f32>,
     /// Scratch buffer for captured microphone audio.
     pub scratch_voice: Vec<f32>,
+    /// Scratch buffer for polyphonic sound effect voices.
+    pub scratch_effects: Vec<f32>,
     /// Master summing bus combining all sound sources.
     pub super_flow: Vec<f32>,
 
@@ -89,6 +93,7 @@ impl MiniaudioPlayer {
 
         let music_manager = MusicManager::new(sr, ch as u32, period)?;
         let music_dsp = DspProcessor::new(sr, ch);
+        let inherit_dsp = DspProcessor::new(sr, ch);
         let effects_manager = EffectsManager::new(max_voices, max_ram_bytes, sr, ch);
         let isolate_dsp = DspProcessor::new(sr, ch);
         let input_manager = InputManager::new(sr, ch);
@@ -101,6 +106,7 @@ impl MiniaudioPlayer {
         Ok(Box::new(Self {
             music_manager,
             music_dsp,
+            inherit_dsp,
             effects_manager,
             isolate_dsp,
             input_manager,
@@ -109,6 +115,7 @@ impl MiniaudioPlayer {
             output_manager,
             scratch_music: vec![0.0; max_samples],
             scratch_voice: vec![0.0; max_samples],
+            scratch_effects: vec![0.0; max_samples],
             super_flow: vec![0.0; max_samples],
             sample_rate: sr,
             channels: ch,
@@ -166,43 +173,68 @@ impl MiniaudioPlayer {
         if self.scratch_music.len() < sample_count {
             self.scratch_music.resize(sample_count, 0.0);
             self.scratch_voice.resize(sample_count, 0.0);
+            self.scratch_effects.resize(sample_count, 0.0);
             self.super_flow.resize(sample_count, 0.0);
         }
 
         self.super_flow[..sample_count].fill(0.0);
+        self.scratch_effects[..sample_count].fill(0.0);
 
-        // 1. Render fused music from decks into scratch_music
+        // 1. Render fused music from decks into scratch_music (pure music bus)
         self.music_manager.render(frame_count, &mut self.scratch_music);
 
-        // 2. Render RAM effects with In-Place Buffer Reuse
+        // 2. Process pure music DSP (ReplayGain, SkipSilence, Sonic, EQ, Reverb)
+        self.music_dsp.process(&mut self.scratch_music[..sample_count]);
+        // NOTE: scratch_music is strictly the Pure Music bus:
+        // - ZERO sound effect leakage (SFX only in super_flow)
+        // - ZERO microphone auto-ducking attenuation (ducking only in super_flow)
+        // This clean stream is dispatched to AudioOutputSource::MusicMix ("Music Only").
+
+        // 3. Copy pure music into super_flow (All Mix) where auto-ducking is applied
+        self.super_flow[..sample_count].copy_from_slice(&self.scratch_music[..sample_count]);
+
+        // 4. Microphone capture, RMS level measurement, and Auto-Ducking applied ONLY to super_flow
+        self.input_manager.process(
+            &mut self.super_flow[..sample_count],
+            &mut self.scratch_voice[..sample_count],
+        );
+
+        // 5. Render RAM effects with In-Place Buffer Reuse:
+        // Voices with DspRouting::Inherit render into scratch_effects,
+        // DspRouting::Bypass render into super_flow,
+        // DspRouting::Isolate render into effects_work_buffer.
         self.effects_manager.render_with_reuse(
-            &mut self.scratch_music,
+            &mut self.scratch_effects,
             &mut self.super_flow,
             frame_count,
         );
 
-        // 3. Process isolated SFX voices through their own DSP chain (if any)
+        // 6. Process isolated SFX voices through their own DSP chain (if any) and accumulate into super_flow
         let work_buf = self.effects_manager.work_buffer(sample_count);
         self.isolate_dsp.process(work_buf);
-        self.simd_mixer.accumulate(&mut self.super_flow, work_buf);
+        if work_buf.iter().any(|&s| s.abs() > 1e-6) {
+            self.simd_mixer.accumulate(&mut self.super_flow, work_buf);
+        }
 
-        // 4. Process music DSP (ReplayGain, SkipSilence, Sonic, EQ, Reverb)
-        self.music_dsp.process(&mut self.scratch_music[..sample_count]);
+        // 7. Process inherited SFX voices through inherit_dsp (sharing music's Reverb, EQ, etc.) and accumulate into super_flow
+        self.inherit_dsp.process(&mut self.scratch_effects[..sample_count]);
+        if self.scratch_effects[..sample_count].iter().any(|&s| s.abs() > 1e-6) {
+            self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_effects[..sample_count]);
+        }
 
-        // 5. Microphone capture, RMS level measurement, and Auto-Ducking
-        self.input_manager.process(
-            &mut self.scratch_music[..sample_count],
-            &mut self.scratch_voice[..sample_count],
-        );
+        // 8. Accumulate direct microphone voice monitoring into super_flow (All Mix)
+        if self.scratch_voice[..sample_count].iter().any(|&s| s.abs() > 1e-6) {
+            self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_voice[..sample_count]);
+        }
 
-        // 6. Accumulate processed music and voice monitoring into super_flow
-        self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_music[..sample_count]);
-        self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_voice[..sample_count]);
-
-        // 7. Master True-Peak Brickwall Limiter & Soft-Knee Saturation Headroom
+        // 9. Master True-Peak Brickwall Limiter & Soft-Knee Saturation Headroom on super_flow
         self.master_limiter.process_frames(&mut self.super_flow[..sample_count]);
 
-        // 8. Symmetrical Output Dispatch to all active sinks
+        // 10. Symmetrical Output Dispatch to all active sinks:
+        // - all_buffer (All Mix): super_flow (ducked music + all SFX + mic + limiter)
+        // - music_mix_buffer (Music Only): scratch_music (pure music, ZERO SFX, ZERO DUCKING)
+        // - active_buffer: active deck PCM
+        // - standby_buffer: standby deck PCM
         self.output_manager.dispatch(
             &self.super_flow[..sample_count],
             &self.scratch_music[..sample_count],

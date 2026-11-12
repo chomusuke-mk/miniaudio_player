@@ -171,6 +171,9 @@ pub struct Freeverb {
     current_dry: f32,
     current_wet1: f32,
     current_wet2: f32,
+
+    is_dormant: bool,
+    silent_blocks: usize,
 }
 
 impl Freeverb {
@@ -214,6 +217,8 @@ impl Freeverb {
             current_dry: 1.0,
             current_wet1: 0.0,
             current_wet2: 0.0,
+            is_dormant: true,
+            silent_blocks: 0,
         };
 
         rev.update_params();
@@ -257,6 +262,12 @@ impl Freeverb {
         &self.config
     }
 
+    /// Returns whether the reverberation network is dormant (all delay lines silent).
+    #[inline]
+    pub fn is_dormant(&self) -> bool {
+        self.is_dormant
+    }
+
     /// Clears all comb and all-pass delay line buffers to silence.
     pub fn clear(&mut self) {
         for c in &mut self.combs_l {
@@ -271,6 +282,8 @@ impl Freeverb {
         for a in &mut self.allpass_r {
             a.clear();
         }
+        self.is_dormant = true;
+        self.silent_blocks = 0;
     }
 
     /// Processes interleaved PCM audio frames in-place through the reverberation network.
@@ -285,7 +298,22 @@ impl Freeverb {
             && self.current_wet2 < 1e-5
             && (self.current_dry - 1.0).abs() < 1e-5
         {
+            self.is_dormant = true;
             return;
+        }
+
+        // Fast-path: Check if the incoming block has any audio signal
+        let has_input = samples.iter().any(|&s| s.abs() > 1e-6);
+
+        // If the reverb network is dormant (empty delay lines) and no audio is entering,
+        // bypass processing completely with zero CPU cost.
+        if self.is_dormant && !has_input {
+            return;
+        }
+
+        if has_input {
+            self.is_dormant = false;
+            self.silent_blocks = 0;
         }
 
         let frame_count = samples.len() / channels;
@@ -299,6 +327,7 @@ impl Freeverb {
 
         let damp = self.damp;
         let feedback = self.feedback;
+        let mut max_tail_energy: f32 = 0.0;
 
         if channels >= 2 {
             for f in 0..frame_count {
@@ -320,16 +349,17 @@ impl Freeverb {
                     out_comb_r = self.allpass_r[i].process(out_comb_r);
                 }
 
+                let wet_out_l = out_comb_l * self.current_wet1 + out_comb_r * self.current_wet2;
+                let wet_out_r = out_comb_r * self.current_wet1 + out_comb_l * self.current_wet2;
+
+                max_tail_energy = max_tail_energy.max(wet_out_l.abs()).max(wet_out_r.abs());
+
                 self.current_dry += dry_step;
                 self.current_wet1 += wet1_step;
                 self.current_wet2 += wet2_step;
 
-                samples[idx] = in_l * self.current_dry
-                    + out_comb_l * self.current_wet1
-                    + out_comb_r * self.current_wet2;
-                samples[idx + 1] = in_r * self.current_dry
-                    + out_comb_r * self.current_wet1
-                    + out_comb_l * self.current_wet2;
+                samples[idx] = in_l * self.current_dry + wet_out_l;
+                samples[idx + 1] = in_r * self.current_dry + wet_out_r;
             }
         } else {
             // Mono
@@ -345,11 +375,26 @@ impl Freeverb {
                     out_comb = self.allpass_l[i].process(out_comb);
                 }
 
+                let wet_out = out_comb * self.current_wet1;
+                max_tail_energy = max_tail_energy.max(wet_out.abs());
+
                 self.current_dry += dry_step;
                 self.current_wet1 += wet1_step;
 
-                samples[f] = in_val * self.current_dry + out_comb * self.current_wet1;
+                samples[f] = in_val * self.current_dry + wet_out;
             }
+        }
+
+        // If no audio was input and the ringdown tail has dropped below the digital
+        // silence floor (< 1e-5 / -100 dBFS) across 4 consecutive periods, transition
+        // to dormant state and clear delay lines to prevent subnormal denormals.
+        if !has_input && max_tail_energy < 1e-5 {
+            self.silent_blocks += 1;
+            if self.silent_blocks >= 4 {
+                self.clear();
+            }
+        } else if has_input {
+            self.silent_blocks = 0;
         }
     }
 

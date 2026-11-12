@@ -709,9 +709,12 @@ class PlayerAction<T> {
       );
     }
 
+    final effectiveRouting =
+        (dspRouting != DspRouting.inherit) ? dspRouting : config.dspRouting;
+
     final voiceId = await _rust.playEffect(
       id: id,
-      dspRouting: dspRouting.value,
+      dspRouting: effectiveRouting.value,
       config: rust_types.RustEffectConfig(
         volume: effectiveConfig.volume,
         balance: effectiveConfig.balance,
