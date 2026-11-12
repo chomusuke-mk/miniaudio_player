@@ -29,8 +29,6 @@ pub enum EventType {
     IsPlaying = 4,
     /// Is-buffering boolean change.
     IsBuffering = 5,
-    /// Track playback completion.
-    IsCompleted = 6,
     /// Output volume change.
     Volume = 7,
     /// Playback speed/rate change.
@@ -85,7 +83,6 @@ impl EventType {
             3 => Self::Duration,
             4 => Self::IsPlaying,
             5 => Self::IsBuffering,
-            6 => Self::IsCompleted,
             7 => Self::Volume,
             8 => Self::Rate,
             9 => Self::Pitch,
@@ -171,7 +168,6 @@ pub enum TelemetryEvent {
     Duration(i64),
     IsPlaying(bool),
     IsBuffering(bool),
-    IsCompleted(bool),
     Volume(f32),
     Rate(f32),
     Pitch(f32),
@@ -205,7 +201,6 @@ impl TelemetryEvent {
             Self::Duration(_) => EventType::Duration,
             Self::IsPlaying(_) => EventType::IsPlaying,
             Self::IsBuffering(_) => EventType::IsBuffering,
-            Self::IsCompleted(_) => EventType::IsCompleted,
             Self::Volume(_) => EventType::Volume,
             Self::Rate(_) => EventType::Rate,
             Self::Pitch(_) => EventType::Pitch,
@@ -242,9 +237,6 @@ impl TelemetryEvent {
             },
             Self::IsBuffering(b) => MapEventData {
                 is_buffering: i32::from(*b),
-            },
-            Self::IsCompleted(c) => MapEventData {
-                is_completed: i32::from(*c),
             },
             Self::Volume(v) => MapEventData { volume: *v },
             Self::Rate(r) => MapEventData { rate: *r },
@@ -301,7 +293,6 @@ impl TelemetryEvent {
                 EventType::Duration => Self::Duration(data.duration_ms),
                 EventType::IsPlaying => Self::IsPlaying(data.is_playing != 0),
                 EventType::IsBuffering => Self::IsBuffering(data.is_buffering != 0),
-                EventType::IsCompleted => Self::IsCompleted(data.is_completed != 0),
                 EventType::Volume => Self::Volume(data.volume),
                 EventType::Rate => Self::Rate(data.rate),
                 EventType::Pitch => Self::Pitch(data.pitch),
@@ -344,8 +335,6 @@ pub union MapEventData {
     pub is_playing: i32,
     /// 1 if buffering, 0 otherwise.
     pub is_buffering: i32,
-    /// 1 if track completed, 0 otherwise.
-    pub is_completed: i32,
     /// Volume multiplier.
     pub volume: f32,
     /// Playback speed rate.

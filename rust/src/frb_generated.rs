@@ -6418,30 +6418,22 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                 return crate::api::types::RustPlayerEvent::PlaybackState(var_field0);
             }
             2 => {
-                let mut var_field0 = <i32>::sse_decode(deserializer);
-                return crate::api::types::RustPlayerEvent::State(var_field0);
-            }
-            3 => {
                 let mut var_field0 = <i64>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Position(var_field0);
             }
-            4 => {
+            3 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsPlaying(var_field0);
             }
-            5 => {
+            4 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsBuffering(var_field0);
             }
-            6 => {
-                let mut var_field0 = <bool>::sse_decode(deserializer);
-                return crate::api::types::RustPlayerEvent::IsCompleted(var_field0);
-            }
-            7 => {
+            5 => {
                 let mut var_field0 = <crate::api::types::RustBuffer>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Buffer(var_field0);
             }
-            8 => {
+            6 => {
                 let mut var_queue = <Vec<i64>>::sse_decode(deserializer);
                 let mut var_currentIndex = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Queue {
@@ -6449,89 +6441,89 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                     current_index: var_currentIndex,
                 };
             }
-            9 => {
+            7 => {
                 let mut var_field0 = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::CurrentIndex(var_field0);
             }
-            10 => {
+            8 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsCrossfading(var_field0);
             }
-            11 => {
+            9 => {
                 let mut var_field0 =
                     <crate::api::types::RustCrossfadeConfig>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::CrossfadeConfig(var_field0);
             }
-            12 => {
+            10 => {
                 let mut var_field0 =
                     <crate::api::types::RustVisualizerData>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Visualizer(var_field0);
             }
-            13 => {
+            11 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::VisualizerEnabled(var_field0);
             }
-            14 => {
+            12 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Volume(var_field0);
             }
-            15 => {
+            13 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Rate(var_field0);
             }
-            16 => {
+            14 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Pitch(var_field0);
             }
-            17 => {
+            15 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Balance(var_field0);
             }
-            18 => {
+            16 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Mono(var_field0);
             }
-            19 => {
+            17 => {
                 let mut var_field0 = <u32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::BufferSize(var_field0);
             }
-            20 => {
+            18 => {
                 let mut var_field0 =
                     <crate::api::types::RustSilenceConfig>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::SilenceConfig(var_field0);
             }
-            21 => {
+            19 => {
                 let mut var_field0 = <i64>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::SilenceSaved(var_field0);
             }
-            22 => {
+            20 => {
                 let mut var_field0 =
                     <crate::api::types::RustEqualizerParams>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Equalizer(var_field0);
             }
-            23 => {
+            21 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Preamp(var_field0);
             }
-            24 => {
+            22 => {
                 let mut var_field0 =
                     <crate::api::types::RustReplayGainConfig>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::ReplayGain(var_field0);
             }
-            25 => {
+            23 => {
                 let mut var_field0 = <u32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::ReplayGainMode(var_field0);
             }
-            26 => {
+            24 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::DefaultReplayGain(var_field0);
             }
-            27 => {
+            25 => {
                 let mut var_field0 =
                     <crate::api::types::RustCrossfeedConfig>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Crossfeed(var_field0);
             }
-            28 => {
+            26 => {
                 let mut var_enabled = <bool>::sse_decode(deserializer);
                 let mut var_width = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Spatializer {
@@ -6539,36 +6531,36 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                     width: var_width,
                 };
             }
-            29 => {
+            27 => {
                 let mut var_field0 =
                     <crate::api::types::RustReverbParams>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Reverb(var_field0);
             }
-            30 => {
+            28 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Limiter(var_field0);
             }
-            31 => {
+            29 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsRecording(var_field0);
             }
-            32 => {
+            30 => {
                 let mut var_field0 = <u64>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::RecordedDuration(var_field0);
             }
-            33 => {
+            31 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsDuckingActive(var_field0);
             }
-            34 => {
+            32 => {
                 let mut var_field0 = <f32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::MicRmsLevel(var_field0);
             }
-            35 => {
+            33 => {
                 let mut var_field0 = <u32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::VoiceCompleted(var_field0);
             }
-            36 => {
+            34 => {
                 let mut var_ids = <Vec<String>>::sse_decode(deserializer);
                 let mut var_allocatedBytes = <usize>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::LoadedEffects {
@@ -6576,20 +6568,20 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                     allocated_bytes: var_allocatedBytes,
                 };
             }
-            37 => {
+            35 => {
                 let mut var_field0 = <u32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::ActiveVoices(var_field0);
             }
-            38 => {
+            36 => {
                 let mut var_field0 =
                     <crate::api::types::RustAudioMetadata>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::AudioMetadata(var_field0);
             }
-            39 => {
+            37 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::MetadataEnabled(var_field0);
             }
-            40 => {
+            38 => {
                 let mut var_isRecording = <bool>::sse_decode(deserializer);
                 let mut var_source = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::RecordingState {
@@ -6597,44 +6589,44 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                     source: var_source,
                 };
             }
-            41 => {
+            39 => {
                 let mut var_field0 = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::LoopMode(var_field0);
             }
-            42 => {
+            40 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::IsShuffled(var_field0);
             }
-            43 => {
+            41 => {
                 let mut var_field0 =
                     <crate::api::types::RustInfiniteMixConfig>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::InfiniteMix(var_field0);
             }
-            44 => {
+            42 => {
                 let mut var_field0 = <bool>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::PauseOnDeviceChange(var_field0);
             }
-            45 => {
+            43 => {
                 let mut var_field0 =
                     <Vec<crate::api::types::RustAudioInput>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Inputs(var_field0);
             }
-            46 => {
+            44 => {
                 let mut var_field0 =
                     <Vec<crate::api::types::RustAudioDevice>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::OutputDevices(var_field0);
             }
-            47 => {
+            45 => {
                 let mut var_field0 =
                     <Vec<crate::api::types::RustAudioDevice>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::InputDevices(var_field0);
             }
-            48 => {
+            46 => {
                 let mut var_field0 =
                     <crate::api::types::RustDartReadRequest>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::DartReadRequest(var_field0);
             }
-            49 => {
+            47 => {
                 let mut var_currentTrackId = <i64>::sse_decode(deserializer);
                 let mut var_remainingTracks = <u32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::NeedMoreTracks {
@@ -6642,12 +6634,12 @@ impl SseDecode for crate::api::types::RustPlayerEvent {
                     remaining_tracks: var_remainingTracks,
                 };
             }
-            50 => {
+            48 => {
                 let mut var_field0 =
                     <Vec<crate::api::types::RustAudioOutput>>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Outputs(var_field0);
             }
-            51 => {
+            49 => {
                 let mut var_message = <String>::sse_decode(deserializer);
                 let mut var_code = <i32>::sse_decode(deserializer);
                 return crate::api::types::RustPlayerEvent::Error {
@@ -6670,7 +6662,6 @@ impl SseDecode for crate::api::types::RustPlayerStatus {
         let mut var_state = <i32>::sse_decode(deserializer);
         let mut var_isPlaying = <bool>::sse_decode(deserializer);
         let mut var_isBuffering = <bool>::sse_decode(deserializer);
-        let mut var_isCompleted = <bool>::sse_decode(deserializer);
         let mut var_volume = <f32>::sse_decode(deserializer);
         let mut var_rate = <f32>::sse_decode(deserializer);
         let mut var_pitch = <f32>::sse_decode(deserializer);
@@ -6683,7 +6674,6 @@ impl SseDecode for crate::api::types::RustPlayerStatus {
             state: var_state,
             is_playing: var_isPlaying,
             is_buffering: var_isBuffering,
-            is_completed: var_isCompleted,
             volume: var_volume,
             rate: var_rate,
             pitch: var_pitch,
@@ -6889,7 +6879,6 @@ impl SseDecode for crate::api::player::TelemetryFilter {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_state = <Option<i32>>::sse_decode(deserializer);
-        let mut var_phase = <Option<i32>>::sse_decode(deserializer);
         let mut var_pos = <i64>::sse_decode(deserializer);
         let mut var_index = <Option<i32>>::sse_decode(deserializer);
         let mut var_bufferedEnd = <Option<i64>>::sse_decode(deserializer);
@@ -6898,7 +6887,6 @@ impl SseDecode for crate::api::player::TelemetryFilter {
         let mut var_isRecording = <Option<bool>>::sse_decode(deserializer);
         let mut var_isDucking = <Option<bool>>::sse_decode(deserializer);
         let mut var_isPlaying = <Option<bool>>::sse_decode(deserializer);
-        let mut var_isCompleted = <Option<bool>>::sse_decode(deserializer);
         let mut var_replayGain = <Option<(u32, u32)>>::sse_decode(deserializer);
         let mut var_metadata =
             <Option<crate::api::types::RustAudioMetadata>>::sse_decode(deserializer);
@@ -6909,7 +6897,6 @@ impl SseDecode for crate::api::player::TelemetryFilter {
             <Option<crate::api::types::RustVisualizerData>>::sse_decode(deserializer);
         return crate::api::player::TelemetryFilter {
             state: var_state,
-            phase: var_phase,
             pos: var_pos,
             index: var_index,
             buffered_end: var_bufferedEnd,
@@ -6918,7 +6905,6 @@ impl SseDecode for crate::api::player::TelemetryFilter {
             is_recording: var_isRecording,
             is_ducking: var_isDucking,
             is_playing: var_isPlaying,
-            is_completed: var_isCompleted,
             replay_gain: var_replayGain,
             metadata: var_metadata,
             audio_info: var_audioInfo,
@@ -8499,182 +8485,176 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustPlayerEvent {
             crate::api::types::RustPlayerEvent::PlaybackState(field0) => {
                 [1.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::State(field0) => {
+            crate::api::types::RustPlayerEvent::Position(field0) => {
                 [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::Position(field0) => {
+            crate::api::types::RustPlayerEvent::IsPlaying(field0) => {
                 [3.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::IsPlaying(field0) => {
+            crate::api::types::RustPlayerEvent::IsBuffering(field0) => {
                 [4.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::types::RustPlayerEvent::IsBuffering(field0) => {
-                [5.into_dart(), field0.into_into_dart().into_dart()].into_dart()
-            }
-            crate::api::types::RustPlayerEvent::IsCompleted(field0) => {
-                [6.into_dart(), field0.into_into_dart().into_dart()].into_dart()
-            }
             crate::api::types::RustPlayerEvent::Buffer(field0) => {
-                [7.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [5.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Queue {
                 queue,
                 current_index,
             } => [
-                8.into_dart(),
+                6.into_dart(),
                 queue.into_into_dart().into_dart(),
                 current_index.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::types::RustPlayerEvent::CurrentIndex(field0) => {
-                [9.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [7.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::IsCrossfading(field0) => {
-                [10.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [8.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::CrossfadeConfig(field0) => {
-                [11.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [9.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Visualizer(field0) => {
-                [12.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [10.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::VisualizerEnabled(field0) => {
-                [13.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [11.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Volume(field0) => {
-                [14.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [12.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Rate(field0) => {
-                [15.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [13.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Pitch(field0) => {
-                [16.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [14.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Balance(field0) => {
-                [17.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [15.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Mono(field0) => {
-                [18.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [16.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::BufferSize(field0) => {
-                [19.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [17.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::SilenceConfig(field0) => {
-                [20.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [18.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::SilenceSaved(field0) => {
-                [21.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [19.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Equalizer(field0) => {
-                [22.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [20.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Preamp(field0) => {
-                [23.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [21.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::ReplayGain(field0) => {
-                [24.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [22.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::ReplayGainMode(field0) => {
-                [25.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [23.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::DefaultReplayGain(field0) => {
-                [26.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [24.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Crossfeed(field0) => {
-                [27.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [25.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Spatializer { enabled, width } => [
-                28.into_dart(),
+                26.into_dart(),
                 enabled.into_into_dart().into_dart(),
                 width.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::types::RustPlayerEvent::Reverb(field0) => {
-                [29.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [27.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Limiter(field0) => {
-                [30.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [28.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::IsRecording(field0) => {
-                [31.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [29.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::RecordedDuration(field0) => {
-                [32.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [30.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::IsDuckingActive(field0) => {
-                [33.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [31.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::MicRmsLevel(field0) => {
-                [34.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [32.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::VoiceCompleted(field0) => {
-                [35.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [33.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::LoadedEffects {
                 ids,
                 allocated_bytes,
             } => [
-                36.into_dart(),
+                34.into_dart(),
                 ids.into_into_dart().into_dart(),
                 allocated_bytes.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::types::RustPlayerEvent::ActiveVoices(field0) => {
-                [37.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [35.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::AudioMetadata(field0) => {
-                [38.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [36.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::MetadataEnabled(field0) => {
-                [39.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [37.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::RecordingState {
                 is_recording,
                 source,
             } => [
-                40.into_dart(),
+                38.into_dart(),
                 is_recording.into_into_dart().into_dart(),
                 source.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::types::RustPlayerEvent::LoopMode(field0) => {
-                [41.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [39.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::IsShuffled(field0) => {
-                [42.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [40.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::InfiniteMix(field0) => {
-                [43.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [41.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::PauseOnDeviceChange(field0) => {
-                [44.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [42.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Inputs(field0) => {
-                [45.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [43.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::OutputDevices(field0) => {
-                [46.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [44.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::InputDevices(field0) => {
-                [47.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [45.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::DartReadRequest(field0) => {
-                [48.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [46.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::NeedMoreTracks {
                 current_track_id,
                 remaining_tracks,
             } => [
-                49.into_dart(),
+                47.into_dart(),
                 current_track_id.into_into_dart().into_dart(),
                 remaining_tracks.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::types::RustPlayerEvent::Outputs(field0) => {
-                [50.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+                [48.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::types::RustPlayerEvent::Error { message, code } => [
-                51.into_dart(),
+                49.into_dart(),
                 message.into_into_dart().into_dart(),
                 code.into_into_dart().into_dart(),
             ]
@@ -8705,7 +8685,6 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustPlayerStatus {
             self.state.into_into_dart().into_dart(),
             self.is_playing.into_into_dart().into_dart(),
             self.is_buffering.into_into_dart().into_dart(),
-            self.is_completed.into_into_dart().into_dart(),
             self.volume.into_into_dart().into_dart(),
             self.rate.into_into_dart().into_dart(),
             self.pitch.into_into_dart().into_dart(),
@@ -8993,7 +8972,6 @@ impl flutter_rust_bridge::IntoDart for crate::api::player::TelemetryFilter {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.state.into_into_dart().into_dart(),
-            self.phase.into_into_dart().into_dart(),
             self.pos.into_into_dart().into_dart(),
             self.index.into_into_dart().into_dart(),
             self.buffered_end.into_into_dart().into_dart(),
@@ -9002,7 +8980,6 @@ impl flutter_rust_bridge::IntoDart for crate::api::player::TelemetryFilter {
             self.is_recording.into_into_dart().into_dart(),
             self.is_ducking.into_into_dart().into_dart(),
             self.is_playing.into_into_dart().into_dart(),
-            self.is_completed.into_into_dart().into_dart(),
             self.replay_gain.into_into_dart().into_dart(),
             self.metadata.into_into_dart().into_dart(),
             self.audio_info.into_into_dart().into_dart(),
@@ -9980,221 +9957,213 @@ impl SseEncode for crate::api::types::RustPlayerEvent {
                 <i32>::sse_encode(1, serializer);
                 <i32>::sse_encode(field0, serializer);
             }
-            crate::api::types::RustPlayerEvent::State(field0) => {
-                <i32>::sse_encode(2, serializer);
-                <i32>::sse_encode(field0, serializer);
-            }
             crate::api::types::RustPlayerEvent::Position(field0) => {
-                <i32>::sse_encode(3, serializer);
+                <i32>::sse_encode(2, serializer);
                 <i64>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsPlaying(field0) => {
-                <i32>::sse_encode(4, serializer);
+                <i32>::sse_encode(3, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsBuffering(field0) => {
-                <i32>::sse_encode(5, serializer);
-                <bool>::sse_encode(field0, serializer);
-            }
-            crate::api::types::RustPlayerEvent::IsCompleted(field0) => {
-                <i32>::sse_encode(6, serializer);
+                <i32>::sse_encode(4, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Buffer(field0) => {
-                <i32>::sse_encode(7, serializer);
+                <i32>::sse_encode(5, serializer);
                 <crate::api::types::RustBuffer>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Queue {
                 queue,
                 current_index,
             } => {
-                <i32>::sse_encode(8, serializer);
+                <i32>::sse_encode(6, serializer);
                 <Vec<i64>>::sse_encode(queue, serializer);
                 <i32>::sse_encode(current_index, serializer);
             }
             crate::api::types::RustPlayerEvent::CurrentIndex(field0) => {
-                <i32>::sse_encode(9, serializer);
+                <i32>::sse_encode(7, serializer);
                 <i32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsCrossfading(field0) => {
-                <i32>::sse_encode(10, serializer);
+                <i32>::sse_encode(8, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::CrossfadeConfig(field0) => {
-                <i32>::sse_encode(11, serializer);
+                <i32>::sse_encode(9, serializer);
                 <crate::api::types::RustCrossfadeConfig>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Visualizer(field0) => {
-                <i32>::sse_encode(12, serializer);
+                <i32>::sse_encode(10, serializer);
                 <crate::api::types::RustVisualizerData>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::VisualizerEnabled(field0) => {
-                <i32>::sse_encode(13, serializer);
+                <i32>::sse_encode(11, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Volume(field0) => {
-                <i32>::sse_encode(14, serializer);
+                <i32>::sse_encode(12, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Rate(field0) => {
-                <i32>::sse_encode(15, serializer);
+                <i32>::sse_encode(13, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Pitch(field0) => {
-                <i32>::sse_encode(16, serializer);
+                <i32>::sse_encode(14, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Balance(field0) => {
-                <i32>::sse_encode(17, serializer);
+                <i32>::sse_encode(15, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Mono(field0) => {
-                <i32>::sse_encode(18, serializer);
+                <i32>::sse_encode(16, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::BufferSize(field0) => {
-                <i32>::sse_encode(19, serializer);
+                <i32>::sse_encode(17, serializer);
                 <u32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::SilenceConfig(field0) => {
-                <i32>::sse_encode(20, serializer);
+                <i32>::sse_encode(18, serializer);
                 <crate::api::types::RustSilenceConfig>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::SilenceSaved(field0) => {
-                <i32>::sse_encode(21, serializer);
+                <i32>::sse_encode(19, serializer);
                 <i64>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Equalizer(field0) => {
-                <i32>::sse_encode(22, serializer);
+                <i32>::sse_encode(20, serializer);
                 <crate::api::types::RustEqualizerParams>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Preamp(field0) => {
-                <i32>::sse_encode(23, serializer);
+                <i32>::sse_encode(21, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::ReplayGain(field0) => {
-                <i32>::sse_encode(24, serializer);
+                <i32>::sse_encode(22, serializer);
                 <crate::api::types::RustReplayGainConfig>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::ReplayGainMode(field0) => {
-                <i32>::sse_encode(25, serializer);
+                <i32>::sse_encode(23, serializer);
                 <u32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::DefaultReplayGain(field0) => {
-                <i32>::sse_encode(26, serializer);
+                <i32>::sse_encode(24, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Crossfeed(field0) => {
-                <i32>::sse_encode(27, serializer);
+                <i32>::sse_encode(25, serializer);
                 <crate::api::types::RustCrossfeedConfig>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Spatializer { enabled, width } => {
-                <i32>::sse_encode(28, serializer);
+                <i32>::sse_encode(26, serializer);
                 <bool>::sse_encode(enabled, serializer);
                 <f32>::sse_encode(width, serializer);
             }
             crate::api::types::RustPlayerEvent::Reverb(field0) => {
-                <i32>::sse_encode(29, serializer);
+                <i32>::sse_encode(27, serializer);
                 <crate::api::types::RustReverbParams>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Limiter(field0) => {
-                <i32>::sse_encode(30, serializer);
+                <i32>::sse_encode(28, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsRecording(field0) => {
-                <i32>::sse_encode(31, serializer);
+                <i32>::sse_encode(29, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::RecordedDuration(field0) => {
-                <i32>::sse_encode(32, serializer);
+                <i32>::sse_encode(30, serializer);
                 <u64>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsDuckingActive(field0) => {
-                <i32>::sse_encode(33, serializer);
+                <i32>::sse_encode(31, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::MicRmsLevel(field0) => {
-                <i32>::sse_encode(34, serializer);
+                <i32>::sse_encode(32, serializer);
                 <f32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::VoiceCompleted(field0) => {
-                <i32>::sse_encode(35, serializer);
+                <i32>::sse_encode(33, serializer);
                 <u32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::LoadedEffects {
                 ids,
                 allocated_bytes,
             } => {
-                <i32>::sse_encode(36, serializer);
+                <i32>::sse_encode(34, serializer);
                 <Vec<String>>::sse_encode(ids, serializer);
                 <usize>::sse_encode(allocated_bytes, serializer);
             }
             crate::api::types::RustPlayerEvent::ActiveVoices(field0) => {
-                <i32>::sse_encode(37, serializer);
+                <i32>::sse_encode(35, serializer);
                 <u32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::AudioMetadata(field0) => {
-                <i32>::sse_encode(38, serializer);
+                <i32>::sse_encode(36, serializer);
                 <crate::api::types::RustAudioMetadata>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::MetadataEnabled(field0) => {
-                <i32>::sse_encode(39, serializer);
+                <i32>::sse_encode(37, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::RecordingState {
                 is_recording,
                 source,
             } => {
-                <i32>::sse_encode(40, serializer);
+                <i32>::sse_encode(38, serializer);
                 <bool>::sse_encode(is_recording, serializer);
                 <i32>::sse_encode(source, serializer);
             }
             crate::api::types::RustPlayerEvent::LoopMode(field0) => {
-                <i32>::sse_encode(41, serializer);
+                <i32>::sse_encode(39, serializer);
                 <i32>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::IsShuffled(field0) => {
-                <i32>::sse_encode(42, serializer);
+                <i32>::sse_encode(40, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::InfiniteMix(field0) => {
-                <i32>::sse_encode(43, serializer);
+                <i32>::sse_encode(41, serializer);
                 <crate::api::types::RustInfiniteMixConfig>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::PauseOnDeviceChange(field0) => {
-                <i32>::sse_encode(44, serializer);
+                <i32>::sse_encode(42, serializer);
                 <bool>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Inputs(field0) => {
-                <i32>::sse_encode(45, serializer);
+                <i32>::sse_encode(43, serializer);
                 <Vec<crate::api::types::RustAudioInput>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::OutputDevices(field0) => {
-                <i32>::sse_encode(46, serializer);
+                <i32>::sse_encode(44, serializer);
                 <Vec<crate::api::types::RustAudioDevice>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::InputDevices(field0) => {
-                <i32>::sse_encode(47, serializer);
+                <i32>::sse_encode(45, serializer);
                 <Vec<crate::api::types::RustAudioDevice>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::DartReadRequest(field0) => {
-                <i32>::sse_encode(48, serializer);
+                <i32>::sse_encode(46, serializer);
                 <crate::api::types::RustDartReadRequest>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::NeedMoreTracks {
                 current_track_id,
                 remaining_tracks,
             } => {
-                <i32>::sse_encode(49, serializer);
+                <i32>::sse_encode(47, serializer);
                 <i64>::sse_encode(current_track_id, serializer);
                 <u32>::sse_encode(remaining_tracks, serializer);
             }
             crate::api::types::RustPlayerEvent::Outputs(field0) => {
-                <i32>::sse_encode(50, serializer);
+                <i32>::sse_encode(48, serializer);
                 <Vec<crate::api::types::RustAudioOutput>>::sse_encode(field0, serializer);
             }
             crate::api::types::RustPlayerEvent::Error { message, code } => {
-                <i32>::sse_encode(51, serializer);
+                <i32>::sse_encode(49, serializer);
                 <String>::sse_encode(message, serializer);
                 <i32>::sse_encode(code, serializer);
             }
@@ -10213,7 +10182,6 @@ impl SseEncode for crate::api::types::RustPlayerStatus {
         <i32>::sse_encode(self.state, serializer);
         <bool>::sse_encode(self.is_playing, serializer);
         <bool>::sse_encode(self.is_buffering, serializer);
-        <bool>::sse_encode(self.is_completed, serializer);
         <f32>::sse_encode(self.volume, serializer);
         <f32>::sse_encode(self.rate, serializer);
         <f32>::sse_encode(self.pitch, serializer);
@@ -10361,7 +10329,6 @@ impl SseEncode for crate::api::player::TelemetryFilter {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<i32>>::sse_encode(self.state, serializer);
-        <Option<i32>>::sse_encode(self.phase, serializer);
         <i64>::sse_encode(self.pos, serializer);
         <Option<i32>>::sse_encode(self.index, serializer);
         <Option<i64>>::sse_encode(self.buffered_end, serializer);
@@ -10370,7 +10337,6 @@ impl SseEncode for crate::api::player::TelemetryFilter {
         <Option<bool>>::sse_encode(self.is_recording, serializer);
         <Option<bool>>::sse_encode(self.is_ducking, serializer);
         <Option<bool>>::sse_encode(self.is_playing, serializer);
-        <Option<bool>>::sse_encode(self.is_completed, serializer);
         <Option<(u32, u32)>>::sse_encode(self.replay_gain, serializer);
         <Option<crate::api::types::RustAudioMetadata>>::sse_encode(self.metadata, serializer);
         <Option<crate::api::types::RustAudioInfo>>::sse_encode(self.audio_info, serializer);

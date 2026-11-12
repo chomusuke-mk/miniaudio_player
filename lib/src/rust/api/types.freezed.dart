@@ -54,11 +54,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   TResult maybeMap<TResult extends Object?>({
     TResult Function(RustPlayerEvent_AudioInfo value)? audioInfo,
     TResult Function(RustPlayerEvent_PlaybackState value)? playbackState,
-    TResult Function(RustPlayerEvent_State value)? state,
     TResult Function(RustPlayerEvent_Position value)? position,
     TResult Function(RustPlayerEvent_IsPlaying value)? isPlaying,
     TResult Function(RustPlayerEvent_IsBuffering value)? isBuffering,
-    TResult Function(RustPlayerEvent_IsCompleted value)? isCompleted,
     TResult Function(RustPlayerEvent_Buffer value)? buffer,
     TResult Function(RustPlayerEvent_Queue value)? queue,
     TResult Function(RustPlayerEvent_CurrentIndex value)? currentIndex,
@@ -115,16 +113,12 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return audioInfo(_that);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that);
-      case RustPlayerEvent_State() when state != null:
-        return state(_that);
       case RustPlayerEvent_Position() when position != null:
         return position(_that);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
         return isBuffering(_that);
-      case RustPlayerEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that);
       case RustPlayerEvent_Buffer() when buffer != null:
         return buffer(_that);
       case RustPlayerEvent_Queue() when queue != null:
@@ -239,11 +233,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_AudioInfo value) audioInfo,
     required TResult Function(RustPlayerEvent_PlaybackState value)
         playbackState,
-    required TResult Function(RustPlayerEvent_State value) state,
     required TResult Function(RustPlayerEvent_Position value) position,
     required TResult Function(RustPlayerEvent_IsPlaying value) isPlaying,
     required TResult Function(RustPlayerEvent_IsBuffering value) isBuffering,
-    required TResult Function(RustPlayerEvent_IsCompleted value) isCompleted,
     required TResult Function(RustPlayerEvent_Buffer value) buffer,
     required TResult Function(RustPlayerEvent_Queue value) queue,
     required TResult Function(RustPlayerEvent_CurrentIndex value) currentIndex,
@@ -313,16 +305,12 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return audioInfo(_that);
       case RustPlayerEvent_PlaybackState():
         return playbackState(_that);
-      case RustPlayerEvent_State():
-        return state(_that);
       case RustPlayerEvent_Position():
         return position(_that);
       case RustPlayerEvent_IsPlaying():
         return isPlaying(_that);
       case RustPlayerEvent_IsBuffering():
         return isBuffering(_that);
-      case RustPlayerEvent_IsCompleted():
-        return isCompleted(_that);
       case RustPlayerEvent_Buffer():
         return buffer(_that);
       case RustPlayerEvent_Queue():
@@ -432,11 +420,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(RustPlayerEvent_AudioInfo value)? audioInfo,
     TResult? Function(RustPlayerEvent_PlaybackState value)? playbackState,
-    TResult? Function(RustPlayerEvent_State value)? state,
     TResult? Function(RustPlayerEvent_Position value)? position,
     TResult? Function(RustPlayerEvent_IsPlaying value)? isPlaying,
     TResult? Function(RustPlayerEvent_IsBuffering value)? isBuffering,
-    TResult? Function(RustPlayerEvent_IsCompleted value)? isCompleted,
     TResult? Function(RustPlayerEvent_Buffer value)? buffer,
     TResult? Function(RustPlayerEvent_Queue value)? queue,
     TResult? Function(RustPlayerEvent_CurrentIndex value)? currentIndex,
@@ -492,16 +478,12 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return audioInfo(_that);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that);
-      case RustPlayerEvent_State() when state != null:
-        return state(_that);
       case RustPlayerEvent_Position() when position != null:
         return position(_that);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
         return isBuffering(_that);
-      case RustPlayerEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that);
       case RustPlayerEvent_Buffer() when buffer != null:
         return buffer(_that);
       case RustPlayerEvent_Queue() when queue != null:
@@ -614,11 +596,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(RustAudioInfo field0)? audioInfo,
     TResult Function(int field0)? playbackState,
-    TResult Function(int field0)? state,
     TResult Function(PlatformInt64 field0)? position,
     TResult Function(bool field0)? isPlaying,
     TResult Function(bool field0)? isBuffering,
-    TResult Function(bool field0)? isCompleted,
     TResult Function(RustBuffer field0)? buffer,
     TResult Function(Int64List queue, int currentIndex)? queue,
     TResult Function(int field0)? currentIndex,
@@ -673,16 +653,12 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return audioInfo(_that.field0);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that.field0);
-      case RustPlayerEvent_State() when state != null:
-        return state(_that.field0);
       case RustPlayerEvent_Position() when position != null:
         return position(_that.field0);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that.field0);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
         return isBuffering(_that.field0);
-      case RustPlayerEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that.field0);
       case RustPlayerEvent_Buffer() when buffer != null:
         return buffer(_that.field0);
       case RustPlayerEvent_Queue() when queue != null:
@@ -796,11 +772,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   TResult when<TResult extends Object?>({
     required TResult Function(RustAudioInfo field0) audioInfo,
     required TResult Function(int field0) playbackState,
-    required TResult Function(int field0) state,
     required TResult Function(PlatformInt64 field0) position,
     required TResult Function(bool field0) isPlaying,
     required TResult Function(bool field0) isBuffering,
-    required TResult Function(bool field0) isCompleted,
     required TResult Function(RustBuffer field0) buffer,
     required TResult Function(Int64List queue, int currentIndex) queue,
     required TResult Function(int field0) currentIndex,
@@ -855,16 +829,12 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return audioInfo(_that.field0);
       case RustPlayerEvent_PlaybackState():
         return playbackState(_that.field0);
-      case RustPlayerEvent_State():
-        return state(_that.field0);
       case RustPlayerEvent_Position():
         return position(_that.field0);
       case RustPlayerEvent_IsPlaying():
         return isPlaying(_that.field0);
       case RustPlayerEvent_IsBuffering():
         return isBuffering(_that.field0);
-      case RustPlayerEvent_IsCompleted():
-        return isCompleted(_that.field0);
       case RustPlayerEvent_Buffer():
         return buffer(_that.field0);
       case RustPlayerEvent_Queue():
@@ -974,11 +944,9 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(RustAudioInfo field0)? audioInfo,
     TResult? Function(int field0)? playbackState,
-    TResult? Function(int field0)? state,
     TResult? Function(PlatformInt64 field0)? position,
     TResult? Function(bool field0)? isPlaying,
     TResult? Function(bool field0)? isBuffering,
-    TResult? Function(bool field0)? isCompleted,
     TResult? Function(RustBuffer field0)? buffer,
     TResult? Function(Int64List queue, int currentIndex)? queue,
     TResult? Function(int field0)? currentIndex,
@@ -1032,16 +1000,12 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return audioInfo(_that.field0);
       case RustPlayerEvent_PlaybackState() when playbackState != null:
         return playbackState(_that.field0);
-      case RustPlayerEvent_State() when state != null:
-        return state(_that.field0);
       case RustPlayerEvent_Position() when position != null:
         return position(_that.field0);
       case RustPlayerEvent_IsPlaying() when isPlaying != null:
         return isPlaying(_that.field0);
       case RustPlayerEvent_IsBuffering() when isBuffering != null:
         return isBuffering(_that.field0);
-      case RustPlayerEvent_IsCompleted() when isCompleted != null:
-        return isCompleted(_that.field0);
       case RustPlayerEvent_Buffer() when buffer != null:
         return buffer(_that.field0);
       case RustPlayerEvent_Queue() when queue != null:
@@ -1276,73 +1240,6 @@ class _$RustPlayerEvent_PlaybackStateCopyWithImpl<$Res>
 
 /// @nodoc
 
-class RustPlayerEvent_State extends RustPlayerEvent {
-  const RustPlayerEvent_State(this.field0) : super._();
-
-  final int field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_StateCopyWith<RustPlayerEvent_State> get copyWith =>
-      _$RustPlayerEvent_StateCopyWithImpl<RustPlayerEvent_State>(
-          this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_State &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.state(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_StateCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_StateCopyWith(RustPlayerEvent_State value,
-          $Res Function(RustPlayerEvent_State) _then) =
-      _$RustPlayerEvent_StateCopyWithImpl;
-  @useResult
-  $Res call({int field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_StateCopyWithImpl<$Res>
-    implements $RustPlayerEvent_StateCopyWith<$Res> {
-  _$RustPlayerEvent_StateCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_State _self;
-  final $Res Function(RustPlayerEvent_State) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_State(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as int,
-    ));
-  }
-}
-
-/// @nodoc
-
 class RustPlayerEvent_Position extends RustPlayerEvent {
   const RustPlayerEvent_Position(this.field0) : super._();
 
@@ -1535,74 +1432,6 @@ class _$RustPlayerEvent_IsBufferingCopyWithImpl<$Res>
     Object? field0 = null,
   }) {
     return _then(RustPlayerEvent_IsBuffering(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as bool,
-    ));
-  }
-}
-
-/// @nodoc
-
-class RustPlayerEvent_IsCompleted extends RustPlayerEvent {
-  const RustPlayerEvent_IsCompleted(this.field0) : super._();
-
-  final bool field0;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $RustPlayerEvent_IsCompletedCopyWith<RustPlayerEvent_IsCompleted>
-      get copyWith => _$RustPlayerEvent_IsCompletedCopyWithImpl<
-          RustPlayerEvent_IsCompleted>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is RustPlayerEvent_IsCompleted &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode {
-    return Object.hash(runtimeType, field0);
-  }
-
-  @override
-  String toString() {
-    return 'RustPlayerEvent.isCompleted(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $RustPlayerEvent_IsCompletedCopyWith<$Res>
-    implements $RustPlayerEventCopyWith<$Res> {
-  factory $RustPlayerEvent_IsCompletedCopyWith(
-          RustPlayerEvent_IsCompleted value,
-          $Res Function(RustPlayerEvent_IsCompleted) _then) =
-      _$RustPlayerEvent_IsCompletedCopyWithImpl;
-  @useResult
-  $Res call({bool field0});
-}
-
-/// @nodoc
-class _$RustPlayerEvent_IsCompletedCopyWithImpl<$Res>
-    implements $RustPlayerEvent_IsCompletedCopyWith<$Res> {
-  _$RustPlayerEvent_IsCompletedCopyWithImpl(this._self, this._then);
-
-  final RustPlayerEvent_IsCompleted _self;
-  final $Res Function(RustPlayerEvent_IsCompleted) _then;
-
-  /// Create a copy of RustPlayerEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(RustPlayerEvent_IsCompleted(
       null == field0
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable

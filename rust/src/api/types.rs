@@ -351,8 +351,6 @@ pub struct RustPlayerStatus {
     pub is_playing: bool,
     /// Whether the engine is buffering.
     pub is_buffering: bool,
-    /// Whether playback of the track has completed.
-    pub is_completed: bool,
     /// Master volume level.
     pub volume: f32,
     /// Playback speed rate multiplier.
@@ -375,7 +373,6 @@ impl From<crate::core::dual_source::MiniaudioPlayerStatus> for RustPlayerStatus 
             state: status.state,
             is_playing: status.is_playing != 0,
             is_buffering: status.is_buffering != 0,
-            is_completed: status.is_completed != 0,
             volume: status.volume,
             rate: status.rate,
             pitch: status.pitch,
@@ -1260,18 +1257,14 @@ pub struct RustRecordingResult {
 pub enum RustPlayerEvent {
     /// Technical format characteristics of the active audio track.
     AudioInfo(RustAudioInfo),
-    /// Playback state transition code.
+    /// Playback state transition code (`PlaybackState`).
     PlaybackState(i32),
-    /// State machine integer code.
-    State(i32),
     /// Elapsed track position in milliseconds.
     Position(i64),
     /// Whether audio is actively playing.
     IsPlaying(bool),
     /// Whether player is buffering data.
     IsBuffering(bool),
-    /// Whether track has finished playback.
-    IsCompleted(bool),
     /// Tripartite ring buffer telemetry metrics.
     Buffer(RustBuffer),
     /// Playlist queue track IDs in active playback order and current queue index.

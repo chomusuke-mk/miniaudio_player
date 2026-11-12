@@ -17,11 +17,12 @@ use crate::dsp::channel_matrix::ChannelMatrix;
 use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
 use crate::dsp::resampler::RubatoResampler;
+use crate::core::types::{PlaybackState, QueueTransition};
+use crate::dsp::chain::DspChain;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::{SilenceConfig, SilenceDetector};
 use crate::dsp::sonic::SonicStream;
 use crate::dsp::visualizer::VisualizerData;
-use crate::dsp::DspChain;
 use crate::sync::ring_buffer::{AudioProducer, AudioRingBuffer};
 use crate::sync::seqlock::CachePaddedSeqlock;
 use crate::sync::telemetry::{
@@ -29,19 +30,11 @@ use crate::sync::telemetry::{
 };
 
 /// Deck playback state: playback is stopped and position is reset.
-pub const STATE_STOPPED: i32 = 0;
+pub const STATE_STOPPED: i32 = PlaybackState::Stopped.as_i32();
 /// Deck playback state: audio is actively rendering.
-pub const STATE_PLAYING: i32 = 1;
+pub const STATE_PLAYING: i32 = PlaybackState::Playing.as_i32();
 /// Deck playback state: playback is paused.
-pub const STATE_PAUSED: i32 = 2;
-/// Deck playback state: end of track has been reached.
-pub const STATE_COMPLETED: i32 = 3;
-/// Deck playback state: deck is waiting for buffer fill.
-pub const STATE_BUFFERING: i32 = 4;
-/// Deck playback state: an unrecoverable decoding or I/O error occurred.
-pub const STATE_ERROR: i32 = 5;
-/// Deck playback state: stream source or file is opening.
-pub const STATE_OPENING: i32 = 6;
+pub const STATE_PAUSED: i32 = PlaybackState::Paused.as_i32();
 
 /// Stream seek cache miss: required target range must be downloaded.
 pub const MAP_STREAM_SEEK_CACHE_MISS: i32 = 0;
@@ -86,8 +79,6 @@ pub struct MiniaudioPlayerStatus {
     pub is_playing: i32,
     /// Non-zero if deck is stalled buffering.
     pub is_buffering: i32,
-    /// Non-zero if playback completed.
-    pub is_completed: i32,
     /// Master volume level.
     pub volume: f32,
     /// Playback rate speed multiplier.
@@ -897,9 +888,8 @@ struct DecoderWorker {
     session_arc: Arc<RwLock<Option<StreamSession>>>,
     decoder_eof_arc: Arc<AtomicBool>,
     tele: Arc<TelemetryDispatcher>,
-    completed_flag: Arc<AtomicBool>,
-    buffering_flag: Arc<AtomicBool>,
-    buffering_resumed_flag: Arc<AtomicBool>,
+    track_exhausted: Arc<AtomicBool>,
+    is_buffering: Arc<AtomicBool>,
     visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     visualizer_enabled: Arc<AtomicBool>,
     flush_generation: Arc<AtomicU64>,
@@ -941,44 +931,6 @@ impl DecoderWorker {
     }
 
     fn poll_renderer_flags(&mut self) {
-        if self.completed_flag.swap(false, Ordering::AcqRel) {
-            let dur = self.dur_ms.load(Ordering::Relaxed);
-            self.state.store(STATE_COMPLETED, Ordering::Release);
-            self.tele
-                .post_event(EventType::Position, MapEventData { position_ms: dur });
-            self.tele
-                .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
-            self.tele
-                .post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
-            self.tele.post_event(
-                EventType::State,
-                MapEventData {
-                    state: STATE_COMPLETED,
-                },
-            );
-        }
-
-        if self.buffering_flag.swap(false, Ordering::AcqRel) {
-            self.tele
-                .post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
-            self.tele.post_event(
-                EventType::State,
-                MapEventData {
-                    state: STATE_BUFFERING,
-                },
-            );
-        }
-        if self.buffering_resumed_flag.swap(false, Ordering::AcqRel) {
-            self.tele
-                .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
-            self.tele.post_event(
-                EventType::State,
-                MapEventData {
-                    state: STATE_PLAYING,
-                },
-            );
-        }
-
         let cur_sr = self.sr_arc.load(Ordering::Relaxed);
         let cur_ch = self.ch_arc.load(Ordering::Relaxed) as usize;
         self.pipeline.sync_silence_format(cur_sr, cur_ch);
@@ -1009,7 +961,7 @@ impl DecoderWorker {
         let dur = self.dur_ms.load(Ordering::Relaxed);
         if dur > 0 && target_seek >= dur {
             self.decoder_eof_arc.store(true, Ordering::Relaxed);
-            self.state.store(STATE_COMPLETED, Ordering::Relaxed);
+            self.track_exhausted.store(true, Ordering::Release);
             self.pos_ms.store(dur, Ordering::Relaxed);
             let f = if cur_dev_sr > 0 {
                 (dur * cur_dev_sr * 1024) / 1000
@@ -1019,21 +971,11 @@ impl DecoderWorker {
             self.pos_frames.store(f, Ordering::Relaxed);
             self.tele
                 .post_event(EventType::Position, MapEventData { position_ms: dur });
-            self.tele
-                .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
-            self.tele
-                .post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
-            self.tele.post_event(
-                EventType::State,
-                MapEventData {
-                    state: STATE_COMPLETED,
-                },
-            );
             return true;
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
+        {
             let cur_flush = self.flush_generation.load(Ordering::Acquire);
             let start_wait = MonotonicInstant::now();
             while self.flush_acknowledged.load(Ordering::Acquire) < cur_flush
@@ -1166,35 +1108,18 @@ impl DecoderWorker {
     }
 
     fn check_buffering_recovery(&self) {
-        if self.state.load(Ordering::Relaxed) == STATE_BUFFERING && !self.is_producer_empty() {
-            self.transition_to_playing_from_buffering();
+        if self.is_buffering.load(Ordering::Relaxed) && !self.is_producer_empty() {
+            self.set_buffering(false);
         }
     }
 
-    fn transition_to_playing_from_buffering(&self) {
-        crate::map_log!(4, "DecoderWorker recovered from buffering -> PLAYING");
-        self.state.store(STATE_PLAYING, Ordering::Relaxed);
-        self.tele
-            .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
-        self.tele.post_event(
-            EventType::State,
-            MapEventData {
-                state: STATE_PLAYING,
-            },
-        );
-    }
-
-    fn transition_to_buffering(&self) {
-        crate::map_log!(4, "DecoderWorker transitioned to BUFFERING");
-        self.state.store(STATE_BUFFERING, Ordering::Relaxed);
-        self.tele
-            .post_event(EventType::IsBuffering, MapEventData { is_buffering: 1 });
-        self.tele.post_event(
-            EventType::State,
-            MapEventData {
-                state: STATE_BUFFERING,
-            },
-        );
+    fn set_buffering(&self, buffering: bool) {
+        let prev = self.is_buffering.swap(buffering, Ordering::AcqRel);
+        if prev != buffering {
+            crate::map_log!(4, "DecoderWorker is_buffering changed: {} -> {}", prev, buffering);
+            self.tele
+                .post_event(EventType::IsBuffering, MapEventData { is_buffering: buffering as i32 });
+        }
     }
 
     fn handle_eof(&mut self) {
@@ -1210,8 +1135,8 @@ impl DecoderWorker {
                 .unwrap_or(true);
 
             if !is_buf_eof {
-                if self.state.load(Ordering::Relaxed) == STATE_PLAYING {
-                    self.transition_to_buffering();
+                if PlaybackState::from_i32(self.state.load(Ordering::Relaxed)) == PlaybackState::Playing {
+                    self.set_buffering(true);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 thread::sleep(Duration::from_millis(15));
@@ -1225,9 +1150,7 @@ impl DecoderWorker {
             return;
         }
 
-        if self.state.load(Ordering::Relaxed) == STATE_BUFFERING {
-            self.transition_to_playing_from_buffering();
-        }
+        self.set_buffering(false);
 
         #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_millis(20));
@@ -1259,9 +1182,9 @@ impl DecoderWorker {
                     Err(err) => {
                         if self.is_stream_arc.load(Ordering::Relaxed) {
                             if self.is_producer_empty()
-                                && self.state.load(Ordering::Relaxed) == STATE_PLAYING
+                                && PlaybackState::from_i32(self.state.load(Ordering::Relaxed)) == PlaybackState::Playing
                             {
-                                self.transition_to_buffering();
+                                self.set_buffering(true);
                             }
                             #[cfg(not(target_arch = "wasm32"))]
                             thread::sleep(Duration::from_millis(10));
@@ -1287,9 +1210,7 @@ impl DecoderWorker {
 
         if decoded_ok && !self.frame_buf.is_empty() {
             self.decoder_eof_arc.store(false, Ordering::Relaxed);
-            if self.state.load(Ordering::Relaxed) == STATE_BUFFERING {
-                self.transition_to_playing_from_buffering();
-            }
+            self.set_buffering(false);
 
             let cur_track_sr = self.sr_arc.load(Ordering::Relaxed).max(8000);
             let cur_track_ch = (self.ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
@@ -1321,8 +1242,12 @@ impl DecoderWorker {
                 continue;
             }
 
-            let cur_state = self.state.load(Ordering::Relaxed);
-            if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
+            let cur_state = PlaybackState::from_i32(self.state.load(Ordering::Relaxed));
+            if cur_state == PlaybackState::Stopped {
+                self.wait_for_wake(30);
+                continue;
+            }
+            if cur_state == PlaybackState::Paused && self.available_producer_slots() < 2048 {
                 self.wait_for_wake(30);
                 continue;
             }
@@ -1372,8 +1297,11 @@ impl DecoderWorker {
             return true;
         }
 
-        let cur_state = self.state.load(Ordering::Relaxed);
-        if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
+        let cur_state = PlaybackState::from_i32(self.state.load(Ordering::Relaxed));
+        if cur_state == PlaybackState::Stopped {
+            return true;
+        }
+        if cur_state == PlaybackState::Paused && self.available_producer_slots() < 2048 {
             return true;
         }
 
@@ -1492,11 +1420,9 @@ pub struct StreamingDeck {
     /// Generation counter acknowledging completed seek flushes by the audio thread.
     pub flush_acknowledged: Arc<AtomicU64>,
     /// Whether playback reached the end of the current stream.
-    pub completed_flag: Arc<AtomicBool>,
+    pub track_exhausted: Arc<AtomicBool>,
     /// Whether the deck is waiting for buffer fill.
-    pub buffering_flag: Arc<AtomicBool>,
-    /// Flag signaling buffering resumed after starvation.
-    pub buffering_resumed_flag: Arc<AtomicBool>,
+    pub is_buffering: Arc<AtomicBool>,
 
     // Cached DSP settings
     /// Graphic equalizer band parameters.
@@ -1647,9 +1573,8 @@ impl StreamingDeck {
         let visualizer_seqlock = Arc::new(CachePaddedSeqlock::new(VisualizerData::default()));
         let flush_generation = Arc::new(AtomicU64::new(0));
         let flush_acknowledged = Arc::new(AtomicU64::new(0));
-        let completed_flag = Arc::new(AtomicBool::new(false));
-        let buffering_flag = Arc::new(AtomicBool::new(false));
-        let buffering_resumed_flag = Arc::new(AtomicBool::new(false));
+        let track_exhausted = Arc::new(AtomicBool::new(false));
+        let is_buffering = Arc::new(AtomicBool::new(false));
 
         let eq_params = Arc::new(RwLock::new(EqualizerParams::default()));
         let preamp_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
@@ -1715,9 +1640,8 @@ impl StreamingDeck {
             flush_generation: flush_generation.clone(),
             flush_acknowledged: flush_acknowledged.clone(),
             local_flush_gen: 0,
-            completed_flag: completed_flag.clone(),
-            buffering_flag: buffering_flag.clone(),
-            buffering_resumed_flag: buffering_resumed_flag.clone(),
+            track_exhausted: track_exhausted.clone(),
+            is_buffering: is_buffering.clone(),
             dsp: DspChain::new(ch as usize, sr),
             sonic: SonicStream::new(sr, (ch as usize).clamp(1, 8)),
             sonic_in_buf: vec![0.0f32; 16384],
@@ -1772,9 +1696,8 @@ impl StreamingDeck {
             visualizer_seqlock,
             flush_generation,
             flush_acknowledged,
-            completed_flag,
-            buffering_flag,
-            buffering_resumed_flag,
+            track_exhausted,
+            is_buffering,
             eq_params,
             preamp_db,
             replay_gain,
@@ -1862,9 +1785,8 @@ impl StreamingDeck {
             session_arc: self.stream_session.clone(),
             decoder_eof_arc: self.decoder_eof.clone(),
             tele: self.telemetry.clone(),
-            completed_flag: self.completed_flag.clone(),
-            buffering_flag: self.buffering_flag.clone(),
-            buffering_resumed_flag: self.buffering_resumed_flag.clone(),
+            track_exhausted: self.track_exhausted.clone(),
+            is_buffering: self.is_buffering.clone(),
             visualizer_seqlock: self.visualizer_seqlock.clone(),
             visualizer_enabled: self.visualizer_enabled.clone(),
             flush_generation: self.flush_generation.clone(),
@@ -1897,16 +1819,13 @@ impl StreamingDeck {
 
 
     fn mark_open_error(&self, err_code: i32) -> i32 {
-        self.state.store(STATE_ERROR, Ordering::Relaxed);
         self.telemetry
-            .post_event(EventType::State, MapEventData { state: STATE_ERROR });
+            .post_event(EventType::Error, MapEventData { error_code: err_code });
         err_code
     }
 
     pub fn begin_open(&mut self) -> i32 {
-        if self.state.load(Ordering::Relaxed) != STATE_OPENING {
-            let _ = self.stop();
-        }
+        let _ = self.stop();
         self.network_streamer_abort.store(true, Ordering::Release);
         self.is_stream.store(false, Ordering::Release);
         if let Ok(mut guard) = self.stream_session.write() {
@@ -1941,7 +1860,6 @@ impl StreamingDeck {
                 silence_saved_ms: 0,
             },
         );
-        self.state.store(STATE_OPENING, Ordering::Relaxed);
         self.position_ms.store(0, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
         self.duration_ms.store(0, Ordering::Relaxed);
@@ -1957,12 +1875,6 @@ impl StreamingDeck {
         if let Ok(mut cf) = self.container_format.write() {
             *cf = String::from("Unknown");
         }
-        self.telemetry.post_event(
-            EventType::State,
-            MapEventData {
-                state: STATE_OPENING,
-            },
-        );
         MAP_SUCCESS
     }
 
@@ -2953,7 +2865,7 @@ impl StreamingDeck {
 
     fn complete_at_duration(&self, dur: i64) {
         self.decoder_eof.store(true, Ordering::Relaxed);
-        self.state.store(STATE_COMPLETED, Ordering::Relaxed);
+        self.track_exhausted.store(true, Ordering::Release);
         self.position_ms.store(dur, Ordering::Relaxed);
         let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(8000) as i64;
         self.position_frames.store(
@@ -2970,16 +2882,6 @@ impl StreamingDeck {
 
         self.telemetry
             .post_event(EventType::Position, MapEventData { position_ms: dur });
-        self.telemetry
-            .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
-        self.telemetry
-            .post_event(EventType::IsCompleted, MapEventData { is_completed: 1 });
-        self.telemetry.post_event(
-            EventType::State,
-            MapEventData {
-                state: STATE_COMPLETED,
-            },
-        );
     }
 
     fn dispatch_seek_to_decoder(&mut self, position_ms: i64) {
@@ -2990,17 +2892,7 @@ impl StreamingDeck {
         }
 
         self.decoder_eof.store(false, Ordering::Relaxed);
-        self.telemetry
-            .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
-        if self.state.load(Ordering::Relaxed) == STATE_COMPLETED {
-            self.state.store(STATE_PAUSED, Ordering::Relaxed);
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData {
-                    state: STATE_PAUSED,
-                },
-            );
-        }
+        self.track_exhausted.store(false, Ordering::Release);
         self.flush_generation.fetch_add(1, Ordering::Release);
         self.acknowledge_renderer_flush();
 
@@ -3065,7 +2957,7 @@ impl StreamingDeck {
             out_status.buffer_fill = (r.end_byte.saturating_sub(r.start_byte)).max(0) as usize;
             out_status.fill_percentage = r.fill_percentage * 100.0;
             out_status.is_buffering =
-                (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
+                self.is_buffering.load(Ordering::Relaxed) as i32;
             out_status.is_eof = r.is_eof;
             out_status.read_cursor_byte = r.read_cursor_byte;
             out_status.range_start = r.start_byte;
@@ -3089,7 +2981,7 @@ impl StreamingDeck {
                     out_range.end_ms = 0;
                 }
                 out_range.is_buffering =
-                    (self.state.load(Ordering::Relaxed) == STATE_BUFFERING) as i32;
+                    self.is_buffering.load(Ordering::Relaxed) as i32;
                 return MAP_SUCCESS;
             }
         }
@@ -3334,13 +3226,6 @@ impl StreamingDeck {
     pub fn play(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
         crate::map_log!(3, "play() called (current_state={})", cur);
-        if cur == STATE_OPENING || cur == STATE_ERROR {
-            return MAP_ERROR_INVALID_STATE;
-        }
-
-        if cur == STATE_COMPLETED {
-            let _ = self.seek(0);
-        }
 
         if let Ok(guard) = self.stream_session.read() {
             if let Some(ref session) = *guard {
@@ -3348,10 +3233,9 @@ impl StreamingDeck {
             }
         }
         self.decoder_eof.store(false, Ordering::Relaxed);
-        self.telemetry
-            .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
+        self.track_exhausted.store(false, Ordering::Release);
 
-        self.state.store(STATE_PLAYING, Ordering::Relaxed);
+        self.state.store(STATE_PLAYING, Ordering::Release);
         self.telemetry
             .post_event(EventType::IsPlaying, MapEventData { is_playing: 1 });
         self.telemetry.post_event(
@@ -3370,11 +3254,8 @@ impl StreamingDeck {
     pub fn pause(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
         crate::map_log!(3, "pause() called (current_state={})", cur);
-        if cur == STATE_OPENING || cur == STATE_ERROR {
-            return MAP_ERROR_INVALID_STATE;
-        }
 
-        self.state.store(STATE_PAUSED, Ordering::Relaxed);
+        self.state.store(STATE_PAUSED, Ordering::Release);
         self.telemetry
             .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
         self.telemetry.post_event(
@@ -3384,6 +3265,9 @@ impl StreamingDeck {
             },
         );
 
+        let (_, cvar) = &*self.decoder_wake;
+        cvar.notify_all();
+
         MAP_SUCCESS
     }
 
@@ -3392,9 +3276,8 @@ impl StreamingDeck {
 
         self.network_streamer_abort.store(true, Ordering::Release);
         self.decoder_eof.store(false, Ordering::Relaxed);
-        self.buffering_flag.store(false, Ordering::Release);
-        self.buffering_resumed_flag.store(false, Ordering::Release);
-        self.completed_flag.store(false, Ordering::Release);
+        self.is_buffering.store(false, Ordering::Release);
+        self.track_exhausted.store(false, Ordering::Release);
         if let Ok(guard) = self.stream_session.read() {
             if let Some(ref session) = *guard {
                 session.abort();
@@ -3403,21 +3286,10 @@ impl StreamingDeck {
                 }
             }
         }
-        self.telemetry
-            .post_event(EventType::IsCompleted, MapEventData { is_completed: 0 });
-        if self.state.load(Ordering::Relaxed) == STATE_COMPLETED {
-            self.state.store(STATE_PAUSED, Ordering::Relaxed);
-            self.telemetry.post_event(
-                EventType::State,
-                MapEventData {
-                    state: STATE_PAUSED,
-                },
-            );
-        }
         self.flush_generation.fetch_add(1, Ordering::Release);
         self.acknowledge_renderer_flush();
 
-        self.state.store(STATE_STOPPED, Ordering::Relaxed);
+        self.state.store(STATE_STOPPED, Ordering::Release);
         self.position_ms.store(0, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
@@ -3433,6 +3305,8 @@ impl StreamingDeck {
         self.telemetry
             .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
         self.telemetry
+            .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
+        self.telemetry
             .post_event(EventType::Position, MapEventData { position_ms: 0 });
         self.telemetry.post_event(
             EventType::State,
@@ -3444,12 +3318,33 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Case 2 termination: track reached end, stopping streamer/buffer while keeping seek position.
+    pub fn finish_at_end(&mut self) {
+        crate::map_log!(3, "finish_at_end() called");
+        self.network_streamer_abort.store(true, Ordering::Release);
+        if let Ok(guard) = self.stream_session.read() {
+            if let Some(ref session) = *guard {
+                session.abort();
+            }
+        }
+        self.is_buffering.store(false, Ordering::Release);
+        self.track_exhausted.store(true, Ordering::Release);
+        self.state.store(STATE_STOPPED, Ordering::Release);
+
+        self.telemetry
+            .post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
+        self.telemetry
+            .post_event(EventType::IsBuffering, MapEventData { is_buffering: 0 });
+        self.telemetry.post_event(
+            EventType::State,
+            MapEventData {
+                state: STATE_STOPPED,
+            },
+        );
+    }
+
     pub fn seek(&mut self, position_ms: i64) -> i32 {
         crate::map_log!(4, "seek(position_ms={})", position_ms);
-        let cur = self.state.load(Ordering::Relaxed);
-        if cur == STATE_OPENING || cur == STATE_ERROR {
-            return MAP_ERROR_INVALID_STATE;
-        }
         if self.is_live_stream() {
             return MAP_SUCCESS;
         }
@@ -3780,8 +3675,7 @@ impl StreamingDeck {
         let st = self.state.load(Ordering::Relaxed);
         out.state = st;
         out.is_playing = (st == STATE_PLAYING) as i32;
-        out.is_buffering = (st == STATE_BUFFERING) as i32;
-        out.is_completed = (st == STATE_COMPLETED) as i32;
+        out.is_buffering = self.is_buffering.load(Ordering::Relaxed) as i32;
         out.volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
         out.rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
         out.pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed));
@@ -3866,8 +3760,8 @@ pub struct AudioSourceCore {
 /// Lock-free atomic tracker coordinating smooth crossfade transitions between Deck A and Deck B.
 #[repr(C)]
 pub struct CrossfadeAtomic {
-    /// Whether a crossfade transition is actively running.
-    pub is_active: AtomicBool,
+    /// Internal queue transition state (Idle, AutoCrossfade, ManualCrossfade).
+    pub transition: AtomicI32,
     /// Deck ID fading out (0: A, 1: B).
     pub from_deck: AtomicI32,
     /// Deck ID fading in (0: A, 1: B).
@@ -3883,7 +3777,7 @@ pub struct CrossfadeAtomic {
 impl Default for CrossfadeAtomic {
     fn default() -> Self {
         Self {
-            is_active: AtomicBool::new(false),
+            transition: AtomicI32::new(QueueTransition::Idle.as_i32()),
             from_deck: AtomicI32::new(0),
             to_deck: AtomicI32::new(1),
             current_frame: AtomicU64::new(0),
@@ -3896,20 +3790,32 @@ impl Default for CrossfadeAtomic {
 impl CrossfadeAtomic {
     /// Commences an atomic crossfade transition from `from_deck` to `to_deck`.
     #[inline]
-    pub fn begin(&self, from_deck: i32, to_deck: i32, total_frames: u64, curve: i32) {
+    pub fn begin(&self, from_deck: i32, to_deck: i32, total_frames: u64, curve: i32, transition: QueueTransition) {
         self.from_deck.store(from_deck, Ordering::Relaxed);
         self.to_deck.store(to_deck, Ordering::Relaxed);
         self.current_frame.store(0, Ordering::Relaxed);
         self.total_frames
             .store(total_frames.max(1), Ordering::Relaxed);
         self.curve.store(curve, Ordering::Relaxed);
-        self.is_active.store(true, Ordering::Release);
+        self.transition.store(transition.as_i32(), Ordering::Release);
     }
 
     /// Aborts any active crossfade transition immediately.
     #[inline]
     pub fn abort(&self) {
-        self.is_active.store(false, Ordering::Release);
+        self.transition.store(QueueTransition::Idle.as_i32(), Ordering::Release);
+    }
+
+    /// Returns whether a crossfade is currently active.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.transition.load(Ordering::Acquire) != QueueTransition::Idle.as_i32()
+    }
+
+    /// Returns the current queue transition phase.
+    #[inline]
+    pub fn transition(&self) -> QueueTransition {
+        QueueTransition::from_i32(self.transition.load(Ordering::Relaxed))
     }
 
     /// Computes instantaneous volume gains for (from_deck, to_deck) at a given normalized progress.
@@ -3932,7 +3838,7 @@ impl CrossfadeAtomic {
         let curve = self.curve.load(Ordering::Relaxed);
         let progress = (cur as f32 / tot as f32).min(1.0);
         if cur + frame_count >= tot {
-            self.is_active.store(false, Ordering::Release);
+            self.transition.store(QueueTransition::Idle.as_i32(), Ordering::Release);
         }
         let (gain_from, gain_to) = Self::compute_gains(curve, progress);
         if self.from_deck.load(Ordering::Relaxed) == 0 {
@@ -3955,25 +3861,6 @@ pub type CustomSourceFactory = Arc<
         + Sync,
 >;
 
-/// Dual-deck engine phase: idle with no active playback.
-pub const ENGINE_PHASE_IDLE: i32 = 0;
-/// Dual-deck engine phase: pre-buffering or loading audio headers.
-pub const ENGINE_PHASE_LOADING: i32 = 1;
-/// Dual-deck engine phase: actively rendering audio.
-pub const ENGINE_PHASE_PLAYING: i32 = 2;
-/// Dual-deck engine phase: playback paused.
-pub const ENGINE_PHASE_PAUSED: i32 = 3;
-/// Dual-deck engine phase: automatic end-of-track overlap crossfade running.
-pub const ENGINE_PHASE_AUTO_CROSSFADING: i32 = 4;
-/// Dual-deck engine phase: user-initiated manual track skip crossfade running.
-pub const ENGINE_PHASE_MANUAL_CROSSFADING: i32 = 5;
-/// Dual-deck engine phase: entire playlist queue finished.
-pub const ENGINE_PHASE_COMPLETED: i32 = 6;
-/// Dual-deck engine phase: playback encountered an unrecoverable error.
-pub const ENGINE_PHASE_ERROR: i32 = 7;
-/// Dual-deck engine phase: engine resources released and destroyed.
-pub const ENGINE_PHASE_DISPOSED: i32 = 8;
-
 /// Dual-deck crossfading coordinator orchestrating two independent streaming decks (Deck A and Deck B).
 pub struct DualSource {
     /// Primary streaming deck A.
@@ -3986,8 +3873,8 @@ pub struct DualSource {
     pub crossfade: Arc<CrossfadeAtomic>,
     /// Flag indicating that a crossfade completed.
     pub crossfade_completed_flag: Arc<AtomicBool>,
-    /// High-level engine lifecycle phase (`ENGINE_PHASE_*`).
-    pub phase: Arc<AtomicI32>,
+    /// Canonical transport playback state code (`PlaybackState`).
+    pub playback_state: Arc<AtomicI32>,
 
     /// Active playlist queue (shuffled or un-shuffled).
     pub queue: Arc<RwLock<Vec<AudioSourceCore>>>,
@@ -4041,7 +3928,7 @@ impl DualSource {
             active_deck: Arc::new(AtomicI32::new(0)),
             crossfade: Arc::new(CrossfadeAtomic::default()),
             crossfade_completed_flag: Arc::new(AtomicBool::new(false)),
-            phase: Arc::new(AtomicI32::new(ENGINE_PHASE_IDLE)),
+            playback_state: Arc::new(AtomicI32::new(PlaybackState::Stopped.as_i32())),
             queue: Arc::new(RwLock::new(Vec::new())),
             canonical_queue: Arc::new(RwLock::new(Vec::new())),
             original_indices: Arc::new(RwLock::new(Vec::new())),
@@ -4160,7 +4047,7 @@ impl DualSource {
 
         self.current_index.store(-1, Ordering::Release);
         self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
-        self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+        self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
     }
 
     /// Resolves the expected upcoming track ID based on the current active queue and loop mode.
@@ -4187,7 +4074,8 @@ impl DualSource {
     /// Verifies that any in-flight crossfade still targets the expected track ID.
     /// If a queue mutation invalidated the target track ID, aborts the crossfade immediately.
     pub fn verify_or_abort_crossfade(&mut self) {
-        if !self.crossfade.is_active.load(Ordering::Relaxed) {
+        let trans = self.crossfade.transition();
+        if trans == QueueTransition::Idle {
             return;
         }
         let target_id = self.crossfade_target_id.load(Ordering::Relaxed);
@@ -4195,12 +4083,11 @@ impl DualSource {
             self.abort_active_crossfade();
             return;
         }
-        let phase = self.phase.load(Ordering::Relaxed);
-        if phase == ENGINE_PHASE_AUTO_CROSSFADING {
+        if trans == QueueTransition::AutoCrossfade {
             if self.expected_next_track_id() != Some(target_id) {
                 self.abort_active_crossfade();
             }
-        } else if phase == ENGINE_PHASE_MANUAL_CROSSFADING {
+        } else if trans == QueueTransition::ManualCrossfade {
             let cur = self.current_index.load(Ordering::Relaxed);
             let cur_id = if cur >= 0 {
                 self.queue.read().unwrap().get(cur as usize).map(|it| it.id)
@@ -4214,7 +4101,7 @@ impl DualSource {
     }
 
     pub fn preload_standby_deck(&mut self) {
-        if self.crossfade.is_active.load(Ordering::Relaxed) {
+        if self.crossfade.is_active() {
             return;
         }
         let q = self.queue.read().unwrap();
@@ -4318,7 +4205,7 @@ impl DualSource {
                     self.abort_active_crossfade();
                     self.deck_a.stop();
                     self.deck_b.stop();
-                    self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+                    self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
                     return Some(removed);
                 } else {
                     let new_idx = if cur >= q.len() as i64 {
@@ -4425,13 +4312,13 @@ impl DualSource {
             self.abort_active_crossfade();
             self.deck_a.stop();
             self.deck_b.stop();
-            self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+            self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
         }
     }
 
     pub fn next(&mut self, manual_crossfade_ms: Option<u64>) -> Result<(), String> {
-        let cur_phase = self.phase.load(Ordering::Relaxed);
-        if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
+        let trans = self.crossfade.transition();
+        if trans == QueueTransition::AutoCrossfade {
             let target_id = self.crossfade_target_id.load(Ordering::Relaxed);
             if target_id >= 0 {
                 if let Some(idx) = self.queue.read().unwrap().iter().position(|it| it.id == target_id) {
@@ -4448,7 +4335,7 @@ impl DualSource {
             if tot_frame > cur_frame + max_frames {
                 self.crossfade.total_frames.store(cur_frame + max_frames, Ordering::Release);
             }
-            self.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
+            self.crossfade.transition.store(QueueTransition::ManualCrossfade.as_i32(), Ordering::Release);
             return Ok(());
         }
 
@@ -4474,10 +4361,10 @@ impl DualSource {
     pub fn previous(&mut self) -> Result<(), String> {
         let cur_deck = self.active_deck_ref();
         let pos_ms = cur_deck.position_ms.load(Ordering::Relaxed);
-        let cur_phase = self.phase.load(Ordering::Relaxed);
+        let trans = self.crossfade.transition();
         let is_live = cur_deck.is_live_stream();
 
-        if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
+        if trans == QueueTransition::AutoCrossfade {
             self.abort_active_crossfade();
             if !is_live && pos_ms > 3000 {
                 self.active_deck_mut().seek(0);
@@ -4511,7 +4398,7 @@ impl DualSource {
         seek_ms: Option<i64>,
         force_play: bool,
     ) -> Result<(), String> {
-        if self.crossfade.is_active.load(Ordering::Relaxed) {
+        if self.crossfade.is_active() {
             self.abort_active_crossfade();
         }
         let q = self.queue.read().unwrap();
@@ -4525,10 +4412,8 @@ impl DualSource {
         self.crossfade_completed_flag.store(false, Ordering::Release);
 
         let active_deck = self.active_deck.load(Ordering::Relaxed);
-        let cur_phase = self.phase.load(Ordering::Relaxed);
-        let was_playing = cur_phase == ENGINE_PHASE_PLAYING
-            || cur_phase == ENGINE_PHASE_AUTO_CROSSFADING
-            || cur_phase == ENGINE_PHASE_MANUAL_CROSSFADING;
+        let cur_playback = PlaybackState::from_i32(self.playback_state.load(Ordering::Relaxed));
+        let was_playing = cur_playback == PlaybackState::Playing;
 
         let to_deck = if active_deck == 0 { 1 } else { 0 };
         let to_slot = if to_deck == 0 {
@@ -4571,9 +4456,9 @@ impl DualSource {
                     &mut self.deck_b
                 };
                 to_slot.play();
-                self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+                self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
             } else {
-                self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+                self.playback_state.store(PlaybackState::Paused.as_i32(), Ordering::Release);
             }
             self.preload_standby_deck();
             return Ok(());
@@ -4590,10 +4475,10 @@ impl DualSource {
             let total_frames = (xfade_ms as u64 * sr as u64) / 1000;
             let curve = self.crossfade_curve.load(Ordering::Relaxed);
             self.crossfade_target_id.store(item.id, Ordering::Release);
-            self.crossfade.begin(active_deck, to_deck, total_frames, curve);
+            self.crossfade.begin(active_deck, to_deck, total_frames, curve, QueueTransition::ManualCrossfade);
             self.active_deck.store(to_deck, Ordering::Release);
             self.current_index.store(index as i64, Ordering::Release);
-            self.phase.store(ENGINE_PHASE_MANUAL_CROSSFADING, Ordering::Release);
+            self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
         } else {
             self.active_deck.store(to_deck, Ordering::Release);
             let from_slot = if active_deck == 0 {
@@ -4603,7 +4488,7 @@ impl DualSource {
             };
             from_slot.stop();
             self.current_index.store(index as i64, Ordering::Release);
-            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+            self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
         }
 
         self.preload_standby_deck();
@@ -4678,18 +4563,16 @@ impl DualSource {
     }
 
     pub fn abort_active_crossfade(&mut self) {
-        let phase = self.phase.load(Ordering::Relaxed);
+        let trans = self.crossfade.transition();
         self.crossfade_target_id.store(-1, Ordering::Release);
-        if phase == ENGINE_PHASE_AUTO_CROSSFADING {
+        if trans == QueueTransition::AutoCrossfade {
             self.crossfade.abort();
             self.standby_deck_mut().stop();
-            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
-        } else if phase == ENGINE_PHASE_MANUAL_CROSSFADING {
+        } else if trans == QueueTransition::ManualCrossfade {
             self.crossfade.abort();
             let to_deck = self.crossfade.to_deck.load(Ordering::Relaxed);
             self.active_deck.store(to_deck, Ordering::Release);
             self.standby_deck_mut().stop();
-            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
         } else {
             self.crossfade.abort();
         }
@@ -4802,7 +4685,7 @@ impl DualSource {
             if play_res != 0 {
                 return Err(format!("Play failed: error {}", play_res));
             }
-            self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+            self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
             self.preload_standby_deck();
             return Ok(());
         }
@@ -4812,20 +4695,20 @@ impl DualSource {
             if let Some(shuf) = shuffled {
                 self.set_shuffle(shuf);
             }
-            let cur_phase = self.phase.load(Ordering::Relaxed);
-            if cur_phase == ENGINE_PHASE_COMPLETED {
-                let q_len = self.queue.read().unwrap().len();
-                if q_len > 0 {
-                    return self.transition_to_index(0, None, seek_ms, true);
+            let cur_playback = PlaybackState::from_i32(self.playback_state.load(Ordering::Relaxed));
+            if cur_playback == PlaybackState::Stopped {
+                let cur_idx = self.current_index.load(Ordering::Relaxed);
+                if cur_idx >= 0 {
+                    let seek_target = seek_ms.unwrap_or(0);
+                    return self.transition_to_index(cur_idx as usize, None, Some(seek_target), true);
                 }
-                return Ok(());
             }
             if let Some(ms) = seek_ms {
                 self.seek(ms);
             }
             let res = self.active_deck_mut().play();
             if res == 0 {
-                self.phase.store(ENGINE_PHASE_PLAYING, Ordering::Release);
+                self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
                 Ok(())
             } else {
                 Err(format!("Play failed: code {}", res))
@@ -4889,22 +4772,22 @@ impl DualSource {
 
     pub fn pause(&mut self) {
         self.active_deck_mut().pause();
-        self.phase.store(ENGINE_PHASE_PAUSED, Ordering::Release);
+        self.playback_state.store(PlaybackState::Paused.as_i32(), Ordering::Release);
     }
 
     pub fn stop(&mut self) {
         self.abort_active_crossfade();
         self.deck_a.stop();
         self.deck_b.stop();
-        self.phase.store(ENGINE_PHASE_IDLE, Ordering::Release);
+        self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
     }
 
     pub fn seek(&mut self, position_ms: i64) -> i32 {
-        let cur_phase = self.phase.load(Ordering::Relaxed);
-        if cur_phase == ENGINE_PHASE_MANUAL_CROSSFADING {
+        let trans = self.crossfade.transition();
+        if trans == QueueTransition::ManualCrossfade {
             self.abort_active_crossfade();
             return self.active_deck_mut().seek(position_ms);
-        } else if cur_phase == ENGINE_PHASE_AUTO_CROSSFADING {
+        } else if trans == QueueTransition::AutoCrossfade {
             let dur = self.active_deck_ref().duration_ms.load(Ordering::Relaxed);
             let auto_ms = self.auto_crossfade_duration_ms.load(Ordering::Relaxed);
             let in_xfade_zone = auto_ms > 0 && dur > auto_ms as i64 && position_ms >= (dur - auto_ms as i64);

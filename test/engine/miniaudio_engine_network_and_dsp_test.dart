@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
+import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
@@ -98,7 +98,7 @@ void main() {
       await engine.action.play();
       expect(engine.state.isPlaying, isTrue);
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
     });
 
     test(
@@ -140,18 +140,13 @@ void main() {
       await engine.action.play(position: 2);
       expect(engine.state.currentIndex, equals(2));
       expect(engine.state.isPlaying, isTrue);
-      expect(
-        engine.state.phase == EnginePhase.manualCrossfading ||
-            engine.state.phase == EnginePhase.playing,
-        isTrue,
-      );
       // Allow manual crossfade to settle
       int elapsed = 0;
-      while (engine.state.phase != EnginePhase.playing && elapsed < 1000) {
+      while (engine.state.isCrossfading && elapsed < 1000) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsed += 50;
       }
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
     });
   });
 
@@ -243,11 +238,12 @@ void main() {
 
       // Allow crossfade (200ms) to complete
       int elapsedXfade = 0;
-      while (engine.state.phase != EnginePhase.playing && elapsedXfade < 1000) {
+      while (engine.state.isCrossfading && elapsedXfade < 1000) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         elapsedXfade += 50;
       }
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.isCrossfading, isFalse);
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
       expect(engine.state.isPlaying, isTrue);
       expect(engine.state.duration, isNotNull);
     });

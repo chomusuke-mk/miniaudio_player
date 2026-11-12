@@ -12,6 +12,7 @@ void main() {
   HttpOverrides.global = null;
 
   setUpAll(() async {
+    MiniaudioPlayer.globalConfig.logLevel = MiniaudioLogLevel.none;
     await MiniaudioPlayer.ensureInitialized();
   });
 

@@ -1803,7 +1803,7 @@ impl StreamSession {
                     self.head.set_linear_bytes(head_bytes);
                 }
                 ClassifiedSlice::AudioPayload(audio_bytes) => {
-                    let _ = self.feed_chunk(audio_bytes);
+                    let _ = self.write_at(boundary.audio_start as u64, audio_bytes);
                 }
                 ClassifiedSlice::MetadataChunk { offset, data } => {
                     let _ = self.metadata.commit_chunk(offset, data);

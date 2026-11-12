@@ -1653,15 +1653,10 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     RustAudioInfo field0,
   ) = RustPlayerEvent_AudioInfo;
 
-  /// Playback state transition code.
+  /// Playback state transition code (`PlaybackState`).
   const factory RustPlayerEvent.playbackState(
     int field0,
   ) = RustPlayerEvent_PlaybackState;
-
-  /// State machine integer code.
-  const factory RustPlayerEvent.state(
-    int field0,
-  ) = RustPlayerEvent_State;
 
   /// Elapsed track position in milliseconds.
   const factory RustPlayerEvent.position(
@@ -1677,11 +1672,6 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.isBuffering(
     bool field0,
   ) = RustPlayerEvent_IsBuffering;
-
-  /// Whether track has finished playback.
-  const factory RustPlayerEvent.isCompleted(
-    bool field0,
-  ) = RustPlayerEvent_IsCompleted;
 
   /// Tripartite ring buffer telemetry metrics.
   const factory RustPlayerEvent.buffer(
@@ -1950,9 +1940,6 @@ class RustPlayerStatus {
   /// Whether the engine is buffering.
   final bool isBuffering;
 
-  /// Whether playback of the track has completed.
-  final bool isCompleted;
-
   /// Master volume level.
   final double volume;
 
@@ -1977,7 +1964,6 @@ class RustPlayerStatus {
     required this.state,
     required this.isPlaying,
     required this.isBuffering,
-    required this.isCompleted,
     required this.volume,
     required this.rate,
     required this.pitch,
@@ -1996,7 +1982,6 @@ class RustPlayerStatus {
       state.hashCode ^
       isPlaying.hashCode ^
       isBuffering.hashCode ^
-      isCompleted.hashCode ^
       volume.hashCode ^
       rate.hashCode ^
       pitch.hashCode ^
@@ -2014,7 +1999,6 @@ class RustPlayerStatus {
           state == other.state &&
           isPlaying == other.isPlaying &&
           isBuffering == other.isBuffering &&
-          isCompleted == other.isCompleted &&
           volume == other.volume &&
           rate == other.rate &&
           pitch == other.pitch &&

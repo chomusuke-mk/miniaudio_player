@@ -153,18 +153,6 @@ abstract final class MapPlaybackState {
   /// Paused playback state (`2`).
   static const int paused = 2;
 
-  /// Completed playback state (`3`).
-  static const int completed = 3;
-
-  /// Buffering state waiting for audio data (`4`).
-  static const int buffering = 4;
-
-  /// Error state (`5`).
-  static const int error = 5;
-
-  /// Opening or probing audio source state (`6`).
-  static const int opening = 6;
-
   /// Returns a human-readable English description of the given [state].
   static String describe(int state) {
     switch (state) {
@@ -174,14 +162,6 @@ abstract final class MapPlaybackState {
         return 'Playing';
       case paused:
         return 'Paused';
-      case completed:
-        return 'Completed';
-      case buffering:
-        return 'Buffering';
-      case error:
-        return 'Error';
-      case opening:
-        return 'Opening';
       default:
         return 'Unknown state ($state)';
     }

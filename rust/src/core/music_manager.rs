@@ -211,7 +211,7 @@ impl MusicManager {
         output.fill(0.0);
 
         let active_slot = self.inner.active_deck.load(Ordering::Relaxed);
-        let is_xfading = self.inner.crossfade.is_active.load(Ordering::Relaxed);
+        let is_xfading = self.inner.crossfade.is_active();
 
         if self.scratch_deck_a.len() < sample_count {
             self.scratch_deck_a.resize(sample_count, 0.0);
@@ -227,6 +227,9 @@ impl MusicManager {
 
         if is_xfading {
             let (gain_a, gain_b) = self.inner.crossfade.advance_and_get_gains(frame_count as u64);
+            if !self.inner.crossfade.is_active() {
+                self.inner.crossfade_completed_flag.store(true, Ordering::Release);
+            }
 
             for i in 0..sample_count {
                 output[i] = self.scratch_deck_a[i] * gain_a + self.scratch_deck_b[i] * gain_b;
@@ -290,7 +293,7 @@ impl MusicManager {
     /// Returns whether an atomic crossfade is currently in progress.
     #[inline]
     pub fn is_crossfading(&self) -> bool {
-        self.inner.crossfade.is_active.load(Ordering::Relaxed)
+        self.inner.crossfade.is_active()
     }
 
     /// Returns a copy of the playlist queue items.

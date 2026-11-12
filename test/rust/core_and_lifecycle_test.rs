@@ -99,9 +99,8 @@ fn test_audio_renderer_instant_rate_and_pitch_response() {
         flush_generation: Arc::new(AtomicU64::new(0)),
         flush_acknowledged: Arc::new(AtomicU64::new(0)),
         local_flush_gen: 0,
-        completed_flag: Arc::new(AtomicBool::new(false)),
-        buffering_flag: Arc::new(AtomicBool::new(false)),
-        buffering_resumed_flag: Arc::new(AtomicBool::new(false)),
+        track_exhausted: Arc::new(AtomicBool::new(false)),
+        is_buffering: Arc::new(AtomicBool::new(false)),
         dsp: DspChain::new(dev_ch, dev_sr),
         sonic: SonicStream::new(dev_sr, dev_ch),
         sonic_in_buf: vec![0.0f32; 16384],
@@ -199,9 +198,8 @@ fn test_player_coordinator_lifecycle_on_manifest_fixtures() {
 
 #[test]
 fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
-    use miniaudio_player::core::dual_source::{
-        AudioSourceCore, DualSource, ENGINE_PHASE_AUTO_CROSSFADING,
-    };
+    use miniaudio_player::core::dual_source::{AudioSourceCore, DualSource};
+    use miniaudio_player::core::types::QueueTransition;
 
     if let Ok(mut dual) = DualSource::new(48000, 2, 1024) {
         let wav_path = FixtureResolver::resolve_str("salida.wav");
@@ -244,12 +242,10 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
 
         // Simulate active auto-crossfade targeting id 103, then mutate queue to remove index 2 (id 103)
         dual.crossfade_target_id.store(103, Ordering::SeqCst);
-        dual.crossfade.begin(0, 1, 48000, 0);
-        dual.phase
-            .store(ENGINE_PHASE_AUTO_CROSSFADING, Ordering::SeqCst);
+        dual.crossfade.begin(0, 1, 48000, 0, QueueTransition::AutoCrossfade);
         assert!(dual.remove_item_at(2).is_some());
         // Removing target track must abort active crossfade and reset crossfade_target_id
-        assert!(!dual.crossfade.is_active.load(Ordering::SeqCst));
+        assert!(!dual.crossfade.is_active());
         assert_eq!(dual.crossfade_target_id.load(Ordering::SeqCst), -1);
 
         dual.deck_a.stop();

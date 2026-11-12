@@ -9,7 +9,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::core::dual_source::{STATE_BUFFERING, STATE_COMPLETED, STATE_PLAYING};
+use crate::core::types::PlaybackState;
 use crate::dsp::chain::DspChain;
 use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -100,9 +100,8 @@ pub struct AudioRenderer {
     pub flush_acknowledged: Arc<AtomicU64>,
     pub local_flush_gen: u64,
 
-    pub completed_flag: Arc<AtomicBool>,
-    pub buffering_flag: Arc<AtomicBool>,
-    pub buffering_resumed_flag: Arc<AtomicBool>,
+    pub track_exhausted: Arc<AtomicBool>,
+    pub is_buffering: Arc<AtomicBool>,
 
     pub dsp: DspChain,
     pub sonic: SonicStream,
@@ -239,7 +238,6 @@ impl AudioRenderer {
     #[inline]
     fn update_playback_state_and_position(
         &mut self,
-        cur_state: i32,
         read_samples: usize,
         total_samples: usize,
         un_stretched_frames_consumed: i64,
@@ -253,23 +251,17 @@ impl AudioRenderer {
             let dur = self.duration_ms.load(Ordering::Acquire);
             let pos = self.position_ms.load(Ordering::Acquire);
             if decoder_at_eof && !seek_pending && read_samples == 0 {
-                if cur_state == STATE_PLAYING && (dur <= 0 || pos > 0 || dur <= 100) {
-                    self.state.store(STATE_COMPLETED, Ordering::Release);
-                    self.completed_flag.store(true, Ordering::Release);
+                if dur <= 0 || pos > 0 || dur <= 100 {
+                    self.is_buffering.store(false, Ordering::Release);
+                    self.track_exhausted.store(true, Ordering::Release);
                 }
             } else if read_samples == 0 && self.is_stream.load(Ordering::Acquire) {
-                if cur_state == STATE_PLAYING {
-                    self.state.store(STATE_BUFFERING, Ordering::Release);
-                    self.buffering_flag.store(true, Ordering::Release);
-                }
+                self.is_buffering.store(true, Ordering::Release);
             }
         }
 
         if read_samples > 0 {
-            if cur_state == STATE_BUFFERING {
-                self.state.store(STATE_PLAYING, Ordering::Release);
-                self.buffering_resumed_flag.store(true, Ordering::Release);
-            }
+            self.is_buffering.store(false, Ordering::Release);
             let sr = self.device_sample_rate.load(Ordering::Relaxed) as i64;
             let track_subframes = un_stretched_frames_consumed * 1024;
             let total_subframes = self
@@ -323,8 +315,8 @@ impl AudioRenderer {
         let total_samples = frame_count * ch;
         let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
 
-        let cur_state = self.state.load(Ordering::Relaxed);
-        if cur_state != STATE_PLAYING && cur_state != STATE_BUFFERING {
+        let cur_state = PlaybackState::from_i32(self.state.load(Ordering::Relaxed));
+        if cur_state != PlaybackState::Playing {
             out_slice.fill(0.0);
             return;
         }
@@ -334,7 +326,6 @@ impl AudioRenderer {
             self.pull_audio_frames(out_slice, frame_count, ch, spatial_doppler);
 
         self.update_playback_state_and_position(
-            cur_state,
             read_samples,
             total_samples,
             un_stretched_frames_consumed,

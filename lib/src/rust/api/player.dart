@@ -291,9 +291,6 @@ class TelemetryFilter {
   /// Cached playback state code.
   final int? state;
 
-  /// Cached engine phase code.
-  final int? phase;
-
   /// Cached track position in milliseconds.
   final PlatformInt64 pos;
 
@@ -318,9 +315,6 @@ class TelemetryFilter {
   /// Cached playing status flag.
   final bool? isPlaying;
 
-  /// Cached completion flag.
-  final bool? isCompleted;
-
   /// Cached ReplayGain settings tuple (gain bits, peak bits).
   final (int, int)? replayGain;
 
@@ -338,7 +332,6 @@ class TelemetryFilter {
 
   const TelemetryFilter({
     this.state,
-    this.phase,
     required this.pos,
     this.index,
     this.bufferedEnd,
@@ -347,7 +340,6 @@ class TelemetryFilter {
     this.isRecording,
     this.isDucking,
     this.isPlaying,
-    this.isCompleted,
     this.replayGain,
     this.metadata,
     this.audioInfo,
@@ -361,7 +353,6 @@ class TelemetryFilter {
   @override
   int get hashCode =>
       state.hashCode ^
-      phase.hashCode ^
       pos.hashCode ^
       index.hashCode ^
       bufferedEnd.hashCode ^
@@ -370,7 +361,6 @@ class TelemetryFilter {
       isRecording.hashCode ^
       isDucking.hashCode ^
       isPlaying.hashCode ^
-      isCompleted.hashCode ^
       replayGain.hashCode ^
       metadata.hashCode ^
       audioInfo.hashCode ^
@@ -383,7 +373,6 @@ class TelemetryFilter {
       other is TelemetryFilter &&
           runtimeType == other.runtimeType &&
           state == other.state &&
-          phase == other.phase &&
           pos == other.pos &&
           index == other.index &&
           bufferedEnd == other.bufferedEnd &&
@@ -392,7 +381,6 @@ class TelemetryFilter {
           isRecording == other.isRecording &&
           isDucking == other.isDucking &&
           isPlaying == other.isPlaying &&
-          isCompleted == other.isCompleted &&
           replayGain == other.replayGain &&
           metadata == other.metadata &&
           audioInfo == other.audioInfo &&

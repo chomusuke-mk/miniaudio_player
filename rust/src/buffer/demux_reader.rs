@@ -108,11 +108,11 @@ impl Seek for DemuxedStreamReader {
 impl MediaSource for DemuxedStreamReader {
     fn is_seekable(&self) -> bool {
         !self.session.is_live()
-            && (self.session.is_tail_locked() || self.session.is_fully_buffered())
+            && (!self.session.tail_data().is_empty() || self.session.is_fully_buffered())
     }
 
     fn byte_len(&self) -> Option<u64> {
-        if self.session.is_tail_locked() || self.session.is_fully_buffered() {
+        if !self.session.tail_data().is_empty() || self.session.is_fully_buffered() {
             self.session.total_size()
         } else {
             None

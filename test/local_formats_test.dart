@@ -370,11 +370,12 @@ void main() {
         trace.log('Step 5: play() until completion');
         await player.action.play();
         int waitMs = 0;
-        while (!player.state.isCompleted && waitMs < 3000) {
+        while (!player.state.playbackState.isStopped && waitMs < 3000) {
           await Future<void>.delayed(const Duration(milliseconds: 100));
           waitMs += 100;
         }
-        expect(player.state.isCompleted, isTrue);
+        expect(player.state.playbackState.isStopped, isTrue);
+        expect(player.state.isPlaying, isFalse);
         trace.log('Step 5.1: completed verified');
 
         // Step 6: Replay from completion auto-rewinds
@@ -382,7 +383,7 @@ void main() {
         await player.action.play();
         await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
-        expect(player.state.isCompleted, isFalse);
+        expect(player.state.playbackState.isPlaying, isTrue);
         trace.log('Step 6.1: auto-rewind replay verified',
             {'position': player.state.position.inMilliseconds});
 

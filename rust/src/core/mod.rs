@@ -21,8 +21,8 @@ pub use dsp_processor::DspProcessor;
 pub use dual_source::{
     AudioSourceCore, CrossfadeAtomic, DualSource, MiniaudioPlayerStatus,
     MiniaudioStreamStatus, StreamingDeck, MAP_STREAM_SEEK_CACHE_HIT,
-    MAP_STREAM_SEEK_CACHE_HIT_PREFETCH, MAP_STREAM_SEEK_CACHE_MISS, STATE_BUFFERING,
-    STATE_COMPLETED, STATE_ERROR, STATE_OPENING, STATE_PAUSED, STATE_PLAYING, STATE_STOPPED,
+    MAP_STREAM_SEEK_CACHE_HIT_PREFETCH, MAP_STREAM_SEEK_CACHE_MISS, STATE_PAUSED,
+    STATE_PLAYING, STATE_STOPPED,
 };
 pub use effects_manager::EffectsManager;
 pub use input_manager::InputManager;
@@ -32,7 +32,7 @@ pub use output_manager::OutputManager;
 pub use recording::{LiveRecorder, WavFormat};
 pub use renderer::{AudioRenderer, DspCommand};
 pub use simd_mixer::SimdMixer;
-pub use types::{Decibels, PlayerError, SampleRate, Volume};
+pub use types::{Decibels, PlaybackState, PlayerError, QueueTransition, SampleRate, Volume};
 pub use typestate::{Active, Open, Paused, Player, Stopped, Uninitialized};
 pub use voice_pool::{
     DspRouting, EffectCatalogItem, EffectConfig, EffectSourceType, SoundBuffer, VoicePool,

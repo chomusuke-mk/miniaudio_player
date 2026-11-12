@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
+import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
@@ -63,9 +63,9 @@ void main() {
 
         // 1. User calls next() -> starts manual crossfade to Track 2
         final nextFuture = engine.action.next();
-        // Allow crossfade to begin and enter manualCrossfading phase
+        // Allow crossfade to begin and enter crossfade
         await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(engine.state.phase, equals(EnginePhase.manualCrossfading));
+        expect(engine.state.isCrossfading, isTrue);
         expect(engine.state.currentIndex, equals(1));
 
         // 2. < 100ms later, user calls previous() while on Track 2 (position < 3s threshold)
@@ -84,7 +84,8 @@ void main() {
         // - Exactly one deck active (state.isPlaying == true, volume == masterVolume)
         expect(engine.state.isPlaying, isTrue);
         expect(engine.state.volume, closeTo(1.0, 1e-4));
-        expect(engine.state.phase, equals(EnginePhase.playing));
+        expect(engine.state.playbackState, equals(PlaybackState.playing));
+        expect(engine.state.isCrossfading, isFalse);
       },
     );
   });
@@ -131,13 +132,13 @@ void main() {
         // Seek Track 1 near the end to enter the auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
         await engine.action.seek(const Duration(milliseconds: 8500));
         for (int i = 0;
-            i < 20 && engine.state.phase != EnginePhase.autoCrossfading;
+            i < 20 && !engine.state.isCrossfading;
             i++) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
 
-        // Engine should have entered autoCrossfading
-        expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+        // Engine should have entered crossfading
+        expect(engine.state.isCrossfading, isTrue);
         expect(engine.state.currentIndex, equals(0)); // Queue still on Track 1!
 
         // User presses previous()
@@ -146,7 +147,8 @@ void main() {
         // Should revert tentative transition and restart Track 1 from 0:00 because pos was 8.5s > 3s
         expect(engine.state.currentIndex, equals(0));
         expect(engine.state.currentItem?.data, equals('Track 1'));
-        expect(engine.state.phase, equals(EnginePhase.playing));
+        expect(engine.state.playbackState, equals(PlaybackState.playing));
+        expect(engine.state.isCrossfading, isFalse);
         expect(engine.state.position.inMilliseconds, lessThan(1000));
         expect(engine.state.volume, closeTo(1.0, 1e-4));
       },
@@ -171,30 +173,27 @@ void main() {
         // Seek into auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
         await engine.action.seek(const Duration(milliseconds: 8500));
         for (int i = 0;
-            i < 40 && engine.state.phase != EnginePhase.autoCrossfading;
+            i < 40 && !engine.state.isCrossfading;
             i++) {
           await Future<void>.delayed(const Duration(milliseconds: 30));
         }
 
-        expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+        expect(engine.state.isCrossfading, isTrue);
         expect(engine.state.currentIndex, equals(0));
 
         // User presses next() -> promotes auto to manual
         await engine.action.next();
 
-        // Queue now committed to Track 2, phase is manualCrossfading
+        // Queue now committed to Track 2, still playing
         expect(engine.state.currentIndex, equals(1));
         expect(engine.state.currentItem?.data, equals('Track 2'));
-        expect(
-          engine.state.phase == EnginePhase.manualCrossfading ||
-              engine.state.phase == EnginePhase.playing,
-          isTrue,
-        );
+        expect(engine.state.isPlaying, isTrue);
 
         // Wait for manualDuration (500ms) to complete
         await Future<void>.delayed(const Duration(milliseconds: 700));
 
-        expect(engine.state.phase, equals(EnginePhase.playing));
+        expect(engine.state.playbackState, equals(PlaybackState.playing));
+        expect(engine.state.isCrossfading, isFalse);
         expect(engine.state.currentIndex, equals(1));
         expect(engine.state.isPlaying, isTrue);
       },
@@ -250,13 +249,14 @@ void main() {
 
       // Wait a moment for final transition settlement
       for (int i = 0;
-          i < 20 && engine.state.phase != EnginePhase.playing;
+          i < 20 && engine.state.isCrossfading;
           i++) {
         await Future<void>.delayed(const Duration(milliseconds: 30));
       }
 
       expect(engine.state.isPlaying, isTrue);
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
+      expect(engine.state.isCrossfading, isFalse);
       expect(engine.state.volume, closeTo(1.0, 1e-4));
     });
   });
@@ -300,17 +300,18 @@ void main() {
       // Enter auto crossfade window
       await engine.action.seek(const Duration(milliseconds: 8500));
       for (int i = 0;
-          i < 40 && engine.state.phase != EnginePhase.autoCrossfading;
+          i < 40 && !engine.state.isCrossfading;
           i++) {
         await Future<void>.delayed(const Duration(milliseconds: 30));
       }
 
-      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.isCrossfading, isTrue);
 
       // Seek back to 1.0 second on outgoing track
       await engine.action.seek(const Duration(seconds: 1));
 
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
+      expect(engine.state.isCrossfading, isFalse);
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.position.inMilliseconds, closeTo(1000, 300));
       expect(engine.state.volume, closeTo(1.0, 1e-4));
@@ -329,7 +330,7 @@ void main() {
       // Trigger manual crossfade
       final nextFut = engine.action.next();
       await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(engine.state.phase, equals(EnginePhase.manualCrossfading));
+      expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex,
           equals(1)); // Track 2 is incoming active deck
 
@@ -337,7 +338,8 @@ void main() {
       await engine.action.seek(const Duration(seconds: 3));
       await nextFut;
 
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
+      expect(engine.state.isCrossfading, isFalse);
       expect(engine.state.currentIndex, equals(1));
       expect(engine.state.position.inMilliseconds, closeTo(3000, 400));
       expect(engine.state.volume, closeTo(1.0, 1e-4));
@@ -361,11 +363,8 @@ void main() {
     });
 
     test(
-        'reaches completed on last track in LoopMode.off, and play() restarts from index 0',
+        'reaches stopped on last track in LoopMode.off, and play() restarts from index 0',
         () async {
-      final completedEvents = <bool>[];
-      engine.stream.completed.listen(completedEvents.add);
-
       await engine.action.setQueue([
         AudioSource(track1File.path, data: 'Track 1'),
       ]);
@@ -383,23 +382,20 @@ void main() {
       // Seek near EOF to trigger natural track completion
       await engine.action.seek(const Duration(milliseconds: 9900));
 
-      // Wait for playback to hit EOF
+      // Wait for playback to hit EOF and reach stopped state (Case 2)
       for (int i = 0; i < 50; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        if (engine.state.isCompleted) break;
+        if (engine.state.playbackState.isStopped) break;
       }
 
-      expect(engine.state.phase, equals(EnginePhase.completed));
-      expect(engine.state.isCompleted, isTrue);
+      expect(engine.state.playbackState, equals(PlaybackState.stopped));
       expect(engine.state.isPlaying, isFalse);
-      expect(completedEvents.contains(true), isTrue);
 
-      // Calling play() from completed restarts queue from index 0
+      // Calling play() from stopped restarts queue from index 0
       await engine.action.play();
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
       expect(engine.state.isPlaying, isTrue);
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.isCompleted, isFalse);
     });
   });
 
@@ -442,7 +438,7 @@ void main() {
       await engine.action.seek(const Duration(seconds: 2));
 
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
       expect(engine.state.position.inMilliseconds, closeTo(2000, 350));
       expect(engine.state.volume, closeTo(1.0, 1e-4));
 
@@ -480,18 +476,19 @@ void main() {
       // Seek into auto-crossfade zone (track is ~10s long)
       await engine.action.seek(const Duration(milliseconds: 8500));
       for (int i = 0;
-          i < 40 && engine.state.phase != EnginePhase.autoCrossfading;
+          i < 40 && !engine.state.isCrossfading;
           i++) {
         await Future<void>.delayed(const Duration(milliseconds: 30));
       }
 
-      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex, equals(0));
 
       // Seek back outside the crossfade zone (to 1.5s)
       await engine.action.seek(const Duration(milliseconds: 1500));
 
-      expect(engine.state.phase, equals(EnginePhase.playing));
+      expect(engine.state.playbackState, equals(PlaybackState.playing));
+      expect(engine.state.isCrossfading, isFalse);
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.position.inMilliseconds, closeTo(1500, 350));
       expect(engine.state.volume, closeTo(1.0, 1e-4));
@@ -499,12 +496,12 @@ void main() {
       // Seek back into crossfade zone: it triggers again smoothly
       await engine.action.seek(const Duration(milliseconds: 8600));
       for (int i = 0;
-          i < 40 && engine.state.phase != EnginePhase.autoCrossfading;
+          i < 40 && !engine.state.isCrossfading;
           i++) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
 
-      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex, equals(0));
     });
 
@@ -535,18 +532,18 @@ void main() {
       // Seek into crossfade zone (8.2s out of ~10.0s)
       await engine.action.seek(const Duration(milliseconds: 8200));
       for (int i = 0;
-          i < 20 && engine.state.phase != EnginePhase.autoCrossfading;
+          i < 20 && !engine.state.isCrossfading;
           i++) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
-      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      expect(engine.state.isCrossfading, isTrue);
 
       // Seek slightly further inside crossfade zone (9.0s)
       await engine.action.seek(const Duration(milliseconds: 9000));
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
-      // Phase remains autoCrossfading on outgoing track without error or premature skip
-      expect(engine.state.phase, equals(EnginePhase.autoCrossfading));
+      // Remains crossfading on outgoing track without error or premature skip
+      expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.position.inMilliseconds, closeTo(9000, 350));
     });

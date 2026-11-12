@@ -576,15 +576,9 @@ class MiniaudioPlayer<T> {
         final val = switch (field0) {
           1 => PlaybackState.playing,
           2 => PlaybackState.paused,
-          3 => PlaybackState.completed,
-          4 => PlaybackState.buffering,
-          5 => PlaybackState.error,
-          6 => PlaybackState.opening,
           _ => PlaybackState.stopped,
         };
         state._playbackState = val;
-        state._isPaused = val == PlaybackState.paused;
-        state._isOpening = val == PlaybackState.opening;
         MapLogger.info(
             '[EVENT:PLAYBACK_STATE] Engine playback state -> ${val.name}');
         stream._playbackStateController.add(val);
@@ -594,15 +588,6 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_IsBuffering(:final field0):
         state._isBuffering = field0;
         stream._bufferingController.add(field0);
-      case rust_types.RustPlayerEvent_IsCompleted(:final field0):
-        state._isCompleted = field0;
-        stream._completedController.add(field0);
-      case rust_types.RustPlayerEvent_State(:final field0):
-        final p = (field0 >= 0 && field0 < EnginePhase.values.length)
-            ? EnginePhase.values[field0]
-            : EnginePhase.idle;
-        state._phase = p;
-        stream._phaseController.add(p);
       case rust_types.RustPlayerEvent_Position(:final field0):
         final pos = Duration(milliseconds: field0.toInt());
         state._position = pos;

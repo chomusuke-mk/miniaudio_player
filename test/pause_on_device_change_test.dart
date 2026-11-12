@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
+import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 void main() {
@@ -275,12 +275,12 @@ void main() {
         await engine.action.play();
         expect(
             engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
-        expect(engine.state.phase, equals(EnginePhase.playing));
+        expect(engine.state.playbackState, equals(PlaybackState.playing));
 
         await Future.delayed(const Duration(milliseconds: 100));
 
         await engine.action.pause();
-        expect(engine.state.phase, equals(EnginePhase.paused));
+        expect(engine.state.playbackState, equals(PlaybackState.paused));
 
         // Seek while paused
         await engine.action.seek(const Duration(milliseconds: 2000));
@@ -289,7 +289,7 @@ void main() {
 
         // Resume play
         await engine.action.play();
-        expect(engine.state.phase, equals(EnginePhase.playing));
+        expect(engine.state.playbackState, equals(PlaybackState.playing));
 
         await Future.delayed(const Duration(milliseconds: 150));
         expect(engine.state.position.inMilliseconds, greaterThan(2000));

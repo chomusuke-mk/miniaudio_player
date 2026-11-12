@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use crate::core::dual_source::AudioSourceCore;
 use crate::core::miniaudio_player::MiniaudioPlayer;
 use crate::core::recording::WavFormat;
+use crate::core::types::{PlaybackState, QueueTransition};
 use crate::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
 use crate::dsp::equalizer::EqualizerParams;
 use crate::dsp::reverb::ReverbConfig;
@@ -24,8 +25,6 @@ use super::types::*;
 pub struct TelemetryFilter {
     /// Cached playback state code.
     pub state: Option<i32>,
-    /// Cached engine phase code.
-    pub phase: Option<i32>,
     /// Cached track position in milliseconds.
     pub pos: i64,
     /// Cached active queue index.
@@ -42,8 +41,6 @@ pub struct TelemetryFilter {
     pub is_ducking: Option<bool>,
     /// Cached playing status flag.
     pub is_playing: Option<bool>,
-    /// Cached completion flag.
-    pub is_completed: Option<bool>,
     /// Cached ReplayGain settings tuple (gain bits, peak bits).
     pub replay_gain: Option<(u32, u32)>,
     /// Cached audio metadata payload.
@@ -60,7 +57,6 @@ impl Default for TelemetryFilter {
     fn default() -> Self {
         Self {
             state: Some(0),
-            phase: Some(0),
             pos: 0,
             index: Some(-1),
             buffered_end: None,
@@ -69,7 +65,6 @@ impl Default for TelemetryFilter {
             is_recording: Some(false),
             is_ducking: Some(false),
             is_playing: Some(false),
-            is_completed: Some(false),
             replay_gain: None,
             metadata: None,
             audio_info: None,
@@ -119,14 +114,6 @@ impl EventReporter {
     pub fn emit(&self, event: RustPlayerEvent) {
         let mut filter = self.filter.lock().unwrap();
         let should_emit = match &event {
-            RustPlayerEvent::State(p) => {
-                if filter.phase == Some(*p) {
-                    false
-                } else {
-                    filter.phase = Some(*p);
-                    true
-                }
-            }
             RustPlayerEvent::PlaybackState(s) => {
                 if filter.state == Some(*s) {
                     false
@@ -154,11 +141,11 @@ impl EventReporter {
                     true
                 }
             }
-            RustPlayerEvent::IsCompleted(b) => {
-                if filter.is_completed == Some(*b) {
+            RustPlayerEvent::IsBuffering(b) => {
+                if filter.is_buffering == Some(*b) {
                     false
                 } else {
-                    filter.is_completed = Some(*b);
+                    filter.is_buffering = Some(*b);
                     true
                 }
             }
@@ -472,11 +459,8 @@ impl RustMiniaudioPlayer {
                                         "[WATCHER:PAUSE] Auto-pausing playback deck due to output device change/disconnect!"
                                     );
                                     let _ = ply.music_manager.pause();
-                                    ply.music_manager.inner.phase.store(
-                                        crate::core::dual_source::ENGINE_PHASE_PAUSED,
-                                        Ordering::Release,
-                                    );
-                                    watcher_reporter.emit(RustPlayerEvent::PlaybackState(2)); // Paused
+                                    watcher_reporter.emit(RustPlayerEvent::PlaybackState(crate::core::types::PlaybackState::Paused.as_i32()));
+                                    watcher_reporter.emit(RustPlayerEvent::IsPlaying(false));
                                 }
                             }
                         }
@@ -619,16 +603,18 @@ impl RustMiniaudioPlayer {
                     };
 
                     // Check crossfade completion (auto and manual)
-                    let cur_phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-                    let is_xfade_phase = cur_phase == crate::core::dual_source::ENGINE_PHASE_AUTO_CROSSFADING
-                        || cur_phase == crate::core::dual_source::ENGINE_PHASE_MANUAL_CROSSFADING;
+                    let xfade_trans = ply.music_manager.inner.crossfade.transition();
+                    let is_xfade_active = xfade_trans != QueueTransition::Idle;
                     let mut xfade_done = ply.music_manager.inner.crossfade_completed_flag.swap(false, Ordering::AcqRel);
-                    let is_active = ply.music_manager.inner.crossfade.is_active.load(Ordering::Relaxed);
                     let cur_f = ply.music_manager.inner.crossfade.current_frame.load(Ordering::Relaxed);
                     let tot_f = ply.music_manager.inner.crossfade.total_frames.load(Ordering::Relaxed);
+                    let target_id = ply.music_manager.inner.crossfade_target_id.load(Ordering::Relaxed);
 
-                    if !xfade_done && is_xfade_phase && (!is_active || (tot_f > 0 && cur_f >= tot_f)) {
-                        ply.music_manager.inner.crossfade.is_active.store(false, Ordering::Release);
+                    if !xfade_done && is_xfade_active && (tot_f > 0 && cur_f >= tot_f) {
+                        ply.music_manager.inner.crossfade.abort();
+                        xfade_done = true;
+                    }
+                    if !xfade_done && !is_xfade_active && target_id >= 0 {
                         xfade_done = true;
                     }
 
@@ -662,50 +648,52 @@ impl RustMiniaudioPlayer {
                             }
                         }
 
-                        ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_PLAYING, Ordering::Release);
                         ply.music_manager.inner.preload_standby_deck();
+                        worker_reporter.emit(RustPlayerEvent::IsCrossfading(false));
                     }
 
                     // Auto-crossfade & queue advance evaluation
-                    let cur_phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-                    let is_xfading = ply.music_manager.inner.crossfade.is_active.load(Ordering::Relaxed);
+                    let cur_playback = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
+                    let is_xfading = ply.music_manager.inner.crossfade.is_active();
                     let active_deck = ply.music_manager.active_deck_ref();
-                    let deck_state = active_deck.state.load(Ordering::Relaxed);
                     let pos = active_deck.position_ms.load(Ordering::Relaxed);
                     let dur = active_deck.duration_ms.load(Ordering::Relaxed);
                     let current_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
 
                     let can_trigger = !is_xfading
                         && current_idx >= 0
-                        && cur_phase != crate::core::dual_source::ENGINE_PHASE_COMPLETED
-                        && cur_phase != crate::core::dual_source::ENGINE_PHASE_IDLE
-                        && cur_phase != crate::core::dual_source::ENGINE_PHASE_DISPOSED;
+                        && cur_playback == PlaybackState::Playing;
 
                     if can_trigger {
                         let auto_ms = ply.music_manager.inner.auto_crossfade_duration_ms.load(Ordering::Relaxed);
-                        let should_auto_xfade = deck_state == crate::core::dual_source::STATE_PLAYING
+                        let q_len = ply.music_manager.inner.queue.read().unwrap().len();
+                        let loop_m = ply.music_manager.inner.loop_mode.load(Ordering::Relaxed);
+
+                        let has_next_track = if q_len > 0 {
+                            let n = current_idx + 1;
+                            (n as usize) < q_len || loop_m == 2
+                        } else {
+                            false
+                        };
+
+                        let should_auto_xfade = has_next_track
                             && auto_ms > 0
                             && dur > (auto_ms as i64)
                             && (pos + (auto_ms as i64) >= dur);
                         let is_eof = !should_auto_xfade && (
-                            active_deck.completed_flag.swap(false, Ordering::AcqRel)
-                            || deck_state == crate::core::dual_source::STATE_COMPLETED
+                            active_deck.track_exhausted.swap(false, Ordering::AcqRel)
                             || (dur > 0 && pos >= dur && pos > 0)
                         );
 
                         if should_auto_xfade || is_eof {
-                            let q_len = ply.music_manager.inner.queue.read().unwrap().len();
-                            let loop_m = ply.music_manager.inner.loop_mode.load(Ordering::Relaxed);
                             let next_idx_opt = if loop_m == 1 && is_eof && !should_auto_xfade {
                                 Some(current_idx as usize)
-                            } else if q_len > 0 {
+                            } else if has_next_track {
                                 let n = current_idx + 1;
                                 if (n as usize) < q_len {
                                     Some(n as usize)
-                                } else if loop_m == 2 {
-                                    Some(0)
                                 } else {
-                                    None
+                                    Some(0)
                                 }
                             } else {
                                 None
@@ -734,9 +722,9 @@ impl RustMiniaudioPlayer {
                                             };
                                             let xfade_frames = (eff_ms * sr as u64) / 1000;
                                             let curve = ply.music_manager.inner.crossfade_curve.load(Ordering::Relaxed);
-                                            ply.music_manager.inner.crossfade.begin(active_id, to_deck, xfade_frames, curve);
+                                            ply.music_manager.inner.crossfade.begin(active_id, to_deck, xfade_frames, curve, QueueTransition::AutoCrossfade);
                                             ply.music_manager.inner.crossfade_target_id.store(item.id, Ordering::Release);
-                                            ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_AUTO_CROSSFADING, Ordering::Release);
+                                            worker_reporter.emit(RustPlayerEvent::IsCrossfading(true));
                                         } else {
                                             let from_slot = if active_id == 0 {
                                                 &mut ply.music_manager.inner.deck_a
@@ -751,28 +739,21 @@ impl RustMiniaudioPlayer {
                                                 gain_db: g,
                                                 peak: p,
                                             }));
-                                            ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_PLAYING, Ordering::Release);
                                         }
                                     }
                                 }
                             } else if is_eof {
-                                ply.music_manager.inner.phase.store(crate::core::dual_source::ENGINE_PHASE_COMPLETED, Ordering::Release);
+                                ply.music_manager.inner.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
                                 let active_deck = ply.music_manager.active_deck_mut();
-                                active_deck.state.store(crate::core::dual_source::STATE_COMPLETED, Ordering::Release);
-                                active_deck.pause();
+                                active_deck.finish_at_end();
                             }
                         }
                     }
 
                     // Check infinite mix queue replenishment
                     if ply.music_manager.inner.infinite_mix_enabled.load(Ordering::Relaxed) {
-                        let cur_phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-                        let active_deck = ply.music_manager.active_deck_ref();
-                        let deck_state = active_deck.state.load(Ordering::Relaxed);
-                        let is_playing = deck_state == crate::core::dual_source::STATE_PLAYING
-                            && cur_phase != crate::core::dual_source::ENGINE_PHASE_COMPLETED
-                            && cur_phase != crate::core::dual_source::ENGINE_PHASE_IDLE
-                            && cur_phase != crate::core::dual_source::ENGINE_PHASE_DISPOSED;
+                        let cur_playback = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
+                        let is_playing = cur_playback == PlaybackState::Playing;
 
                         if is_playing {
                             let current_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
@@ -816,7 +797,8 @@ impl RustMiniaudioPlayer {
                     // Query active deck
                     let active_deck = ply.music_manager.active_deck_ref();
                     let state = active_deck.state.load(Ordering::Relaxed);
-                    let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
+                    let playback_state = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
+                    let is_buffering = active_deck.is_buffering.load(Ordering::Relaxed);
                     let pos = active_deck.position_ms.load(Ordering::Relaxed);
                     let audio_info = active_deck.get_audio_info();
                     let mut br = crate::bridge::ffi::MiniaudioBufferedRange::default();
@@ -847,7 +829,7 @@ impl RustMiniaudioPlayer {
                     let rg = ply.music_dsp.equalizer.replay_gain();
                     let active_voices = ply.effects_manager.active_voices_count();
 
-                    let is_active_audio = (state == crate::core::dual_source::STATE_PLAYING && phase != crate::core::dual_source::ENGINE_PHASE_COMPLETED)
+                    let is_active_audio = (state == crate::core::dual_source::STATE_PLAYING && playback_state == PlaybackState::Playing)
                         || is_rec
                         || active_voices > 0;
                     let vis_data = if ply.output_manager.visualizer_enabled.load(Ordering::Relaxed) {
@@ -862,19 +844,11 @@ impl RustMiniaudioPlayer {
 
                     drop(ply);
 
-                    let is_completed = state == crate::core::dual_source::STATE_COMPLETED
-                        || phase == crate::core::dual_source::ENGINE_PHASE_COMPLETED;
-                    let is_playing = !is_completed && state == crate::core::dual_source::STATE_PLAYING;
-                    let effective_state = if is_completed {
-                        crate::core::dual_source::STATE_COMPLETED
-                    } else {
-                        state
-                    };
+                    let is_playing = playback_state == PlaybackState::Playing;
 
-                    worker_reporter.emit(RustPlayerEvent::PlaybackState(effective_state));
-                    worker_reporter.emit(RustPlayerEvent::State(phase));
+                    worker_reporter.emit(RustPlayerEvent::PlaybackState(playback_state.as_i32()));
                     worker_reporter.emit(RustPlayerEvent::IsPlaying(is_playing));
-                    worker_reporter.emit(RustPlayerEvent::IsCompleted(is_completed));
+                    worker_reporter.emit(RustPlayerEvent::IsBuffering(is_buffering));
                     worker_reporter.emit(RustPlayerEvent::Position(pos));
                     worker_reporter.emit(RustPlayerEvent::CurrentIndex(idx as i32));
                     if audio_info.sample_rate > 0 {
@@ -1052,10 +1026,10 @@ impl RustMiniaudioPlayer {
         let queue_changed = prev_ids != new_ids;
         let cur_idx = ply.music_manager.current_index();
         let is_shuffled = ply.music_manager.is_shuffled();
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let active_deck = ply.music_manager.active_deck_ref();
-        let state = active_deck.state.load(Ordering::Relaxed);
-        let is_playing = state == crate::core::dual_source::STATE_PLAYING;
+        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+        let is_playing = state == PlaybackState::Playing.as_i32();
+        let is_xfading = ply.music_manager.inner.crossfade.is_active();
         let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
         let initial_info = active_deck.get_audio_info();
         let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
@@ -1082,7 +1056,6 @@ impl RustMiniaudioPlayer {
         }
         self.emit_event(RustPlayerEvent::IsShuffled(is_shuffled));
         self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
         if self.metadata_enabled.load(Ordering::Relaxed) {
             self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
             if let Some(meta) = initial_meta {
@@ -1101,8 +1074,8 @@ impl RustMiniaudioPlayer {
             }));
         }
         self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
+        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(())
     }
 
@@ -1120,8 +1093,8 @@ impl RustMiniaudioPlayer {
         ply.output_manager
             .visualizer_seqlock
             .write(|d| *d = crate::dsp::visualizer::VisualizerData::default());
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+        let is_xfading = ply.music_manager.inner.crossfade.is_active();
         drop(ply);
         map_log!(
             3,
@@ -1129,8 +1102,8 @@ impl RustMiniaudioPlayer {
             t0.elapsed().as_millis()
         );
         self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
+        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
     }
 
@@ -1148,8 +1121,8 @@ impl RustMiniaudioPlayer {
         ply.output_manager
             .visualizer_seqlock
             .write(|d| *d = crate::dsp::visualizer::VisualizerData::default());
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+        let is_xfading = ply.music_manager.inner.crossfade.is_active();
         drop(ply);
         map_log!(
             3,
@@ -1157,10 +1130,9 @@ impl RustMiniaudioPlayer {
             t0.elapsed().as_millis()
         );
         self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::Position(0));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
+        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
     }
 
@@ -1175,23 +1147,21 @@ impl RustMiniaudioPlayer {
             t0.elapsed().as_millis()
         );
         let res = ply.music_manager.seek(position_ms)?;
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let cur_idx = ply.music_manager.current_index();
-        let state = ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed);
+        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+        let is_playing = state == PlaybackState::Playing.as_i32();
+        let is_xfading = ply.music_manager.inner.crossfade.is_active();
         drop(ply);
         map_log!(
             3,
             "[NATIVE:SEEK:DONE] seek() completed in {}ms. Emitting events...",
             t0.elapsed().as_millis()
         );
-        let is_playing = state == crate::core::dual_source::STATE_PLAYING;
-        let is_completed = state == crate::core::dual_source::STATE_COMPLETED;
         self.emit_event(RustPlayerEvent::Position(position_ms));
-        self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
         self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCompleted(is_completed));
+        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(res)
     }
 
@@ -1241,11 +1211,9 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         }));
         self.emit_event(RustPlayerEvent::CurrentIndex(-1));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
         self.emit_event(RustPlayerEvent::Position(0));
         self.emit_event(RustPlayerEvent::AudioInfo(RustAudioInfo::default()));
         self.emit_event(RustPlayerEvent::PlaybackState(0));
-        self.emit_event(RustPlayerEvent::State(0));
         Ok(())
     }
 
@@ -1323,10 +1291,10 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let mut ply = self.inner.lock().unwrap();
         ply.music_manager.next(crossfade_duration_ms)?;
         let idx = ply.music_manager.current_index();
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let active_deck = ply.music_manager.active_deck_ref();
-        let state = active_deck.state.load(Ordering::Relaxed);
-        let is_playing = state == crate::core::dual_source::STATE_PLAYING;
+        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+        let is_playing = state == PlaybackState::Playing.as_i32();
+        let is_xfading = ply.music_manager.inner.crossfade.is_active();
         let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
         let initial_info = active_deck.get_audio_info();
         let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
@@ -1347,7 +1315,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             }));
         }
         self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
         if self.metadata_enabled.load(Ordering::Relaxed) {
             self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
             if let Some(meta) = initial_meta {
@@ -1358,9 +1325,9 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         if initial_info.sample_rate > 0 {
             self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
         }
-        self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
         self.emit_event(RustPlayerEvent::PlaybackState(state));
+        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(())
     }
 
@@ -1369,10 +1336,10 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         let mut ply = self.inner.lock().unwrap();
         ply.music_manager.previous()?;
         let idx = ply.music_manager.current_index();
-        let phase = ply.music_manager.inner.phase.load(Ordering::Relaxed);
         let active_deck = ply.music_manager.active_deck_ref();
-        let state = active_deck.state.load(Ordering::Relaxed);
-        let is_playing = state == crate::core::dual_source::STATE_PLAYING;
+        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+        let is_playing = state == PlaybackState::Playing.as_i32();
+        let is_xfading = ply.music_manager.inner.crossfade.is_active();
         let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
         let initial_info = active_deck.get_audio_info();
         let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
@@ -1393,7 +1360,6 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             }));
         }
         self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
-        self.emit_event(RustPlayerEvent::IsCompleted(false));
         if self.metadata_enabled.load(Ordering::Relaxed) {
             self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
             if let Some(meta) = initial_meta {
@@ -1404,9 +1370,9 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         if initial_info.sample_rate > 0 {
             self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
         }
-        self.emit_event(RustPlayerEvent::State(phase));
         self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
         self.emit_event(RustPlayerEvent::PlaybackState(state));
+        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(())
     }
 

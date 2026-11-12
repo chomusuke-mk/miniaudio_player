@@ -116,7 +116,7 @@ void main() {
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
-      expect(player.state.isOpening, isFalse);
+      expect(player.state.isPlaying, isTrue);
 
       // Check metadata immediately after opening
       final meta = player.state.metadata?.bytes;
@@ -214,15 +214,15 @@ void main() {
           : Duration.zero;
       await player.action.seek(seekTarget);
 
-      // Wait for completion (EOF)
+      // Wait for completion (EOF -> stopped)
       int waitMs = 0;
-      while (!player.state.isCompleted && waitMs < 6000) {
+      while (!player.state.playbackState.isStopped && waitMs < 6000) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         waitMs += 100;
       }
-      expect(player.state.isCompleted, isTrue,
+      expect(player.state.playbackState.isStopped, isTrue,
           reason:
-              'Track must reach completion cleanly without decoding fake syncwords');
+              'Track must reach stopped at queue end cleanly without decoding fake syncwords');
 
       await player.action.stop();
     });

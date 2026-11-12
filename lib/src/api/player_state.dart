@@ -1,78 +1,24 @@
 part of 'miniaudio_player.dart';
 
-/// Represents the high-level playback and lifecycle states of [MiniaudioPlayer].
+/// Represents the real transport states of [MiniaudioPlayer].
 enum PlaybackState {
-  /// The player is stopped, rewound to start, or has no active media.
+  /// The player is stopped, rewound to start, or has reached queue end without repeat.
   stopped,
 
-  /// The player is actively preparing, resolving, probing, or loading an audio source.
-  opening,
-
-  /// Audio frames are actively rendering through the output audio device.
+  /// Audio playback is authorized and actively rendering frames unless temporarily buffering.
   playing,
 
-  /// Playback is paused at the current position.
-  paused,
-
-  /// Playback reached the end of the track.
-  completed,
-
-  /// Playback is stalled waiting for network data or buffer replenishment.
-  buffering,
-
-  /// An unrecoverable decoding, I/O, or native engine error occurred.
-  error;
+  /// Audio playback is paused at the current position.
+  paused;
 
   /// Whether the playback state is [PlaybackState.stopped].
   bool get isStopped => this == PlaybackState.stopped;
-
-  /// Whether the playback state is [PlaybackState.opening].
-  bool get isOpening => this == PlaybackState.opening;
 
   /// Whether the playback state is [PlaybackState.playing].
   bool get isPlaying => this == PlaybackState.playing;
 
   /// Whether the playback state is [PlaybackState.paused].
   bool get isPaused => this == PlaybackState.paused;
-
-  /// Whether the playback state is [PlaybackState.completed].
-  bool get isCompleted => this == PlaybackState.completed;
-
-  /// Whether the playback state is [PlaybackState.buffering].
-  bool get isBuffering => this == PlaybackState.buffering;
-
-  /// Whether the playback state is [PlaybackState.error].
-  bool get isError => this == PlaybackState.error;
-}
-
-/// Explicit finite state machine (FSM) phases for queue and crossfade lifecycle.
-enum EnginePhase {
-  /// The engine is idle without an active stream.
-  idle,
-
-  /// An audio track is actively being loaded and probed.
-  loading,
-
-  /// Audio frames are actively rendering through the output device.
-  playing,
-
-  /// Playback is paused at the current position.
-  paused,
-
-  /// An automatic crossfade between consecutive tracks is currently transitioning.
-  autoCrossfading,
-
-  /// A manual user-initiated crossfade between tracks is currently transitioning.
-  manualCrossfading,
-
-  /// Playback of the active queue or track has completed.
-  completed,
-
-  /// An unrecoverable engine or decoding error occurred.
-  error,
-
-  /// The player and its native resources have been disposed.
-  disposed,
 }
 
 /// Synchronous, lock-free $O(1)$ stream snapshot of the player, queue, effects, and DSP states.
@@ -103,14 +49,9 @@ class PlayerState<T> {
   /// The high-level playback state of the player.
   PlaybackState get playbackState => _playbackState;
 
-  EnginePhase _phase = EnginePhase.idle;
-
-  /// The explicit finite state machine phase for queue and crossfade lifecycle.
-  EnginePhase get phase => _phase;
-
   bool _isPlaying = false;
 
-  /// Whether the audio player is actively rendering frames.
+  /// Whether the audio player is authorized and actively rendering frames.
   bool get isPlaying => _isPlaying;
 
   bool _isBuffering = false;
@@ -118,20 +59,8 @@ class PlayerState<T> {
   /// Whether playback is currently stalled waiting for audio buffer replenishment.
   bool get isBuffering => _isBuffering;
 
-  bool _isCompleted = false;
-
-  /// Whether playback of the current track or queue has finished.
-  bool get isCompleted => _isCompleted;
-
-  bool _isOpening = false;
-
-  /// Whether an audio track is currently opening or probing.
-  bool get isOpening => _isOpening;
-
-  bool _isPaused = false;
-
   /// Whether playback is currently paused.
-  bool get isPaused => _isPaused;
+  bool get isPaused => _playbackState == PlaybackState.paused;
 
   Buffer _buffer = const Buffer();
 

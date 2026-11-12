@@ -15,14 +15,8 @@ class PlayerStream<T> {
       StreamController<bool>.broadcast();
   final StreamController<bool> _bufferingController =
       StreamController<bool>.broadcast();
-  final StreamController<bool> _completedController =
-      StreamController<bool>.broadcast();
-  final StreamController<bool> _openingController =
-      StreamController<bool>.broadcast();
   final StreamController<PlaybackState> _playbackStateController =
       StreamController<PlaybackState>.broadcast();
-  final StreamController<EnginePhase> _phaseController =
-      StreamController<EnginePhase>.broadcast();
   final StreamController<Buffer> _bufferController =
       StreamController<Buffer>.broadcast();
   final StreamController<AudioMetadata?> _metadataController =
@@ -144,23 +138,8 @@ class PlayerStream<T> {
   /// Broadcast stream emitting whether playback is stalled waiting for data.
   Stream<bool> get isBuffering => _bufferingController.stream;
 
-  /// Broadcast stream emitting whether track playback has completed.
-  Stream<bool> get completed => _completedController.stream;
-
-  /// Broadcast stream emitting whether track playback has completed.
-  Stream<bool> get isCompleted => _completedController.stream;
-
-  /// Broadcast stream emitting whether a track is currently opening or resolving.
-  Stream<bool> get opening => _openingController.stream;
-
-  /// Broadcast stream emitting whether a track is currently opening or resolving.
-  Stream<bool> get isOpening => _openingController.stream;
-
   /// Broadcast stream emitting high-level playback state changes.
   Stream<PlaybackState> get playbackState => _playbackStateController.stream;
-
-  /// Broadcast stream emitting explicit FSM engine phase transitions.
-  Stream<EnginePhase> get phase => _phaseController.stream;
 
   /// Broadcast stream emitting audio prefetch buffer metrics.
   Stream<Buffer> get buffer => _bufferController.stream;
@@ -362,10 +341,7 @@ class PlayerStream<T> {
       _durationController.close(),
       _playingController.close(),
       _bufferingController.close(),
-      _completedController.close(),
-      _openingController.close(),
       _playbackStateController.close(),
-      _phaseController.close(),
       _bufferController.close(),
       _activeVoicesCountController.close(),
       _allocatedRamBytesController.close(),

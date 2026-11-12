@@ -32,7 +32,6 @@ void main() {
       expect(state.playbackState, PlaybackState.stopped);
       expect(state.isPaused, isFalse);
       expect(state.playbackState.isStopped, isTrue);
-      expect(state.playbackState.isError, isFalse);
       expect(state.skipSilence, isFalse);
       expect(state.preamp, 0.0);
       expect(state.currentIndex, isNull);
