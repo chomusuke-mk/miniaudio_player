@@ -215,6 +215,7 @@ words:
   - EREAD
   - Estebanez
   - etmp
+  - evictable
   - EXITSTATUS
   - Expansor
   - EXTM
@@ -306,8 +307,10 @@ words:
   - INLINES
   - inps
   - Instace
+  - interaural
   - interbloqueos
   - Intercepción
+  - interprocedural
   - iovecin
   - ipart
   - ISHLD
@@ -391,6 +394,7 @@ words:
   - microarquitectura
   - microcódigo
   - microcontrollers
+  - microtask
   - midfi
   - Mikhaylov
   - miniaudio
@@ -542,6 +546,7 @@ words:
   - rmax
   - rmin
   - robustify
+  - rodata
   - Rohit
   - rolloff
   - routeable
@@ -551,6 +556,7 @@ words:
   - rustflags
   - safelisted
   - Sandboxed
+  - saturator
   - SCHED
   - Schyler
   - sdcardfs
@@ -564,6 +570,7 @@ words:
   - selcost
   - seqlock
   - Seqlock
+  - seqlocks
   - serialnos
   - shoutcast
   - Shoutcast
@@ -582,6 +589,7 @@ words:
   - Sobredimensionamiento
   - softfp
   - sonification
+  - soundcards
   - Soundcloud
   - spanp
   - spatialization
@@ -727,6 +735,7 @@ words:
   - Xiph
   - xiphmont
   - Xlist
+  - xruns
   - XSTRINGIFY
   - yourapp
   - YTYPE

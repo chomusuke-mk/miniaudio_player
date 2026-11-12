@@ -1,106 +1,333 @@
-# `miniaudio_player` Architecture Specification
+# `miniaudio_player` Comprehensive Architecture Specification
 
-## 1. Executive Summary
+## 1. Executive Summary & Philosophy
 
-`miniaudio_player` is an ultra-low-resource, cross-platform audio player and digital signal processing (DSP) engine built for Flutter and Dart. It combines a high-performance **Rust core** with **miniaudio** hardware abstraction and **Sonic DSP**, bridged seamlessly to Dart via **Flutter Rust Bridge (FRB v2)**.
+`miniaudio_player` is an ultra-low-latency, memory-efficient, cross-platform audio playback and digital signal processing (DSP) engine engineered for Flutter and Dart. Its core is written in **Rust** (`miniaudio_player_rust`), backed by a lightweight **C11 hardware abstraction layer** (`miniaudio`), a native Rust implementation of the **Sonic DSP** time-stretching and pitch-shifting algorithm, and interfaced to Dart via **Flutter Rust Bridge (FRB v2)**.
 
-The engine provides unified support for streaming music queues, autonomous memory-budgeted polyphonic RAM sound effects with 3D spatialization and Doppler kinematics, a multi-destination output matrix (speakers, DJ CUE pre-listening, and lock-free live recording), real-time microphone capture with auto-ducking, and studio-grade DSP processing.
+The engine delivers production-grade capabilities within a unified architecture:
+
+- **Dual-Deck Continuous Music Playback**: Seamless gapless playback and deterministic crossfading between Deck A and Deck B, indexed by monotonic track IDs rather than mutable queue indices.
+- **Adaptive Progressive Streaming**: Native support for HTTP/HTTPS remote streams, HTTP Live Streaming (HLS v3/v7 with M3U8 parsing, AES-128 segment decryption, and MPEG-2 TS demuxing), and Internet radio (Shoutcast/Icecast) with dynamic ICY metadata parsing.
+- **Tripartite Progressive Elastic Buffer (`TripartiteBuffer` / `StreamBuffer`)**: Memory-bounded stream caching featuring an immutable **Pinned Head** (for container headers and ID3v2/MP4 atoms), a lock-free **Sliding Pure Audio Ring** (with adaptive backpressure and block coalescing), and a **Tail Buffer** (for ID3v1/APEv2 metadata and seek indices).
+- **Autonomous Memory-Budgeted SFX Voice Pool**: Up to 64 concurrent polyphonic voices with zero runtime heap allocations during playback, managed by an autonomous RAM budget (`effectMemoryLimitMb`), reactive multi-factor retention scoring (zero timers), and unconditional eviction immunity for memory-backed sources.
+- **3D Spatial Acoustic Processor**: Real-time 3D audio modeling with distance attenuation curves (Linear, Inverse, Exponential), directional sound cones, and kinematic Doppler frequency shifts.
+- **Studio-Grade DSP Processing Chain**: 10-band ISO 266 biquad equalizer, algorithmic Freeverb reverberation, native Sonic time-stretch/pitch-shift, Bauer BS2B stereo-to-binaural crossfeed, ITU-R BS.1770-4 / EBU R128 ReplayGain normalization, smart silence excision, and soft-knee saturation backed by a true-peak brickwall limiter at 0 dBFS.
+- **Symmetric Multi-Destination Output Matrix**: Simultaneous routing across multiple physical audio endpoints, dedicated DJ CUE pre-listening headphone bus, lock-free WAV disk recording, and 60 FPS Fast Fourier Transform (FFT) spectrum analysis.
+- **Microphone Capture & Auto-Ducking**: Hardware capture node with real-time RMS ballistics envelope, sidechain auto-ducking on the music bus, and direct monitoring with sub-15 ms latency.
 
 ---
 
-## 2. System Architecture Overview
+## 2. System Architecture & Layered Topography
 
-The system is organized into four clearly separated layers:
-
-1. **Dart API Layer**: Developer-facing unified API featuring `MiniaudioPlayer<T>` and three orthogonal namespaces:
-   - `player.action`: Asynchronous imperative commands (`setQueue`, universal `play`, `setEffects`, `playEffect`, DSP & routing controls).
-   - `player.state`: $O(1)$ lock-free synchronous state snapshots with zero redundant aliases.
-   - `player.stream`: Reactive broadcast streams for fine-grained UI bindings.
-2. **Flutter Rust Bridge (FRB) & FFI Boundary**: Asynchronous RPC command dispatch, zero-copy byte transfers with immediate Dart heap reclamation (`clearBytes`), and lightweight native Rust-to-Dart broadcast event streaming.
-3. **Rust Core Audio Engine (`miniaudio_player_rust`)**: Domain managers orchestrating dual-deck gapless playback, ID-tracked crossfading, autonomous RAM-budgeted polyphonic effects, DSP filters, SIMD audio mixing, and format decoders.
-4. **C Hardware Bridge (`miniaudio`) & OS Audio Subsystem**: Native C11 bridge interfacing directly with platform audio backends (ALSA, PulseAudio, PipeWire, WASAPI, CoreAudio, AAudio, OpenSL ES, and WebAudio).
+The system architecture is structured across four decoupled layers with well-defined boundaries:
 
 ```mermaid
 flowchart TB
-    subgraph Dart["Dart / Flutter Layer"]
+    subgraph DartLayer["Dart / Flutter API Layer"]
         Player["MiniaudioPlayer&lt;T&gt;"]
-        Action["player.action\n(setQueue, play, setEffects, playEffect)"]
-        State["player.state\n(O(1) Canonical Snapshot)"]
-        Stream["player.stream\n(Broadcast Events)"]
-        VoiceHandle["Voice Handle\n(Live Polyphonic Modulation)"]
+        Action["player.action\n(setQueue, play, pause, seek, setEffects, playEffect)"]
+        State["player.state\n(O(1) Synchronous Snapshot, Zero Redundant Aliases)"]
+        Stream["player.stream\n(Deduplicated Reactive Broadcast Streams)"]
+        VoiceHandle["Voice Handle\n(Encapsulated Polyphonic Voice Modulation)"]
+        SourceModel["AudioSource&lt;T&gt;\n(Polymorphic Universal Concrete Class)"]
+        
         Player --> Action
         Player --> State
         Player --> Stream
+        Player --> SourceModel
         Action -.->|"playEffect()"| VoiceHandle
     end
 
-    subgraph FRB["Bridge Boundary (Flutter Rust Bridge v2)"]
-        CommandChannel["Command Dispatch\n(Dart -> Rust)"]
-        EventChannel["StreamSink Event Pipeline\n(Rust -> Dart: Queue IDs, AudioInfo, AudioMetadata, Telemetry)"]
-        RawByteBridge["CustomDartByteSource & FFI"]
+    subgraph FRBLayer["FFI Boundary (Flutter Rust Bridge v2)"]
+        CmdRPC["Asynchronous RPC Channel\n(Dart -> Rust: Transport Commands & DSP Configuration)"]
+        EventSink["StreamSink Event Pipeline\n(Rust -> Dart: 60 FPS Telemetry, AudioInfo, AudioMetadata)"]
+        ByteBridge["Zero-Copy Buffer Bridge\n(Raw Memory Pointers & Immediate clearBytes())"]
     end
 
-    subgraph RustCore["Rust Core Audio Engine"]
+    subgraph RustLayer["Rust Core Engine (miniaudio_player_rust)"]
         direction TB
         Orchestrator["MiniaudioPlayer / MiniaudioPlayerRenderer"]
         
         subgraph Domains["Autonomous Domain Managers"]
             MM["MusicManager & DualSource\n(Deck A / Deck B, ID-Tracked Crossfade)"]
-            EM["EffectsManager & VoicePool\n(64-Voice Pool, Autonomous RAM Budget, 3D Spatial)"]
-            DSP["DspProcessor\n(EQ, Reverb, Sonic, ReplayGain)"]
-            IM["InputManager\n(Mic Capture, RMS, Auto-Ducker)"]
-            MIX["MasterMixer\n(SIMD Vector Sum, Limiter)"]
-            OM["OutputManager\n(Master, DJ Cue, Recorder, FFT)"]
+            EM["EffectsManager & VoicePool\n(64 Polyphonic Voices, RAM Budget, 3D Spatial)"]
+            DSP["DspProcessor & DspChain\n(10-Band EQ, Reverb, Sonic, ReplayGain, Limiter)"]
+            IM["InputManager\n(Microphone Capture, RMS Ballistics, Auto-Ducker)"]
+            MIX["SimdMixer\n(Hardware SIMD Summation: AVX2/NEON)"]
+            OM["OutputManager\n(Master Out, DJ Cue, Lock-Free WAV Recorder, FFT)"]
         end
 
-        subgraph Decoders["Decoders & Ingestion"]
-            Symphonia["Symphonia Engine\n(MP3, WAV, FLAC, OGG, AAC)"]
-            CustomCodecs["Specialized Decoders\n(Opus, FDK-AAC, DSF, APE, WavPack)"]
-            StreamingHLS["HLS & Stream Readers\n(M3U8, AES-128, MPEG-TS, ICY)"]
-            Tripartite["TripartiteBuffer\n(Pinned Head, Pure Audio Ring, Tail)"]
+        subgraph Ingestion["Ingestion, Buffering & Decoders"]
+            SymphoniaEng["Symphonia Core Engine\n(MP3, WAV, FLAC, OGG, AAC, ALAC)"]
+            CustomDecoders["Specialized Decoders\n(Opus, Extended PCM RF64/W64, DSF DSD, APE, WavPack)"]
+            StreamModule["HLS, Network Streamer & Demuxer\n(M3U8 Parser, AES-128 Decryptor, MPEG-TS, ICY Demuxer)"]
+            Tripartite["TripartiteBuffer / StreamBuffer\n(Pinned Head, Pure Audio Ring, Tail Buffer)"]
         end
 
         Orchestrator --> Domains
-        MM --> Decoders
+        MM --> Ingestion
     end
 
-    subgraph Native["C Hardware Bridge & OS Backends"]
-        CBridge["miniaudio_device_bridge.c / .h"]
-        OSAudio["OS Audio Backends\n(ALSA, Pulse, PipeWire, WASAPI, CoreAudio, AAudio)"]
-        CBridge --> OSAudio
+    subgraph NativeLayer["C Hardware Bridge & OS Audio Backends"]
+        CBridge["miniaudio_device_bridge.c / .h\n(PCM Callbacks, Device Lifecycle, AAudio Defensive Hooks)"]
+        OSBackends["OS Audio Subsystems\n(ALSA, PulseAudio, PipeWire, WASAPI, CoreAudio, AAudio, OpenSL ES, WebAudio)"]
+        CBridge --> OSBackends
     end
 
-    Action --> CommandChannel
-    VoiceHandle --> CommandChannel
-    CommandChannel --> Orchestrator
-    Orchestrator --> EventChannel
-    EventChannel --> Stream
+    Action --> CmdRPC
+    VoiceHandle --> CmdRPC
+    CmdRPC --> Orchestrator
+    Orchestrator --> EventSink
+    EventSink --> Stream
     Stream --> State
-    RawByteBridge <--> Decoders
+    ByteBridge <--> Ingestion
     OM --> CBridge
     CBridge --> IM
 ```
 
 ---
 
-## 3. High-Priority Real-Time Audio Signal Path
+## 3. Dart / Flutter Application Layer
 
-The high-priority audio callback renders PCM samples under hard real-time deadlines. To guarantee zero audio dropouts (glitches / xruns), the render callback is strictly **lock-free, allocation-free, and syscall-free**.
+### 3.1. `MiniaudioPlayer<T>` and Orthogonal Namespaces
+
+The public API in Dart is organized into three strictly segregated namespaces, eliminating clutter and ambiguous state access:
+
+- `player.action`: Houses all imperative, asynchronous command methods (`setQueue`, `play`, `pause`, `stop`, `seek`, `setVolume`, `setEffects`, `playEffect`, etc.). It directly holds the private FFI reference, keeping the internal bridge inaccessible from the outside.
+- `player.state`: Exposes an $O(1)$ lock-free synchronous snapshot of the engine state at the current microtask. The state is updated reactively from Rust's telemetry events without requiring asynchronous polling or IPC waits.
+- `player.stream`: Exposes fine-grained broadcast streams with built-in deduplication for reactive UI rendering (e.g., `stream.playbackState`, `stream.audioInfo`, `stream.metadata`, `stream.visualizer`).
+
+### 3.2. Clean State Machine & Lifecycle Transitions
+
+The player enforces a strict 3-state canonical machine that decouples transport authorization from temporary buffering conditions:
+
+| Canonical State | Playback Authorization | Buffer & Network Activity | Entry Triggers |
+| :--- | :---: | :--- | :--- |
+| **`playing`** | **YES** | Active; continuously pulls network chunks and fills ring buffers up to capacity or EOF. Audio plays if buffered PCM frames are available (`!isBuffering`). | Explicit `play()` call. |
+| **`paused`** | **NO** | Active; PCM rendering is halted, but network buffering and preloading continue in the background until the buffer is full. | Explicit `pause()` call. |
+| **`stopped`** | **NO** | Completely halted; network requests are aborted, decoders are flushed, and audio device output is silent. | 1. Explicit `stop()` call (seek reset to 0).<br>2. Natural queue exhaustion when no repeat mode (`loopAll`/`loopOne`) or Infinity Mix items remain (seek remains at track end). |
+
+```mermaid
+stateDiagram-v2
+    [*] --> Stopped: Initial Creation
+    Stopped --> Playing: play() [Authorizes audio; starts network prefetch]
+    Playing --> Paused: pause() [Revokes audio; prefetch continues]
+    Paused --> Playing: play() [Re-authorizes audio]
+    Playing --> Stopped: stop() [Seek -> 0; aborts network & decoders]
+    Paused --> Stopped: stop() [Seek -> 0; aborts network & decoders]
+    Playing --> Stopped: Queue Finished [Seek stays at end; no loops/infinity]
+
+    note right of Playing
+        Buffering Condition (isBuffering = true)
+        inhibits PCM rendering without altering
+        the canonical 'Playing' authorization.
+    end note
+```
+
+#### Orthogonal Engine Flags
+
+- **`isBuffering`**: A purely transient indicator that the decoded PCM queue or network ring buffer is temporarily depleted below its playback threshold. It never forces a transition to `paused`.
+- **`isOpening`**: Set when the player is resolving a new URL, establishing HTTP handshakes, or sniffing stream headers. Treated as an internal buffering condition.
+- **`isCrossfading`**: An internal flag of `MusicManager` indicating that Deck A and Deck B are simultaneously active and interpolating volumes; it does not alter the global transport authorization.
+
+### 3.3. Polymorphic Universal `AudioSource<T>`
+
+`AudioSource<T>` is a single concrete model class that replaces artificial subclass hierarchies (`UriAudioSource`, `MemoryAudioSource`, `CustomAudioSource` are eliminated):
+
+- Supports file paths (`String` or `Uri` with `file://`).
+- Supports remote HTTP/HTTPS URLs and HLS manifests (`.m3u8`).
+- Supports Internet radio streams (`icy://`, `http://`).
+- Supports in-memory byte buffers (`Uint8List` or `List<int>`).
+- Supports pull-based custom streams (`CustomByteProvider`) for custom decryption, DRM, or streaming from proprietary storage.
+- Attaches generic user metadata (`T? data`) preserved throughout the track lifecycle, alongside optional precomputed ReplayGain tags (`replayGainDb`, `replayPeak`).
+
+#### Immediate Dart Heap Reclamation (`clearBytes`)
+
+When an in-memory `AudioSource(Uint8List)` is transferred to Rust, Dart copies the buffer pointer to the native engine and immediately invokes `clearBytes()`. This drops the Dart heap reference, allowing the Dart garbage collector (GC) to reclaim RAM immediately rather than holding the compressed audio bytes in both Dart and Rust heaps.
+
+### 3.4. Sound Effects Domain & Reactive `Voice` Handle
+
+Sound effect registration is entirely declarative via `player.action.setEffects(List<AudioEffect>)`. Triggering an effect via `player.action.playEffect(id, ...)` allocates one of the 64 polyphonic voices and returns a `Future<Voice>`.
+
+The returned `Voice` object encapsulates live modulation of that specific playing instance:
+
+```dart
+final voice = await player.action.playEffect(
+  'explosion',
+  volume: 0.8,
+  pitch: 1.0,
+  pitchJitter: 0.05, // Random ±5% pitch variation per trigger
+  emitter: SpatialEmitter(position: Vector3(10.0, 0.0, 2.0)),
+);
+
+// Modulate the active voice slot in real time:
+voice.setVolume(0.5);
+voice.setPitch(1.2);
+voice.setEmitter(SpatialEmitter(position: Vector3(5.0, 0.0, 1.0)));
+await voice.stop(fadeDuration: const Duration(milliseconds: 50));
+```
+
+### 3.5. Deterministic Error Mapping (`MiniaudioPlayerException`)
+
+Errors originating across the native FFI boundary are structured with standardized numeric codes (`MapResult::errorFileNotFound = -5`, `MapResult::errorDecodeFailed = -6`, etc.). Dart's `MiniaudioPlayerException.fromRustError` extracts the error code via regex and constructs strongly-typed exceptions, ensuring reliable programmatic error handling.
+
+---
+
+## 4. FFI Boundary & Flutter Rust Bridge (FRB v2)
+
+The interface between the Dart runtime and the Rust native core is managed via FRB v2:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Dart as Dart App / UI
+    participant FRB as FRB Task Pool (Background)
+    participant RustCore as Rust Core Orchestrator
+    participant AudioThread as Real-Time Audio Callback (OS)
+
+    Dart->>FRB: player.action.play(id: 42) [Async RPC]
+    FRB->>RustCore: Invokes MusicManager transport
+    RustCore->>RustCore: Atomic state transition: Playing
+    RustCore-->>Dart: Completes play() Future
+    Note over AudioThread: Render callback wakes up;<br/>mixes PCM frames for track 42
+    AudioThread->>RustCore: Updates atomic position & FFT visualizer
+    RustCore->>Dart: StreamSink emits TelemetryEvent (60 FPS)
+    Dart->>Dart: Updates player.state in O(1) & notifies UI streams
+```
+
+1. **Non-Blocking RPC Dispatch**: Imperative calls from Dart run on FRB background workers, ensuring that slow operations (such as opening network sockets or parsing large playlists) never stall Flutter's UI isolate.
+2. **High-Frequency Telemetry Stream (`StreamSink`)**: Rust dispatches a consolidated telemetry stream at 60 FPS containing playback position, buffered ranges, device states, and FFT visualizer data. Event deduplication filters out redundant emissions when the player is idle or paused.
+3. **Zero-Copy Byte Ingestion**: Large buffers pass directly from Dart to Rust via raw memory pointers, avoiding intermediate serialization or encoding overhead.
+
+---
+
+## 5. Rust Core Engine (`miniaudio_player_rust`)
+
+### 5.1. Central Orchestrator (`MiniaudioPlayer` & `MiniaudioPlayerRenderer`)
+
+`MiniaudioPlayer` coordinates all audio domains and manages the native playback lifecycle. The processing core (`MiniaudioPlayerRenderer`) is separated from the control API to ensure that the audio callback can operate independently of high-level management locks.
+
+### 5.2. Music Domain (`MusicManager` & `DualSource`)
+
+`MusicManager` manages continuous playlist sequencing and crossfading using a dual-deck architecture:
+
+- **Deck A & Deck B Architecture**: Two independent streaming decks (`StreamingDeck`) run in parallel. While Deck A is playing the active track, Deck B can preload, decode, and cue the next track in advance.
+- **Deterministic ID-Tracked Crossfading (`crossfade_target_id`)**: Traditional audio players associate crossfades with playlist indices (which fail when tracks are inserted, deleted, or reordered mid-transition). `miniaudio_player` pins crossfades to the monotonic `i64` track ID of the incoming song. Any queue alteration triggers `verify_or_abort_crossfade()`, immediately aborting the crossfade and restoring unity gain to the active deck if the target ID is no longer valid.
+- **Asynchronous Decoder Threads (`DecoderWorker`)**: Each deck runs a dedicated worker thread that decodes compressed audio packets and writes raw `f32` PCM frames into lock-free ring buffers.
+- **Universal Codec Suite**:
+  - Symphonia engine: MP3, WAV, FLAC, OGG Vorbis, AAC ADTS, ALAC.
+  - Specialized decoders: Opus (`symphonia_adapter_libopus`), Extended PCM (RF64, RIFX, W64 up to 32-bit float), DSD/DSF with FIR Blackman-Harris decimation to `f32`, Monkey's Audio (APE), and WavPack (.wv).
+
+### 5.3. Progressive Buffering & Streaming Architecture
+
+Network and local streaming rely on `TripartiteBuffer`:
+
+```mermaid
+graph LR
+    subgraph Tripartite["TripartiteBuffer"]
+        Head["Pinned Head\n(64 KB - 512 KB)\nID3v2, FLAC, MP4 Atoms\nPinned permanently in RAM"]
+        Ring["Sliding Pure Audio Ring\n(Elastic SPSC Ring Buffer)\nSliding time-window with backpressure"]
+        Tail["Tail Buffer\n(64 KB - 128 KB)\nID3v1, APEv2, Lyrics3\n& Index seeking chunks"]
+    end
+    
+    NetStream["Network / File Ingestion"] --> Head
+    NetStream --> Ring
+    NetStream --> Tail
+    Ring --> Decoders["Background PCM Decoders"]
+```
+
+- **Pinned Head**: Retains the initial stream segment containing container headers, metadata blocks, and seek tables. It remains permanently cached so decoders can seek back to stream headers without network round-trips.
+- **Sliding Pure Audio Ring**: Stores pure audio packets in a bounded circular buffer. It maintains a configurable backward window (e.g., 10 seconds) to enable instant micro-seeks without cache misses, and a forward prefetch window (e.g., 30 seconds) grouped in coalesced blocks to prevent network socket thrashing.
+- **Tail Buffer**: Dedicated storage for metadata appended at the end of the file (ID3v1, APEv2) to prevent decoder EOF chirps or failed header probes.
+- **HLS Subsystem**: Built-in M3U8 manifest parser, AES-128-CBC segment decryptor (RFC 8216), and MPEG-2 TS demuxer for AAC/MP3 streams.
+- **Shoutcast/Icecast ICY Demuxer**: Extracts interleaved metadata blocks dynamically without disrupting audio decoding.
+- **Livestream Immunity & Infinite Loop Prevention**:
+  - Live streams (`is_live == true` or `duration_ms <= 0`) cleanly expose `duration: null`.
+  - When analyzing audio (`is_analysis == true`), live streams execute a fast-path that probes initial metadata and container format, stops the deck immediately, and skips full-track acoustic processing (ReplayGain, Waveform, Chromaprint), completely preventing infinite loading loops.
+
+### 5.4. Polyphonic Sound Effects Domain (`EffectsManager`, `VoicePool`, `DspVoice`)
+
+The SFX engine provides low-latency playback of up to 64 simultaneous voices:
+
+- **Autonomous Memory Budget (`effectMemoryLimitMb`)**: Configurable RAM budget (default: 50 MB; nullable for unlimited memory).
+- **Eviction Immunity for In-Memory Sources**: Sound effects created from memory bytes (`AudioSource(Uint8List)`) have an infinite retention weight (`SourceWeight = inf`), guaranteeing they will never be evicted.
+- **Reactive Multi-Factor Retention Scoring**: Eviction runs reactively without background timers. When RAM is needed, inactive evictable sounds are ranked using:
+
+$$\text{Score} = \text{SourceWeight} \times (1 + \text{TriggerFrequency}) \times \frac{1}{1 + \Delta t_{\text{seconds}}}$$
+
+  where `SourceWeight` is `5.0` for network streams and `1.0` for local files. The lowest-scoring inactive sound is evicted first.
+
+- **3D Spatial Acoustic Processor**: Calculates listener-relative distance attenuation, directional cone factors, and Doppler pitch modulation for each voice.
+
+### 5.5. Digital Signal Processing Chain (`DspProcessor`, `DspChain`)
+
+The DSP chain processes audio in contiguous floating-point (`f32`) blocks:
 
 ```mermaid
 flowchart LR
-    DeckA["Deck A"] --> XFade["Crossfade Engine\n(crossfade_target_id)"]
-    DeckB["Deck B"] --> XFade
+    InPCM["Input PCM"] --> EQ["10-Band Biquad EQ (ISO 266)"]
+    EQ --> Reverb["Freeverb (8 Comb + 4 Allpass)"]
+    Reverb --> Crossfeed["Bauer BS2B Crossfeed"]
+    Crossfeed --> Sonic["Sonic DSP (Pitch & Rate)"]
+    Sonic --> RG["ReplayGain Normalization"]
+    RG --> SoftKnee["Soft-Knee Saturation"]
+    SoftKnee --> Limiter["Brickwall Limiter (0 dBFS)"]
+    Limiter --> OutPCM["Processed Output PCM"]
+```
+
+- **10-Band ISO 266 Biquad Equalizer**: Direct Form II Transposed biquad filters tuned to standard ISO center frequencies (31 Hz to 16 kHz).
+- **Algorithmic Freeverb Reverb**: 8 parallel feedback comb filters and 4 cascaded allpass filters per stereo channel.
+- **Bauer BS2B Crossfeed**: Blends low frequencies across stereo channels with interaural time delay (ITD) filtering to alleviate headphone listening fatigue.
+- **Sonic DSP**: Native Rust implementation of the PICOLA/WSOLA algorithm for time-stretching and pitch-shifting without vocal formant distortion.
+- **ReplayGain & ITU-R BS.1770-4 / EBU R128**: Dynamic loudness normalization based on integrated LUFS measurements with relative and absolute gating.
+- **Smart Silence Detector**: Finite-state machine that detects leading, intermediate, and trailing silence, excising pauses with smooth micro-crossfades.
+- **Dynamic Headroom Protection**: Soft-knee saturator followed by a true-peak brickwall limiter at 0 dBFS, allowing unconstrained input volume levels (`volume >= 0.0`) without digital clipping.
+
+### 5.6. Vectorized SIMD Mixer (`SimdMixer`)
+
+Sums audio buses (music, sound effects, and microphone monitoring) using target-specific hardware acceleration:
+
+- **x86_64**: AVX2 and FMA instructions processing 8 `f32` samples per instruction cycle.
+- **aarch64**: ARM NEON instructions processing 4 `f32` samples per instruction cycle.
+- **Scalar Fallback**: Loop-unrolled scalar implementation for platforms without SIMD extensions.
+
+### 5.7. Input & Capture (`InputManager`, `DeviceCaptureNode`)
+
+- **Hardware Microphone Capture**: Ingests PCM frames directly from the operating system's default or selected input node.
+- **Dynamic RMS Auto-Ducker**: Evaluates speech envelope energy via sidechain; when vocal activity exceeds the user-defined threshold, it smoothly ducks the music bus using configurable attack, hold, and release curves.
+- **Direct Monitoring**: Routes microphone input directly into the master output bus with sub-15 ms latency.
+
+### 5.8. Multi-Destination Output Matrix & Live Recording (`OutputManager`)
+
+- **Multi-Sink Routing**: Distributes the master mix across multiple physical soundcards and endpoints simultaneously.
+- **DJ CUE Pre-Listening**: Routes the standby track, active track, or master mix to a secondary output device (e.g., DJ headphones).
+- **Lock-Free WAV Disk Recorder**: Streams rendered audio frames through a single-producer single-consumer (`rtrb`) ring buffer to a background file writer thread, completely shielding the audio thread from disk I/O latency.
+- **60 FPS FFT Spectrum Analyzer**: Computes 10-band perceptual frequency magnitudes and pushes updates via a `CachePaddedSeqlock` for lock-free UI consumption.
+
+---
+
+## 6. Hard Real-Time Audio Signal Path
+
+The high-priority audio callback renders PCM samples under hard real-time operating system deadlines. To guarantee zero audio dropouts or buffer underruns (*glitches* / *xruns*), the callback strictly follows the **Triple-Zero Guarantee**:
+
+1. **Zero Heap Allocations**: All scratch buffers and working vectors are pre-allocated during initialization.
+2. **Zero Mutex Contention**: Synchronization uses lock-free ring buffers, seqlocks, and atomic variables.
+3. **Zero Syscalls / Blocking I/O**: Sockets, file descriptors, and disk operations run strictly on background threads.
+
+```mermaid
+flowchart LR
+    DeckA["Deck A (PCM)"] --> XFade["Crossfade Engine\n(crossfade_target_id)"]
+    DeckB["Deck B (PCM)"] --> XFade
     
-    XFade -->|"Music PCM"| InheritSum(( + ))
-    VoicesInherit["SFX (Inherit DSP)"] --> InheritSum
+    XFade -->|"Music Bus"| InheritSum(( + ))
+    VoicesInherit["SFX (DspRouting.inherit)"] --> InheritSum
     
-    InheritSum --> MusicDSP["Music DSP Chain\n(EQ, Reverb, Pitch/Rate, ReplayGain)"]
-    MusicDSP --> AutoDucker["Auto-Ducker Sidechain"]
+    InheritSum --> MusicDSP["Master Music DSP\n(EQ, Reverb, Crossfeed, Sonic, ReplayGain)"]
+    MusicDSP --> AutoDucker["Auto-Ducker Sidechain\n(Microphone Attenuation)"]
     
-    VoicesIsolate["SFX (Isolate DSP)"] --> IsolateDSP["Isolate DSP Chain"]
+    VoicesIsolate["SFX (DspRouting.isolate)"] --> IsolateDSP["Dedicated SFX DSP"]
     
-    VoicesBypass["SFX (Dry / Bypass)"] --> SIMDSum(( + SIMD ))
+    VoicesBypass["SFX (DspRouting.bypass)"] --> SIMDSum(( + SIMD Mixer ))
     AutoDucker --> SIMDSum
     IsolateDSP --> SIMDSum
     DirectMic["Direct Mic Monitor"] --> SIMDSum
@@ -108,116 +335,161 @@ flowchart LR
     SIMDSum --> SoftKnee["Soft-Knee Saturation"]
     SoftKnee --> Brickwall["True-Peak Brickwall Limiter\n(0 dBFS)"]
     
-    Brickwall --> MasterOut["Master Device Output"]
-    Brickwall --> RecSink["Lock-Free Disk Recorder"]
-    Brickwall --> FFTVisualizer["FFT Analyzer (Visualizer)"]
+    Brickwall --> MasterOut["Primary Output Device"]
+    Brickwall --> RecSink["Lock-Free WAV Disk Recorder"]
+    Brickwall --> FFTVisualizer["FFT Spectrum Visualizer (Seqlock)"]
     
-    XFade -.->|"Standby Track"| CueOut["DJ Headphone Cue Output"]
+    XFade -.->|"Standby Track"| CueOut["DJ Headphone CUE Output"]
 ```
 
-### Signal Processing Steps:
-1. **Music Decoding & ID-Tracked Crossfading**: `MusicManager` (`DualSource`) renders PCM frames from Deck A and Deck B, executing equal-power or linear crossfade interpolation governed by `crossfade_target_id`.
-2. **Dynamic DSP Batching**:
-   - `DspRouting.inherit`: Voices are summed into `scratch_music` before the main DSP pass, sharing EQ and Reverb at zero additional CPU cost.
-   - `DspRouting.isolate`: Voices undergo dedicated DSP processing using pre-allocated work buffers.
-   - `DspRouting.bypass`: Clean sound effects bypass all filters and feed directly into the master bus.
-3. **Master Music DSP**: Equalizer, Reverb, Sonic (time-stretch & pitch-shift), and ReplayGain normalization applied in a single contiguous vectorized pass.
-4. **Auto-Ducking & Mic Monitoring**: `InputManager` samples microphone input, tracks ballistic RMS envelopes, applies exponential sidechain ducking to the music bus, and mixes direct low-latency monitoring.
-5. **Vectorized SIMD Summation**: `MasterMixer` sums all streams using hardware-accelerated SIMD instructions (AVX2/NEON).
-6. **Master Dynamics & Limiting**: Soft-knee headroom protection followed by a true-peak brickwall limiter prevents digital clipping past 0 dBFS, allowing unconstrained positive gain (`volume >= 0.0`) on individual inputs and tracks.
-7. **Multi-Destination Dispatch**: Processed audio is routed concurrently to the primary output device, DJ CUE pre-listening headphone bus, lock-free WAV disk recording ring buffer, and FFT spectrum visualizer.
-
 ---
 
-## 4. Subsystem Details
+## 7. Concurrency, Threading & Synchronization Model
 
-### 4.1. Music Domain (`MusicManager` & `DualSource`)
-- **Strict Separation of Queue Configuration and Playback**:
-  - `player.action.setQueue(List<AudioSource<T>>)`: Replaces the playlist queue in Rust without starting playback or probing audio decoders. Sets `state.currentIndex` to `null` (`-1` in Rust) until `play(...)` is invoked.
-  - `player.action.play({int? id, int? position, bool? shuffled, Duration? seek})`: Universal transport command handling initial start, resumption, track switching by monotonic `id` or zero-based `position` (`id` takes precedence over `position`), atomic shuffle activation (pinning the selected starting track to index `0` on first play), and initial seek offsets.
-- **Deterministic Crossfade by Track ID (`crossfade_target_id`)**:
-  - Crossfade transitions track the monotonic `id` (`Arc<AtomicI64>`) of the incoming track rather than its mutable queue index.
-  - Any queue mutation (`append`, `insertNext`, `removeAt`, `reorder`, `reorderByIds`, `clearQueue`, `setShuffle`, `setLoopMode`) invokes `verify_or_abort_crossfade()`, immediately aborting any in-flight crossfade and restoring unity gain to the active deck if the expected target track ID has changed.
-- **Lightweight Queue Telemetry & Memory Reclamation**:
-  - Rust emits `RustPlayerEvent::Queue(Vec<i64>)` containing only ordered track IDs, eliminating redundant FFI serialization of strings and byte buffers on queue mutations.
-  - When an `AudioSource<T>` backed by in-memory `Uint8List` bytes is transferred to Rust, Dart immediately clears its local byte reference via `clearBytes()` so the Dart GC reclaims the heap buffer while preserving generic `T? data` in `sourceRegistry`.
-- **Unified Decoders, HLS & TripartiteBuffer**:
-  - Powered by Symphonia with specialized decoders for Opus, FDK-AAC, Extended PCM, DSF (Direct Stream Digital), APE (Monkey's Audio), and WavPack.
-  - Built-in M3U8 parser, AES-128 segment decryption, and MPEG-TS demuxer for HLS streams, alongside ICY metadata demuxing.
-  - `TripartiteBuffer` separates the **Pinned Head** (ID3v2/FLAC/MP4 header metadata), **Pure Audio Ring** (bounded circular audio frame cache), and **Tail Buffer** (ID3v1/APEv2/trailing chunks) to prevent EOF decoder chirps and synthesize `AudioMetadata` containers without truncating giant cover art or tags.
-- **Consolidated Format & Metadata Telemetry (`AudioInfo` & `AudioMetadata`)**:
-  - Eliminates fragmented primitive streams and events (`duration`, `sampleRate`, `channels`, `bitrate`, `metaBytes`).
-  - Rust dispatches single consolidated events `RustPlayerEvent::AudioInfo(RustAudioInfo)` and `RustPlayerEvent::AudioMetadata(RustAudioMetadata)`.
-  - Dart exposes `state.audioInfo` and `stream.audioInfo`, with `state.duration` as a convenience getter delegating to `audioInfo?.duration`.
-  - Unknown/infinite live stream durations are cleanly represented as `duration: null` (`None` in Rust) without redundant `is_live` flags.
-  - Metadata dispatch is explicitly governed via `player.action.setMetadataEnabled(bool)` with zero aliases, mirrored across `state.metadataEnabled` / `stream.metadataEnabled` and `state.metadata` / `stream.metadata`.
+Execution is partitioned into four isolated thread domains:
 
-### 4.2. Sound Effects Domain (`EffectsManager`, `VoicePool`, & `Voice`)
-- **Declarative Catalog (`setEffects`)**:
-  - `player.action.setEffects(List<AudioEffect>)` registers the sound effects catalog in Rust. Manual `loadEffect`, `preloadEffects`, and `unloadEffect` methods are eliminated.
-- **Autonomous Memory-Budgeted Eviction (`effectMemoryLimitMb`)**:
-  - Configured via `effectMemoryLimitMb` on `MiniaudioPlayer` or `PlayerConfig` (defaults to `50` MB; nullable for unlimited memory with a `[!CAUTION]` safety warning).
-  - **Memory-Backed Effect Immunity**: Effects created from in-memory bytes (`AudioSource(Uint8List)`) are decoded immediately in Rust (freeing compressed bytes) and are strictly **immune to eviction** (`SourceWeight = inf`), while counting toward `allocatedRamBytes`.
-  - **Reactive Triggers (Zero Timers)**: Eviction runs deterministically on `playEffect(id)` (Trigger 1, prior to decoding an uncached effect) and on `VoiceCompleted` (Trigger 2, when an active voice finishes playing).
-  - **Multi-Factor Retention Score**: Inactive evictable effects are ranked by:
-    $$\text{Score} = \text{SourceWeight} \times (1 + \text{TriggerFrequency}) \times \frac{1}{1 + \Delta t_{\text{seconds}}}$$
-    where `SourceWeight` is `5.0` for network URLs and `1.0` for local files. The lowest-scoring inactive effect is evicted first.
-- **Encapsulated Live `Voice` Handle**:
-  - `player.action.playEffect(id, ...)` configures all initial playback parameters (`volume`, `pitch`, `balance`, `pitchJitter`, `volumeJitter`, `emitter`, `looping`, `routing`) and returns a `Future<Voice>`.
-  - The returned `Voice` object encapsulates live modulation of that active polyphonic voice slot (`voice.id`, `voice.setVolume`, `voice.setPitch`, `voice.setBalance`, `voice.setEmitter`, `voice.stop`), while global scene physics remain on `player.action.setListener` and `player.action.setDopplerParameters`.
-
-### 4.3. Digital Signal Processing (`DspProcessor`)
-- **Unconstrained Gain & Modulation**: `volume` (`>= 0.0`), `rate` (`> 0.0`), `pitch` (`> 0.0`), `micVolume` (`>= 0.0`), and `cueVolume` (`>= 0.0`) enforce no artificial upper ceiling (such as `2.0` or `4.0`), empowering full software amplification protected at the output stage by the master soft-knee saturator and 0 dBFS brickwall limiter.
-- **10-Band ISO 266 Equalizer**: Peaking and shelving biquad filters tuned to standard center frequencies (31 Hz to 16 kHz).
-- **Studio Algorithmic Reverb**: Freeverb-based network with 8 parallel comb filters and 4 cascaded allpass filters per channel.
-- **Sonic DSP**: High-quality pitch shifting and time stretching without formant corruption.
-- **ReplayGain & ITU-R BS.1770-4 / EBU R128**: Loudness normalization with peak clipping protection and unified offline acoustic analysis via polymorphic `AudioSource` (`analyzeAudio` and `analyzeAudioSync`, with `analyzeAudioMemory` completely eliminated). Employs a sub-millisecond fast-path (<1 ms) when loudness and waveform decoding are disabled, returning instant `AudioInfo` and optional `AudioMetadata`.
-- **Skip Silence**: Dynamic threshold detection with edge trimming and continuous pause excision.
-
-### 4.4. Input & Capture (`InputManager`)
-- **Microphone Capture**: Interfaces with hardware capture nodes via miniaudio.
-- **Sidechain Auto-Ducker**: Automatically lowers music volume when speech is detected, configured by threshold, attack, hold, and release parameters.
-- **Direct Monitoring**: Sub-15 ms hardware-to-master direct pass-through for karaoke and vocal applications.
-
-### 4.5. Output Matrix & Recording (`OutputManager`)
-- **Multi-Sink Matrix**: Dispatches the master mix to multiple active output targets configured via `player.action.configureOutputs`, `addOutput`, and `removeOutput`, reflected in `player.state.outputs`.
-- **DJ Cue Pre-Listening**: Routes standby deck, active deck, or master mix to a secondary audio endpoint (e.g., USB headphones).
-- **Lock-Free Live Recording**: Streams rendered audio frames into a single-producer single-consumer (`rtrb`) ring buffer, written to disk in a dedicated worker thread so the audio thread never blocks on disk I/O.
-- **FFT Spectrum Visualizer**: Real-time 10-band Fast Fourier Transform and RMS/peak analyzer controlled via `player.action.setVisualizerEnabled`.
-
----
-
-## 5. Concurrency and Threading Architecture
-
-`miniaudio_player` separates execution across four distinct thread domains:
-
-| Thread Domain | Responsibilities | Concurrency Guarantees |
+| Thread Domain | Core Responsibility | Concurrency & Real-Time Guarantees |
 | :--- | :--- | :--- |
-| **Dart Main / UI Thread** | Widget rendering, user interaction, reactive stream subscriptions. | Non-blocking. Communicates with Rust via FRB and serialized transport queue. |
-| **FRB Task Pool** | Command deserialization, initial stream probing, offline acoustic analysis. | Background worker threads. Long-running tasks do not block Dart or audio. |
-| **I/O & Network Workers** | HTTP/HLS stream prefetching, file reading, disk recording writer. | Lock-free queues (`rtrb`, `crossbeam_channel`). Never holds mutexes shared with audio thread. |
-| **Real-Time Audio Callback** | PCM frame generation, DSP execution, SIMD summing, hardware output. | Hard real-time priority. **Strictly lock-free, zero allocations, no syscalls, no blocking I/O.** |
+| **Dart UI / Event Loop** | Widget rendering, UI event handling, reactive stream subscriptions. | Non-blocking. Communicates with native code via asynchronous FRB RPC dispatch. |
+| **FRB Task Pool** | Command parsing, local file probing, offline acoustic analysis. | Background threads. Does not block the Dart UI or the real-time audio callback. |
+| **I/O & Network Workers** | HTTP/HLS chunk prefetching, sliding buffer management, disk WAV writing. | Decoupled via lock-free queues (`rtrb`, `crossbeam_channel`). Never acquires audio callback locks. |
+| **Real-Time Audio Callback** | PCM frame generation, SIMD summing, DSP processing, hardware submission. | **Hard real-time priority. Strictly zero allocations, zero mutexes, zero syscalls.** |
 
-### Synchronization Mechanisms
-- **Seqlock (`CachePaddedSeqlock<T>`)**: Allows lock-free, tear-free atomic reads of high-frequency visualizer telemetry from the audio thread without blocking writer threads.
-- **Lock-Free Ring Buffers (`rtrb`)**: Single-Producer Single-Consumer buffers decouple network/file data ingestion, voice completion notifications, and disk recording from the audio callback.
-- **Atomic State Indicators**: Volume, rate, pitch, crossfade progress, and `crossfade_target_id` are updated atomically (`AtomicBool`, `AtomicI64`, `AtomicU64`, `AtomicU32`).
+### Lock-Free Synchronization Primitives
+
+1. **`CachePaddedSeqlock<T>`**: Sequence lock padded to 64-byte cache line boundaries to eliminate false sharing. Grants the audio thread uninterrupted write access to high-frequency telemetry (visualizer FFT, position) while enabling tear-free atomic reads from UI dispatchers.
+2. **Lock-Free SPSC Ring Buffers (`rtrb`)**: Single-Producer Single-Consumer circular buffers used for audio frame transfers, disk recording streams, and voice completion events.
+3. **Atomic State Indicators**: Volume, pitch, playback rate, crossfade progress, and `crossfade_target_id` rely on standard atomic types (`AtomicBool`, `AtomicI64`, `AtomicU64`, `AtomicU32`) with explicit `Acquire`/`Release` memory ordering.
 
 ---
 
-## 6. Dart API Design Principles
+## 8. Compilation, Linker Optimization & Binary Footprint
 
-1. **Unified Concrete `AudioSource<T>`**:
-   - A single concrete class with a single unified constructor `AudioSource(Object source, {Map<String, String>? headers, T? data, double? replayGainDb, double? replayPeak, int? id})` accepting:
-     - `String` (local file path, HTTP/HTTPS URL, HLS `.m3u8` stream, or `data:` URI),
-     - `Uri` (file, network, or `data:` URI),
-     - `Uint8List` / `List<int>` (in-memory audio bytes, automatically cleared on the Dart side once transferred to Rust), or
-     - `CustomByteProvider` (custom pull-based byte stream for DRM, encrypted decryption, or tokenized storage).
-   - No subclass hierarchy (`UriAudioSource`, `MemoryAudioSource`, `CustomAudioSource`, and `AudioSource.custom` are eliminated).
-   - Serves as the universal input representation across both the playback queue (`player.action.setQueue`) and offline acoustic/metadata analysis (`MiniaudioPlayer.analyzeAudio`).
-2. **Orthogonal Namespaces & Encapsulation**:
-   - `player.action`: Async imperative commands (`setQueue()`, `play()`, `pause()`, `seek()`, `setMetadataEnabled()`, `setEffects()`, `playEffect()`). Holds a private reference to `_rustPlayer` directly, keeping `MiniaudioPlayer`'s FFI handle strictly private.
-   - `player.state`: Canonical synchronous snapshot (`isPlaying`, `isBuffering`, `isCompleted`, `isOpening`, `isPaused`, `currentIndex`, `infiniteMixEnabled`, `mono`, `bufferSize`, `audioInfo`, `duration`, `metadataEnabled`, `metadata`, `preamp`, `limiterEnabled`, `isShuffled`) with zero duplicate convenience aliases. Primitive format fields (`sampleRate`, `channels`, `audioBitrate`) are consolidated into `audioInfo`.
-   - `player.stream`: Fine-grained broadcast streams providing deduplicated reactive updates for UI components (`stream.audioInfo`, `stream.metadata`, `stream.metadataEnabled`, `stream.playbackState`, etc.).
-3. **Clean Break Architecture**: Zero deprecated facades, zero legacy shims, and zero duplicate convenience aliases; deterministic method signatures throughout.
-4. **Effective Dart Documentation**: 100% English API documentation following official Dart guidelines.
+The native build pipeline is aggressively optimized to deliver a minimal binary footprint while preserving SIMD vectorization and real-time DSP performance.
+
+### 8.1. Release Profile Configuration (`rust/Cargo.toml`)
+
+```toml
+[profile.release]
+opt-level = "s"      # Aggressively optimizes size while preserving SIMD vectorization
+lto = true           # Fat LTO: Cross-crate and C-boundary Link-Time Optimization
+codegen-units = 1    # Single compilation unit maximizes interprocedural dead-code elimination
+strip = true         # Strips debug symbols and non-dynamic symbol tables
+panic = "abort"      # Drops exception landing pads and dramatically shrinks .eh_frame
+```
+
+#### Comparative Analysis of Optimization Levels (`opt-level`)
+
+- **`opt-level = 3`** (9.34 MB): Aggressive loop unrolling and function inlining bloat the `.text` section without measurable latency benefits for the audio callback.
+- **`opt-level = "z"`** (8.16 MB): Minimizes binary size blindly, but emits indirect jump tables in the `.data` section and disables profitable SIMD vectorizations in DSP routines.
+- **`opt-level = "s"`** (**8.14 MB**): Strikes the optimal balance; significantly reduces `.text` size while maintaining SIMD vectorization in `SimdMixer` and the FFT visualizer.
+
+#### Impact of `panic = "abort"`
+
+Uncaught panics cannot safely cross the FFI boundary into C or Dart. Switching to `panic = "abort"`:
+
+- Shrinks `.gcc_except_table` from 272 KB to **13 KB** (a **95.1%** reduction).
+- Reduces the executable `.text` section by **2.42 MB** by stripping exception landing pads and unwinding metadata.
+
+### 8.2. Linker Optimization Flags (`rustflags`)
+
+Configured in `rust/.cargo/config.toml` and mirrored in the project root `.cargo/config.toml`:
+
+```toml
+[target.'cfg(target_os = "linux")']
+rustflags = [
+    "-C", "link-arg=-Wl,--gc-sections",      # Garbage-collect unused ELF sections
+    "-C", "link-arg=-Wl,--as-needed",        # Drop links to unreferenced shared libraries
+    "-C", "link-arg=-Wl,-O1",                # Optimize linker symbol hash tables
+    "-C", "force-unwind-tables=no",          # Suppress redundant DWARF asynchronous unwind tables
+]
+```
+
+### 8.3. Crate Feature Pruning
+
+- **`ureq`**: Configured with `default-features = false, features = ["tls"]`. Stripping the default `gzip` feature eliminates redundant transport decompression code for streams that are already natively compressed (MP3, AAC, FLAC).
+- **`symphonia`**: Combining Fat LTO (`lto = true`) with single compilation units (`codegen-units = 1`) allows the linker to perform machine-level tree shaking, automatically removing unused codec routines.
+- **`lofty`**: Retained necessary zlib decompression support to preserve compatibility with compressed ID3v2 tags found in real-world MP3 files.
+
+### 8.4. Flutter Build Hook Integration (`hook/build.dart`)
+
+To ensure Cargo reads `rust/.cargo/config.toml` reliably regardless of where Flutter CLI invocations originate, `hook/build.dart` sets the working directory explicitly to the `rust` subfolder:
+
+```dart
+// hook/build.dart
+final rustDir = input.packageRoot.resolve('rust');
+final buildProcess = await Process.start(
+  'cargo',
+  ['build', '--release', ...],
+  workingDirectory: rustDir.path, // Ensures rust/.cargo/config.toml is automatically parsed
+);
+```
+
+### 8.5. Empirical Optimization Benchmarks
+
+| Metric | Initial State (Baseline) | Optimized Production State | Net Reduction | Percentage Improvement |
+| :--- | :---: | :---: | :---: | :---: |
+| **Binary Size (`libminiaudio_player.so`)** | **9.90 MB (9,899,256 B)** | **6.93 MB (6,930,376 B)** | **-2.97 MB** | **-30.0%** |
+| **Code Section (`.text`)** | 6.96 MB (7,295,152 B) | 4.64 MB (4,868,688 B) | -2.31 MB | -33.3% |
+| **Exception Tables (`.gcc_except_table`)** | 265.8 KB (272,152 B) | 12.9 KB (13,276 B) | -252.8 KB | **-95.1%** |
+| **Unwind Frames (`.eh_frame`)** | 634.5 KB (649,692 B) | 323.7 KB (331,472 B) | -310.8 KB | -49.0% |
+| **Unwind Header (`.eh_frame_hdr`)** | 93.2 KB (95,436 B) | 48.0 KB (49,140 B) | -45.2 KB | -48.5% |
+| **Read-Only Data (`.rodata`)** | 998.4 KB (1,022,372 B) | 919.1 KB (941,156 B) | -79.3 KB | -7.9% |
+| **Test Suite Verification** | 100% Pass Rate (Rust: 51/51, Flutter: 37/37) | 100% Pass Rate | 0 regressions | **100% OK** |
+
+---
+
+## 9. Clean Code Standards, Strong Typing & Architectural Discipline
+
+The codebase adheres strictly to clean code practices and static typing guarantees:
+
+### 9.1. Quality Criteria
+
+- **Dead Code Elimination (*RemoveDeadCode*)**: Systematically purged unused structs, orphan enums (such as `RustEngineEvent`), redundant getter methods, and legacy wrapper shims.
+- **Comprehensive Documentation (*Documented*)**: All public structs, enums, methods, functions, and internal invariants are thoroughly documented (`///` in Rust and Doxygen `/** */` in C).
+- **Standardized Technical English (*Write in English*)**: All internal comments, variable identifiers, documentation, and diagnostics are strictly written in professional English.
+
+### 9.2. Eliminating Primitive Obsession
+
+Strong domain types replace raw primitives to enforce invariant validation at compile time:
+
+- `SampleRate`: Enforces permissible sample rates (e.g., 8,000 Hz to 192,000 Hz).
+- `Volume`: Encapsulates non-negative linear gains ($[0.0, \infty)$) and provides explicit conversion methods (`to_decibels()`).
+- `Decibels`: Represents logarithmic scale values with deterministic conversion to linear gain (`to_linear()`).
+
+### 9.3. Compile-Time Typestate Lifecycle Pattern
+
+To prevent illegal state transitions and guarantee safe resource access, the player models its lifecycle using Rust's Typestate pattern:
+
+```rust
+pub struct Uninitialized;
+pub struct Open<S> { stream: S }
+pub struct Active<S> { stream: S }
+pub struct Paused<S> { stream: S }
+pub struct Stopped<S> { stream: S }
+
+pub struct Player<State> {
+    config: PlayerConfig,
+    state: State,
+}
+
+impl Player<Uninitialized> {
+    pub fn open<S>(self, stream: S) -> Player<Open<S>> { ... }
+}
+
+impl<S> Player<Open<S>> {
+    pub fn play(self) -> Player<Active<S>> { ... }
+}
+
+impl<S> Player<Active<S>> {
+    pub fn pause(self) -> Player<Paused<S>> { ... }
+    pub fn stop(self) -> Player<Stopped<S>> { ... }
+}
+```
+
+### 9.4. Generator AST Cleanliness (FRB v2 Compatibility)
+
+To ensure reliable, conflict-free code generation with `flutter_rust_bridge_codegen`:
+
+- Structural types were systematically disambiguated (e.g., `DspVoice` and `DspVoicePool` in the DSP module vs. `VoicePool` in the Core module).
+- Unit structs were standardized with explicit empty bodies (`pub struct SimdMixer {}`) to conform to AST parser requirements.

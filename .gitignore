@@ -38,4 +38,3 @@ migrate_working_dir/
 # Test audio fixtures (exclude binary audio files, track only MANIFEST.md)
 /test/fixtures/*
 !/test/fixtures/MANIFEST.md
-/docs/*
