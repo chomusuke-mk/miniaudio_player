@@ -1479,6 +1479,7 @@ pub struct StreamingDeck {
     pub decoder_running: Arc<AtomicBool>,
     pub decoder_wake: Arc<(Mutex<bool>, Condvar)>,
     pub decoder_thread: Option<JoinHandle<()>>,
+    pub is_analysis: bool,
 }
 
 // StreamingDeck is Send + Sync across threads
@@ -1744,6 +1745,7 @@ impl StreamingDeck {
             decoder_running,
             decoder_wake,
             decoder_thread: None,
+            is_analysis: !run_decoder_loop,
         });
 
         if run_decoder_loop {
@@ -2029,6 +2031,15 @@ impl StreamingDeck {
             );
         }
 
+        if is_live && self.is_analysis {
+            crate::map_log!(
+                3,
+                "open_hls_network: livestream detected on analysis deck; skipping background HLS streamer thread for {}",
+                url
+            );
+            return MAP_SUCCESS;
+        }
+
         self.network_streamer_abort.store(true, Ordering::Release);
         let new_abort = Arc::new(AtomicBool::new(false));
         self.network_streamer_abort = new_abort.clone();
@@ -2273,6 +2284,15 @@ impl StreamingDeck {
             }
             if let Ok(mut slot) = session_slot.lock() {
                 *slot = Some(session.clone());
+            }
+
+            if is_live && self.is_analysis {
+                crate::map_log!(
+                    3,
+                    "open_network: livestream detected on analysis deck; skipping background network streamer thread for {}",
+                    url
+                );
+                return MAP_SUCCESS;
             }
 
             self.network_streamer_abort.store(true, Ordering::Release);
@@ -2869,11 +2889,21 @@ impl StreamingDeck {
         cvar.notify_all();
     }
 
+    #[inline]
+    pub fn is_analysis(&self) -> bool {
+        self.is_analysis
+    }
+
     pub fn is_live_stream(&self) -> bool {
-        self.stream_session
+        if self
+            .stream_session
             .read()
             .map(|g| g.as_ref().map(|s| s.is_live()).unwrap_or(false))
             .unwrap_or(false)
+        {
+            return true;
+        }
+        self.is_stream.load(Ordering::Acquire) && self.duration_ms.load(Ordering::Acquire) <= 0
     }
 
     pub fn stream_feed(&mut self, data: &[u8]) -> i32 {

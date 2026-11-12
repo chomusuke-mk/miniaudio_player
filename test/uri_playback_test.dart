@@ -607,5 +607,101 @@ void main() {
         await player.action.stop();
       }
     });
+
+    test(
+        'analyzeAudio on live stream resolves promptly with null duration, format info and skips waveform/replaygain/chromaprint',
+        () async {
+      final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
+
+      final result = await MiniaudioPlayer.analyzeAudio(
+        liveUrl,
+        replayGain: true,
+        waveform: true,
+        chromaprint: true,
+        metadata: true,
+      ).timeout(const Duration(seconds: 4));
+
+      // 1. Duration must be null for livestreams
+      expect(result.audioInfo.duration, isNull);
+
+      // 2. Format info is accurately extracted
+      expect(result.audioInfo.sampleRate, equals(48000));
+      expect(result.audioInfo.channels, equals(2));
+      expect(result.audioInfo.codec, equals('MP3'));
+
+      // 3. ReplayGain, Waveform, and Chromaprint must NOT be computed for livestreams
+      expect(result.replayGain, isNull);
+      expect(result.waveform, isNull);
+      expect(result.chromaprint, isNull);
+    });
+
+    test(
+        'analyzeAudio error handling on non-existent HTTP URL (404) throws MiniaudioPlayerException with errorFileNotFound',
+        () async {
+      final notFoundUrl = 'http://127.0.0.1:$serverPort/error/404';
+
+      expect(
+        () => MiniaudioPlayer.analyzeAudio(notFoundUrl),
+        throwsA(
+          isA<MiniaudioPlayerException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            equals(MapResult.errorFileNotFound),
+          ),
+        ),
+      );
+    });
+
+    test(
+        'analyzeAudio error handling on unreachable host/port throws MiniaudioPlayerException without hanging',
+        () async {
+      final unreachableUrl = 'http://127.0.0.1:59991/audio.mp3';
+
+      expect(
+        () => MiniaudioPlayer.analyzeAudio(unreachableUrl)
+            .timeout(const Duration(seconds: 4)),
+        throwsA(
+          isA<MiniaudioPlayerException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            equals(MapResult.errorFileNotFound),
+          ),
+        ),
+      );
+    });
+
+    test(
+        'analyzeAudio error handling on non-existent local file throws MiniaudioPlayerException with errorFileNotFound',
+        () async {
+      const nonExistentFile = '/path/to/missing_local_file_analysis_12345.mp3';
+
+      expect(
+        () => MiniaudioPlayer.analyzeAudio(nonExistentFile),
+        throwsA(
+          isA<MiniaudioPlayerException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            equals(MapResult.errorFileNotFound),
+          ),
+        ),
+      );
+    });
+
+    test(
+        'analyzeAudio error handling on HTTP 500 Internal Server Error throws MiniaudioPlayerException with errorDecodeFailed',
+        () async {
+      final serverErrorUrl = 'http://127.0.0.1:$serverPort/error/500';
+
+      expect(
+        () => MiniaudioPlayer.analyzeAudio(serverErrorUrl),
+        throwsA(
+          isA<MiniaudioPlayerException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            equals(MapResult.errorDecodeFailed),
+          ),
+        ),
+      );
+    });
   });
 }

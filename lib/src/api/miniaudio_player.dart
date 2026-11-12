@@ -364,7 +364,11 @@ class MiniaudioPlayer<T> {
       return _toAnalysisResult(res);
     } catch (e) {
       if (e is MiniaudioPlayerException) rethrow;
-      throw MiniaudioPlayerException(e.toString());
+      throw MiniaudioPlayerException.fromRustError(
+        e,
+        prefix: 'Audio analysis failed',
+        defaultErrorCode: MapResult.errorGeneric,
+      );
     }
   }
 
@@ -420,7 +424,11 @@ class MiniaudioPlayer<T> {
       return _toAnalysisResult(res);
     } catch (e) {
       if (e is MiniaudioPlayerException) rethrow;
-      throw MiniaudioPlayerException(e.toString());
+      throw MiniaudioPlayerException.fromRustError(
+        e,
+        prefix: 'Audio analysis failed',
+        defaultErrorCode: MapResult.errorGeneric,
+      );
     }
   }
 

@@ -305,6 +305,35 @@ pub fn analyze_audio_source(
         return Err(format!("Failed to open audio source (code: {})", res));
     }
 
+    // Livestream fast-path: unbounded live broadcasts cannot and must not be analyzed for
+    // whole-track acoustic metrics (ReplayGain, Waveform, Chromaprint).
+    // Instead, only container format info and metadata (if requested) are extracted; duration is returned as null.
+    if deck.is_live_stream() {
+        let mut audio_info = deck.get_audio_info();
+        audio_info.duration_ms = None;
+        let metadata = if config.metadata {
+            deck.get_parsed_metadata()
+        } else {
+            None
+        };
+        deck.stop();
+        return Ok(RustAudioAnalysisResult {
+            audio_info,
+            has_replay_gain: false,
+            integrated_lufs: 0.0,
+            replay_gain_db: 0.0,
+            replay_gain_peak: 0.0,
+            has_waveform: false,
+            spectral_centroid: 0.0,
+            frequency_bands: Vec::new(),
+            waveform_peaks: Vec::new(),
+            has_metadata: metadata.is_some(),
+            metadata,
+            has_chromaprint: false,
+            chromaprint: None,
+        });
+    }
+
     let mut audio_info = deck.get_audio_info();
     let sample_rate = audio_info.sample_rate;
     let channels = audio_info.channels.max(1);
@@ -317,6 +346,7 @@ pub fn analyze_audio_source(
         } else {
             None
         };
+        deck.stop();
         return Ok(RustAudioAnalysisResult {
             audio_info,
             has_replay_gain: false,
@@ -461,6 +491,8 @@ pub fn analyze_audio_source(
     } else {
         None
     };
+
+    deck.stop();
 
     Ok(RustAudioAnalysisResult {
         audio_info,
