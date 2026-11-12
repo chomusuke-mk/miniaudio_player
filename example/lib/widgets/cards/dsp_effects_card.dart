@@ -404,8 +404,9 @@ class DspEffectsCard extends StatelessWidget {
                               ],
                               onChanged: controller.silenceEnabled
                                   ? (m) {
-                                      if (m != null)
+                                      if (m != null) {
                                         controller.setSilenceMode(m);
+                                      }
                                     }
                                   : null,
                             ),

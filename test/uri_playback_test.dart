@@ -413,6 +413,32 @@ void main() {
       await player.action.stop();
     });
 
+    test('progressive HTTP playback of OGG with forward and backward seeking',
+        () async {
+      final url = 'http://127.0.0.1:$serverPort/music/salida.ogg';
+      await player.action.setQueue([AudioSource(url)]);
+      await player.action.play();
+
+      expect(player.state.duration?.inSeconds, inInclusiveRange(65, 72));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(player.state.isPlaying, isTrue);
+
+      // 1. Seek forward near the end (55 seconds)
+      await player.action.seek(const Duration(seconds: 55));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(player.state.position.inSeconds, inInclusiveRange(53, 58));
+      expect(player.state.isPlaying, isTrue);
+
+      // 2. Seek backward to an earlier position (20 seconds)
+      await player.action.seek(const Duration(seconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(player.state.position.inSeconds, inInclusiveRange(18, 23));
+      expect(player.state.isPlaying, isTrue);
+
+      await player.action.stop();
+      expect(player.state.isPlaying, isFalse);
+    });
+
     test(
         'adversarial: HTTP 404 Not Found throws MiniaudioPlayerException with errorFileNotFound',
         () async {

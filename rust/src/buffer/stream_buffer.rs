@@ -855,6 +855,19 @@ impl StreamBuffer {
         }
     }
 
+    /// Suspends the calling thread on `data_signal` until signaled or `timeout` elapses.
+    pub fn wait_signal(&self, timeout: Duration) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let guard = self.backend.lock().unwrap();
+            let _ = self.data_signal.wait_timeout(guard, timeout);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = timeout;
+        }
+    }
+
     /// Current mutation version counter.
     #[inline]
     pub fn version(&self) -> u32 {
@@ -1884,6 +1897,11 @@ impl StreamSession {
         self.body.wait_for_free_space(min_free_bytes, timeout)
     }
 
+    /// Suspends the calling thread until signaled or `timeout` elapses.
+    pub fn wait_signal(&self, timeout: Duration) {
+        self.body.wait_signal(timeout);
+    }
+
     /// Writes `bytes` at an explicit `offset` into the appropriate tier (`Head` or `Body`).
     pub fn write_at(&self, offset: u64, bytes: &[u8]) -> Result<usize, BufferError> {
         if bytes.is_empty() {
@@ -1932,8 +1950,8 @@ impl StreamSession {
             return Ok(0);
         }
 
-        // 3. When probing containers (not decoding audio), allow reading trailing metadata (e.g. MP4 moov)
-        if !decoding && audio_end != u64::MAX && offset >= audio_end {
+        // 3. When probing containers (not decoding audio), allow reading metadata / tail chunks from sparse metadata buffer
+        if !decoding {
             if let Ok(meta_n) = self.metadata.read_at(offset, out) {
                 if meta_n > 0 {
                     return Ok(meta_n);

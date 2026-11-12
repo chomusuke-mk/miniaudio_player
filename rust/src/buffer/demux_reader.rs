@@ -21,7 +21,7 @@ pub struct DemuxedStreamReader {
 
 impl DemuxedStreamReader {
     /// Read timeout duration when waiting for asynchronous stream chunk delivery.
-    pub const READ_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
+    pub const READ_WAIT_TIMEOUT: Duration = Duration::from_millis(5000);
 
     /// Creates a new `DemuxedStreamReader` over the given `StreamSession`.
     pub fn new(session: StreamSession) -> Self {
@@ -89,6 +89,7 @@ impl Read for DemuxedStreamReader {
                 Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
             }
             Err(BufferError::WouldBlock) => {
+                crate::map_log!(1, "DemuxedStreamReader::read WOULD_BLOCK at cursor={} (buf_len={})", self.cursor, buf.len());
                 Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
             }
             Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
@@ -107,12 +108,20 @@ impl Seek for DemuxedStreamReader {
 
 impl MediaSource for DemuxedStreamReader {
     fn is_seekable(&self) -> bool {
-        !self.session.is_live()
-            && (!self.session.tail_data().is_empty() || self.session.is_fully_buffered())
+        if self.session.is_live() {
+            return false;
+        }
+        if self.session.is_decoding_audio() {
+            return true;
+        }
+        !self.session.tail_data().is_empty() || self.session.is_fully_buffered()
     }
 
     fn byte_len(&self) -> Option<u64> {
-        if !self.session.tail_data().is_empty() || self.session.is_fully_buffered() {
+        if self.session.is_decoding_audio()
+            || !self.session.tail_data().is_empty()
+            || self.session.is_fully_buffered()
+        {
             self.session.total_size()
         } else {
             None

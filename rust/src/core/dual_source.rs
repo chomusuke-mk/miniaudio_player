@@ -536,7 +536,17 @@ fn spawn_network_streamer_thread(
 
             while !abort_stream.load(Ordering::Relaxed) && decoder_running.load(Ordering::Relaxed) {
                 if session.is_eof() {
-                    break;
+                    session.body.set_push_streaming(false);
+                    if is_live {
+                        break;
+                    }
+                    if session.is_eof()
+                        && !abort_stream.load(Ordering::Relaxed)
+                        && decoder_running.load(Ordering::Relaxed)
+                    {
+                        session.wait_signal(Duration::from_millis(500));
+                    }
+                    continue;
                 }
 
                 // Query the 3-phase progressive block-coalescing scheduler (5s -> 5s -> 15s super-blocks)
@@ -634,7 +644,11 @@ fn spawn_network_streamer_thread(
                             crate::map_log!(3, "Network streamer reached EOF");
                             session.mark_eof();
                             session.body.set_push_streaming(false);
-                            return;
+                            if is_live {
+                                return;
+                            }
+                            stream_pos = u64::MAX;
+                            break;
                         }
                         Ok(n) => {
                             range_retries = 0;
@@ -672,7 +686,10 @@ fn spawn_network_streamer_thread(
                             remaining_in_block = remaining_in_block.saturating_sub(offset);
                             if session.is_eof() {
                                 session.body.set_push_streaming(false);
-                                return;
+                                if is_live {
+                                    return;
+                                }
+                                break;
                             }
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -714,7 +731,11 @@ fn spawn_network_streamer_thread(
                 if order.reaches_eof && session.range_end() >= order.offset + order.length as u64 {
                     crate::map_log!(3, "Network streamer completed audio payload up to audio_end");
                     session.mark_eof();
-                    break;
+                    session.body.set_push_streaming(false);
+                    if is_live {
+                        break;
+                    }
+                    continue;
                 }
             }
             session.body.set_push_streaming(false);
@@ -1007,7 +1028,14 @@ impl DecoderWorker {
             }
             if !reinit {
                 if let Some(ref mut eng) = *eng_lock {
-                    let _ = eng.seek_ms(target_seek as u64);
+                    match eng.seek_ms(target_seek as u64) {
+                        Ok(()) => {
+                            crate::map_log!(3, "DecoderWorker seek_ms({}) succeeded", target_seek);
+                        }
+                        Err(e) => {
+                            crate::map_log!(1, "DecoderWorker seek_ms({}) failed: {:?}", target_seek, e);
+                        }
+                    }
                 }
             }
         }
@@ -2188,9 +2216,13 @@ impl StreamingDeck {
                             content_length,
                             boundary.audio_start,
                         );
-                        if audio_end > 0 && audio_end < content_length && audio_end >= tail_offset {
+                        if audio_end > 0 && audio_end <= content_length && audio_end >= tail_offset {
                             let rel_start = (audio_end - tail_offset) as usize;
-                            tail_data = Some(probed[rel_start..].to_vec());
+                            if rel_start < probed.len() {
+                                tail_data = Some(probed[rel_start..].to_vec());
+                            } else {
+                                tail_data = Some(probed.to_vec());
+                            }
                             forced_audio_end = Some(audio_end as u64);
                         }
                     }
@@ -2221,7 +2253,12 @@ impl StreamingDeck {
             if let Some(ae) = forced_audio_end {
                 session.set_audio_end(ae);
                 if let Some(ref td) = tail_data {
-                    session.set_tail(td, Some(ae));
+                    let td_off = if ae < content_length as u64 {
+                        ae
+                    } else {
+                        (content_length - td.len() as i64).max(0) as u64
+                    };
+                    session.set_tail(td, Some(td_off));
                 }
                 if let Ok(mut b_guard) = self.boundary_info.write() {
                     if let Some(ref mut b) = *b_guard {
@@ -2365,9 +2402,13 @@ impl StreamingDeck {
                             total_size,
                             boundary.audio_start,
                         );
-                        if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
+                        if audio_end > 0 && audio_end <= total_size && audio_end >= tail_offset {
                             let rel = (audio_end - tail_offset) as usize;
-                            tail_out = Some((tbuf[rel..].to_vec(), Some(audio_end as u64)));
+                            if rel < tbuf.len() {
+                                tail_out = Some((tbuf[rel..].to_vec(), Some(audio_end as u64)));
+                            } else {
+                                tail_out = Some((tbuf.clone(), Some(tail_offset as u64)));
+                            }
                             boundary.audio_end = audio_end;
                         }
                     }
@@ -2485,8 +2526,13 @@ impl StreamingDeck {
                         total_size,
                         boundary.audio_start,
                     );
-                    if audio_end > 0 && audio_end < total_size && audio_end >= tail_offset {
-                        tail_slice = Some((&data[audio_end as usize..], Some(audio_end as u64)));
+                    if audio_end > 0 && audio_end <= total_size && audio_end >= tail_offset {
+                        let rel = (audio_end - tail_offset) as usize;
+                        if rel < data[tail_offset as usize..].len() {
+                            tail_slice = Some((&data[audio_end as usize..], Some(audio_end as u64)));
+                        } else {
+                            tail_slice = Some((&data[tail_offset as usize..], Some(tail_offset as u64)));
+                        }
                     }
                 }
             }

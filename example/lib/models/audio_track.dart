@@ -46,8 +46,9 @@ class AudioTrack {
     if (isLive) return 'LIVE STREAM';
     if (_isNetwork) return 'NETWORK';
     if (_sourceString.startsWith('asset:') ||
-        _sourceString.startsWith('assets/'))
+        _sourceString.startsWith('assets/')) {
       return 'ASSET';
+    }
     return 'FILE';
   }
 
@@ -58,8 +59,9 @@ class AudioTrack {
     if (isLive) return 'icy:// (Live)';
     if (_isNetwork) return 'https://';
     if (_sourceString.startsWith('asset:') ||
-        _sourceString.startsWith('assets/'))
+        _sourceString.startsWith('assets/')) {
       return 'asset://';
+    }
     return 'file://';
   }
 

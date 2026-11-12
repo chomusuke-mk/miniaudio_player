@@ -208,7 +208,7 @@ impl StreamClassifier {
         }
     }
 
-    /// Whether this container format can contain trailing metadata or tags (ID3v1, APE, Lyrics3).
+    /// Whether this container format can contain trailing metadata or tags (ID3v1, APE, Lyrics3, Ogg trailer).
     #[inline]
     pub fn container_needs_tail_scan(container: ContainerFormat) -> bool {
         matches!(
@@ -218,6 +218,8 @@ impl StreamClassifier {
                 | ContainerFormat::Flac
                 | ContainerFormat::Ape
                 | ContainerFormat::WavPack
+                | ContainerFormat::OggVorbis
+                | ContainerFormat::OggOpus
         )
     }
 
