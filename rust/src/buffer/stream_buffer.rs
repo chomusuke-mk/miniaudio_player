@@ -78,6 +78,145 @@ pub enum BufferError {
 /// Invoked outside any buffer mutex lock to prevent deadlocks and I/O priority inversion.
 pub type ByteFetchTask = Arc<dyn Fn(u64, usize) -> IoResult<Vec<u8>> + Send + Sync>;
 
+/// Temporal sliding-window and progressive block-coalescing configuration for a circular [`StreamBuffer`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlidingWindowConfig {
+    /// Backward retention duration in milliseconds (default: `10_000` ms = 10s).
+    /// Bytes within `[read_cursor - B_back .. read_cursor]` are protected from circular overwrite.
+    pub back_duration_ms: u32,
+    /// Forward prefetch target duration in milliseconds (default: `30_000` ms = 30s).
+    /// The block scheduler prefetches ahead up to `read_cursor + B_ahead` (or `audio_end`).
+    pub ahead_duration_ms: u32,
+    /// Base block window duration in milliseconds (default: `5_000` ms = 5s).
+    pub window_duration_ms: u32,
+    /// Number of base windows to accumulate/consume before coalescing into a super-block
+    /// (default: `3` windows = 15s).
+    pub coalesce_windows: usize,
+}
+
+impl SlidingWindowConfig {
+    /// Default backward retention duration (10 seconds).
+    pub const DEFAULT_BACK_DURATION_MS: u32 = 10_000;
+    /// Default forward prefetch target duration (30 seconds).
+    pub const DEFAULT_AHEAD_DURATION_MS: u32 = 30_000;
+    /// Default single block window duration (5 seconds).
+    pub const DEFAULT_WINDOW_DURATION_MS: u32 = 5_000;
+    /// Default number of windows to coalesce in Phase 3 (3 windows = 15 seconds).
+    pub const DEFAULT_COALESCE_WINDOWS: usize = 3;
+    /// Default initial stream byte rate estimate before codec probing (32 KB/s = 256 kbps).
+    pub const DEFAULT_BYTE_RATE_PER_SEC: u64 = 32 * 1024;
+}
+
+impl Default for SlidingWindowConfig {
+    fn default() -> Self {
+        Self {
+            back_duration_ms: Self::DEFAULT_BACK_DURATION_MS,
+            ahead_duration_ms: Self::DEFAULT_AHEAD_DURATION_MS,
+            window_duration_ms: Self::DEFAULT_WINDOW_DURATION_MS,
+            coalesce_windows: Self::DEFAULT_COALESCE_WINDOWS,
+        }
+    }
+}
+
+/// Progressive block-fetching phase of the temporal sliding-window scheduler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockFetchPhase {
+    /// Phase 1 (Bootstrap / Post-Seek Urgent): `ahead < 1 window`.
+    /// Requests a single base window (`1 * B_win`) for immediate playback startup.
+    UrgentBootstrap,
+    /// Phase 2 (Stabilization): `1 window <= ahead < coalesce_windows * B_win`.
+    /// Requests single base windows (`1 * B_win`) until the coalescing threshold is reached.
+    Stabilization,
+    /// Phase 3 (Coalesced Cruise): `ahead >= coalesce_windows * B_win`.
+    /// Waits until consumption opens a deficit of at least `coalesce_windows * B_win`
+    /// (or the remaining bytes before `audio_end`), then requests a coalesced super-block.
+    CoalescedCruise,
+}
+
+/// Deterministic block fetch instruction computed by the sliding-window scheduler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockFetchOrder {
+    /// Absolute stream byte offset to fetch from (`range_end`).
+    pub offset: u64,
+    /// Number of bytes to fetch in this block or coalesced super-block.
+    pub length: usize,
+    /// Active progressive phase that produced this order.
+    pub phase: BlockFetchPhase,
+    /// True if this block reaches `audio_end` (meaning the stream reaches EOF upon completion).
+    pub reaches_eof: bool,
+}
+
+/// Resolved byte-level sliding-window state inside `BufferBackend::Circular`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlidingWindowState {
+    /// Temporal configuration parameters.
+    pub config: SlidingWindowConfig,
+    /// Stream byte rate in bytes/sec (estimated or exact from `AudioInfo`).
+    pub byte_rate_per_sec: u64,
+    /// Current playback rate multiplier (e.g., `1.0`, `3.0`, `0.25`).
+    pub playback_rate: f32,
+    /// Protected backward retention bytes (`B_back`).
+    pub back_retention_bytes: usize,
+    /// Target forward prefetch bytes (`B_ahead`).
+    pub ahead_target_bytes: usize,
+    /// Scaled single base window size in bytes (`B_win`).
+    pub base_window_bytes: usize,
+    /// True once the forward prefetch window has filled to `ahead_target_bytes` (enabling Phase 3 hysteresis).
+    pub window_filled: bool,
+    /// Last `range_end` at which a pull-mode prefetch was triggered.
+    pub last_pull_trigger_end: u64,
+}
+
+impl SlidingWindowState {
+    /// Creates a new `SlidingWindowState` and resolves byte dimensions for `capacity`.
+    pub fn new(
+        config: SlidingWindowConfig,
+        byte_rate_per_sec: u64,
+        playback_rate: f32,
+        capacity: usize,
+    ) -> Self {
+        let mut state = Self {
+            config,
+            byte_rate_per_sec: byte_rate_per_sec.max(1),
+            playback_rate: if playback_rate.is_finite() && playback_rate > 0.0 {
+                playback_rate
+            } else {
+                1.0
+            },
+            back_retention_bytes: 0,
+            ahead_target_bytes: 0,
+            base_window_bytes: 0,
+            window_filled: false,
+            last_pull_trigger_end: 0,
+        };
+        state.recalculate(capacity);
+        state
+    }
+
+    /// Recomputes `back_retention_bytes`, `ahead_target_bytes`, and `base_window_bytes`
+    /// from `(config, byte_rate_per_sec, playback_rate, capacity)`.
+    pub fn recalculate(&mut self, capacity: usize) {
+        let cap = capacity.max(1);
+        let rate_scale = (self.playback_rate.clamp(1.0, 3.0)) as f64;
+        let byte_rate = self.byte_rate_per_sec.max(1) as f64;
+
+        let raw_back = (byte_rate * (self.config.back_duration_ms as f64 / 1000.0)).round() as usize;
+        let max_back = if cap < 1024 { cap / 8 } else { cap / 3 };
+        self.back_retention_bytes = raw_back.min(max_back);
+
+        let max_ahead_cap = cap.saturating_sub(self.back_retention_bytes).max(1);
+        let raw_ahead =
+            (byte_rate * (self.config.ahead_duration_ms as f64 / 1000.0) * rate_scale).round() as usize;
+        self.ahead_target_bytes = raw_ahead.clamp(1, max_ahead_cap);
+
+        let coalesce_n = self.config.coalesce_windows.max(1);
+        let max_win = (self.ahead_target_bytes / coalesce_n).max(1);
+        let raw_win =
+            (byte_rate * (self.config.window_duration_ms as f64 / 1000.0) * rate_scale).round() as usize;
+        self.base_window_bytes = raw_win.clamp(1, max_win);
+    }
+}
+
 /// Internal storage strategy for a [`StreamBuffer`].
 pub enum BufferBackend {
     /// Non-circular linear storage with configurable minimum growth step (used for `Head`).
@@ -92,7 +231,7 @@ pub enum BufferBackend {
         min_growth: usize,
         icy_override: Vec<u8>,
     },
-    /// Circular sliding window with reactive watermark prefetching (used for `Body`).
+    /// Circular bidirectional sliding window (`[Back | Ahead]`) with progressive block coalescing (used for `Body`).
     Circular {
         storage: Vec<u8>,
         capacity: usize,
@@ -100,8 +239,7 @@ pub enum BufferBackend {
         range_start: u64,
         range_end: u64,
         audio_end: Option<u64>,
-        prefetch_watermark_pct: f32,
-        last_prefetch_trigger: u64,
+        window: SlidingWindowState,
         push_streaming: bool,
         fetcher: Option<ByteFetchTask>,
     },
@@ -168,6 +306,7 @@ pub struct StreamBuffer {
     read_cursor: AtomicU64,
     is_circular: bool,
     is_buffering: AtomicBool,
+    is_producer_waiting: AtomicBool,
     is_eof: AtomicBool,
     should_abort: AtomicBool,
     version: AtomicU32,
@@ -180,8 +319,8 @@ impl StreamBuffer {
     pub const DEFAULT_MIN_GROWTH: usize = 32 * 1024;
     /// Default capacity for circular audio body buffers (8 MB).
     pub const DEFAULT_BODY_CAPACITY: usize = 8 * 1024 * 1024;
-    /// Default proactive consumption watermark (70%).
-    pub const DEFAULT_WATERMARK_PCT: f32 = 0.70;
+    /// Default free-space hysteresis threshold (256 KB) before waking a throttled producer.
+    pub const DEFAULT_FREE_SPACE_RESUME_BYTES: usize = 256 * 1024;
 
     /// Creates a non-circular linear `StreamBuffer` (used for `Head`).
     pub fn new_linear(initial_size: usize, min_growth: usize) -> Arc<Self> {
@@ -196,6 +335,7 @@ impl StreamBuffer {
             read_cursor: AtomicU64::new(0),
             is_circular: false,
             is_buffering: AtomicBool::new(false),
+            is_producer_waiting: AtomicBool::new(false),
             is_eof: AtomicBool::new(false),
             should_abort: AtomicBool::new(false),
             version: AtomicU32::new(0),
@@ -220,16 +360,17 @@ impl StreamBuffer {
             read_cursor: AtomicU64::new(0),
             is_circular: false,
             is_buffering: AtomicBool::new(false),
+            is_producer_waiting: AtomicBool::new(false),
             is_eof: AtomicBool::new(false),
             should_abort: AtomicBool::new(false),
             version: AtomicU32::new(0),
         })
     }
 
-    /// Creates a circular sliding-window `StreamBuffer` (used for `Body`).
+    /// Creates a circular bidirectional sliding-window `StreamBuffer` (used for `Body`).
     pub fn new_circular(
         capacity: usize,
-        prefetch_watermark_pct: f32,
+        config: SlidingWindowConfig,
         fetcher: Option<ByteFetchTask>,
     ) -> Arc<Self> {
         let cap = if capacity > 0 {
@@ -237,6 +378,12 @@ impl StreamBuffer {
         } else {
             Self::DEFAULT_BODY_CAPACITY
         };
+        let window = SlidingWindowState::new(
+            config,
+            SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC,
+            1.0,
+            cap,
+        );
         Arc::new(Self {
             backend: Mutex::new(BufferBackend::Circular {
                 storage: vec![0u8; cap],
@@ -245,8 +392,7 @@ impl StreamBuffer {
                 range_start: 0,
                 range_end: 0,
                 audio_end: None,
-                prefetch_watermark_pct: prefetch_watermark_pct.clamp(0.1, 0.95),
-                last_prefetch_trigger: 0,
+                window,
                 push_streaming: false,
                 fetcher,
             }),
@@ -254,10 +400,380 @@ impl StreamBuffer {
             read_cursor: AtomicU64::new(0),
             is_circular: true,
             is_buffering: AtomicBool::new(false),
+            is_producer_waiting: AtomicBool::new(false),
             is_eof: AtomicBool::new(false),
             should_abort: AtomicBool::new(false),
             version: AtomicU32::new(0),
         })
+    }
+
+    /// Pure deterministic evaluator for the 3-phase progressive block-coalescing scheduler.
+    #[allow(clippy::too_many_arguments)]
+    fn compute_next_block_order_locked(
+        cursor: u64,
+        capacity: usize,
+        anchor_offset: u64,
+        range_start: u64,
+        range_end: u64,
+        audio_end: Option<u64>,
+        is_eof: bool,
+        window: &SlidingWindowState,
+    ) -> Option<BlockFetchOrder> {
+        if is_eof {
+            return None;
+        }
+        if let Some(end) = audio_end {
+            if range_end >= end {
+                return None;
+            }
+        }
+
+        let effective_cursor = cursor.max(anchor_offset).max(range_start);
+        let ahead_bytes = range_end.saturating_sub(effective_cursor) as usize;
+
+        let eviction_floor = cursor
+            .max(anchor_offset)
+            .saturating_sub(window.back_retention_bytes as u64)
+            .max(anchor_offset);
+        let used_in_ring = range_end.saturating_sub(eviction_floor) as usize;
+        let free_ring_space = capacity.saturating_sub(used_in_ring);
+
+        if free_ring_space == 0 || ahead_bytes >= window.ahead_target_bytes {
+            return None;
+        }
+
+        let win_size = window.base_window_bytes.max(1);
+        let coalesce_n = window.config.coalesce_windows.max(1);
+        let coalesce_threshold = win_size.saturating_mul(coalesce_n);
+        let deficit = window.ahead_target_bytes.saturating_sub(ahead_bytes);
+        let remaining_to_eof = audio_end.map(|end| end.saturating_sub(range_end) as usize);
+
+        let (phase, raw_req_len) = if ahead_bytes < win_size {
+            // Phase 1 (UrgentBootstrap): ahead < 1 window -> request 1 base window (5s)
+            (BlockFetchPhase::UrgentBootstrap, win_size)
+        } else if ahead_bytes < coalesce_threshold {
+            // Phase 2 (Stabilization): 1 <= ahead < coalesce_n windows -> request 1 base window (5s)
+            (BlockFetchPhase::Stabilization, win_size)
+        } else {
+            // Phase 3 (CoalescedCruise): ahead >= coalesce_n windows
+            // During initial fill (!window_filled), top up to ahead_target_bytes in coalesced batches.
+            // Once window_filled is true, hold until consumption opens a deficit >= coalesce_threshold
+            // (or enough deficit to fetch the remaining bytes up to audio_end).
+            let can_finish_eof = remaining_to_eof
+                .map(|rem| rem <= deficit && rem <= free_ring_space)
+                .unwrap_or(false);
+
+            if window.window_filled && deficit < coalesce_threshold && !can_finish_eof {
+                return None;
+            }
+            let batch = deficit.min(coalesce_threshold);
+            (BlockFetchPhase::CoalescedCruise, batch)
+        };
+
+        let mut length = raw_req_len.min(deficit).min(free_ring_space);
+        let mut reaches_eof = false;
+
+        if let Some(rem_eof) = remaining_to_eof {
+            if rem_eof <= length {
+                length = rem_eof;
+                reaches_eof = true;
+            }
+        }
+
+        if length == 0 {
+            return None;
+        }
+
+        if phase == BlockFetchPhase::CoalescedCruise
+            && window.window_filled
+            && !reaches_eof
+            && length < coalesce_threshold.min(window.ahead_target_bytes)
+        {
+            return None;
+        }
+
+        Some(BlockFetchOrder {
+            offset: range_end,
+            length,
+            phase,
+            reaches_eof,
+        })
+    }
+
+    /// Updates `window.window_filled` and `is_eof` after bytes are written into a `Circular` buffer.
+    #[inline]
+    fn refresh_circular_window_fill_locked(
+        &self,
+        anchor_offset: u64,
+        range_start: u64,
+        range_end: u64,
+        audio_end: Option<u64>,
+        window: &mut SlidingWindowState,
+    ) {
+        let cursor = self.read_cursor.load(Ordering::Acquire);
+        let effective_cursor = cursor.max(anchor_offset).max(range_start);
+        let ahead_bytes = range_end.saturating_sub(effective_cursor) as usize;
+        let reached_eof = audio_end.map(|end| range_end >= end).unwrap_or(false);
+        let coalesce_threshold = window
+            .base_window_bytes
+            .max(1)
+            .saturating_mul(window.config.coalesce_windows.max(1));
+
+        if ahead_bytes >= window.ahead_target_bytes || reached_eof {
+            window.window_filled = true;
+        } else if ahead_bytes < coalesce_threshold {
+            window.window_filled = false;
+        }
+
+        if reached_eof {
+            self.is_eof.store(true, Ordering::Release);
+        }
+    }
+
+    /// Configures the temporal sliding window parameters, stream byte rate, and playback rate.
+    pub fn configure_sliding_window(
+        &self,
+        config: SlidingWindowConfig,
+        byte_rate_per_sec: u64,
+        playback_rate: f32,
+    ) {
+        {
+            let mut guard = self.backend.lock().unwrap();
+            if let BufferBackend::Circular {
+                capacity,
+                anchor_offset,
+                range_start,
+                range_end,
+                audio_end,
+                ref mut window,
+                ..
+            } = *guard
+            {
+                window.config = config;
+                if byte_rate_per_sec > 0 {
+                    window.byte_rate_per_sec = byte_rate_per_sec;
+                }
+                if playback_rate.is_finite() && playback_rate > 0.0 {
+                    window.playback_rate = playback_rate;
+                }
+                window.recalculate(capacity);
+                self.refresh_circular_window_fill_locked(
+                    anchor_offset,
+                    range_start,
+                    range_end,
+                    audio_end,
+                    window,
+                );
+            }
+        }
+        self.data_signal.notify_all();
+    }
+
+    /// Updates the stream byte rate (bytes/sec) and recalculates sliding-window byte dimensions.
+    pub fn set_stream_byte_rate(&self, byte_rate_per_sec: u64) {
+        if byte_rate_per_sec == 0 {
+            return;
+        }
+        {
+            let mut guard = self.backend.lock().unwrap();
+            if let BufferBackend::Circular {
+                capacity,
+                anchor_offset,
+                range_start,
+                range_end,
+                audio_end,
+                ref mut window,
+                ..
+            } = *guard
+            {
+                window.byte_rate_per_sec = byte_rate_per_sec;
+                window.recalculate(capacity);
+                self.refresh_circular_window_fill_locked(
+                    anchor_offset,
+                    range_start,
+                    range_end,
+                    audio_end,
+                    window,
+                );
+            }
+        }
+        self.data_signal.notify_all();
+    }
+
+    /// Updates the playback speed multiplier and dynamically scales forward prefetch/window sizes.
+    pub fn set_playback_rate(&self, playback_rate: f32) {
+        if !playback_rate.is_finite() || playback_rate <= 0.0 {
+            return;
+        }
+        {
+            let mut guard = self.backend.lock().unwrap();
+            if let BufferBackend::Circular {
+                capacity,
+                anchor_offset,
+                range_start,
+                range_end,
+                audio_end,
+                ref mut window,
+                ..
+            } = *guard
+            {
+                window.playback_rate = playback_rate;
+                window.recalculate(capacity);
+                self.refresh_circular_window_fill_locked(
+                    anchor_offset,
+                    range_start,
+                    range_end,
+                    audio_end,
+                    window,
+                );
+            }
+        }
+        self.data_signal.notify_all();
+    }
+
+    /// Returns a snapshot of the resolved [`SlidingWindowState`] if this buffer is `Circular`.
+    pub fn sliding_window_state(&self) -> Option<SlidingWindowState> {
+        let guard = self.backend.lock().unwrap();
+        if let BufferBackend::Circular { window, .. } = *guard {
+            Some(window)
+        } else {
+            None
+        }
+    }
+
+    /// Computes the next [`BlockFetchOrder`] according to the 3-phase progressive block-coalescing heuristic.
+    pub fn next_block_request(&self) -> Option<BlockFetchOrder> {
+        if !self.is_circular || self.should_abort.load(Ordering::Acquire) {
+            return None;
+        }
+        let guard = self.backend.lock().unwrap();
+        if let BufferBackend::Circular {
+            capacity,
+            anchor_offset,
+            range_start,
+            range_end,
+            audio_end,
+            ref window,
+            ..
+        } = *guard
+        {
+            let cursor = self.read_cursor.load(Ordering::Acquire);
+            let is_eof = self.is_eof.load(Ordering::Acquire);
+            Self::compute_next_block_order_locked(
+                cursor,
+                capacity,
+                anchor_offset,
+                range_start,
+                range_end,
+                audio_end,
+                is_eof,
+                window,
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Suspends the producer thread on `data_signal` until the sliding-window scheduler
+    /// produces a [`BlockFetchOrder`], or until `timeout` elapses, EOF is reached, or the buffer is aborted.
+    pub fn wait_for_next_block(&self, timeout: Duration) -> Option<BlockFetchOrder> {
+        if !self.is_circular {
+            return None;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = timeout;
+            return self.next_block_request();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let start_time = MonotonicInstant::now();
+            let mut guard = self.backend.lock().unwrap();
+            self.is_producer_waiting.store(true, Ordering::Release);
+            let result = loop {
+                if self.should_abort.load(Ordering::Acquire) || self.is_eof.load(Ordering::Acquire) {
+                    break None;
+                }
+                if let BufferBackend::Circular {
+                    capacity,
+                    anchor_offset,
+                    range_start,
+                    range_end,
+                    audio_end,
+                    ref window,
+                    ..
+                } = *guard
+                {
+                    let cursor = self.read_cursor.load(Ordering::Acquire);
+                    let is_eof = self.is_eof.load(Ordering::Acquire);
+                    if let Some(order) = Self::compute_next_block_order_locked(
+                        cursor,
+                        capacity,
+                        anchor_offset,
+                        range_start,
+                        range_end,
+                        audio_end,
+                        is_eof,
+                        window,
+                    ) {
+                        break Some(order);
+                    }
+                } else {
+                    break None;
+                }
+
+                let elapsed = start_time.elapsed();
+                if elapsed >= timeout {
+                    break None;
+                }
+                let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
+                let (new_guard, _) = self.data_signal.wait_timeout(guard, wait_slice).unwrap();
+                guard = new_guard;
+            };
+            self.is_producer_waiting.store(false, Ordering::Release);
+            result
+        }
+    }
+
+    /// Returns the number of unread forward bytes (`Ahead`) currently buffered ahead of `read_cursor`.
+    pub fn ahead_bytes(&self) -> u64 {
+        let guard = self.backend.lock().unwrap();
+        if let BufferBackend::Circular {
+            anchor_offset,
+            range_start,
+            range_end,
+            ..
+        } = *guard
+        {
+            let cursor = self
+                .read_cursor
+                .load(Ordering::Acquire)
+                .max(anchor_offset)
+                .max(range_start);
+            range_end.saturating_sub(cursor)
+        } else {
+            0
+        }
+    }
+
+    /// Returns the number of retained backward bytes (`Back`) currently buffered behind `read_cursor`.
+    pub fn back_buffered_bytes(&self) -> u64 {
+        let guard = self.backend.lock().unwrap();
+        if let BufferBackend::Circular {
+            anchor_offset,
+            range_start,
+            range_end,
+            ..
+        } = *guard
+        {
+            let cursor = self
+                .read_cursor
+                .load(Ordering::Acquire)
+                .clamp(anchor_offset, range_end);
+            cursor.saturating_sub(range_start)
+        } else {
+            0
+        }
     }
 
     /// Whether this buffer operates as a circular ring buffer.
@@ -272,10 +788,71 @@ impl StreamBuffer {
         self.read_cursor.load(Ordering::Acquire)
     }
 
-    /// Updates the read cursor offset.
+    /// Updates the read cursor offset and wakes any waiting producer thread.
     #[inline]
     pub fn set_cursor(&self, offset: u64) {
         self.read_cursor.store(offset, Ordering::Release);
+        if self.is_circular && self.is_producer_waiting.load(Ordering::Acquire) {
+            self.data_signal.notify_all();
+        }
+    }
+
+    /// Suspends the producer thread on `data_signal` until at least `min_free_bytes`
+    /// (respecting `back_retention_bytes` backward protection) are available in the circular buffer,
+    /// or until `timeout` elapses or the buffer is aborted.
+    pub fn wait_for_free_space(&self, min_free_bytes: usize, timeout: Duration) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (min_free_bytes, timeout);
+            return true;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if !self.is_circular {
+                return true;
+            }
+            let start_time = MonotonicInstant::now();
+            let mut guard = self.backend.lock().unwrap();
+            self.is_producer_waiting.store(true, Ordering::Release);
+            let result = loop {
+                if self.should_abort.load(Ordering::Acquire) {
+                    break false;
+                }
+                if let BufferBackend::Circular {
+                    capacity,
+                    anchor_offset,
+                    range_end,
+                    ref window,
+                    ..
+                } = *guard
+                {
+                    let cursor = self.read_cursor.load(Ordering::Acquire).max(anchor_offset);
+                    let eviction_floor = cursor
+                        .saturating_sub(window.back_retention_bytes as u64)
+                        .max(anchor_offset);
+                    let used = range_end.saturating_sub(eviction_floor) as usize;
+                    let free_space = capacity.saturating_sub(used);
+                    let target_free = min_free_bytes
+                        .max((capacity / 16).min(Self::DEFAULT_FREE_SPACE_RESUME_BYTES))
+                        .min(capacity.saturating_sub(window.back_retention_bytes).max(1));
+                    if free_space >= target_free {
+                        break true;
+                    }
+                } else {
+                    break true;
+                }
+
+                let elapsed = start_time.elapsed();
+                if elapsed >= timeout {
+                    break false;
+                }
+                let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
+                let (new_guard, _) = self.data_signal.wait_timeout(guard, wait_slice).unwrap();
+                guard = new_guard;
+            };
+            self.is_producer_waiting.store(false, Ordering::Release);
+            result
+        }
     }
 
     /// Current mutation version counter.
@@ -362,10 +939,22 @@ impl StreamBuffer {
     pub fn set_audio_end(&self, end: Option<u64>) {
         let mut guard = self.backend.lock().unwrap();
         if let BufferBackend::Circular {
-            ref mut audio_end, ..
+            anchor_offset,
+            range_start,
+            range_end,
+            ref mut audio_end,
+            ref mut window,
+            ..
         } = *guard
         {
             *audio_end = end;
+            self.refresh_circular_window_fill_locked(
+                anchor_offset,
+                range_start,
+                range_end,
+                *audio_end,
+                window,
+            );
         }
         self.version.fetch_add(1, Ordering::Release);
         self.data_signal.notify_all();
@@ -473,6 +1062,8 @@ impl StreamBuffer {
                     ref mut anchor_offset,
                     ref mut range_start,
                     ref mut range_end,
+                    audio_end,
+                    ref mut window,
                     ..
                 } => {
                     if *range_start == *range_end {
@@ -484,6 +1075,7 @@ impl StreamBuffer {
                         *anchor_offset = stream_offset;
                         *range_start = stream_offset;
                         *range_end = stream_offset;
+                        window.window_filled = false;
                     }
 
                     let write_end = stream_offset + chunk.len() as u64;
@@ -519,6 +1111,13 @@ impl StreamBuffer {
                     if write_end > *range_end {
                         *range_end = write_end;
                     }
+                    self.refresh_circular_window_fill_locked(
+                        *anchor_offset,
+                        *range_start,
+                        *range_end,
+                        audio_end,
+                        window,
+                    );
                 }
             }
         }
@@ -529,7 +1128,8 @@ impl StreamBuffer {
         Ok(chunk.len())
     }
 
-    /// Appends sequential stream bytes into a `Circular` buffer, enforcing backpressure against `floor_cursor`.
+    /// Appends sequential stream bytes into a `Circular` buffer, enforcing backpressure
+    /// against `eviction_floor = max(anchor_offset, floor_cursor - back_retention_bytes)`.
     pub fn feed_sequential(
         &self,
         floor_cursor: u64,
@@ -551,13 +1151,18 @@ impl StreamBuffer {
                     anchor_offset,
                     ref mut range_start,
                     ref mut range_end,
+                    audio_end,
+                    ref mut window,
                     ..
                 } => {
-                    let floor_pos = floor_cursor.max(anchor_offset);
+                    let cursor = floor_cursor.max(anchor_offset);
+                    let eviction_floor = cursor
+                        .saturating_sub(window.back_retention_bytes as u64)
+                        .max(anchor_offset);
                     let write_offset = *range_end;
                     let write_end = write_offset + chunk.len() as u64;
 
-                    if write_end.saturating_sub(floor_pos) > capacity as u64 {
+                    if write_end.saturating_sub(eviction_floor) > capacity as u64 {
                         return Err(BufferError::Busy);
                     }
 
@@ -575,6 +1180,13 @@ impl StreamBuffer {
                     if range_end.saturating_sub(*range_start) > capacity as u64 {
                         *range_start = *range_end - capacity as u64;
                     }
+                    self.refresh_circular_window_fill_locked(
+                        anchor_offset,
+                        *range_start,
+                        *range_end,
+                        audio_end,
+                        window,
+                    );
                 }
                 BufferBackend::Linear {
                     ref mut data,
@@ -610,14 +1222,15 @@ impl StreamBuffer {
                 ref mut anchor_offset,
                 ref mut range_start,
                 ref mut range_end,
-                ref mut last_prefetch_trigger,
+                ref mut window,
                 ..
             } = *guard
             {
                 *anchor_offset = new_stream_offset;
                 *range_start = new_stream_offset;
                 *range_end = new_stream_offset;
-                *last_prefetch_trigger = 0;
+                window.window_filled = false;
+                window.last_pull_trigger_end = 0;
             }
         }
         self.read_cursor.store(new_stream_offset, Ordering::Release);
@@ -630,7 +1243,7 @@ impl StreamBuffer {
     ///
     /// - If `is_circular == false` and `offset` is not in memory (and no sync fetcher resolves it),
     ///   returns `Err(BufferError::WouldBlock)` immediately so metadata parsers never stall.
-    /// - If `is_circular == true`, evaluates watermark prefetching and on-demand `fetcher` (`getRealBytes`).
+    /// - If `is_circular == true`, evaluates progressive block prefetching and on-demand `fetcher` (`getRealBytes`).
     pub fn read_at(&self, offset: u64, out: &mut [u8]) -> Result<usize, BufferError> {
         if self.should_abort.load(Ordering::Acquire) {
             return Err(BufferError::Aborted);
@@ -699,8 +1312,7 @@ impl StreamBuffer {
                     range_start,
                     range_end,
                     audio_end,
-                    prefetch_watermark_pct,
-                    ref mut last_prefetch_trigger,
+                    ref mut window,
                     push_streaming,
                     ref fetcher,
                 } => {
@@ -726,22 +1338,25 @@ impl StreamBuffer {
                             out[first_len..to_copy].copy_from_slice(&storage[..second_len]);
                         }
 
-                        // Proactive consumption watermark check (when in pull mode without active push thread)
+                        // Proactive progressive block prefetch (when in pull mode without active push thread)
                         let new_cursor = offset + to_copy as u64;
-                        let unread_ahead = range_end.saturating_sub(new_cursor);
-                        let ahead_ratio = unread_ahead as f32 / capacity as f32;
-                        let reached_end = audio_end.map(|e| range_end >= e).unwrap_or(false)
-                            || self.is_eof.load(Ordering::Acquire);
-
-                        if !push_streaming
-                            && !reached_end
-                            && ahead_ratio <= (1.0 - prefetch_watermark_pct)
-                            && *last_prefetch_trigger < range_end
-                        {
+                        let is_eof = self.is_eof.load(Ordering::Acquire);
+                        if !push_streaming && window.last_pull_trigger_end < range_end {
                             if let Some(ref f) = fetcher {
-                                *last_prefetch_trigger = range_end;
-                                let fetch_len = (capacity / 2).max(32768);
-                                pending_prefetch = Some((f.clone(), range_end, fetch_len));
+                                if let Some(order) = Self::compute_next_block_order_locked(
+                                    new_cursor,
+                                    capacity,
+                                    anchor_offset,
+                                    range_start,
+                                    range_end,
+                                    audio_end,
+                                    is_eof,
+                                    window,
+                                ) {
+                                    window.last_pull_trigger_end = range_end;
+                                    pending_prefetch =
+                                        Some((f.clone(), order.offset, order.length));
+                                }
                             }
                         }
 
@@ -760,11 +1375,17 @@ impl StreamBuffer {
                         return Ok(0);
                     }
 
-                    let is_far_jump = offset < range_start || offset > range_end.saturating_add(262144);
+                    let is_far_jump =
+                        offset < range_start || offset > range_end.saturating_add(262144);
                     if let Some(ref f) = fetcher {
                         if !push_streaming || is_far_jump {
                             self.is_buffering.store(true, Ordering::Release);
-                            cache_miss_fetch = Some((f.clone(), offset, capacity.min(524288)));
+                            let mut fetch_len =
+                                window.base_window_bytes.max(out.len()).min(capacity);
+                            if let Some(end) = audio_end {
+                                fetch_len = fetch_len.min(end.saturating_sub(offset) as usize);
+                            }
+                            cache_miss_fetch = Some((f.clone(), offset, fetch_len));
                         } else {
                             self.is_buffering.store(true, Ordering::Release);
                             return Err(BufferError::WouldBlock);
@@ -992,7 +1613,13 @@ impl StreamSession {
 
     /// Creates a new three-buffer `StreamSession`.
     pub fn new(capacity_bytes: usize, total_size: Option<u64>, is_live: bool) -> Self {
-        Self::with_fetcher(capacity_bytes, total_size, is_live, None)
+        Self::with_config(
+            capacity_bytes,
+            total_size,
+            is_live,
+            SlidingWindowConfig::default(),
+            None,
+        )
     }
 
     /// Creates a new three-buffer `StreamSession` with an on-demand `ByteFetchTask` (`getRealBytes`).
@@ -1002,22 +1629,35 @@ impl StreamSession {
         is_live: bool,
         fetcher: Option<ByteFetchTask>,
     ) -> Self {
+        Self::with_config(
+            capacity_bytes,
+            total_size,
+            is_live,
+            SlidingWindowConfig::default(),
+            fetcher,
+        )
+    }
+
+    /// Creates a new three-buffer `StreamSession` with custom [`SlidingWindowConfig`] and optional `ByteFetchTask`.
+    pub fn with_config(
+        capacity_bytes: usize,
+        total_size: Option<u64>,
+        is_live: bool,
+        config: SlidingWindowConfig,
+        fetcher: Option<ByteFetchTask>,
+    ) -> Self {
         let head = StreamBuffer::new_linear(
             StreamBuffer::DEFAULT_HEAD_INITIAL_SIZE,
             StreamBuffer::DEFAULT_MIN_GROWTH,
         );
-        let body = StreamBuffer::new_circular(
-            capacity_bytes,
-            StreamBuffer::DEFAULT_WATERMARK_PCT,
-            fetcher,
-        );
+        let body = StreamBuffer::new_circular(capacity_bytes, config, fetcher);
         let metadata = StreamBuffer::new_sparse(
             StreamBuffer::DEFAULT_HEAD_INITIAL_SIZE,
             StreamBuffer::DEFAULT_MIN_GROWTH,
             total_size,
         );
 
-        Self {
+        let session = Self {
             head,
             body,
             metadata,
@@ -1026,6 +1666,98 @@ impl StreamSession {
             total_size,
             is_live,
             is_decoding_audio: Arc::new(AtomicBool::new(false)),
+        };
+        if let Some(tot) = total_size {
+            session.body.set_audio_end(Some(tot));
+        }
+        session
+    }
+
+    /// Configures the temporal sliding-window parameters, stream byte rate, and playback rate on `Body`.
+    pub fn configure_sliding_window(
+        &self,
+        config: SlidingWindowConfig,
+        byte_rate_per_sec: u64,
+        playback_rate: f32,
+    ) {
+        self.body
+            .configure_sliding_window(config, byte_rate_per_sec, playback_rate);
+    }
+
+    /// Computes exact stream byte rate from `bitrate_bps` (or `audio_payload_bytes / duration_ms`)
+    /// and updates the `Body` sliding window for `playback_rate`.
+    pub fn configure_stream_timing(&self, bitrate_bps: u32, duration_ms: i64, playback_rate: f32) {
+        let byte_rate = if bitrate_bps > 0 {
+            ((bitrate_bps as u64) / 8).max(1024)
+        } else if duration_ms > 0 {
+            let start = self.audio_start.load(Ordering::Acquire);
+            let end = self.audio_end_offset().unwrap_or(start);
+            let payload_bytes = end.saturating_sub(start);
+            if payload_bytes > 0 {
+                ((payload_bytes * 1000) / duration_ms as u64).max(1024)
+            } else {
+                SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC
+            }
+        } else {
+            SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC
+        };
+
+        let cfg = self
+            .body
+            .sliding_window_state()
+            .map(|s| s.config)
+            .unwrap_or_default();
+        self.body
+            .configure_sliding_window(cfg, byte_rate, playback_rate);
+    }
+
+    /// Updates the playback speed multiplier on `Body` to dynamically scale forward prefetch/window sizes.
+    pub fn set_playback_rate(&self, playback_rate: f32) {
+        self.body.set_playback_rate(playback_rate);
+    }
+
+    /// Computes the next [`BlockFetchOrder`] for `Body` using the 3-phase progressive coalescing scheduler.
+    pub fn next_block_request(&self) -> Option<BlockFetchOrder> {
+        self.body.next_block_request()
+    }
+
+    /// Suspends the producer thread until `Body` requires the next [`BlockFetchOrder`] or `timeout` elapses.
+    pub fn wait_for_next_block(&self, timeout: Duration) -> Option<BlockFetchOrder> {
+        self.body.wait_for_next_block(timeout)
+    }
+
+    /// Unread forward bytes (`Ahead`) currently buffered ahead of `read_cursor` in `Body`.
+    pub fn ahead_bytes(&self) -> u64 {
+        self.body.ahead_bytes()
+    }
+
+    /// Retained backward bytes (`Back`) currently buffered behind `read_cursor` in `Body`.
+    pub fn back_buffered_bytes(&self) -> u64 {
+        self.body.back_buffered_bytes()
+    }
+
+    /// Returns `true` when this is a live stream and the accumulated `Ahead` time-shift buffer
+    /// is at or below a single base window (`<= 1 * B_win`, i.e., at the real-time live edge).
+    pub fn is_at_live_edge(&self) -> bool {
+        if !self.is_live {
+            return false;
+        }
+        let ahead = self.body.ahead_bytes() as usize;
+        let win_bytes = self
+            .body
+            .sliding_window_state()
+            .map(|s| s.base_window_bytes)
+            .unwrap_or(65536);
+        ahead <= win_bytes
+    }
+
+    /// Upper audio boundary byte offset, if known (`audio_end` or `total_size`).
+    pub fn audio_end_offset(&self) -> Option<u64> {
+        let ae = self.audio_end.load(Ordering::Acquire);
+        if ae != u64::MAX {
+            Some(ae)
+        } else {
+            self.total_size
         }
     }
 
@@ -1145,6 +1877,11 @@ impl StreamSession {
     pub fn feed_chunk(&self, chunk: &[u8]) -> Result<usize, BufferError> {
         let cursor = self.body.cursor();
         self.body.feed_sequential(cursor, chunk)
+    }
+
+    /// Suspends the producer thread until `min_free_bytes` are available in the circular `Body` buffer.
+    pub fn wait_for_free_space(&self, min_free_bytes: usize, timeout: Duration) -> bool {
+        self.body.wait_for_free_space(min_free_bytes, timeout)
     }
 
     /// Writes `bytes` at an explicit `offset` into the appropriate tier (`Head` or `Body`).
@@ -1302,17 +2039,31 @@ impl StreamSession {
         self.body.flush_circular(new_stream_offset);
     }
 
-    /// Updates the read cursor to `target_offset` and updates buffering state.
+    /// Updates the read cursor to `target_offset`, serving from `[Back | Ahead]` on a cache hit
+    /// or re-anchoring the circular window (`flush_circular`) on an uncached seek during audio decoding.
     pub fn seek(&self, target_offset: u64) -> Result<(), BufferError> {
-        self.body.set_cursor(target_offset);
         let head_len = self.head.linear_len() as u64;
+        let audio_start = self.audio_start.load(Ordering::Acquire);
         let (r_start, r_end, _) = self.body.circular_metrics();
-        if target_offset < head_len || (target_offset >= r_start && target_offset < r_end) {
+        let is_eof = self.body.is_eof();
+
+        let in_head = target_offset < head_len;
+        let in_body = target_offset >= r_start
+            && (target_offset < r_end || (is_eof && target_offset <= r_end));
+
+        if in_head || in_body {
+            self.body.set_cursor(target_offset);
             self.body.is_buffering.store(false, Ordering::Release);
-        } else if !self.body.is_eof() {
-            self.body.is_buffering.store(true, Ordering::Release);
+            self.body.data_signal.notify_all();
+        } else if self.is_decoding_audio.load(Ordering::Acquire) && target_offset >= audio_start {
+            self.body.flush_circular(target_offset);
+        } else {
+            self.body.set_cursor(target_offset);
+            if !is_eof {
+                self.body.is_buffering.store(true, Ordering::Release);
+            }
+            self.body.data_signal.notify_all();
         }
-        self.body.data_signal.notify_all();
         Ok(())
     }
 

@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use common::FixtureResolver;
 use miniaudio_player::buffer::{
-    BufferError, ByteSource, ByteSourceStream, CustomDartByteSource, DartReadRequest,
-    DemuxedStreamReader, FileByteSource, MemoryByteSource, MetadataStreamReader, SourceKind,
-    StreamBuffer, StreamByteSource, StreamSession,
+    BlockFetchPhase, BufferError, ByteSource, ByteSourceStream, CustomDartByteSource,
+    DartReadRequest, DemuxedStreamReader, FileByteSource, MemoryByteSource, MetadataStreamReader,
+    SlidingWindowConfig, SourceKind, StreamBuffer, StreamByteSource, StreamSession,
 };
 use miniaudio_player::decoder::classifier::{BoundaryStatus, ContainerFormat, StreamClassifier};
 use miniaudio_player::decoder::symphonia_engine::SymphoniaEngine;
@@ -158,7 +158,15 @@ fn test_backpressure_busy() {
     let res = buffer.feed_chunk(&chunk2);
     assert_eq!(res, Err(BufferError::Busy));
 
-    buffer.seek(30).unwrap();
+    // Reactive wait_for_free_space wakes immediately when consumer advances read cursor
+    let consumer_buf = buffer.clone();
+    let handle = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        consumer_buf.advance_read_cursor(30);
+    });
+    assert!(buffer.wait_for_free_space(40, Duration::from_millis(500)));
+    handle.join().unwrap();
+
     let res2 = buffer.feed_chunk(&chunk2);
     assert!(res2.is_ok());
 }
@@ -232,19 +240,144 @@ fn test_stream_buffer_linear_sparse_and_circular_real_bytes() {
         Ok(store_clone[start..end].to_vec())
     });
 
-    let body_buf = StreamBuffer::new_circular(128, 0.50, Some(fetcher));
-    // Cache miss at offset 200 triggers getRealBytes(200, 128)
+    let body_buf = StreamBuffer::new_circular(128, SlidingWindowConfig::default(), Some(fetcher));
+    // Cache miss at offset 200 triggers Phase 1 UrgentBootstrap getRealBytes
     let mut c_out = [0u8; 32];
     let n = body_buf.read_at(200, &mut c_out).unwrap();
     assert_eq!(n, 32);
     assert_eq!(c_out[0], (200 & 0xFF) as u8);
     assert_eq!(fetch_calls.load(Ordering::SeqCst), 1);
 
-    // Reading past 50% watermark (offset 200 + 64 = 264) triggers proactive watermark refill
+    // Subsequent read triggers proactive Phase 2 Stabilization block fetch
     let mut c_out2 = [0u8; 40];
-    let n2 = body_buf.read_at(240, &mut c_out2).unwrap();
-    assert_eq!(n2, 40);
+    let n2 = body_buf.read_at(205, &mut c_out2).unwrap();
+    assert_eq!(n2, 32);
     assert!(fetch_calls.load(Ordering::SeqCst) >= 2);
+}
+
+#[test]
+fn test_sliding_window_progressive_block_coalescing_and_eof() {
+    // 10s back (10_000 B), 30s ahead (30_000 B), 5s base window (5_000 B), 3 windows coalesce (15_000 B)
+    // Total stream size = 57_000 B (57s), ring capacity = 64_000 B
+    let cfg = SlidingWindowConfig {
+        back_duration_ms: 10_000,
+        ahead_duration_ms: 30_000,
+        window_duration_ms: 5_000,
+        coalesce_windows: 3,
+    };
+    let session = StreamSession::with_config(64_000, Some(57_000), false, cfg, None);
+    session.set_audio_start(0);
+    session.configure_sliding_window(cfg, 1000, 1.0);
+
+    // Phase 1 (UrgentBootstrap): ahead = 0 -> requests 1 window (5_000 B = 5s)
+    let order1 = session.next_block_request().expect("Phase 1 order expected");
+    assert_eq!(order1.phase, BlockFetchPhase::UrgentBootstrap);
+    assert_eq!(order1.offset, 0);
+    assert_eq!(order1.length, 5_000);
+    assert!(!order1.reaches_eof);
+    session.feed_chunk(&vec![0x11; order1.length]).unwrap();
+
+    // Phase 2 (Stabilization): ahead = 5_000 B (1 window) -> requests 1 window (5_000 B = 5s)
+    let order2 = session.next_block_request().expect("Phase 2 first order expected");
+    assert_eq!(order2.phase, BlockFetchPhase::Stabilization);
+    assert_eq!(order2.offset, 5_000);
+    assert_eq!(order2.length, 5_000);
+    session.feed_chunk(&vec![0x22; order2.length]).unwrap();
+
+    // Phase 2 (Stabilization): ahead = 10_000 B (2 windows) -> requests 1 window (5_000 B = 5s)
+    let order3 = session.next_block_request().expect("Phase 2 second order expected");
+    assert_eq!(order3.phase, BlockFetchPhase::Stabilization);
+    assert_eq!(order3.offset, 10_000);
+    assert_eq!(order3.length, 5_000);
+    session.feed_chunk(&vec![0x33; order3.length]).unwrap();
+
+    // Phase 3 (CoalescedCruise): ahead = 15_000 B (3 windows reached!) -> requests coalesced 15_000 B (15s)
+    let order4 = session.next_block_request().expect("Phase 3 coalesced order expected");
+    assert_eq!(order4.phase, BlockFetchPhase::CoalescedCruise);
+    assert_eq!(order4.offset, 15_000);
+    assert_eq!(order4.length, 15_000);
+    session.feed_chunk(&vec![0x44; order4.length]).unwrap();
+
+    // Forward window is now full (ahead = 30_000 B = 30s). If paused or at 0s, zero requests are made.
+    assert_eq!(session.ahead_bytes(), 30_000);
+    assert!(session.next_block_request().is_none());
+
+    // Advance playback from 1s to 14s: ahead drops from 29_000 to 16_000 -> hysteresis holds (no tiny requests)
+    for sec in 1..=14 {
+        session.advance_read_cursor(sec * 1000);
+        assert!(
+            session.next_block_request().is_none(),
+            "Must not request miniature blocks at {}s (ahead={} B)",
+            sec,
+            session.ahead_bytes()
+        );
+    }
+
+    // At 15s (cursor = 15_000 B), ahead is 15_000 B (deficit = 15_000 B == 3 windows) -> triggers 15s super-block
+    session.advance_read_cursor(15_000);
+    assert_eq!(session.back_buffered_bytes(), 15_000);
+    let order5 = session
+        .next_block_request()
+        .expect("Phase 3 refill expected at 15s");
+    assert_eq!(order5.phase, BlockFetchPhase::CoalescedCruise);
+    assert_eq!(order5.offset, 30_000);
+    assert_eq!(order5.length, 15_000);
+    assert!(!order5.reaches_eof);
+    session.feed_chunk(&vec![0x55; order5.length]).unwrap();
+    assert_eq!(session.ahead_bytes(), 30_000);
+
+    // Advance cursor to 25_000 B: back retention protects [15_000 .. 25_000] (10s behind cursor)
+    session.advance_read_cursor(25_000);
+    let (hit, _) = session.try_seek_cached(16_000);
+    assert!(hit, "Backward 10s window [15_000..25_000] must be cached in RAM");
+    session.advance_read_cursor(25_000);
+
+    // Advance cursor to 30_000 B: ahead is 15_000 B (range_end = 45_000 B), remaining to EOF (57_000 B) is 12_000 B (< 15_000 B)
+    session.advance_read_cursor(30_000);
+    let order_eof = session
+        .next_block_request()
+        .expect("Final EOF-clamped block expected");
+    assert_eq!(order_eof.phase, BlockFetchPhase::CoalescedCruise);
+    assert_eq!(order_eof.offset, 45_000);
+    assert_eq!(order_eof.length, 12_000);
+    assert!(order_eof.reaches_eof);
+
+    session.feed_chunk(&vec![0x66; order_eof.length]).unwrap();
+    assert!(session.is_eof(), "Buffer must automatically mark EOF at audio_end");
+    assert!(session.next_block_request().is_none());
+}
+
+#[test]
+fn test_sliding_window_rate_scaling_and_live_edge() {
+    let cfg = SlidingWindowConfig::default();
+    let live_session = StreamSession::with_config(512_000, None, true, cfg, None);
+    live_session.set_audio_start(0);
+    live_session.configure_sliding_window(cfg, 1000, 1.0);
+
+    let state_1x = live_session.body.sliding_window_state().unwrap();
+    assert_eq!(state_1x.back_retention_bytes, 10_000);
+    assert_eq!(state_1x.ahead_target_bytes, 30_000);
+    assert_eq!(state_1x.base_window_bytes, 5_000);
+
+    // At 3.0x playback speed, forward target and base window scale by 3x
+    live_session.set_playback_rate(3.0);
+    let state_3x = live_session.body.sliding_window_state().unwrap();
+    assert_eq!(state_3x.back_retention_bytes, 10_000);
+    assert_eq!(state_3x.ahead_target_bytes, 90_000);
+    assert_eq!(state_3x.base_window_bytes, 15_000);
+
+    // At 0.25x playback speed, block sizes do not shrink below 1.0x
+    live_session.set_playback_rate(0.25);
+    let state_025x = live_session.body.sliding_window_state().unwrap();
+    assert_eq!(state_025x.ahead_target_bytes, 30_000);
+    assert_eq!(state_025x.base_window_bytes, 5_000);
+
+    // Live-edge detection: true when ahead <= 1 base window (5_000 B), false when time-shift accumulated
+    live_session.feed_chunk(&vec![0xAA; 3_000]).unwrap();
+    assert!(live_session.is_at_live_edge());
+
+    live_session.feed_chunk(&vec![0xBB; 15_000]).unwrap();
+    assert!(!live_session.is_at_live_edge());
 }
 
 #[test]

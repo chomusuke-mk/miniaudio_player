@@ -94,6 +94,7 @@ pub struct AudioRenderer {
     pub decoder_eof: Arc<AtomicBool>,
     pub seek_request_ms: Arc<AtomicI64>,
     pub is_stream: Arc<AtomicBool>,
+    pub at_live_edge: Arc<AtomicBool>,
 
     pub flush_generation: Arc<AtomicU64>,
     pub flush_acknowledged: Arc<AtomicU64>,
@@ -200,8 +201,11 @@ impl AudioRenderer {
         ch: usize,
         spatial_doppler: f32,
     ) -> (usize, i64) {
-        let cur_rate =
-            (f32::from_bits(self.rate.load(Ordering::Relaxed)) * spatial_doppler).max(0.001);
+        let mut requested_rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
+        if requested_rate > 1.0 && self.at_live_edge.load(Ordering::Relaxed) {
+            requested_rate = 1.0;
+        }
+        let cur_rate = (requested_rate * spatial_doppler).max(0.001);
         let cur_pitch =
             (f32::from_bits(self.pitch.load(Ordering::Relaxed)) * spatial_doppler).max(0.001);
         let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;

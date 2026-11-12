@@ -225,8 +225,9 @@ fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
 #[cfg(not(target_arch = "wasm32"))]
 fn build_network_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(5))
+        .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(15))
         .max_idle_connections(0)
         .build()
 }
@@ -528,46 +529,204 @@ fn spawn_network_streamer_thread(
     session: StreamSession,
     abort_stream: Arc<AtomicBool>,
     decoder_running: Arc<AtomicBool>,
+    url: String,
+    headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+    content_length: i64,
+    is_live: bool,
 ) {
     crate::map_log!(3, "Network streamer thread started");
     let _ = std::thread::Builder::new()
         .name("miniaudio-net-streamer".to_string())
         .spawn(move || {
+            session.body.set_push_streaming(true);
             let mut chunk = vec![0u8; 32768];
+            let mut range_retries = 0u32;
+            let mut stream_pos = session.range_end();
+
             while !abort_stream.load(Ordering::Relaxed) && decoder_running.load(Ordering::Relaxed) {
-                match reader.read(&mut chunk) {
-                    Ok(0) => {
-                        crate::map_log!(3, "Network streamer reached EOF");
-                        session.mark_eof();
-                        break;
-                    }
-                    Ok(n) => {
-                        crate::map_log!(5, "Network streamer read {} bytes", n);
-                        let mut offset = 0;
-                        while offset < n
-                            && !abort_stream.load(Ordering::Relaxed)
-                            && decoder_running.load(Ordering::Relaxed)
-                        {
-                            match session.feed_chunk(&chunk[offset..n]) {
+                if session.is_eof() {
+                    break;
+                }
+
+                // Query the 3-phase progressive block-coalescing scheduler (5s -> 5s -> 15s super-blocks)
+                let Some(order) = session
+                    .next_block_request()
+                    .or_else(|| session.wait_for_next_block(Duration::from_millis(250)))
+                else {
+                    continue;
+                };
+
+                // If an out-of-cache seek re-anchored the circular window (`order.offset != stream_pos`),
+                // reposition the stream via in-place skip (<= 64 KB forward) or HTTP Range request.
+                if !is_live && order.offset != stream_pos {
+                    let mut skipped_in_place = false;
+                    if order.offset > stream_pos && (order.offset - stream_pos) <= 65536 {
+                        let mut skip_rem = (order.offset - stream_pos) as usize;
+                        skipped_in_place = true;
+                        while skip_rem > 0 {
+                            let n_skip = skip_rem.min(chunk.len());
+                            match reader.read(&mut chunk[..n_skip]) {
                                 Ok(0) => {
-                                    std::thread::sleep(Duration::from_millis(10));
+                                    skipped_in_place = false;
+                                    break;
                                 }
-                                Ok(written) => offset += written,
-                                Err(crate::buffer::BufferError::Busy) => {
-                                    crate::map_log!(2, "Network streamer buffer busy, throttling 20ms");
-                                    std::thread::sleep(Duration::from_millis(20));
+                                Ok(n) => {
+                                    skip_rem -= n;
+                                    stream_pos += n as u64;
                                 }
-                                Err(_) => return,
+                                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                                Err(_) => {
+                                    skipped_in_place = false;
+                                    break;
+                                }
                             }
                         }
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(e) => {
-                        crate::map_log!(1, "Network streamer read error: {:?}", e);
-                        break;
+
+                    if !skipped_in_place {
+                        let range_hdr = format!("bytes={}-", order.offset);
+                        let agent = build_network_agent();
+                        let req = apply_http_headers(agent.get(&url), headers.as_deref())
+                            .set("Range", &range_hdr);
+                        match req.call() {
+                            Ok(res) if res.status() == 206 => {
+                                reader = Box::new(res.into_reader());
+                                stream_pos = order.offset;
+                            }
+                            _ => {
+                                std::thread::sleep(Duration::from_millis(50));
+                                continue;
+                            }
+                        }
                     }
                 }
+
+                let mut remaining_in_block = order.length;
+                while remaining_in_block > 0
+                    && !abort_stream.load(Ordering::Relaxed)
+                    && decoder_running.load(Ordering::Relaxed)
+                {
+                    if !is_live && session.range_end() != stream_pos {
+                        break;
+                    }
+
+                    let to_read = remaining_in_block.min(chunk.len());
+                    match reader.read(&mut chunk[..to_read]) {
+                        Ok(0) => {
+                            let current_end = session.range_end();
+                            let target_end = session.audio_end_offset().unwrap_or(
+                                if content_length > 0 {
+                                    content_length as u64
+                                } else {
+                                    0
+                                },
+                            );
+                            if !is_live
+                                && target_end > 0
+                                && current_end < target_end
+                                && range_retries < 3
+                            {
+                                range_retries += 1;
+                                let range_hdr = format!("bytes={}-", current_end);
+                                let agent = build_network_agent();
+                                let req =
+                                    apply_http_headers(agent.get(&url), headers.as_deref())
+                                        .set("Range", &range_hdr);
+                                if let Ok(res) = req.call() {
+                                    if res.status() == 206 {
+                                        reader = Box::new(res.into_reader());
+                                        stream_pos = current_end;
+                                        continue;
+                                    }
+                                }
+                            }
+                            crate::map_log!(3, "Network streamer reached EOF");
+                            session.mark_eof();
+                            session.body.set_push_streaming(false);
+                            return;
+                        }
+                        Ok(n) => {
+                            range_retries = 0;
+                            let mut offset = 0;
+                            while offset < n
+                                && !abort_stream.load(Ordering::Relaxed)
+                                && decoder_running.load(Ordering::Relaxed)
+                            {
+                                if !is_live && session.range_end() != stream_pos + offset as u64 {
+                                    break;
+                                }
+                                match session.feed_chunk(&chunk[offset..n]) {
+                                    Ok(0) => {
+                                        session.wait_for_free_space(
+                                            n - offset,
+                                            Duration::from_millis(250),
+                                        );
+                                    }
+                                    Ok(written) => {
+                                        offset += written;
+                                    }
+                                    Err(crate::buffer::BufferError::Busy) => {
+                                        session.wait_for_free_space(
+                                            n - offset,
+                                            Duration::from_millis(250),
+                                        );
+                                    }
+                                    Err(_) => {
+                                        session.body.set_push_streaming(false);
+                                        return;
+                                    }
+                                }
+                            }
+                            stream_pos += offset as u64;
+                            remaining_in_block = remaining_in_block.saturating_sub(offset);
+                            if session.is_eof() {
+                                session.body.set_push_streaming(false);
+                                return;
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(e) => {
+                            let current_end = session.range_end();
+                            let target_end = session.audio_end_offset().unwrap_or(
+                                if content_length > 0 {
+                                    content_length as u64
+                                } else {
+                                    0
+                                },
+                            );
+                            if !is_live
+                                && target_end > 0
+                                && current_end < target_end
+                                && range_retries < 3
+                            {
+                                range_retries += 1;
+                                let range_hdr = format!("bytes={}-", current_end);
+                                let agent = build_network_agent();
+                                let req =
+                                    apply_http_headers(agent.get(&url), headers.as_deref())
+                                        .set("Range", &range_hdr);
+                                if let Ok(res) = req.call() {
+                                    if res.status() == 206 {
+                                        reader = Box::new(res.into_reader());
+                                        stream_pos = current_end;
+                                        continue;
+                                    }
+                                }
+                            }
+                            crate::map_log!(1, "Network streamer read error: {:?}", e);
+                            session.body.set_push_streaming(false);
+                            return;
+                        }
+                    }
+                }
+
+                if order.reaches_eof && session.range_end() >= order.offset + order.length as u64 {
+                    crate::map_log!(3, "Network streamer completed audio payload up to audio_end");
+                    session.mark_eof();
+                    break;
+                }
             }
+            session.body.set_push_streaming(false);
         });
 }
 
@@ -734,6 +893,7 @@ struct DecoderWorker {
     silence_cfg_arc: Arc<RwLock<SilenceConfig>>,
     silence_saved_arc: Arc<AtomicI64>,
     is_stream_arc: Arc<AtomicBool>,
+    at_live_edge_arc: Arc<AtomicBool>,
     session_arc: Arc<RwLock<Option<StreamSession>>>,
     decoder_eof_arc: Arc<AtomicBool>,
     tele: Arc<TelemetryDispatcher>,
@@ -822,6 +982,18 @@ impl DecoderWorker {
         let cur_sr = self.sr_arc.load(Ordering::Relaxed);
         let cur_ch = self.ch_arc.load(Ordering::Relaxed) as usize;
         self.pipeline.sync_silence_format(cur_sr, cur_ch);
+
+        if self.is_stream_arc.load(Ordering::Relaxed) {
+            let live_edge = self
+                .session_arc
+                .read()
+                .ok()
+                .and_then(|g| g.as_ref().map(|s| s.is_at_live_edge()))
+                .unwrap_or(false);
+            self.at_live_edge_arc.store(live_edge, Ordering::Relaxed);
+        } else {
+            self.at_live_edge_arc.store(false, Ordering::Relaxed);
+        }
     }
 
     /// Processes a pending seek request if one exists.
@@ -1285,6 +1457,8 @@ pub struct StreamingDeck {
 
     /// Whether this deck is streaming from a network stream session.
     pub is_stream: Arc<AtomicBool>,
+    /// Whether this deck is at the live edge of an unbounded live broadcast.
+    pub at_live_edge: Arc<AtomicBool>,
     /// Unified stream session (`head`, `body`, `metadata` `StreamBuffer`s).
     pub stream_session: Arc<RwLock<Option<StreamSession>>>,
     /// Audio boundary information discovered by stream classification.
@@ -1447,6 +1621,7 @@ impl StreamingDeck {
         let visualizer_enabled = Arc::new(AtomicBool::new(false));
 
         let is_stream = Arc::new(AtomicBool::new(false));
+        let at_live_edge = Arc::new(AtomicBool::new(false));
         let stream_session = Arc::new(RwLock::new(None));
         let boundary_info = Arc::new(RwLock::new(None));
         let format = Arc::new(RwLock::new(None));
@@ -1536,6 +1711,7 @@ impl StreamingDeck {
             decoder_eof: decoder_eof.clone(),
             seek_request_ms: seek_request_ms.clone(),
             is_stream: is_stream.clone(),
+            at_live_edge: at_live_edge.clone(),
             flush_generation: flush_generation.clone(),
             flush_acknowledged: flush_acknowledged.clone(),
             local_flush_gen: 0,
@@ -1581,6 +1757,7 @@ impl StreamingDeck {
             silence_saved_ms,
             visualizer_enabled,
             is_stream,
+            at_live_edge,
             stream_session,
             boundary_info,
             format,
@@ -1681,6 +1858,7 @@ impl StreamingDeck {
             silence_cfg_arc: self.silence_config.clone(),
             silence_saved_arc: self.silence_saved_ms.clone(),
             is_stream_arc: self.is_stream.clone(),
+            at_live_edge_arc: self.at_live_edge.clone(),
             session_arc: self.stream_session.clone(),
             decoder_eof_arc: self.decoder_eof.clone(),
             tele: self.telemetry.clone(),
@@ -1726,7 +1904,9 @@ impl StreamingDeck {
     }
 
     pub fn begin_open(&mut self) -> i32 {
-        let _ = self.stop();
+        if self.state.load(Ordering::Relaxed) != STATE_OPENING {
+            let _ = self.stop();
+        }
         self.network_streamer_abort.store(true, Ordering::Release);
         self.is_stream.store(false, Ordering::Release);
         if let Ok(mut guard) = self.stream_session.write() {
@@ -1942,7 +2122,10 @@ impl StreamingDeck {
                                 match session.feed_chunk(&audio_bytes[offset..]) {
                                     Ok(written) => offset += written,
                                     Err(crate::buffer::BufferError::Busy) => {
-                                        std::thread::sleep(Duration::from_millis(20));
+                                        session.wait_for_free_space(
+                                            audio_bytes.len() - offset,
+                                            Duration::from_millis(250),
+                                        );
                                     }
                                     Err(_) => return,
                                 }
@@ -2147,7 +2330,16 @@ impl StreamingDeck {
             let new_abort = Arc::new(AtomicBool::new(false));
             self.network_streamer_abort = new_abort.clone();
 
-            spawn_network_streamer_thread(reader, session, new_abort, self.decoder_running.clone());
+            spawn_network_streamer_thread(
+                reader,
+                session,
+                new_abort,
+                self.decoder_running.clone(),
+                url.to_string(),
+                headers.map(|h| h.to_vec()),
+                content_length,
+                is_live,
+            );
         }
 
         crate::map_log!(
@@ -2672,6 +2864,13 @@ impl StreamingDeck {
             self.duration_ms.store(dur, Ordering::SeqCst);
             self.bitrate.store(bitrate, Ordering::SeqCst);
             self.is_stream.store(is_stream, Ordering::SeqCst);
+            self.at_live_edge.store(is_live, Ordering::SeqCst);
+            if let Ok(guard) = self.stream_session.read() {
+                if let Some(ref session) = *guard {
+                    let cur_rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
+                    session.configure_stream_timing(bitrate, dur, cur_rate);
+                }
+            }
             self.decoder_eof.store(false, Ordering::SeqCst);
             self.position_ms.store(0, Ordering::SeqCst);
             self.position_frames.store(0, Ordering::SeqCst);
@@ -3275,6 +3474,11 @@ impl StreamingDeck {
         }
         crate::map_log!(4, "set_rate(rate={})", rate);
         self.rate.store(rate.to_bits(), Ordering::Relaxed);
+        if let Ok(guard) = self.stream_session.read() {
+            if let Some(ref session) = *guard {
+                session.set_playback_rate(rate);
+            }
+        }
         self.telemetry
             .post_event(EventType::Rate, MapEventData { rate });
         MAP_SUCCESS

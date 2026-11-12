@@ -11,6 +11,6 @@ pub use source::{
     FileByteSource, MemoryByteSource, SourceKind, StreamByteSource,
 };
 pub use stream_buffer::{
-    BufferBackend, BufferError, BufferRange, BufferState, ByteFetchTask, StreamBuffer,
-    StreamSession,
+    BlockFetchOrder, BlockFetchPhase, BufferBackend, BufferError, BufferRange, BufferState,
+    ByteFetchTask, SlidingWindowConfig, SlidingWindowState, StreamBuffer, StreamSession,
 };

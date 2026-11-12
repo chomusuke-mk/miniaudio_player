@@ -95,6 +95,7 @@ fn test_audio_renderer_instant_rate_and_pitch_response() {
         decoder_eof: Arc::new(AtomicBool::new(false)),
         seek_request_ms: Arc::new(AtomicI64::new(-1)),
         is_stream: Arc::new(AtomicBool::new(false)),
+        at_live_edge: Arc::new(AtomicBool::new(false)),
         flush_generation: Arc::new(AtomicU64::new(0)),
         flush_acknowledged: Arc::new(AtomicU64::new(0)),
         local_flush_gen: 0,
