@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,31 +10,74 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 import '../models/acoustid_result.dart';
 import '../models/audio_track.dart';
 
+class _PendingAnalysisRequest {
+  final AudioTrack track;
+  final MiniaudioPlayer? engine;
+  final bool force;
+  final Completer<AudioAnalysisResult?> completer;
+
+  _PendingAnalysisRequest({
+    required this.track,
+    required this.engine,
+    required this.force,
+    required this.completer,
+  });
+}
+
 /// Controller orchestrating on-demand acoustic analysis (ITU-R BS.1770-4 / EBU R128)
 /// and track-level ReplayGain synchronization with [MiniaudioPlayer].
 ///
-/// Executes single-pass decoding on background threads and maintains a persistent
-/// session cache of analysis results to prevent redundant processing.
+/// Executes single-pass decoding on background threads, coalesces rapid track switches
+/// onto a serial worker without dropping the latest active track, and maintains a
+/// persistent session cache of analysis results to prevent redundant processing.
 class AudioAnalyzerController extends ChangeNotifier {
+  @visibleForTesting
+  final Future<AudioAnalysisResult?> Function(AudioTrack track)? analysisRunner;
+
+  /// Creates an [AudioAnalyzerController], optionally injecting a custom [analysisRunner] for tests.
+  AudioAnalyzerController({this.analysisRunner});
+
   final Map<String, AudioAnalysisResult> _resultsByTrack = {};
+  final Map<String, String> _errorsByTrack = {};
   final Map<String, AcoustIdLookupResult> _acoustIdCache = {};
   final Map<String, Future<AcoustIdLookupResult>> _pendingAcoustIdLookups = {};
   String? _currentTrackId;
-  bool _isAnalyzing = false;
-  String? _error;
+  String? _activeWorkerTrackId;
+  Completer<AudioAnalysisResult?>? _activeWorkerCompleter;
+  _PendingAnalysisRequest? _queuedRequest;
+  bool _disposed = false;
 
   /// Cached acoustic analysis result for the active track, if available.
   AudioAnalysisResult? get result =>
       _currentTrackId != null ? _resultsByTrack[_currentTrackId] : null;
 
-  /// Identifier of the track currently being analyzed or selected.
+  /// Identifier of the track currently selected for inspection.
   String? get currentTrackId => _currentTrackId;
 
-  /// Whether an acoustic analysis background task is actively running.
-  bool get isAnalyzing => _isAnalyzing;
+  /// Whether the currently selected track is actively analyzing or queued.
+  bool get isAnalyzing =>
+      _currentTrackId != null && _isTrackPendingById(_currentTrackId!);
 
-  /// Last error message encountered during analysis, or null.
-  String? get error => _error;
+  /// Whether an acoustic analysis background task or queued item is active for [track].
+  bool isAnalyzingTrack(AudioTrack? track) =>
+      track != null && _isTrackPendingById(track.id);
+
+  /// Whether any acoustic analysis task is currently running in the background.
+  bool get hasAnyAnalysisInFlight =>
+      _activeWorkerTrackId != null || _queuedRequest != null;
+
+  /// Last error message encountered during analysis for the active track, or null.
+  String? get error =>
+      _currentTrackId != null ? _errorsByTrack[_currentTrackId] : null;
+
+  bool _isTrackPendingById(String trackId) =>
+      _activeWorkerTrackId == trackId || _queuedRequest?.track.id == trackId;
+
+  void _safeNotify() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
 
   /// Retrieves the cached [AudioAnalysisResult] for [track], or null if unanalyzed.
   AudioAnalysisResult? getResultForTrack(AudioTrack? track) {
@@ -47,18 +91,24 @@ class AudioAnalyzerController extends ChangeNotifier {
     return _resultsByTrack.containsKey(track.id);
   }
 
+  /// Whether the most recent analysis attempt for [track] failed with an error.
+  bool hasErrorForTrack(AudioTrack? track) {
+    if (track == null) return false;
+    return _errorsByTrack.containsKey(track.id);
+  }
+
   /// Sets the currently active track ID for inspection without triggering re-analysis.
   void selectTrack(AudioTrack? track) {
     if (track == null) {
       if (_currentTrackId != null) {
         _currentTrackId = null;
-        notifyListeners();
+        _safeNotify();
       }
       return;
     }
     if (_currentTrackId != track.id) {
       _currentTrackId = track.id;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -113,162 +163,292 @@ class AudioAnalyzerController extends ChangeNotifier {
       );
       await engine.action.setReplayGain(config, id: targetId);
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Executes on-demand single-pass acoustic analysis for a single [track].
   ///
-  /// If [track] is already cached in [_resultsByTrack], returns immediately with zero decoding overhead.
-  /// If [engine] is supplied and ReplayGain metrics are computed, automatically dispatches
-  /// [ReplayGainConfig] targeting the track's engine slot by ID.
+  /// If [track] is already cached in [_resultsByTrack] and [force] is false, returns
+  /// immediately with zero decoding overhead. If another track is actively decoding,
+  /// [track] is queued (coalescing superseded intermediate tracks) and automatically
+  /// starts as soon as the active decode finishes.
   Future<AudioAnalysisResult?> analyze(
     AudioTrack track, {
     MiniaudioPlayer? engine,
+    bool force = false,
   }) async {
+    if (_disposed) return null;
+
+    _currentTrackId = track.id;
+
     // 1. Session Cache Hit Check
-    if (_resultsByTrack.containsKey(track.id)) {
+    if (!force && _resultsByTrack.containsKey(track.id)) {
       MapLogger.debug(
         '[ANALYZER:CACHE_HIT] Track "${track.title}" (ID: ${track.id}) retrieved from session cache in 0.05ms.',
       );
-      _currentTrackId = track.id;
-      notifyListeners();
+      _errorsByTrack.remove(track.id);
+      _safeNotify();
       return _resultsByTrack[track.id];
     }
 
-    _currentTrackId = track.id;
-    _isAnalyzing = true;
-    _error = null;
-    notifyListeners();
+    if (force) {
+      _resultsByTrack.remove(track.id);
+      _errorsByTrack.remove(track.id);
+    }
 
+    // 2. Join if already running for this track (unless re-analysis was forced).
+    if (!force &&
+        _activeWorkerTrackId == track.id &&
+        _activeWorkerCompleter != null) {
+      _safeNotify();
+      return await _activeWorkerCompleter!.future;
+    }
+
+    // 3. Join if already waiting at the head of the queue.
+    if (_queuedRequest != null &&
+        _queuedRequest!.track.id == track.id &&
+        (!force || _queuedRequest!.force)) {
+      _safeNotify();
+      return await _queuedRequest!.completer.future;
+    }
+
+    // 4. Coalesce onto the single background queue if another track is currently decoding.
+    if (_activeWorkerTrackId != null) {
+      final existing = _queuedRequest;
+      if (existing != null && existing.track.id != track.id) {
+        _queuedRequest = null;
+        if (!existing.completer.isCompleted) {
+          existing.completer.complete(null);
+        }
+      }
+      final completer =
+          (_queuedRequest != null && _queuedRequest!.track.id == track.id)
+          ? _queuedRequest!.completer
+          : Completer<AudioAnalysisResult?>();
+      _queuedRequest = _PendingAnalysisRequest(
+        track: track,
+        engine: engine,
+        force: force,
+        completer: completer,
+      );
+      _safeNotify();
+      return await completer.future;
+    }
+
+    final completer = Completer<AudioAnalysisResult?>();
+    unawaited(
+      _drainAnalysisLoop(
+        track,
+        engine: engine,
+        initialCompleter: completer,
+      ),
+    );
+    return await completer.future;
+  }
+
+  Future<void> _drainAnalysisLoop(
+    AudioTrack initialTrack, {
+    MiniaudioPlayer? engine,
+    required Completer<AudioAnalysisResult?> initialCompleter,
+  }) async {
+    var current = initialTrack;
+    var currentEngine = engine;
+    var currentCompleter = initialCompleter;
+    _activeWorkerTrackId = current.id;
+    _activeWorkerCompleter = currentCompleter;
+    _errorsByTrack.remove(current.id);
+    _safeNotify();
+
+    try {
+      while (!_disposed) {
+        final result = await _performSingleAnalysis(
+          current,
+          engine: currentEngine,
+        );
+
+        _PendingAnalysisRequest? nextReq;
+        while (!_disposed && _queuedRequest != null) {
+          final candidate = _queuedRequest!;
+          _queuedRequest = null;
+          if (!candidate.force &&
+              _resultsByTrack.containsKey(candidate.track.id)) {
+            if (!candidate.completer.isCompleted) {
+              candidate.completer.complete(_resultsByTrack[candidate.track.id]);
+            }
+            continue;
+          }
+          nextReq = candidate;
+          break;
+        }
+
+        if (_disposed || nextReq == null) {
+          _activeWorkerTrackId = null;
+          _activeWorkerCompleter = null;
+          if (!currentCompleter.isCompleted) {
+            currentCompleter.complete(result);
+          }
+          break;
+        }
+
+        final completedCompleter = currentCompleter;
+        current = nextReq.track;
+        currentEngine = nextReq.engine;
+        currentCompleter = nextReq.completer;
+        _activeWorkerTrackId = current.id;
+        _activeWorkerCompleter = currentCompleter;
+        _errorsByTrack.remove(current.id);
+
+        if (!completedCompleter.isCompleted) {
+          completedCompleter.complete(result);
+        }
+        _safeNotify();
+      }
+    } finally {
+      _activeWorkerTrackId = null;
+      _activeWorkerCompleter = null;
+      if (!currentCompleter.isCompleted) {
+        currentCompleter.complete(null);
+      }
+      final pending = _queuedRequest;
+      _queuedRequest = null;
+      if (pending != null && !pending.completer.isCompleted) {
+        pending.completer.complete(null);
+      }
+      _safeNotify();
+    }
+  }
+
+  Future<AudioAnalysisResult?> _analyzeTarget(Object target) {
+    return MiniaudioPlayer.analyzeAudio(
+      target,
+      waveform: true,
+      replayGain: true,
+      metadata: true,
+      chromaprint: true,
+      waveformPoints: 72,
+    );
+  }
+
+  Future<AudioAnalysisResult?> _decodeAndAnalyze(AudioTrack track) async {
+    final runner = analysisRunner;
+    if (runner != null) {
+      return await runner(track);
+    }
+
+    if (track.source.isMemory && track.source.bytes != null) {
+      return await _analyzeTarget(track.source.bytes!);
+    }
+
+    final uri = track.source.uri;
+    if (uri != null) {
+      if (uri.startsWith('asset://') ||
+          uri.startsWith('asset:') ||
+          uri.startsWith('assets/')) {
+        final assetPath = uri.startsWith('asset://')
+            ? uri.substring('asset://'.length)
+            : uri.startsWith('asset:')
+            ? uri.substring('asset:'.length)
+            : uri;
+        if (!kIsWeb && File(assetPath).existsSync()) {
+          return await _analyzeTarget(assetPath);
+        }
+        final byteData = await rootBundle.load(assetPath);
+        final bytes = byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        );
+        return await _analyzeTarget(bytes);
+      }
+
+      final filePath = (!kIsWeb && uri.startsWith('file://'))
+          ? Uri.parse(uri).toFilePath()
+          : uri;
+      return await _analyzeTarget(filePath);
+    }
+
+    return await _analyzeTarget(track.source);
+  }
+
+  Future<AudioAnalysisResult?> _performSingleAnalysis(
+    AudioTrack track, {
+    MiniaudioPlayer? engine,
+  }) async {
     final stopwatch = Stopwatch()..start();
     MapLogger.info(
       '[ANALYZER:START] Starting single-pass acoustic analysis for track: "${track.title}" (ID: ${track.id})',
     );
 
     try {
-      AudioAnalysisResult? res;
-
-      if (track.source.isMemory && track.source.bytes != null) {
-        res = await MiniaudioPlayer.analyzeAudio(
-          track.source.bytes!,
-          waveform: true,
-          replayGain: true,
-          metadata: true,
-          chromaprint: true,
-          waveformPoints: 72,
-        );
-      } else if (track.source.uri != null) {
-        final s = track.source.uri!;
-        if (s.startsWith('asset://') ||
-            s.startsWith('asset:') ||
-            s.startsWith('assets/')) {
-          final assetPath = s.startsWith('asset://')
-              ? s.substring('asset://'.length)
-              : s.startsWith('asset:')
-              ? s.substring('asset:'.length)
-              : s;
-          if (!kIsWeb && File(assetPath).existsSync()) {
-            res = await MiniaudioPlayer.analyzeAudio(
-              assetPath,
-              waveform: true,
-              replayGain: true,
-              metadata: true,
-              chromaprint: true,
-              waveformPoints: 72,
-            );
-          } else {
-            try {
-              final byteData = await rootBundle.load(assetPath);
-              final bytes = byteData.buffer.asUint8List(
-                byteData.offsetInBytes,
-                byteData.lengthInBytes,
-              );
-              res = await MiniaudioPlayer.analyzeAudio(
-                bytes,
-                waveform: true,
-                replayGain: true,
-                metadata: true,
-                chromaprint: true,
-                waveformPoints: 72,
-              );
-            } catch (_) {}
-          }
-        } else {
-          final filePath = (!kIsWeb && s.startsWith('file://'))
-              ? Uri.parse(s).toFilePath()
-              : s;
-          res = await MiniaudioPlayer.analyzeAudio(
-            filePath,
-            waveform: true,
-            replayGain: true,
-            metadata: true,
-            chromaprint: true,
-            waveformPoints: 72,
-          );
-        }
-      } else {
-        res = await MiniaudioPlayer.analyzeAudio(
-          track.source,
-          waveform: true,
-          replayGain: true,
-          metadata: true,
-          chromaprint: true,
-          waveformPoints: 72,
-        );
-      }
-
+      final res = await _decodeAndAnalyze(track);
       stopwatch.stop();
 
-      if (res != null) {
-        _resultsByTrack[track.id] = res;
+      if (res == null) {
+        _errorsByTrack[track.id] = 'Analysis returned no result';
+        return null;
+      }
 
-        MapLogger.info(
-          '[ANALYZER:DONE] Analysis completed in ${stopwatch.elapsedMilliseconds}ms for "${track.title}": '
-          'Loudness=${res.replayGain?.lufs.toStringAsFixed(2)} LUFS, '
-          'Gain=${res.replayGain?.gainDb.toStringAsFixed(2)} dB, '
-          'Peak=${res.replayGain?.peak.toStringAsFixed(4)}, '
-          'Waveform=${res.waveform?.points.length ?? 0} points',
-        );
+      _resultsByTrack[track.id] = res;
+      _errorsByTrack.remove(track.id);
 
-        // 2. Synchronize ReplayGain directly with native engine if provided
-        if (engine != null && res.replayGain != null) {
-          final queueItem = engine.state.queue
-              .cast<AudioSource<dynamic>?>()
-              .firstWhere(
-                (item) =>
-                    item?.data is AudioTrack &&
-                    (item!.data as AudioTrack).id == track.id,
-                orElse: () => null,
-              );
-          final targetId = queueItem?.id ?? track.source.id;
-          if (targetId != null) {
-            final config = ReplayGainConfig(
-              gainDb: res.replayGain!.gainDb,
-              peak: res.replayGain!.peak,
+      MapLogger.info(
+        '[ANALYZER:DONE] Analysis completed in ${stopwatch.elapsedMilliseconds}ms for "${track.title}": '
+        'Loudness=${res.replayGain?.lufs.toStringAsFixed(2)} LUFS, '
+        'Gain=${res.replayGain?.gainDb.toStringAsFixed(2)} dB, '
+        'Peak=${res.replayGain?.peak.toStringAsFixed(4)}, '
+        'Waveform=${res.waveform?.points.length ?? 0} points',
+      );
+
+      // Synchronize ReplayGain directly with native engine if still active
+      if (engine != null &&
+          !engine.isDisposed &&
+          !_disposed &&
+          res.replayGain != null) {
+        final queueItem = engine.state.queue
+            .cast<AudioSource<dynamic>?>()
+            .firstWhere(
+              (item) =>
+                  item?.data is AudioTrack &&
+                  (item!.data as AudioTrack).id == track.id,
+              orElse: () => null,
             );
-            MapLogger.info(
-              '[REPLAY_GAIN:DISPATCH] Synchronizing ReplayGain to engine for track "${track.title}" (ID: $targetId): ${config.gainDb} dB',
-            );
-            await engine.action.setReplayGain(config, id: targetId);
-          }
+        final targetId = queueItem?.id ?? track.source.id;
+        if (targetId != null) {
+          final config = ReplayGainConfig(
+            gainDb: res.replayGain!.gainDb,
+            peak: res.replayGain!.peak,
+          );
+          MapLogger.info(
+            '[REPLAY_GAIN:DISPATCH] Synchronizing ReplayGain to engine for track "${track.title}" (ID: $targetId): ${config.gainDb} dB',
+          );
+          await engine.action.setReplayGain(config, id: targetId);
         }
       }
       return res;
     } catch (e) {
       stopwatch.stop();
-      if (_currentTrackId == track.id) {
-        _error = e.toString();
-      }
+      _errorsByTrack[track.id] = e.toString();
       MapLogger.error(
         '[ANALYZER:ERROR] Failed analysis for "${track.title}": $e',
       );
       return null;
-    } finally {
-      if (_currentTrackId == track.id) {
-        _isAnalyzing = false;
-        notifyListeners();
-      }
     }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _activeWorkerTrackId = null;
+    final activeCompleter = _activeWorkerCompleter;
+    _activeWorkerCompleter = null;
+    if (activeCompleter != null && !activeCompleter.isCompleted) {
+      activeCompleter.complete(null);
+    }
+    final pending = _queuedRequest;
+    _queuedRequest = null;
+    if (pending != null && !pending.completer.isCompleted) {
+      pending.completer.complete(null);
+    }
+    super.dispose();
   }
 
   /// Retrieves cached AcoustID lookup result for [fingerprint], if previously fetched.

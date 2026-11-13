@@ -226,13 +226,15 @@ class AudioAnalyzerCard extends StatelessWidget {
           final effectiveAnalysis =
               analysis ?? analyzerController?.getResultForTrack(effectiveTrack);
           final effectiveIsLoading =
-              isLoading || (analyzerController?.isAnalyzing ?? false);
+              isLoading ||
+              (analyzerController?.isAnalyzingTrack(effectiveTrack) ?? false);
           final effectiveOnReanalyze =
               onReanalyze ??
               (effectiveCanAnalyze && effectiveTrack != null
                   ? () => analyzerController?.analyze(
                       effectiveTrack,
                       engine: playerController?.engine,
+                      force: true,
                     )
                   : null);
 

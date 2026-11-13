@@ -78,7 +78,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _syncWaveformForTrack(curTrack);
       if (curTrack.canAnalyze &&
           !_analyzerController.hasResultForTrack(curTrack) &&
-          !_analyzerController.isAnalyzing) {
+          !_analyzerController.hasErrorForTrack(curTrack) &&
+          !_analyzerController.isAnalyzingTrack(curTrack)) {
         _analyzerController.analyze(curTrack, engine: _playerController.engine);
       }
     }
