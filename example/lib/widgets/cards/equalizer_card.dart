@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
-import '../common/compact_slider_overlay.dart';
-import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
 import '../painters/eq_curve_painter.dart';
 
@@ -58,210 +56,199 @@ class EqualizerCard extends StatelessWidget {
     controller.setEqualizerBand(closestBand, gainDb);
   }
 
+  Widget _buildPresetDropdown(String currentPreset, bool enabled) {
+    return DropdownButtonFormField<String>(
+      key: ValueKey(currentPreset),
+      initialValue: currentPreset,
+      isExpanded: true,
+      dropdownColor: const Color(0xFF0E1424),
+      decoration: const InputDecoration(
+        labelText: 'Preset',
+        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      ),
+      items: [
+        ...presets.map(
+          (p) => DropdownMenuItem(
+            value: p.key,
+            child: Text(
+              p.label,
+              style: const TextStyle(fontSize: 10.5),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        DropdownMenuItem(
+          value: 'custom',
+          enabled: currentPreset == 'custom',
+          child: Text(
+            'Custom',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontStyle: FontStyle.italic,
+              color: currentPreset == 'custom'
+                  ? StudioColors.accentCyan
+                  : StudioColors.textMuted,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+      onChanged: enabled
+          ? (presetKey) {
+              if (presetKey == null || presetKey == 'custom') return;
+              controller.setEqualizerPreset(presetKey);
+            }
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
         final eq = controller.currentEqualizer;
+        final isEnabled = eq.enabled;
         final selected = controller.selectedPreset;
+        final currentPreset = presets.any((p) => p.key == selected)
+            ? selected
+            : 'custom';
         final bandsList = eq.toList();
 
         return StudioCard(
           icon: Icons.tune,
           title: 'ISO 266 10-BAND PARAMETRIC EQUALIZER',
-          subtitle: 'Direct Form II Transposed (DF2T) SIMD • 0.00 dB Analytical Error',
-          trailing: const StudioBadge(
-            label: 'Acoustic RBJ Curves',
-            color: StudioColors.accentCyan,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          subtitle:
+              'Direct Form II Transposed (DF2T) SIMD • 0.00 dB Analytical Error',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // Presets Selection Chips & Right-Aligned Preamp Overlay Control
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final isNarrow = constraints.maxWidth < 360;
-
-                  final presetsScroll = SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        const Text(
-                          'PRESETS: ',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: StudioColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        ...presets.map((p) {
-                          final isSelected = selected == p.key;
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 4.0),
-                            child: ChoiceChip(
-                              label: Text(
-                                p.label,
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.w500,
-                                  color: isSelected
-                                      ? Colors.black
-                                      : StudioColors.textSecondary,
-                                ),
-                              ),
-                              selected: isSelected,
-                              selectedColor: StudioColors.accentCyan,
-                              backgroundColor: StudioColors.backgroundDark,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 0,
-                              ),
-                              visualDensity: VisualDensity.compact,
-                              onSelected: (_) =>
-                                  controller.setEqualizerPreset(p.key),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                  );
-
-                  final preampControl = CompactSliderControl(
-                    icon: Icons.tune,
-                    label:
-                        'Pre: ${controller.preampDb >= 0 ? '+' : ''}${controller.preampDb.toStringAsFixed(1)} dB',
-                    value: controller.preampDb,
-                    defaultValue: 0.0,
-                    min: -12.0,
-                    max: 12.0,
-                    activeColor: StudioColors.accentAmber,
-                    onChanged: controller.setPreamp,
-                  );
-
-                  if (isNarrow) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        presetsScroll,
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: preampControl,
-                        ),
-                      ],
-                    );
-                  }
-
-                  return Row(
-                    children: [
-                      Expanded(child: presetsScroll),
-                      const SizedBox(width: 8),
-                      preampControl,
-                    ],
-                  );
-                },
+              Text(
+                isEnabled ? 'ON' : 'OFF',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: isEnabled
+                      ? StudioColors.accentCyan
+                      : StudioColors.textMuted,
+                ),
               ),
-              const SizedBox(height: 10),
-
-              // Interactive Biquad Response Curve Graph with Frequency Nodes
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  const graphHeight = 130.0;
-                  final width = constraints.maxWidth;
-
-                  return GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (details) {
-                      _handleGraphInteraction(
-                        details.localPosition,
-                        Size(width, graphHeight),
-                      );
-                    },
-                    onPanUpdate: (details) {
-                      _handleGraphInteraction(
-                        details.localPosition,
-                        Size(width, graphHeight),
-                      );
-                    },
-                    child: Container(
-                      height: graphHeight,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: StudioColors.cardBorder,
-                          width: 1.0,
-                        ),
-                      ),
-                      child: CustomPaint(
-                        painter: EqCurvePainter(
-                          equalizer: eq,
-                          activeColor: StudioColors.accentCyan,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-
-              // Projections below each point outside the graph:
-              // Line 1: Frequency in white
-              // Line 2: Gain in accent cyan
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  return Row(
-                    children: [
-                      // Padding for left margin corresponding to (width / 11) * 0.5
-                      const Expanded(flex: 1, child: SizedBox.shrink()),
-                      for (int i = 0; i < EqCurvePainter.bandCount; i++) ...[
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Frequency label in pure white
-                              Text(
-                                frequencyLabels[i],
-                                style: const TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
-                                  fontFamily: 'monospace',
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 2),
-                              // Gain value in accent cyan
-                              Text(
-                                bandsList[i] > 0
-                                    ? '+${bandsList[i].toStringAsFixed(1)}'
-                                    : bandsList[i].toStringAsFixed(1),
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.w700,
-                                  color: bandsList[i] != 0.0
-                                      ? StudioColors.accentCyan
-                                      : StudioColors.textMuted,
-                                  fontFamily: 'monospace',
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      const Expanded(flex: 1, child: SizedBox.shrink()),
-                    ],
-                  );
-                },
+              const SizedBox(width: 4),
+              Switch(
+                value: isEnabled,
+                activeThumbColor: StudioColors.accentCyan,
+                onChanged: controller.setEqualizerEnabled,
               ),
             ],
+          ),
+          child: AnimatedOpacity(
+            opacity: isEnabled ? 1.0 : 0.38,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(
+              ignoring: !isEnabled,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildPresetDropdown(currentPreset, isEnabled),
+                  const SizedBox(height: 10),
+
+                  // Interactive Biquad Response Curve Graph with Frequency Nodes
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const graphHeight = 130.0;
+                      final width = constraints.maxWidth;
+
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapDown: (details) {
+                          _handleGraphInteraction(
+                            details.localPosition,
+                            Size(width, graphHeight),
+                          );
+                        },
+                        onPanUpdate: (details) {
+                          _handleGraphInteraction(
+                            details.localPosition,
+                            Size(width, graphHeight),
+                          );
+                        },
+                        child: Container(
+                          height: graphHeight,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: StudioColors.cardBorder,
+                              width: 1.0,
+                            ),
+                          ),
+                          child: CustomPaint(
+                            painter: EqCurvePainter(
+                              equalizer: eq,
+                              activeColor: StudioColors.accentCyan,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Projections below each point outside the graph:
+                  // Line 1: Frequency in white
+                  // Line 2: Gain in accent cyan
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      return Row(
+                        children: [
+                          // Padding for left margin corresponding to (width / 11) * 0.5
+                          const Expanded(flex: 1, child: SizedBox.shrink()),
+                          for (int i = 0; i < EqCurvePainter.bandCount; i++) ...[
+                            Expanded(
+                              flex: 2,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Frequency label in pure white
+                                  Text(
+                                    frequencyLabels[i],
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                      fontFamily: 'monospace',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  // Gain value in accent cyan
+                                  Text(
+                                    bandsList[i] > 0
+                                        ? '+${bandsList[i].toStringAsFixed(1)}'
+                                        : bandsList[i].toStringAsFixed(1),
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.w700,
+                                      color: bandsList[i] != 0.0
+                                          ? StudioColors.accentCyan
+                                          : StudioColors.textMuted,
+                                      fontFamily: 'monospace',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          const Expanded(flex: 1, child: SizedBox.shrink()),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
           ),
         );
       },

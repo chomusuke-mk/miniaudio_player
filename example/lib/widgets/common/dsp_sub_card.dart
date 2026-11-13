@@ -43,27 +43,15 @@ class DspSubCard extends StatelessWidget {
                 size: 16,
                 color: enabled ? accentColor : StudioColors.textMuted,
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 9.5,
-                        color: StudioColors.textSecondary,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
               const SizedBox(width: 4),
@@ -87,6 +75,14 @@ class DspSubCard extends StatelessWidget {
                 ],
               ),
             ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 9.5,
+              color: StudioColors.textSecondary,
+            ),
           ),
           const SizedBox(height: 6),
           AnimatedOpacity(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
+import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/spectrum_visualizer_card.dart';
 import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
 
@@ -93,34 +94,69 @@ void main() {
 
         final scrollable = find.byType(Scrollable).first;
 
-        // Locate Flat and Rock ChoiceChips in Equalizer card
-        final flatChipFinder = find.widgetWithText(ChoiceChip, 'Flat');
-        expect(flatChipFinder, findsOneWidget);
+        final eqCard = find.byType(EqualizerCard);
+        expect(eqCard, findsOneWidget);
+        expect(
+          find.descendant(of: eqCard, matching: find.text('Acoustic RBJ Curves')),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: eqCard,
+            matching: find.byType(CompactSliderControl),
+          ),
+          findsNothing,
+        );
+
+        final eqSwitch = find.descendant(
+          of: eqCard,
+          matching: find.byType(Switch),
+        );
         await tester.scrollUntilVisible(
-          flatChipFinder,
+          eqSwitch,
           200,
           scrollable: scrollable,
         );
+        expect(tester.widget<Switch>(eqSwitch).value, isFalse);
+        await tester.tap(eqSwitch);
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(milliseconds: 300));
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.widget<Switch>(eqSwitch).value, isTrue);
 
-        final flatChip = tester.widget<ChoiceChip>(flatChipFinder);
-        expect(flatChip.selected, isTrue);
-
-        final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
-        expect(rockChipFinder, findsOneWidget);
+        final presetDropdown = find.descendant(
+          of: eqCard,
+          matching: find.byWidgetPredicate(
+            (w) => w is DropdownButtonFormField<String>,
+          ),
+        );
+        expect(presetDropdown, findsOneWidget);
         await tester.scrollUntilVisible(
-          rockChipFinder,
+          presetDropdown,
           200,
           scrollable: scrollable,
         );
-        await tester.tap(rockChipFinder);
+        expect(
+          find.descendant(of: presetDropdown, matching: find.text('Flat')),
+          findsOneWidget,
+        );
+
+        await tester.tap(presetDropdown);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.text('Rock').last, warnIfMissed: false);
         await tester.runAsync(() async {
           await Future.delayed(const Duration(milliseconds: 300));
         });
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
 
-        final rockChip = tester.widget<ChoiceChip>(rockChipFinder);
-        expect(rockChip.selected, isTrue);
+        expect(
+          find.descendant(of: presetDropdown, matching: find.text('Rock')),
+          findsOneWidget,
+        );
       },
     );
 

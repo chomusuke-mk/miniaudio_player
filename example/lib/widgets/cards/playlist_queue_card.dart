@@ -151,6 +151,7 @@ class PlaylistQueueCard extends StatelessWidget {
                       min: 0.0,
                       max: 12.0,
                       activeColor: StudioColors.accentCyan,
+                      valueFormatter: (s) => '${s.round()}s',
                       onChanged: (s) => controller.setCrossfadeDuration(
                         Duration(seconds: s.round()),
                       ),
@@ -163,6 +164,7 @@ class PlaylistQueueCard extends StatelessWidget {
                       min: 0.0,
                       max: 1500.0,
                       activeColor: StudioColors.accentPurple,
+                      valueFormatter: (ms) => '${ms.round()}ms',
                       onChanged: (ms) => controller.setManualCrossfadeDuration(
                         Duration(milliseconds: ms.round()),
                       ),

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
-import '../widgets/cards/algorithmic_reverb_card.dart';
 import '../widgets/cards/audio_analyzer_card.dart';
 import '../widgets/cards/dsp_effects_card.dart';
 import '../widgets/cards/equalizer_card.dart';
@@ -55,9 +54,6 @@ class StudioConsoleView extends StatelessWidget {
         ),
         RepaintBoundary(child: DspEffectsCard(controller: playerController)),
         RepaintBoundary(child: EqualizerCard(controller: playerController)),
-        RepaintBoundary(
-          child: AlgorithmicReverbCard(controller: playerController),
-        ),
         RepaintBoundary(
           child: RamSoundEffectsCard(controller: playerController),
         ),

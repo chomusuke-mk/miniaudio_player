@@ -7,6 +7,7 @@ import '../common/compact_slider_overlay.dart';
 import '../common/dsp_sub_card.dart';
 import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
+import 'algorithmic_reverb_card.dart';
 import 'crossfeed_card.dart';
 
 /// Card hosting DSP and spatial mastering processors:
@@ -14,6 +15,7 @@ import 'crossfeed_card.dart';
 /// - Intelligent Silence Skipping
 /// - Bauer BS2B Binaural Crossfeed
 /// - Stereo Widener Spatializer
+/// - Studio Algorithmic Reverb (Freeverb Model)
 /// - Master Preamplifier Gain
 /// - Stereo Balance / Pan
 /// - Monophonic Downmixing
@@ -98,6 +100,7 @@ class DspEffectsCard extends StatelessWidget {
             max: -20.0,
             activeColor: StudioColors.accentPurple,
             disabled: !controller.silenceEnabled,
+            valueFormatter: (v) => '${v.toStringAsFixed(1)} dB',
             onChanged: controller.setSilenceThresholdDb,
           ),
         ],
@@ -127,7 +130,116 @@ class DspEffectsCard extends StatelessWidget {
             max: 2.0,
             activeColor: StudioColors.accentCyan,
             disabled: !controller.spatializerEnabled,
+            valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
             onChanged: controller.setSpatializerWidth,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResponsiveSubCardGrid(List<Widget> cards, double maxWidth) {
+    final int columns;
+    if (maxWidth >= 780) {
+      columns = 4;
+    } else if (maxWidth >= 620) {
+      columns = 3;
+    } else if (maxWidth >= 420) {
+      columns = 2;
+    } else {
+      columns = 1;
+    }
+
+    final rows = <Widget>[];
+    for (var i = 0; i < cards.length; i += columns) {
+      final rowItems = cards.sublist(
+        i,
+        (i + columns) > cards.length ? cards.length : (i + columns),
+      );
+      if (rows.isNotEmpty) {
+        rows.add(const SizedBox(height: 10));
+      }
+      if (rowItems.length == 1) {
+        rows.add(rowItems.first);
+      } else {
+        rows.add(
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var j = 0; j < rowItems.length; j++) ...[
+                  if (j > 0) const SizedBox(width: 10),
+                  Expanded(child: rowItems[j]),
+                ],
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: rows,
+    );
+  }
+
+  Widget _buildCompactToggleTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required Color activeColor,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0F1D),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: StudioColors.cardBorder),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: value ? activeColor : StudioColors.textMuted,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    color: StudioColors.textMuted,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: value,
+            activeThumbColor: activeColor,
+            onChanged: onChanged,
           ),
         ],
       ),
@@ -143,7 +255,7 @@ class DspEffectsCard extends StatelessWidget {
           icon: Icons.tune,
           title: 'DYNAMIC DSP & SPATIAL MASTERING',
           subtitle:
-              'True-Peak Limiter • Silence Skipper • BS2B Crossfeed • Stereo Widener • Preamp • ReplayGain',
+              'True-Peak Limiter • Silence Skipper • BS2B Crossfeed • Stereo Widener • Freeverb Reverb • Preamp • ReplayGain',
           trailing: const StudioBadge(
             label: 'Mastering Chain',
             color: StudioColors.accentCyan,
@@ -158,118 +270,26 @@ class DspEffectsCard extends StatelessWidget {
                 builder: (context, constraints) {
                   final isCompact = constraints.maxWidth < 360;
 
-                  final limiterWidget = Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0A0F1D),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: StudioColors.cardBorder),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.shield_outlined,
-                          size: 16,
-                          color: controller.limiterEnabled
-                              ? StudioColors.accentEmerald
-                              : StudioColors.textMuted,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'True-Peak Limiter',
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                controller.limiterEnabled
-                                    ? 'Active: 0.0 dBFS ceiling'
-                                    : 'Disabled / Bypass',
-                                style: const TextStyle(
-                                  fontSize: 9,
-                                  color: StudioColors.textMuted,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: controller.limiterEnabled,
-                          activeThumbColor: StudioColors.accentEmerald,
-                          onChanged: controller.setLimiterEnabled,
-                        ),
-                      ],
-                    ),
+                  final limiterWidget = _buildCompactToggleTile(
+                    icon: Icons.shield_outlined,
+                    title: 'True-Peak Limiter',
+                    subtitle: controller.limiterEnabled
+                        ? 'Active: 0.0 dBFS ceiling'
+                        : 'Disabled / Bypass',
+                    value: controller.limiterEnabled,
+                    activeColor: StudioColors.accentEmerald,
+                    onChanged: controller.setLimiterEnabled,
                   );
 
-                  final monoWidget = Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0A0F1D),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: StudioColors.cardBorder),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.call_merge,
-                          size: 16,
-                          color: controller.monoDownmix
-                              ? StudioColors.accentAmber
-                              : StudioColors.textMuted,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Mono Downmix',
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                controller.monoDownmix
-                                    ? 'L+R downmixed'
-                                    : 'Stereo discrete',
-                                style: const TextStyle(
-                                  fontSize: 9,
-                                  color: StudioColors.textMuted,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: controller.monoDownmix,
-                          activeThumbColor: StudioColors.accentAmber,
-                          onChanged: controller.setMonoDownmix,
-                        ),
-                      ],
-                    ),
+                  final monoWidget = _buildCompactToggleTile(
+                    icon: Icons.call_merge,
+                    title: 'Mono Downmix',
+                    subtitle: controller.monoDownmix
+                        ? 'L+R downmixed'
+                        : 'Stereo discrete',
+                    value: controller.monoDownmix,
+                    activeColor: StudioColors.accentAmber,
+                    onChanged: controller.setMonoDownmix,
                   );
 
                   if (isCompact) {
@@ -295,61 +315,16 @@ class DspEffectsCard extends StatelessWidget {
               const SizedBox(height: 10),
 
               // =============================================================
-              // 2. Intelligent Silence Skipping, BS2B Crossfeed & Stereo Widener
+              // 2. Intelligent Silence Skipping, BS2B Crossfeed, Stereo Widener & Reverb
               // =============================================================
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final silenceCard = _buildSmartSilenceSubCard();
-                  final crossfeedCard = BauerCrossfeedSubCard(
-                    controller: controller,
-                  );
-                  final widenerCard = _buildStereoWidenerSubCard();
-
-                  if (constraints.maxWidth >= 620) {
-                    return IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(child: silenceCard),
-                          const SizedBox(width: 10),
-                          Expanded(child: crossfeedCard),
-                          const SizedBox(width: 10),
-                          Expanded(child: widenerCard),
-                        ],
-                      ),
-                    );
-                  }
-
-                  if (constraints.maxWidth >= 420) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        IntrinsicHeight(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: silenceCard),
-                              const SizedBox(width: 10),
-                              Expanded(child: crossfeedCard),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        widenerCard,
-                      ],
-                    );
-                  }
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      silenceCard,
-                      const SizedBox(height: 10),
-                      crossfeedCard,
-                      const SizedBox(height: 10),
-                      widenerCard,
-                    ],
-                  );
+                  return _buildResponsiveSubCardGrid([
+                    _buildSmartSilenceSubCard(),
+                    BauerCrossfeedSubCard(controller: controller),
+                    _buildStereoWidenerSubCard(),
+                    ReverbSubCard(controller: controller),
+                  ], constraints.maxWidth);
                 },
               ),
               const SizedBox(height: 10),

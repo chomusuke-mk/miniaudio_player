@@ -110,6 +110,7 @@ class BauerCrossfeedSubCard extends StatelessWidget {
               CompactSliderControl(
                 icon: Icons.waves,
                 label: 'Lowpass Cutoff: ${cf.cutoffHz.round()} Hz',
+                valueFormatter: (v) => '${v.round()} Hz',
                 value: cf.cutoffHz,
                 defaultValue: Crossfeed.moffatBauer.cutoffHz,
                 min: 300.0,
@@ -122,6 +123,7 @@ class BauerCrossfeedSubCard extends StatelessWidget {
               CompactSliderControl(
                 icon: Icons.compare_arrows,
                 label: 'Crossfeed Level: ${cf.feedDb.toStringAsFixed(1)} dB',
+                valueFormatter: (v) => '${v.toStringAsFixed(1)} dB',
                 value: cf.feedDb,
                 defaultValue: Crossfeed.moffatBauer.feedDb,
                 min: 1.0,

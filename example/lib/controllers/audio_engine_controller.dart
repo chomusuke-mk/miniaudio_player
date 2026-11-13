@@ -103,7 +103,12 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   String _selectedPreset = 'flat';
-  String _selectedReverbPreset = 'Off';
+  Equalizer? _equalizerOverride;
+  int _pendingEqualizerUpdates = 0;
+  String _selectedReverbPreset = 'Studio';
+  Reverb? _reverbOverride;
+  int _pendingReverbUpdates = 0;
+  Reverb _lastActiveReverb = Reverb.studio;
 
   final List<StreamSubscription<dynamic>> _subscriptions = [];
 
@@ -134,18 +139,27 @@ class AudioEngineController extends ChangeNotifier {
   bool get isLoop => engine.state.loopMode != LoopMode.off;
   LoopMode get loopMode => engine.state.loopMode;
 
-  Equalizer get currentEqualizer => engine.state.equalizer;
+  Equalizer get currentEqualizer => _equalizerOverride ?? engine.state.equalizer;
+  bool get equalizerEnabled => currentEqualizer.enabled;
   String get selectedPreset => _selectedPreset;
 
-  Reverb get currentReverb => engine.state.reverb;
+  Reverb get currentReverb {
+    if (_reverbOverride != null) return _reverbOverride!;
+    final rev = engine.state.reverb;
+    if (rev == Reverb.off) {
+      return _lastActiveReverb.copyWith(enabled: false);
+    }
+    return rev;
+  }
+
   String get selectedReverbPreset => _selectedReverbPreset;
-  double get reverbRoomSize => engine.state.reverb.roomSize;
-  double get reverbDamping => engine.state.reverb.damping;
-  double get reverbWidth => engine.state.reverb.width;
-  double get reverbWet => engine.state.reverb.wet;
-  double get reverbDry => engine.state.reverb.dry;
-  double get reverbWetDry => engine.state.reverb.wet;
-  bool get reverbEnabled => engine.state.reverb.enabled;
+  double get reverbRoomSize => currentReverb.roomSize;
+  double get reverbDamping => currentReverb.damping;
+  double get reverbWidth => currentReverb.width;
+  double get reverbWet => currentReverb.wet;
+  double get reverbDry => currentReverb.dry;
+  double get reverbWetDry => currentReverb.wet;
+  bool get reverbEnabled => currentReverb.enabled;
 
   Crossfeed? _crossfeedOverride;
   int _pendingCrossfeedUpdates = 0;
@@ -408,13 +422,21 @@ class AudioEngineController extends ChangeNotifier {
     );
     _subscriptions.add(
       engine.stream.equalizer.listen((eq) {
+        if (_pendingEqualizerUpdates > 0) return;
+        _equalizerOverride = null;
         _selectedPreset = _detectPreset(eq) ?? 'custom';
         notifyListeners();
       }),
     );
     _subscriptions.add(
       engine.stream.reverb.listen((rev) {
-        _selectedReverbPreset = _detectReverbPreset(rev) ?? 'Custom';
+        if (_pendingReverbUpdates > 0) return;
+        _reverbOverride = null;
+        if (rev != Reverb.off) {
+          _lastActiveReverb = rev.copyWith(enabled: true);
+        }
+        _selectedReverbPreset =
+            _detectReverbPreset(_lastActiveReverb) ?? 'Custom';
         notifyListeners();
       }),
     );
@@ -520,18 +542,38 @@ class AudioEngineController extends ChangeNotifier {
 
   // --- Equalizer ---
   static String? _detectPreset(Equalizer eq) {
-    if (eq == Equalizer.flat) return 'flat';
-    if (eq == Equalizer.rock) return 'rock';
-    if (eq == Equalizer.pop) return 'pop';
-    if (eq == Equalizer.jazz) return 'jazz';
-    if (eq == Equalizer.classical) return 'classical';
-    if (eq == Equalizer.bassBoost) return 'bassBoost';
+    final normalized = eq.copyWith(enabled: true);
+    if (normalized == Equalizer.flat) return 'flat';
+    if (normalized == Equalizer.rock) return 'rock';
+    if (normalized == Equalizer.pop) return 'pop';
+    if (normalized == Equalizer.jazz) return 'jazz';
+    if (normalized == Equalizer.classical) return 'classical';
+    if (normalized == Equalizer.bassBoost) return 'bassBoost';
     return null;
   }
 
+  Future<void> _applyEqualizer(Equalizer target) async {
+    _pendingEqualizerUpdates++;
+    _equalizerOverride = target;
+    _selectedPreset = _detectPreset(target) ?? 'custom';
+    notifyListeners();
+    try {
+      await engine.action.setEqualizer(target);
+    } finally {
+      _pendingEqualizerUpdates--;
+      if (_pendingEqualizerUpdates == 0 && engine.state.equalizer == target) {
+        _equalizerOverride = null;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> setEqualizerEnabled(bool enabled) async {
+    await _applyEqualizer(currentEqualizer.copyWith(enabled: enabled));
+  }
+
   Future<void> setEqualizerPreset(String presetKey) async {
-    _selectedPreset = presetKey;
-    Equalizer eq;
+    final Equalizer eq;
     switch (presetKey) {
       case 'rock':
         eq = Equalizer.rock;
@@ -553,33 +595,61 @@ class AudioEngineController extends ChangeNotifier {
         eq = Equalizer.flat;
         break;
     }
-    await engine.action.setEqualizer(eq);
-    notifyListeners();
+    await _applyEqualizer(eq);
   }
 
   Future<void> setEqualizerBand(int bandIndex, double gainDb) async {
-    final list = engine.state.equalizer.toList();
+    final list = currentEqualizer.toList();
     if (bandIndex >= 0 && bandIndex < list.length) {
       list[bandIndex] = gainDb;
-      await engine.action.setEqualizer(Equalizer.fromList(list));
-      _selectedPreset = _detectPreset(engine.state.equalizer) ?? 'custom';
-      notifyListeners();
+      await _applyEqualizer(
+        Equalizer.fromList(list, enabled: currentEqualizer.enabled),
+      );
     }
   }
 
   // --- Reverb ---
   static String? _detectReverbPreset(Reverb rev) {
     for (final entry in Reverb.presets.entries) {
+      if (entry.key == 'Off') continue;
       if (entry.value == rev) return entry.key;
     }
     return null;
   }
 
-  Future<void> setReverbPreset(String name) async {
-    _selectedReverbPreset = name;
-    final preset = Reverb.presets[name] ?? Reverb.off;
-    await engine.action.setReverb(preset);
+  Future<void> _applyReverb(Reverb target) async {
+    _pendingReverbUpdates++;
+    final activeView = target.enabled
+        ? target
+        : (target == Reverb.off
+              ? _lastActiveReverb
+              : target.copyWith(enabled: true));
+    if (target != Reverb.off) {
+      _lastActiveReverb = activeView;
+    }
+    _selectedReverbPreset = _detectReverbPreset(activeView) ?? 'Custom';
+    _reverbOverride = target.enabled
+        ? target
+        : activeView.copyWith(enabled: false);
     notifyListeners();
+    try {
+      await engine.action.setReverb(target);
+    } finally {
+      _pendingReverbUpdates--;
+      if (_pendingReverbUpdates == 0 && engine.state.reverb == target) {
+        _reverbOverride = null;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> toggleReverb(bool enabled) async {
+    await _applyReverb(currentReverb.copyWith(enabled: enabled));
+  }
+
+  Future<void> setReverbPreset(String name) async {
+    final preset = Reverb.presets[name] ?? Reverb.off;
+    await _applyReverb(preset);
   }
 
   Future<void> setReverbParams({
@@ -590,9 +660,8 @@ class AudioEngineController extends ChangeNotifier {
     double? dry,
     bool? enabled,
   }) async {
-    final current = engine.state.reverb;
-    await engine.action.setReverb(
-      current.copyWith(
+    await _applyReverb(
+      currentReverb.copyWith(
         enabled: enabled ?? true,
         roomSize: roomSize,
         damping: damping,
@@ -601,9 +670,6 @@ class AudioEngineController extends ChangeNotifier {
         dry: dry,
       ),
     );
-    _selectedReverbPreset =
-        _detectReverbPreset(engine.state.reverb) ?? 'Custom';
-    notifyListeners();
   }
 
   // --- Track Selection & Queue Navigation ---

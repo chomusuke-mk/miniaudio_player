@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
+import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
 import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
 
 Future<void> settleFrames(
@@ -207,14 +208,35 @@ void main() {
           await settleFrames(tester, frames: 5);
           expect(tester.takeException(), isNull);
 
-          // 4. EQ Preset ChoiceChip Selection
-          final rockChipFinder = find.widgetWithText(ChoiceChip, 'Rock');
+          // 4. EQ Enable Switch & Preset Dropdown Selection
+          final eqCard = find.byType(EqualizerCard);
+          final eqSwitch = find.descendant(
+            of: eqCard,
+            matching: find.byType(Switch),
+          );
           await tester.scrollUntilVisible(
-            rockChipFinder,
+            eqSwitch,
             200,
             scrollable: scrollable,
           );
-          await tester.tap(rockChipFinder);
+          if (!tester.widget<Switch>(eqSwitch).value) {
+            await tester.tap(eqSwitch);
+            await settleFrames(tester, frames: 5);
+          }
+          final eqDropdown = find.descendant(
+            of: eqCard,
+            matching: find.byWidgetPredicate(
+              (w) => w is DropdownButtonFormField<String>,
+            ),
+          );
+          await tester.scrollUntilVisible(
+            eqDropdown,
+            200,
+            scrollable: scrollable,
+          );
+          await tester.tap(eqDropdown);
+          await settleFrames(tester, frames: 5);
+          await tester.tap(find.text('Rock').last, warnIfMissed: false);
           await settleFrames(tester, frames: 5);
           expect(tester.takeException(), isNull);
 

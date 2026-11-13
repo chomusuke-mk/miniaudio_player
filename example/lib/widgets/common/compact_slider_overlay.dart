@@ -2,13 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../theme/studio_colors.dart';
 
-/// Ultra-compact, elegant floating slider overlay control for Speed, Pitch, Volume, and Crossfade.
+/// Ultra-compact, elegant floating slider overlay control for Speed, Pitch, Volume, Crossfeed, and DSP values.
 ///
 /// Clicking the trigger button shows a sleek floating bar directly above it:
-/// `[ Icon (click to reset to default) | ------------------- Slider ------------------- ]`.
-///
-/// As the user drags the slider, the value updates directly on the trigger button underneath,
-/// completely eliminating the need for redundant text inside the floating slider bar.
+/// `[ Icon (click to reset to default) | ---------- Slider ---------- | Live Value ]`.
 class CompactSliderControl extends StatefulWidget {
   final IconData icon;
   final String label;
@@ -19,6 +16,7 @@ class CompactSliderControl extends StatefulWidget {
   final Color activeColor;
   final ValueChanged<double> onChanged;
   final bool disabled;
+  final String Function(double value)? valueFormatter;
 
   const CompactSliderControl({
     super.key,
@@ -31,6 +29,7 @@ class CompactSliderControl extends StatefulWidget {
     this.activeColor = StudioColors.accentCyan,
     required this.onChanged,
     this.disabled = false,
+    this.valueFormatter,
   });
 
   @override
@@ -77,6 +76,17 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
     }
   }
 
+  String _formatOverlayValue(double val) {
+    if (widget.valueFormatter != null) {
+      return widget.valueFormatter!(val);
+    }
+    final colonIdx = widget.label.indexOf(': ');
+    if (colonIdx != -1) {
+      return widget.label.substring(colonIdx + 2);
+    }
+    return widget.label;
+  }
+
   void _showOverlay() {
     final overlay = Overlay.of(context);
     _currentVal = widget.value;
@@ -86,9 +96,13 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
     final pos = renderBox.localToGlobal(Offset.zero);
     final screenSize = MediaQuery.of(context).size;
 
+    final overlayWidth = 228.0.clamp(
+      160.0,
+      (screenSize.width - 16).clamp(160.0, 240.0),
+    );
     final targetLeft = (pos.dx - 20).clamp(
       8.0,
-      (screenSize.width - 190).clamp(8.0, double.infinity),
+      (screenSize.width - overlayWidth - 8).clamp(8.0, double.infinity),
     );
     final targetTop = (pos.dy - 44).clamp(
       8.0,
@@ -112,7 +126,7 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                 Positioned(
                   left: targetLeft,
                   top: targetTop,
-                  width: 180,
+                  width: overlayWidth,
                   child: Material(
                     elevation: 10,
                     color: const Color(0xFF0D1424),
@@ -125,7 +139,7 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                     ),
                     child: Container(
                       height: 36,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
                       child: Row(
                         children: [
                           // Reset icon: click snaps to default value
@@ -175,6 +189,18 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                                   widget.onChanged(val);
                                 },
                               ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatOverlayValue(_currentVal),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: widget.activeColor,
+                              fontFamily: 'monospace',
                             ),
                           ),
                         ],

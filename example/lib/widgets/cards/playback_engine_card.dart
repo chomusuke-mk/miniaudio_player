@@ -597,11 +597,12 @@ class PlaybackEngineCard extends StatelessWidget {
                       CompactSliderControl(
                         icon: Icons.volume_up,
                         label: 'Vol: ${(controller.volume * 100).round()}%',
-                        value: controller.volume,
+                        value: controller.volume.clamp(0.0, 2.0),
                         defaultValue: 1.0,
                         min: 0.0,
-                        max: 1.0,
+                        max: 2.0,
                         activeColor: StudioColors.accentEmerald,
+                        valueFormatter: (v) => '${(v * 100).round()}%',
                         onChanged: controller.setVolume,
                       ),
                       // Speed Overlay Control
@@ -613,6 +614,7 @@ class PlaybackEngineCard extends StatelessWidget {
                         min: 0.25,
                         max: 4.0,
                         activeColor: StudioColors.accentCyan,
+                        valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
                         onChanged: controller.setRate,
                       ),
                       // Pitch Overlay Control
@@ -624,6 +626,7 @@ class PlaybackEngineCard extends StatelessWidget {
                         min: 0.5,
                         max: 2.0,
                         activeColor: StudioColors.accentPurple,
+                        valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
                         onChanged: controller.setPitch,
                       ),
                     ],
@@ -723,173 +726,111 @@ class PlaybackEngineCard extends StatelessWidget {
               const SizedBox(height: 10),
 
               // 5. Native Pause on Device Disconnect Toggle
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: StudioColors.cardBackgroundDark,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: StudioColors.cardBorder),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.pause_circle_outline,
-                                size: 14,
-                                color: controller.pauseOnDeviceChange
-                                    ? StudioColors.accentCyan
-                                    : StudioColors.textMuted,
-                              ),
-                              const SizedBox(width: 6),
-                              const Expanded(
-                                child: Text(
-                                  'Pause on Device Change',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: StudioColors.textPrimary,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            controller.pauseOnDeviceChange
-                                ? 'Immediate native pause (0ms leak) if physical endpoint changes'
-                                : 'Inactive: audio switches to new endpoint without pausing',
-                            style: const TextStyle(
-                              fontSize: 9.5,
-                              color: StudioColors.textMuted,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          controller.pauseOnDeviceChange ? 'ON' : 'OFF',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: controller.pauseOnDeviceChange
-                                ? StudioColors.accentCyan
-                                : StudioColors.textMuted,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Switch(
-                          value: controller.pauseOnDeviceChange,
-                          activeThumbColor: StudioColors.accentCyan,
-                          onChanged: (val) =>
-                              controller.setPauseOnDeviceChange(val),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+              _buildFeatureToggleTile(
+                icon: Icons.pause_circle_outline,
+                title: 'Pause on Device Change',
+                subtitle: controller.pauseOnDeviceChange
+                    ? 'Immediate native pause (0ms leak) if physical endpoint changes'
+                    : 'Inactive: audio switches to new endpoint without pausing',
+                value: controller.pauseOnDeviceChange,
+                activeColor: StudioColors.accentCyan,
+                onChanged: controller.setPauseOnDeviceChange,
               ),
               const SizedBox(height: 6),
 
               // 6. Dynamic Metadata Event Dispatch Toggle
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: StudioColors.cardBackgroundDark,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: StudioColors.cardBorder),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.tag,
-                                size: 14,
-                                color: controller.metadataEnabled
-                                    ? StudioColors.accentAmber
-                                    : StudioColors.textMuted,
-                              ),
-                              const SizedBox(width: 6),
-                              const Expanded(
-                                child: Text(
-                                  'Dynamic Metadata Event Stream',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: StudioColors.textPrimary,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            controller.metadataEnabled
-                                ? 'Active: Rust streams live ID3v2/FLAC/Vorbis metadata events'
-                                : 'Disabled: zero channel bus saturation until activated',
-                            style: const TextStyle(
-                              fontSize: 9.5,
-                              color: StudioColors.textMuted,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          controller.metadataEnabled ? 'ON' : 'OFF',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: controller.metadataEnabled
-                                ? StudioColors.accentAmber
-                                : StudioColors.textMuted,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Switch(
-                          value: controller.metadataEnabled,
-                          activeThumbColor: StudioColors.accentAmber,
-                          onChanged: (val) =>
-                              controller.setMetadataEnabled(val),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+              _buildFeatureToggleTile(
+                icon: Icons.tag,
+                title: 'Dynamic Metadata Event Stream',
+                subtitle: controller.metadataEnabled
+                    ? 'Active: Rust streams live ID3v2/FLAC/Vorbis metadata events'
+                    : 'Disabled: zero channel bus saturation until activated',
+                value: controller.metadataEnabled,
+                activeColor: StudioColors.accentAmber,
+                onChanged: controller.setMetadataEnabled,
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildFeatureToggleTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required Color activeColor,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: StudioColors.cardBackgroundDark,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: StudioColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: value ? activeColor : StudioColors.textMuted,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: StudioColors.textPrimary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    value ? 'ON' : 'OFF',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: value ? activeColor : StudioColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Switch(
+                    value: value,
+                    activeThumbColor: activeColor,
+                    onChanged: onChanged,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 9.5,
+              color: StudioColors.textMuted,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 
