@@ -484,6 +484,13 @@ class PlayerAction<T> {
     await _rust.setVisualizerEnabled(enabled: enabled);
   }
 
+  /// Configures which audio bus feeds the real-time FFT spectrum visualizer.
+  Future<void> setVisualizerSource(AudioOutputSource source) async {
+    _player._ensureNotDisposed();
+    _player.state._visualizerSource = source;
+    await _rust.setVisualizerSource(source: source.value);
+  }
+
   /// Enables or disables metadata dispatch from the native audio engine.
   ///
   /// When enabled, [AudioMetadata] events are emitted across `PlayerStream.metadata`

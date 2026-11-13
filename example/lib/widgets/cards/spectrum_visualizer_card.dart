@@ -31,6 +31,82 @@ class SpectrumVisualizerCard extends StatelessWidget {
               spacing: 6,
               runSpacing: 4,
               children: [
+                // Audio Source Selector Dropdown (styled identically to recorder and routing matrix)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF070B14),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: StudioColors.cardBorder),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<AudioOutputSource>(
+                      value: controller.visualizerSource,
+                      isDense: true,
+                      icon: const Icon(Icons.arrow_drop_down, size: 16),
+                      dropdownColor: const Color(0xFF0E172A),
+                      items: const [
+                        DropdownMenuItem(
+                          value: AudioOutputSource.all,
+                          child: Text(
+                            'All Mix',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.musicMix,
+                          child: Text(
+                            'Music Only',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.activeTrack,
+                          child: Text(
+                            'Active Deck',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.standbyTrack,
+                          child: Text(
+                            'Cue Deck',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.voiceOnly,
+                          child: Text(
+                            'Voice Only',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: isEnabled
+                          ? (src) {
+                              if (src != null) {
+                                controller.setVisualizerSource(src);
+                              }
+                            }
+                          : null,
+                    ),
+                  ),
+                ),
                 const StudioBadge(
                   label: '0% Idle CPU',
                   color: StudioColors.accentEmerald,

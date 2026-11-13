@@ -597,6 +597,22 @@ class HardwareRoutingCard extends StatelessWidget {
                                                                           .ellipsis,
                                                                 ),
                                                               ),
+                                                              DropdownMenuItem(
+                                                                value: AudioOutputSource
+                                                                    .voiceOnly,
+                                                                child: Text(
+                                                                  'Voice Only',
+                                                                  style:
+                                                                      TextStyle(
+                                                                        fontSize:
+                                                                            9.5,
+                                                                      ),
+                                                                  maxLines: 1,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                              ),
                                                             ],
                                                             onChanged: (src) {
                                                               if (src != null) {

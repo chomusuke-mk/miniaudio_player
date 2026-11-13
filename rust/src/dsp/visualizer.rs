@@ -53,6 +53,12 @@ impl VisualizerData {
         }
         false
     }
+
+    /// Returns whether the visualizer data is silent (all metrics at zero or below audible noise floor).
+    #[inline]
+    pub fn is_silent(&self) -> bool {
+        self.rms <= 1e-4 && self.peak <= 1e-4 && self.bands.iter().all(|&b| b <= 1e-4)
+    }
 }
 
 /// Real-time audio visualizer analyzing 10 frequency bands and signal levels.
@@ -83,7 +89,15 @@ impl Visualizer {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.current_data = VisualizerData::default();
+            self.reset();
+        }
+    }
+
+    /// Resets all visualizer filter states and clears current measurements to default zeros.
+    pub fn reset(&mut self) {
+        self.current_data = VisualizerData::default();
+        for f in &mut self.bpf_filters {
+            f.reset_state();
         }
     }
 
@@ -161,17 +175,29 @@ impl Visualizer {
             if b_clamped >= self.current_data.bands[b] {
                 new_bands[b] = b_clamped;
             } else {
-                new_bands[b] = self.current_data.bands[b] * decay + b_clamped * (1.0 - decay);
+                let decayed = self.current_data.bands[b] * decay + b_clamped * (1.0 - decay);
+                new_bands[b] = if decayed < 1e-4 { 0.0 } else { decayed };
             }
         }
 
-        self.current_data = VisualizerData {
+        let eff_rms = if global_rms < 1e-4 { 0.0 } else { global_rms };
+        let eff_peak = if global_peak < 1e-4 { 0.0 } else { global_peak };
+        let eff_left = if peak_l < 1e-4 { 0.0 } else { peak_l.min(1.0) };
+        let eff_right = if peak_r < 1e-4 { 0.0 } else { peak_r.min(1.0) };
+
+        let candidate = VisualizerData {
             bands: new_bands,
-            rms: global_rms,
-            peak: global_peak,
-            left: peak_l.min(1.0),
-            right: peak_r.min(1.0),
+            rms: eff_rms,
+            peak: eff_peak,
+            left: eff_left,
+            right: eff_right,
         };
+
+        if candidate.is_silent() {
+            self.reset();
+        } else {
+            self.current_data = candidate;
+        }
     }
 
     fn recalculate_filters(&mut self) {

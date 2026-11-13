@@ -1616,6 +1616,9 @@ class RustPlayerConfig {
   /// Ring buffer capacity for network HTTP streaming in milliseconds.
   final BigInt bufferNetworkDurationMs;
 
+  /// Audio bus feeding the real-time visualizer (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack, 4: VoiceOnly).
+  final int visualizerSource;
+
   const RustPlayerConfig({
     required this.bufferSizeFrames,
     required this.maxVoices,
@@ -1623,6 +1626,7 @@ class RustPlayerConfig {
     required this.pauseOnDeviceChange,
     required this.bufferLocalDurationMs,
     required this.bufferNetworkDurationMs,
+    required this.visualizerSource,
   });
 
   static Future<RustPlayerConfig> default_() =>
@@ -1635,7 +1639,8 @@ class RustPlayerConfig {
       maxRamBytes.hashCode ^
       pauseOnDeviceChange.hashCode ^
       bufferLocalDurationMs.hashCode ^
-      bufferNetworkDurationMs.hashCode;
+      bufferNetworkDurationMs.hashCode ^
+      visualizerSource.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1647,7 +1652,8 @@ class RustPlayerConfig {
           maxRamBytes == other.maxRamBytes &&
           pauseOnDeviceChange == other.pauseOnDeviceChange &&
           bufferLocalDurationMs == other.bufferLocalDurationMs &&
-          bufferNetworkDurationMs == other.bufferNetworkDurationMs;
+          bufferNetworkDurationMs == other.bufferNetworkDurationMs &&
+          visualizerSource == other.visualizerSource;
 }
 
 @freezed
@@ -1717,6 +1723,11 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   const factory RustPlayerEvent.visualizerEnabled(
     bool field0,
   ) = RustPlayerEvent_VisualizerEnabled;
+
+  /// Audio bus feeding the real-time visualizer (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack, 4: VoiceOnly).
+  const factory RustPlayerEvent.visualizerSource(
+    int field0,
+  ) = RustPlayerEvent_VisualizerSource;
 
   /// Master volume level.
   const factory RustPlayerEvent.volume(

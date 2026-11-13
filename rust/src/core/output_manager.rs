@@ -5,7 +5,7 @@
 
 use std::ffi::CString;
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
@@ -137,6 +137,7 @@ pub struct OutputManager {
     // =========================================================================
     pub visualizer: Visualizer,
     pub visualizer_enabled: Arc<AtomicBool>,
+    pub visualizer_source: Arc<AtomicU8>,
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
 
     pub pause_on_device_change: Arc<AtomicBool>,
@@ -169,6 +170,7 @@ impl OutputManager {
             recording_path: None,
             visualizer: Visualizer::new(channels, sample_rate),
             visualizer_enabled: Arc::new(AtomicBool::new(false)),
+            visualizer_source: Arc::new(AtomicU8::new(AudioOutputSource::All as u8)),
             visualizer_seqlock: Arc::new(CachePaddedSeqlock::new(VisualizerData::default())),
             pause_on_device_change: Arc::new(AtomicBool::new(false)),
             sample_rate,
@@ -460,6 +462,20 @@ impl OutputManager {
         }
     }
 
+    /// Sets the audio source bus that feeds the real-time FFT spectrum visualizer.
+    #[inline]
+    pub fn set_visualizer_source(&mut self, source: AudioOutputSource) {
+        self.visualizer_source.store(source as u8, Ordering::Release);
+        self.visualizer.reset();
+        self.visualizer_seqlock.write(|d| *d = VisualizerData::default());
+    }
+
+    /// Gets the current audio source bus feeding the visualizer.
+    #[inline]
+    pub fn visualizer_source(&self) -> AudioOutputSource {
+        AudioOutputSource::from(self.visualizer_source.load(Ordering::Acquire) as i32)
+    }
+
     /// Retrieves instantaneous visualizer metrics via lock-free seqlock reader.
     #[inline]
     pub fn get_visualizer_data(&self) -> VisualizerData {
@@ -483,6 +499,7 @@ impl OutputManager {
         music_mix_buffer: &[f32],
         active_buffer: &[f32],
         standby_buffer: &[f32],
+        voice_buffer: &[f32],
         frame_count: usize,
     ) {
         let sample_count = frame_count * self.channels;
@@ -493,6 +510,7 @@ impl OutputManager {
                 AudioOutputSource::MusicMix => music_mix_buffer,
                 AudioOutputSource::ActiveTrack => active_buffer,
                 AudioOutputSource::StandbyTrack => standby_buffer,
+                AudioOutputSource::VoiceOnly => voice_buffer,
             }
         };
 
@@ -537,9 +555,13 @@ impl OutputManager {
 
         // 3. Compute FFT Spectrum for visualizer
         if self.visualizer_enabled.load(Ordering::Relaxed) {
-            let valid = all_buffer.len().min(sample_count);
+            let vis_source = AudioOutputSource::from(
+                self.visualizer_source.load(Ordering::Relaxed) as i32,
+            );
+            let vis_slice = select_source(vis_source);
+            let valid = vis_slice.len().min(sample_count);
             self.visualizer.set_enabled(true);
-            self.visualizer.process_frames(&all_buffer[..valid]);
+            self.visualizer.process_frames(&vis_slice[..valid]);
             let vis_data = self.visualizer.get_data();
             self.visualizer_seqlock.write(|d| *d = vis_data);
         }

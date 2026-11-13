@@ -57,6 +57,8 @@ class PlayerStream<T> {
       StreamController<VisualizerData>.broadcast();
   final StreamController<bool> _visualizerEnabledController =
       StreamController<bool>.broadcast();
+  final StreamController<AudioOutputSource> _visualizerSourceController =
+      StreamController<AudioOutputSource>.broadcast();
   final StreamController<double> _preampController =
       StreamController<double>.broadcast();
   final StreamController<ReplayGainConfig> _replayGainController =
@@ -241,6 +243,10 @@ class PlayerStream<T> {
   /// Reactive broadcast stream emitting updates whenever the visualizer DSP calculation is enabled or disabled.
   Stream<bool> get visualizerEnabled => _visualizerEnabledController.stream;
 
+  /// Reactive broadcast stream emitting updates whenever the visualizer audio source changes.
+  Stream<AudioOutputSource> get visualizerSource =>
+      _visualizerSourceController.stream;
+
   /// Broadcast stream emitting master pre-amplification gain updates in dB.
   Stream<double> get preamp => _preampController.stream;
 
@@ -360,6 +366,7 @@ class PlayerStream<T> {
       _silenceSavedDurationController.close(),
       _visualizerController.close(),
       _visualizerEnabledController.close(),
+      _visualizerSourceController.close(),
       _preampController.close(),
       _replayGainController.close(),
       _replayGainModeController.close(),

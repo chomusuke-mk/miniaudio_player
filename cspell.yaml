@@ -445,6 +445,7 @@ words:
   - numver
   - NXDK
   - nyquist
+  - objc
   - oga
   - oggpack
   - onaudioprocess

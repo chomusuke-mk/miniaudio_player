@@ -1126,6 +1126,16 @@ class PlaybackEngineCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                        DropdownMenuItem(
+                          value: AudioOutputSource.voiceOnly,
+                          child: Text(
+                            'Voice Only',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
                       ],
                       onChanged: (src) {
                         if (src != null) controller.setRecordingSource(src);

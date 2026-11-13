@@ -292,11 +292,13 @@ impl RustMiniaudioPlayer {
             Some(device_trigger.clone()),
         )?;
         player.output_manager.set_pause_on_device_change(config.pause_on_device_change);
+        player.output_manager.set_visualizer_source(AudioOutputSource::from(config.visualizer_source));
         let _ = player.output_manager.set_outputs(initial_outputs.clone());
 
         let inner = Arc::new(Mutex::new(player));
         let reporter = EventReporter::new();
         reporter.emit(RustPlayerEvent::Outputs(initial_outputs));
+        reporter.emit(RustPlayerEvent::VisualizerSource(config.visualizer_source));
         let custom_handle = Arc::new(Mutex::new(None));
         let monitor_running = Arc::new(AtomicBool::new(true));
         let metadata_enabled = Arc::new(AtomicBool::new(false));
@@ -796,7 +798,6 @@ impl RustMiniaudioPlayer {
 
                     // Query active deck
                     let active_deck = ply.music_manager.active_deck_ref();
-                    let state = active_deck.state.load(Ordering::Relaxed);
                     let playback_state = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
                     let is_buffering = active_deck.is_buffering.load(Ordering::Relaxed);
                     let pos = active_deck.position_ms.load(Ordering::Relaxed);
@@ -829,15 +830,8 @@ impl RustMiniaudioPlayer {
                     let rg = ply.music_dsp.equalizer.replay_gain();
                     let active_voices = ply.effects_manager.active_voices_count();
 
-                    let is_active_audio = (state == crate::core::dual_source::STATE_PLAYING && playback_state == PlaybackState::Playing)
-                        || is_rec
-                        || active_voices > 0;
                     let vis_data = if ply.output_manager.visualizer_enabled.load(Ordering::Relaxed) {
-                        if is_active_audio {
-                            Some(ply.output_manager.visualizer_seqlock.read())
-                        } else {
-                            Some(crate::dsp::visualizer::VisualizerData::default())
-                        }
+                        Some(ply.output_manager.visualizer_seqlock.read())
                     } else {
                         None
                     };
@@ -947,6 +941,9 @@ impl RustMiniaudioPlayer {
 
         let current_outputs = self.inner.lock().unwrap().output_manager.outputs.clone();
         self.reporter.emit(RustPlayerEvent::Outputs(current_outputs));
+
+        let current_vis_source = self.inner.lock().unwrap().output_manager.visualizer_source() as i32;
+        self.reporter.emit(RustPlayerEvent::VisualizerSource(current_vis_source));
 
         let current_inputs = self.inner.lock().unwrap().input_manager.current_inputs();
         self.reporter.emit(RustPlayerEvent::Inputs(current_inputs));
@@ -1083,9 +1080,6 @@ impl RustMiniaudioPlayer {
             t0.elapsed().as_millis()
         );
         ply.music_manager.pause();
-        ply.output_manager
-            .visualizer_seqlock
-            .write(|d| *d = crate::dsp::visualizer::VisualizerData::default());
         let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
         let is_xfading = ply.music_manager.inner.crossfade.is_active();
         drop(ply);
@@ -1097,7 +1091,6 @@ impl RustMiniaudioPlayer {
         self.emit_event(RustPlayerEvent::PlaybackState(state));
         self.emit_event(RustPlayerEvent::IsPlaying(false));
         self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
-        self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
     }
 
     /// Stops playback and resets elapsed position to the beginning.
@@ -1673,6 +1666,14 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
                 self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
             }
         }
+    }
+
+    /// Configures the audio bus feeding the real-time FFT spectrum visualizer.
+    pub fn set_visualizer_source(&self, source: i32) {
+        let mut ply = self.inner.lock().unwrap();
+        let src = AudioOutputSource::from(source);
+        ply.output_manager.set_visualizer_source(src);
+        self.emit_event(RustPlayerEvent::VisualizerSource(source));
     }
 
     /// Enables or disables forwarding of audio metadata payloads.

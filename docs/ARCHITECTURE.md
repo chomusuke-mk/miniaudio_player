@@ -304,9 +304,10 @@ Sums audio buses (music, sound effects, and microphone monitoring) using target-
   - **`AudioOutputSource.musicMix` (Music Only)**: Pure music mix from decks with master music DSP (EQ, Reverb, Crossfeed, Sonic, ReplayGain), strictly isolated from sound effects (SFX) and microphone auto-ducking attenuation.
   - **`AudioOutputSource.activeTrack` (Active Deck)**: Isolated active deck track only, bypassing music DSP and mixing.
   - **`AudioOutputSource.standbyTrack` (Standby Deck / DJ Cue)**: Isolated standby deck track only for pre-listening and headphone cueing.
-- **DJ CUE Pre-Listening**: Routes the standby track, active track, pure music mix, or master mix to a secondary output device (e.g., DJ headphones).
-- **Lock-Free WAV Disk Recorder**: Streams rendered audio frames through a single-producer single-consumer (`rtrb`) ring buffer to a background file writer thread, capturing any of the four selective routing sources without disk I/O latency on the audio thread.
-- **60 FPS FFT Spectrum Analyzer**: Computes 10-band perceptual frequency magnitudes and pushes updates via a `CachePaddedSeqlock` for lock-free UI consumption.
+  - **`AudioOutputSource.voiceOnly` (Voice Only)**: Isolated microphone and line-in audio capture signal only, completely free from music and sound effects.
+- **DJ CUE Pre-Listening**: Routes the standby track, active track, pure music mix, master mix, or microphone voice to a secondary output device (e.g., DJ headphones).
+- **Lock-Free WAV Disk Recorder**: Streams rendered audio frames through a single-producer single-consumer (`rtrb`) ring buffer to a background file writer thread, capturing any of the five selective routing sources without disk I/O latency on the audio thread.
+- **Configurable 60 FPS FFT Spectrum Analyzer**: Computes 10-band perceptual frequency magnitudes from any selected audio bus (`all`, `musicMix`, `activeTrack`, `standbyTrack`, or `voiceOnly`) and pushes updates via a `CachePaddedSeqlock` for lock-free UI consumption.
 
 ### 5.9. Continuous Engine Clock & Smart Acoustic Decay (`Freeverb` & `DspProcessor`)
 
@@ -350,25 +351,30 @@ flowchart LR
         SrcMusic
         SrcActive["AudioOutputSource.activeTrack\n(Active Deck Isolated)"]
         SrcStandby["AudioOutputSource.standbyTrack\n(Standby Deck / DJ Cue)"]
+        SrcVoice["AudioOutputSource.voiceOnly\n(Isolated Microphone Capture)"]
     end
     
     Brickwall -->|"Master Mix"| SrcAll
     DeckA -.->|"Active Track"| SrcActive
     DeckB -.->|"Standby Track"| SrcStandby
+    DirectMic -.->|"Clean Voice"| SrcVoice
     
     SrcAll --> Endpoints["Hardware Output Devices & Disk Recording"]
     SrcMusic --> Endpoints
     SrcActive --> Endpoints
     SrcStandby --> Endpoints
+    SrcVoice --> Endpoints
     
-    Brickwall --> FFTVisualizer["FFT Spectrum Visualizer (Seqlock)"]
+    OutputMatrix -->|"Configurable Source Selection"| FFTVisualizer["FFT Spectrum Visualizer (Seqlock)"]
 ```
 
 ### Signal Bus Isolation & DSP Routing Guarantee
 To ensure accurate audio routing and prevent sound effects from bleeding into endpoints configured for background music or clean recording:
 - **`DspRouting.inherit` (Default)**: SFX voices inherit the active master music DSP settings (Reverb, 10-band Equalizer, Preamp, Mono, Spatializer) through a synchronized `InheritDSP` processor, while retaining their per-voice parameters (volume, pitch, balance, spatial positioning). This ensures sound effects naturally share acoustic environment properties (e.g. room reverb) with the music while their output sums exclusively into `SIMDSum` (`AudioOutputSource.all` / "All Mix").
 - **`AudioOutputSource.musicMix` ("Music Only")**: Taps directly from the Pure Music Bus downstream of `MusicDSP` before any auto-ducking or SFX summation. It contains strictly pure deck audio with music DSP, **completely unattenuated by microphone auto-ducking** and with **guaranteed zero sound effect samples**.
+- **`AudioOutputSource.voiceOnly` ("Voice Only")**: Taps directly from the captured microphone voice bus (`scratch_voice`), completely free from deck music, crossfade transitions, and sound effects. Useful for clean vocal stem recording, dedicated PA routing, and vocal VU/spectrum meters.
 - **`AudioOutputSource.all` ("All Mix")**: Receives the full vectorized SIMD sum of music (attenuated by microphone auto-ducking using Max-Attenuation Arbitration), polyphonic sound effects (all DSP routing modes: `inherit`, `isolate`, `bypass`), and direct microphone monitoring, finalized by soft-knee saturation and the true-peak brickwall limiter. Sound effects and ducking are routed exclusively to this master bus.
+- **Configurable Visualizer Source**: The FFT spectrum visualizer can dynamically tap any of the five audio buses via `player.action.setVisualizerSource(source)`. When set to `voiceOnly`, the visualizer functions as a live vocal meter even when music decks are paused or stopped.
 - **Multi-Microphone Auto-Ducking (Max Attenuation Arbitration)**: When multiple physical microphone inputs have ducking enabled, their sidechain envelopes are arbitrated via minimum gain ($\min_i g_i$), ensuring that simultaneous speech across N microphones attenuates background music by the maximum configured ducking depth rather than cascading or multiplying into silence.
 
 ---

@@ -27,7 +27,7 @@ enum AudioFileFormat {
   }
 }
 
-/// Audio signal source routed to an output device or live file recording session.
+/// Audio signal source routed to an output device, live file recording session, or visualizer.
 enum AudioOutputSource {
   /// Complete master mix (music + SFX voices + microphone + ducking + master limiter).
   all(0),
@@ -39,7 +39,10 @@ enum AudioOutputSource {
   activeTrack(2),
 
   /// Isolated standby deck track only (ideal for DJ pre-listening).
-  standbyTrack(3);
+  standbyTrack(3),
+
+  /// Isolated microphone capture voice signal only, excluding music and sound effects.
+  voiceOnly(4);
 
   /// Raw native enum value.
   final int value;
@@ -54,6 +57,8 @@ enum AudioOutputSource {
         return AudioOutputSource.activeTrack;
       case 3:
         return AudioOutputSource.standbyTrack;
+      case 4:
+        return AudioOutputSource.voiceOnly;
       case 0:
       default:
         return AudioOutputSource.all;
@@ -464,6 +469,11 @@ class PlayerConfig {
   /// Whether 3D spatial audio processing is enabled.
   final bool enableSpatialAudio;
 
+  /// The audio signal source that feeds the real-time FFT spectrum visualizer.
+  ///
+  /// Defaults to [AudioOutputSource.all].
+  final AudioOutputSource visualizerSource;
+
   /// Creates a [PlayerConfig] with engine parameters.
   const PlayerConfig({
     this.sampleRate = 44100,
@@ -478,6 +488,7 @@ class PlayerConfig {
     this.bufferNetworkDuration = const Duration(seconds: 30),
     this.crossfade,
     this.enableSpatialAudio = true,
+    this.visualizerSource = AudioOutputSource.all,
   });
 }
 

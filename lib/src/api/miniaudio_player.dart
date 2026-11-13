@@ -536,12 +536,14 @@ class MiniaudioPlayer<T> {
             BigInt.from(_globalConfig.bufferLocalDuration.inMilliseconds),
         bufferNetworkDurationMs:
             BigInt.from(_globalConfig.bufferNetworkDuration.inMilliseconds),
+        visualizerSource: config.visualizerSource.value,
       ),
       sampleRate: config.sampleRate > 0 ? config.sampleRate : 44100,
       channels: config.channels > 0 ? config.channels : 2,
       periodSize: state.bufferSize > 0 ? state.bufferSize : 1024,
       initialOutputs: rustOutputs,
     );
+    state._visualizerSource = config.visualizerSource;
 
     action = PlayerAction<T>(this, _rustPlayer);
 
@@ -664,6 +666,10 @@ class MiniaudioPlayer<T> {
           stream._visualizerController.add(VisualizerData.empty());
         }
         stream._visualizerEnabledController.add(field0);
+      case rust_types.RustPlayerEvent_VisualizerSource(:final field0):
+        final src = AudioOutputSource.fromValue(field0);
+        state._visualizerSource = src;
+        stream._visualizerSourceController.add(src);
       case rust_types.RustPlayerEvent_Visualizer(:final field0):
         final vis = VisualizerData(
           bands: field0.bands.toList(),

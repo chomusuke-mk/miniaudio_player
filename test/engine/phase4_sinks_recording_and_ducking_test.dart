@@ -192,8 +192,26 @@ void main() {
         isTrue,
       );
 
-      // Remove output
+      // Add output for isolated voice only
+      const micOutput = AudioOutput(
+        deviceId: 'voice_sink_device',
+        source: AudioOutputSource.voiceOnly,
+      );
+      await engine.action.addOutput(micOutput);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        engine.state.outputs.any(
+          (o) =>
+              o.source == AudioOutputSource.voiceOnly &&
+              o.deviceId == 'voice_sink_device',
+        ),
+        isTrue,
+      );
+
+      // Remove outputs
       await engine.action.removeOutput(headphoneOutput);
+      await engine.action.removeOutput(micOutput);
       await Future.delayed(const Duration(milliseconds: 50));
 
       expect(
@@ -204,6 +222,41 @@ void main() {
         ),
         isFalse,
       );
+      expect(
+        engine.state.outputs.any(
+          (o) =>
+              o.source == AudioOutputSource.voiceOnly &&
+              o.deviceId == 'voice_sink_device',
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+        'Visualizer source configuration and stream updates with voiceOnly and musicMix',
+        () async {
+      expect(engine.state.visualizerSource, equals(AudioOutputSource.all));
+
+      AudioOutputSource? emittedSource;
+      final sub = engine.stream.visualizerSource.listen((src) {
+        emittedSource = src;
+      });
+
+      await engine.action.setVisualizerSource(AudioOutputSource.voiceOnly);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(engine.state.visualizerSource, equals(AudioOutputSource.voiceOnly));
+      expect(emittedSource, equals(AudioOutputSource.voiceOnly));
+
+      await engine.action.setVisualizerSource(AudioOutputSource.musicMix);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(engine.state.visualizerSource, equals(AudioOutputSource.musicMix));
+      expect(emittedSource, equals(AudioOutputSource.musicMix));
+
+      // Reset to all
+      await engine.action.setVisualizerSource(AudioOutputSource.all);
+      await sub.cancel();
     });
 
     test(

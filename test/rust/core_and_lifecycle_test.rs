@@ -598,3 +598,287 @@ fn test_reverb_natural_decay_on_pause_and_smart_dormancy() {
     assert!(player.inherit_dsp.reverb.is_dormant(), "Inherit SFX reverb returns to dormant state");
 }
 
+#[test]
+fn test_voice_only_output_and_visualizer_source_selection() {
+    use miniaudio_player::api::types::AudioOutputSource;
+    use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
+
+    let mut player = MiniaudioPlayer::new(48000, 2, 512, 16, None, None).unwrap();
+    let frame_count = 512;
+    let sample_count = frame_count * 2;
+
+    // Simulate active microphone speech in scratch_voice, but NO music and NO sound effects
+    player.scratch_voice[..sample_count].fill(0.7);
+    player.scratch_music[..sample_count].fill(0.0);
+    player.super_flow[..sample_count].fill(0.0);
+
+    // 1. Enable visualizer and set source to VoiceOnly
+    player.output_manager.set_visualizer_enabled(true);
+    player.output_manager.set_visualizer_source(AudioOutputSource::VoiceOnly);
+    assert_eq!(player.output_manager.visualizer_source(), AudioOutputSource::VoiceOnly);
+
+    // Dispatch buffers to outputs and visualizer
+    player.output_manager.dispatch(
+        &player.super_flow[..sample_count],
+        &player.scratch_music[..sample_count],
+        player.music_manager.active_deck_buffer(),
+        player.music_manager.standby_buffer(),
+        &player.scratch_voice[..sample_count],
+        frame_count,
+    );
+
+    // Visualizer must have captured the microphone energy!
+    let vis_data = player.output_manager.get_visualizer_data();
+    assert!(
+        vis_data.rms > 0.1,
+        "Visualizer with VoiceOnly source must capture microphone speech RMS! got rms={}",
+        vis_data.rms
+    );
+    assert!(
+        vis_data.peak > 0.5,
+        "Visualizer with VoiceOnly source must capture microphone peak! got peak={}",
+        vis_data.peak
+    );
+
+    // 2. Now switch visualizer source to MusicMix (Music Only) while only voice is present
+    player.output_manager.set_visualizer_source(AudioOutputSource::MusicMix);
+    assert_eq!(player.output_manager.visualizer_source(), AudioOutputSource::MusicMix);
+
+    player.output_manager.dispatch(
+        &player.super_flow[..sample_count],
+        &player.scratch_music[..sample_count],
+        player.music_manager.active_deck_buffer(),
+        player.music_manager.standby_buffer(),
+        &player.scratch_voice[..sample_count],
+        frame_count,
+    );
+
+    // Visualizer must now see silence because MusicMix has zero energy!
+    let vis_music = player.output_manager.get_visualizer_data();
+    assert_eq!(
+        vis_music.rms, 0.0,
+        "Visualizer with MusicMix source must ignore voice! got rms={}",
+        vis_music.rms
+    );
+}
+
+#[test]
+fn test_direct_monitoring_visualizer_and_all_mix_without_music() {
+    use miniaudio_player::api::types::{AudioOutputSource, RustAudioInputConfig};
+    use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
+
+    let mut player = MiniaudioPlayer::new(48000, 2, 512, 16, None, None).unwrap();
+    let frame_count = 512;
+    let sample_count = frame_count * 2;
+    let sample_rate = 48000;
+
+    // 1. Direct Monitoring FALSE: pure voice bus captures speech, but All Mix (speakers) remains 0.0 (no feedback)
+    let mic_config_no_mon = RustAudioInputConfig {
+        volume: 1.0,
+        monitor_direct: false,
+        monitor_volume: 0.8,
+        ducking: None,
+    };
+
+    let (capture_node_1, _) =
+        miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, std::ptr::null())
+            .unwrap();
+    let (mut prod_1, consumer_1) = rtrb::RingBuffer::new(2048);
+    for _ in 0..512 {
+        let _ = prod_1.push(0.6f32);
+    }
+    let ducker_1 = miniaudio_player::dsp::ducking::AutoDucker::new(sample_rate);
+
+    player.input_manager.active_inputs.push(miniaudio_player::core::input_manager::ActiveInputNode {
+        device_id: "mic_test".to_string(),
+        resolved_id: "mic_test".to_string(),
+        config: mic_config_no_mon,
+        capture_node: capture_node_1,
+        consumer: consumer_1,
+        ducker: ducker_1,
+        scratch_buffer: vec![0.0f32; 1024],
+    });
+
+    assert!(!player.input_manager.has_active_direct_monitoring());
+    assert!(player.input_manager.has_active_inputs());
+
+    player.super_flow[..sample_count].fill(0.0);
+    player.input_manager.process(
+        &mut player.super_flow[..sample_count],
+        &mut player.scratch_voice[..sample_count],
+    );
+
+    // scratch_voice (Voice Only) MUST have captured speech
+    let voice_energy: f32 = player.scratch_voice[..sample_count].iter().map(|s| s.abs()).sum();
+    assert!(voice_energy > 10.0, "VoiceOnly bus must capture speech even when direct monitoring is off");
+
+    // super_flow (All Mix) MUST be zero when direct monitoring is false
+    let all_mix_energy: f32 = player.super_flow[..sample_count].iter().map(|s| s.abs()).sum();
+    assert_eq!(all_mix_energy, 0.0, "All Mix must not receive voice when monitor_direct is false");
+
+    // 2. Direct Monitoring TRUE: speech is injected into All Mix and activates direct monitoring telemetry
+    player.input_manager.active_inputs.clear();
+
+    let mic_config_mon = RustAudioInputConfig {
+        volume: 1.0,
+        monitor_direct: true,
+        monitor_volume: 0.8,
+        ducking: None,
+    };
+
+    let (capture_node_2, _) =
+        miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, std::ptr::null())
+            .unwrap();
+    let (mut prod_2, consumer_2) = rtrb::RingBuffer::new(2048);
+    for _ in 0..512 {
+        let _ = prod_2.push(0.6f32);
+    }
+    let ducker_2 = miniaudio_player::dsp::ducking::AutoDucker::new(sample_rate);
+
+    player.input_manager.active_inputs.push(miniaudio_player::core::input_manager::ActiveInputNode {
+        device_id: "mic_test_2".to_string(),
+        resolved_id: "mic_test_2".to_string(),
+        config: mic_config_mon,
+        capture_node: capture_node_2,
+        consumer: consumer_2,
+        ducker: ducker_2,
+        scratch_buffer: vec![0.0f32; 1024],
+    });
+
+    assert!(player.input_manager.has_active_direct_monitoring());
+
+    player.super_flow[..sample_count].fill(0.0);
+    player.input_manager.process(
+        &mut player.super_flow[..sample_count],
+        &mut player.scratch_voice[..sample_count],
+    );
+
+    let all_mix_energy_mon: f32 = player.super_flow[..sample_count].iter().map(|s| s.abs()).sum();
+    assert!(
+        all_mix_energy_mon > 10.0,
+        "All Mix must receive voice when monitor_direct is true, got energy {}",
+        all_mix_energy_mon
+    );
+
+    // 3. Visualizer with All Mix source must see the microphone speech without any music playing
+    player.output_manager.set_visualizer_enabled(true);
+    player.output_manager.set_visualizer_source(AudioOutputSource::All);
+    player.scratch_music[..sample_count].fill(0.0); // No music
+
+    player.output_manager.dispatch(
+        &player.super_flow[..sample_count],
+        &player.scratch_music[..sample_count],
+        player.music_manager.active_deck_buffer(),
+        player.music_manager.standby_buffer(),
+        &player.scratch_voice[..sample_count],
+        frame_count,
+    );
+
+    let vis_all = player.output_manager.get_visualizer_data();
+    assert!(
+        vis_all.rms > 0.1,
+        "All Mix visualizer must capture microphone audio in real time when direct monitoring is active! got rms={}",
+        vis_all.rms
+    );
+    assert!(
+        vis_all.peak > 0.3,
+        "All Mix visualizer peak must reflect monitored speech! got peak={}",
+        vis_all.peak
+    );
+}
+
+#[test]
+fn test_visualizer_captures_reverb_tail_of_effect_without_music() {
+    use miniaudio_player::api::types::AudioOutputSource;
+    use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
+    use miniaudio_player::dsp::reverb::ReverbConfig;
+
+    let mut player = MiniaudioPlayer::new(48000, 2, 512, 16, None, None).unwrap();
+    let frame_count = 512;
+    let sample_count = frame_count * 2;
+
+    // 1. Enable visualizer on All Mix and configure Reverb on inherit_dsp
+    player.output_manager.set_visualizer_enabled(true);
+    player.output_manager.set_visualizer_source(AudioOutputSource::All);
+
+    let rev_config = ReverbConfig {
+        enabled: 1,
+        room_size: 0.8,
+        damping: 0.2,
+        width: 1.0,
+        wet: 0.6,
+        dry: 1.0,
+    };
+    player.inherit_dsp.set_reverb(rev_config);
+
+    // 2. Simulate short sound effect burst (e.g. 5 blocks of loud signal in scratch_effects)
+    for _ in 0..5 {
+        player.scratch_effects[..sample_count].fill(0.8);
+        player.inherit_dsp.process(&mut player.scratch_effects[..sample_count]);
+    }
+    assert!(!player.inherit_dsp.reverb.is_dormant(), "Reverb must be active after burst");
+
+    // 3. Effect finishes! No active voices in effects_manager (0 active voices) and no music playing
+    assert_eq!(player.effects_manager.active_voices_count(), 0);
+
+    // Render one period where effects_manager produces silence, but inherit_dsp reverb rings down!
+    player.render_pcm(frame_count);
+
+    // GUARANTEE: Even though active_voices == 0 and music is not playing,
+    // the visualizer on All Mix MUST capture the ringing Reverb tail!
+    let vis_reverb = player.output_manager.get_visualizer_data();
+    assert!(
+        vis_reverb.rms > 0.005,
+        "All Mix visualizer MUST capture the reverb tail of an effect when active_voices == 0! got rms={}",
+        vis_reverb.rms
+    );
+    assert!(
+        vis_reverb.peak > 0.01,
+        "All Mix visualizer peak must reflect the reverb tail! got peak={}",
+        vis_reverb.peak
+    );
+
+    // 4. In subsequent frames, early reflections settle and the tail smoothly decays
+    let mut rms_block_20 = 0.0;
+    let mut rms_block_60 = 0.0;
+    for i in 0..70 {
+        player.render_pcm(frame_count);
+        let cur_vis = player.output_manager.get_visualizer_data();
+        if i == 20 {
+            rms_block_20 = cur_vis.rms;
+        } else if i == 60 {
+            rms_block_60 = cur_vis.rms;
+        }
+    }
+    assert!(
+        rms_block_60 < rms_block_20 * 0.7,
+        "Visualizer RMS must decay over time: block 60 ({}) < block 20 ({}) * 0.7",
+        rms_block_60,
+        rms_block_20
+    );
+
+    // 5. Run until reverb tail is completely dissipated into dormancy
+    for _ in 0..1000 {
+        player.render_pcm(frame_count);
+        if player.inherit_dsp.reverb.is_dormant() {
+            break;
+        }
+    }
+    assert!(player.inherit_dsp.reverb.is_dormant());
+
+    // Run a few more frames to allow visualizer release decay to complete
+    for _ in 0..20 {
+        player.render_pcm(frame_count);
+    }
+
+    let final_vis = player.output_manager.get_visualizer_data();
+    assert!(
+        final_vis.is_silent(),
+        "Visualizer must reach silent state after reverb decay completes, got rms={}, peak={}",
+        final_vis.rms,
+        final_vis.peak
+    );
+}
+
+
+

@@ -193,7 +193,7 @@ impl MiniaudioPlayer {
         // 3. Copy pure music into super_flow (All Mix) where auto-ducking is applied
         self.super_flow[..sample_count].copy_from_slice(&self.scratch_music[..sample_count]);
 
-        // 4. Microphone capture, RMS level measurement, and Auto-Ducking applied ONLY to super_flow
+        // 4. Microphone capture, Auto-Ducking on music, and selective direct monitoring injected into super_flow
         self.input_manager.process(
             &mut self.super_flow[..sample_count],
             &mut self.scratch_voice[..sample_count],
@@ -222,10 +222,9 @@ impl MiniaudioPlayer {
             self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_effects[..sample_count]);
         }
 
-        // 8. Accumulate direct microphone voice monitoring into super_flow (All Mix)
-        if self.scratch_voice[..sample_count].iter().any(|&s| s.abs() > 1e-6) {
-            self.simd_mixer.accumulate(&mut self.super_flow, &self.scratch_voice[..sample_count]);
-        }
+        // 8. Direct microphone monitoring is selectively injected into super_flow by input_manager.process
+        // (only for inputs with monitor_direct == true, unattenuated by ducking).
+        // scratch_voice remains the pure Voice Only bus (dispatched cleanly to VoiceOnly sinks).
 
         // 9. Master True-Peak Brickwall Limiter & Soft-Knee Saturation Headroom on super_flow
         self.master_limiter.process_frames(&mut self.super_flow[..sample_count]);
@@ -235,11 +234,13 @@ impl MiniaudioPlayer {
         // - music_mix_buffer (Music Only): scratch_music (pure music, ZERO SFX, ZERO DUCKING)
         // - active_buffer: active deck PCM
         // - standby_buffer: standby deck PCM
+        // - voice_buffer (Voice Only): scratch_voice (pure microphone capture, ZERO MUSIC, ZERO SFX)
         self.output_manager.dispatch(
             &self.super_flow[..sample_count],
             &self.scratch_music[..sample_count],
             self.music_manager.active_deck_buffer(),
             self.music_manager.standby_buffer(),
+            &self.scratch_voice[..sample_count],
             frame_count,
         );
     }

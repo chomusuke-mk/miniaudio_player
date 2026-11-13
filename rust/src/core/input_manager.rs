@@ -279,11 +279,12 @@ impl InputManager {
     // =========================================================================
 
     /// Processes multi-input capture:
-    /// - Drains lock-free SPSC consumer queues.
-    /// - Scales by per-input volume.
+    /// - Drains lock-free SPSC consumer queues into per-node scratch buffers.
+    /// - Scales by per-input capture volume.
     /// - Computes sidechain Auto-Ducking with multi-microphone max-attenuation (min-gain) arbitration.
-    /// - Applies ducking to `music_buffer` without exponential compounding across multiple mics.
-    /// - Sums direct monitoring into `scratch_voice_out` with zero latency.
+    /// - Accumulates pure voice into `scratch_voice_out` unconditionally (for `AudioOutputSource::VoiceOnly`).
+    /// - Applies arbitrated ducking envelope to `music_buffer` without compounding across mics.
+    /// - Injects direct monitoring voice audio into `music_buffer` for nodes with `monitor_direct == true`.
     pub fn process(&mut self, music_buffer: &mut [f32], scratch_voice_out: &mut [f32]) {
         let frame_count = music_buffer.len() / self.channels;
         let sample_count = music_buffer.len();
@@ -332,29 +333,42 @@ impl InputManager {
                 }
             }
 
-            // Direct pass-through monitoring
-            if node.config.monitor_direct {
-                let mon_vol = node.config.monitor_volume.max(0.0);
-                let out_len = scratch_voice_out.len().min(sample_count);
-
-                for f in 0..frame_count {
-                    let val = node.scratch_buffer[f] * mon_vol;
-                    let out_idx = f * self.channels;
-                    if out_idx + 1 < out_len {
-                        scratch_voice_out[out_idx] += val;
-                        scratch_voice_out[out_idx + 1] += val;
-                    }
+            // Unconditional Voice Only bus accumulation (pure voice audio at capture volume)
+            let out_len = scratch_voice_out.len().min(sample_count);
+            for f in 0..frame_count {
+                let val = node.scratch_buffer[f];
+                let out_idx = f * self.channels;
+                if out_idx + 1 < out_len {
+                    scratch_voice_out[out_idx] += val;
+                    scratch_voice_out[out_idx + 1] += val;
                 }
             }
         }
 
-        // Apply arbitrated ducking envelope (maximum attenuation, never cascading or multiplying across microphones)
+        // Apply arbitrated ducking envelope to music bus ONLY (maximum attenuation, never cascading across mics)
         if any_ducking {
             for k in 0..frame_count {
                 let g = self.ducking_envelope[k];
                 if (g - 1.0).abs() > 1e-4 {
                     for c in 0..self.channels {
                         music_buffer[k * self.channels + c] *= g;
+                    }
+                }
+            }
+        }
+
+        // Direct pass-through monitoring: inject voice into master mix (music_buffer / super_flow) AFTER music ducking
+        for node in &self.active_inputs {
+            if node.config.monitor_direct {
+                let mon_vol = node.config.monitor_volume.max(0.0);
+                let music_len = music_buffer.len().min(sample_count);
+
+                for f in 0..frame_count {
+                    let val = node.scratch_buffer[f] * mon_vol;
+                    let out_idx = f * self.channels;
+                    if out_idx + 1 < music_len {
+                        music_buffer[out_idx] += val;
+                        music_buffer[out_idx + 1] += val;
                     }
                 }
             }
@@ -380,5 +394,13 @@ impl InputManager {
     #[inline]
     pub fn has_active_inputs(&self) -> bool {
         !self.active_inputs.is_empty()
+    }
+
+    /// Returns whether any active input capture node has direct monitoring enabled with non-zero volume.
+    #[inline]
+    pub fn has_active_direct_monitoring(&self) -> bool {
+        self.active_inputs
+            .iter()
+            .any(|n| n.config.monitor_direct && n.config.monitor_volume > 0.0)
     }
 }

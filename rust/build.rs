@@ -33,6 +33,25 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=CoreAudio");
         println!("cargo:rustc-link-lib=framework=AudioToolbox");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        if target_os == "ios" {
+            build.flag("-x").flag("objective-c");
+
+            println!("cargo:rustc-link-lib=objc");
+            println!("cargo:rustc-link-lib=pthread");
+            println!("cargo:rustc-link-lib=m");
+
+            for framework in [
+                "Foundation",
+                "CoreFoundation",
+                "CoreAudio",
+                "AudioToolbox",
+                "AVFoundation",
+                "AVFAudio",
+                "UIKit",
+            ] {
+                println!("cargo:rustc-link-lib=framework={framework}");
+            }
+        }
     }
 
     build.compile("miniaudio_bridge");

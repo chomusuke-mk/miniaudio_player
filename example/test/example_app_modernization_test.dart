@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
+import 'package:miniaudio_player_example/widgets/cards/spectrum_visualizer_card.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -212,6 +213,102 @@ void main() {
               w is AnimatedOpacity && (w.opacity == 1.0 || w.opacity == 0.38),
         );
         expect(opacityFinder, findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'Visualizer Source Selection: Displays current source in dropdown, renders Voice Only, and updates on selection',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 3000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() async {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(milliseconds: 100));
+        });
+
+        await tester.pumpWidget(const MiniaudioPlayerExampleApp());
+        await tester.pump();
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(seconds: 2));
+        });
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        final visualizerCard = find.byType(SpectrumVisualizerCard);
+        expect(visualizerCard, findsOneWidget);
+
+        final scrollable = find.byType(Scrollable).first;
+
+        // Enable visualizer switch if off
+        final switchFinder = find.descendant(
+          of: visualizerCard,
+          matching: find.byType(Switch),
+        );
+        await tester.scrollUntilVisible(
+          switchFinder,
+          150,
+          scrollable: scrollable,
+        );
+        final visualizerSwitch = tester.widget<Switch>(switchFinder);
+        if (!visualizerSwitch.value) {
+          await tester.tap(switchFinder);
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+
+        // Find the visualizer source dropdown
+        final dropdownFinder = find.descendant(
+          of: visualizerCard,
+          matching: find.byType(DropdownButton<AudioOutputSource>),
+        );
+        expect(dropdownFinder, findsOneWidget);
+
+        // Verify initial source is All Mix
+        expect(
+          find.descendant(of: visualizerCard, matching: find.text('All Mix')),
+          findsOneWidget,
+        );
+
+        // Open dropdown
+        await tester.tap(dropdownFinder);
+        await tester.pumpAndSettle();
+
+        // Tap Voice Only in dropdown menu
+        final voiceOnlyMenuItem = find.text('Voice Only').last;
+        await tester.tap(voiceOnlyMenuItem);
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.pumpAndSettle();
+
+        // Verify Voice Only is now selected in dropdown
+        expect(
+          find.descendant(
+            of: visualizerCard,
+            matching: find.text('Voice Only'),
+          ),
+          findsOneWidget,
+        );
+
+        // Open dropdown again and select Music Only
+        await tester.tap(dropdownFinder);
+        await tester.pumpAndSettle();
+
+        final musicOnlyMenuItem = find.text('Music Only').last;
+        await tester.tap(musicOnlyMenuItem);
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.pumpAndSettle();
+
+        expect(
+          find.descendant(
+            of: visualizerCard,
+            matching: find.text('Music Only'),
+          ),
+          findsOneWidget,
+        );
       },
     );
 

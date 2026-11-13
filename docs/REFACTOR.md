@@ -135,6 +135,7 @@ This document records the systematic audit, findings, cleanups, documentation up
 - **Actions**:
   - Refactored `MiniaudioPlayer` constructor to accept strictly `({queue, effects, outputs, inputs, config = const PlayerConfig()})`.
   - Unified configuration into `PlayerConfig`, eliminating duplicate entry points.
+  - Implemented dynamic event dispatch and subscription for `RustPlayerEvent_VisualizerSource`, synchronizing `visualizerSource` across synchronous state and broadcast streams.
   - Verified complete documentation of factory/constructors, state/stream/action accessors, and lifecycle methods (`init`, `dispose`).
 - **Status**: Audited & Verified.
 
@@ -154,6 +155,7 @@ This document records the systematic audit, findings, cleanups, documentation up
   - Regenerated FRB bindings via `flutter_rust_bridge_codegen generate`.
   - Refactored Dart `PlayerAction.playEffect(String id, {EffectConfig config = const EffectConfig()})` to strictly consume `EffectConfig`, removing all loose duplicate parameters.
   - Refactored `configureInput(AudioInputConfig config, {String deviceId = 'AUTO'})` removing the confusing `device` alias.
+  - Added `Future<void> setVisualizerSource(AudioOutputSource source)` allowing dynamic switching of the visualizer's audio feed.
   - Verified comprehensive `///` documentation for all 45+ methods in `PlayerAction`.
 - **Status**: Audited & Verified.
 
@@ -171,12 +173,16 @@ This document records the systematic audit, findings, cleanups, documentation up
   - Refactored `AudioInput` constructor to accept strictly `deviceId` (`'AUTO'` default) and `config` (`AudioInputConfig`).
   - Removed duplicate `effectMemoryLimitMb` on `PlayerConfig`, establishing `maxRamBytes: int?` (default 50 MB, `null` for unlimited) as the single source of truth.
   - Removed duplicate alias getter `resolvedMaxRamBytes`.
+  - Added `AudioOutputSource.voiceOnly` (value `4`) for dedicated microphone/voice bus routing and visualizer analysis.
+  - Added `visualizerSource` (default `AudioOutputSource.all`) to `PlayerConfig`.
   - Documented all enums (`AudioFileFormat`, `AudioOutputSource`, `DspRouting`, `VoiceStealingPolicy`) and classes (`AudioOutput`, `AudioInputConfig`, `AudioInput`, `AudioEffect`, `EffectConfig`, `PlayerConfig`, `RecordingResult`).
 - **Status**: Audited & Verified.
 
 ### 17. `lib/src/api/player_state.dart`
 - **Audit Findings**: Reactive synchronous state snapshot (`PlayerState`, `PlaybackState`).
-- **Actions**: Verified complete `///` documentation on all 40+ getters. Confirmed proper sentence structure, third-person/noun phrasing, and English-only.
+- **Actions**:
+  - Added `AudioOutputSource get visualizerSource` property exposing the currently selected visualizer audio bus.
+  - Verified complete `///` documentation on all 40+ getters. Confirmed proper sentence structure, third-person/noun phrasing, and English-only.
 - **Status**: Audited & Verified.
 
 ### 18. `lib/src/api/player_stream.dart`
@@ -185,6 +191,7 @@ This document records the systematic audit, findings, cleanups, documentation up
   - Contained duplicate stream getters: `Stream<bool> get buffering` alongside `Stream<bool> get isBuffering`.
 - **Actions**:
   - Removed `playing` and `buffering` aliases to standardize on canonical boolean stream naming: `isPlaying` and `isBuffering`, aligning with `isShuffled`, `isCrossfading`, `isRecording`, `isDuckingActive` and the corresponding `PlayerState` properties.
+  - Added `Stream<AudioOutputSource> get visualizerSource` broadcast stream for reactive UI updates when the visualizer bus changes.
   - Updated all test call sites.
   - Verified documentation for all stream getters and `dispose()`.
 - **Status**: Audited & Verified.
@@ -260,7 +267,8 @@ This document records the systematic audit, findings, cleanups, documentation up
 | Suite | Status | Results | Notes |
 |---|:---:|:---:|---|
 | **Dart Static Analysis** (`dart analyze`) | **PASS** | 0 issues | Clean type checks, clean bracketed comment references |
-| **Rust Unit & Integration Tests** (`cargo test`) | **PASS** | 55 / 55 passed | 100% pass across all 8 test suites |
-| **Flutter Test Suite** (`flutter test`) | **PASS** | 281 / 281 passed | 100% pass across all Dart unit & integration tests |
+| **Rust Unit & Integration Tests** (`cargo test`) | **PASS** | 64 / 64 passed | 100% pass across all 8 test suites including `test_direct_monitoring_visualizer_and_all_mix_without_music` and `test_visualizer_captures_reverb_tail_of_effect_without_music` |
+| **Flutter Test Suite** (`flutter test`) | **PASS** | 282 / 282 passed | 100% pass across all Dart unit & integration tests including visualizer & voice only routing tests |
+| **Example Flutter Test Suite** (`cd example && flutter test`) | **PASS** | 61 / 61 passed | 100% pass across all example widget tests, dropdown selectors, and stress suites |
 | **English Language Compliance** | **PASS** | 100% English | Zero non-English words, comments, or symbols |
 | **Single Source of Truth / No Duplicates** | **PASS** | Zero Aliases | All duplicate and alias parameters eliminated across Dart and Rust |

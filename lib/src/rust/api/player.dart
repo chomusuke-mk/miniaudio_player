@@ -261,6 +261,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
   Future<void> setVisualizerEnabled({required bool enabled});
 
+  /// Configures the audio bus feeding the real-time FFT spectrum visualizer.
+  Future<void> setVisualizerSource({required int source});
+
   /// Sets the master output volume level (0.0 to 1.0+).
   Future<void> setVolume({required double volume});
 

@@ -65,6 +65,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_Visualizer value)? visualizer,
     TResult Function(RustPlayerEvent_VisualizerEnabled value)?
         visualizerEnabled,
+    TResult Function(RustPlayerEvent_VisualizerSource value)? visualizerSource,
     TResult Function(RustPlayerEvent_Volume value)? volume,
     TResult Function(RustPlayerEvent_Rate value)? rate,
     TResult Function(RustPlayerEvent_Pitch value)? pitch,
@@ -133,6 +134,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return visualizer(_that);
       case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
         return visualizerEnabled(_that);
+      case RustPlayerEvent_VisualizerSource() when visualizerSource != null:
+        return visualizerSource(_that);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that);
       case RustPlayerEvent_Rate() when rate != null:
@@ -246,6 +249,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_Visualizer value) visualizer,
     required TResult Function(RustPlayerEvent_VisualizerEnabled value)
         visualizerEnabled,
+    required TResult Function(RustPlayerEvent_VisualizerSource value)
+        visualizerSource,
     required TResult Function(RustPlayerEvent_Volume value) volume,
     required TResult Function(RustPlayerEvent_Rate value) rate,
     required TResult Function(RustPlayerEvent_Pitch value) pitch,
@@ -325,6 +330,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return visualizer(_that);
       case RustPlayerEvent_VisualizerEnabled():
         return visualizerEnabled(_that);
+      case RustPlayerEvent_VisualizerSource():
+        return visualizerSource(_that);
       case RustPlayerEvent_Volume():
         return volume(_that);
       case RustPlayerEvent_Rate():
@@ -431,6 +438,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_Visualizer value)? visualizer,
     TResult? Function(RustPlayerEvent_VisualizerEnabled value)?
         visualizerEnabled,
+    TResult? Function(RustPlayerEvent_VisualizerSource value)? visualizerSource,
     TResult? Function(RustPlayerEvent_Volume value)? volume,
     TResult? Function(RustPlayerEvent_Rate value)? rate,
     TResult? Function(RustPlayerEvent_Pitch value)? pitch,
@@ -498,6 +506,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return visualizer(_that);
       case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
         return visualizerEnabled(_that);
+      case RustPlayerEvent_VisualizerSource() when visualizerSource != null:
+        return visualizerSource(_that);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that);
       case RustPlayerEvent_Rate() when rate != null:
@@ -606,6 +616,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustCrossfadeConfig field0)? crossfadeConfig,
     TResult Function(RustVisualizerData field0)? visualizer,
     TResult Function(bool field0)? visualizerEnabled,
+    TResult Function(int field0)? visualizerSource,
     TResult Function(double field0)? volume,
     TResult Function(double field0)? rate,
     TResult Function(double field0)? pitch,
@@ -673,6 +684,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return visualizer(_that.field0);
       case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
         return visualizerEnabled(_that.field0);
+      case RustPlayerEvent_VisualizerSource() when visualizerSource != null:
+        return visualizerSource(_that.field0);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that.field0);
       case RustPlayerEvent_Rate() when rate != null:
@@ -782,6 +795,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustCrossfadeConfig field0) crossfadeConfig,
     required TResult Function(RustVisualizerData field0) visualizer,
     required TResult Function(bool field0) visualizerEnabled,
+    required TResult Function(int field0) visualizerSource,
     required TResult Function(double field0) volume,
     required TResult Function(double field0) rate,
     required TResult Function(double field0) pitch,
@@ -849,6 +863,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return visualizer(_that.field0);
       case RustPlayerEvent_VisualizerEnabled():
         return visualizerEnabled(_that.field0);
+      case RustPlayerEvent_VisualizerSource():
+        return visualizerSource(_that.field0);
       case RustPlayerEvent_Volume():
         return volume(_that.field0);
       case RustPlayerEvent_Rate():
@@ -954,6 +970,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustCrossfadeConfig field0)? crossfadeConfig,
     TResult? Function(RustVisualizerData field0)? visualizer,
     TResult? Function(bool field0)? visualizerEnabled,
+    TResult? Function(int field0)? visualizerSource,
     TResult? Function(double field0)? volume,
     TResult? Function(double field0)? rate,
     TResult? Function(double field0)? pitch,
@@ -1020,6 +1037,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return visualizer(_that.field0);
       case RustPlayerEvent_VisualizerEnabled() when visualizerEnabled != null:
         return visualizerEnabled(_that.field0);
+      case RustPlayerEvent_VisualizerSource() when visualizerSource != null:
+        return visualizerSource(_that.field0);
       case RustPlayerEvent_Volume() when volume != null:
         return volume(_that.field0);
       case RustPlayerEvent_Rate() when rate != null:
@@ -1923,6 +1942,74 @@ class _$RustPlayerEvent_VisualizerEnabledCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustPlayerEvent_VisualizerSource extends RustPlayerEvent {
+  const RustPlayerEvent_VisualizerSource(this.field0) : super._();
+
+  final int field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_VisualizerSourceCopyWith<RustPlayerEvent_VisualizerSource>
+      get copyWith => _$RustPlayerEvent_VisualizerSourceCopyWithImpl<
+          RustPlayerEvent_VisualizerSource>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_VisualizerSource &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.visualizerSource(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_VisualizerSourceCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_VisualizerSourceCopyWith(
+          RustPlayerEvent_VisualizerSource value,
+          $Res Function(RustPlayerEvent_VisualizerSource) _then) =
+      _$RustPlayerEvent_VisualizerSourceCopyWithImpl;
+  @useResult
+  $Res call({int field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_VisualizerSourceCopyWithImpl<$Res>
+    implements $RustPlayerEvent_VisualizerSourceCopyWith<$Res> {
+  _$RustPlayerEvent_VisualizerSourceCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_VisualizerSource _self;
+  final $Res Function(RustPlayerEvent_VisualizerSource) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_VisualizerSource(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as int,
     ));
   }
 }

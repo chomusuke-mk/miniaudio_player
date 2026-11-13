@@ -1082,6 +1082,8 @@ pub struct RustPlayerConfig {
     pub buffer_local_duration_ms: u64,
     /// Ring buffer capacity for network HTTP streaming in milliseconds.
     pub buffer_network_duration_ms: u64,
+    /// Audio bus feeding the real-time visualizer (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack, 4: VoiceOnly).
+    pub visualizer_source: i32,
 }
 
 impl Default for RustPlayerConfig {
@@ -1093,6 +1095,7 @@ impl Default for RustPlayerConfig {
             pause_on_device_change: true,
             buffer_local_duration_ms: 30000,
             buffer_network_duration_ms: 30000,
+            visualizer_source: 0,
         }
     }
 }
@@ -1108,6 +1111,8 @@ pub enum AudioOutputSource {
     ActiveTrack = 2,
     /// Isolated standby deck track only (ideal for DJ pre-listening).
     StandbyTrack = 3,
+    /// Isolated microphone capture voice signal only, excluding music and sound effects.
+    VoiceOnly = 4,
 }
 
 impl From<i32> for AudioOutputSource {
@@ -1116,6 +1121,7 @@ impl From<i32> for AudioOutputSource {
             1 => AudioOutputSource::MusicMix,
             2 => AudioOutputSource::ActiveTrack,
             3 => AudioOutputSource::StandbyTrack,
+            4 => AudioOutputSource::VoiceOnly,
             _ => AudioOutputSource::All,
         }
     }
@@ -1287,6 +1293,8 @@ pub enum RustPlayerEvent {
     Visualizer(RustVisualizerData),
     /// Whether visualizer analysis is active.
     VisualizerEnabled(bool),
+    /// Audio bus feeding the real-time visualizer (0: All, 1: MusicMix, 2: ActiveTrack, 3: StandbyTrack, 4: VoiceOnly).
+    VisualizerSource(i32),
     /// Master volume level.
     Volume(f32),
     /// Playback speed rate multiplier.

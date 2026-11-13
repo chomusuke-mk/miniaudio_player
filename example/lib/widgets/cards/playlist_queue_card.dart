@@ -253,7 +253,10 @@ class PlaylistQueueCard extends StatelessWidget {
                                       dynamicMeta!.trackArtist!.isNotEmpty)
                                   ? dynamicMeta.trackArtist!
                                   : (analysis?.metadata?.trackArtist != null &&
-                                        analysis!.metadata!.trackArtist!.isNotEmpty)
+                                        analysis!
+                                            .metadata!
+                                            .trackArtist!
+                                            .isNotEmpty)
                                   ? analysis.metadata!.trackArtist!
                                   : (track.artist ?? 'Audio Track');
 

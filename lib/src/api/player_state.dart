@@ -168,6 +168,11 @@ class PlayerState<T> {
   /// Defaults to `false`. Can be activated via `player.action.setVisualizerEnabled(true)`.
   bool get visualizerEnabled => _visualizerEnabled;
 
+  AudioOutputSource _visualizerSource = AudioOutputSource.all;
+
+  /// The audio bus stream currently feeding the real-time FFT spectrum visualizer.
+  AudioOutputSource get visualizerSource => _visualizerSource;
+
   double _preamp = 0.0;
 
   /// The master pre-amplification gain in decibels.

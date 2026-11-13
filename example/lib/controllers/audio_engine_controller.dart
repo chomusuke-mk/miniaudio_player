@@ -182,6 +182,10 @@ class AudioEngineController extends ChangeNotifier {
   bool get visualizerEnabled =>
       _visualizerEnabledOverride ?? engine.state.visualizerEnabled;
 
+  AudioOutputSource? _visualizerSourceOverride;
+  AudioOutputSource get visualizerSource =>
+      _visualizerSourceOverride ?? engine.state.visualizerSource;
+
   bool? _metadataEnabledOverride;
   bool get metadataEnabled =>
       _metadataEnabledOverride ?? engine.state.metadataEnabled;
@@ -331,6 +335,12 @@ class AudioEngineController extends ChangeNotifier {
     _subscriptions.add(
       engine.stream.visualizerEnabled.listen((_) {
         _visualizerEnabledOverride = null;
+        notifyListeners();
+      }),
+    );
+    _subscriptions.add(
+      engine.stream.visualizerSource.listen((_) {
+        _visualizerSourceOverride = null;
         notifyListeners();
       }),
     );
@@ -792,6 +802,15 @@ class AudioEngineController extends ChangeNotifier {
       '[VISUALIZER:STATE] Real-time 10-band FFT visualizer: ${enabled ? "ENABLED" : "DISABLED"}',
     );
     await engine.action.setVisualizerEnabled(enabled);
+  }
+
+  Future<void> setVisualizerSource(AudioOutputSource source) async {
+    _visualizerSourceOverride = source;
+    notifyListeners();
+    MapLogger.info(
+      '[VISUALIZER:SOURCE] Routing FFT audio analysis feed to: ${source.name.toUpperCase()}',
+    );
+    await engine.action.setVisualizerSource(source);
   }
 
   Future<void> setMetadataEnabled(bool enabled) async {
