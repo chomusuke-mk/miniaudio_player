@@ -249,12 +249,12 @@ class PlaylistQueueCard extends StatelessWidget {
                                   ? analysis.metadata!.title!
                                   : track.title;
                               final displayArtist =
-                                  (dynamicMeta?.artist != null &&
-                                      dynamicMeta!.artist!.isNotEmpty)
-                                  ? dynamicMeta.artist!
-                                  : (analysis?.metadata?.artist != null &&
-                                        analysis!.metadata!.artist!.isNotEmpty)
-                                  ? analysis.metadata!.artist!
+                                  (dynamicMeta?.trackArtist != null &&
+                                      dynamicMeta!.trackArtist!.isNotEmpty)
+                                  ? dynamicMeta.trackArtist!
+                                  : (analysis?.metadata?.trackArtist != null &&
+                                        analysis!.metadata!.trackArtist!.isNotEmpty)
+                                  ? analysis.metadata!.trackArtist!
                                   : (track.artist ?? 'Audio Track');
 
                               return Padding(

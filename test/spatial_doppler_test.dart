@@ -148,16 +148,20 @@ void main() {
       expect(setEnabledCalled, true);
 
       controller.setListener(
-        position: const Vector3(0, 0, 0),
-        velocity: const Vector3(0, 0, 5),
+        const SpatialListener(
+          position: Vector3(0, 0, 0),
+          velocity: Vector3(0, 0, 5),
+        ),
       );
       expect(lastListener?.position, const Vector3(0, 0, 0));
       expect(lastListener?.velocity, const Vector3(0, 0, 5));
 
       controller.setEmitter(
-        position: const Vector3(100, 0, 0),
-        velocity: const Vector3(-50, 0, 0),
-        dopplerFactor: 1.5,
+        const SpatialEmitter(
+          position: Vector3(100, 0, 0),
+          velocity: Vector3(-50, 0, 0),
+          dopplerFactor: 1.5,
+        ),
       );
       expect(lastEmitter?.position, const Vector3(100, 0, 0));
       expect(lastEmitter?.velocity, const Vector3(-50, 0, 0));

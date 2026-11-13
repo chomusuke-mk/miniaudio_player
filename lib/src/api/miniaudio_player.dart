@@ -479,9 +479,6 @@ class MiniaudioPlayer<T> {
   /// Primary canonical constructor. Accepts optional initial [queue] playlist,
   /// RAM [effects], multi-matrix [outputs], capture [inputs], and [config].
   ///
-  /// The optional [effectMemoryLimitMb] parameter overrides `config.effectMemoryLimitMb`
-  /// when provided.
-  ///
   /// ### Physical Endpoint Collision Resolution
   /// If [outputs] or [inputs] contain both `'AUTO'` and a specific physical device ID
   /// that resolves to the same underlying OS hardware endpoint, the native Rust audio engine
@@ -494,10 +491,6 @@ class MiniaudioPlayer<T> {
     Set<AudioOutput>? outputs,
     Set<AudioInput> inputs = const {},
     PlayerConfig config = const PlayerConfig(),
-    int? effectMemoryLimitMb,
-    int? bufferSize,
-    bool pauseOnDeviceChange = false,
-    CrossfadeConfig? crossfadeConfig,
   }) {
     if (!RustLib.instance.initialized) {
       throw StateError(
@@ -510,13 +503,11 @@ class MiniaudioPlayer<T> {
     stream = PlayerStream<T>(this);
     state = PlayerState<T>(this);
 
-    state._bufferSize = bufferSize ?? _globalConfig.defaultBufferSize;
-    state._pauseOnDeviceChange = pauseOnDeviceChange;
-
-    final int? resolvedMaxRamBytes = effectMemoryLimitMb != null
-        ? effectMemoryLimitMb * 1024 * 1024
-        : config.resolvedMaxRamBytes;
-    state._maxRamBytes = resolvedMaxRamBytes;
+    state._bufferSize = config.bufferSizeFrames > 0
+        ? config.bufferSizeFrames
+        : _globalConfig.defaultBufferSize;
+    state._pauseOnDeviceChange = config.pauseOnDeviceChange;
+    state._maxRamBytes = config.maxRamBytes;
 
     state._globalOutputDevices = getOutputDevicesSync();
     state._globalInputDevices = getInputDevicesSync();
@@ -537,17 +528,17 @@ class MiniaudioPlayer<T> {
       config: rust_types.RustPlayerConfig(
         bufferSizeFrames: state.bufferSize > 0 ? state.bufferSize : 1024,
         maxVoices: config.maxVoices,
-        maxRamBytes: resolvedMaxRamBytes != null
-            ? BigInt.from(resolvedMaxRamBytes)
+        maxRamBytes: config.maxRamBytes != null
+            ? BigInt.from(config.maxRamBytes!)
             : null,
-        pauseOnDeviceChange: pauseOnDeviceChange,
+        pauseOnDeviceChange: config.pauseOnDeviceChange,
         bufferLocalDurationMs:
             BigInt.from(_globalConfig.bufferLocalDuration.inMilliseconds),
         bufferNetworkDurationMs:
             BigInt.from(_globalConfig.bufferNetworkDuration.inMilliseconds),
       ),
-      sampleRate: 44100,
-      channels: 2,
+      sampleRate: config.sampleRate > 0 ? config.sampleRate : 44100,
+      channels: config.channels > 0 ? config.channels : 2,
       periodSize: state.bufferSize > 0 ? state.bufferSize : 1024,
       initialOutputs: rustOutputs,
     );
@@ -562,11 +553,11 @@ class MiniaudioPlayer<T> {
     if (inputs.isNotEmpty) {
       action.setInputs(inputs);
     }
-    if (pauseOnDeviceChange) {
+    if (config.pauseOnDeviceChange) {
       action.setPauseOnDeviceChange(true);
     }
-    if (crossfadeConfig != null) {
-      action.setCrossfade(crossfadeConfig);
+    if (config.crossfade != null) {
+      action.setCrossfade(config.crossfade!);
     }
     if (queue.isNotEmpty) {
       action.setQueue(queue);

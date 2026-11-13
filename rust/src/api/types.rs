@@ -1208,6 +1208,8 @@ pub struct RustEffectConfig {
     pub volume_jitter: f32,
     /// Optional 3D spatial emitter parameters.
     pub spatial: Option<RustSpatialEmitter>,
+    /// DSP routing mode (0 = Inherit, 1 = Isolate, 2 = Bypass).
+    pub dsp_routing: i32,
 }
 
 impl From<RustEffectConfig> for crate::core::voice_pool::EffectConfig {
@@ -1222,6 +1224,7 @@ impl From<RustEffectConfig> for crate::core::voice_pool::EffectConfig {
             pitch_jitter: c.pitch_jitter,
             volume_jitter: c.volume_jitter,
             spatial: c.spatial.map(Into::into),
+            dsp_routing: c.dsp_routing.into(),
         }
     }
 }

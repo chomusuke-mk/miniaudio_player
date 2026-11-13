@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::core::voice_pool::{
-    decode_effect_source, DspRouting, EffectCatalogItem, EffectConfig, VoicePool,
+    decode_effect_source, EffectCatalogItem, EffectConfig, VoicePool,
 };
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener};
 
@@ -56,12 +56,11 @@ impl EffectsManager {
         self.pool.lock().unwrap().set_effects(effects)
     }
 
-    /// Triggers playback of a registered sound effect by ID with specified routing and parameters.
+    /// Triggers playback of a registered sound effect by ID with specified parameters.
     #[inline]
     pub fn play_effect(
         &self,
         id: &str,
-        routing: DspRouting,
         config: EffectConfig,
     ) -> Result<(u32, bool), String> {
         let need_decode = {
@@ -99,7 +98,7 @@ impl EffectsManager {
             .id_to_index
             .get(id)
             .ok_or_else(|| format!("AudioEffectNotFound: Effect '{}' not registered", id))?;
-        let voice_id = pool.play_loaded_effect(effect_idx, routing, config)?;
+        let voice_id = pool.play_loaded_effect(effect_idx, config)?;
         Ok((voice_id, ram_changed))
     }
 

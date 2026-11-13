@@ -1085,6 +1085,9 @@ class RustEffectConfig {
   /// Optional 3D spatial emitter parameters.
   final RustSpatialEmitter? spatial;
 
+  /// DSP routing mode (0 = Inherit, 1 = Isolate, 2 = Bypass).
+  final int dspRouting;
+
   const RustEffectConfig({
     required this.volume,
     required this.balance,
@@ -1095,6 +1098,7 @@ class RustEffectConfig {
     required this.pitchJitter,
     required this.volumeJitter,
     this.spatial,
+    required this.dspRouting,
   });
 
   static Future<RustEffectConfig> default_() =>
@@ -1110,7 +1114,8 @@ class RustEffectConfig {
       priority.hashCode ^
       pitchJitter.hashCode ^
       volumeJitter.hashCode ^
-      spatial.hashCode;
+      spatial.hashCode ^
+      dspRouting.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1125,7 +1130,8 @@ class RustEffectConfig {
           priority == other.priority &&
           pitchJitter == other.pitchJitter &&
           volumeJitter == other.volumeJitter &&
-          spatial == other.spatial;
+          spatial == other.spatial &&
+          dspRouting == other.dspRouting;
 }
 
 /// Parameters configuring the 10-band ISO peaking equalizer.

@@ -127,13 +127,7 @@ class PlayerStream<T> {
   Stream<Duration?> get duration => _durationController.stream;
 
   /// Broadcast stream emitting whether audio frames are actively rendering.
-  Stream<bool> get playing => _playingController.stream;
-
-  /// Broadcast stream emitting whether audio frames are actively rendering.
   Stream<bool> get isPlaying => _playingController.stream;
-
-  /// Broadcast stream emitting whether playback is stalled waiting for data.
-  Stream<bool> get buffering => _bufferingController.stream;
 
   /// Broadcast stream emitting whether playback is stalled waiting for data.
   Stream<bool> get isBuffering => _bufferingController.stream;

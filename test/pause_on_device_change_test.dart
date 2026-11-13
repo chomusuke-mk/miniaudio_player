@@ -82,14 +82,19 @@ void main() {
     });
 
     test('pauseOnDeviceChange constructor option sets initial state', () {
-      player = MiniaudioPlayer(queue: [dummySource], pauseOnDeviceChange: true);
+      player = MiniaudioPlayer(
+        queue: [dummySource],
+        config: const PlayerConfig(pauseOnDeviceChange: true),
+      );
       expect(player.state.pauseOnDeviceChange, isTrue);
     });
 
     test('action.setPauseOnDeviceChange updates state and emits to stream',
         () async {
-      player =
-          MiniaudioPlayer(queue: [dummySource], pauseOnDeviceChange: false);
+      player = MiniaudioPlayer(
+        queue: [dummySource],
+        config: const PlayerConfig(pauseOnDeviceChange: false),
+      );
       expect(player.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -131,14 +136,16 @@ void main() {
 
     test('pauseOnDeviceChange constructor option propagates to child decks',
         () {
-      engine = MiniaudioPlayer(pauseOnDeviceChange: true);
+      engine =
+          MiniaudioPlayer(config: const PlayerConfig(pauseOnDeviceChange: true));
       expect(engine.state.pauseOnDeviceChange, isTrue);
     });
 
     test(
         'action.setPauseOnDeviceChange updates engine state and emits to stream',
         () async {
-      engine = MiniaudioPlayer(pauseOnDeviceChange: false);
+      engine = MiniaudioPlayer(
+          config: const PlayerConfig(pauseOnDeviceChange: false));
       expect(engine.state.pauseOnDeviceChange, isFalse);
 
       final events = <bool>[];
@@ -227,7 +234,9 @@ void main() {
         'MiniaudioPlayer with pauseOnDeviceChange can play, pause, seek, and resume without leaf call error',
         () async {
       final player = MiniaudioPlayer(
-          queue: [AudioSource(testWavFile.path)], pauseOnDeviceChange: true);
+        queue: [AudioSource(testWavFile.path)],
+        config: const PlayerConfig(pauseOnDeviceChange: true),
+      );
       try {
         await player.action.play();
         expect(
@@ -269,7 +278,9 @@ void main() {
     test(
         'MiniaudioPlayer with pauseOnDeviceChange handles seek and resume properly',
         () async {
-      final engine = MiniaudioPlayer(pauseOnDeviceChange: true);
+      final engine = MiniaudioPlayer(
+        config: const PlayerConfig(pauseOnDeviceChange: true),
+      );
       try {
         await engine.action.setQueue([AudioSource(testWavFile.path)]);
         await engine.action.play();

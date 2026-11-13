@@ -475,7 +475,6 @@ void main() {
       // Core 17 fields
       expect(meta.title, equals('Symphony of Rust'));
       expect(meta.trackArtist, equals('The Borrow Checkers'));
-      expect(meta.artist, equals('The Borrow Checkers'));
       expect(meta.album, equals('Zero Cost Abstractions'));
       expect(meta.albumArtist, equals('Ferris Orchestra'));
       expect(meta.year, equals(2026));

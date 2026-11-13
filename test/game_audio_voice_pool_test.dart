@@ -62,21 +62,15 @@ void main() {
 
       final v1 = await player.action.playEffect(
         'laser',
-        volume: 0.8,
-        pitch: 1.0,
-        config: const EffectConfig(priority: 100),
+        config: const EffectConfig(volume: 0.8, pitch: 1.0, priority: 100),
       );
       final v2 = await player.action.playEffect(
         'laser',
-        volume: 0.5,
-        pitch: 1.2,
-        config: const EffectConfig(priority: 150),
+        config: const EffectConfig(volume: 0.5, pitch: 1.2, priority: 150),
       );
       final v3 = await player.action.playEffect(
         'laser',
-        volume: 1.0,
-        pitch: 0.9,
-        config: const EffectConfig(priority: 200),
+        config: const EffectConfig(volume: 1.0, pitch: 0.9, priority: 200),
       );
 
       expect(v1.id, greaterThan(0));
@@ -98,21 +92,25 @@ void main() {
 
       final v1 = await player.action.playEffect(
         'hit',
-        volume: 0.9,
-        pitch: 1.0,
-        pitchJitter: 0.05,
-        volumeJitter: 0.05,
-        config: const EffectConfig(priority: 128),
+        config: const EffectConfig(
+          volume: 0.9,
+          pitch: 1.0,
+          pitchJitter: 0.05,
+          volumeJitter: 0.05,
+          priority: 128,
+        ),
       );
       expect(v1.id, greaterThan(0));
 
       final v2 = await player.action.playEffect(
         'hit',
-        volume: 0.9,
-        pitch: 1.0,
-        pitchJitter: 0.1,
-        volumeJitter: 0.1,
-        config: const EffectConfig(priority: 128),
+        config: const EffectConfig(
+          volume: 0.9,
+          pitch: 1.0,
+          pitchJitter: 0.1,
+          volumeJitter: 0.1,
+          priority: 128,
+        ),
       );
       expect(v2.id, greaterThan(0));
     });
@@ -126,10 +124,14 @@ void main() {
             id: 'stemB', source: AudioSource(Uint8List.fromList(wavBytes))),
       ]);
 
-      final vA =
-          await player.action.playEffect('stemA', volume: 0.7, looping: true);
-      final vB =
-          await player.action.playEffect('stemB', volume: 0.4, looping: true);
+      final vA = await player.action.playEffect(
+        'stemA',
+        config: const EffectConfig(volume: 0.7, looping: true),
+      );
+      final vB = await player.action.playEffect(
+        'stemB',
+        config: const EffectConfig(volume: 0.4, looping: true),
+      );
 
       expect(vA.id, greaterThan(0));
       expect(vB.id, greaterThan(0));
@@ -169,9 +171,11 @@ void main() {
 
       final voice = await player.action.playEffect(
         'spatial_hit',
-        volume: 1.0,
-        pitch: 1.0,
-        emitter: emitter,
+        config: EffectConfig(
+          volume: 1.0,
+          pitch: 1.0,
+          spatial: emitter,
+        ),
       );
       expect(voice.id, greaterThan(0));
 
@@ -206,8 +210,10 @@ void main() {
         for (var i = 0; i < 10; i++) {
           final voice = await multiPlayer.action.playEffect(
             'laser_multi',
-            volume: 0.8,
-            looping: true,
+            config: const EffectConfig(
+              volume: 0.8,
+              looping: true,
+            ),
           );
           voices.add(voice);
         }

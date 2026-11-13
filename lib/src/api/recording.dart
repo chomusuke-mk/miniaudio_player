@@ -8,6 +8,7 @@ enum WavFormat {
   /// 32-bit floating point linear PCM (high dynamic range / broadcast standard).
   float32;
 
+  /// Converts this [WavFormat] to its corresponding native [rust_types.RustWavFormat].
   rust_types.RustWavFormat toRust() {
     switch (this) {
       case WavFormat.pcm16:
@@ -17,6 +18,7 @@ enum WavFormat {
     }
   }
 
+  /// Resolves a [WavFormat] from a native [rust_types.RustWavFormat].
   static WavFormat fromRust(rust_types.RustWavFormat rust) {
     switch (rust) {
       case rust_types.RustWavFormat.pcm16:
@@ -38,9 +40,11 @@ enum CueMode {
   /// Route composite Master mix to Cue output.
   master(2);
 
+  /// The raw native integer representation.
   final int value;
   const CueMode(this.value);
 
+  /// Resolves a [CueMode] from its raw integer [value].
   static CueMode fromValue(int value) {
     switch (value) {
       case 0:
@@ -84,6 +88,7 @@ class DuckingConfig {
     this.releaseMs = 400.0,
   });
 
+  /// Converts this configuration to its native [rust_types.RustDuckingConfig] representation.
   rust_types.RustDuckingConfig toRust() => rust_types.RustDuckingConfig(
         enabled: enabled,
         duckingDb: duckingDb,
@@ -93,6 +98,7 @@ class DuckingConfig {
         releaseMs: releaseMs,
       );
 
+  /// Resolves a [DuckingConfig] from its native [rust_types.RustDuckingConfig].
   static DuckingConfig fromRust(rust_types.RustDuckingConfig rust) =>
       DuckingConfig(
         enabled: rust.enabled,
@@ -147,6 +153,7 @@ class CueConfig {
     this.mode = CueMode.deckA,
   });
 
+  /// Converts this configuration to its native [rust_types.RustCueConfig] representation.
   rust_types.RustCueConfig toRust() => rust_types.RustCueConfig(
         enabled: enabled,
         deviceId: deviceId,
@@ -154,6 +161,7 @@ class CueConfig {
         mode: mode.value,
       );
 
+  /// Resolves a [CueConfig] from its native [rust_types.RustCueConfig].
   static CueConfig fromRust(rust_types.RustCueConfig rust) => CueConfig(
         enabled: rust.enabled,
         deviceId: rust.deviceId,

@@ -15,10 +15,12 @@ import '../models/mock_data.dart';
 /// multi-capture input routing with ducking, and live recording.
 class AudioEngineController extends ChangeNotifier {
   final MiniaudioPlayer<AudioTrack> engine = MiniaudioPlayer<AudioTrack>(
-    crossfadeConfig: CrossfadeConfig(
-      autoDuration: const Duration(seconds: 5),
-      manualDuration: const Duration(milliseconds: 100),
-      curve: CrossfadeCurve.equalPower,
+    config: PlayerConfig(
+      crossfade: CrossfadeConfig(
+        autoDuration: const Duration(seconds: 5),
+        manualDuration: const Duration(milliseconds: 100),
+        curve: CrossfadeCurve.equalPower,
+      ),
     ),
   );
 
@@ -845,7 +847,10 @@ class AudioEngineController extends ChangeNotifier {
     double volume = 1.0,
     double pitch = 1.0,
   }) async {
-    return await engine.action.playEffect(id, volume: volume, pitch: pitch);
+    return await engine.action.playEffect(
+      id,
+      config: EffectConfig(volume: volume, pitch: pitch),
+    );
   }
 
   Future<void> unloadAllEffects() async {

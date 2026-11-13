@@ -306,7 +306,10 @@ void main() {
           recMusicOnlyFile.path,
           source: AudioOutputSource.musicMix,
         );
-        final voice1 = await engine.action.playEffect('sfx_test', volume: 1.0);
+        final voice1 = await engine.action.playEffect(
+          'sfx_test',
+          config: const EffectConfig(volume: 1.0),
+        );
         await Future.delayed(const Duration(milliseconds: 300));
         await voice1.stop();
         final recRes1 = await engine.action.stopRecording();
@@ -325,7 +328,10 @@ void main() {
           recAllMixFile.path,
           source: AudioOutputSource.all,
         );
-        final voice2 = await engine.action.playEffect('sfx_test', volume: 1.0);
+        final voice2 = await engine.action.playEffect(
+          'sfx_test',
+          config: const EffectConfig(volume: 1.0),
+        );
         await Future.delayed(const Duration(milliseconds: 300));
         await voice2.stop();
         final recRes2 = await engine.action.stopRecording();

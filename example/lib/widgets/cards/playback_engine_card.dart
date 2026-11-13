@@ -101,12 +101,12 @@ class PlaybackEngineCard extends StatelessWidget {
                           : (activeTrack?.title ?? 'No track selected');
 
                       final displayArtist =
-                          (dynamicMeta?.artist != null &&
-                              dynamicMeta!.artist!.isNotEmpty)
-                          ? dynamicMeta.artist!
-                          : (analysis?.metadata?.artist != null &&
-                                analysis!.metadata!.artist!.isNotEmpty)
-                          ? analysis.metadata!.artist!
+                          (dynamicMeta?.trackArtist != null &&
+                              dynamicMeta!.trackArtist!.isNotEmpty)
+                          ? dynamicMeta.trackArtist!
+                          : (analysis?.metadata?.trackArtist != null &&
+                                analysis!.metadata!.trackArtist!.isNotEmpty)
+                          ? analysis.metadata!.trackArtist!
                           : (activeTrack?.artist ??
                                 'Select a track from the queue');
 

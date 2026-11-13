@@ -24,9 +24,11 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(milliseconds: 300),
-          manualDuration: const Duration(milliseconds: 100),
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(milliseconds: 300),
+            manualDuration: const Duration(milliseconds: 100),
+          ),
         ),
       );
     });

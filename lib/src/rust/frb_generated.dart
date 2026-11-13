@@ -161,7 +161,6 @@ abstract class RustLibApi extends BaseApi {
   Future<int> crateApiPlayerRustMiniaudioPlayerPlayEffect(
       {required RustMiniaudioPlayer that,
       required String id,
-      required int dspRouting,
       required RustEffectConfig config});
 
   Future<void> crateApiPlayerRustMiniaudioPlayerPrevious(
@@ -1105,7 +1104,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<int> crateApiPlayerRustMiniaudioPlayerPlayEffect(
       {required RustMiniaudioPlayer that,
       required String id,
-      required int dspRouting,
       required RustEffectConfig config}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -1113,7 +1111,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
             that, serializer);
         sse_encode_String(id, serializer);
-        sse_encode_i_32(dspRouting, serializer);
         sse_encode_box_autoadd_rust_effect_config(config, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 24, port: port_);
@@ -1123,7 +1120,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeErrorData: sse_decode_String,
       ),
       constMeta: kCrateApiPlayerRustMiniaudioPlayerPlayEffectConstMeta,
-      argValues: [that, id, dspRouting, config],
+      argValues: [that, id, config],
       apiImpl: this,
     ));
   }
@@ -1131,7 +1128,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiPlayerRustMiniaudioPlayerPlayEffectConstMeta =>
       const TaskConstMeta(
         debugName: "RustMiniaudioPlayer_play_effect",
-        argNames: ["that", "id", "dspRouting", "config"],
+        argNames: ["that", "id", "config"],
       );
 
   @override
@@ -4462,8 +4459,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustEffectConfig dco_decode_rust_effect_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return RustEffectConfig(
       volume: dco_decode_f_32(arr[0]),
       balance: dco_decode_f_32(arr[1]),
@@ -4474,6 +4471,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       pitchJitter: dco_decode_f_32(arr[6]),
       volumeJitter: dco_decode_f_32(arr[7]),
       spatial: dco_decode_opt_box_autoadd_rust_spatial_emitter(arr[8]),
+      dspRouting: dco_decode_i_32(arr[9]),
     );
   }
 
@@ -6231,6 +6229,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_volumeJitter = sse_decode_f_32(deserializer);
     var var_spatial =
         sse_decode_opt_box_autoadd_rust_spatial_emitter(deserializer);
+    var var_dspRouting = sse_decode_i_32(deserializer);
     return RustEffectConfig(
         volume: var_volume,
         balance: var_balance,
@@ -6240,7 +6239,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         priority: var_priority,
         pitchJitter: var_pitchJitter,
         volumeJitter: var_volumeJitter,
-        spatial: var_spatial);
+        spatial: var_spatial,
+        dspRouting: var_dspRouting);
   }
 
   @protected
@@ -7912,6 +7912,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_32(self.pitchJitter, serializer);
     sse_encode_f_32(self.volumeJitter, serializer);
     sse_encode_opt_box_autoadd_rust_spatial_emitter(self.spatial, serializer);
+    sse_encode_i_32(self.dspRouting, serializer);
   }
 
   @protected
@@ -8549,11 +8550,9 @@ class RustMiniaudioPlayerImpl extends RustOpaque
   /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
   /// returning the assigned voice ID.
   Future<int> playEffect(
-          {required String id,
-          required int dspRouting,
-          required RustEffectConfig config}) =>
+          {required String id, required RustEffectConfig config}) =>
       RustLib.instance.api.crateApiPlayerRustMiniaudioPlayerPlayEffect(
-          that: this, id: id, dspRouting: dspRouting, config: config);
+          that: this, id: id, config: config);
 
   /// Rewinds or skips to the previous track in the queue.
   Future<void> previous() =>

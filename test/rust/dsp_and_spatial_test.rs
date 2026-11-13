@@ -329,7 +329,7 @@ fn test_voice_pool_polyphony_and_listener_relative_farthest_stealing() {
 fn test_core_voice_pool_reactive_eviction_and_memory_immunity() {
     use miniaudio_player::core::dual_source::AudioSourceCore;
     use miniaudio_player::core::voice_pool::{
-        DspRouting, EffectCatalogItem, EffectConfig, VoicePool as CoreVoicePool,
+        EffectCatalogItem, EffectConfig, VoicePool as CoreVoicePool,
     };
 
     let path = common::FixtureResolver::resolve_str("salida.wav");
@@ -388,14 +388,14 @@ fn test_core_voice_pool_reactive_eviction_and_memory_immunity() {
 
     // Triggering disk_a loads it on demand; active voice protects it while playing
     let (v_a, _) = pool
-        .play_effect("disk_a", DspRouting::Inherit, EffectConfig::default())
+        .play_effect("disk_a", EffectConfig::default())
         .unwrap();
     assert!(pool.loaded_effect_ids().contains(&"disk_a".to_string()));
     assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
 
     // Triggering disk_b while disk_a is still active keeps both temporarily
     let (_v_b, _) = pool
-        .play_effect("disk_b", DspRouting::Inherit, EffectConfig::default())
+        .play_effect("disk_b", EffectConfig::default())
         .unwrap();
     assert!(pool.loaded_effect_ids().contains(&"disk_a".to_string()));
     assert!(pool.loaded_effect_ids().contains(&"disk_b".to_string()));

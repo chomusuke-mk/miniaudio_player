@@ -1149,7 +1149,6 @@ fn wire__crate__api__player__RustMiniaudioPlayer_play_effect_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustMiniaudioPlayer>,
             >>::sse_decode(&mut deserializer);
             let api_id = <String>::sse_decode(&mut deserializer);
-            let api_dsp_routing = <i32>::sse_decode(&mut deserializer);
             let api_config = <crate::api::types::RustEffectConfig>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
@@ -1171,7 +1170,6 @@ fn wire__crate__api__player__RustMiniaudioPlayer_play_effect_impl(
                     let output_ok = crate::api::player::RustMiniaudioPlayer::play_effect(
                         &*api_that_guard,
                         api_id,
-                        api_dsp_routing,
                         api_config,
                     )?;
                     std::result::Result::Ok(output_ok)
@@ -6121,6 +6119,7 @@ impl SseDecode for crate::api::types::RustEffectConfig {
         let mut var_volumeJitter = <f32>::sse_decode(deserializer);
         let mut var_spatial =
             <Option<crate::api::types::RustSpatialEmitter>>::sse_decode(deserializer);
+        let mut var_dspRouting = <i32>::sse_decode(deserializer);
         return crate::api::types::RustEffectConfig {
             volume: var_volume,
             balance: var_balance,
@@ -6131,6 +6130,7 @@ impl SseDecode for crate::api::types::RustEffectConfig {
             pitch_jitter: var_pitchJitter,
             volume_jitter: var_volumeJitter,
             spatial: var_spatial,
+            dsp_routing: var_dspRouting,
         };
     }
 }
@@ -8174,6 +8174,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::types::RustEffectConfig {
             self.pitch_jitter.into_into_dart().into_dart(),
             self.volume_jitter.into_into_dart().into_dart(),
             self.spatial.into_into_dart().into_dart(),
+            self.dsp_routing.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9753,6 +9754,7 @@ impl SseEncode for crate::api::types::RustEffectConfig {
         <f32>::sse_encode(self.pitch_jitter, serializer);
         <f32>::sse_encode(self.volume_jitter, serializer);
         <Option<crate::api::types::RustSpatialEmitter>>::sse_encode(self.spatial, serializer);
+        <i32>::sse_encode(self.dsp_routing, serializer);
     }
 }
 

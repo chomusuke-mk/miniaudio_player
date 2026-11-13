@@ -437,7 +437,8 @@ void main() {
     test('Test 7: 3 MB Head & 25 KB Tail with 5-Second Buffer Integrity',
         () async {
       // Small 1 MB circular buffer (~5 seconds at 44.1kHz 16-bit stereo)
-      final smallBufferPlayer = MiniaudioPlayer(bufferSize: 1);
+      final smallBufferPlayer =
+          MiniaudioPlayer(config: const PlayerConfig(bufferSizeFrames: 1));
       await smallBufferPlayer.action.setMetadataEnabled(true);
       final url = 'http://127.0.0.1:$serverPort/music/head_3mb_tail_25kb.mp3';
 

@@ -28,29 +28,38 @@ class Vector3 {
   /// Unit right vector `(1.0, 0.0, 0.0)`.
   static const Vector3 right = Vector3(1.0, 0.0, 0.0);
 
+  /// Adds [other] to this vector.
   Vector3 operator +(Vector3 other) =>
       Vector3(x + other.x, y + other.y, z + other.z);
 
+  /// Subtracts [other] from this vector.
   Vector3 operator -(Vector3 other) =>
       Vector3(x - other.x, y - other.y, z - other.z);
 
+  /// Multiplies this vector by a [scalar].
   Vector3 operator *(double scalar) =>
       Vector3(x * scalar, y * scalar, z * scalar);
 
+  /// Negates this vector.
   Vector3 operator -() => Vector3(-x, -y, -z);
 
+  /// Computes the dot product of this vector and [other].
   double dot(Vector3 other) => x * other.x + y * other.y + z * other.z;
 
+  /// Computes the cross product of this vector and [other].
   Vector3 cross(Vector3 other) => Vector3(
         y * other.z - z * other.y,
         z * other.x - x * other.z,
         x * other.y - y * other.x,
       );
 
+  /// The squared Euclidean length of this vector.
   double get lengthSquared => x * x + y * y + z * z;
 
+  /// The Euclidean length of this vector.
   double get length => math.sqrt(lengthSquared);
 
+  /// A normalized unit vector in the same direction, or [Vector3.zero] if degenerate.
   Vector3 get normalized {
     final len = length;
     if (len < 1e-12) return Vector3.zero;
@@ -58,13 +67,17 @@ class Vector3 {
     return Vector3(x * inv, y * inv, z * inv);
   }
 
+  /// Computes the Euclidean distance between this vector and [other].
   double distanceTo(Vector3 other) => (this - other).length;
 
+  /// Linearly interpolates between this vector and [other] by [t].
   Vector3 lerp(Vector3 other, double t) => Vector3(
       x + (other.x - x) * t, y + (other.y - y) * t, z + (other.z - z) * t);
 
+  /// Converts this vector to its native [RustVector3] representation.
   RustVector3 toRust() => RustVector3(x: x, y: y, z: z);
 
+  /// Constructs a [Vector3] from a native [RustVector3].
   factory Vector3.fromRust(RustVector3 rust) => Vector3(rust.x, rust.y, rust.z);
 
   @override
@@ -94,6 +107,7 @@ enum DistanceModel {
   /// Exponential attenuation dropping off sharply by distance power.
   exponential;
 
+  /// Converts this model to its native [RustDistanceModel] representation.
   RustDistanceModel toRust() {
     switch (this) {
       case DistanceModel.inverse:
@@ -105,6 +119,7 @@ enum DistanceModel {
     }
   }
 
+  /// Resolves a [DistanceModel] from a native [RustDistanceModel].
   static DistanceModel fromRust(RustDistanceModel rust) {
     switch (rust) {
       case RustDistanceModel.inverse:
@@ -139,6 +154,7 @@ class SpatialListener {
     this.up = Vector3.up,
   });
 
+  /// Returns a copy of this listener with updated spatial parameters.
   SpatialListener copyWith({
     Vector3? position,
     Vector3? velocity,
@@ -153,6 +169,7 @@ class SpatialListener {
     );
   }
 
+  /// Converts this listener to its native [RustSpatialListener] representation.
   RustSpatialListener toRust() => RustSpatialListener(
         position: position.toRust(),
         velocity: velocity.toRust(),
@@ -160,6 +177,7 @@ class SpatialListener {
         up: up.toRust(),
       );
 
+  /// Constructs a [SpatialListener] from a native [RustSpatialListener].
   factory SpatialListener.fromRust(RustSpatialListener rust) => SpatialListener(
         position: Vector3.fromRust(rust.position),
         velocity: Vector3.fromRust(rust.velocity),
@@ -236,6 +254,7 @@ class SpatialEmitter {
     this.distanceModel = DistanceModel.inverse,
   });
 
+  /// Returns a copy of this emitter with updated parameters.
   SpatialEmitter copyWith({
     Vector3? position,
     Vector3? velocity,
@@ -264,6 +283,7 @@ class SpatialEmitter {
     );
   }
 
+  /// Converts this emitter to its native [RustSpatialEmitter] representation.
   RustSpatialEmitter toRust() => RustSpatialEmitter(
         position: position.toRust(),
         velocity: velocity.toRust(),
@@ -278,6 +298,7 @@ class SpatialEmitter {
         distanceModel: distanceModel.toRust(),
       );
 
+  /// Constructs a [SpatialEmitter] from a native [RustSpatialEmitter].
   factory SpatialEmitter.fromRust(RustSpatialEmitter rust) => SpatialEmitter(
         position: Vector3.fromRust(rust.position),
         velocity: Vector3.fromRust(rust.velocity),
@@ -343,6 +364,7 @@ class SpatialController {
   double _dopplerFactor = 1.0;
   double _speedOfSound = 343.3;
 
+  /// Creates a [SpatialController] managing 3D spatial callbacks.
   SpatialController({
     required void Function(bool enabled) setEnabled,
     required void Function(SpatialListener listener) setListener,
@@ -377,59 +399,13 @@ class SpatialController {
   }
 
   /// Updates the listener in space.
-  void setListener({
-    Vector3? position,
-    Vector3? velocity,
-    Vector3? forward,
-    Vector3? up,
-  }) {
-    _listener = _listener.copyWith(
-      position: position,
-      velocity: velocity,
-      forward: forward,
-      up: up,
-    );
-    _setListener(_listener);
-  }
-
-  /// Updates the listener directly with a [SpatialListener] instance.
-  void updateListener(SpatialListener listener) {
+  void setListener(SpatialListener listener) {
     _listener = listener;
     _setListener(_listener);
   }
 
   /// Updates the sound emitter in space.
-  void setEmitter({
-    Vector3? position,
-    Vector3? velocity,
-    Vector3? direction,
-    double? minDistance,
-    double? maxDistance,
-    double? rolloffFactor,
-    double? dopplerFactor,
-    double? innerAngleRad,
-    double? outerAngleRad,
-    double? outerGain,
-    DistanceModel? distanceModel,
-  }) {
-    _emitter = _emitter.copyWith(
-      position: position,
-      velocity: velocity,
-      direction: direction,
-      minDistance: minDistance,
-      maxDistance: maxDistance,
-      rolloffFactor: rolloffFactor,
-      dopplerFactor: dopplerFactor,
-      innerAngleRad: innerAngleRad,
-      outerAngleRad: outerAngleRad,
-      outerGain: outerGain,
-      distanceModel: distanceModel,
-    );
-    _setEmitter(_emitter);
-  }
-
-  /// Updates the emitter directly with a [SpatialEmitter] instance.
-  void updateEmitter(SpatialEmitter emitter) {
+  void setEmitter(SpatialEmitter emitter) {
     _emitter = emitter;
     _setEmitter(_emitter);
   }

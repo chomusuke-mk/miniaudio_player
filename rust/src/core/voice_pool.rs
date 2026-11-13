@@ -90,6 +90,8 @@ pub struct EffectConfig {
     pub volume_jitter: f32,
     /// Optional 3D spatial emitter parameters.
     pub spatial: Option<SpatialEmitter>,
+    /// DSP routing mode (Inherit, Isolate, or Bypass).
+    pub dsp_routing: DspRouting,
 }
 
 impl Default for EffectConfig {
@@ -104,6 +106,7 @@ impl Default for EffectConfig {
             pitch_jitter: 0.0,
             volume_jitter: 0.0,
             spatial: None,
+            dsp_routing: DspRouting::Inherit,
         }
     }
 }
@@ -503,11 +506,10 @@ impl VoicePool {
         true
     }
 
-    /// Triggers an already loaded sound effect at `effect_idx` using the specified DSP routing and playback parameters.
+    /// Triggers an already loaded sound effect at `effect_idx` using the specified playback parameters.
     pub fn play_loaded_effect(
         &mut self,
         effect_idx: usize,
-        dsp_routing: DspRouting,
         config: EffectConfig,
     ) -> Result<u32, String> {
         if effect_idx >= self.registered_effects.len()
@@ -549,7 +551,7 @@ impl VoicePool {
             balance: config.balance.clamp(-1.0, 1.0),
             priority: config.priority,
             looping: config.looping,
-            dsp_routing,
+            dsp_routing: config.dsp_routing,
             emitter: config.spatial,
             stopping: false,
             fade_samples_remaining: 0,
@@ -564,7 +566,6 @@ impl VoicePool {
     pub fn play_effect(
         &mut self,
         id: &str,
-        dsp_routing: DspRouting,
         config: EffectConfig,
     ) -> Result<(u32, bool), String> {
         let effect_idx = match self.id_to_index.get(id) {
@@ -585,7 +586,7 @@ impl VoicePool {
             ram_changed = true;
         }
 
-        let voice_id = self.play_loaded_effect(effect_idx, dsp_routing, config)?;
+        let voice_id = self.play_loaded_effect(effect_idx, config)?;
         Ok((voice_id, ram_changed))
     }
 

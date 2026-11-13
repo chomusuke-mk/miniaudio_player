@@ -12,7 +12,7 @@ use crate::core::dual_source::AudioSourceCore;
 use crate::core::miniaudio_player::MiniaudioPlayer;
 use crate::core::recording::WavFormat;
 use crate::core::types::{PlaybackState, QueueTransition};
-use crate::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
+use crate::core::voice_pool::{EffectCatalogItem, EffectConfig};
 use crate::dsp::equalizer::EqualizerParams;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
@@ -1742,18 +1742,12 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     pub fn play_effect(
         &self,
         id: String,
-        dsp_routing: i32,
         config: RustEffectConfig,
     ) -> Result<u32, String> {
-        let routing = match dsp_routing {
-            1 => DspRouting::Isolate,
-            2 => DspRouting::Bypass,
-            _ => DspRouting::Inherit,
-        };
         let core_config = EffectConfig::from(config);
         let (voice_id, ram_changed, loaded_ids, ram_bytes) = {
             let ply = self.inner.lock().unwrap();
-            let (vid, changed) = ply.effects_manager.play_effect(&id, routing, core_config)?;
+            let (vid, changed) = ply.effects_manager.play_effect(&id, core_config)?;
             let ids = if changed {
                 ply.effects_manager.loaded_effect_ids()
             } else {

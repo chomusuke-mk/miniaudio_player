@@ -345,7 +345,7 @@ void main() {
 
       final subs = [
         player.stream.position.listen((_) => positionEvents++),
-        player.stream.playing.listen((_) => playingEvents++),
+        player.stream.isPlaying.listen((_) => playingEvents++),
         player.stream.preamp.listen((_) => preampEvents++),
         player.stream.reverb.listen((_) => reverbEvents++),
         player.stream.balance.listen((_) => balanceEvents++),

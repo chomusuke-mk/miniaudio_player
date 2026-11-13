@@ -131,9 +131,7 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
   /// returning the assigned voice ID.
   Future<int> playEffect(
-      {required String id,
-      required int dspRouting,
-      required RustEffectConfig config});
+      {required String id, required RustEffectConfig config});
 
   /// Rewinds or skips to the previous track in the queue.
   Future<void> previous();

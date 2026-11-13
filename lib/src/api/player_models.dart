@@ -1,6 +1,5 @@
 import '../equalizer.dart';
 import '../reverb.dart';
-import 'audio_device.dart';
 import 'crossfade_config.dart';
 import 'miniaudio_player.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
@@ -201,21 +200,19 @@ class AudioInput {
   AudioInputConfig get config => _config;
 
   /// Creates an [AudioInput] bound to a hardware endpoint and an [AudioInputConfig].
-  AudioInput({
+  const AudioInput({
     String deviceId = 'AUTO',
-    AudioDevice? device,
     AudioInputConfig config = const AudioInputConfig(),
-  })  : _deviceId = device != null ? device.id : deviceId,
+  })  : _deviceId = deviceId,
         _config = config;
 
   /// Creates a copy of this input with updated parameters.
   AudioInput copyWith({
     String? deviceId,
-    AudioDevice? device,
     AudioInputConfig? config,
   }) {
     return AudioInput(
-      deviceId: device != null ? device.id : (deviceId ?? _deviceId),
+      deviceId: deviceId ?? _deviceId,
       config: config ?? _config,
     );
   }
@@ -436,29 +433,15 @@ class PlayerConfig {
   /// The maximum number of concurrent polyphonic effect voices.
   final int maxVoices;
 
-  /// Maximum memory budget in megabytes (MB) allocated for decoded RAM sound effects.
+  /// Maximum memory budget in bytes allocated for decoded RAM sound effects.
   ///
-  /// Defaults to `50` (50 MB).
+  /// Defaults to `50 * 1024 * 1024` (50 MB).
   ///
   /// > [!CAUTION]
-  /// > **[DANGEROUS: UNLIMITED MEMORY]**: Setting `effectMemoryLimitMb: null` disables all RAM eviction.
+  /// > **[DANGEROUS: UNLIMITED MEMORY]**: Setting `maxRamBytes: null` disables all RAM eviction.
   /// > Sound effects will accumulate in memory indefinitely without safety boundaries. Use only in
   /// > strictly controlled environments with finite, small audio assets.
-  final int? effectMemoryLimitMb;
-
-  /// Optional exact byte-granularity override for the RAM sound effects memory budget.
-  ///
-  /// When non-null, takes precedence over [effectMemoryLimitMb].
   final int? maxRamBytes;
-
-  /// Resolves the effective RAM budget in bytes (`null` for unlimited memory).
-  int? get resolvedMaxRamBytes {
-    if (maxRamBytes != null) return maxRamBytes;
-    if (effectMemoryLimitMb != null) {
-      return effectMemoryLimitMb! * 1024 * 1024;
-    }
-    return null;
-  }
 
   /// The voice stealing policy when max voices are saturated.
   final VoiceStealingPolicy voiceStealingPolicy;
@@ -483,12 +466,11 @@ class PlayerConfig {
 
   /// Creates a [PlayerConfig] with engine parameters.
   const PlayerConfig({
-    this.sampleRate = 48000,
+    this.sampleRate = 44100,
     this.channels = 2,
-    this.bufferSizeFrames = 1024,
+    this.bufferSizeFrames = 0,
     this.maxVoices = 64,
-    this.effectMemoryLimitMb = 50,
-    this.maxRamBytes,
+    this.maxRamBytes = 50 * 1024 * 1024,
     this.voiceStealingPolicy = VoiceStealingPolicy.lowestPriority,
     this.autoPlay = false,
     this.pauseOnDeviceChange = false,

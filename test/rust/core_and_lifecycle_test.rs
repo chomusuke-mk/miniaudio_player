@@ -257,7 +257,7 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
 fn test_music_only_output_excludes_sound_effects() {
     use miniaudio_player::core::dual_source::AudioSourceCore;
     use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
-    use miniaudio_player::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
+    use miniaudio_player::core::voice_pool::{EffectCatalogItem, EffectConfig};
 
     let mut player = MiniaudioPlayer::new(48000, 2, 1024, 16, None, None).unwrap();
     let wav_path = FixtureResolver::resolve_str("salida.wav");
@@ -281,7 +281,7 @@ fn test_music_only_output_excludes_sound_effects() {
     // Trigger effect with DspRouting::Inherit (default)
     let (voice_id, _) = player
         .effects_manager
-        .play_effect("sfx_test", DspRouting::Inherit, EffectConfig::default())
+        .play_effect("sfx_test", EffectConfig::default())
         .unwrap();
     assert_ne!(voice_id, 0);
 
@@ -309,7 +309,7 @@ fn test_music_only_output_excludes_sound_effects() {
 fn test_polyphonic_effects_inherit_reverb_and_tail_decay() {
     use miniaudio_player::core::dual_source::AudioSourceCore;
     use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
-    use miniaudio_player::core::voice_pool::{DspRouting, EffectCatalogItem, EffectConfig};
+    use miniaudio_player::core::voice_pool::{EffectCatalogItem, EffectConfig};
     use miniaudio_player::dsp::reverb::ReverbConfig;
 
     let mut player = MiniaudioPlayer::new(48000, 2, 1024, 32, None, None).unwrap();
@@ -355,7 +355,7 @@ fn test_polyphonic_effects_inherit_reverb_and_tail_decay() {
         };
         let (vid, _) = player
             .effects_manager
-            .play_effect("sfx_laser", DspRouting::Inherit, config)
+            .play_effect("sfx_laser", config)
             .unwrap();
         assert_ne!(vid, 0);
     }

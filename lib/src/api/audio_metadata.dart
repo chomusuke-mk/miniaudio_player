@@ -336,88 +336,190 @@ class IcyMetadata {
 /// catalog identifiers, credits, dates, harmonic keys/moods, URLs, copyright,
 /// podcast tags, sorting/grouping, and encoder details).
 class ExtendedMetadata {
-  // MusicBrainz & AcoustID
+  /// MusicBrainz recording UUID.
   final String? musicBrainzRecordingId;
+
+  /// MusicBrainz track UUID.
   final String? musicBrainzTrackId;
+
+  /// MusicBrainz release UUID.
   final String? musicBrainzReleaseId;
+
+  /// MusicBrainz release group UUID.
   final String? musicBrainzReleaseGroupId;
+
+  /// MusicBrainz artist UUID.
   final String? musicBrainzArtistId;
+
+  /// MusicBrainz release artist UUID.
   final String? musicBrainzReleaseArtistId;
+
+  /// MusicBrainz work UUID.
   final String? musicBrainzWorkId;
+
+  /// MusicBrainz release type (e.g. album, single, ep).
   final String? musicBrainzReleaseType;
+
+  /// AcoustID fingerprint identifier.
   final String? acoustId;
+
+  /// Raw AcoustID acoustic fingerprint string.
   final String? acoustIdFingerprint;
 
-  // Identifiers
+  /// International Standard Recording Code (ISRC).
   final String? isrc;
+
+  /// EAN/UPC commercial barcode.
   final String? barcode;
+
+  /// Record label catalog number.
   final String? catalogNumber;
 
-  // Credits & Personnel
+  /// Music arranger name.
   final String? arranger;
+
+  /// Orchestra or choir conductor name.
   final String? conductor;
+
+  /// Performance or musical director name.
   final String? director;
+
+  /// Audio recording or mastering engineer name.
   final String? engineer;
+
+  /// Lyricist or text writer name.
   final String? lyricist;
+
+  /// Disc jockey or mix DJ name.
   final String? mixDj;
+
+  /// Mixing engineer name.
   final String? mixEngineer;
+
+  /// Featured or guest performer credits.
   final String? performer;
+
+  /// Music producer name.
   final String? producer;
+
+  /// Music publisher entity.
   final String? publisher;
+
+  /// Record label or imprint.
   final String? label;
+
+  /// Remixer or rework artist.
   final String? remixer;
+
+  /// Songwriter or lyric author.
   final String? writer;
+
+  /// Music composer name.
   final String? composer;
+
+  /// Original lyricist for translated or adapted works.
   final String? originalLyricist;
 
-  // Dates
+  /// Recording date string.
   final String? recordingDate;
+
+  /// Commercial release date string.
   final String? releaseDate;
+
+  /// Original commercial release date string.
   final String? originalReleaseDate;
 
-  // Musical / Harmonic Properties
+  /// Musical initial key or tonality (e.g. "8A", "Am", "C# minor").
   final String? initialKey;
+
+  /// Harmonic color code or tag.
   final String? color;
+
+  /// Track mood description.
   final String? mood;
 
-  // URLs
+  /// Canonical audio file URL.
   final String? audioFileUrl;
+
+  /// Official audio source web link.
   final String? audioSourceUrl;
+
+  /// Commercial information or purchase URL.
   final String? commercialInformationUrl;
+
+  /// Copyright or licensing information URL.
   final String? copyrightUrl;
+
+  /// Official track artist website URL.
   final String? trackArtistUrl;
+
+  /// Online radio station homepage URL.
   final String? radioStationUrl;
+
+  /// Direct payment or tip jar URL.
   final String? paymentUrl;
+
+  /// Record publisher official web URL.
   final String? publisherUrl;
 
-  // Rights & Licensing
+  /// Legal copyright notice string.
   final String? copyrightMessage;
+
+  /// Software or creative commons license declaration.
   final String? license;
 
-  // Podcast
+  /// Podcast episode text description or show notes.
   final String? podcastDescription;
+
+  /// Podcast iTunes/standard category taxonomy.
   final String? podcastSeriesCategory;
+
+  /// Podcast feed or episode web URL.
   final String? podcastUrl;
+
+  /// Globally unique identifier (GUID) for the podcast episode.
   final String? podcastGlobalUniqueId;
+
+  /// Comma-separated search keywords for the podcast episode.
   final String? podcastKeywords;
 
-  // Grouping, Subtitles & Show
+  /// Subtitle or subtitle title for multi-disc box sets.
   final String? setSubtitle;
+
+  /// Radio, TV, or podcast show name.
   final String? showName;
+
+  /// Classical movement or content group designation.
   final String? contentGroup;
+
+  /// Secondary track subtitle.
   final String? trackSubtitle;
 
-  // Language & Advisory
+  /// ISO 639 audio language code (e.g. "eng", "spa", "jpn").
   final String? language;
+
+  /// Writing script system (e.g. "Latn", "Cyrl").
   final String? script;
+
+  /// Parental advisory rating (e.g. "Explicit", "Clean").
   final String? parentalAdvisory;
 
-  // File & Encoding Info
+  /// File owner or licensee identifier.
   final String? fileOwner;
+
+  /// Original file name before export or ripping.
   final String? originalFileName;
+
+  /// Original physical media type (e.g. "CD", "Vinyl", "DAT").
   final String? originalMediaType;
+
+  /// Software or person responsible for audio encoding.
   final String? encodedBy;
+
+  /// Software used to encode or rip the audio file.
   final String? encoderSoftware;
+
+  /// Specific settings or flags passed to the audio encoder.
   final String? encoderSettings;
 
   /// Empty [ExtendedMetadata] constant.
@@ -738,9 +840,6 @@ class AudioMetadata {
 
   /// Primary track artist.
   final String? trackArtist;
-
-  /// Convenience alias for [trackArtist].
-  String? get artist => trackArtist;
 
   /// Album title.
   final String? album;

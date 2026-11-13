@@ -30,7 +30,7 @@ void main() {
 
       final player = MiniaudioPlayer(
         queue: [AudioSource(testWavFile.path)],
-        pauseOnDeviceChange: true,
+        config: const PlayerConfig(pauseOnDeviceChange: true),
       );
 
       try {
@@ -85,7 +85,7 @@ void main() {
 
       final player = MiniaudioPlayer(
         queue: [AudioSource(testWavFile.path)],
-        pauseOnDeviceChange: true,
+        config: const PlayerConfig(pauseOnDeviceChange: true),
       );
 
       try {

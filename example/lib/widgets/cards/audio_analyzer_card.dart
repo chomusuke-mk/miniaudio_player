@@ -828,7 +828,7 @@ class AudioAnalyzerCard extends StatelessWidget {
 
     final rows = <(String, String)>[
       ('Title', resolve(metadata?.title)),
-      ('Artist', resolve(metadata?.trackArtist ?? metadata?.artist)),
+      ('Artist', resolve(metadata?.trackArtist)),
       ('Album', resolve(metadata?.album)),
       (
         'Year / Date',

@@ -155,10 +155,12 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(seconds: 2),
-          manualDuration: const Duration(milliseconds: 200),
-          curve: CrossfadeCurve.linear,
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(seconds: 2),
+            manualDuration: const Duration(milliseconds: 200),
+            curve: CrossfadeCurve.linear,
+          ),
         ),
       );
     });
@@ -415,8 +417,10 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          manualDuration: const Duration(milliseconds: 100),
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            manualDuration: const Duration(milliseconds: 100),
+          ),
         ),
       );
     });

@@ -606,17 +606,17 @@ class PlayerAction<T> {
     await _rust.setPauseOnDeviceChange(enabled: enabled);
   }
 
-  /// Updates playback buffer period size.
-  Future<void> setBufferSize(int size) async {
+  /// Updates playback buffer period size in frames.
+  Future<void> setBufferSize(int bufferSizeFrames) async {
     _player._ensureNotDisposed();
-    if (size < 0) {
+    if (bufferSizeFrames < 0) {
       throw ArgumentError.value(
-        size,
-        'bufferSize',
+        bufferSizeFrames,
+        'bufferSizeFrames',
         'Buffer size must be non-negative',
       );
     }
-    await _rust.setBufferSize(bufferSizeFrames: size);
+    await _rust.setBufferSize(bufferSizeFrames: bufferSizeFrames);
   }
 
   // =========================================================================
@@ -656,77 +656,57 @@ class PlayerAction<T> {
   ///
   /// If the effect is not currently decoded in RAM, Rust decodes it on demand and
   /// reactively enforces the configured RAM budget using the multi-factor retention score.
+  ///
+  /// All playback properties (volume, pitch, balance, rate, looping, priority, jitter,
+  /// spatial emitter, DSP routing) are configured via [config].
   Future<Voice> playEffect(
     String id, {
-    DspRouting dspRouting = DspRouting.inherit,
     EffectConfig config = const EffectConfig(),
-    double? volume,
-    double? pitch,
-    double? balance,
-    double? pitchJitter,
-    double? volumeJitter,
-    SpatialEmitter? emitter,
-    SpatialEmitter? spatial,
-    bool? looping,
-    int? priority,
   }) async {
     _player._ensureNotDisposed();
-    final effectiveConfig = config.copyWith(
-      volume: volume,
-      pitch: pitch,
-      balance: balance,
-      pitchJitter: pitchJitter,
-      volumeJitter: volumeJitter,
-      spatial: emitter ?? spatial,
-      looping: looping,
-      priority: priority,
-    );
-    if (effectiveConfig.volume.isNaN ||
-        effectiveConfig.volume.isInfinite ||
-        effectiveConfig.volume < 0.0) {
+    if (config.volume.isNaN ||
+        config.volume.isInfinite ||
+        config.volume < 0.0) {
       throw ArgumentError.value(
-        effectiveConfig.volume,
+        config.volume,
         'volume',
         'Effect volume must be >= 0.0',
       );
     }
-    if (effectiveConfig.pitch.isNaN ||
-        effectiveConfig.pitch.isInfinite ||
-        effectiveConfig.pitch <= 0.0) {
+    if (config.pitch.isNaN ||
+        config.pitch.isInfinite ||
+        config.pitch <= 0.0) {
       throw ArgumentError.value(
-        effectiveConfig.pitch,
+        config.pitch,
         'pitch',
         'Effect pitch must be > 0.0',
       );
     }
-    if (effectiveConfig.rate.isNaN ||
-        effectiveConfig.rate.isInfinite ||
-        effectiveConfig.rate <= 0.0) {
+    if (config.rate.isNaN ||
+        config.rate.isInfinite ||
+        config.rate <= 0.0) {
       throw ArgumentError.value(
-        effectiveConfig.rate,
+        config.rate,
         'rate',
         'Effect rate must be > 0.0',
       );
     }
 
-    final effectiveRouting =
-        (dspRouting != DspRouting.inherit) ? dspRouting : config.dspRouting;
-
     final voiceId = await _rust.playEffect(
       id: id,
-      dspRouting: effectiveRouting.value,
       config: rust_types.RustEffectConfig(
-        volume: effectiveConfig.volume,
-        balance: effectiveConfig.balance,
-        pitch: effectiveConfig.pitch,
-        rate: effectiveConfig.rate,
-        looping: effectiveConfig.looping,
-        priority: effectiveConfig.priority,
-        pitchJitter: effectiveConfig.pitchJitter,
-        volumeJitter: effectiveConfig.volumeJitter,
-        spatial: effectiveConfig.spatial != null
-            ? _toRustEmitter(effectiveConfig.spatial!)
+        volume: config.volume,
+        balance: config.balance,
+        pitch: config.pitch,
+        rate: config.rate,
+        looping: config.looping,
+        priority: config.priority,
+        pitchJitter: config.pitchJitter,
+        volumeJitter: config.volumeJitter,
+        spatial: config.spatial != null
+            ? _toRustEmitter(config.spatial!)
             : null,
+        dspRouting: config.dspRouting.value,
       ),
     );
     _player.state._loadedEffectIds =
@@ -982,17 +962,15 @@ class PlayerAction<T> {
   Future<void> configureInput(
     AudioInputConfig config, {
     String deviceId = 'AUTO',
-    AudioDevice? device,
   }) async {
     _player._ensureNotDisposed();
-    final targetId = device != null ? device.id : deviceId;
-    if (!_player.state.inputs.any((i) => i.deviceId == targetId)) {
+    if (!_player.state.inputs.any((i) => i.deviceId == deviceId)) {
       throw StateError(
-        'Cannot configure input: deviceId $targetId is not currently active.',
+        'Cannot configure input: deviceId $deviceId is not currently active.',
       );
     }
     await _rust.configureInput(
-      deviceId: targetId,
+      deviceId: deviceId,
       config: _toRustInputConfig(config),
     );
   }

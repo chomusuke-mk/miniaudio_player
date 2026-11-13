@@ -335,7 +335,7 @@ class MetadataInspectorModal extends StatelessWidget {
           color: accentColor,
           rows: [
             ('Title', metadata?.title ?? '--'),
-            ('Artist', metadata?.trackArtist ?? metadata?.artist ?? '--'),
+            ('Artist', metadata?.trackArtist ?? '--'),
             ('Album', metadata?.album ?? '--'),
             ('Album Artist', metadata?.albumArtist ?? '--'),
             (

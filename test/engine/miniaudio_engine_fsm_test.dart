@@ -30,10 +30,12 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(seconds: 2),
-          manualDuration: const Duration(seconds: 2),
-          curve: CrossfadeCurve.linear,
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(seconds: 2),
+            manualDuration: const Duration(seconds: 2),
+            curve: CrossfadeCurve.linear,
+          ),
         ),
       );
     });
@@ -97,10 +99,12 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(seconds: 2),
-          manualDuration: const Duration(milliseconds: 500),
-          curve: CrossfadeCurve.linear,
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(seconds: 2),
+            manualDuration: const Duration(milliseconds: 500),
+            curve: CrossfadeCurve.linear,
+          ),
         ),
       );
     });
@@ -205,9 +209,11 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(milliseconds: 50),
-          manualDuration: const Duration(milliseconds: 50),
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(milliseconds: 50),
+            manualDuration: const Duration(milliseconds: 50),
+          ),
         ),
       );
     });
@@ -267,9 +273,11 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(seconds: 2),
-          manualDuration: const Duration(seconds: 2),
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(seconds: 2),
+            manualDuration: const Duration(seconds: 2),
+          ),
         ),
       );
     });
@@ -351,7 +359,9 @@ void main() {
 
     setUp(() {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: const CrossfadeConfig.off(),
+        config: const PlayerConfig(
+          crossfade: CrossfadeConfig.off(),
+        ),
       );
     });
 
@@ -415,7 +425,9 @@ void main() {
         'seek to 2s with crossfade=0 maintains track 1 and does not switch prematurely',
         () async {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: const CrossfadeConfig.off(),
+        config: const PlayerConfig(
+          crossfade: CrossfadeConfig.off(),
+        ),
       );
 
       await engine.action.setQueue([
@@ -453,9 +465,11 @@ void main() {
         'seeking back outside crossfade range aborts auto-crossfade and allows re-triggering',
         () async {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(seconds: 2),
-          manualDuration: const Duration(seconds: 2),
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(seconds: 2),
+            manualDuration: const Duration(seconds: 2),
+          ),
         ),
       );
 
@@ -509,9 +523,11 @@ void main() {
         'seeking within crossfade range preserves autoCrossfading phase and updates progress',
         () async {
       engine = MiniaudioPlayer<String>(
-        crossfadeConfig: CrossfadeConfig(
-          autoDuration: const Duration(seconds: 2),
-          manualDuration: const Duration(seconds: 2),
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(seconds: 2),
+            manualDuration: const Duration(seconds: 2),
+          ),
         ),
       );
 
