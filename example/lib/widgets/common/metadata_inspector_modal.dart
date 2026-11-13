@@ -13,8 +13,6 @@ class MetadataInspectorModal extends StatelessWidget {
   final AudioMetadata? dynamicMetadata;
   final AudioInfo? staticAudioInfo;
   final AudioInfo? dynamicAudioInfo;
-  final ReplayGainResult? staticReplayGain;
-  final ReplayGainConfig? dynamicReplayGain;
 
   const MetadataInspectorModal({
     super.key,
@@ -23,9 +21,13 @@ class MetadataInspectorModal extends StatelessWidget {
     this.dynamicMetadata,
     this.staticAudioInfo,
     this.dynamicAudioInfo,
-    this.staticReplayGain,
-    this.dynamicReplayGain,
   });
+
+  String _resolveTag(String? value) {
+    if (value == null) return '--';
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? '--' : trimmed;
+  }
 
   String _formatDuration(Duration? d) {
     if (d == null || d == Duration.zero) return '--';
@@ -124,12 +126,6 @@ class MetadataInspectorModal extends StatelessWidget {
                     accentColor: StudioColors.accentCyan,
                     metadata: staticMetadata,
                     info: staticAudioInfo,
-                    gainDb: staticReplayGain?.gainDb != null
-                        ? '${staticReplayGain!.gainDb.toStringAsFixed(1)} dB'
-                        : staticMetadata?.replayGainTrackGain,
-                    peak: staticReplayGain?.peak != null
-                        ? staticReplayGain!.peak.toStringAsFixed(3)
-                        : staticMetadata?.replayGainTrackPeak,
                   );
 
                   final dynamicCol = _buildMetadataColumn(
@@ -140,12 +136,6 @@ class MetadataInspectorModal extends StatelessWidget {
                     accentColor: StudioColors.accentEmerald,
                     metadata: dynamicMetadata,
                     info: dynamicAudioInfo,
-                    gainDb: dynamicReplayGain?.gainDb != null
-                        ? '${dynamicReplayGain!.gainDb.toStringAsFixed(1)} dB'
-                        : dynamicMetadata?.replayGainTrackGain,
-                    peak: dynamicReplayGain?.peak != null
-                        ? dynamicReplayGain!.peak.toStringAsFixed(3)
-                        : dynamicMetadata?.replayGainTrackPeak,
                   );
 
                   if (isCompact) {
@@ -196,8 +186,6 @@ class MetadataInspectorModal extends StatelessWidget {
     required Color accentColor,
     required AudioMetadata? metadata,
     required AudioInfo? info,
-    required String? gainDb,
-    required String? peak,
   }) {
     final cover = metadata?.frontCover;
 
@@ -329,22 +317,23 @@ class MetadataInspectorModal extends StatelessWidget {
         ),
         const SizedBox(height: 10),
 
-        // Core Tags
+        // Metadata Tags
         _buildTagGroup(
-          title: 'CORE METADATA TAGS',
+          title: 'METADATA TAGS',
           color: accentColor,
           rows: [
-            ('Title', metadata?.title ?? '--'),
-            ('Artist', metadata?.trackArtist ?? '--'),
-            ('Album', metadata?.album ?? '--'),
-            ('Album Artist', metadata?.albumArtist ?? '--'),
+            ('Title', _resolveTag(metadata?.title)),
+            ('Artist', _resolveTag(metadata?.trackArtist)),
+            ('Album', _resolveTag(metadata?.album)),
+            ('Album Artist', _resolveTag(metadata?.albumArtist)),
             (
               'Year / Date',
-              metadata?.year?.toString() ??
-                  metadata?.extended.originalReleaseDate ??
-                  '--',
+              _resolveTag(
+                metadata?.year?.toString() ??
+                    metadata?.extended.originalReleaseDate,
+              ),
             ),
-            ('Genre', metadata?.genre ?? '--'),
+            ('Genre', _resolveTag(metadata?.genre)),
             (
               'Track #',
               '${metadata?.trackNumber ?? "-"}/${metadata?.trackTotal ?? "-"}',
@@ -353,6 +342,10 @@ class MetadataInspectorModal extends StatelessWidget {
               'Disc #',
               '${metadata?.discNumber ?? "-"}/${metadata?.discTotal ?? "-"}',
             ),
+            ('RG Track Gain', _resolveTag(metadata?.replayGainTrackGain)),
+            ('RG Track Peak', _resolveTag(metadata?.replayGainTrackPeak)),
+            ('RG Album Gain', _resolveTag(metadata?.replayGainAlbumGain)),
+            ('RG Album Peak', _resolveTag(metadata?.replayGainAlbumPeak)),
             if (metadata?.lyrics != null && metadata!.lyrics!.isNotEmpty)
               (
                 'Lyrics',
@@ -400,19 +393,6 @@ class MetadataInspectorModal extends StatelessWidget {
                   ? 'Lossless (Bit-perfect)'
                   : 'Lossy / Unknown',
             ),
-          ],
-        ),
-        const SizedBox(height: 10),
-
-        // Loudness & ReplayGain Normalization
-        _buildTagGroup(
-          title: 'REPLAYGAIN & LOUDNESS TAGS',
-          color: accentColor,
-          rows: [
-            ('Track Gain', gainDb ?? metadata?.replayGainTrackGain ?? '--'),
-            ('Track Peak', peak ?? metadata?.replayGainTrackPeak ?? '--'),
-            ('Album Gain', metadata?.replayGainAlbumGain ?? '--'),
-            ('Album Peak', metadata?.replayGainAlbumPeak ?? '--'),
           ],
         ),
         const SizedBox(height: 10),

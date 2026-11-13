@@ -60,6 +60,141 @@ class AudioAnalyzerCard extends StatelessWidget {
     return '$minutes:$seconds.$ms';
   }
 
+  String _formatByteSize(int? bytes) {
+    if (bytes == null || bytes <= 0) return '--';
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '$bytes B';
+  }
+
+  String _formatTotalFrames(AudioInfo? info) {
+    if (info == null ||
+        info.sampleRate <= 0 ||
+        info.duration == null ||
+        info.duration! <= Duration.zero) {
+      return '--';
+    }
+    final frames = (info.sampleRate * info.duration!.inMicroseconds / 1000000)
+        .round();
+    if (frames <= 0) return '--';
+    final digits = frames.toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) {
+        buf.write(',');
+      }
+      buf.write(digits[i]);
+    }
+    return buf.toString();
+  }
+
+  String _resolveText(String? val, bool isLoading) {
+    if (isLoading) return 'loading...';
+    if (val == null || val.trim().isEmpty) return '--';
+    return val;
+  }
+
+  Widget _buildPropertyRow(String label, String value, bool isLoading) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 95,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 9,
+                color: StudioColors.textMuted,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 9,
+                color: isLoading ? const Color(0xFF64748B) : Colors.white,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubCardHeader({
+    required IconData icon,
+    required Color accentColor,
+    required String title,
+    required String subtitle,
+    Widget? trailing,
+  }) {
+    final titleRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: accentColor),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+              color: accentColor,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1424),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+        border: Border(
+          bottom: BorderSide(
+            color: StudioColors.cardBorder.withValues(alpha: 0.6),
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (trailing == null)
+            titleRow
+          else
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 2,
+              children: [titleRow, trailing],
+            ),
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 8.5,
+              color: StudioColors.textMuted,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   int _countExtendedFields(AudioMetadata? metadata) {
     if (metadata == null) return 0;
     int count = 0;
@@ -307,10 +442,11 @@ class AudioAnalyzerCard extends StatelessWidget {
           _buildWaveformSection(analysis, isLoading),
           const SizedBox(height: 14),
 
-          // 3 & 4. AUDIO INFO & METADATA SECTIONS (Responsive Flex 50%/50% or 100%)
+          // 3, 4 & 5. AUDIO INFO, METADATA & CHROMAPRINT
+          // Responsive: 3 columns (1/3 + 1/3 + 1/3) -> 2+1 (1/2 + 1/2, 1) -> 1 + 1 + 1
           LayoutBuilder(
             builder: (context, constraints) {
-              final isSideBySide = constraints.maxWidth >= 540;
+              final isThreeColumn = constraints.maxWidth >= 720;
               final audioInfoWidget = _buildAudioInfoSection(
                 analysis,
                 isLoading,
@@ -321,14 +457,41 @@ class AudioAnalyzerCard extends StatelessWidget {
                 isLoading,
                 track,
               );
+              final chromaprintWidget = _buildChromaprintSection(
+                context,
+                analysis,
+                isLoading,
+                track,
+                fingerprintMaxLines: isThreeColumn ? 14 : 2,
+              );
 
-              if (isSideBySide) {
+              if (isThreeColumn) {
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(flex: 1, child: audioInfoWidget),
                     const SizedBox(width: 12),
                     Expanded(flex: 1, child: metadataWidget),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 1, child: chromaprintWidget),
+                  ],
+                );
+              }
+
+              if (constraints.maxWidth >= 520) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 1, child: audioInfoWidget),
+                        const SizedBox(width: 12),
+                        Expanded(flex: 1, child: metadataWidget),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    chromaprintWidget,
                   ],
                 );
               }
@@ -339,14 +502,12 @@ class AudioAnalyzerCard extends StatelessWidget {
                   audioInfoWidget,
                   const SizedBox(height: 12),
                   metadataWidget,
+                  const SizedBox(height: 12),
+                  chromaprintWidget,
                 ],
               );
             },
           ),
-          const SizedBox(height: 14),
-
-          // 5. CHROMAPRINT / ACOUSTID FINGERPRINT SECTION
-          _buildChromaprintSection(context, analysis, isLoading, track),
         ],
       ),
     );
@@ -636,21 +797,27 @@ class AudioAnalyzerCard extends StatelessWidget {
   Widget _buildAudioInfoSection(AudioAnalysisResult? analysis, bool isLoading) {
     final info = analysis?.audioInfo;
 
-    String resolve(String? val) {
-      if (isLoading) return 'loading...';
-      if (val == null || val.trim().isEmpty) return '--';
-      return val;
-    }
-
     final rows = <(String, String)>[
-      ('Container Format', resolve(info?.containerFormat ?? info?.format)),
-      ('Audio Codec', resolve(info?.codec)),
+      (
+        'Container Format',
+        _resolveText(info?.containerFormat ?? info?.format, isLoading),
+      ),
+      ('Format', _resolveText(info?.format, isLoading)),
+      ('Audio Codec', _resolveText(info?.codec, isLoading)),
       (
         'Sample Rate',
         isLoading
             ? 'loading...'
             : (info != null && info.sampleRate > 0
                   ? '${info.sampleRate} Hz'
+                  : '--'),
+      ),
+      (
+        'Raw Sample Rate',
+        isLoading
+            ? 'loading...'
+            : (info?.rawSampleRate != null && info!.rawSampleRate! > 0
+                  ? '${info.rawSampleRate} Hz'
                   : '--'),
       ),
       (
@@ -694,6 +861,9 @@ class AudioAnalyzerCard extends StatelessWidget {
                   : '--'),
       ),
       (
+        'Total Frames', isLoading ? 'loading...' : _formatTotalFrames(info)),
+      ('File Size', isLoading ? 'loading...' : _formatByteSize(info?.fileSize)),
+      (
         'Lossless',
         isLoading
             ? 'loading...'
@@ -713,95 +883,20 @@ class AudioAnalyzerCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Section Header
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(7),
-              ),
-              border: Border(
-                bottom: BorderSide(
-                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
-                ),
-              ),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: 14,
-                      color: StudioColors.accentCyan,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'AUDIO INFO',
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5,
-                        color: StudioColors.accentCyan,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 3),
-                Text(
-                  'Extracted directly from headers at zero decoding cost without affecting playback performance.',
-                  style: TextStyle(
-                    fontSize: 8.5,
-                    color: StudioColors.textMuted,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ),
+          _buildSubCardHeader(
+            icon: Icons.info_outline,
+            accentColor: StudioColors.accentCyan,
+            title: 'AUDIO INFO',
+            subtitle: 'Extracted directly from headers at zero decoding cost without affecting playback performance.',
           ),
 
           // Properties Table
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(
-              children: rows.map((r) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 3,
-                  ),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 95,
-                        child: Text(
-                          r.$1,
-                          style: const TextStyle(
-                            fontSize: 9,
-                            color: StudioColors.textMuted,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          r.$2,
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: isLoading
-                                ? const Color(0xFF64748B)
-                                : Colors.white,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w600,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
+              children: rows
+                  .map((r) => _buildPropertyRow(r.$1, r.$2, isLoading))
+                  .toList(),
             ),
           ),
         ],
@@ -822,23 +917,18 @@ class AudioAnalyzerCard extends StatelessWidget {
     final pictures = metadata?.pictures ?? const <AudioPicture>[];
     final extendedCount = _countExtendedFields(metadata);
 
-    String resolve(String? val) {
-      if (isLoading) return 'loading...';
-      if (val == null || val.trim().isEmpty) return '--';
-      return val;
-    }
-
     final rows = <(String, String)>[
-      ('Title', resolve(metadata?.title)),
-      ('Artist', resolve(metadata?.trackArtist)),
-      ('Album', resolve(metadata?.album)),
+      ('Title', _resolveText(metadata?.title, isLoading)),
+      ('Artist', _resolveText(metadata?.trackArtist, isLoading)),
+      ('Album', _resolveText(metadata?.album, isLoading)),
       (
         'Year / Date',
-        resolve(
+        _resolveText(
           metadata?.year?.toString() ?? metadata?.extended.originalReleaseDate,
+          isLoading,
         ),
       ),
-      ('Genre', resolve(metadata?.genre)),
+      ('Genre', _resolveText(metadata?.genre, isLoading)),
       (
         'Track #',
         isLoading
@@ -847,6 +937,10 @@ class AudioAnalyzerCard extends StatelessWidget {
                   ? '${metadata!.trackNumber}/${metadata.trackTotal ?? "-"}'
                   : '--'),
       ),
+      ('RG Track Gain', _resolveText(metadata?.replayGainTrackGain, isLoading)),
+      ('RG Track Peak', _resolveText(metadata?.replayGainTrackPeak, isLoading)),
+      ('RG Album Gain', _resolveText(metadata?.replayGainAlbumGain, isLoading)),
+      ('RG Album Peak', _resolveText(metadata?.replayGainAlbumPeak, isLoading)),
     ];
 
     return Container(
@@ -859,52 +953,11 @@ class AudioAnalyzerCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Section Header
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0E1424),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(7),
-              ),
-              border: Border(
-                bottom: BorderSide(
-                  color: StudioColors.cardBorder.withValues(alpha: 0.6),
-                ),
-              ),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.library_music_outlined,
-                      size: 14,
-                      color: StudioColors.accentPurple,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'METADATA',
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5,
-                        color: StudioColors.accentPurple,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 3),
-                Text(
-                  'Embedded tags, album credits, multi-image artwork thumbnails, and extended studio credits.',
-                  style: TextStyle(
-                    fontSize: 8.5,
-                    color: StudioColors.textMuted,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ),
+          _buildSubCardHeader(
+            icon: Icons.library_music_outlined,
+            accentColor: StudioColors.accentPurple,
+            title: 'METADATA',
+            subtitle: 'Embedded tags, album credits, multi-image artwork thumbnails, and extended studio credits.',
           ),
 
           // Properties Table
@@ -912,43 +965,7 @@ class AudioAnalyzerCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(
               children: [
-                ...rows.map((r) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 3,
-                    ),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 95,
-                          child: Text(
-                            r.$1,
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: StudioColors.textMuted,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            r.$2,
-                            style: TextStyle(
-                              fontSize: 9,
-                              color: isLoading
-                                  ? const Color(0xFF64748B)
-                                  : Colors.white,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w600,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
+                ...rows.map((r) => _buildPropertyRow(r.$1, r.$2, isLoading)),
 
                 // Thumbnails Row (Interactive list with overflow & modal on tap)
                 Padding(
@@ -1207,8 +1224,9 @@ class AudioAnalyzerCard extends StatelessWidget {
     BuildContext context,
     AudioAnalysisResult? analysis,
     bool isLoading,
-    AudioTrack? track,
-  ) {
+    AudioTrack? track, {
+    int fingerprintMaxLines = 2,
+  }) {
     final chromaprint = analysis?.chromaprint;
     final fpString = chromaprint?.fingerprint;
     final algorithm = chromaprint?.algorithm;
@@ -1229,7 +1247,6 @@ class AudioAnalyzerCard extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFF070B14),
         borderRadius: BorderRadius.circular(8),
@@ -1238,204 +1255,199 @@ class AudioAnalyzerCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.fingerprint,
-                size: 14,
-                color: StudioColors.accentCyan,
+          // Section Header
+          _buildSubCardHeader(
+            icon: Icons.fingerprint,
+            accentColor: StudioColors.accentCyan,
+            title: 'CHROMAPRINT / ACOUSTID FINGERPRINT',
+            subtitle: 'Digital acoustic fingerprint generated via Chromaprint for automated AcoustID track identification and MusicBrainz metadata cross-referencing.',
+            trailing: Text(
+              algoBadge,
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                color: algoColor,
+                fontFamily: 'monospace',
               ),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'CHROMAPRINT / ACOUSTID FINGERPRINT',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    color: Colors.white,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                algoBadge,
-                style: TextStyle(
-                  fontSize: 8.5,
-                  fontWeight: FontWeight.w700,
-                  color: algoColor,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Digital acoustic fingerprint generated via Chromaprint for automated AcoustID track identification and MusicBrainz metadata cross-referencing.',
-            style: TextStyle(
-              fontSize: 9,
-              color: StudioColors.textMuted,
-              height: 1.35,
             ),
           ),
-          const SizedBox(height: 8),
 
-          // Monospace Fingerprint Preview Box
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0A0F1D),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: StudioColors.cardBorder, width: 0.8),
-            ),
-            child: Row(
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: isLoading
-                      ? const Text(
-                          'loading...',
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Color(0xFF64748B),
-                            fontFamily: 'monospace',
-                          ),
-                        )
-                      : (fpString != null && fpString.isNotEmpty
-                            ? SelectableText(
-                                fpString,
-                                style: const TextStyle(
-                                  fontSize: 9,
-                                  fontFamily: 'monospace',
-                                  color: Colors.white,
-                                  height: 1.25,
-                                ),
-                                maxLines: 2,
-                              )
-                            : const Text(
-                                '--',
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  color: StudioColors.textMuted,
-                                  fontFamily: 'monospace',
-                                ),
-                              )),
-                ),
-                if (!isLoading && fpString != null && fpString.isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 13),
-                    color: StudioColors.accentCyan,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 24,
-                      minHeight: 24,
-                    ),
-                    tooltip: 'Copy Fingerprint',
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: fpString));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Chromaprint fingerprint copied to clipboard',
-                          ),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // Identify Track Button (Web API with cache protection against rebuilds)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: InkWell(
-                onTap:
-                    (!isLoading &&
-                        fpString != null &&
-                        fpString.isNotEmpty &&
-                        analyzerController != null)
-                    ? () {
-                        showDialog(
-                          context: context,
-                          builder: (_) => AcoustIdLookupDialog(
-                            fingerprint: fpString,
-                            durationSeconds: durationSeconds,
-                            trackTitle: track?.title ?? 'Track',
-                            analyzerController: analyzerController!,
-                          ),
-                        );
-                      }
-                    : null,
-                borderRadius: BorderRadius.circular(6),
-                child: Container(
+                // Monospace Fingerprint Preview Box
+                Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
+                    horizontal: 8,
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color:
-                        (!isLoading && fpString != null && fpString.isNotEmpty)
-                        ? StudioColors.accentCyan.withValues(alpha: 0.15)
-                        : StudioColors.cardBorder.withValues(alpha: 0.2),
+                    color: const Color(0xFF0A0F1D),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                      color:
-                          (!isLoading &&
-                              fpString != null &&
-                              fpString.isNotEmpty)
-                          ? StudioColors.accentCyan.withValues(alpha: 0.5)
-                          : StudioColors.cardBorder.withValues(alpha: 0.3),
+                      color: StudioColors.cardBorder,
                       width: 0.8,
                     ),
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.travel_explore,
-                        size: 13,
-                        color:
-                            (!isLoading &&
-                                fpString != null &&
-                                fpString.isNotEmpty)
-                            ? StudioColors.accentCyan
-                            : (isLoading
-                                  ? const Color(0xFF64748B)
-                                  : StudioColors.textMuted),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        isLoading
-                            ? 'loading...'
+                      Expanded(
+                        child: isLoading
+                            ? const Text(
+                                'loading...',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: Color(0xFF64748B),
+                                  fontFamily: 'monospace',
+                                ),
+                              )
                             : (fpString != null && fpString.isNotEmpty
-                                  ? 'IDENTIFY TRACK (AcoustID API)'
-                                  : '--'),
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.4,
+                                  ? SelectableText(
+                                      fpString,
+                                      style: const TextStyle(
+                                        fontSize: 9,
+                                        fontFamily: 'monospace',
+                                        color: Colors.white,
+                                        height: 1.25,
+                                      ),
+                                      maxLines: fingerprintMaxLines,
+                                    )
+                                  : const Text(
+                                      '--',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        color: StudioColors.textMuted,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    )),
+                      ),
+                      if (!isLoading &&
+                          fpString != null &&
+                          fpString.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        IconButton(
+                          icon: const Icon(Icons.copy, size: 13),
+                          color: StudioColors.accentCyan,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 24,
+                            minHeight: 24,
+                          ),
+                          tooltip: 'Copy Fingerprint',
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: fpString));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Chromaprint fingerprint copied to clipboard',
+                                ),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Identify Track Button (Web API with cache protection against rebuilds)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      onTap:
+                          (!isLoading &&
+                              fpString != null &&
+                              fpString.isNotEmpty &&
+                              analyzerController != null)
+                          ? () {
+                              showDialog(
+                                context: context,
+                                builder: (_) => AcoustIdLookupDialog(
+                                  fingerprint: fpString,
+                                  durationSeconds: durationSeconds,
+                                  trackTitle: track?.title ?? 'Track',
+                                  analyzerController: analyzerController!,
+                                ),
+                              );
+                            }
+                          : null,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
                           color:
                               (!isLoading &&
                                   fpString != null &&
                                   fpString.isNotEmpty)
-                              ? StudioColors.accentCyan
-                              : (isLoading
-                                    ? const Color(0xFF64748B)
-                                    : StudioColors.textMuted),
+                              ? StudioColors.accentCyan.withValues(alpha: 0.15)
+                              : StudioColors.cardBorder.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color:
+                                (!isLoading &&
+                                    fpString != null &&
+                                    fpString.isNotEmpty)
+                                ? StudioColors.accentCyan.withValues(alpha: 0.5)
+                                : StudioColors.cardBorder.withValues(
+                                    alpha: 0.3,
+                                  ),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.travel_explore,
+                              size: 13,
+                              color:
+                                  (!isLoading &&
+                                      fpString != null &&
+                                      fpString.isNotEmpty)
+                                  ? StudioColors.accentCyan
+                                  : (isLoading
+                                        ? const Color(0xFF64748B)
+                                        : StudioColors.textMuted),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              isLoading
+                                  ? 'loading...'
+                                  : (fpString != null && fpString.isNotEmpty
+                                        ? 'IDENTIFY TRACK (AcoustID API)'
+                                        : '--'),
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
+                                color:
+                                    (!isLoading &&
+                                        fpString != null &&
+                                        fpString.isNotEmpty)
+                                    ? StudioColors.accentCyan
+                                    : (isLoading
+                                          ? const Color(0xFF64748B)
+                                          : StudioColors.textMuted),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ],

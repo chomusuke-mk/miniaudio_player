@@ -9,6 +9,7 @@ import 'package:miniaudio_player_example/controllers/audio_engine_controller.dar
 import 'package:miniaudio_player_example/models/audio_track.dart';
 import 'package:miniaudio_player_example/widgets/cards/audio_analyzer_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
+import 'package:miniaudio_player_example/widgets/common/metadata_inspector_modal.dart';
 
 AudioAnalysisResult _makeTestAnalysis({double gainDb = -3.5}) {
   return AudioAnalysisResult(
@@ -577,6 +578,223 @@ void main() {
         expect(find.text('loading...'), findsNothing);
         expect(find.text('Test Track'), findsOneWidget);
         expect(find.text('-5.5 dB'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'AudioAnalyzerCard renders 4 additional Audio Info fields and 4 AudioMetadata ReplayGain tag fields',
+      (tester) async {
+        tester.view.physicalSize = const Size(1000, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final richAnalysis = AudioAnalysisResult(
+          audioInfo: const AudioInfo(
+            sampleRate: 44100,
+            rawSampleRate: 2822400,
+            channels: 2,
+            bitsPerSample: 24,
+            bitrate: 1411000,
+            duration: Duration(seconds: 10),
+            format: 'flac',
+            fileSize: 2 * 1024 * 1024,
+            codec: 'FLAC',
+            containerFormat: 'FLAC',
+            lossless: true,
+            bitrateMode: BitrateMode.vbr,
+          ),
+          replayGain: const ReplayGainResult(
+            gainDb: -9.9,
+            peak: 0.55,
+            lufs: -8.1,
+          ),
+          waveform: const WaveformResult(points: [0.2, 0.7]),
+          metadata: AudioMetadata(
+            title: 'Master Track',
+            trackArtist: 'Studio Artist',
+            album: 'Studio Album',
+            replayGainTrackGain: '-6.50 dB',
+            replayGainTrackPeak: '0.988553',
+            replayGainAlbumGain: '-7.10 dB',
+            replayGainAlbumPeak: '0.995000',
+          ),
+          chromaprint: const ChromaprintResult(
+            fingerprint: 'AQADtEmyREmURImC5_jx',
+            raw: [123456],
+            algorithm: 1,
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: AudioAnalyzerCard(
+                  analysis: richAnalysis,
+                  isLoading: false,
+                  analyzerController: analyzerController,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // 4 extra Audio Info fields
+        expect(find.text('Format'), findsOneWidget);
+        expect(find.text('flac'), findsOneWidget);
+        expect(find.text('Raw Sample Rate'), findsOneWidget);
+        expect(find.text('2822400 Hz'), findsOneWidget);
+        expect(find.text('File Size'), findsOneWidget);
+        expect(find.text('2.00 MB'), findsOneWidget);
+        expect(find.text('Total Frames'), findsOneWidget);
+        expect(find.text('441,000'), findsOneWidget);
+
+        // 4 AudioMetadata ReplayGain tag fields kept independent of BS.1770 KPI (-9.9 dB)
+        expect(find.text('-9.9 dB'), findsOneWidget);
+        expect(find.text('RG Track Gain'), findsOneWidget);
+        expect(find.text('-6.50 dB'), findsOneWidget);
+        expect(find.text('RG Track Peak'), findsOneWidget);
+        expect(find.text('0.988553'), findsOneWidget);
+        expect(find.text('RG Album Gain'), findsOneWidget);
+        expect(find.text('-7.10 dB'), findsOneWidget);
+        expect(find.text('RG Album Peak'), findsOneWidget);
+        expect(find.text('0.995000'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'AudioAnalyzerCard adapts Audio Info, Metadata, and Chromaprint across 1/3+1/3+1/3, 1/2+1/2+1, and 1+1+1 layouts',
+      (tester) async {
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final analysis = _makeTestAnalysis();
+
+        Future<void> pumpAtWidth(double width) async {
+          tester.view.physicalSize = Size(width, 1400);
+          tester.view.devicePixelRatio = 1.0;
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: AudioAnalyzerCard(
+                    analysis: analysis,
+                    isLoading: false,
+                    analyzerController: analyzerController,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+        }
+
+        // 1. Wide (>= 720 inner width): all 3 sections on one row (1/3 + 1/3 + 1/3)
+        // Stacked vertically alongside Audio Info & Metadata -> 12 fingerprint lines
+        await pumpAtWidth(1000);
+        final audioWide = tester.getTopLeft(find.text('AUDIO INFO'));
+        final metaWide = tester.getTopLeft(find.text('METADATA'));
+        final chromaWide = tester.getTopLeft(
+          find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
+        );
+        expect(audioWide.dx, lessThan(metaWide.dx));
+        expect(metaWide.dx, lessThan(chromaWide.dx));
+        expect((audioWide.dy - metaWide.dy).abs(), lessThan(8));
+        expect((metaWide.dy - chromaWide.dy).abs(), lessThan(8));
+        expect(find.text('ALGORITHM TEST2 (1)'), findsOneWidget);
+        expect(
+          tester.widget<SelectableText>(find.byType(SelectableText)).maxLines,
+          14,
+        );
+
+        // 2. Medium (520..719 inner width): Audio Info & Metadata 1/2 + 1/2, Chromaprint below (1 col -> 2 lines)
+        await pumpAtWidth(640);
+        final audioMed = tester.getTopLeft(find.text('AUDIO INFO'));
+        final metaMed = tester.getTopLeft(find.text('METADATA'));
+        final chromaMed = tester.getTopLeft(
+          find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
+        );
+        expect(audioMed.dx, lessThan(metaMed.dx));
+        expect((audioMed.dy - metaMed.dy).abs(), lessThan(8));
+        expect(chromaMed.dy, greaterThan(audioMed.dy + 50));
+        expect(
+          tester.widget<SelectableText>(find.byType(SelectableText)).maxLines,
+          2,
+        );
+
+        // 3. Compact (< 520 inner width): 1 + 1 + 1 vertical stack (1 col -> 2 lines)
+        await pumpAtWidth(400);
+        final audioNarrow = tester.getTopLeft(find.text('AUDIO INFO'));
+        final metaNarrow = tester.getTopLeft(find.text('METADATA'));
+        final chromaNarrow = tester.getTopLeft(
+          find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
+        );
+        expect(metaNarrow.dy, greaterThan(audioNarrow.dy + 50));
+        expect(chromaNarrow.dy, greaterThan(metaNarrow.dy + 50));
+        expect(
+          tester.widget<SelectableText>(find.byType(SelectableText)).maxLines,
+          2,
+        );
+      },
+    );
+
+    testWidgets(
+      'MetadataInspectorModal removes REPLAYGAIN & LOUDNESS TAGS, renames METADATA TAGS without CORE, and shows AudioMetadata ReplayGain tags',
+      (tester) async {
+        tester.view.physicalSize = const Size(1000, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final track = AudioTrack(
+          id: 'inspect-rg',
+          title: 'Inspect Track',
+          source: AudioSource('assets/music/test_24bit.wav'),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: MetadataInspectorModal(
+                track: track,
+                staticMetadata: AudioMetadata(
+                  title: 'Static Song',
+                  replayGainTrackGain: '-6.50 dB',
+                  replayGainTrackPeak: '0.988553',
+                  replayGainAlbumGain: '-7.10 dB',
+                  replayGainAlbumPeak: '0.995000',
+                ),
+                dynamicMetadata: AudioMetadata(
+                  title: 'Dynamic Song',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('REPLAYGAIN & LOUDNESS TAGS'), findsNothing);
+        expect(find.text('CORE METADATA TAGS'), findsNothing);
+        expect(find.text('METADATA TAGS'), findsNWidgets(2));
+        expect(find.text('RG Track Gain'), findsNWidgets(2));
+        expect(find.text('RG Track Peak'), findsNWidgets(2));
+        expect(find.text('RG Album Gain'), findsNWidgets(2));
+        expect(find.text('RG Album Peak'), findsNWidgets(2));
+        expect(find.text('-6.50 dB'), findsOneWidget);
+        expect(find.text('0.988553'), findsOneWidget);
+        expect(find.text('-7.10 dB'), findsOneWidget);
+        expect(find.text('0.995000'), findsOneWidget);
+        expect(tester.takeException(), isNull);
       },
     );
   });

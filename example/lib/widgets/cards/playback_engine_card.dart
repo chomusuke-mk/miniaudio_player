@@ -229,10 +229,6 @@ class PlaybackEngineCard extends StatelessWidget {
                                                     analysis?.audioInfo,
                                                 dynamicAudioInfo:
                                                     engine.state.audioInfo,
-                                                staticReplayGain:
-                                                    analysis?.replayGain,
-                                                dynamicReplayGain:
-                                                    engine.state.replayGain,
                                               ),
                                         );
                                       },

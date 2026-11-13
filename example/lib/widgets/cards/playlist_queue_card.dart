@@ -439,14 +439,6 @@ class PlaylistQueueCard extends StatelessWidget {
                                                                   .engine
                                                                   .state
                                                                   .audioInfo,
-                                                          staticReplayGain:
-                                                              analysis
-                                                                  ?.replayGain,
-                                                          dynamicReplayGain:
-                                                              controller
-                                                                  .engine
-                                                                  .state
-                                                                  .replayGain,
                                                         ),
                                                   );
                                                 },
