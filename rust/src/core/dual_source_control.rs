@@ -3,12 +3,12 @@
 use std::sync::atomic::Ordering;
 
 use crate::core::dual_source::{
-    AudioSourceCore, CustomSourceFactory, DualSource, StreamingDeck,
+    resolve_replay_gain, AudioSourceCore, CustomSourceFactory, DualSource, StreamingDeck,
 };
 use crate::core::renderer::DspCommand;
 use crate::core::types::{PlaybackState, QueueTransition};
 use crate::dsp::crossfeed::CrossfeedConfig;
-use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
+use crate::dsp::equalizer::EqualizerParams;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
 use crate::sync::{lock_unpoisoned, read_unpoisoned, write_unpoisoned};
@@ -25,7 +25,8 @@ pub struct DeckDspTemplate {
     pub pause_on_device_change: bool,
     pub eq_params: EqualizerParams,
     pub preamp_db: f32,
-    pub replay_gain: ReplayGainConfig,
+    pub replay_gain_mode: u32,
+    pub default_replay_gain: (f32, f32),
     pub balance: f32,
     pub mono_enabled: bool,
     pub spatializer_enabled: bool,
@@ -48,7 +49,8 @@ pub struct DeckLiveOverlay {
     pub pitch: f32,
     pub pause_on_device_change: bool,
     pub preamp_db: f32,
-    pub replay_gain: ReplayGainConfig,
+    pub replay_gain_mode: u32,
+    pub default_replay_gain: (f32, f32),
     pub balance: f32,
     pub mono_enabled: bool,
     pub spatializer_enabled: bool,
@@ -94,29 +96,16 @@ pub enum TransitionCommitMode {
     AutoAdvanceGapless,
 }
 
-fn replay_gain_for_item(base: ReplayGainConfig, item: Option<&AudioSourceCore>) -> ReplayGainConfig {
-    if let Some(it) = item {
-        if let Some(gain_db) = it.replay_gain_db {
-            return ReplayGainConfig {
-                gain_db,
-                peak: it.replay_peak.unwrap_or(1.0),
-                prevent_clipping: 1,
-                enabled: 1,
-            };
-        }
-        return ReplayGainConfig {
-            gain_db: 0.0,
-            peak: 1.0,
-            prevent_clipping: base.prevent_clipping,
-            enabled: 0,
-        };
-    }
-    base
-}
-
 impl StreamingDeck {
     /// Captures all DSP, format, silence, and visualizer parameters without mutating state.
-    pub fn capture_dsp_template(&self, sr: u32, ch: u32, period: u32) -> DeckDspTemplate {
+    pub fn capture_dsp_template(
+        &self,
+        sr: u32,
+        ch: u32,
+        period: u32,
+        replay_gain_mode: u32,
+        default_replay_gain: (f32, f32),
+    ) -> DeckDspTemplate {
         DeckDspTemplate {
             sample_rate: sr.max(8000),
             channels: ch.clamp(1, 16),
@@ -127,7 +116,8 @@ impl StreamingDeck {
             pause_on_device_change: self.pause_on_device_change.load(Ordering::Relaxed),
             eq_params: self.eq_params,
             preamp_db: f32::from_bits(self.preamp_db.load(Ordering::Relaxed)),
-            replay_gain: self.replay_gain,
+            replay_gain_mode,
+            default_replay_gain,
             balance: f32::from_bits(self.balance.load(Ordering::Relaxed)),
             mono_enabled: self.mono_enabled.load(Ordering::Relaxed),
             spatializer_enabled: self.spatializer_enabled.load(Ordering::Relaxed),
@@ -141,7 +131,11 @@ impl StreamingDeck {
     }
 
     /// Captures lightweight atomic/copy DSP parameters for zero-allocation RT commit sync.
-    pub fn capture_live_overlay(&self) -> DeckLiveOverlay {
+    pub fn capture_live_overlay(
+        &self,
+        replay_gain_mode: u32,
+        default_replay_gain: (f32, f32),
+    ) -> DeckLiveOverlay {
         DeckLiveOverlay {
             device_sample_rate: self.device_sample_rate.load(Ordering::Relaxed),
             device_channels: self.device_channels.load(Ordering::Relaxed),
@@ -151,7 +145,8 @@ impl StreamingDeck {
             pitch: f32::from_bits(self.pitch.load(Ordering::Relaxed)),
             pause_on_device_change: self.pause_on_device_change.load(Ordering::Relaxed),
             preamp_db: f32::from_bits(self.preamp_db.load(Ordering::Relaxed)),
-            replay_gain: self.replay_gain,
+            replay_gain_mode,
+            default_replay_gain,
             balance: f32::from_bits(self.balance.load(Ordering::Relaxed)),
             mono_enabled: self.mono_enabled.load(Ordering::Relaxed),
             spatializer_enabled: self.spatializer_enabled.load(Ordering::Relaxed),
@@ -193,7 +188,13 @@ impl StreamingDeck {
         self.visualizer_enabled
             .store(tpl.visualizer_enabled, Ordering::Relaxed);
 
-        let rg = replay_gain_for_item(tpl.replay_gain, item);
+        let rg = resolve_replay_gain(tpl.replay_gain_mode, tpl.default_replay_gain, item);
+        if let Some(it) = item {
+            self.set_queue_item_assignment(it);
+        } else {
+            self.queue_item_id = None;
+            self.track_replay_gain = (None, None);
+        }
         self.eq_params = tpl.eq_params.clone();
         self.replay_gain = rg;
         self.crossfeed_config = tpl.crossfeed_config;
@@ -245,7 +246,10 @@ impl StreamingDeck {
             .store(ov.visualizer_enabled, Ordering::Relaxed);
         self.silence_config.write(|s| *s = ov.silence_config);
 
-        let rg = replay_gain_for_item(ov.replay_gain, item);
+        let rg = resolve_replay_gain(ov.replay_gain_mode, ov.default_replay_gain, item);
+        if let Some(it) = item {
+            self.set_queue_item_assignment(it);
+        }
         self.replay_gain = rg;
 
         self.push_dsp_commands(&[
@@ -282,8 +286,19 @@ impl DualSource {
 
     /// Captures the DSP/hardware template from the current active deck.
     pub fn capture_dsp_template(&self) -> DeckDspTemplate {
+        self.active_deck_ref().capture_dsp_template(
+            self.sample_rate,
+            self.channels,
+            self.period_size,
+            self.replay_gain_mode,
+            self.default_replay_gain,
+        )
+    }
+
+    /// Captures the lightweight RT DSP overlay and global ReplayGain policy without touching the active deck's item gain.
+    pub fn capture_live_overlay(&self) -> DeckLiveOverlay {
         self.active_deck_ref()
-            .capture_dsp_template(self.sample_rate, self.channels, self.period_size)
+            .capture_live_overlay(self.replay_gain_mode, self.default_replay_gain)
     }
 
     /// Replaces `deck_a` and `deck_b` with clean stopped decks in $O(1)$ and returns the displaced pair.
@@ -737,7 +752,7 @@ impl DualSource {
             return Err(prepared);
         }
 
-        let overlay = self.active_deck_ref().capture_live_overlay();
+        let overlay = self.capture_live_overlay();
         prepared.apply_live_overlay_silent(&overlay, Some(&expected));
         prepared.pause();
 
@@ -762,7 +777,7 @@ impl DualSource {
         seek_ms: Option<i64>,
         mode: TransitionCommitMode,
     ) -> Option<Box<StreamingDeck>> {
-        let resolved_idx = {
+        let (resolved_idx, live_item) = {
             let q = read_unpoisoned(&self.queue);
             if q.is_empty() {
                 if let Some(unused) = prepared_opt {
@@ -771,7 +786,7 @@ impl DualSource {
                 return None;
             }
             if let Some(pos) = q.iter().position(|it| it.id == item.id) {
-                pos
+                (pos, q[pos].clone())
             } else {
                 // Target track was removed from the queue while opening off-thread.
                 if let Some(unused) = prepared_opt {
@@ -799,11 +814,11 @@ impl DualSource {
         let was_playing =
             PlaybackState::from_i32(self.playback_state.load(Ordering::Relaxed)) == PlaybackState::Playing;
 
-        let overlay = self.active_deck_ref().capture_live_overlay();
+        let overlay = self.capture_live_overlay();
         let mut displaced: Option<Box<StreamingDeck>> = None;
 
         if let Some(mut prepared) = prepared_opt {
-            prepared.apply_live_overlay_silent(&overlay, Some(item));
+            prepared.apply_live_overlay_silent(&overlay, Some(&live_item));
             if to_deck == 0 {
                 std::mem::swap(&mut self.deck_a, &mut prepared);
             } else {
@@ -816,7 +831,7 @@ impl DualSource {
             } else {
                 &mut self.deck_b
             };
-            standby.apply_live_overlay_silent(&overlay, Some(item));
+            standby.apply_live_overlay_silent(&overlay, Some(&live_item));
         }
 
         self.invalidate_standby();

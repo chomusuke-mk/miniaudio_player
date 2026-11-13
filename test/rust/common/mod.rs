@@ -110,8 +110,20 @@ impl SignalGenerator {
         out
     }
 
-    /// Generates a complete valid 16-bit Little-Endian RIFF WAVE byte vector.
+    /// Generates a complete valid 16-bit Little-Endian RIFF WAVE byte vector (440 Hz full-scale).
     pub fn pcm16_wav_bytes(num_frames: usize, sample_rate: u32, channels: u16) -> Vec<u8> {
+        Self::pcm16_wav_sine_bytes(num_frames, sample_rate, channels, 440.0, 30000.0 / 32767.0)
+    }
+
+    /// Generates a valid 16-bit Little-Endian RIFF WAVE byte vector for an arbitrary sine
+    /// tone frequency and normalized amplitude (`0.0 ..= 1.0`).
+    pub fn pcm16_wav_sine_bytes(
+        num_frames: usize,
+        sample_rate: u32,
+        channels: u16,
+        freq_hz: f32,
+        amplitude: f32,
+    ) -> Vec<u8> {
         let bits_per_sample: u16 = 16;
         let bytes_per_sample = (bits_per_sample / 8) as usize;
         let block_align = channels as usize * bytes_per_sample;
@@ -136,10 +148,11 @@ impl SignalGenerator {
         wav.extend_from_slice(b"data");
         wav.extend_from_slice(&(data_size as u32).to_le_bytes());
 
+        let scale = amplitude.clamp(0.0, 1.0) * 32767.0;
         for i in 0..num_frames {
             let t = i as f32 / sample_rate as f32;
-            let sample = (t * 440.0 * 2.0 * PI).sin();
-            let val = (sample * 30000.0) as i16;
+            let sample = (t * freq_hz * 2.0 * PI).sin();
+            let val = (sample * scale).round() as i16;
             for _ in 0..channels {
                 wav.extend_from_slice(&val.to_le_bytes());
             }

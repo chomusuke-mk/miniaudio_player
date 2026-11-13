@@ -56,10 +56,8 @@ pub struct MiniaudioPlayer {
     /// Hardware callback period size in frames.
     pub period_size: u32,
 
-    /// Default ReplayGain fallback values `(gain_db, peak)`.
-    pub default_replay_gain: (f32, f32),
-    /// ReplayGain mode (`0 = Disabled`, `1 = Track`, `2 = Forced`).
-    pub replay_gain_mode: u32,
+    /// Effective ReplayGain telemetry cached for the active foreground track `(gain_db, peak)`.
+    pub active_replay_gain: (f32, f32),
 }
 
 unsafe impl Send for MiniaudioPlayer {}
@@ -120,49 +118,35 @@ impl MiniaudioPlayer {
             sample_rate: sr,
             channels: ch,
             period_size: period,
-            default_replay_gain: (0.0, 1.0),
-            replay_gain_mode: 1, // Track
+            active_replay_gain: (0.0, 1.0),
         }))
     }
 
-    /// Recalculates effective ReplayGain based on `replay_gain_mode`, queue item metadata,
-    /// and `default_replay_gain`, applying it directly to `music_dsp`.
+    /// Sets the global ReplayGain operating mode (`0 = Disabled`, `1 = Track`, `2 = Forced`)
+    /// and recalculates per-deck ReplayGain normalization cleanly.
+    pub fn set_replay_gain_mode(&mut self, mode: u32) -> (f32, f32) {
+        self.music_manager.inner.replay_gain_mode = mode;
+        self.recalculate_and_apply_replay_gain()
+    }
+
+    /// Sets the fallback or forced ReplayGain adjustment `(gain_db, peak)`
+    /// and recalculates per-deck ReplayGain normalization cleanly.
+    pub fn set_default_replay_gain(&mut self, gain_db: f32, peak: f32) -> (f32, f32) {
+        self.music_manager.inner.default_replay_gain = (gain_db, peak);
+        self.recalculate_and_apply_replay_gain()
+    }
+
+    /// Recalculates per-deck ReplayGain independently on Deck A and Deck B based on each deck's
+    /// assigned track, global mode, and fallback default, while keeping post-mix `music_dsp`
+    /// ReplayGain disabled so crossfading tracks never adopt each other's gain or double-scale.
     pub fn recalculate_and_apply_replay_gain(&mut self) -> (f32, f32) {
-        use std::sync::atomic::Ordering;
-        let (eff_gain, eff_peak, eff_enabled) = match self.replay_gain_mode {
-            0 => (0.0, 1.0, 0), // Disabled
-            2 => (self.default_replay_gain.0, self.default_replay_gain.1, 1), // Forced
-            _ => { // Track
-                let q = crate::sync::read_unpoisoned(&self.music_manager.inner.queue);
-                let cur = self.music_manager.inner.current_index.load(Ordering::Relaxed);
-                let idx = if cur >= 0 && (cur as usize) < q.len() {
-                    Some(cur as usize)
-                } else if !q.is_empty() {
-                    Some(0)
-                } else {
-                    None
-                };
-                if let Some(i) = idx {
-                    let item = &q[i];
-                    if let Some(gain) = item.replay_gain_db {
-                        (gain, item.replay_peak.unwrap_or(1.0), 1)
-                    } else {
-                        (self.default_replay_gain.0, self.default_replay_gain.1, if self.default_replay_gain.0 != 0.0 { 1 } else { 0 })
-                    }
-                } else {
-                    (self.default_replay_gain.0, self.default_replay_gain.1, if self.default_replay_gain.0 != 0.0 { 1 } else { 0 })
-                }
-            }
-        };
-
-        self.music_dsp.set_replay_gain(crate::dsp::equalizer::ReplayGainConfig {
-            enabled: eff_enabled,
-            gain_db: eff_gain,
-            peak: eff_peak,
-            prevent_clipping: 1,
-        });
-
-        (eff_gain, eff_peak)
+        self.music_dsp
+            .set_replay_gain(crate::dsp::equalizer::ReplayGainConfig::default());
+        self.music_manager.inner.refresh_deck_replay_gains();
+        let fg = self.music_manager.inner.resolve_foreground_replay_gain();
+        let eff = (fg.gain_db, fg.peak);
+        self.active_replay_gain = eff;
+        eff
     }
 
     /// Renders one period of PCM frames across all active decks, effects, and microphone DSP,

@@ -878,5 +878,527 @@ fn test_visualizer_captures_reverb_tail_of_effect_without_music() {
     );
 }
 
+/// Measures the exact peak amplitude of a single sine frequency component on channel 0
+/// from an interleaved stereo PCM slice using quadrature (cos/sin) correlation.
+fn measure_tone_amplitude_ch0(samples: &[f32], sample_rate: u32, freq_hz: f32) -> f32 {
+    let frames = samples.len() / 2;
+    if frames == 0 {
+        return 0.0;
+    }
+    let mut re = 0.0f64;
+    let mut im = 0.0f64;
+    for i in 0..frames {
+        let s = samples[i * 2] as f64;
+        let phase = 2.0 * std::f64::consts::PI * (freq_hz as f64) * (i as f64) / (sample_rate as f64);
+        re += s * phase.cos();
+        im += s * phase.sin();
+    }
+    let n = frames as f64;
+    (2.0 * (re * re + im * im).sqrt() / n) as f32
+}
+
+/// Renders until the decoder delivers non-silence and DSP preamp smoother has settled.
+fn pump_until_tone_settles(
+    player: &mut miniaudio_player::core::miniaudio_player::MiniaudioPlayer,
+    frame_count: usize,
+    settle_blocks: usize,
+) {
+    let mut rendered_nonzero = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        player.render_pcm(frame_count);
+        let peak = player.scratch_music[..frame_count * 2]
+            .iter()
+            .fold(0.0f32, |m, &s| m.max(s.abs()));
+        if peak > 1e-4 {
+            rendered_nonzero = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(rendered_nonzero, "Timed out waiting for decoded audio samples");
+    for _ in 0..settle_blocks {
+        player.render_pcm(frame_count);
+    }
+}
+
+#[test]
+fn test_per_track_replay_gain_isolated_across_manual_and_auto_crossfade() {
+    use miniaudio_player::core::dual_source::AudioSourceCore;
+    use miniaudio_player::core::dual_source_control::TransitionCommitMode;
+    use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
+
+    let sr = 48000u32;
+    // 480 frames = 10ms = integer cycles for both 400 Hz (4 cycles) and 3200 Hz (32 cycles)
+    let block_frames = 480usize;
+    let wav_x = SignalGenerator::pcm16_wav_sine_bytes(sr as usize * 2, sr, 2, 400.0, 0.5);
+    let wav_y = SignalGenerator::pcm16_wav_sine_bytes(sr as usize * 2, sr, 2, 3200.0, 0.5);
+
+    let gain_x_db = -18.0f32;
+    let expected_x_linear = 0.5 * 10.0f32.powf(gain_x_db / 20.0); // ~0.06295
+    let expected_y_linear = 0.5 * 1.0f32; // 0 dB -> 0.500
+
+    let make_track = |id: i64, bytes: Vec<u8>, rg_db: Option<f32>| AudioSourceCore {
+        id,
+        source: format!("mem://track_{}.wav", id),
+        headers: None,
+        data_bytes: Some(bytes),
+        replay_gain_db: rg_db,
+        replay_peak: Some(1.0),
+    };
+
+    let wait_both_decks_pcm =
+        |ply: &miniaudio_player::core::miniaudio_player::MiniaudioPlayer, min_samples: usize| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                let mm = &ply.music_manager.inner;
+                let a_avail = mm
+                    .active_deck_ref()
+                    .renderer
+                    .as_ref()
+                    .map(|r| r.consumer.samples_available())
+                    .unwrap_or(0);
+                let s_avail = mm
+                    .standby_deck_ref()
+                    .renderer
+                    .as_ref()
+                    .map(|r| r.consumer.samples_available())
+                    .unwrap_or(0);
+                if a_avail >= min_samples && s_avail >= min_samples {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Timed out waiting for decoded PCM ring fill (active={}, standby={}, want={})",
+                    a_avail,
+                    s_avail,
+                    min_samples
+                );
+                std::thread::yield_now();
+            }
+        };
+
+    // Case 1: Manual Crossfade from Track X (-18 dB) -> Track Y (0 dB).
+    {
+        let mut player = MiniaudioPlayer::new(sr, 2, block_frames as u32, 4, None, None).unwrap();
+        player.master_limiter.set_enabled(false);
+        player.music_manager.set_crossfade(500, 500, 1); // 500ms linear crossfade
+        player.music_manager.inner.set_queue(vec![
+            make_track(201, wav_x.clone(), Some(gain_x_db)),
+            make_track(202, wav_y.clone(), Some(0.0)),
+        ]);
+        player.recalculate_and_apply_replay_gain();
+        player
+            .music_manager
+            .inner
+            .play(Some(201), None, None, None)
+            .unwrap();
+        player.recalculate_and_apply_replay_gain();
+
+        pump_until_tone_settles(&mut player, block_frames, 5);
+        let solo_x =
+            measure_tone_amplitude_ch0(&player.scratch_music[..block_frames * 2], sr, 400.0);
+        assert!(
+            (solo_x - expected_x_linear).abs() < 0.008,
+            "Solo Track X amplitude must match single -18dB ReplayGain ({}), got {} (double-gain would be ~0.0079)",
+            expected_x_linear,
+            solo_x
+        );
+
+        // Start manual crossfade to Track Y (0 dB).
+        player
+            .music_manager
+            .inner
+            .transition_to_index(1, Some(500), None, true)
+            .unwrap();
+        let active_rg = player.recalculate_and_apply_replay_gain();
+        assert!((active_rg.0 - 0.0).abs() < 1e-4);
+        assert_eq!(player.music_dsp.equalizer.replay_gain().enabled, 0);
+
+        // Wait until BOTH outgoing Track X and incoming Track Y have decoded PCM queued in their
+        // lock-free AudioRingBuffers before stepping crossfade frames.
+        wait_both_decks_pcm(&player, block_frames * 2 * 25);
+
+        // Ensure incoming Track Y decoder is delivering audio while crossfade is active (~20..40% progress).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut checked_samples = 0;
+        while std::time::Instant::now() < deadline && checked_samples < 8 {
+            let cf_before = player
+                .music_manager
+                .inner
+                .crossfade
+                .current_frame
+                .load(Ordering::Relaxed);
+            let cf_total = player
+                .music_manager
+                .inner
+                .crossfade
+                .total_frames
+                .load(Ordering::Relaxed);
+            player.render_pcm(block_frames);
+            let mid_progress = ((cf_before + (block_frames as u64) / 2) as f32
+                / cf_total.max(1) as f32)
+                .clamp(0.0, 1.0);
+            let slice = &player.scratch_music[..block_frames * 2];
+            let amp_x = measure_tone_amplitude_ch0(slice, sr, 400.0);
+            let amp_y = measure_tone_amplitude_ch0(slice, sr, 3200.0);
+            if amp_y > 0.01 && mid_progress > 0.08 && mid_progress < 0.85 {
+                let exp_x = expected_x_linear * (1.0 - mid_progress);
+                let exp_y = expected_y_linear * mid_progress;
+                assert!(
+                    (amp_x - exp_x).abs() < 0.015,
+                    "Manual crossfade leaked Track Y ReplayGain into outgoing Track X at p={:.2}: expected X={}, got {} (Y leak would be ~{})",
+                    mid_progress,
+                    exp_x,
+                    amp_x,
+                    0.5 * (1.0 - mid_progress)
+                );
+                assert!(
+                    (amp_y - exp_y).abs() < 0.025,
+                    "Manual crossfade incoming Track Y amplitude mismatch at p={:.2}: expected {}, got {}",
+                    mid_progress,
+                    exp_y,
+                    amp_y
+                );
+                checked_samples += 1;
+            }
+            if amp_y <= 0.01 {
+                std::thread::yield_now();
+            }
+        }
+        assert!(
+            checked_samples >= 4,
+            "Failed to observe overlapping manual crossfade audio blocks; checked={}",
+            checked_samples
+        );
+    }
+
+    // Case 2: Auto Crossfade from Track X (0 dB) -> Track Y (-18 dB).
+    {
+        let mut player = MiniaudioPlayer::new(sr, 2, block_frames as u32, 4, None, None).unwrap();
+        player.master_limiter.set_enabled(false);
+        player.music_manager.set_crossfade(500, 500, 1); // 500ms linear crossfade
+        let item_y = make_track(302, wav_y, Some(gain_x_db));
+        player.music_manager.inner.set_queue(vec![
+            make_track(301, wav_x, Some(0.0)),
+            item_y.clone(),
+        ]);
+        player.recalculate_and_apply_replay_gain();
+        player
+            .music_manager
+            .inner
+            .play(Some(301), None, None, None)
+            .unwrap();
+        player.recalculate_and_apply_replay_gain();
+        pump_until_tone_settles(&mut player, block_frames, 5);
+
+        // Prewarm standby and trigger TransitionCommitMode::AutoCrossfade directly.
+        player.music_manager.inner.preload_standby_deck();
+        let wait_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !player.music_manager.inner.standby_is_ready_for(&item_y)
+            && std::time::Instant::now() < wait_deadline
+        {
+            std::thread::yield_now();
+        }
+        assert!(player.music_manager.inner.standby_is_ready_for(&item_y));
+
+        let _ = player.music_manager.inner.commit_transition_internal(
+            None,
+            1,
+            &item_y,
+            None,
+            TransitionCommitMode::AutoCrossfade { eff_ms: 500 },
+        );
+        player.recalculate_and_apply_replay_gain();
+        wait_both_decks_pcm(&player, block_frames * 2 * 25);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut checked_samples = 0;
+        while std::time::Instant::now() < deadline && checked_samples < 8 {
+            let cf_before = player
+                .music_manager
+                .inner
+                .crossfade
+                .current_frame
+                .load(Ordering::Relaxed);
+            let cf_total = player
+                .music_manager
+                .inner
+                .crossfade
+                .total_frames
+                .load(Ordering::Relaxed);
+            player.render_pcm(block_frames);
+            let mid_progress = ((cf_before + (block_frames as u64) / 2) as f32
+                / cf_total.max(1) as f32)
+                .clamp(0.0, 1.0);
+            let slice = &player.scratch_music[..block_frames * 2];
+            let amp_x = measure_tone_amplitude_ch0(slice, sr, 400.0);
+            let amp_y = measure_tone_amplitude_ch0(slice, sr, 3200.0);
+            if amp_y > 0.003 && mid_progress > 0.10 && mid_progress < 0.85 {
+                let exp_x = expected_y_linear * (1.0 - mid_progress); // Track X has 0 dB
+                let exp_y = expected_x_linear * mid_progress; // Track Y has -18 dB
+                assert!(
+                    (amp_x - exp_x).abs() < 0.025,
+                    "Auto crossfade outgoing Track X (0 dB) mismatch at p={:.2}: expected {}, got {}",
+                    mid_progress,
+                    exp_x,
+                    amp_x
+                );
+                assert!(
+                    (amp_y - exp_y).abs() < 0.015,
+                    "Auto crossfade leaked Track X gain into incoming Track Y (-18 dB) at p={:.2}: expected {}, got {} (X leak would be ~{})",
+                    mid_progress,
+                    exp_y,
+                    amp_y,
+                    0.5 * mid_progress
+                );
+                checked_samples += 1;
+            }
+            if amp_y <= 0.003 {
+                std::thread::yield_now();
+            }
+        }
+        assert!(
+            checked_samples >= 4,
+            "Failed to observe overlapping auto-crossfade audio blocks; checked={}",
+            checked_samples
+        );
+    }
+}
+
+#[test]
+fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_crossfade() {
+    use miniaudio_player::api::player::RustMiniaudioPlayer;
+    use miniaudio_player::api::types::{RustAudioSource, RustCrossfadeConfig, RustReplayGainConfig};
+    use miniaudio_player::core::dual_source::AudioSourceCore;
+    use miniaudio_player::core::miniaudio_player::MiniaudioPlayer;
+
+    let sr = 48000u32;
+    let wav_a = SignalGenerator::pcm16_wav_sine_bytes(sr as usize * 2, sr, 2, 440.0, 0.5);
+    let wav_b = SignalGenerator::pcm16_wav_sine_bytes(sr as usize * 2, sr, 2, 880.0, 0.5);
+
+    // 1. Direct MiniaudioPlayer mode & queue removal mid-crossfade checks.
+    {
+        let mut player = MiniaudioPlayer::new(sr, 2, 480, 4, None, None).unwrap();
+        player.music_manager.set_crossfade(500, 500, 0);
+        player.music_manager.inner.set_queue(vec![
+            AudioSourceCore {
+                id: 501,
+                source: "mem://501.wav".to_string(),
+                headers: None,
+                data_bytes: Some(wav_a.clone()),
+                replay_gain_db: Some(-12.0),
+                replay_peak: Some(0.9),
+            },
+            AudioSourceCore {
+                id: 502,
+                source: "mem://502.wav".to_string(),
+                headers: None,
+                data_bytes: Some(wav_b.clone()),
+                replay_gain_db: Some(-3.0),
+                replay_peak: Some(0.8),
+            },
+        ]);
+        player
+            .music_manager
+            .inner
+            .play(Some(501), None, None, None)
+            .unwrap();
+        player
+            .music_manager
+            .inner
+            .transition_to_index(1, Some(500), None, true)
+            .unwrap();
+        let fg = player.recalculate_and_apply_replay_gain();
+        assert!((fg.0 - (-3.0)).abs() < 1e-4);
+
+        // Identify outgoing deck (holding 501) vs active incoming deck (holding 502).
+        let (out_rg, in_rg) = {
+            let act_idx = player.music_manager.inner.active_deck.load(Ordering::Relaxed);
+            if act_idx == 1 {
+                (player.music_manager.inner.deck_a.replay_gain, player.music_manager.inner.deck_b.replay_gain)
+            } else {
+                (player.music_manager.inner.deck_b.replay_gain, player.music_manager.inner.deck_a.replay_gain)
+            }
+        };
+        assert_eq!(out_rg.enabled, 1);
+        assert!((out_rg.gain_db - (-12.0)).abs() < 1e-4);
+        assert_eq!(in_rg.enabled, 1);
+        assert!((in_rg.gain_db - (-3.0)).abs() < 1e-4);
+        assert_eq!(player.music_dsp.equalizer.replay_gain().enabled, 0);
+
+        // Removing outgoing track from queue while it still fades out, then toggling Disabled -> Track,
+        // must still restore -12 dB on outgoing deck and -3 dB on incoming deck.
+        let _ = player.music_manager.inner.remove_item_at(0);
+        let dis = player.set_replay_gain_mode(0);
+        assert!((dis.0 - 0.0).abs() < 1e-4);
+        assert_eq!(player.music_manager.inner.deck_a.replay_gain.enabled, 0);
+        assert_eq!(player.music_manager.inner.deck_b.replay_gain.enabled, 0);
+
+        let forced = player.set_default_replay_gain(-7.5, 0.95);
+        assert!((forced.0 - 0.0).abs() < 1e-4); // Still in Disabled mode
+        let mode2 = player.set_replay_gain_mode(2);
+        assert!((mode2.0 - (-7.5)).abs() < 1e-4);
+        assert!((player.music_manager.inner.deck_a.replay_gain.gain_db - (-7.5)).abs() < 1e-4);
+        assert!((player.music_manager.inner.deck_b.replay_gain.gain_db - (-7.5)).abs() < 1e-4);
+
+        let restored = player.set_replay_gain_mode(1);
+        assert!((restored.0 - (-3.0)).abs() < 1e-4);
+        let (out_after, in_after) = {
+            let act_idx = player.music_manager.inner.active_deck.load(Ordering::Relaxed);
+            if act_idx == 1 {
+                (player.music_manager.inner.deck_a.replay_gain, player.music_manager.inner.deck_b.replay_gain)
+            } else {
+                (player.music_manager.inner.deck_b.replay_gain, player.music_manager.inner.deck_a.replay_gain)
+            }
+        };
+        assert!((out_after.gain_db - (-12.0)).abs() < 1e-4);
+        assert!((in_after.gain_db - (-3.0)).abs() < 1e-4);
+    }
+
+    // 2A. EngineActorHandle + ControlCoordinator + EngineUiSnapshots verification during crossfade.
+    {
+        use miniaudio_player::buffer::{CustomDartByteSource, CustomSourceRegistry};
+        use miniaudio_player::core::control_coordinator::ControlCoordinator;
+        use miniaudio_player::core::dual_source::CustomSourceFactory;
+        use miniaudio_player::core::engine_actor::EngineActorHandle;
+        use miniaudio_player::sync::write_unpoisoned;
+
+        let (engine, _notify_rx, hint_rx) =
+            EngineActorHandle::spawn(sr, 2, 512, 8, None, None, false, 0, Vec::new())
+                .expect("Failed to spawn EngineActorHandle");
+        let reg = CustomSourceRegistry::new();
+        let coordinator = ControlCoordinator::spawn(
+            engine.clone(),
+            reg.clone(),
+            hint_rx,
+            Arc::new(|_snap| {}),
+        );
+        let custom_factory: CustomSourceFactory = Arc::new(move |stream_id, total_size| {
+            CustomDartByteSource::with_registry(
+                stream_id,
+                total_size,
+                true,
+                Arc::new(|_| {}),
+                Some(reg.clone()),
+            )
+        });
+
+        engine
+            .exec(|ply| {
+                ply.music_manager.set_crossfade(500, 500, 1);
+            })
+            .unwrap();
+        coordinator
+            .set_queue(
+                vec![
+                    AudioSourceCore {
+                        id: 801,
+                        source: "mem://801.wav".to_string(),
+                        headers: None,
+                        data_bytes: Some(wav_a.clone()),
+                        replay_gain_db: Some(-14.0),
+                        replay_peak: Some(0.95),
+                    },
+                    AudioSourceCore {
+                        id: 802,
+                        source: "mem://802.wav".to_string(),
+                        headers: None,
+                        data_bytes: Some(wav_b.clone()),
+                        replay_gain_db: Some(-2.5),
+                        replay_peak: Some(0.85),
+                    },
+                ],
+                custom_factory,
+            )
+            .unwrap();
+        coordinator.play(Some(801), None, None, None, false).unwrap();
+        assert!((engine.snapshots().unpack_rg().0 - (-14.0)).abs() < 1e-4);
+
+        coordinator.next(Some(500), false).unwrap();
+        assert!(engine.snapshots().is_xfading());
+        assert!((engine.snapshots().unpack_rg().0 - (-2.5)).abs() < 1e-4);
+
+        // Verify outgoing deck retains -14.0 dB while incoming foreground has -2.5 dB,
+        // and updating outgoing track 801 in-place only alters the outgoing deck.
+        let (out_gain, in_gain) = engine
+            .exec(|ply| {
+                {
+                    let mut q = write_unpoisoned(&ply.music_manager.inner.queue);
+                    q[0].replay_gain_db = Some(-9.0);
+                }
+                let _ = ply.recalculate_and_apply_replay_gain();
+                let mm = &ply.music_manager.inner;
+                if mm.active_deck.load(Ordering::Relaxed) == 1 {
+                    (mm.deck_a.replay_gain.gain_db, mm.deck_b.replay_gain.gain_db)
+                } else {
+                    (mm.deck_b.replay_gain.gain_db, mm.deck_a.replay_gain.gain_db)
+                }
+            })
+            .unwrap();
+        assert!((out_gain - (-9.0)).abs() < 1e-4);
+        assert!((in_gain - (-2.5)).abs() < 1e-4);
+        assert!((engine.snapshots().unpack_rg().0 - (-2.5)).abs() < 1e-4);
+
+        coordinator.shutdown();
+        engine.shutdown();
+    }
+
+    // 2B. Public RustMiniaudioPlayer API + shuffle + set_replay_gain live update on outgoing track.
+    {
+        use miniaudio_player::api::types::RustPlayerConfig;
+
+        let ply = RustMiniaudioPlayer::new(
+            RustPlayerConfig::default(),
+            sr,
+            2,
+            1024,
+            Vec::new(),
+        )
+        .unwrap();
+        ply.set_crossfade(RustCrossfadeConfig {
+            auto_duration_ms: 400,
+            manual_duration_ms: 400,
+            curve: 0,
+        });
+        ply.set_queue(vec![
+            RustAudioSource {
+                id: 901,
+                source: "mem://901.wav".to_string(),
+                headers: None,
+                data_bytes: Some(wav_a),
+                replay_gain_db: Some(-14.0),
+                replay_peak: Some(0.95),
+            },
+            RustAudioSource {
+                id: 902,
+                source: "mem://902.wav".to_string(),
+                headers: None,
+                data_bytes: Some(wav_b),
+                replay_gain_db: Some(-2.5),
+                replay_peak: Some(0.85),
+            },
+        ])
+        .unwrap();
+        ply.set_shuffle(true);
+        ply.play(Some(901), None, None, None).unwrap();
+        ply.next(Some(400)).unwrap();
+
+        // Updating outgoing track 901 by id under shuffle + crossfade must succeed cleanly.
+        ply.set_replay_gain(
+            Some(RustReplayGainConfig {
+                gain_db: -9.0,
+                peak: 0.9,
+            }),
+            Some(901),
+            None,
+        )
+        .unwrap();
+        ply.set_replay_gain_mode(2).unwrap();
+        ply.set_default_replay_gain(-7.5, 0.95).unwrap();
+        ply.dispose();
+    }
+}
+
 
 

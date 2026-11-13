@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -411,6 +413,514 @@ void main() {
         expect(player.state.replayGain.gainDb, closeTo(0.0, 1e-4));
       } finally {
         await player.dispose();
+      }
+    });
+  });
+
+  group('Per-Track ReplayGain Crossfade Isolation (End-to-End)', () {
+    File writeSineWav16(
+      Directory dir,
+      String name, {
+      required int sampleRate,
+      required int frames,
+      required double freqHz,
+      required double amplitude,
+    }) {
+      const channels = 2;
+      final dataSize = frames * channels * 2;
+      final bytes = ByteData(44 + dataSize);
+      void writeTag(int offset, String tag) {
+        for (int i = 0; i < 4; i++) {
+          bytes.setUint8(offset + i, tag.codeUnitAt(i));
+        }
+      }
+
+      writeTag(0, 'RIFF');
+      bytes.setUint32(4, 36 + dataSize, Endian.little);
+      writeTag(8, 'WAVE');
+      writeTag(12, 'fmt ');
+      bytes.setUint32(16, 16, Endian.little);
+      bytes.setUint16(20, 1, Endian.little); // PCM
+      bytes.setUint16(22, channels, Endian.little);
+      bytes.setUint32(24, sampleRate, Endian.little);
+      bytes.setUint32(28, sampleRate * channels * 2, Endian.little);
+      bytes.setUint16(32, channels * 2, Endian.little);
+      bytes.setUint16(34, 16, Endian.little);
+      writeTag(36, 'data');
+      bytes.setUint32(40, dataSize, Endian.little);
+
+      final twoPiFOverSr = 2.0 * math.pi * freqHz / sampleRate;
+      int pos = 44;
+      for (int f = 0; f < frames; f++) {
+        final sample =
+            (amplitude * math.sin(twoPiFOverSr * f) * 32767.0)
+                .round()
+                .clamp(-32768, 32767);
+        bytes.setInt16(pos, sample, Endian.little);
+        bytes.setInt16(pos + 2, sample, Endian.little);
+        pos += 4;
+      }
+
+      final file = File('${dir.path}/$name');
+      file.writeAsBytesSync(bytes.buffer.asUint8List());
+      return file;
+    }
+
+    ({int sampleRate, int channels, Int16List pcm}) parseWavPcm16(
+      Uint8List wavBytes,
+    ) {
+      final bd = ByteData.sublistView(wavBytes);
+      int sr = 48000;
+      int ch = 2;
+      int off = 12;
+      while (off + 8 <= wavBytes.length) {
+        final id = String.fromCharCodes(wavBytes.sublist(off, off + 4));
+        final len = bd.getUint32(off + 4, Endian.little);
+        off += 8;
+        if (id == 'fmt ' && off + 16 <= wavBytes.length) {
+          ch = bd.getUint16(off + 2, Endian.little);
+          sr = bd.getUint32(off + 4, Endian.little);
+        } else if (id == 'data') {
+          final byteLen = math.min(len, wavBytes.length - off);
+          final sampleCount = byteLen ~/ 2;
+          final pcm = Int16List(sampleCount);
+          for (int i = 0; i < sampleCount; i++) {
+            pcm[i] = bd.getInt16(off + i * 2, Endian.little);
+          }
+          return (sampleRate: sr, channels: ch, pcm: pcm);
+        }
+        off += len + (len.isOdd ? 1 : 0);
+      }
+      fail('Recorded WAV missing RIFF data chunk');
+    }
+
+    double measureToneAmplitudeCh0(
+      Int16List pcm,
+      int sampleRate,
+      int channels,
+      double freqHz,
+      int startFrame,
+      int numFrames,
+    ) {
+      final w = 2.0 * math.pi * freqHz / sampleRate;
+      double cSum = 0.0;
+      double sSum = 0.0;
+      for (int i = 0; i < numFrames; i++) {
+        final sample = pcm[(startFrame + i) * channels] / 32768.0;
+        final angle = w * i;
+        cSum += sample * math.cos(angle);
+        sSum += sample * math.sin(angle);
+      }
+      return (2.0 / numFrames) * math.sqrt(cSum * cSum + sSum * sSum);
+    }
+
+    test(
+        'manual crossfade isolates per-track ReplayGain (400 Hz @ -18 dB -> 3200 Hz @ 0 dB) in recorded mix',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('map_rg_manual_xfade_');
+      const sr = 48000;
+      const baseAmp = 0.4;
+      const gainXDb = -18.0;
+      final expectedX = baseAmp * math.pow(10.0, gainXDb / 20.0).toDouble();
+      const expectedY = baseAmp;
+
+      final wavX = writeSineWav16(
+        tempDir,
+        'track_x_400hz.wav',
+        sampleRate: sr,
+        frames: sr * 5,
+        freqHz: 400.0,
+        amplitude: baseAmp,
+      );
+      final wavY = writeSineWav16(
+        tempDir,
+        'track_y_3200hz.wav',
+        sampleRate: sr,
+        frames: sr * 5,
+        freqHz: 3200.0,
+        amplitude: baseAmp,
+      );
+      final recSoloFile = File('${tempDir.path}/solo_x.wav');
+      final recXfadeFile = File('${tempDir.path}/manual_xfade.wav');
+
+      final player = MiniaudioPlayer(
+        config: const PlayerConfig(
+          sampleRate: sr,
+          channels: 2,
+          crossfade: CrossfadeConfig(
+            manualDuration: Duration(milliseconds: 900),
+            autoDuration: Duration(milliseconds: 900),
+            curve: CrossfadeCurve.linear,
+          ),
+        ),
+      );
+
+      try {
+        await player.action.setLimiter(false);
+        final sourceX = AudioSource(
+          wavX.path,
+          replayGainDb: gainXDb,
+          replayPeak: 1.0,
+        );
+        final sourceY = AudioSource(
+          wavY.path,
+          replayGainDb: 0.0,
+          replayPeak: 1.0,
+        );
+
+        await player.action.setQueue([sourceX, sourceY]);
+        await player.action.play();
+        await waitForAudioProgress(
+          player,
+          minDelta: const Duration(milliseconds: 60),
+        );
+        expect(player.state.replayGain.gainDb, closeTo(gainXDb, 1e-4));
+
+        // 1. Verify solo Track X uses single -18 dB gain (not double-scaled).
+        await player.action.startRecording(
+          recSoloFile.path,
+          format: AudioFileFormat.wav,
+          source: AudioOutputSource.musicMix,
+        );
+        await waitForRecordingProgress(
+          player,
+          minRecorded: const Duration(milliseconds: 120),
+        );
+        await player.action.stopRecording();
+
+        final soloWav = parseWavPcm16(await recSoloFile.readAsBytes());
+        final soloWin = soloWav.sampleRate ~/ 20; // 50ms -> exact integer cycles of 400 & 3200 Hz
+        final soloTotalFrames = soloWav.pcm.length ~/ soloWav.channels;
+        expect(soloTotalFrames, greaterThanOrEqualTo(soloWin * 2));
+        final soloAmpX = measureToneAmplitudeCh0(
+          soloWav.pcm,
+          soloWav.sampleRate,
+          soloWav.channels,
+          400.0,
+          soloWin,
+          soloWin,
+        );
+        final soloAmpY = measureToneAmplitudeCh0(
+          soloWav.pcm,
+          soloWav.sampleRate,
+          soloWav.channels,
+          3200.0,
+          soloWin,
+          soloWin,
+        );
+        expect(soloAmpX, closeTo(expectedX, 0.008));
+        expect(soloAmpY, lessThan(0.003));
+
+        // 2. Record across manual crossfade to Track Y (0 dB).
+        await player.action.startRecording(
+          recXfadeFile.path,
+          format: AudioFileFormat.wav,
+          source: AudioOutputSource.musicMix,
+        );
+        await player.action.next();
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isCrossfading,
+          current: () => player.state.isCrossfading,
+          predicate: (v) => v,
+          timeout: const Duration(seconds: 3),
+          reason: 'Expected manual crossfade to become active',
+        );
+        expect(player.state.replayGain.gainDb, closeTo(0.0, 1e-4));
+
+        await waitForRecordingProgress(
+          player,
+          minRecorded: const Duration(milliseconds: 800),
+        );
+        await player.action.stopRecording();
+
+        final cfWav = parseWavPcm16(await recXfadeFile.readAsBytes());
+        final winFrames = cfWav.sampleRate ~/ 20;
+        final totalFrames = cfWav.pcm.length ~/ cfWav.channels;
+        int overlappingWindows = 0;
+        for (int start = 0; start + winFrames <= totalFrames; start += winFrames) {
+          final ax = measureToneAmplitudeCh0(
+            cfWav.pcm,
+            cfWav.sampleRate,
+            cfWav.channels,
+            400.0,
+            start,
+            winFrames,
+          );
+          final ay = measureToneAmplitudeCh0(
+            cfWav.pcm,
+            cfWav.sampleRate,
+            cfWav.channels,
+            3200.0,
+            start,
+            winFrames,
+          );
+          if (ax > 0.006 && ay > 0.05 && ay < expectedY * 0.90) {
+            overlappingWindows++;
+            // Track X must never receive Track Y's 0 dB gain while fading out.
+            expect(ax, lessThanOrEqualTo(expectedX * 1.15));
+            final normSum = (ax / expectedX) + (ay / expectedY);
+            expect(normSum, closeTo(1.0, 0.25));
+          }
+        }
+        expect(
+          overlappingWindows,
+          greaterThanOrEqualTo(2),
+          reason: 'Expected multiple overlapping crossfade windows in recorded mix',
+        );
+      } finally {
+        if (player.state.isRecording) {
+          try {
+            await player.action.stopRecording();
+          } catch (_) {}
+        }
+        await player.dispose();
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      }
+    });
+
+    test(
+        'auto crossfade isolates per-track ReplayGain (400 Hz @ 0 dB -> 3200 Hz @ -18 dB) in recorded mix',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('map_rg_auto_xfade_');
+      const sr = 48000;
+      const baseAmp = 0.4;
+      const gainYDb = -18.0;
+      const expectedX = baseAmp;
+      final expectedY = baseAmp * math.pow(10.0, gainYDb / 20.0).toDouble();
+
+      // 1.7s Track X + 900ms auto crossfade triggers automatically at ~800ms.
+      final wavX = writeSineWav16(
+        tempDir,
+        'auto_x_400hz.wav',
+        sampleRate: sr,
+        frames: (sr * 1.7).round(),
+        freqHz: 400.0,
+        amplitude: baseAmp,
+      );
+      final wavY = writeSineWav16(
+        tempDir,
+        'auto_y_3200hz.wav',
+        sampleRate: sr,
+        frames: sr * 4,
+        freqHz: 3200.0,
+        amplitude: baseAmp,
+      );
+      final recAutoFile = File('${tempDir.path}/auto_xfade.wav');
+
+      final player = MiniaudioPlayer(
+        config: const PlayerConfig(
+          sampleRate: sr,
+          channels: 2,
+          crossfade: CrossfadeConfig(
+            manualDuration: Duration(milliseconds: 900),
+            autoDuration: Duration(milliseconds: 900),
+            curve: CrossfadeCurve.linear,
+          ),
+        ),
+      );
+
+      try {
+        await player.action.setLimiter(false);
+        final sourceX = AudioSource(wavX.path, replayGainDb: 0.0, replayPeak: 1.0);
+        final sourceY =
+            AudioSource(wavY.path, replayGainDb: gainYDb, replayPeak: 1.0);
+        await player.action.setQueue([sourceX, sourceY]);
+        await player.action.play();
+        await player.action.startRecording(
+          recAutoFile.path,
+          format: AudioFileFormat.wav,
+          source: AudioOutputSource.musicMix,
+        );
+
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isCrossfading,
+          current: () => player.state.isCrossfading,
+          predicate: (v) => v,
+          timeout: const Duration(seconds: 5),
+          reason: 'Expected auto crossfade to engage near end of Track X',
+        );
+        // Auto-crossfade keeps outgoing Track X as foreground item until completion,
+        // so foreground telemetry stays at 0.0 dB while Track Y fades in at -18 dB.
+        expect(player.state.replayGain.gainDb, closeTo(0.0, 1e-4));
+
+        await waitForRecordingProgress(
+          player,
+          minRecorded:
+              player.state.recordedDuration + const Duration(milliseconds: 550),
+        );
+        await player.action.stopRecording();
+
+        // Once auto-crossfade completes, currentItem and ReplayGain telemetry switch to Track Y (-18 dB).
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isCrossfading,
+          current: () => player.state.isCrossfading,
+          predicate: (v) => !v,
+          timeout: const Duration(seconds: 5),
+          reason: 'Expected auto crossfade to finish onto Track Y',
+        );
+        await awaitStateOrStream<ReplayGainConfig>(
+          stream: player.stream.replayGain,
+          current: () => player.state.replayGain,
+          predicate: (rg) => (rg.gainDb - gainYDb).abs() < 1e-4,
+          timeout: const Duration(seconds: 3),
+          reason: 'Expected foreground ReplayGain to switch to -18 dB after auto crossfade',
+        );
+        expect(player.state.currentItem?.id, equals(sourceY.id));
+
+        final cfWav = parseWavPcm16(await recAutoFile.readAsBytes());
+        final winFrames = cfWav.sampleRate ~/ 20;
+        final totalFrames = cfWav.pcm.length ~/ cfWav.channels;
+        int overlappingWindows = 0;
+        for (int start = 0; start + winFrames <= totalFrames; start += winFrames) {
+          final ax = measureToneAmplitudeCh0(
+            cfWav.pcm,
+            cfWav.sampleRate,
+            cfWav.channels,
+            400.0,
+            start,
+            winFrames,
+          );
+          final ay = measureToneAmplitudeCh0(
+            cfWav.pcm,
+            cfWav.sampleRate,
+            cfWav.channels,
+            3200.0,
+            start,
+            winFrames,
+          );
+          if (ax > 0.04 && ax < expectedX * 0.90 && ay > 0.005) {
+            overlappingWindows++;
+            // Track Y must never receive Track X's 0 dB gain during auto-crossfade.
+            expect(ay, lessThanOrEqualTo(expectedY * 1.15));
+            final normSum = (ax / expectedX) + (ay / expectedY);
+            expect(normSum, closeTo(1.0, 0.25));
+          }
+        }
+        expect(
+          overlappingWindows,
+          greaterThanOrEqualTo(2),
+          reason: 'Expected overlapping auto-crossfade windows in recorded mix',
+        );
+      } finally {
+        if (player.state.isRecording) {
+          try {
+            await player.action.stopRecording();
+          } catch (_) {}
+        }
+        await player.dispose();
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      }
+    });
+
+    test(
+        'shuffle + outgoing setReplayGain and ReplayGainMode toggles mid-crossfade preserve foreground isolation',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('map_rg_state_xfade_');
+      const sr = 48000;
+      final wavX = writeSineWav16(
+        tempDir,
+        'state_x.wav',
+        sampleRate: sr,
+        frames: sr * 6,
+        freqHz: 400.0,
+        amplitude: 0.35,
+      );
+      final wavY = writeSineWav16(
+        tempDir,
+        'state_y.wav',
+        sampleRate: sr,
+        frames: sr * 6,
+        freqHz: 3200.0,
+        amplitude: 0.35,
+      );
+
+      final player = MiniaudioPlayer(
+        config: const PlayerConfig(
+          sampleRate: sr,
+          channels: 2,
+          crossfade: CrossfadeConfig(
+            manualDuration: Duration(milliseconds: 1600),
+            autoDuration: Duration(milliseconds: 1600),
+            curve: CrossfadeCurve.linear,
+          ),
+        ),
+      );
+
+      try {
+        final sourceX = AudioSource(
+          wavX.path,
+          replayGainDb: -14.0,
+          replayPeak: 0.95,
+        );
+        final sourceY = AudioSource(
+          wavY.path,
+          replayGainDb: -2.5,
+          replayPeak: 0.85,
+        );
+
+        await player.action.setQueue([sourceX, sourceY]);
+        await player.action.setShuffle(true);
+        await player.action.play(id: sourceX.id);
+        await waitForAudioProgress(
+          player,
+          minDelta: const Duration(milliseconds: 50),
+        );
+        expect(player.state.replayGain.gainDb, closeTo(-14.0, 1e-4));
+
+        await player.action.next();
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isCrossfading,
+          current: () => player.state.isCrossfading,
+          predicate: (v) => v,
+          timeout: const Duration(seconds: 3),
+        );
+        expect(player.state.currentItem?.id, equals(sourceY.id));
+        expect(player.state.replayGain.gainDb, closeTo(-2.5, 1e-4));
+
+        // Live ReplayGain update targeted at outgoing sourceX under shuffle
+        // must update sourceX without hijacking foreground -2.5 dB telemetry.
+        await player.action.setReplayGain(
+          const ReplayGainConfig(gainDb: -9.0, peak: 0.9),
+          id: sourceX.id,
+        );
+        await drainBroadcastStreams();
+        expect(sourceX.replayGainDb, closeTo(-9.0, 1e-4));
+        expect(player.state.replayGain.gainDb, closeTo(-2.5, 1e-4));
+
+        // Toggling ReplayGain modes mid-crossfade cleanly updates & restores active gain.
+        await player.action.setReplayGainMode(ReplayGainMode.disabled);
+        expect(player.state.replayGain.gainDb, closeTo(0.0, 1e-4));
+
+        await player.action.setDefaultReplayGain(-7.5, peak: 0.95);
+        await player.action.setReplayGainMode(ReplayGainMode.forced);
+        expect(player.state.replayGain.gainDb, closeTo(-7.5, 1e-4));
+
+        await player.action.setReplayGainMode(ReplayGainMode.track);
+        expect(player.state.replayGain.gainDb, closeTo(-2.5, 1e-4));
+
+        // Wait for crossfade completion and verify active Track Y update propagates cleanly.
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isCrossfading,
+          current: () => player.state.isCrossfading,
+          predicate: (v) => !v,
+          timeout: const Duration(seconds: 5),
+        );
+        await player.action.setReplayGain(
+          const ReplayGainConfig(gainDb: -4.5, peak: 0.75),
+        );
+        expect(player.state.replayGain.gainDb, closeTo(-4.5, 1e-4));
+      } finally {
+        await player.dispose();
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
       }
     });
   });

@@ -253,6 +253,7 @@ words:
   - Freeverb
   - Frykholm
   - fseeki
+  - fsize
   - ftelli
   - ftol
   - ftyp
@@ -582,6 +583,7 @@ words:
   - serialnos
   - shoutcast
   - Shoutcast
+  - shuf
   - sidechain
   - SIGSEGV
   - Simd
@@ -644,11 +646,13 @@ words:
   - SYSCALLS
   - tagncompare
   - tapset
+  - tbuf
   - TDAC
   - TDRC
   - telemetría
   - Telemetría
   - Terje
+  - tgot
   - Theora
   - Thiago
   - thrads

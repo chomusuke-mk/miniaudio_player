@@ -756,6 +756,7 @@ impl RustMiniaudioPlayer {
                 let mut last_meta_enabled = false;
                 let mut edge_events: Vec<RustPlayerEvent> = Vec::with_capacity(8);
                 let mut tick_events: Vec<RustPlayerEvent> = Vec::with_capacity(24);
+                let mut pending_notices: Vec<RustPlayerEvent> = Vec::with_capacity(8);
 
                 while worker_running.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(16));
@@ -765,10 +766,13 @@ impl RustMiniaudioPlayer {
                     for notice in notify_rx.try_iter() {
                         match notice {
                             RtEngineNotice::IsCrossfading(v) => {
-                                tick_events.push(RustPlayerEvent::IsCrossfading(v));
+                                // Defer crossfade/ReplayGain notices until after CurrentIndex is
+                                // pushed from the consistent snapshot so Dart listeners always see
+                                // the updated track before its completion/gain transitions fire.
+                                pending_notices.push(RustPlayerEvent::IsCrossfading(v));
                             }
                             RtEngineNotice::ReplayGain { gain_db, peak } => {
-                                tick_events.push(RustPlayerEvent::ReplayGain(
+                                pending_notices.push(RustPlayerEvent::ReplayGain(
                                     RustReplayGainConfig { gain_db, peak },
                                 ));
                             }
@@ -872,6 +876,9 @@ impl RustMiniaudioPlayer {
                             is_buffering: range_buffering,
                         }));
                     }
+                    if !pending_notices.is_empty() {
+                        tick_events.extend(pending_notices.iter().cloned());
+                    }
                     tick_events.push(RustPlayerEvent::IsCrossfading(is_xfading));
                     tick_events.push(RustPlayerEvent::IsRecording(is_rec));
                     if is_rec {
@@ -908,6 +915,7 @@ impl RustMiniaudioPlayer {
                         edge_events.drain(..),
                         tick_events.drain(..),
                     ) {
+                        pending_notices.clear();
                         if should_emit_meta {
                             last_emitted_meta_deck = active_deck_idx;
                             last_emitted_meta_deck_id = active_deck_id;
@@ -1443,18 +1451,21 @@ impl RustMiniaudioPlayer {
                     Some(ref c) => (Some(c.gain_db), Some(c.peak)),
                     None => (None, None),
                 };
-                {
+                let target_id = {
                     let mut q = write_unpoisoned(&ply.music_manager.inner.queue);
                     if idx < q.len() {
                         q[idx].replay_gain_db = new_gain;
                         q[idx].replay_peak = new_peak;
+                        Some(q[idx].id)
+                    } else {
+                        None
                     }
-                }
-                {
+                };
+                if let Some(tid) = target_id {
                     let mut cq = write_unpoisoned(&ply.music_manager.inner.canonical_queue);
-                    if idx < cq.len() {
-                        cq[idx].replay_gain_db = new_gain;
-                        cq[idx].replay_peak = new_peak;
+                    if let Some(item) = cq.iter_mut().find(|it| it.id == tid) {
+                        item.replay_gain_db = new_gain;
+                        item.replay_peak = new_peak;
                     }
                 }
                 let cur = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
@@ -1463,8 +1474,9 @@ impl RustMiniaudioPlayer {
                 } else {
                     idx == 0
                 };
+                let fg_rg = ply.recalculate_and_apply_replay_gain();
                 if is_target_active {
-                    return Some(ply.recalculate_and_apply_replay_gain());
+                    return Some(fg_rg);
                 }
             }
             None
@@ -1481,10 +1493,9 @@ impl RustMiniaudioPlayer {
 
     /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
     pub fn set_replay_gain_mode(&self, mode: u32) -> Result<(), String> {
-        let (g, p) = self.engine.exec(move |ply| {
-            ply.replay_gain_mode = mode;
-            ply.recalculate_and_apply_replay_gain()
-        })?;
+        let (g, p) = self
+            .engine
+            .exec(move |ply| ply.set_replay_gain_mode(mode))?;
         self.emit_event(RustPlayerEvent::ReplayGainMode(mode));
         self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db: g,
@@ -1495,10 +1506,9 @@ impl RustMiniaudioPlayer {
 
     /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
     pub fn set_default_replay_gain(&self, gain_db: f32, peak: f32) -> Result<(), String> {
-        let (g, p) = self.engine.exec(move |ply| {
-            ply.default_replay_gain = (gain_db, peak);
-            ply.recalculate_and_apply_replay_gain()
-        })?;
+        let (g, p) = self
+            .engine
+            .exec(move |ply| ply.set_default_replay_gain(gain_db, peak))?;
         self.emit_event(RustPlayerEvent::DefaultReplayGain(gain_db));
         self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db: g,

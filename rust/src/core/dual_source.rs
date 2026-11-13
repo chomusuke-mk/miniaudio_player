@@ -1528,6 +1528,10 @@ pub struct StreamingDeck {
     pub preamp_db: Arc<AtomicU32>,
     /// ReplayGain loudness normalization settings.
     pub replay_gain: ReplayGainConfig,
+    /// Queue item ID currently loaded on this deck (`None` when stopped/unloaded).
+    pub queue_item_id: Option<i64>,
+    /// Track-specific `(replay_gain_db, replay_peak)` associated with `queue_item_id`.
+    pub track_replay_gain: (Option<f32>, Option<f32>),
     /// Stereo balance pan stored as atomic float bits.
     pub balance: Arc<AtomicU32>,
     /// Stereo downmix to mono flag.
@@ -1681,6 +1685,8 @@ impl StreamingDeck {
         let eq_params = EqualizerParams::default();
         let preamp_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let replay_gain = ReplayGainConfig::default();
+        let queue_item_id = None;
+        let track_replay_gain = (None, None);
         let balance = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let mono_enabled = Arc::new(AtomicBool::new(false));
         let spatializer_enabled = Arc::new(AtomicBool::new(false));
@@ -1806,6 +1812,8 @@ impl StreamingDeck {
             eq_params,
             preamp_db,
             replay_gain,
+            queue_item_id,
+            track_replay_gain,
             balance,
             mono_enabled,
             spatializer_enabled,
@@ -3783,6 +3791,30 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Updates this deck's cached ReplayGain config and pushes it to the RT renderer
+    /// without mutating telemetry or neighboring decks.
+    pub fn apply_replay_gain_config_silent(&mut self, rg: ReplayGainConfig) {
+        if self.replay_gain != rg {
+            self.replay_gain = rg;
+            self.send_dsp_command(DspCommand::SetReplayGain(rg));
+        }
+    }
+
+    /// Records the queue item identity and per-track ReplayGain metadata loaded on this deck.
+    #[inline]
+    pub fn set_queue_item_assignment(&mut self, item: &AudioSourceCore) {
+        self.queue_item_id = Some(item.id);
+        self.track_replay_gain = (item.replay_gain_db, item.replay_peak);
+    }
+
+    /// Clears the loaded queue item association and disables per-deck ReplayGain.
+    #[inline]
+    pub fn clear_queue_item_assignment(&mut self) {
+        self.queue_item_id = None;
+        self.track_replay_gain = (None, None);
+        self.apply_replay_gain_config_silent(ReplayGainConfig::default());
+    }
+
     pub fn set_preamp(&mut self, preamp_db: f32) -> i32 {
         crate::map_log!(4, "set_preamp(preamp_db={})", preamp_db);
         self.preamp_db.store(preamp_db.to_bits(), Ordering::Relaxed);
@@ -4057,6 +4089,61 @@ pub struct AudioSourceCore {
     pub replay_peak: Option<f32>,
 }
 
+/// Resolves an effective [`ReplayGainConfig`] from global policy (`mode`, `default_gain`)
+/// and optional per-track ReplayGain parts `(gain_db, peak)`.
+pub fn resolve_replay_gain_parts(
+    mode: u32,
+    default_gain: (f32, f32),
+    item_gain_db: Option<f32>,
+    item_peak: Option<f32>,
+) -> ReplayGainConfig {
+    match mode {
+        0 => ReplayGainConfig {
+            gain_db: 0.0,
+            peak: 1.0,
+            prevent_clipping: 1,
+            enabled: 0,
+        },
+        2 => ReplayGainConfig {
+            gain_db: default_gain.0,
+            peak: default_gain.1,
+            prevent_clipping: 1,
+            enabled: 1,
+        },
+        _ => {
+            if let Some(gain_db) = item_gain_db {
+                return ReplayGainConfig {
+                    gain_db,
+                    peak: item_peak.unwrap_or(1.0),
+                    prevent_clipping: 1,
+                    enabled: 1,
+                };
+            }
+            ReplayGainConfig {
+                gain_db: default_gain.0,
+                peak: default_gain.1,
+                prevent_clipping: 1,
+                enabled: if default_gain.0 != 0.0 { 1 } else { 0 },
+            }
+        }
+    }
+}
+
+/// Resolves an effective [`ReplayGainConfig`] for an optional queued item.
+#[inline]
+pub fn resolve_replay_gain(
+    mode: u32,
+    default_gain: (f32, f32),
+    item: Option<&AudioSourceCore>,
+) -> ReplayGainConfig {
+    match item {
+        Some(it) => {
+            resolve_replay_gain_parts(mode, default_gain, it.replay_gain_db, it.replay_peak)
+        }
+        None => resolve_replay_gain_parts(mode, default_gain, None, None),
+    }
+}
+
 /// Lock-free atomic tracker coordinating smooth crossfade transitions between Deck A and Deck B.
 #[repr(C)]
 pub struct CrossfadeAtomic {
@@ -4216,6 +4303,10 @@ pub struct DualSource {
     pub planned_index: Arc<AtomicI64>,
     /// Whether queue mutators synchronously call `preload_standby_deck` (false under Tri-Plane actor).
     pub auto_preload_standby: Arc<AtomicBool>,
+    /// Default ReplayGain fallback/forced values `(gain_db, peak)`.
+    pub default_replay_gain: (f32, f32),
+    /// Global ReplayGain operating mode (`0 = Disabled`, `1 = Track`, `2 = Forced`).
+    pub replay_gain_mode: u32,
 }
 
 unsafe impl Send for DualSource {}
@@ -4258,7 +4349,54 @@ impl DualSource {
             standby_ready_source: Arc::new(RwLock::new(None)),
             planned_index: Arc::new(AtomicI64::new(-1)),
             auto_preload_standby: Arc::new(AtomicBool::new(true)),
+            default_replay_gain: (0.0, 1.0),
+            replay_gain_mode: 1,
         })
+    }
+
+    /// Resolves effective ReplayGain configuration for `item` under the active global mode/default.
+    #[inline]
+    pub fn resolve_item_replay_gain(&self, item: Option<&AudioSourceCore>) -> ReplayGainConfig {
+        resolve_replay_gain(self.replay_gain_mode, self.default_replay_gain, item)
+    }
+
+    /// Resolves effective ReplayGain telemetry for the current foreground track
+    /// (or index 0 while stopped with a non-empty queue).
+    pub fn resolve_foreground_replay_gain(&self) -> ReplayGainConfig {
+        let q = read_unpoisoned(&self.queue);
+        let cur = self.current_index.load(Ordering::Relaxed);
+        let item = if cur >= 0 && (cur as usize) < q.len() {
+            Some(&q[cur as usize])
+        } else if !q.is_empty() {
+            Some(&q[0])
+        } else {
+            None
+        };
+        resolve_replay_gain(self.replay_gain_mode, self.default_replay_gain, item)
+    }
+
+    /// Refreshes per-deck ReplayGain DSP settings on both Deck A and Deck B independently
+    /// according to each deck's own loaded queue item and the global mode/default.
+    pub fn refresh_deck_replay_gains(&mut self) {
+        let mode = self.replay_gain_mode;
+        let def_rg = self.default_replay_gain;
+        let q = read_unpoisoned(&self.queue);
+        for deck in [&mut self.deck_a, &mut self.deck_b] {
+            if let Some(item_id) = deck.queue_item_id {
+                if let Some(item) = q.iter().find(|it| it.id == item_id) {
+                    deck.track_replay_gain = (item.replay_gain_db, item.replay_peak);
+                }
+                let rg = resolve_replay_gain_parts(
+                    mode,
+                    def_rg,
+                    deck.track_replay_gain.0,
+                    deck.track_replay_gain.1,
+                );
+                deck.apply_replay_gain_config_silent(rg);
+            } else {
+                deck.apply_replay_gain_config_silent(ReplayGainConfig::default());
+            }
+        }
     }
 
     /// Returns a mutable reference to the currently active foreground deck.
@@ -4316,9 +4454,10 @@ impl DualSource {
         cancel: Option<&CancelToken>,
     ) -> i32 {
         if cancel.is_some_and(|c| c.is_cancelled()) {
+            deck.clear_queue_item_assignment();
             return MAP_ERROR_ABORTED;
         }
-        if item.source.starts_with("custom:") || item.source.starts_with("custom://") {
+        let res = if item.source.starts_with("custom:") || item.source.starts_with("custom://") {
             let id_str = item
                 .source
                 .trim_start_matches("custom://")
@@ -4342,20 +4481,27 @@ impl DualSource {
             };
             if let Some(factory) = custom_factory {
                 let (source, handle) = factory(stream_id, total_size);
-                return deck.open_custom_source_with_cancel(source, handle, total_size, true, cancel);
+                deck.open_custom_source_with_cancel(source, handle, total_size, true, cancel)
+            } else {
+                MAP_ERROR_UNSUPPORTED
             }
-            return MAP_ERROR_UNSUPPORTED;
-        }
-        if let Some(ref data) = item.data_bytes {
+        } else if let Some(ref data) = item.data_bytes {
             let ext_hint = StreamClassifier::extract_extension_hint(&item.source);
-            let res = deck.open_memory_with_hint(data, ext_hint);
+            let open_res = deck.open_memory_with_hint(data, ext_hint);
             if cancel.is_some_and(|c| c.is_cancelled()) {
-                return deck.mark_open_error(MAP_ERROR_ABORTED);
+                deck.mark_open_error(MAP_ERROR_ABORTED)
+            } else {
+                open_res
             }
-            res
         } else {
             deck.open_source_with_cancel(&item.source, item.headers.as_deref(), cancel)
+        };
+        if res == MAP_SUCCESS {
+            deck.set_queue_item_assignment(item);
+        } else {
+            deck.clear_queue_item_assignment();
         }
+        res
     }
 
     /// Replaces the entire playback queue with `items` without starting playback.
@@ -4369,7 +4515,9 @@ impl DualSource {
         self.standby_ready_id.store(-1, Ordering::Release);
         *write_unpoisoned(&self.standby_ready_source) = None;
         self.deck_a.stop();
+        self.deck_a.clear_queue_item_assignment();
         self.deck_b.stop();
+        self.deck_b.clear_queue_item_assignment();
 
         *write_unpoisoned(&self.canonical_queue) = items.clone();
         *write_unpoisoned(&self.original_indices) = (0..items.len()).collect();
@@ -4466,6 +4614,8 @@ impl DualSource {
         let custom_factory = self.custom_source_factory.clone();
         let standby_ready_id = self.standby_ready_id.clone();
         let standby_ready_source = self.standby_ready_source.clone();
+        let rg_mode = self.replay_gain_mode;
+        let def_rg = self.default_replay_gain;
         let standby_deck = if active_deck == 0 {
             &mut self.deck_b
         } else {
@@ -4475,12 +4625,8 @@ impl DualSource {
         if let Some(item) = target_item {
             let res = Self::open_deck_source(standby_deck, &item, custom_factory.as_ref());
             if res == 0 {
-                if let Some(gain) = item.replay_gain_db {
-                    let peak = item.replay_peak.unwrap_or(1.0);
-                    standby_deck.set_replay_gain(gain, peak, 1);
-                } else {
-                    standby_deck.clear_replay_gain();
-                }
+                let rg = resolve_replay_gain(rg_mode, def_rg, Some(&item));
+                standby_deck.apply_replay_gain_config_silent(rg);
                 standby_deck.pause();
                 standby_ready_id.store(item.id, Ordering::Release);
                 *write_unpoisoned(&standby_ready_source) = Some(item.source);
@@ -4490,6 +4636,7 @@ impl DualSource {
             }
         } else {
             standby_deck.stop();
+            standby_deck.clear_queue_item_assignment();
             standby_ready_id.store(-1, Ordering::Release);
             *write_unpoisoned(&standby_ready_source) = None;
         }
@@ -4548,7 +4695,9 @@ impl DualSource {
                     drop(q);
                     self.abort_active_crossfade();
                     self.deck_a.stop();
+                    self.deck_a.clear_queue_item_assignment();
                     self.deck_b.stop();
+                    self.deck_b.clear_queue_item_assignment();
                     self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
                     return Some(removed);
                 } else {
@@ -4566,12 +4715,17 @@ impl DualSource {
                     *write_unpoisoned(&self.standby_ready_source) = None;
                     if !self.auto_preload_standby.load(Ordering::Relaxed) {
                         self.deck_a.stop();
+                        self.deck_a.clear_queue_item_assignment();
                         self.deck_b.stop();
+                        self.deck_b.clear_queue_item_assignment();
                         return Some(removed);
                     }
                     let factory = self.custom_source_factory.clone();
+                    let next_rg = self.resolve_item_replay_gain(Some(&next_item));
                     let active = self.active_deck_mut();
-                    Self::open_deck_source(active, &next_item, factory.as_ref());
+                    if Self::open_deck_source(active, &next_item, factory.as_ref()) == 0 {
+                        active.apply_replay_gain_config_silent(next_rg);
+                    }
                     active.play();
                     self.preload_standby_deck();
                     return Some(removed);
@@ -4768,23 +4922,20 @@ impl DualSource {
         let was_playing = cur_playback == PlaybackState::Playing;
 
         let to_deck = if active_deck == 0 { 1 } else { 0 };
+        let to_rg = self.resolve_item_replay_gain(Some(&item));
+        let custom_factory = self.custom_source_factory.clone();
         let to_slot = if to_deck == 0 {
             &mut self.deck_a
         } else {
             &mut self.deck_b
         };
 
-        let res = Self::open_deck_source(to_slot, &item, self.custom_source_factory.as_ref());
+        let res = Self::open_deck_source(to_slot, &item, custom_factory.as_ref());
         if res != 0 {
             return Err(format!("Failed to open track: error {}", res));
         }
 
-        if let Some(gain) = item.replay_gain_db {
-            let peak = item.replay_peak.unwrap_or(1.0);
-            to_slot.set_replay_gain(gain, peak, 1);
-        } else {
-            to_slot.clear_replay_gain();
-        }
+        to_slot.apply_replay_gain_config_silent(to_rg);
 
         if let Some(ms) = seek_ms {
             if ms > 0 {
@@ -4920,11 +5071,13 @@ impl DualSource {
         if trans == QueueTransition::AutoCrossfade {
             self.crossfade.abort();
             self.standby_deck_mut().stop();
+            self.standby_deck_mut().clear_queue_item_assignment();
         } else if trans == QueueTransition::ManualCrossfade {
             self.crossfade.abort();
             let to_deck = self.crossfade.to_deck.load(Ordering::Relaxed);
             self.active_deck.store(to_deck, Ordering::Release);
             self.standby_deck_mut().stop();
+            self.standby_deck_mut().clear_queue_item_assignment();
         } else {
             self.crossfade.abort();
         }
@@ -5005,6 +5158,8 @@ impl DualSource {
             self.crossfade_completed_flag.store(false, Ordering::Release);
 
             let active_deck = self.active_deck.load(Ordering::Relaxed);
+            let start_rg = self.resolve_item_replay_gain(Some(&start_item));
+            let custom_factory = self.custom_source_factory.clone();
             let active_slot = if active_deck == 0 {
                 &mut self.deck_a
             } else {
@@ -5014,18 +5169,13 @@ impl DualSource {
             let res = Self::open_deck_source(
                 active_slot,
                 &start_item,
-                self.custom_source_factory.as_ref(),
+                custom_factory.as_ref(),
             );
             if res != 0 {
                 return Err(format!("Failed to open track: error {}", res));
             }
 
-            if let Some(gain) = start_item.replay_gain_db {
-                let peak = start_item.replay_peak.unwrap_or(1.0);
-                active_slot.set_replay_gain(gain, peak, 1);
-            } else {
-                active_slot.clear_replay_gain();
-            }
+            active_slot.apply_replay_gain_config_silent(start_rg);
 
             if let Some(ms) = seek_ms {
                 if ms > 0 {
@@ -5124,7 +5274,9 @@ impl DualSource {
     pub fn stop(&mut self) {
         self.abort_active_crossfade();
         self.deck_a.stop();
+        self.deck_a.clear_queue_item_assignment();
         self.deck_b.stop();
+        self.deck_b.clear_queue_item_assignment();
         self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
     }
 

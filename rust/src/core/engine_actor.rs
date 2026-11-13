@@ -61,7 +61,7 @@ impl EngineUiSnapshots {
     /// Initializes snapshots from initial player configuration state.
     pub fn from_player(ply: &MiniaudioPlayer) -> Self {
         let active_deck = ply.music_manager.active_deck_ref();
-        let rg = ply.music_dsp.equalizer.replay_gain();
+        let (rg_gain, rg_peak) = ply.active_replay_gain;
         Self {
             sample_rate: ply.sample_rate,
             pub_seq: AtomicU64::new(0),
@@ -92,7 +92,7 @@ impl EngineUiSnapshots {
             active_open_gen: AtomicU64::new(active_deck.open_generation.load(Ordering::Acquire)),
             meta_version: AtomicU32::new(active_deck.get_meta_bytes_version()),
             flush_generation: AtomicU64::new(active_deck.flush_generation.load(Ordering::Acquire)),
-            replay_gain_packed: AtomicU64::new(Self::pack_rg(rg.gain_db, rg.peak)),
+            replay_gain_packed: AtomicU64::new(Self::pack_rg(rg_gain, rg_peak)),
             visualizer_enabled: AtomicBool::new(
                 ply.output_manager
                     .visualizer_enabled
@@ -471,9 +471,9 @@ fn publish_snapshots(
     snap.meta_version.store(meta_ver, Ordering::Release);
     snap.flush_generation.store(flush_gen, Ordering::Release);
 
-    let rg = ply.music_dsp.equalizer.replay_gain();
+    let (rg_gain, rg_peak) = ply.active_replay_gain;
     snap.replay_gain_packed.store(
-        EngineUiSnapshots::pack_rg(rg.gain_db, rg.peak),
+        EngineUiSnapshots::pack_rg(rg_gain, rg_peak),
         Ordering::Release,
     );
 
@@ -522,7 +522,7 @@ struct LifecycleHintState {
 
 fn tick_music_lifecycle(
     ply: &mut MiniaudioPlayer,
-    notify_tx: &crossbeam_channel::Sender<RtEngineNotice>,
+    notices: &mut Vec<RtEngineNotice>,
     hint_tx: &crossbeam_channel::Sender<RtControlHint>,
     hint_state: &mut LifecycleHintState,
 ) {
@@ -576,6 +576,7 @@ fn tick_music_lifecycle(
             &mut ply.music_manager.inner.deck_a
         };
         from_slot.stop();
+        from_slot.clear_queue_item_assignment();
 
         let target_id = ply
             .music_manager
@@ -593,7 +594,7 @@ fn tick_music_lifecycle(
                     .store(new_idx as i64, Ordering::Release);
                 ply.music_manager.inner.sync_planned_index_to_current();
                 let (g, p) = ply.recalculate_and_apply_replay_gain();
-                let _ = notify_tx.try_send(RtEngineNotice::ReplayGain {
+                notices.push(RtEngineNotice::ReplayGain {
                     gain_db: g,
                     peak: p,
                 });
@@ -603,7 +604,7 @@ fn tick_music_lifecycle(
         hint_state.last_prewarm_hint_key = None;
         hint_state.last_auto_advance_key = None;
         let _ = hint_tx.try_send(RtControlHint::PrewarmNeeded);
-        let _ = notify_tx.try_send(RtEngineNotice::IsCrossfading(false));
+        notices.push(RtEngineNotice::IsCrossfading(false));
     }
 
     let cur_playback = PlaybackState::from_i32(
@@ -705,10 +706,10 @@ fn tick_music_lifecycle(
                             mode,
                         );
                         if should_auto_xfade {
-                            let _ = notify_tx.try_send(RtEngineNotice::IsCrossfading(true));
+                            notices.push(RtEngineNotice::IsCrossfading(true));
                         } else {
                             let (g, p) = ply.recalculate_and_apply_replay_gain();
-                            let _ = notify_tx.try_send(RtEngineNotice::ReplayGain {
+                            notices.push(RtEngineNotice::ReplayGain {
                                 gain_db: g,
                                 peak: p,
                             });
@@ -784,7 +785,7 @@ fn tick_music_lifecycle(
                             .inner
                             .last_notified_infinite_mix_id
                             .store(current_id, Ordering::Release);
-                        let _ = notify_tx.try_send(RtEngineNotice::NeedMoreTracks {
+                        notices.push(RtEngineNotice::NeedMoreTracks {
                             current_track_id: current_id,
                             remaining_tracks: remaining as u32,
                         });
@@ -869,6 +870,7 @@ impl EngineActorHandle {
                 let mut next_tick = Instant::now();
                 let mut pub_cache = SnapshotPublishCache::default();
                 let mut hint_state = LifecycleHintState::default();
+                let mut pending_notices: Vec<RtEngineNotice> = Vec::with_capacity(8);
                 publish_snapshots(&player, &snap_clone, &mut pub_cache);
 
                 loop {
@@ -893,8 +895,18 @@ impl EngineActorHandle {
                     let now = Instant::now();
                     if now >= next_tick {
                         player.render_pcm(period_frames);
-                        tick_music_lifecycle(&mut player, &notify_tx, &hint_tx, &mut hint_state);
+                        tick_music_lifecycle(
+                            &mut player,
+                            &mut pending_notices,
+                            &hint_tx,
+                            &mut hint_state,
+                        );
                         publish_snapshots(&player, &snap_clone, &mut pub_cache);
+                        // Dispatch edge notices only after snapshot publication so monitors reading
+                        // `EngineUiSnapshots` on wake never observe stale track index/metadata.
+                        for notice in pending_notices.drain(..) {
+                            let _ = notify_tx.try_send(notice);
+                        }
                         next_tick += period_duration;
                         let after = Instant::now();
                         if next_tick + period_duration < after {
