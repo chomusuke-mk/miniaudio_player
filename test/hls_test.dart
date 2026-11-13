@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -68,7 +70,16 @@ void main() {
       final player = MiniaudioPlayer(queue: [AudioSource(streamUrl)]);
       try {
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 600));
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isPlaying,
+          current: () => player.state.isPlaying,
+          predicate: (playing) => playing,
+          reason: 'HLS stream should transition to isPlaying',
+        );
+        await waitForAudioProgress(
+          player,
+          minDelta: const Duration(milliseconds: 60),
+        );
 
         expect(player.state.isPlaying, isTrue);
         await player.action.stop();
@@ -83,7 +94,16 @@ void main() {
       final player = MiniaudioPlayer(queue: [AudioSource(streamUrl)]);
       try {
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 600));
+        await awaitStateOrStream<bool>(
+          stream: player.stream.isPlaying,
+          current: () => player.state.isPlaying,
+          predicate: (playing) => playing,
+          reason: 'Multi-segment HLS playlist should transition to isPlaying',
+        );
+        await waitForAudioProgress(
+          player,
+          minDelta: const Duration(milliseconds: 60),
+        );
         expect(player.state.isPlaying, isTrue);
 
         await player.action.stop();

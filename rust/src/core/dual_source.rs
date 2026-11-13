@@ -919,8 +919,11 @@ struct DecoderWorker {
     wake: Arc<(Mutex<bool>, Condvar)>,
     state: Arc<AtomicI32>,
     engine_arc: Arc<Mutex<Option<SymphoniaEngine>>>,
+    engine_loaded: Arc<AtomicBool>,
     producer_arc: Arc<Mutex<Option<AudioProducer>>>,
     seek_req: Arc<AtomicI64>,
+    seek_packed: Arc<AtomicU64>,
+    open_gen: Arc<AtomicU64>,
     pos_ms: Arc<AtomicI64>,
     pos_frames: Arc<AtomicI64>,
     dur_ms: Arc<AtomicI64>,
@@ -998,26 +1001,42 @@ impl DecoderWorker {
     /// Processes a pending seek request if one exists.
     /// Returns `true` if the main worker loop should `continue` immediately.
     fn handle_pending_seek(&mut self) -> bool {
-        let target_seek = self.seek_req.swap(-1, Ordering::SeqCst);
-        if target_seek < 0 {
+        let packed = self.seek_packed.swap(0, Ordering::AcqRel);
+        if packed == 0 {
             return false;
         }
-        crate::map_log!(4, "DecoderWorker executing seek to {}ms", target_seek);
+        let gen = (packed >> 40) as i64;
+        let target_seek = (packed & 0xFF_FFFF_FFFF) as i64;
+        let start_open_gen = self.open_gen.load(Ordering::Acquire);
+        let is_superseded = || {
+            self.seek_packed.load(Ordering::Acquire) != 0
+                || self.seek_req.load(Ordering::Acquire) != gen
+                || self.open_gen.load(Ordering::Acquire) != start_open_gen
+        };
+        crate::map_log!(4, "DecoderWorker executing seek to {}ms (gen={})", target_seek, gen);
 
         let cur_dev_sr = self.dev_sr_arc.load(Ordering::Relaxed).max(8000) as i64;
         let dur = self.dur_ms.load(Ordering::Relaxed);
         if dur > 0 && target_seek >= dur {
-            self.decoder_eof_arc.store(true, Ordering::Relaxed);
-            self.track_exhausted.store(true, Ordering::Release);
-            self.pos_ms.store(dur, Ordering::Relaxed);
-            let f = if cur_dev_sr > 0 {
-                (dur * cur_dev_sr * 1024) / 1000
-            } else {
-                0
-            };
-            self.pos_frames.store(f, Ordering::Relaxed);
-            self.tele
-                .post_event(EventType::Position, MapEventData { position_ms: dur });
+            if !is_superseded() {
+                self.decoder_eof_arc.store(true, Ordering::Relaxed);
+                self.track_exhausted.store(true, Ordering::Release);
+                self.pos_ms.store(dur, Ordering::Relaxed);
+                let f = if cur_dev_sr > 0 {
+                    (dur * cur_dev_sr * 1024) / 1000
+                } else {
+                    0
+                };
+                self.pos_frames.store(f, Ordering::Relaxed);
+                self.tele
+                    .post_event(EventType::Position, MapEventData { position_ms: dur });
+                let _ = self.seek_req.compare_exchange(
+                    gen,
+                    -1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
             return true;
         }
 
@@ -1028,12 +1047,22 @@ impl DecoderWorker {
             while self.flush_acknowledged.load(Ordering::Acquire) < cur_flush
                 && start_wait.elapsed() < Duration::from_millis(15)
             {
+                if is_superseded() {
+                    return true;
+                }
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
 
+        if is_superseded() {
+            return true;
+        }
+
         self.decoder_eof_arc.store(false, Ordering::Relaxed);
         if let Ok(mut eng_lock) = self.engine_arc.lock() {
+            if is_superseded() {
+                return true;
+            }
             let mut reinit = false;
             if target_seek == 0 && self.is_stream_arc.load(Ordering::Relaxed) {
                 if let Ok(guard) = self.session_arc.read() {
@@ -1066,6 +1095,12 @@ impl DecoderWorker {
             }
         }
 
+        // Discard stale seek commit completely if stop/begin_open or a newer seek arrived
+        // while `eng.seek_ms` was running (otherwise slow linear seeks overwrite newer pos_ms).
+        if is_superseded() {
+            return true;
+        }
+
         self.pipeline.reset(target_seek == 0);
         self.silence_saved_arc.store(0, Ordering::Relaxed);
         self.tele.post_event(
@@ -1074,6 +1109,11 @@ impl DecoderWorker {
                 silence_saved_ms: 0,
             },
         );
+
+        if is_superseded() {
+            return true;
+        }
+
         self.pos_ms.store(target_seek, Ordering::Relaxed);
         let f = if cur_dev_sr > 0 {
             (target_seek * cur_dev_sr * 1024) / 1000
@@ -1087,7 +1127,9 @@ impl DecoderWorker {
                 position_ms: target_seek,
             },
         );
-        false
+        self.seek_req
+            .compare_exchange(gen, -1, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
     }
 
     /// Ensures a flushed live stream re-initializes its `SymphoniaEngine` once data arrives.
@@ -1125,6 +1167,7 @@ impl DecoderWorker {
             if let Ok(mut eng_lock) = self.engine_arc.lock() {
                 *eng_lock = Some(new_eng);
             }
+            self.engine_loaded.store(true, Ordering::Release);
             self.stream_reinit_needed.store(false, Ordering::Release);
             self.decoder_eof_arc.store(false, Ordering::Relaxed);
             self.pipeline.clear_pending_and_resampler();
@@ -1497,7 +1540,10 @@ pub struct StreamingDeck {
     pub limiter_enabled: Arc<AtomicBool>,
 
     pub engine: Arc<Mutex<Option<SymphoniaEngine>>>,
+    pub engine_loaded: Arc<AtomicBool>,
     pub seek_request_ms: Arc<AtomicI64>,
+    pub seek_counter: Arc<AtomicU64>,
+    pub seek_packed: Arc<AtomicU64>,
     pub decoder_eof: Arc<AtomicBool>,
     pub stream_reinit_needed: Arc<AtomicBool>,
     pub network_streamer_abort: Arc<AtomicBool>,
@@ -1644,7 +1690,10 @@ impl StreamingDeck {
         let limiter_enabled = Arc::new(AtomicBool::new(true));
 
         let engine = Arc::new(Mutex::new(None));
+        let engine_loaded = Arc::new(AtomicBool::new(false));
         let seek_request_ms = Arc::new(AtomicI64::new(-1));
+        let seek_counter = Arc::new(AtomicU64::new(1));
+        let seek_packed = Arc::new(AtomicU64::new(0));
         let decoder_eof = Arc::new(AtomicBool::new(false));
         let stream_reinit_needed = Arc::new(AtomicBool::new(false));
         let network_streamer_abort = Arc::new(AtomicBool::new(false));
@@ -1765,7 +1814,10 @@ impl StreamingDeck {
             reverb_config,
             limiter_enabled,
             engine,
+            engine_loaded,
             seek_request_ms,
+            seek_counter,
+            seek_packed,
             decoder_eof,
             stream_reinit_needed,
             network_streamer_abort,
@@ -1827,8 +1879,11 @@ impl StreamingDeck {
             wake: self.decoder_wake.clone(),
             state: self.state.clone(),
             engine_arc: self.engine.clone(),
+            engine_loaded: self.engine_loaded.clone(),
             producer_arc: self.audio_producer.clone(),
             seek_req: self.seek_request_ms.clone(),
+            seek_packed: self.seek_packed.clone(),
+            open_gen: self.open_generation.clone(),
             pos_ms: self.position_ms.clone(),
             pos_frames: self.position_frames.clone(),
             dur_ms: self.duration_ms.clone(),
@@ -1884,6 +1939,8 @@ impl StreamingDeck {
 
     pub fn begin_open(&mut self) -> i32 {
         let _ = self.stop();
+        self.open_generation.fetch_add(1, Ordering::AcqRel);
+        self.clear_pending_seek();
         self.network_streamer_abort.store(true, Ordering::Release);
         self.is_stream.store(false, Ordering::Release);
         if let Ok(mut guard) = self.stream_session.write() {
@@ -1909,6 +1966,7 @@ impl StreamingDeck {
             handle.abort();
         }
         *write_unpoisoned(&self.custom_source_handle) = None;
+        self.engine_loaded.store(false, Ordering::Release);
         *lock_unpoisoned(&self.engine) = None;
         self.decoder_eof.store(false, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
@@ -2983,6 +3041,7 @@ impl StreamingDeck {
 
             let mut eng_lock = lock_unpoisoned(&self.engine);
             *eng_lock = Some(eng);
+            self.engine_loaded.store(true, Ordering::Release);
             self.sample_rate.store(sr, Ordering::SeqCst);
             self.raw_sample_rate.store(raw_sr, Ordering::SeqCst);
             self.channels.store(ch, Ordering::SeqCst);
@@ -3091,6 +3150,24 @@ impl StreamingDeck {
         }
     }
 
+    #[inline]
+    fn enqueue_seek(&self, position_ms: i64) {
+        let clamped = (position_ms.max(0) as u64) & 0xFF_FFFF_FFFF;
+        let mut gen = self.seek_counter.fetch_add(1, Ordering::AcqRel) & 0xFF_FFFF;
+        if gen == 0 {
+            gen = (self.seek_counter.fetch_add(1, Ordering::AcqRel) & 0xFF_FFFF).max(1);
+        }
+        self.seek_request_ms.store(gen as i64, Ordering::Release);
+        let packed = (gen << 40) | clamped;
+        self.seek_packed.store(packed, Ordering::Release);
+    }
+
+    #[inline]
+    fn clear_pending_seek(&self) {
+        self.seek_packed.store(0, Ordering::Release);
+        self.seek_request_ms.store(-1, Ordering::Release);
+    }
+
     fn complete_at_duration(&mut self, dur: i64) {
         self.decoder_eof.store(true, Ordering::Relaxed);
         self.track_exhausted.store(true, Ordering::Release);
@@ -3104,7 +3181,7 @@ impl StreamingDeck {
             },
             Ordering::Relaxed,
         );
-        self.seek_request_ms.store(-1, Ordering::SeqCst);
+        self.clear_pending_seek();
         self.flush_generation.fetch_add(1, Ordering::Release);
         self.acknowledge_renderer_flush();
 
@@ -3137,7 +3214,7 @@ impl StreamingDeck {
         self.telemetry
             .post_event(EventType::Position, MapEventData { position_ms });
 
-        self.seek_request_ms.store(position_ms, Ordering::SeqCst);
+        self.enqueue_seek(position_ms);
         let (_, cvar) = &*self.decoder_wake;
         cvar.notify_all();
     }
@@ -3514,6 +3591,9 @@ impl StreamingDeck {
                 }
             }
         }
+        if let Some(ref handle) = *read_unpoisoned(&self.custom_source_handle) {
+            handle.abort();
+        }
         self.flush_generation.fetch_add(1, Ordering::Release);
         self.acknowledge_renderer_flush();
 
@@ -3521,8 +3601,10 @@ impl StreamingDeck {
         self.position_ms.store(0, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
         self.silence_saved_ms.store(0, Ordering::Relaxed);
-        if !self.is_stream.load(Ordering::Relaxed) && lock_unpoisoned(&self.engine).is_some() {
-            self.seek_request_ms.store(0, Ordering::SeqCst);
+        if !self.is_stream.load(Ordering::Relaxed) && self.engine_loaded.load(Ordering::Acquire) {
+            self.enqueue_seek(0);
+        } else {
+            self.clear_pending_seek();
         }
         self.telemetry.post_event(
             EventType::SilenceSaved,

@@ -19,7 +19,25 @@ class PlayerAction<T> {
   /// `setReplayGain`, volume, DSP, SFX) and hardware/catalog ops bypass this
   /// lane completely so slow HTTP opens never cause head-of-line blocking.
   Future<void> _queueTail = Future.value();
+  Future<void>? _initialQueueFuture;
   int _activePlayEpoch = 0;
+
+  void _trackInitialQueue(Future<void> future) {
+    late final Future<void> tracked;
+    tracked = future.then<void>((_) {}, onError: (_) {}).whenComplete(() {
+      if (identical(_initialQueueFuture, tracked)) {
+        _initialQueueFuture = null;
+      }
+    });
+    _initialQueueFuture = tracked;
+  }
+
+  Future<void> _awaitInitialQueueIfPending() async {
+    final pending = _initialQueueFuture;
+    if (pending != null) {
+      await pending;
+    }
+  }
 
   Future<R> _serializeQueue<R>(Future<R> Function() action) {
     final completer = Completer<R>();
@@ -283,6 +301,14 @@ class PlayerAction<T> {
           _player._customProviders.remove(removed.id);
         }
         _player.state._queue = List.unmodifiable(currentQueue);
+        final curIdx = _player.state._currentIndex;
+        if (curIdx != null) {
+          if (index < curIdx) {
+            _player.state._currentIndex = curIdx - 1;
+          } else if (index == curIdx || curIdx >= currentQueue.length) {
+            _player.state._currentIndex = null;
+          }
+        }
         await _rust.removeAt(index: BigInt.from(index));
       }
     });
@@ -301,6 +327,16 @@ class PlayerAction<T> {
         final item = currentQueue.removeAt(oldIndex);
         currentQueue.insert(newIndex, item);
         _player.state._queue = List.unmodifiable(currentQueue);
+        final curIdx = _player.state._currentIndex;
+        if (curIdx != null) {
+          if (curIdx == oldIndex) {
+            _player.state._currentIndex = newIndex;
+          } else if (oldIndex < curIdx && curIdx <= newIndex) {
+            _player.state._currentIndex = curIdx - 1;
+          } else if (newIndex <= curIdx && curIdx < oldIndex) {
+            _player.state._currentIndex = curIdx + 1;
+          }
+        }
         final ids = currentQueue.map((s) => s.id ?? 0).toList();
         await _rust.reorderByIds(ids: Int64List.fromList(ids));
       }
@@ -312,6 +348,7 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      final activeItem = _player.state.currentItem;
       final reordered = <AudioSource<T>>[];
       for (final id in ids) {
         final s = _player._sourceRegistry[id];
@@ -319,6 +356,10 @@ class PlayerAction<T> {
       }
       if (reordered.length == _player.state.queue.length) {
         _player.state._queue = List.unmodifiable(reordered);
+        if (activeItem != null) {
+          final newIdx = reordered.indexOf(activeItem);
+          _player.state._currentIndex = newIdx >= 0 ? newIdx : null;
+        }
       }
       await _rust.reorderByIds(ids: Int64List.fromList(ids));
     });
@@ -555,6 +596,8 @@ class PlayerAction<T> {
     int? position,
   }) async {
     _player._ensureNotDisposed();
+    await _awaitInitialQueueIfPending();
+    _player._ensureNotDisposed();
     await _rust.setReplayGain(
       config: config != null
           ? rust_types.RustReplayGainConfig(
@@ -622,11 +665,15 @@ class PlayerAction<T> {
   /// Sets default ReplayGain fallback adjustment in dB and peak.
   Future<void> setDefaultReplayGain(double gainDb, {double peak = 1.0}) async {
     _player._ensureNotDisposed();
+    await _awaitInitialQueueIfPending();
+    _player._ensureNotDisposed();
     await _rust.setDefaultReplayGain(gainDb: gainDb, peak: peak);
   }
 
   /// Sets ReplayGain calculation mode.
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
+    _player._ensureNotDisposed();
+    await _awaitInitialQueueIfPending();
     _player._ensureNotDisposed();
     await _rust.setReplayGainMode(mode: mode.index);
   }

@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 /// Helper to log actions and player state during chaotic operations,
 /// dumped on failure to pinpoint exact errors.
 class LocalChaosTrace {
@@ -63,9 +65,6 @@ void main() {
         expect(duration?.inMilliseconds, greaterThan(0),
             reason: '$fileName duration should be greater than 0');
 
-        for (var i = 0; i < 40 && !player.state.isPlaying; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        }
         expect(player.state.isPlaying, isTrue,
             reason: '$fileName should be playing');
         expect(player.state.position.inMilliseconds, greaterThanOrEqualTo(0),
@@ -75,7 +74,6 @@ void main() {
         if (duration != null && duration > const Duration(seconds: 3)) {
           const seekTarget = Duration(seconds: 2);
           await player.action.seek(seekTarget);
-          await Future<void>.delayed(const Duration(milliseconds: 200));
           final posAfterSeek = player.state.position.inMilliseconds;
           expect((posAfterSeek - 2000).abs(), lessThanOrEqualTo(1000),
               reason:
@@ -113,7 +111,6 @@ void main() {
         expect(duration?.inMilliseconds, greaterThan(0),
             reason: '$fileName in-memory duration should be > 0');
 
-        await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.isPlaying, isTrue,
             reason: '$fileName in-memory should be playing');
 
@@ -121,7 +118,6 @@ void main() {
         if (duration != null && duration > const Duration(seconds: 3)) {
           const seekTarget = Duration(seconds: 2);
           await player.action.seek(seekTarget);
-          await Future<void>.delayed(const Duration(milliseconds: 200));
           final posAfterSeek = player.state.position.inMilliseconds;
           expect((posAfterSeek - 2000).abs(), lessThanOrEqualTo(1000),
               reason:
@@ -167,8 +163,6 @@ void main() {
         await player.action.setQueue([AudioSource(assetKey)]);
         await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
-
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
 
         await player.action.stop();
@@ -192,7 +186,6 @@ void main() {
       await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
@@ -202,7 +195,6 @@ void main() {
       await player.action.setQueue([AudioSource(file.absolute.uri)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
@@ -212,7 +204,6 @@ void main() {
       await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
@@ -222,7 +213,6 @@ void main() {
           .setQueue([AudioSource('test/fixtures/salida_aac.m4a')]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
@@ -271,7 +261,6 @@ void main() {
       await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.isPlaying, isTrue);
       await player.action.stop();
     });
@@ -304,7 +293,6 @@ void main() {
             .setQueue([AudioSource('test/fixtures/salida_alac.m4a')]);
         await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
         await player.action.stop();
       } finally {
@@ -340,7 +328,6 @@ void main() {
         await player.action.setQueue([AudioSource(trackA)]);
         trace.log('Step 1.1: play()');
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
         trace.log('Step 1.2: state verified playing',
             {'position': player.state.position.inMilliseconds});
@@ -348,7 +335,6 @@ void main() {
         // Step 2: Seek forward while playing
         trace.log('Step 2: seek(2s)');
         await player.action.seek(const Duration(seconds: 2));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(
             player.state.position.inMilliseconds, greaterThanOrEqualTo(1500));
         trace.log('Step 2.1: seek position verified',
@@ -369,11 +355,13 @@ void main() {
         // Step 5: Resume play to trigger natural completion
         trace.log('Step 5: play() until completion');
         await player.action.play();
-        int waitMs = 0;
-        while (!player.state.playbackState.isStopped && waitMs < 3000) {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-          waitMs += 100;
-        }
+        await awaitStateOrStream<PlaybackState>(
+          stream: player.stream.playbackState,
+          current: () => player.state.playbackState,
+          predicate: (s) => s.isStopped,
+          timeout: const Duration(seconds: 3),
+          reason: 'Track failed to reach stopped state on EOF',
+        );
         expect(player.state.playbackState.isStopped, isTrue);
         expect(player.state.isPlaying, isFalse);
         trace.log('Step 5.1: completed verified');
@@ -381,7 +369,6 @@ void main() {
         // Step 6: Replay from completion auto-rewinds
         trace.log('Step 6: play() from completed state');
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect(player.state.isPlaying, isTrue);
         expect(player.state.playbackState.isPlaying, isTrue);
         trace.log('Step 6.1: auto-rewind replay verified',
@@ -391,7 +378,6 @@ void main() {
         trace.log('Step 7: switch to track B (M4A AAC)');
         await player.action.setQueue([AudioSource(trackB)]);
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.isPlaying, isTrue);
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
         trace.log('Step 7.1: track B playing verified',
@@ -400,7 +386,6 @@ void main() {
         // Step 8: Seek on track B
         trace.log('Step 8: seek(2s) on track B');
         await player.action.seek(const Duration(seconds: 2));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
         expect((player.state.position.inMilliseconds - 2000).abs(),
             lessThanOrEqualTo(1000));
         trace.log('Step 8.1: track B seek verified',
@@ -410,7 +395,6 @@ void main() {
         trace.log('Step 9: switch to track C (M4A ALAC)');
         await player.action.setQueue([AudioSource(trackC)]);
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 250));
         expect(player.state.isPlaying, isTrue);
         trace.log('Step 9.1: track C playing verified',
             {'duration': player.state.duration?.inMilliseconds});

@@ -10,7 +10,6 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
 
 use miniaudio_player::bridge::ffi::PcmCaptureHeader;
 use miniaudio_player::buffer::{BufferError, StreamSession};
@@ -195,7 +194,6 @@ fn test_telemetry_dispatcher_concurrent_multi_producer() {
         h.join().unwrap();
     }
 
-    thread::sleep(Duration::from_millis(50));
     assert_eq!(
         CALL_COUNT.load(Ordering::SeqCst),
         num_producers * events_per_producer

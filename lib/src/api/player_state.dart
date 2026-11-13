@@ -347,11 +347,14 @@ class PlayerState<T> {
   /// Whether there is a preceding track available in the playlist.
   bool get hasPrevious => _currentIndex != null && _currentIndex! > 0;
 
-  AudioSource<T>? _currentItem;
-
   /// The [AudioSource] currently loaded at [currentIndex], or `null` if no track is active.
-  AudioSource<T>? get currentItem => _currentItem;
+  AudioSource<T>? get currentItem {
+    final idx = _currentIndex;
+    return (idx != null && idx >= 0 && idx < _queue.length)
+        ? _queue[idx]
+        : null;
+  }
 
   /// The optional caller-supplied domain object attached to the current track.
-  T? get currentData => _currentItem?.data;
+  T? get currentData => currentItem?.data;
 }

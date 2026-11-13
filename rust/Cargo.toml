@@ -45,6 +45,10 @@ path = "../test/rust/benchmark_test.rs"
 name = "tri_plane_stress_test"
 path = "../test/rust/tri_plane_stress_test.rs"
 
+[[test]]
+name = "massive_concurrency_stress_test"
+path = "../test/rust/massive_concurrency_stress_test.rs"
+
 [dependencies]
 # 100% Rust Audio Decoding and Demuxing
 symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats", "all-meta"] }

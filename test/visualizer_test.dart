@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -78,14 +80,12 @@ void main() {
       expect(player.state.visualizerEnabled, isFalse);
 
       final sub = player.stream.visualizer.listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(player.state.visualizerEnabled, isFalse);
 
       await player.action.setVisualizerEnabled(true);
       expect(player.state.visualizerEnabled, isTrue);
 
       await sub.cancel();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(player.state.visualizerEnabled, isTrue);
 
       await player.action.setVisualizerEnabled(false);
@@ -113,8 +113,14 @@ void main() {
 
       await player.action.play();
 
-      // Allow audio to stream and compute multiple buffer frames
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      // Wait until real FFT visualizer metrics arrive from live audio frames
+      await awaitStateOrStream<VisualizerData>(
+        stream: player.stream.visualizer,
+        current: () => player.state.visualizer,
+        predicate: (d) => d.rms > 0.001,
+        timeout: const Duration(seconds: 3),
+        reason: 'Visualizer failed to emit non-zero RMS metrics during playback',
+      );
 
       expect(player.state.isPlaying, isTrue);
       expect(emittedData, isNotEmpty);
@@ -136,7 +142,13 @@ void main() {
 
       // Pause or stop should reset or zero visualizer
       await player.action.stop();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await awaitStateOrStream<VisualizerData>(
+        stream: player.stream.visualizer,
+        current: () => player.state.visualizer,
+        predicate: (d) => d.rms == 0.0,
+        timeout: const Duration(seconds: 2),
+        reason: 'Visualizer RMS should reset to 0.0 on stop',
+      );
       expect(player.state.visualizer.rms, equals(0.0));
     });
 
@@ -204,14 +216,27 @@ void main() {
       addTearDown(() => sub.cancel());
 
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await awaitStateOrStream<VisualizerData>(
+        stream: player.stream.visualizer,
+        current: () => player.state.visualizer,
+        predicate: (d) => d.rms > 0.001,
+        timeout: const Duration(seconds: 3),
+        reason: 'Visualizer failed to emit non-zero RMS metrics',
+      );
 
       expect(player.state.visualizerEnabled, isTrue);
       expect(emitted.any((d) => d.rms > 0.001), isTrue);
 
       // Force-disable mid-playback
       await player.action.setVisualizerEnabled(false);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await awaitStateOrStream<VisualizerData>(
+        stream: player.stream.visualizer,
+        current: () => player.state.visualizer,
+        predicate: (d) => d.rms == 0.0 && d.bands.every((b) => b == 0.0),
+        timeout: const Duration(seconds: 2),
+        reason: 'Disabling visualizer should emit empty visualizer snapshot',
+      );
+      await drainBroadcastStreams();
 
       expect(player.state.visualizerEnabled, isFalse);
       expect(player.state.visualizer.rms, equals(0.0));
@@ -243,7 +268,7 @@ void main() {
       await player.action.setVisualizerEnabled(false);
       expect(player.state.visualizerEnabled, isFalse);
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await drainBroadcastStreams(8);
       expect(enabledStates, equals([true, false, true, false]));
     });
   });

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -273,8 +275,11 @@ void main() {
       await player.action.play();
       expect(player.state.isPlaying, isTrue);
 
-      // Allow 200ms of audio streaming through all DSP nodes
-      await Future.delayed(const Duration(milliseconds: 200));
+      // Verify audio frames stream actively through all DSP nodes
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 60),
+      );
 
       expect(player.state.isPlaying, isTrue);
       await player.action.pause();
@@ -316,7 +321,12 @@ void main() {
       await player.action.setLimiter(false);
       await player.action.setReverb(Reverb.cathedral);
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await awaitStateOrStream<Reverb>(
+        stream: player.stream.reverb,
+        current: () => player.state.reverb,
+        predicate: (r) => r == Reverb.cathedral,
+      );
+      await drainBroadcastStreams();
 
       expect(streamRg?.gainDb, closeTo(-6.0, 0.001));
       expect(streamRg?.peak, closeTo(0.9, 0.001));
@@ -352,8 +362,12 @@ void main() {
       ];
 
       // Mutate only balance
-      await player.action.setBalance(0.3);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, double>(
+        action: () => player.action.setBalance(0.3),
+        stream: player.stream.balance,
+        predicate: (b) => (b - 0.3).abs() < 1e-4,
+      );
+      await drainBroadcastStreams();
 
       expect(balanceEvents, equals(1));
       expect(positionEvents, equals(0),
@@ -390,7 +404,7 @@ void main() {
       await player.action.setBalance(-0.5);
       await player.action.setPreamp(1.2);
       await player.action.setLimiter(false);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await drainBroadcastStreams(8);
 
       expect(volumeEvents, equals(1));
       expect(balanceEvents, equals(1));
@@ -402,7 +416,7 @@ void main() {
       await player.action.setBalance(-0.5);
       await player.action.setPreamp(1.2);
       await player.action.setLimiter(false);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await drainBroadcastStreams(8);
 
       expect(volumeEvents, equals(1),
           reason: 'volume stream should deduplicate identical values');

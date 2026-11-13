@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
@@ -135,11 +137,11 @@ void main() {
           reason: 'metadata must contain APIC picture frame');
 
       // Verify playback proceeds from pure audio ring
-      int elapsed = 0;
-      while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        elapsed += 50;
-      }
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 10),
+        timeout: const Duration(seconds: 2),
+      );
       expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
       expect(player.state.position.inMilliseconds, greaterThan(0),
           reason: 'Audio frames must decode cleanly');
@@ -178,11 +180,11 @@ void main() {
           reason: 'metadata must begin with fLaC signature');
 
       // Verify playback proceeds
-      int elapsed = 0;
-      while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        elapsed += 50;
-      }
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 10),
+        timeout: const Duration(seconds: 2),
+      );
       expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
       expect(player.state.position.inMilliseconds, greaterThan(0),
           reason: 'Audio frames must decode cleanly');
@@ -215,11 +217,13 @@ void main() {
       await player.action.seek(seekTarget);
 
       // Wait for completion (EOF -> stopped)
-      int waitMs = 0;
-      while (!player.state.playbackState.isStopped && waitMs < 6000) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        waitMs += 100;
-      }
+      await awaitStateOrStream<PlaybackState>(
+        stream: player.stream.playbackState,
+        current: () => player.state.playbackState,
+        predicate: (s) => s.isStopped,
+        timeout: const Duration(seconds: 6),
+        reason: 'EOF track failed to transition to stopped',
+      );
       expect(player.state.playbackState.isStopped, isTrue,
           reason:
               'Track must reach stopped at queue end cleanly without decoding fake syncwords');
@@ -259,11 +263,11 @@ void main() {
           reason: 'Must contain full moov atom from tail');
 
       // Verify playback works
-      int elapsed = 0;
-      while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        elapsed += 50;
-      }
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 10),
+        timeout: const Duration(seconds: 2),
+      );
       expect(player.state.isPlaying, isTrue,
           reason: 'Non-faststart MP4 must play cleanly');
       expect(player.state.position.inMilliseconds, greaterThan(0),
@@ -306,11 +310,11 @@ void main() {
           reason: 'Synthesized WAV metadata must patch data chunk size to 0');
 
       // Verify playback and completion
-      int elapsed = 0;
-      while (player.state.position.inMilliseconds == 0 && elapsed < 2000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        elapsed += 50;
-      }
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 10),
+        timeout: const Duration(seconds: 2),
+      );
       expect(player.state.isPlaying, isTrue, reason: 'Playback must be active');
       expect(player.state.position.inMilliseconds, greaterThan(0),
           reason: 'Audio frames must decode cleanly');
@@ -323,9 +327,14 @@ void main() {
           'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
 
       final receivedMeta = <Uint8List>[];
+      final twoBlocksReady = Completer<void>();
       final metaSub = player.stream.metadata.listen((meta) {
         if (meta != null) {
           receivedMeta.add(meta.bytes);
+          if (!twoBlocksReady.isCompleted &&
+              receivedMeta.where((m) => m.length > 128).length >= 2) {
+            twoBlocksReady.complete();
+          }
         }
       });
 
@@ -333,12 +342,10 @@ void main() {
       await player.action.play();
 
       // Wait for at least 2 ICY metadata blocks to be demuxed from the audio stream and synthesized
-      int waitMs = 0;
-      while (receivedMeta.where((m) => m.length > 128).length < 2 &&
-          waitMs < 4000) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        waitMs += 100;
-      }
+      await twoBlocksReady.future.timeout(
+        const Duration(seconds: 4),
+        onTimeout: () {},
+      );
 
       await metaSub.cancel();
 
@@ -390,10 +397,14 @@ void main() {
       final engine = MiniaudioPlayer();
       await engine.action.setMetadataEnabled(true);
       final receivedEngineMeta = <Uint8List>[];
+      final metaReady = Completer<void>();
 
       final engineMetaSub = engine.stream.metadata.listen((meta) {
         if (meta != null) {
           receivedEngineMeta.add(meta.bytes);
+          if (!metaReady.isCompleted && meta.bytes.length > 128) {
+            metaReady.complete();
+          }
         }
       });
 
@@ -402,12 +413,10 @@ void main() {
       await engine.action.setQueue([AudioSource(Uri.parse(url))]);
       await engine.action.play();
 
-      int waitMs = 0;
-      while (receivedEngineMeta.where((m) => m.length > 128).isEmpty &&
-          waitMs < 3000) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        waitMs += 100;
-      }
+      await metaReady.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {},
+      );
 
       await engineMetaSub.cancel();
 
@@ -461,7 +470,11 @@ void main() {
       final tailTag = meta.sublist(meta.length - 128, meta.length - 125);
       expect(utf8.decode(tailTag), equals('TAG'));
 
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await waitForAudioProgress(
+        smallBufferPlayer,
+        minDelta: const Duration(milliseconds: 50),
+        timeout: const Duration(seconds: 3),
+      );
       expect(smallBufferPlayer.state.position.inMilliseconds, greaterThan(0));
 
       await smallBufferPlayer.action.seek(Duration.zero);

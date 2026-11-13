@@ -89,20 +89,63 @@ impl SoundBuffer {
         }
     }
 
+    /// Resolves wrapped interpolation frame indices `(frame_0, frame_1, frac)` for `cursor`.
+    ///
+    /// Returns `None` when `total_frames == 0` or a non-looping cursor reaches end-of-buffer.
+    #[inline]
+    pub fn resolve_lerp_indices(
+        cursor: &mut f64,
+        total_frames: usize,
+        looping: bool,
+    ) -> Option<(usize, usize, f32)> {
+        if total_frames == 0 {
+            return None;
+        }
+        if !cursor.is_finite() || *cursor < 0.0 {
+            *cursor = 0.0;
+        }
+        if *cursor >= total_frames as f64 {
+            if looping {
+                *cursor %= total_frames as f64;
+                if !cursor.is_finite() || *cursor >= total_frames as f64 {
+                    *cursor = 0.0;
+                }
+            } else {
+                return None;
+            }
+        }
+        let f0 = (cursor.floor() as usize).min(total_frames - 1);
+        let f1 = if f0 + 1 < total_frames {
+            f0 + 1
+        } else if looping {
+            0
+        } else {
+            total_frames - 1
+        };
+        let frac = (*cursor - f0 as f64).clamp(0.0, 1.0) as f32;
+        Some((f0, f1, frac))
+    }
+
     /// Samples left and right channels at `frame_0` and `frame_1` with fractional linear interpolation `frac`.
     #[inline]
     pub fn sample_stereo_lerp(&self, frame_0: usize, frame_1: usize, frac: f32) -> (f32, f32) {
+        let max_frame = self.frame_count();
+        if max_frame == 0 {
+            return (0.0, 0.0);
+        }
+        let f0 = frame_0.min(max_frame - 1);
+        let f1 = frame_1.min(max_frame - 1);
         if self.channels == 1 {
-            let s0 = self.samples[frame_0];
-            let s1 = self.samples[frame_1];
+            let s0 = self.samples[f0];
+            let s1 = self.samples[f1];
             let val = s0 + frac * (s1 - s0);
             (val, val)
         } else {
             let ch = self.channels;
-            let s0_l = self.samples[frame_0 * ch];
-            let s0_r = self.samples[frame_0 * ch + 1];
-            let s1_l = self.samples[frame_1 * ch];
-            let s1_r = self.samples[frame_1 * ch + 1];
+            let s0_l = self.samples[f0 * ch];
+            let s0_r = self.samples[f0 * ch + 1];
+            let s1_l = self.samples[f1 * ch];
+            let s1_r = self.samples[f1 * ch + 1];
             (s0_l + frac * (s1_l - s0_l), s0_r + frac * (s1_r - s0_r))
         }
     }
@@ -305,26 +348,11 @@ impl DspVoice {
                 break;
             };
 
-            let cur_frame = self.frame_cursor;
-            let frame_0 = cur_frame.floor() as usize;
-            let frac = (cur_frame - frame_0 as f64) as f32;
-
-            if frame_0 >= src_frames {
-                if self.looping {
-                    self.frame_cursor = 0.0;
-                    continue;
-                } else {
-                    self.stop();
-                    break;
-                }
-            }
-
-            let frame_1 = if frame_0 + 1 < src_frames {
-                frame_0 + 1
-            } else if self.looping {
-                0
-            } else {
-                frame_0
+            let Some((frame_0, frame_1, frac)) =
+                SoundBuffer::resolve_lerp_indices(&mut self.frame_cursor, src_frames, self.looping)
+            else {
+                self.stop();
+                break;
             };
 
             let (src_l, src_r) = sound.sample_stereo_lerp(frame_0, frame_1, frac);

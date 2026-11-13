@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart' hide EnginePhase;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import '../helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -69,7 +71,6 @@ void main() {
       await engine.action.insertNext(
         AudioSource(trackC.path, data: 'Gamma'),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.queue.length, equals(3));
       expect(engine.state.queue[0].data, equals('Alpha'));
@@ -80,7 +81,6 @@ void main() {
       await engine.action.append([
         AudioSource(trackD.path, data: 'Delta'),
       ]);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.queue.length, equals(4));
       expect(engine.state.queue[3].data, equals('Delta'));
@@ -96,7 +96,6 @@ void main() {
 
       // Reorder index 0 (Alpha) to index 2
       await engine.action.reorder(0, 2);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.queue.length, equals(3));
       expect(engine.state.queue[0].data, equals('Beta'));
@@ -105,7 +104,6 @@ void main() {
 
       // Remove index 1 (Gamma)
       await engine.action.removeAt(1);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.queue.length, equals(2));
       expect(engine.state.queue[0].data, equals('Beta'));
@@ -124,7 +122,6 @@ void main() {
       expect(engine.state.currentItem?.data, equals('Beta'));
 
       await engine.action.clearQueue(keepCurrent: true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.queue.length, equals(1));
       expect(engine.state.queue[0].data, equals('Beta'));
@@ -151,8 +148,14 @@ void main() {
 
       await engine.action.play();
 
-      // Wait for Rust telemetry monitor thread tick to observe queue depth and request replenishment
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      // Wait reactively for Infinite Mix monitor to request and append tracks
+      await awaitStateOrStream<List<AudioSource<String>>>(
+        stream: engine.stream.queue,
+        current: () => engine.state.queue,
+        predicate: (q) => q.length >= 2 && providerCalledCount >= 1,
+        timeout: const Duration(seconds: 3),
+        reason: 'Infinite Mix replenishment failed to append track',
+      );
 
       expect(providerCalledCount, greaterThanOrEqualTo(1));
       expect(engine.state.queue.length, equals(2));
@@ -174,7 +177,6 @@ void main() {
 
       // Activate shuffle
       await engine.action.setShuffle(true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.isShuffled, isTrue);
 
       final shuffledData = engine.state.queue.map((e) => e.data).toList();
@@ -185,7 +187,6 @@ void main() {
 
       // Deactivate shuffle -> restores original order
       await engine.action.setShuffle(false);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.isShuffled, isFalse);
 
       expect(
@@ -206,7 +207,6 @@ void main() {
       expect(engine.state.currentIndex, isNull);
 
       await engine.action.play(position: 2, shuffled: true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.isShuffled, isTrue);
       expect(engine.state.currentIndex, equals(0));
@@ -232,15 +232,23 @@ void main() {
         AudioSource(trackB.path, data: 'Track 2'),
         AudioSource(trackC.path, data: 'Track 3'),
       ]);
-      await engine.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, int?>(
+        action: () => engine.action.play(),
+        stream: engine.stream.currentIndex,
+        predicate: (i) => i == 0,
+      );
+      await drainBroadcastStreams(8);
 
       final initialQueueEmissions = queueEvents.length;
       expect(initialQueueEmissions, greaterThanOrEqualTo(1));
 
       // Navigate via next() -> must emit currentIndex, NOT queue
-      await engine.action.next();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, int?>(
+        action: () => engine.action.next(),
+        stream: engine.stream.currentIndex,
+        predicate: (i) => i == 1,
+      );
+      await drainBroadcastStreams(8);
 
       expect(queueEvents.length, equals(initialQueueEmissions),
           reason:
@@ -248,8 +256,12 @@ void main() {
       expect(indexEvents.last, equals(1));
 
       // Navigate via previous() -> must emit currentIndex, NOT queue
-      await engine.action.previous();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, int?>(
+        action: () => engine.action.previous(),
+        stream: engine.stream.currentIndex,
+        predicate: (i) => i == 0,
+      );
+      await drainBroadcastStreams(8);
 
       expect(queueEvents.length, equals(initialQueueEmissions),
           reason:
@@ -257,8 +269,12 @@ void main() {
       expect(indexEvents.last, equals(0));
 
       // Navigate via play(position: 2) -> must emit currentIndex, NOT queue
-      await engine.action.play(position: 2);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, int?>(
+        action: () => engine.action.play(position: 2),
+        stream: engine.stream.currentIndex,
+        predicate: (i) => i == 2,
+      );
+      await drainBroadcastStreams(8);
 
       expect(queueEvents.length, equals(initialQueueEmissions),
           reason:
@@ -266,10 +282,14 @@ void main() {
       expect(indexEvents.last, equals(2));
 
       // Append -> queue mutated, so engine.stream.queue MUST emit
-      await engine.action.append([
-        AudioSource(trackD.path, data: 'Track 4'),
-      ]);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, List<AudioSource<String>>>(
+        action: () => engine.action.append([
+          AudioSource(trackD.path, data: 'Track 4'),
+        ]),
+        stream: engine.stream.queue,
+        predicate: (q) => q.length == 4,
+      );
+      await drainBroadcastStreams(8);
 
       expect(queueEvents.length, greaterThan(initialQueueEmissions),
           reason: 'engine.stream.queue must emit when queue is appended');
@@ -287,7 +307,6 @@ void main() {
       await engine.action.play();
 
       await engine.action.setLoopMode(LoopMode.one);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
       expect(engine.state.loopMode, equals(LoopMode.one));
 
       // With loopMode = one, current index is 0
@@ -306,14 +325,18 @@ void main() {
       ]);
 
       await engine.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       // Initiate manual crossfade to next track
       final nextFuture = engine.action.next();
       // While crossfade is active, toggle shuffle
       await engine.action.setShuffle(true);
       await nextFuture;
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (c) => !c,
+        timeout: const Duration(seconds: 2),
+      );
 
       // Ensure active index is within valid range and matches current track in shuffled queue
       final currentIdx = engine.state.currentIndex;
@@ -342,7 +365,7 @@ void main() {
         await engine.action.play(position: target);
       }
 
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      assertPlayerInvariants(engine);
       final finalIdx = engine.state.currentIndex;
       expect(finalIdx, isNotNull);
       expect(finalIdx, greaterThanOrEqualTo(0));

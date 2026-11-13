@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import '../helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -54,7 +56,7 @@ void main() {
       await engine.action.setBufferSize(256);
       await engine.action.setBufferSize(1024);
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await drainBroadcastStreams();
       await sub.cancel();
 
       expect(bufferSizeEvents, containsAllInOrder([256, 1024]));

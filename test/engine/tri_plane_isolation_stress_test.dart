@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import '../helpers/concurrency_test_utils.dart';
+
 class _TarpitHttpServer {
   final ServerSocket _server;
   final Uint8List _fastWavBytes;
@@ -322,7 +324,10 @@ void main() {
           const Duration(seconds: 5),
           onTimeout: () => throw TimeoutException('Test3: action.play(fast)'),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await waitForRecordingProgress(
+          player,
+          minRecorded: const Duration(milliseconds: 80),
+        );
 
         final recResult = await player.action.stopRecording().timeout(
           const Duration(seconds: 5),

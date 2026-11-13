@@ -35,7 +35,6 @@ void main() {
 
       try {
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 50));
 
         // Test seek diagnostics
         await player.action.seek(const Duration(milliseconds: 1000));
@@ -91,7 +90,6 @@ void main() {
       try {
         // Toggle pauseOnDeviceChange and verify action log
         await player.action.setPauseOnDeviceChange(false);
-        await Future<void>.delayed(const Duration(milliseconds: 50));
 
         expect(
           logs.any((l) => l.contains(

@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import '../helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -60,7 +62,10 @@ void main() {
         expect(engine.state.isRecording, isTrue);
 
         await engine.action.play();
-        await Future.delayed(const Duration(milliseconds: 300));
+        await waitForRecordingProgress(
+          engine,
+          minRecorded: const Duration(milliseconds: 80),
+        );
 
         final result = await engine.action.stopRecording();
         expect(engine.state.isRecording, isFalse);
@@ -118,17 +123,15 @@ void main() {
 
       // Add input with custom ducking parameters
       await engine.action.addInput(micInput);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(engine.state.inputs.isNotEmpty, isTrue);
       expect(engine.state.inputs.first.config.volume, closeTo(0.85, 0.001));
 
       // Remove input
       await engine.action.removeInput(micInput);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs.isEmpty, isTrue);
 
-      await Future.delayed(const Duration(milliseconds: 50));
+      await drainBroadcastStreams(8);
       await Future.wait([sub1.cancel(), sub2.cancel()]);
     });
 
@@ -145,7 +148,6 @@ void main() {
       );
 
       await engine.action.addInput(micInput);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, contains(micInput));
       expect(engine.state.inputs.first.config.volume, closeTo(0.75, 0.001));
 
@@ -156,19 +158,15 @@ void main() {
       await engine.action.configureInput(
         const AudioInputConfig(volume: 0.9),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs.first.config.volume, closeTo(0.9, 0.001));
 
       await engine.action.removeInput(micInput);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, isEmpty);
 
       await engine.action.setInputs({micInput});
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, contains(micInput));
 
       await engine.action.setInputs({});
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(engine.state.inputs, isEmpty);
     });
 
@@ -181,7 +179,6 @@ void main() {
 
       // Add output for standby track pre-listening
       await engine.action.addOutput(headphoneOutput);
-      await Future.delayed(const Duration(milliseconds: 50));
 
       expect(
         engine.state.outputs.any(
@@ -198,7 +195,6 @@ void main() {
         source: AudioOutputSource.voiceOnly,
       );
       await engine.action.addOutput(micOutput);
-      await Future.delayed(const Duration(milliseconds: 50));
 
       expect(
         engine.state.outputs.any(
@@ -212,7 +208,6 @@ void main() {
       // Remove outputs
       await engine.action.removeOutput(headphoneOutput);
       await engine.action.removeOutput(micOutput);
-      await Future.delayed(const Duration(milliseconds: 50));
 
       expect(
         engine.state.outputs.any(
@@ -242,14 +237,22 @@ void main() {
         emittedSource = src;
       });
 
-      await engine.action.setVisualizerSource(AudioOutputSource.voiceOnly);
-      await Future.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, AudioOutputSource>(
+        action: () =>
+            engine.action.setVisualizerSource(AudioOutputSource.voiceOnly),
+        stream: engine.stream.visualizerSource,
+        predicate: (s) => s == AudioOutputSource.voiceOnly,
+      );
 
       expect(engine.state.visualizerSource, equals(AudioOutputSource.voiceOnly));
       expect(emittedSource, equals(AudioOutputSource.voiceOnly));
 
-      await engine.action.setVisualizerSource(AudioOutputSource.musicMix);
-      await Future.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, AudioOutputSource>(
+        action: () =>
+            engine.action.setVisualizerSource(AudioOutputSource.musicMix),
+        stream: engine.stream.visualizerSource,
+        predicate: (s) => s == AudioOutputSource.musicMix,
+      );
 
       expect(engine.state.visualizerSource, equals(AudioOutputSource.musicMix));
       expect(emittedSource, equals(AudioOutputSource.musicMix));
@@ -273,7 +276,6 @@ void main() {
               deviceId: 'headphone_dev',
               source: AudioOutputSource.standbyTrack),
         });
-        await Future.delayed(const Duration(milliseconds: 50));
 
         expect(engine.state.outputs.length, equals(2));
         expect(
@@ -310,7 +312,6 @@ void main() {
     test('Zero hardware outputs (outputs: {}) runs in pure recording mode',
         () async {
       final recEngine = MiniaudioPlayer<String>(outputs: const {});
-      await Future.delayed(const Duration(milliseconds: 50));
       expect(recEngine.state.outputs, isEmpty);
 
       final tempDir =
@@ -363,7 +364,10 @@ void main() {
           'sfx_test',
           config: const EffectConfig(volume: 1.0),
         );
-        await Future.delayed(const Duration(milliseconds: 300));
+        await waitForRecordingProgress(
+          engine,
+          minRecorded: const Duration(milliseconds: 80),
+        );
         await voice1.stop();
         final recRes1 = await engine.action.stopRecording();
         expect(recRes1.bytesWritten, greaterThan(44));
@@ -385,7 +389,10 @@ void main() {
           'sfx_test',
           config: const EffectConfig(volume: 1.0),
         );
-        await Future.delayed(const Duration(milliseconds: 300));
+        await waitForRecordingProgress(
+          engine,
+          minRecorded: const Duration(milliseconds: 80),
+        );
         await voice2.stop();
         final recRes2 = await engine.action.stopRecording();
         expect(recRes2.bytesWritten, greaterThan(44));

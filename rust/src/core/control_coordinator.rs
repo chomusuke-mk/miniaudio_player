@@ -343,11 +343,13 @@ impl ControlCoordinator {
         } else {
             let pre_epoch = self.inner.bump_epochs();
             self.inner.cancel_all_io(pre_epoch);
+            self.inner.custom_registry.abort_all();
         }
         let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
         if !keep_current {
             let epoch = self.inner.bump_epochs();
             self.inner.cancel_all_io(epoch);
+            self.inner.custom_registry.abort_all();
         }
         let idx = self.inner.engine.exec(move |ply| {
             ply.music_manager.clear_queue(keep_current);
@@ -582,10 +584,12 @@ impl ControlCoordinator {
     pub fn stop(&self) -> Result<(i32, bool), String> {
         let pre_epoch = self.inner.bump_epochs();
         self.inner.cancel_all_io(pre_epoch);
+        self.inner.custom_registry.abort_all();
 
         let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
         let epoch = self.inner.bump_epochs();
         self.inner.cancel_all_io(epoch);
+        self.inner.custom_registry.abort_all();
         self.inner.engine.exec(|ply| {
             ply.music_manager.stop();
             ply.music_manager.inner.sync_planned_index_to_current();

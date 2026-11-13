@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 class MockCustomByteProvider implements CustomByteProvider {
   final Uint8List _fileBytes;
   @override
@@ -50,10 +52,12 @@ void main() {
     final source = AudioSource(provider);
 
     await player.action.setQueue([source]);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
 
     await player.action.play();
-    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await waitForAudioProgress(
+      player,
+      minDelta: const Duration(milliseconds: 50),
+    );
 
     await player.action.stop();
     await player.dispose();

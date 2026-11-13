@@ -3,6 +3,7 @@ ignorePaths:
 words:
   - aaudio
   - absval
+  - abuf
   - acoust
   - Acoust
   - addrof
@@ -262,6 +263,7 @@ words:
   - Gargaj
   - GCONST
   - Gesemann
+  - GHIJKL
   - glassbox
   - glog
   - GNUC
@@ -276,6 +278,8 @@ words:
   - hann
   - haudiotagger
   - hdrs
+  - HEADAUDIO
+  - HEADERDATA
   - headret
   - HEAPF
   - HEAPU
@@ -438,6 +442,7 @@ words:
   - Normalise
   - normalised
   - notif
+  - noxing
   - nsamples
   - nseg
   - nserialnos
@@ -544,6 +549,7 @@ words:
   - rfind
   - rgain
   - rifx
+  - ringdown
   - rlib
   - rmax
   - rmin
@@ -632,6 +638,7 @@ words:
   - Suttle
   - Symbian
   - synchsafe
+  - syncwords
   - syscall
   - syscalls
   - SYSCALLS
@@ -680,6 +687,7 @@ words:
   - unquantized
   - unseekable
   - upcasted
+  - upmix
   - upmixing
   - ureq
   - usize

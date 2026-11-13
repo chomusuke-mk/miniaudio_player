@@ -38,7 +38,6 @@ void main() {
       await player.action.setQueue([AudioSource(misnamed.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -54,7 +53,6 @@ void main() {
       await player.action.setQueue([AudioSource(extensionless.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -70,7 +68,6 @@ void main() {
       await player.action.setQueue([AudioSource(misnamed.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -133,7 +130,6 @@ void main() {
 
       await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(player.state.audioInfo?.sampleRate, greaterThan(0));
       expect(player.state.audioInfo?.channels, greaterThan(0));

@@ -161,7 +161,8 @@ fn test_backpressure_busy() {
     // Reactive wait_for_free_space wakes immediately when consumer advances read cursor
     let consumer_buf = buffer.clone();
     let handle = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
+        // Intentional minimal delay so waiter parks on Condvar before cursor advances.
+        thread::sleep(Duration::from_millis(5));
         consumer_buf.advance_read_cursor(30);
     });
     assert!(buffer.wait_for_free_space(40, Duration::from_millis(500)));

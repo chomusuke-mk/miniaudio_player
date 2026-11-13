@@ -102,7 +102,6 @@ void main() {
 
       // Reorder to [id3, id1, id2]
       await player.action.reorderByIds([id3, id1, id2]);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(player.state.queue.length, equals(3));
       expect(player.state.queue[0].id, equals(id3));

@@ -28,9 +28,11 @@ const RT_HINT_CAP: usize = 64;
 pub struct EngineUiSnapshots {
     /// Immutable output engine sample rate in Hz.
     pub sample_rate: u32,
+    pub_seq: AtomicU64,
     playback_state: AtomicI32,
     is_xfading: AtomicBool,
     is_recording: AtomicBool,
+    recorded_duration_ms: AtomicU64,
     is_ducking: AtomicBool,
     mic_rms_bits: AtomicU32,
     position_ms: AtomicI64,
@@ -62,6 +64,7 @@ impl EngineUiSnapshots {
         let rg = ply.music_dsp.equalizer.replay_gain();
         Self {
             sample_rate: ply.sample_rate,
+            pub_seq: AtomicU64::new(0),
             playback_state: AtomicI32::new(
                 ply.music_manager
                     .inner
@@ -70,6 +73,7 @@ impl EngineUiSnapshots {
             ),
             is_xfading: AtomicBool::new(ply.music_manager.is_crossfading()),
             is_recording: AtomicBool::new(ply.output_manager.is_recording()),
+            recorded_duration_ms: AtomicU64::new(ply.output_manager.recorded_duration_ms()),
             is_ducking: AtomicBool::new(ply.input_manager.is_ducking_active()),
             mic_rms_bits: AtomicU32::new(ply.input_manager.last_rms_db().to_bits()),
             position_ms: AtomicI64::new(active_deck.position_ms.load(Ordering::Relaxed)),
@@ -123,6 +127,22 @@ impl EngineUiSnapshots {
     }
 
     #[inline]
+    pub fn begin_consistent_read(&self) -> Option<u64> {
+        let seq = self.pub_seq.load(Ordering::Acquire);
+        if seq & 1 != 0 {
+            None
+        } else {
+            Some(seq)
+        }
+    }
+
+    #[inline]
+    pub fn is_consistent_since(&self, seq: u64) -> bool {
+        std::sync::atomic::fence(Ordering::Acquire);
+        self.pub_seq.load(Ordering::Acquire) == seq
+    }
+
+    #[inline]
     pub fn playback_state(&self) -> PlaybackState {
         PlaybackState::from_i32(self.playback_state.load(Ordering::Acquire))
     }
@@ -135,6 +155,11 @@ impl EngineUiSnapshots {
     #[inline]
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    pub fn recorded_duration_ms(&self) -> u64 {
+        self.recorded_duration_ms.load(Ordering::Acquire)
     }
 
     #[inline]
@@ -390,6 +415,7 @@ fn publish_snapshots(
     snap: &EngineUiSnapshots,
     cache: &mut SnapshotPublishCache,
 ) {
+    snap.pub_seq.fetch_add(1, Ordering::AcqRel);
     let active_deck = ply.music_manager.active_deck_ref();
     let active_deck_idx = ply.music_manager.inner.active_deck.load(Ordering::Relaxed);
     let deck_id = active_deck.deck_id;
@@ -411,6 +437,10 @@ fn publish_snapshots(
         .store(ply.music_manager.is_crossfading(), Ordering::Release);
     snap.is_recording
         .store(ply.output_manager.is_recording(), Ordering::Release);
+    snap.recorded_duration_ms.store(
+        ply.output_manager.recorded_duration_ms(),
+        Ordering::Release,
+    );
     snap.is_ducking
         .store(ply.input_manager.is_ducking_active(), Ordering::Release);
     snap.mic_rms_bits
@@ -481,6 +511,7 @@ fn publish_snapshots(
         cache.last_meta_key = meta_key;
         *write_unpoisoned(&snap.parsed_metadata) = active_deck.get_parsed_metadata();
     }
+    snap.pub_seq.fetch_add(1, Ordering::Release);
 }
 
 #[derive(Default)]

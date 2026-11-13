@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 /// Builds a synchsafe 28-bit integer for ID3v2 headers.
 List<int> _synchsafe32(int value) => [
       (value >> 21) & 0x7F,
@@ -605,11 +607,13 @@ void main() {
         await player.action.setQueue([AudioSource(taggedMp3)]);
         await player.action.play();
 
-        final sw = Stopwatch()..start();
-        while (
-            player.state.audioInfo == null && sw.elapsedMilliseconds < 2000) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
+        await awaitStateOrStream<AudioInfo?>(
+          stream: player.stream.audioInfo,
+          current: () => player.state.audioInfo,
+          predicate: (info) => info != null,
+          timeout: const Duration(seconds: 2),
+          reason: 'AudioInfo should populate on track open',
+        );
 
         // AudioInfo is ALWAYS populated even when metadataEnabled == false
         expect(player.state.metadataEnabled, isFalse);

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import '../helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -44,7 +46,6 @@ void main() {
       if (!engine.isDisposed) {
         await engine.dispose();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
 
     test(
@@ -59,18 +60,30 @@ void main() {
         expect(engine.state.isPlaying, isTrue);
         expect(engine.state.currentIndex, equals(0));
 
-        // Let track 1 play for 1.5 seconds
-        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        // Wait for Track 1 to make observable audio progress (> 1s).
+        await waitForAudioProgress(
+          engine,
+          minDelta: const Duration(milliseconds: 1050),
+        );
         expect(engine.state.position.inMilliseconds, greaterThan(1000));
 
         // 1. User calls next() -> starts manual crossfade to Track 2
         final nextFuture = engine.action.next();
-        // Allow crossfade to begin and enter crossfade
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // Wait via stream until crossfade engages on Track 2.
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isCrossfading,
+          current: () => engine.state.isCrossfading,
+          predicate: (v) => v,
+        );
+        await awaitStateOrStream<int?>(
+          stream: engine.stream.currentIndex,
+          current: () => engine.state.currentIndex,
+          predicate: (idx) => idx == 1,
+        );
         expect(engine.state.isCrossfading, isTrue);
         expect(engine.state.currentIndex, equals(1));
 
-        // 2. < 100ms later, user calls previous() while on Track 2 (position < 3s threshold)
+        // 2. Immediately call previous() while on Track 2 (position < 3s threshold)
         final prevFuture = engine.action.previous();
         await Future.wait([nextFuture, prevFuture]);
 
@@ -79,8 +92,12 @@ void main() {
         expect(engine.state.currentItem?.data, equals('Track 1'));
         expect(engine.state.isPlaying, isTrue);
 
-        // Allow any active transition to fully settle
-        await Future<void>.delayed(const Duration(milliseconds: 2200));
+        // Wait via stream for any active transition to finish settling.
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isCrossfading,
+          current: () => engine.state.isCrossfading,
+          predicate: (v) => !v,
+        );
 
         // Final Invariant Validation:
         // - Exactly one deck active (state.isPlaying == true, volume == masterVolume)
@@ -113,7 +130,6 @@ void main() {
       if (!engine.isDisposed) {
         await engine.dispose();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
 
     test(
@@ -125,21 +141,24 @@ void main() {
         ]);
 
         await engine.action.play();
-        for (int i = 0;
-            i < 50 &&
-                (!engine.state.isPlaying ||
-                    engine.state.duration == Duration.zero);
-            i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isPlaying,
+          current: () => engine.state.isPlaying,
+          predicate: (v) => v,
+        );
+        await awaitStateOrStream<Duration?>(
+          stream: engine.stream.duration,
+          current: () => engine.state.duration,
+          predicate: (d) => d != null && d > Duration.zero,
+        );
 
         // Seek Track 1 near the end to enter the auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
         await engine.action.seek(const Duration(milliseconds: 8500));
-        for (int i = 0;
-            i < 20 && !engine.state.isCrossfading;
-            i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isCrossfading,
+          current: () => engine.state.isCrossfading,
+          predicate: (v) => v,
+        );
 
         // Engine should have entered crossfading
         expect(engine.state.isCrossfading, isTrue);
@@ -167,20 +186,23 @@ void main() {
         ]);
 
         await engine.action.play();
-        for (int i = 0;
-            i < 50 &&
-                (!engine.state.isPlaying ||
-                    engine.state.duration == Duration.zero);
-            i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isPlaying,
+          current: () => engine.state.isPlaying,
+          predicate: (v) => v,
+        );
+        await awaitStateOrStream<Duration?>(
+          stream: engine.stream.duration,
+          current: () => engine.state.duration,
+          predicate: (d) => d != null && d > Duration.zero,
+        );
         // Seek into auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
         await engine.action.seek(const Duration(milliseconds: 8500));
-        for (int i = 0;
-            i < 40 && !engine.state.isCrossfading;
-            i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 30));
-        }
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isCrossfading,
+          current: () => engine.state.isCrossfading,
+          predicate: (v) => v,
+        );
 
         expect(engine.state.isCrossfading, isTrue);
         expect(engine.state.currentIndex, equals(0));
@@ -193,8 +215,12 @@ void main() {
         expect(engine.state.currentItem?.data, equals('Track 2'));
         expect(engine.state.isPlaying, isTrue);
 
-        // Wait for manualDuration (500ms) to complete
-        await Future<void>.delayed(const Duration(milliseconds: 700));
+        // Wait for manualDuration (500ms) transition to complete via stream
+        await awaitStateOrStream<bool>(
+          stream: engine.stream.isCrossfading,
+          current: () => engine.state.isCrossfading,
+          predicate: (v) => !v,
+        );
 
         expect(engine.state.playbackState, equals(PlaybackState.playing));
         expect(engine.state.isCrossfading, isFalse);
@@ -222,7 +248,6 @@ void main() {
       if (!engine.isDisposed) {
         await engine.dispose();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
 
     test(
@@ -253,12 +278,12 @@ void main() {
       expect(engine.state.currentIndex, equals(5));
       expect(engine.state.currentItem?.data, equals('Track 6'));
 
-      // Wait a moment for final transition settlement
-      for (int i = 0;
-          i < 20 && engine.state.isCrossfading;
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-      }
+      // Wait via stream for final transition settlement
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (v) => !v,
+      );
 
       expect(engine.state.isPlaying, isTrue);
       expect(engine.state.playbackState, equals(PlaybackState.playing));
@@ -286,7 +311,6 @@ void main() {
       if (!engine.isDisposed) {
         await engine.dispose();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
 
     test(
@@ -298,20 +322,23 @@ void main() {
       ]);
 
       await engine.action.play();
-      for (int i = 0;
-          i < 50 &&
-              (!engine.state.isPlaying ||
-                  engine.state.duration == Duration.zero);
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isPlaying,
+        current: () => engine.state.isPlaying,
+        predicate: (v) => v,
+      );
+      await awaitStateOrStream<Duration?>(
+        stream: engine.stream.duration,
+        current: () => engine.state.duration,
+        predicate: (d) => d != null && d > Duration.zero,
+      );
       // Enter auto crossfade window
       await engine.action.seek(const Duration(milliseconds: 8500));
-      for (int i = 0;
-          i < 40 && !engine.state.isCrossfading;
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (v) => v,
+      );
 
       expect(engine.state.isCrossfading, isTrue);
 
@@ -337,7 +364,16 @@ void main() {
 
       // Trigger manual crossfade
       final nextFut = engine.action.next();
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (v) => v,
+      );
+      await awaitStateOrStream<int?>(
+        stream: engine.stream.currentIndex,
+        current: () => engine.state.currentIndex,
+        predicate: (idx) => idx == 1,
+      );
       expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex,
           equals(1)); // Track 2 is incoming active deck
@@ -369,7 +405,6 @@ void main() {
       if (!engine.isDisposed) {
         await engine.dispose();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
 
     test(
@@ -380,23 +415,27 @@ void main() {
       ]);
 
       await engine.action.play();
-      for (int i = 0;
-          i < 50 &&
-              (!engine.state.isPlaying ||
-                  engine.state.duration == Duration.zero);
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isPlaying,
+        current: () => engine.state.isPlaying,
+        predicate: (v) => v,
+      );
+      await awaitStateOrStream<Duration?>(
+        stream: engine.stream.duration,
+        current: () => engine.state.duration,
+        predicate: (d) => d != null && d > Duration.zero,
+      );
       expect(engine.state.isPlaying, isTrue);
 
       // Seek near EOF to trigger natural track completion
       await engine.action.seek(const Duration(milliseconds: 9900));
 
-      // Wait for playback to hit EOF and reach stopped state (Case 2)
-      for (int i = 0; i < 50; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        if (engine.state.playbackState.isStopped) break;
-      }
+      // Wait via stream for playback to hit EOF and reach stopped state (Case 2)
+      await awaitStateOrStream<PlaybackState>(
+        stream: engine.stream.playbackState,
+        current: () => engine.state.playbackState,
+        predicate: (s) => s.isStopped,
+      );
 
       expect(engine.state.playbackState, equals(PlaybackState.stopped));
       expect(engine.state.isPlaying, isFalse);
@@ -418,7 +457,6 @@ void main() {
       if (!engine.isDisposed) {
         await engine.dispose();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
 
     test(
@@ -445,8 +483,11 @@ void main() {
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.isPlaying, isTrue);
 
-      // Let track play for ~500ms then seek to 2 seconds
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // Wait for observable audio progress then seek to 2 seconds
+      await waitForAudioProgress(
+        engine,
+        minDelta: const Duration(milliseconds: 150),
+      );
       await engine.action.seek(const Duration(seconds: 2));
 
       expect(engine.state.currentIndex, equals(0));
@@ -454,8 +495,11 @@ void main() {
       expect(engine.state.position.inMilliseconds, closeTo(2000, 350));
       expect(engine.state.volume, closeTo(1.0, 1e-4));
 
-      // Let playback run for 1 second; verify track 1 is still playing (no premature next())
-      await Future<void>.delayed(const Duration(seconds: 1));
+      // Let playback advance by >= 600ms; verify track 1 is still playing (no premature next())
+      await waitForAudioProgress(
+        engine,
+        minDelta: const Duration(milliseconds: 600),
+      );
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.isPlaying, isTrue);
       expect(engine.state.position.inMilliseconds, greaterThanOrEqualTo(2500));
@@ -479,21 +523,24 @@ void main() {
       ]);
 
       await engine.action.play();
-      for (int i = 0;
-          i < 50 &&
-              (!engine.state.isPlaying ||
-                  engine.state.duration == Duration.zero);
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isPlaying,
+        current: () => engine.state.isPlaying,
+        predicate: (v) => v,
+      );
+      await awaitStateOrStream<Duration?>(
+        stream: engine.stream.duration,
+        current: () => engine.state.duration,
+        predicate: (d) => d != null && d > Duration.zero,
+      );
 
       // Seek into auto-crossfade zone (track is ~10s long)
       await engine.action.seek(const Duration(milliseconds: 8500));
-      for (int i = 0;
-          i < 40 && !engine.state.isCrossfading;
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (v) => v,
+      );
 
       expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex, equals(0));
@@ -509,11 +556,11 @@ void main() {
 
       // Seek back into crossfade zone: it triggers again smoothly
       await engine.action.seek(const Duration(milliseconds: 8600));
-      for (int i = 0;
-          i < 40 && !engine.state.isCrossfading;
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (v) => v,
+      );
 
       expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex, equals(0));
@@ -537,26 +584,29 @@ void main() {
       ]);
 
       await engine.action.play();
-      for (int i = 0;
-          i < 50 &&
-              (!engine.state.isPlaying ||
-                  engine.state.duration == Duration.zero);
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isPlaying,
+        current: () => engine.state.isPlaying,
+        predicate: (v) => v,
+      );
+      await awaitStateOrStream<Duration?>(
+        stream: engine.stream.duration,
+        current: () => engine.state.duration,
+        predicate: (d) => d != null && d > Duration.zero,
+      );
 
       // Seek into crossfade zone (8.2s out of ~10.0s)
       await engine.action.seek(const Duration(milliseconds: 8200));
-      for (int i = 0;
-          i < 20 && !engine.state.isCrossfading;
-          i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (v) => v,
+      );
       expect(engine.state.isCrossfading, isTrue);
 
       // Seek slightly further inside crossfade zone (9.0s)
       await engine.action.seek(const Duration(milliseconds: 9000));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await drainBroadcastStreams();
 
       // Remains crossfading on outgoing track without error or premature skip
       expect(engine.state.isCrossfading, isTrue);

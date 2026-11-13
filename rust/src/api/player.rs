@@ -3,7 +3,7 @@
 //! Exposes `RustMiniaudioPlayer` orchestrating music decks, RAM sound effects,
 //! multi-destination output matrix, and microphone capture sidechain.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -12,7 +12,8 @@ use crate::buffer::{CustomDartByteSource, CustomSourceRegistry};
 use crate::core::control_coordinator::ControlCoordinator;
 use crate::core::dual_source::AudioSourceCore;
 use crate::core::engine_actor::{
-    snapshot_queue_ids, EngineActorHandle, RtEngineNotice, TrackTransitionSnapshot,
+    snapshot_queue_ids, EngineActorHandle, EngineUiSnapshots, RtEngineNotice,
+    TrackTransitionSnapshot,
 };
 use crate::core::hw_supervisor::{device_id_matches, HardwareDeviceSupervisor};
 use crate::core::recording::WavFormat;
@@ -52,6 +53,7 @@ struct AtomicTelemetryFilter {
     is_buffering: AtomicU8,
     is_xfading: AtomicU8,
     is_recording: AtomicU8,
+    recorded_duration: AtomicU64,
     is_ducking: AtomicU8,
     is_playing: AtomicU8,
     active_voices: AtomicI64,
@@ -68,6 +70,7 @@ impl Default for AtomicTelemetryFilter {
             is_buffering: AtomicU8::new(OPT_BOOL_FALSE),
             is_xfading: AtomicU8::new(OPT_BOOL_FALSE),
             is_recording: AtomicU8::new(OPT_BOOL_FALSE),
+            recorded_duration: AtomicU64::new(0),
             is_ducking: AtomicU8::new(OPT_BOOL_FALSE),
             is_playing: AtomicU8::new(OPT_BOOL_FALSE),
             active_voices: AtomicI64::new(SENTINEL_NONE),
@@ -85,6 +88,7 @@ impl AtomicTelemetryFilter {
         self.is_buffering.store(OPT_BOOL_FALSE, Ordering::Release);
         self.is_xfading.store(OPT_BOOL_FALSE, Ordering::Release);
         self.is_recording.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.recorded_duration.store(0, Ordering::Release);
         self.is_ducking.store(OPT_BOOL_FALSE, Ordering::Release);
         self.is_playing.store(OPT_BOOL_FALSE, Ordering::Release);
         self.active_voices.store(SENTINEL_NONE, Ordering::Release);
@@ -99,6 +103,11 @@ impl AtomicTelemetryFilter {
 
     #[inline]
     fn should_emit_i64(slot: &AtomicI64, val: i64) -> bool {
+        slot.swap(val, Ordering::AcqRel) != val
+    }
+
+    #[inline]
+    fn should_emit_u64(slot: &AtomicU64, val: u64) -> bool {
         slot.swap(val, Ordering::AcqRel) != val
     }
 
@@ -120,6 +129,9 @@ impl AtomicTelemetryFilter {
             RustPlayerEvent::IsBuffering(b) => Self::should_emit_opt_bool(&self.is_buffering, *b),
             RustPlayerEvent::IsCrossfading(b) => Self::should_emit_opt_bool(&self.is_xfading, *b),
             RustPlayerEvent::IsRecording(b) => Self::should_emit_opt_bool(&self.is_recording, *b),
+            RustPlayerEvent::RecordedDuration(d) => {
+                Self::should_emit_u64(&self.recorded_duration, *d)
+            }
             RustPlayerEvent::IsDuckingActive(b) => Self::should_emit_opt_bool(&self.is_ducking, *b),
             RustPlayerEvent::ActiveVoices(v) => {
                 Self::should_emit_i64(&self.active_voices, *v as i64)
@@ -303,6 +315,29 @@ impl EventReporter {
     {
         let mut state = lock_unpoisoned(&self.sink_state);
         self.push_filtered_events(&mut state, events);
+    }
+
+    /// Emits edge-triggered notices unconditionally and conditionally emits level-triggered
+    /// snapshot events only if `snapshots` has not been republished since `read_seq`,
+    /// eliminating TOCTOU stale overwrites against synchronous action emissions.
+    pub(crate) fn emit_snapshot_tick<E, S>(
+        &self,
+        snapshots: &EngineUiSnapshots,
+        read_seq: u64,
+        edge_events: E,
+        snapshot_events: S,
+    ) -> bool
+    where
+        E: IntoIterator<Item = RustPlayerEvent>,
+        S: IntoIterator<Item = RustPlayerEvent>,
+    {
+        let mut state = lock_unpoisoned(&self.sink_state);
+        self.push_filtered_events(&mut state, edge_events);
+        if !snapshots.is_consistent_since(read_seq) {
+            return false;
+        }
+        self.push_filtered_events(&mut state, snapshot_events);
+        true
     }
 
     /// Atomically resets telemetry deduplication caches and emits initial baseline events.
@@ -719,10 +754,12 @@ impl RustMiniaudioPlayer {
                 let mut last_emitted_meta_version = u32::MAX;
                 let mut last_emitted_meta_flush = u64::MAX;
                 let mut last_meta_enabled = false;
+                let mut edge_events: Vec<RustPlayerEvent> = Vec::with_capacity(8);
                 let mut tick_events: Vec<RustPlayerEvent> = Vec::with_capacity(24);
 
                 while worker_running.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(16));
+                    edge_events.clear();
                     tick_events.clear();
 
                     for notice in notify_rx.try_iter() {
@@ -739,7 +776,7 @@ impl RustMiniaudioPlayer {
                                 current_track_id,
                                 remaining_tracks,
                             } => {
-                                tick_events.push(RustPlayerEvent::NeedMoreTracks {
+                                edge_events.push(RustPlayerEvent::NeedMoreTracks {
                                     current_track_id,
                                     remaining_tracks,
                                 });
@@ -752,15 +789,22 @@ impl RustMiniaudioPlayer {
                         let (completed_ids, eviction_info) =
                             worker_effects.drain_completed_and_evict();
                         for v_id in completed_ids {
-                            tick_events.push(RustPlayerEvent::VoiceCompleted(v_id));
+                            edge_events.push(RustPlayerEvent::VoiceCompleted(v_id));
                         }
                         if let Some((ids, allocated_bytes)) = eviction_info {
-                            tick_events.push(RustPlayerEvent::LoadedEffects {
+                            edge_events.push(RustPlayerEvent::LoadedEffects {
                                 ids,
                                 allocated_bytes,
                             });
                         }
                     }
+
+                    let Some(read_seq) = worker_snapshots.begin_consistent_read() else {
+                        if !edge_events.is_empty() {
+                            worker_reporter.emit_batch(edge_events.drain(..));
+                        }
+                        continue;
+                    };
 
                     let playback_state = worker_snapshots.playback_state();
                     let is_buffering = worker_snapshots.is_buffering();
@@ -770,6 +814,7 @@ impl RustMiniaudioPlayer {
                     let idx = worker_snapshots.current_index();
                     let is_xfading = worker_snapshots.is_xfading();
                     let is_rec = worker_snapshots.is_recording();
+                    let rec_dur_ms = worker_snapshots.recorded_duration_ms();
                     let is_ducking = worker_snapshots.is_ducking();
                     let mic_rms = worker_snapshots.mic_rms_db();
 
@@ -802,6 +847,13 @@ impl RustMiniaudioPlayer {
                         None
                     };
 
+                    if !worker_snapshots.is_consistent_since(read_seq) {
+                        if !edge_events.is_empty() {
+                            worker_reporter.emit_batch(edge_events.drain(..));
+                        }
+                        continue;
+                    }
+
                     let is_playing = playback_state == PlaybackState::Playing;
 
                     tick_events.push(RustPlayerEvent::PlaybackState(playback_state.as_i32()));
@@ -822,17 +874,14 @@ impl RustMiniaudioPlayer {
                     }
                     tick_events.push(RustPlayerEvent::IsCrossfading(is_xfading));
                     tick_events.push(RustPlayerEvent::IsRecording(is_rec));
+                    if is_rec {
+                        tick_events.push(RustPlayerEvent::RecordedDuration(rec_dur_ms));
+                    }
                     tick_events.push(RustPlayerEvent::IsDuckingActive(is_ducking));
                     if mic_rms > -90.0 {
                         tick_events.push(RustPlayerEvent::MicRmsLevel(mic_rms));
                     }
                     if should_emit_meta {
-                        last_emitted_meta_deck = active_deck_idx;
-                        last_emitted_meta_deck_id = active_deck_id;
-                        last_emitted_meta_open_gen = active_open_gen;
-                        last_emitted_meta_version = cur_meta_ver;
-                        last_emitted_meta_flush = cur_flush;
-                        last_meta_enabled = true;
                         if let Some(meta) = meta_to_send {
                             tick_events.push(RustPlayerEvent::AudioMetadata(meta));
                         } else {
@@ -841,8 +890,6 @@ impl RustMiniaudioPlayer {
                             ));
                         }
                     } else if !cur_meta_enabled && last_meta_enabled {
-                        last_meta_enabled = false;
-                        last_emitted_meta_version = u32::MAX;
                         tick_events
                             .push(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
                     }
@@ -855,7 +902,24 @@ impl RustMiniaudioPlayer {
                             RustVisualizerData::from(vis),
                         ));
                     }
-                    worker_reporter.emit_batch(tick_events.drain(..));
+                    if worker_reporter.emit_snapshot_tick(
+                        &worker_snapshots,
+                        read_seq,
+                        edge_events.drain(..),
+                        tick_events.drain(..),
+                    ) {
+                        if should_emit_meta {
+                            last_emitted_meta_deck = active_deck_idx;
+                            last_emitted_meta_deck_id = active_deck_id;
+                            last_emitted_meta_open_gen = active_open_gen;
+                            last_emitted_meta_version = cur_meta_ver;
+                            last_emitted_meta_flush = cur_flush;
+                            last_meta_enabled = true;
+                        } else if !cur_meta_enabled && last_meta_enabled {
+                            last_meta_enabled = false;
+                            last_emitted_meta_version = u32::MAX;
+                        }
+                    }
                 }
             })
             .ok();
@@ -911,6 +975,18 @@ impl RustMiniaudioPlayer {
                 current_index,
             });
         }
+    }
+
+    fn emit_queue_and_index<const N: usize>(&self, trailing: [RustPlayerEvent; N]) {
+        let mut batch = Vec::with_capacity(1 + N);
+        if let Ok((queue, current_index)) = self.engine.exec(|ply| snapshot_queue_ids(ply)) {
+            batch.push(RustPlayerEvent::Queue {
+                queue,
+                current_index,
+            });
+        }
+        batch.extend(trailing);
+        self.reporter.emit_batch(batch);
     }
 
     fn emit_track_transition(&self, snap: TrackTransitionSnapshot, emit_shuffle: bool) {
@@ -1005,8 +1081,8 @@ impl RustMiniaudioPlayer {
         self.reporter.emit_batch([
             RustPlayerEvent::Position(position_ms),
             RustPlayerEvent::CurrentIndex(cur_idx as i32),
-            RustPlayerEvent::IsPlaying(is_playing),
             RustPlayerEvent::PlaybackState(state),
+            RustPlayerEvent::IsPlaying(is_playing),
             RustPlayerEvent::IsCrossfading(is_xfading),
         ]);
         Ok(())
@@ -1052,10 +1128,10 @@ impl RustMiniaudioPlayer {
                 peak: p,
             }),
             RustPlayerEvent::CurrentIndex(-1),
-            RustPlayerEvent::IsPlaying(false),
             RustPlayerEvent::Position(0),
             RustPlayerEvent::AudioInfo(RustAudioInfo::default()),
             RustPlayerEvent::PlaybackState(0),
+            RustPlayerEvent::IsPlaying(false),
         ]));
         Ok(())
     }
@@ -1083,11 +1159,11 @@ impl RustMiniaudioPlayer {
             return false;
         };
         if res {
-            self.emit_queue();
             if let Some(snap) = snap {
+                self.emit_queue();
                 self.emit_track_transition(snap, false);
             } else {
-                self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+                self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
             }
         }
         res
@@ -1099,9 +1175,8 @@ impl RustMiniaudioPlayer {
             return false;
         };
         if res {
-            self.emit_queue();
             let idx = self.engine.snapshots().current_index();
-            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+            self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
         }
         res
     }
@@ -1112,9 +1187,8 @@ impl RustMiniaudioPlayer {
             return false;
         };
         if res {
-            self.emit_queue();
             let idx = self.engine.snapshots().current_index();
-            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+            self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
         }
         res
     }
@@ -1122,8 +1196,7 @@ impl RustMiniaudioPlayer {
     /// Clears pending tracks from the queue, optionally preserving the currently active track.
     pub fn clear_queue(&self, keep_current: bool) {
         if let Ok(idx) = self.coordinator.clear_queue(keep_current) {
-            self.emit_queue();
-            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+            self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
         }
     }
 
@@ -1155,9 +1228,10 @@ impl RustMiniaudioPlayer {
     /// Enables or disables playlist shuffle mode.
     pub fn set_shuffle(&self, enabled: bool) {
         if let Ok(Some(idx)) = self.coordinator.set_shuffle(enabled) {
-            self.emit_queue();
-            self.emit_event(RustPlayerEvent::IsShuffled(enabled));
-            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+            self.emit_queue_and_index([
+                RustPlayerEvent::IsShuffled(enabled),
+                RustPlayerEvent::CurrentIndex(idx as i32),
+            ]);
         }
     }
 
@@ -1704,22 +1778,28 @@ impl RustMiniaudioPlayer {
         };
         let src = AudioOutputSource::from(source);
         self.hw.start_recording(path, fmt, src)?;
-        self.emit_event(RustPlayerEvent::IsRecording(true));
-        self.emit_event(RustPlayerEvent::RecordingState {
-            is_recording: true,
-            source,
-        });
+        self.reporter.emit_batch([
+            RustPlayerEvent::RecordedDuration(0),
+            RustPlayerEvent::IsRecording(true),
+            RustPlayerEvent::RecordingState {
+                is_recording: true,
+                source,
+            },
+        ]);
         Ok(())
     }
 
     /// Stops active file recording and returns the finalization metrics.
     pub fn stop_recording(&self) -> Result<RustRecordingResult, String> {
         let (path, dur_ms, bytes_written, sample_count) = self.hw.stop_recording()?;
-        self.emit_event(RustPlayerEvent::IsRecording(false));
-        self.emit_event(RustPlayerEvent::RecordingState {
-            is_recording: false,
-            source: 0,
-        });
+        self.reporter.emit_batch([
+            RustPlayerEvent::RecordedDuration(dur_ms),
+            RustPlayerEvent::IsRecording(false),
+            RustPlayerEvent::RecordingState {
+                is_recording: false,
+                source: 0,
+            },
+        ]);
 
         Ok(RustRecordingResult {
             path,

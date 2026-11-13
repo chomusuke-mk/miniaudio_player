@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
@@ -179,7 +181,7 @@ void main() {
     });
 
     // Pump microtasks for stream emission
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await drainBroadcastStreams();
 
     expect(receivedOutputs, isNotNull);
     expect(receivedOutputs, isNotEmpty);
@@ -233,8 +235,11 @@ void main() {
       await player.action.seek(Duration.zero);
       expect(player.state.position.inMilliseconds, inInclusiveRange(0, 200));
 
-      // Wait a moment while playing and verify it advances smoothly without jumping to end
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // Wait for playback to advance smoothly without jumping to end
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 200),
+      );
       expect(player.state.position.inMilliseconds, inInclusiveRange(200, 1000));
       expect(player.state.isPlaying, isTrue);
 
@@ -243,10 +248,13 @@ void main() {
       expect(
           player.state.position.inMilliseconds, inInclusiveRange(3400, 3600));
 
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 250),
+      );
       // Must NOT jump to EOF (10031ms)
       expect(
-          player.state.position.inMilliseconds, inInclusiveRange(3800, 4500));
+          player.state.position.inMilliseconds, inInclusiveRange(3700, 5000));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.pause();

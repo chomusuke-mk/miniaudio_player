@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
@@ -100,20 +102,25 @@ void main() {
       final events = <bool>[];
       final sub = player.stream.pauseOnDeviceChange.listen(events.add);
 
-      await player.action.setPauseOnDeviceChange(true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, bool>(
+        action: () => player.action.setPauseOnDeviceChange(true),
+        stream: player.stream.pauseOnDeviceChange,
+        predicate: (v) => v == true,
+      );
       await pumpEventQueue();
       expect(player.state.pauseOnDeviceChange, isTrue);
       expect(events, equals([true]));
 
       // Redundant set does not emit duplicate
       await player.action.setPauseOnDeviceChange(true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      await pumpEventQueue();
+      await drainBroadcastStreams(8);
       expect(events, equals([true]));
 
-      await player.action.setPauseOnDeviceChange(false);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, bool>(
+        action: () => player.action.setPauseOnDeviceChange(false),
+        stream: player.stream.pauseOnDeviceChange,
+        predicate: (v) => v == false,
+      );
       await pumpEventQueue();
       expect(player.state.pauseOnDeviceChange, isFalse);
       expect(events, equals([true, false]));
@@ -151,20 +158,25 @@ void main() {
       final events = <bool>[];
       final sub = engine.stream.pauseOnDeviceChange.listen(events.add);
 
-      await engine.action.setPauseOnDeviceChange(true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, bool>(
+        action: () => engine.action.setPauseOnDeviceChange(true),
+        stream: engine.stream.pauseOnDeviceChange,
+        predicate: (v) => v == true,
+      );
       await pumpEventQueue();
       expect(engine.state.pauseOnDeviceChange, isTrue);
       expect(events, equals([true]));
 
       // Redundant set does not emit duplicate
       await engine.action.setPauseOnDeviceChange(true);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      await pumpEventQueue();
+      await drainBroadcastStreams(8);
       expect(events, equals([true]));
 
-      await engine.action.setPauseOnDeviceChange(false);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await performAndAwaitStream<void, bool>(
+        action: () => engine.action.setPauseOnDeviceChange(false),
+        stream: engine.stream.pauseOnDeviceChange,
+        predicate: (v) => v == false,
+      );
       await pumpEventQueue();
       expect(engine.state.pauseOnDeviceChange, isFalse);
       expect(events, equals([true, false]));
@@ -241,17 +253,14 @@ void main() {
         await player.action.play();
         expect(
             player.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
-        for (int i = 0; i < 20 && !player.state.isPlaying; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
         expect(player.state.isPlaying, isTrue);
 
-        await Future.delayed(const Duration(milliseconds: 100));
+        await waitForAudioProgress(
+          player,
+          minDelta: const Duration(milliseconds: 50),
+        );
 
         await player.action.pause();
-        for (int i = 0; i < 20 && player.state.isPlaying; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
         expect(player.state.isPlaying, isFalse);
 
         // Seek while paused (calls streamSeek and duration/position getters)
@@ -261,12 +270,12 @@ void main() {
 
         // Resume play after seek
         await player.action.play();
-        for (int i = 0; i < 20 && !player.state.isPlaying; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
         expect(player.state.isPlaying, isTrue);
 
-        await Future.delayed(const Duration(milliseconds: 150));
+        await waitForAudioProgress(
+          player,
+          minDelta: const Duration(milliseconds: 60),
+        );
         expect(player.state.position.inMilliseconds, greaterThan(2500));
 
         await player.action.stop();
@@ -288,7 +297,10 @@ void main() {
             engine.state.duration?.inMilliseconds, greaterThanOrEqualTo(4900));
         expect(engine.state.playbackState, equals(PlaybackState.playing));
 
-        await Future.delayed(const Duration(milliseconds: 100));
+        await waitForAudioProgress(
+          engine,
+          minDelta: const Duration(milliseconds: 50),
+        );
 
         await engine.action.pause();
         expect(engine.state.playbackState, equals(PlaybackState.paused));
@@ -302,7 +314,10 @@ void main() {
         await engine.action.play();
         expect(engine.state.playbackState, equals(PlaybackState.playing));
 
-        await Future.delayed(const Duration(milliseconds: 150));
+        await waitForAudioProgress(
+          engine,
+          minDelta: const Duration(milliseconds: 60),
+        );
         expect(engine.state.position.inMilliseconds, greaterThan(2000));
 
         await engine.action.stop();

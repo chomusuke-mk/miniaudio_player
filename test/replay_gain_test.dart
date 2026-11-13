@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -340,11 +342,13 @@ void main() {
         await player.action.setQueue([source]);
         await player.action.play();
 
-        final stopwatch = Stopwatch()..start();
-        while (player.state.audioInfo == null &&
-            stopwatch.elapsedMilliseconds < 1000) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
+        await awaitStateOrStream<AudioInfo?>(
+          stream: player.stream.audioInfo,
+          current: () => player.state.audioInfo,
+          predicate: (info) => info != null,
+          timeout: const Duration(seconds: 2),
+          reason: 'AudioInfo should populate on track play',
+        );
 
         expect(player.state.audioInfo, isNotNull);
         expect(player.state.audioInfo?.sampleRate, greaterThan(0));
@@ -379,11 +383,13 @@ void main() {
 
       final player = MiniaudioPlayer(queue: [source]);
       try {
-        final stopwatch = Stopwatch()..start();
-        while (player.state.replayGain.gainDb == 0.0 &&
-            stopwatch.elapsedMilliseconds < 1000) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
+        await awaitStateOrStream<ReplayGainConfig>(
+          stream: player.stream.replayGain,
+          current: () => player.state.replayGain,
+          predicate: (rg) => rg.gainDb != 0.0,
+          timeout: const Duration(seconds: 2),
+          reason: 'Constructor queue failed to apply ReplayGain metadata',
+        );
 
         expect(player.state.replayGainMode, equals(ReplayGainMode.track));
         expect(player.state.replayGain.gainDb, closeTo(-6.5, 1e-4));

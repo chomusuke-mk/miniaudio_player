@@ -562,7 +562,7 @@ class MiniaudioPlayer<T> {
       action.setCrossfade(config.crossfade!);
     }
     if (queue.isNotEmpty) {
-      action.setQueue(queue);
+      action._trackInitialQueue(action.setQueue(queue));
     }
   }
 
@@ -579,13 +579,30 @@ class MiniaudioPlayer<T> {
           2 => PlaybackState.paused,
           _ => PlaybackState.stopped,
         };
+        final impliedPlaying = val == PlaybackState.playing;
+        final stateChanged = state._playbackState != val;
+        final playingChanged = state._isPlaying != impliedPlaying;
         state._playbackState = val;
+        state._isPlaying = impliedPlaying;
         MapLogger.info(
             '[EVENT:PLAYBACK_STATE] Engine playback state -> ${val.name}');
-        stream._playbackStateController.add(val);
+        if (stateChanged) {
+          stream._playbackStateController.add(val);
+        }
+        if (playingChanged) {
+          stream._playingController.add(impliedPlaying);
+        }
       case rust_types.RustPlayerEvent_IsPlaying(:final field0):
+        final playingChanged = state._isPlaying != field0;
+        final needsStateSync = field0 && state._playbackState != PlaybackState.playing;
         state._isPlaying = field0;
-        stream._playingController.add(field0);
+        if (needsStateSync) {
+          state._playbackState = PlaybackState.playing;
+          stream._playbackStateController.add(PlaybackState.playing);
+        }
+        if (playingChanged) {
+          stream._playingController.add(field0);
+        }
       case rust_types.RustPlayerEvent_IsBuffering(:final field0):
         state._isBuffering = field0;
         stream._bufferingController.add(field0);
@@ -856,15 +873,12 @@ class MiniaudioPlayer<T> {
         state._bufferSize = field0;
         stream._bufferSizeController.add(field0);
       case rust_types.RustPlayerEvent_CurrentIndex(:final field0):
-        final idx = field0 >= 0 ? field0 : null;
+        final idx =
+            field0 >= 0 && field0 < state.queue.length ? field0 : null;
         final indexChanged = state._currentIndex != idx;
         state._currentIndex = idx;
         stream._currentIndexController.add(idx);
-        state._currentItem = idx != null && idx >= 0 && idx < state.queue.length
-            ? state.queue[idx]
-            : null;
-        final curSource = state.currentItem;
-        stream._currentItemController.add(curSource);
+        stream._currentItemController.add(state.currentItem);
         if (indexChanged) {
           state._metadata = null;
           stream._metadataController.add(null);
@@ -889,7 +903,6 @@ class MiniaudioPlayer<T> {
             ? currentIndex
             : null;
         state._currentIndex = idx;
-        state._currentItem = idx != null ? state.queue[idx] : null;
         stream._currentIndexController.add(idx);
         stream._queueController.add(state.queue);
         stream._currentItemController.add(state.currentItem);

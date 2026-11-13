@@ -592,8 +592,13 @@ fn scenario_5_hardware_hot_swap_and_recording_stop_under_load() {
         "Output teardown took abnormally long"
     );
 
-    // Wait a few audio periods so PCM frames flush through the live recorder ringbuffer.
-    thread::sleep(Duration::from_millis(120));
+    // Wait until the live recorder has observed active audio progression instead of a fixed sleep.
+    assert!(
+        wait_until(Duration::from_secs(2), || {
+            harness.engine.snapshots().position_ms() > 0
+        }),
+        "Audio engine did not advance position before stopping live recording"
+    );
 
     let t_stop = Instant::now();
     let (out_path, duration_ms, bytes_written, sample_count) =
@@ -646,11 +651,15 @@ fn scenario_6_concurrent_custom_byte_source_active_standby_abort() {
         req_tx_11,
         Some(registry.clone()),
     );
+    let blocked_dispatched = Arc::new(AtomicBool::new(false));
+    let blocked_dispatched_cb = blocked_dispatched.clone();
     let (mut src_blocked, _h12) = CustomDartByteSource::with_registry(
         12,
         Some(4096),
         true,
-        Arc::new(|_req| {}),
+        Arc::new(move |_req| {
+            blocked_dispatched_cb.store(true, Ordering::Release);
+        }),
         Some(registry.clone()),
     );
 
@@ -690,7 +699,12 @@ fn scenario_6_concurrent_custom_byte_source_active_standby_abort() {
     });
 
     t_parallel.join().expect("Concurrent custom readers panicked");
-    thread::sleep(Duration::from_millis(30));
+    assert!(
+        wait_until(Duration::from_secs(1), || {
+            blocked_dispatched.load(Ordering::Acquire)
+        }),
+        "Blocked CustomDartByteSource did not dispatch initial read request before abort_all"
+    );
 
     let t_abort = Instant::now();
     registry.abort_all();
@@ -749,8 +763,14 @@ fn scenario_7_crossfade_prewarm_epoch_invalidation_and_queue_mutation_race() {
         PlaybackState::Playing
     );
 
-    // Let crossfade settle cleanly without ghost swaps or dropouts.
-    thread::sleep(Duration::from_millis(220));
+    // Wait until crossfade settles cleanly without ghost swaps or dropouts.
+    assert!(
+        wait_until(Duration::from_secs(2), || {
+            !harness.engine.snapshots().is_xfading()
+                && harness.engine.snapshots().current_index() == 1
+        }),
+        "Crossfade did not settle cleanly on index 1"
+    );
     assert_eq!(harness.engine.snapshots().current_index(), 1);
 }
 
@@ -801,7 +821,8 @@ fn scenario_8_poison_recovery_and_single_thread_wasm_step_parity() {
     player.music_manager.play(None, Some(0), None, None).expect("play failed");
 
     let mut reached_pos = 0i64;
-    for _ in 0..200 {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
         player.render_pcm(512);
         reached_pos = player
             .music_manager
@@ -811,7 +832,7 @@ fn scenario_8_poison_recovery_and_single_thread_wasm_step_parity() {
         if reached_pos > 0 {
             break;
         }
-        thread::sleep(Duration::from_millis(2));
+        thread::yield_now();
     }
     assert!(reached_pos > 0, "Single-thread render_pcm stepping did not advance position");
 }

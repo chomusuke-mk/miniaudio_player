@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import '../helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
@@ -141,11 +143,13 @@ void main() {
       expect(engine.state.currentIndex, equals(2));
       expect(engine.state.isPlaying, isTrue);
       // Allow manual crossfade to settle
-      int elapsed = 0;
-      while (engine.state.isCrossfading && elapsed < 1000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        elapsed += 50;
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (crossfading) => !crossfading,
+        timeout: const Duration(seconds: 2),
+        reason: 'Manual crossfade failed to complete',
+      );
       expect(engine.state.playbackState, equals(PlaybackState.playing));
     });
   });
@@ -184,7 +188,11 @@ void main() {
 
       expect(engine.state.duration, isNull);
       await engine.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await waitForAudioProgress(
+        engine,
+        minDelta: const Duration(milliseconds: 40),
+        timeout: const Duration(seconds: 3),
+      );
       expect(engine.state.isPlaying, isTrue);
       expect(engine.state.duration, isNull);
 
@@ -203,7 +211,11 @@ void main() {
       ]);
 
       await engine.action.play(position: 1);
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await waitForAudioProgress(
+        engine,
+        minDelta: const Duration(milliseconds: 50),
+        timeout: const Duration(seconds: 3),
+      );
       expect(engine.state.duration, isNull);
       expect(engine.state.currentIndex, equals(1));
 
@@ -212,11 +224,13 @@ void main() {
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.currentItem?.data, equals('Local Track 1'));
 
-      int waitMs = 0;
-      while (engine.state.duration == null && waitMs < 1000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        waitMs += 50;
-      }
+      await awaitStateOrStream<Duration?>(
+        stream: engine.stream.duration,
+        current: () => engine.state.duration,
+        predicate: (d) => d != null,
+        timeout: const Duration(seconds: 2),
+        reason: 'Track duration should populate after stepping back to local file',
+      );
       expect(engine.state.duration, isNotNull);
     });
 
@@ -229,7 +243,11 @@ void main() {
       ]);
 
       await engine.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await waitForAudioProgress(
+        engine,
+        minDelta: const Duration(milliseconds: 40),
+        timeout: const Duration(seconds: 3),
+      );
       expect(engine.state.currentIndex, equals(0));
       expect(engine.state.duration, isNull);
 
@@ -239,11 +257,13 @@ void main() {
       expect(engine.state.currentItem?.data, equals('Local File'));
 
       // Allow crossfade (200ms) to complete
-      int elapsedXfade = 0;
-      while (engine.state.isCrossfading && elapsedXfade < 1000) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        elapsedXfade += 50;
-      }
+      await awaitStateOrStream<bool>(
+        stream: engine.stream.isCrossfading,
+        current: () => engine.state.isCrossfading,
+        predicate: (crossfading) => !crossfading,
+        timeout: const Duration(seconds: 2),
+        reason: 'Crossfade from livestream to local file failed to complete',
+      );
       expect(engine.state.isCrossfading, isFalse);
       expect(engine.state.playbackState, equals(PlaybackState.playing));
       expect(engine.state.isPlaying, isTrue);
@@ -462,7 +482,6 @@ void main() {
       // Advance track (swapping active and standby decks)
       await engine.action.play();
       await engine.action.next();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       // DSP state must remain identically configured after deck swap
       expect(engine.state.equalizer, equals(Equalizer.rock));
@@ -494,7 +513,6 @@ void main() {
       // Advance deck -> visualizer state remains enabled on new active deck
       await engine.action.play();
       await engine.action.next();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(engine.state.visualizerEnabled, isTrue);
 
       // Explicitly disabling visualizer

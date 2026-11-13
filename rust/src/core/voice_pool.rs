@@ -89,27 +89,11 @@ pub(crate) fn render_voice_buffer(
     let step = (pitch as f64 * (buf.sample_rate as f64 / sample_rate)) * doppler_ratio;
 
     for k in 0..frame_count {
-        let f0 = state.cursor_frame.floor() as usize;
-        let f1 = f0 + 1;
-        let frac = (*state.cursor_frame - f0 as f64) as f32;
-
-        if f0 >= total_frames {
-            if looping {
-                *state.cursor_frame %= total_frames as f64;
-            } else {
-                *state.active = false;
-                return true;
-            }
-        }
-
-        let f1_clamped = if f1 >= total_frames {
-            if looping {
-                0
-            } else {
-                total_frames - 1
-            }
-        } else {
-            f1
+        let Some((f0, f1_clamped, frac)) =
+            SoundBuffer::resolve_lerp_indices(state.cursor_frame, total_frames, looping)
+        else {
+            *state.active = false;
+            return true;
         };
 
         let (sl, sr) = buf.sample_stereo_lerp(f0, f1_clamped, frac);

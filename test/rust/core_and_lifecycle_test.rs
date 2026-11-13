@@ -6,7 +6,6 @@ use std::sync::atomic::{
     AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering,
 };
 use std::sync::Arc;
-use std::time::Duration;
 
 use common::{FixtureResolver, SignalGenerator};
 use miniaudio_player::buffer::MemoryByteSource;
@@ -154,7 +153,6 @@ fn test_offline_bounce_and_live_recorder_wav_writer() {
         chunk.commit_all();
     }
 
-    std::thread::sleep(Duration::from_millis(50));
     let recorded_bytes = recorder.stop().unwrap();
     assert_eq!(recorded_bytes, 8);
     assert!(!recorder.is_recording());

@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
@@ -90,12 +92,9 @@ void main() {
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
       expect(player.state.duration?.inSeconds, inInclusiveRange(65, 75));
-
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.seek(const Duration(seconds: 10));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(player.state.position.inSeconds, inInclusiveRange(9, 12));
 
       await player.action.pause();
@@ -113,8 +112,6 @@ void main() {
       await player.action.setQueue([AudioSource(bytes)]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -128,8 +125,6 @@ void main() {
       await player.action.setQueue([AudioSource(bytes)]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -143,8 +138,6 @@ void main() {
       await player.action.setQueue([AudioSource(bytes)]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -158,8 +151,6 @@ void main() {
       await player.action.setQueue([AudioSource(bytes)]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -197,7 +188,7 @@ void main() {
         await player.action.setQueue([AudioSource(bytes)]);
         await player.action.play();
         expect(player.state.duration?.inSeconds, greaterThan(0));
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(player.state.isPlaying, isTrue);
         await player.action.stop();
       }
     });
@@ -222,8 +213,6 @@ void main() {
       await player.action.setQueue([AudioSource(bytes)]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -233,8 +222,6 @@ void main() {
       await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -329,14 +316,12 @@ void main() {
       expect(player.state.duration?.inSeconds, greaterThan(0));
       expect(player.state.duration?.inSeconds, inInclusiveRange(65, 75));
 
-      await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.pause();
       expect(player.state.isPlaying, isFalse);
 
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -349,11 +334,10 @@ void main() {
       await player.action.setQueue([AudioSource(Uri.parse(url))]);
 
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(player.state.isPlaying, isTrue);
 
       // Seek to 30 seconds via HTTP Byte-Range request
       await player.action.seek(const Duration(seconds: 30));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(player.state.position.inSeconds, inInclusiveRange(28, 33));
 
@@ -371,12 +355,10 @@ void main() {
       expect(player.state.duration?.inSeconds, inInclusiveRange(9, 11));
       expect(player.state.audioInfo?.bitrate, greaterThan(0));
 
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       // Seek to 5 seconds via Byte-Range request
       await player.action.seek(const Duration(seconds: 5));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(player.state.position.inSeconds, inInclusiveRange(4, 7));
 
@@ -395,7 +377,6 @@ void main() {
 
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -407,7 +388,6 @@ void main() {
 
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 150));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -420,18 +400,15 @@ void main() {
       await player.action.play();
 
       expect(player.state.duration?.inSeconds, inInclusiveRange(65, 72));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(player.state.isPlaying, isTrue);
 
       // 1. Seek forward near the end (55 seconds)
       await player.action.seek(const Duration(seconds: 55));
-      await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(player.state.position.inSeconds, inInclusiveRange(53, 58));
       expect(player.state.isPlaying, isTrue);
 
       // 2. Seek backward to an earlier position (20 seconds)
       await player.action.seek(const Duration(seconds: 20));
-      await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(player.state.position.inSeconds, inInclusiveRange(18, 23));
       expect(player.state.isPlaying, isTrue);
 
@@ -492,7 +469,6 @@ void main() {
 
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -530,7 +506,11 @@ void main() {
 
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 50),
+        timeout: const Duration(seconds: 3),
+      );
       expect(player.state.isPlaying, isTrue);
 
       await player.action.stop();
@@ -555,8 +535,12 @@ void main() {
       await player.action.setQueue([AudioSource(dropUrl)]);
 
       await player.action.play();
-      // Let it play until server drops connection abruptly
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      // Let it decode/render until frames advance or connection closes cleanly
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 60),
+        timeout: const Duration(seconds: 3),
+      );
 
       // Native audio engine must remain healthy and cleanly stop
       await player.action.stop();
@@ -570,7 +554,11 @@ void main() {
       await player.action.setQueue([AudioSource(Uri.parse(liveUrl))]);
 
       await player.action.play();
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 60),
+        timeout: const Duration(seconds: 3),
+      );
       expect(player.state.isPlaying, isTrue);
 
       // Volume adjustments during live stream
@@ -592,17 +580,17 @@ void main() {
         // 1. Memory
         await player.action.setQueue([AudioSource(bytes)]);
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(player.state.isPlaying, isTrue);
 
         // 2. Network
         await player.action.setQueue([AudioSource(Uri.parse(netUrl))]);
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(player.state.isPlaying, isTrue);
 
         // 3. Asset
         await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
         await player.action.play();
-        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(player.state.isPlaying, isTrue);
 
         await player.action.stop();
       }

@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
+import 'helpers/concurrency_test_utils.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -103,7 +105,7 @@ void main() {
       expect(player.state.skipSilence, isFalse);
       expect(player.state.silenceSkipMode, equals(SilenceSkipMode.disabled));
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await drainBroadcastStreams(8);
       await sub.cancel();
 
       expect(skipEvents, equals([true, false]));
@@ -135,7 +137,7 @@ void main() {
         equals(const Duration(milliseconds: 60)),
       );
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await drainBroadcastStreams(8);
       await sub.cancel();
 
       expect(configEvents, contains(targetConfig));
@@ -167,7 +169,10 @@ void main() {
           .setSilenceConfig(const SilenceSkipConfig.continuous());
       expect(player.state.skipSilence, isTrue);
 
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 60),
+      );
 
       // Toggle silence skip OFF while playing
       await player.action.setSilenceConfig(const SilenceSkipConfig.off());
@@ -182,7 +187,10 @@ void main() {
       await player.action.setQueue([AudioSource('test/fixtures/salida.wav')]);
       await player.action.play();
 
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await waitForAudioProgress(
+        player,
+        minDelta: const Duration(milliseconds: 50),
+      );
 
       // Seek back to beginning
       await player.action.seek(Duration.zero);

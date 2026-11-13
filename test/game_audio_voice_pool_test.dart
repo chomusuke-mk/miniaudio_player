@@ -239,7 +239,6 @@ void main() {
 
         // Stop only targetVoice
         await targetVoice.stop();
-        await Future<void>.delayed(const Duration(milliseconds: 20));
 
         // Exactly 9 voices must remain active
         expect(multiPlayer.state.activeVoicesCount, equals(9));
