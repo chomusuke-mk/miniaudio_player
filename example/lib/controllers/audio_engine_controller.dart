@@ -83,15 +83,18 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   bool get replayGainEnabled => engine.state.volumeNormalization;
-  ReplayGainMode get replayGainMode => engine.state.replayGainMode;
+  ReplayGainMode? _replayGainModeOverride;
+  ReplayGainMode get replayGainMode =>
+      _replayGainModeOverride ?? engine.state.replayGainMode;
   double get defaultReplayGain => engine.state.defaultReplayGain;
 
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
+    _replayGainModeOverride = mode;
+    notifyListeners();
     MapLogger.info(
       '[REPLAY_GAIN:MODE] Operating mode changed to: ${mode.name.toUpperCase()}',
     );
     await engine.action.setReplayGainMode(mode);
-    notifyListeners();
   }
 
   Future<void> setDefaultReplayGain(double gainDb) async {
@@ -450,7 +453,10 @@ class AudioEngineController extends ChangeNotifier {
       engine.stream.replayGain.listen((_) => notifyListeners()),
     );
     _subscriptions.add(
-      engine.stream.replayGainMode.listen((_) => notifyListeners()),
+      engine.stream.replayGainMode.listen((_) {
+        _replayGainModeOverride = null;
+        notifyListeners();
+      }),
     );
     _subscriptions.add(
       engine.stream.crossfeed.listen((_) {

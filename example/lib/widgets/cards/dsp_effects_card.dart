@@ -138,13 +138,19 @@ class DspEffectsCard extends StatelessWidget {
     );
   }
 
-  Widget _buildResponsiveSubCardGrid(List<Widget> cards, double maxWidth) {
+  Widget _buildResponsiveSubCardGrid(
+    List<Widget> cards,
+    double maxWidth, {
+    int maxColumns = 4,
+    double twoColumnBreakpoint = 420,
+    double spacing = 10,
+  }) {
     final int columns;
-    if (maxWidth >= 780) {
+    if (maxColumns >= 4 && maxWidth >= 780) {
       columns = 4;
-    } else if (maxWidth >= 620) {
+    } else if (maxColumns >= 3 && maxWidth >= 620) {
       columns = 3;
-    } else if (maxWidth >= 420) {
+    } else if (maxWidth >= twoColumnBreakpoint) {
       columns = 2;
     } else {
       columns = 1;
@@ -157,7 +163,7 @@ class DspEffectsCard extends StatelessWidget {
         (i + columns) > cards.length ? cards.length : (i + columns),
       );
       if (rows.isNotEmpty) {
-        rows.add(const SizedBox(height: 10));
+        rows.add(SizedBox(height: spacing));
       }
       if (rowItems.length == 1) {
         rows.add(rowItems.first);
@@ -168,7 +174,7 @@ class DspEffectsCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 for (var j = 0; j < rowItems.length; j++) ...[
-                  if (j > 0) const SizedBox(width: 10),
+                  if (j > 0) SizedBox(width: spacing),
                   Expanded(child: rowItems[j]),
                 ],
               ],
@@ -184,13 +190,12 @@ class DspEffectsCard extends StatelessWidget {
     );
   }
 
-  Widget _buildCompactToggleTile({
+  Widget _buildCompactHeaderTile({
     required IconData icon,
+    required Color iconColor,
     required String title,
     required String subtitle,
-    required bool value,
-    required Color activeColor,
-    required ValueChanged<bool> onChanged,
+    required Widget trailing,
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -207,12 +212,13 @@ class DspEffectsCard extends StatelessWidget {
           Icon(
             icon,
             size: 16,
-            color: value ? activeColor : StudioColors.textMuted,
+            color: iconColor,
           ),
           const SizedBox(width: 6),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   title,
@@ -236,12 +242,72 @@ class DspEffectsCard extends StatelessWidget {
               ],
             ),
           ),
-          Switch(
-            value: value,
-            activeThumbColor: activeColor,
-            onChanged: onChanged,
-          ),
+          const SizedBox(width: 6),
+          trailing,
         ],
+      ),
+    );
+  }
+
+  Widget _buildCompactToggleTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required Color activeColor,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return _buildCompactHeaderTile(
+      icon: icon,
+      iconColor: value ? activeColor : StudioColors.textMuted,
+      title: title,
+      subtitle: subtitle,
+      trailing: Switch(
+        value: value,
+        activeThumbColor: activeColor,
+        onChanged: onChanged,
+      ),
+    );
+  }
+
+  Widget _buildReplayGainTile() {
+    final isActive = controller.replayGainMode != ReplayGainMode.disabled;
+    return _buildCompactHeaderTile(
+      icon: Icons.equalizer,
+      iconColor: isActive ? StudioColors.accentCyan : StudioColors.textMuted,
+      title: 'ReplayGain Normalization',
+      subtitle:
+          'Operating Mode: ${controller.replayGainMode.name.toUpperCase()}',
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF070B14),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: StudioColors.cardBorder),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<ReplayGainMode>(
+            value: controller.replayGainMode,
+            isDense: true,
+            icon: const Icon(Icons.arrow_drop_down, size: 16),
+            dropdownColor: const Color(0xFF0E172A),
+            items: ReplayGainMode.values.map((m) {
+              return DropdownMenuItem(
+                value: m,
+                child: Text(
+                  m.name.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              );
+            }).toList(),
+            onChanged: (mode) {
+              if (mode != null) controller.setReplayGainMode(mode);
+            },
+          ),
+        ),
       ),
     );
   }
@@ -264,12 +330,10 @@ class DspEffectsCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // =============================================================
-              // 1. True-Peak Limiter & Mono Downmix
+              // 1. True-Peak Limiter, Mono Downmix & ReplayGain Normalization
               // =============================================================
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final isCompact = constraints.maxWidth < 360;
-
                   final limiterWidget = _buildCompactToggleTile(
                     icon: Icons.shield_outlined,
                     title: 'True-Peak Limiter',
@@ -292,23 +356,14 @@ class DspEffectsCard extends StatelessWidget {
                     onChanged: controller.setMonoDownmix,
                   );
 
-                  if (isCompact) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        limiterWidget,
-                        const SizedBox(height: 8),
-                        monoWidget,
-                      ],
-                    );
-                  }
+                  final replayGainWidget = _buildReplayGainTile();
 
-                  return Row(
-                    children: [
-                      Expanded(child: limiterWidget),
-                      const SizedBox(width: 8),
-                      Expanded(child: monoWidget),
-                    ],
+                  return _buildResponsiveSubCardGrid(
+                    [replayGainWidget, limiterWidget, monoWidget],
+                    constraints.maxWidth,
+                    maxColumns: 3,
+                    twoColumnBreakpoint: 360,
+                    spacing: 8,
                   );
                 },
               ),
@@ -414,70 +469,6 @@ class DspEffectsCard extends StatelessWidget {
                       max: 1.0,
                       activeColor: StudioColors.accentCyan,
                       onChanged: controller.setStereoBalance,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // =============================================================
-              // 5. ReplayGain Master Operating Mode
-              // =============================================================
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF070B14),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: StudioColors.cardBorder),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'ReplayGain Normalization',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Text(
-                            'Operating Mode: ${controller.replayGainMode.name.toUpperCase()}',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: StudioColors.textMuted,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    DropdownButtonHideUnderline(
-                      child: DropdownButton<ReplayGainMode>(
-                        value: controller.replayGainMode,
-                        dropdownColor: const Color(0xFF0E1424),
-                        items: ReplayGainMode.values.map((m) {
-                          return DropdownMenuItem(
-                            value: m,
-                            child: Text(
-                              m.name.toUpperCase(),
-                              style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (mode) {
-                          if (mode != null) controller.setReplayGainMode(mode);
-                        },
-                      ),
                     ),
                   ],
                 ),

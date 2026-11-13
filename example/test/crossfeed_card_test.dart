@@ -941,5 +941,119 @@ void main() {
         await pumpEq(size: const Size(280, 653), textScale: 1.5);
       },
     );
+
+    testWidgets(
+      'ReplayGain Normalization shares 1/3 header row with Limiter and Mono Downmix using styled Output-style dropdown',
+      (tester) async {
+        Finder headerTileFor(String title) => find
+            .ancestor(
+              of: find.text(title),
+              matching: find.byWidgetPredicate(
+                (w) =>
+                    w is Container &&
+                    w.decoration is BoxDecoration &&
+                    (w.decoration! as BoxDecoration).color ==
+                        const Color(0xFF0A0F1D),
+              ),
+            )
+            .first;
+
+        // Wide (800px host -> 744px inner width >= 620): all 3 share 1 row at 1/3 each
+        await pumpDspCard(tester, size: const Size(800, 900));
+
+        final limiterTile = headerTileFor('True-Peak Limiter');
+        final monoTile = headerTileFor('Mono Downmix');
+        final rgTile = headerTileFor('ReplayGain Normalization');
+
+        final limiterRect = tester.getRect(limiterTile);
+        final monoRect = tester.getRect(monoTile);
+        final rgRect = tester.getRect(rgTile);
+
+        expect(monoRect.top, closeTo(limiterRect.top, 0.5));
+        expect(rgRect.top, closeTo(limiterRect.top, 0.5));
+        expect(rgRect.right, lessThanOrEqualTo(limiterRect.left));
+        expect(limiterRect.right, lessThanOrEqualTo(monoRect.left));
+        expect(monoRect.width, closeTo(limiterRect.width, 1.5));
+        expect(rgRect.width, closeTo(limiterRect.width, 1.5));
+        expect(rgRect.height, closeTo(limiterRect.height, 0.5));
+
+        // Verify matching tile internals: Icon + [Title / Subtitle] + Output-style dropdown (no Switch)
+        final rgIconRect = tester.getRect(
+          find.descendant(of: rgTile, matching: find.byIcon(Icons.equalizer)),
+        );
+        final rgTitleRect = tester.getRect(
+          find.descendant(
+            of: rgTile,
+            matching: find.text('ReplayGain Normalization'),
+          ),
+        );
+        final rgSubRect = tester.getRect(
+          find.descendant(
+            of: rgTile,
+            matching: find.text('Operating Mode: TRACK'),
+          ),
+        );
+        expect(
+          find.descendant(of: rgTile, matching: find.byType(Switch)),
+          findsNothing,
+        );
+
+        final rgDropdown = find.descendant(
+          of: rgTile,
+          matching: find.byWidgetPredicate(
+            (w) => w is DropdownButton<ReplayGainMode>,
+          ),
+        );
+        expect(rgDropdown, findsOneWidget);
+        final rgDropdownBox = find
+            .ancestor(
+              of: rgDropdown,
+              matching: find.byWidgetPredicate(
+                (w) =>
+                    w is Container &&
+                    w.decoration is BoxDecoration &&
+                    (w.decoration! as BoxDecoration).color ==
+                        const Color(0xFF070B14),
+              ),
+            )
+            .first;
+        final rgDropdownRect = tester.getRect(rgDropdownBox);
+
+        expect(rgSubRect.top, greaterThanOrEqualTo(rgTitleRect.bottom));
+        expect(rgSubRect.left, closeTo(rgTitleRect.left, 0.5));
+        expect(rgSubRect.left, greaterThanOrEqualTo(rgIconRect.right));
+        expect(rgDropdownRect.left, greaterThanOrEqualTo(rgTitleRect.right - 1.0));
+
+        // Select FORCED mode via styled dropdown
+        await tester.tap(rgDropdown);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.text('FORCED').last);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(controller.replayGainMode, ReplayGainMode.forced);
+        expect(find.text('Operating Mode: FORCED'), findsOneWidget);
+
+        // Medium (480px host -> 424px inner width -> 2 columns): ReplayGain & Limiter row 1, Mono row 2
+        await pumpDspCard(tester, size: const Size(480, 900));
+        final medLimiter = tester.getRect(headerTileFor('True-Peak Limiter'));
+        final medMono = tester.getRect(headerTileFor('Mono Downmix'));
+        final medRg = tester.getRect(headerTileFor('ReplayGain Normalization'));
+        expect(medRg.top, closeTo(medLimiter.top, 0.5));
+        expect(medRg.right, lessThanOrEqualTo(medLimiter.left));
+        expect(medMono.top, greaterThanOrEqualTo(medLimiter.bottom));
+
+        // Mobile (390px host -> 334px inner width < 360 -> 1 column): stacked ReplayGain / Limiter / Mono
+        await pumpDspCard(tester, size: const Size(390, 844));
+        final mobLimiter = tester.getRect(headerTileFor('True-Peak Limiter'));
+        final mobMono = tester.getRect(headerTileFor('Mono Downmix'));
+        final mobRg = tester.getRect(headerTileFor('ReplayGain Normalization'));
+        expect(mobLimiter.top, greaterThanOrEqualTo(mobRg.bottom));
+        expect(mobMono.top, greaterThanOrEqualTo(mobLimiter.bottom));
+
+        // Ultra-narrow 280x653 with 1.5x text scale renders with zero overflow
+        await pumpDspCard(tester, size: const Size(280, 653), textScale: 1.5);
+      },
+    );
   });
 }
