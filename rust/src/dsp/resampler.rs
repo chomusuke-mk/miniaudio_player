@@ -20,6 +20,23 @@ pub struct RubatoResampler {
 }
 
 impl RubatoResampler {
+    /// Zero-overhead passthrough resampler guaranteed never to fail.
+    pub fn passthrough(sample_rate: u32, channels: usize, chunk_size: usize) -> Self {
+        let sr = sample_rate.max(1);
+        let cs = chunk_size.max(256);
+        Self {
+            resampler: None,
+            sample_rate_in: sr,
+            sample_rate_out: sr,
+            channels: channels.max(1),
+            chunk_size_in: cs,
+            chunk_size_out: cs,
+            in_buffers: Vec::new(),
+            out_buffers: Vec::new(),
+            in_fifo: Vec::new(),
+        }
+    }
+
     /// Creates a new resampler instance.
     /// If `sample_rate_in == sample_rate_out`, it operates in zero-overhead passthrough mode.
     pub fn new(

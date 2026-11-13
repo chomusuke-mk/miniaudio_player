@@ -21,6 +21,13 @@ pub struct ActiveInputNode {
     pub scratch_buffer: Vec<f32>,
 }
 
+/// Pre-opened physical capture changes staged off `map-engine-clock`.
+pub struct PreparedInputs {
+    pub desired_inputs: Vec<RustAudioInput>,
+    pub updates: Vec<(String, String, RustAudioInputConfig)>,
+    pub new_nodes: Vec<ActiveInputNode>,
+}
+
 /// Domain manager governing multi-input capture, RMS detection, auto-ducking, and direct monitoring.
 pub struct InputManager {
     /// Active capture hardware input nodes.
@@ -37,14 +44,99 @@ pub struct InputManager {
     pub channels: usize,
 }
 
+impl ActiveInputNode {
+    /// Drains capture audio frames into `self.scratch_buffer`, discarding stale buffered
+    /// frames in O(1) when capture jitter exceeds ~3 audio periods to stay on the live edge.
+    fn drain_live_edge_to_scratch(&mut self, frame_count: usize) {
+        if self.scratch_buffer.len() < frame_count {
+            self.scratch_buffer.resize(frame_count, 0.0);
+        }
+        self.scratch_buffer[..frame_count].fill(0.0);
+
+        let node_ch = (self.capture_node.channels as usize).max(1);
+        let needed_samples = frame_count * node_ch;
+        let max_jitter_samples = (needed_samples * 3).max(node_ch * 256);
+        let available = self.consumer.slots();
+        if available > max_jitter_samples {
+            let stale_raw = available - needed_samples;
+            let stale = (stale_raw / node_ch) * node_ch;
+            if stale > 0 {
+                if let Ok(chunk) = self.consumer.read_chunk(stale) {
+                    chunk.commit_all();
+                }
+            }
+        }
+
+        let mic_vol = self.config.volume.max(0.0);
+        let current_slots = self.consumer.slots();
+        let to_read = (current_slots.min(needed_samples) / node_ch) * node_ch;
+        if to_read == 0 {
+            return;
+        }
+
+        let Ok(chunk) = self.consumer.read_chunk(to_read) else {
+            return;
+        };
+        let (s1, s2) = chunk.as_slices();
+        if node_ch == 1 {
+            let n1 = s1.len().min(frame_count);
+            for (dst, &src) in self.scratch_buffer[..n1].iter_mut().zip(&s1[..n1]) {
+                *dst = src * mic_vol;
+            }
+            let rem = (to_read - n1).min(s2.len());
+            for (dst, &src) in self.scratch_buffer[n1..n1 + rem].iter_mut().zip(&s2[..rem]) {
+                *dst = src * mic_vol;
+            }
+        } else {
+            let inv_ch = mic_vol / node_ch as f32;
+            let mut iter = s1.iter().chain(s2.iter());
+            let frames_read = to_read / node_ch;
+            for dst in &mut self.scratch_buffer[..frames_read] {
+                let mut sum = 0.0f32;
+                for _ in 0..node_ch {
+                    if let Some(&s) = iter.next() {
+                        sum += s;
+                    }
+                }
+                *dst = sum * inv_ch;
+            }
+        }
+        chunk.commit_all();
+    }
+}
+
+/// Mixes mono frame slice `src[..frame_count]` evenly across all interleaved channels in `dst`.
+#[inline]
+fn mix_mono_frames_into_interleaved(
+    src: &[f32],
+    dst: &mut [f32],
+    frame_count: usize,
+    channels: usize,
+    gain: f32,
+) {
+    let max_samples = dst.len();
+    for (f, &sample) in src.iter().take(frame_count).enumerate() {
+        let val = sample * gain;
+        let out_idx = f * channels;
+        for c in 0..channels {
+            if out_idx + c < max_samples {
+                dst[out_idx + c] += val;
+            }
+        }
+    }
+}
+
 impl InputManager {
+    /// Default preallocated scratch buffer size in frames to avoid RT heap reallocations.
+    const DEFAULT_SCRATCH_FRAMES: usize = 8192;
+
     /// Creates a new `InputManager` with the specified sample rate and channel count.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         Self {
             active_inputs: Vec::new(),
             inputs: Vec::new(),
-            ducking_envelope: vec![1.0; 2048],
-            node_envelope: vec![1.0; 2048],
+            ducking_envelope: vec![1.0; Self::DEFAULT_SCRATCH_FRAMES],
+            node_envelope: vec![1.0; Self::DEFAULT_SCRATCH_FRAMES],
             sample_rate,
             channels,
         }
@@ -81,6 +173,174 @@ impl InputManager {
         }
     }
 
+    /// Returns `(device_id, resolved_id)` keys for all currently active capture nodes.
+    pub fn current_device_keys(&self) -> Vec<(String, String)> {
+        self.active_inputs
+            .iter()
+            .map(|n| (n.device_id.clone(), n.resolved_id.clone()))
+            .collect()
+    }
+
+    fn apply_ducker_params(ducker: &mut AutoDucker, config: &RustAudioInputConfig) {
+        if let Some(ref d) = config.ducking {
+            ducker.set_params(
+                d.enabled,
+                d.ducking_db,
+                d.threshold_db,
+                d.attack_ms,
+                d.hold_ms,
+                d.release_ms,
+            );
+        } else {
+            ducker.set_params(false, -14.0, -30.0, 30.0, 250.0, 400.0);
+        }
+    }
+
+    fn resolve_effective_configs(
+        inputs: &[RustAudioInput],
+        pre_resolved_auto_id: Option<String>,
+    ) -> Vec<(RustAudioInput, String)> {
+        let current_auto_def =
+            pre_resolved_auto_id.or_else(|| Self::resolve_physical_input_id("AUTO"));
+        let mut effective_configs: Vec<(RustAudioInput, String)> = Vec::new();
+
+        // 1. Prioritize AUTO inputs first
+        for inp in inputs {
+            if inp.device_id == "AUTO" {
+                let auto_res_id = current_auto_def
+                    .clone()
+                    .unwrap_or_else(|| "AUTO".to_string());
+                if !effective_configs.iter().any(|(_, r)| r == &auto_res_id) {
+                    effective_configs.push((inp.clone(), auto_res_id));
+                }
+            }
+        }
+
+        // 2. Add specific physical devices whose endpoints are not already claimed by AUTO
+        for inp in inputs {
+            if inp.device_id != "AUTO" {
+                if let Some(res_id) = Self::resolve_physical_input_id(&inp.device_id) {
+                    let already_claimed = effective_configs.iter().any(|(c, r)| {
+                        r == &res_id
+                            || (c.device_id == "AUTO" && current_auto_def.as_ref() == Some(&res_id))
+                    });
+                    if !already_claimed {
+                        effective_configs.push((inp.clone(), res_id));
+                    }
+                }
+            }
+        }
+
+        effective_configs
+    }
+
+    fn open_physical_input_node(
+        sample_rate: u32,
+        inp: &RustAudioInput,
+        target_resolved_id: &str,
+    ) -> Result<ActiveInputNode, String> {
+        let c_dev = if target_resolved_id == "AUTO" {
+            None
+        } else {
+            CString::new(target_resolved_id).ok()
+        };
+        let c_ptr = c_dev
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null());
+
+        let (capture_node, consumer) = DeviceCaptureNode::new(sample_rate, 1, 512, c_ptr)
+            .map_err(|e| format!("Failed to create capture device: code {}", e))?;
+
+        let _ = capture_node.start();
+
+        let mut ducker = AutoDucker::new(sample_rate);
+        Self::apply_ducker_params(&mut ducker, &inp.config);
+
+        Ok(ActiveInputNode {
+            device_id: inp.device_id.clone(),
+            resolved_id: target_resolved_id.to_string(),
+            config: inp.config.clone(),
+            capture_node,
+            consumer,
+            ducker,
+            scratch_buffer: vec![0.0; Self::DEFAULT_SCRATCH_FRAMES],
+        })
+    }
+
+    /// Resolves and opens newly requested capture hardware devices off `map-engine-clock`.
+    pub fn prepare_inputs_off_rt(
+        sample_rate: u32,
+        existing_open: &[(String, String)],
+        inputs: Vec<RustAudioInput>,
+        pre_resolved_auto_id: Option<String>,
+    ) -> Result<PreparedInputs, String> {
+        let effective_configs = Self::resolve_effective_configs(&inputs, pre_resolved_auto_id);
+        let mut updates = Vec::with_capacity(effective_configs.len());
+        let mut new_nodes = Vec::new();
+
+        for (inp, target_resolved_id) in effective_configs {
+            let already_open = existing_open
+                .iter()
+                .any(|(dev_id, res_id)| res_id == &target_resolved_id && dev_id == &inp.device_id);
+            updates.push((
+                inp.device_id.clone(),
+                target_resolved_id.clone(),
+                inp.config.clone(),
+            ));
+            if !already_open {
+                new_nodes.push(Self::open_physical_input_node(
+                    sample_rate,
+                    &inp,
+                    &target_resolved_id,
+                )?);
+            }
+        }
+
+        Ok(PreparedInputs {
+            desired_inputs: inputs,
+            updates,
+            new_nodes,
+        })
+    }
+
+    /// Swaps pre-opened capture nodes into `active_inputs` in O(N), returning evicted nodes
+    /// so OS device teardown runs on caller / `map-reaper`.
+    pub fn apply_prepared_inputs(&mut self, batch: PreparedInputs) -> Vec<ActiveInputNode> {
+        self.inputs = batch.desired_inputs;
+        let mut kept = Vec::with_capacity(self.active_inputs.len() + batch.new_nodes.len());
+        let mut evicted = Vec::new();
+
+        for mut node in self.active_inputs.drain(..) {
+            if let Some((_, _, cfg)) = batch
+                .updates
+                .iter()
+                .find(|(dev_id, res_id, _)| *res_id == node.resolved_id && *dev_id == node.device_id)
+            {
+                node.config = cfg.clone();
+                Self::apply_ducker_params(&mut node.ducker, cfg);
+                kept.push(node);
+            } else {
+                node.capture_node.is_active.store(false, std::sync::atomic::Ordering::Release);
+                evicted.push(node);
+            }
+        }
+
+        for new_node in batch.new_nodes {
+            let dup = kept
+                .iter()
+                .any(|n| n.resolved_id == new_node.resolved_id && n.device_id == new_node.device_id);
+            if dup {
+                evicted.push(new_node);
+            } else {
+                kept.push(new_node);
+            }
+        }
+
+        self.active_inputs = kept;
+        evicted
+    }
+
     /// Reconciles active capture nodes with the requested inputs set.
     pub fn set_inputs(&mut self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
         self.set_inputs_with_resolved(inputs, None)
@@ -92,110 +352,15 @@ impl InputManager {
         inputs: Vec<RustAudioInput>,
         pre_resolved_auto_id: Option<String>,
     ) -> Result<(), String> {
-        self.inputs = inputs;
-        let current_auto_def = pre_resolved_auto_id
-            .or_else(|| Self::resolve_physical_input_id("AUTO"));
-
-        // Deduplicate physical hardware capture targets:
-        // Prioritize AUTO and its configuration over specific/explicit devices.
-        // `self.inputs` remains completely intact.
-        let mut effective_configs: Vec<(RustAudioInput, String)> = Vec::new();
-
-        // 1. Prioritize AUTO inputs first
-        for inp in &self.inputs {
-            if inp.device_id == "AUTO" {
-                let auto_res_id = current_auto_def.clone().unwrap_or_else(|| "AUTO".to_string());
-                if !effective_configs.iter().any(|(_, r)| r == &auto_res_id) {
-                    effective_configs.push((inp.clone(), auto_res_id));
-                }
-            }
-        }
-
-        // 2. Add specific physical devices whose endpoints are not already claimed by AUTO
-        for inp in &self.inputs {
-            if inp.device_id != "AUTO" {
-                if let Some(res_id) = Self::resolve_physical_input_id(&inp.device_id) {
-                    let already_claimed = effective_configs.iter().any(|(c, r)| {
-                        r == &res_id || (c.device_id == "AUTO" && current_auto_def.as_ref() == Some(&res_id))
-                    });
-                    if !already_claimed {
-                        effective_configs.push((inp.clone(), res_id));
-                    }
-                }
-            }
-        }
-
-        // 3. Evict active capture nodes not present in effective_configs
-        self.active_inputs.retain_mut(|node| {
-            let keep = effective_configs.iter().any(|(inp, res_id)| {
-                *res_id == node.resolved_id && inp.device_id == node.device_id
-            });
-            if !keep {
-                let _ = node.capture_node.stop();
-            }
-            keep
-        });
-
-        // 4. Update existing nodes and open new ones from effective_configs
-        for (inp, target_resolved_id) in effective_configs {
-            if let Some(node) = self
-                .active_inputs
-                .iter_mut()
-                .find(|n| n.device_id == inp.device_id && n.resolved_id == target_resolved_id)
-            {
-                // Modulate runtime config without reopening hardware
-                node.config = inp.config.clone();
-                if let Some(ref d) = inp.config.ducking {
-                    node.ducker.set_params(
-                        d.enabled,
-                        d.ducking_db,
-                        d.threshold_db,
-                        d.attack_ms,
-                        d.hold_ms,
-                        d.release_ms,
-                    );
-                } else {
-                    node.ducker.set_params(false, -14.0, -30.0, 30.0, 250.0, 400.0);
-                }
-            } else {
-                // Add new hardware capture node bound to resolved physical endpoint
-                let c_dev = if target_resolved_id == "AUTO" {
-                    None
-                } else {
-                    CString::new(target_resolved_id.as_str()).ok()
-                };
-                let c_ptr = c_dev.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
-
-                let (capture_node, consumer) =
-                    DeviceCaptureNode::new(self.sample_rate, 1, 512, c_ptr)
-                        .map_err(|e| format!("Failed to create capture device: code {}", e))?;
-
-                let _ = capture_node.start();
-
-                let mut ducker = AutoDucker::new(self.sample_rate);
-                if let Some(ref d) = inp.config.ducking {
-                    ducker.set_params(
-                        d.enabled,
-                        d.ducking_db,
-                        d.threshold_db,
-                        d.attack_ms,
-                        d.hold_ms,
-                        d.release_ms,
-                    );
-                }
-
-                self.active_inputs.push(ActiveInputNode {
-                    device_id: inp.device_id,
-                    resolved_id: target_resolved_id,
-                    config: inp.config,
-                    capture_node,
-                    consumer,
-                    ducker,
-                    scratch_buffer: vec![0.0; 2048],
-                });
-            }
-        }
-
+        let existing = self.current_device_keys();
+        let batch = Self::prepare_inputs_off_rt(
+            self.sample_rate,
+            &existing,
+            inputs,
+            pre_resolved_auto_id,
+        )?;
+        let evicted = self.apply_prepared_inputs(batch);
+        drop(evicted);
         Ok(())
     }
 
@@ -246,18 +411,7 @@ impl InputManager {
             .find(|n| n.device_id == device_id)
         {
             node.config = config.clone();
-            if let Some(ref d) = config.ducking {
-                node.ducker.set_params(
-                    d.enabled,
-                    d.ducking_db,
-                    d.threshold_db,
-                    d.attack_ms,
-                    d.hold_ms,
-                    d.release_ms,
-                );
-            } else {
-                node.ducker.set_params(false, -14.0, -30.0, 30.0, 250.0, 400.0);
-            }
+            Self::apply_ducker_params(&mut node.ducker, &config);
             Ok(())
         } else if self.inputs.iter().any(|n| n.device_id == device_id) {
             Ok(())
@@ -303,21 +457,7 @@ impl InputManager {
         let mut any_ducking = false;
 
         for node in &mut self.active_inputs {
-            if node.scratch_buffer.len() < frame_count {
-                node.scratch_buffer.resize(frame_count, 0.0);
-            }
-            node.scratch_buffer[..frame_count].fill(0.0);
-
-            let mic_vol = node.config.volume.max(0.0);
-            let mut read_idx = 0;
-            while read_idx < frame_count {
-                if let Ok(sample) = node.consumer.pop() {
-                    node.scratch_buffer[read_idx] = sample * mic_vol;
-                    read_idx += 1;
-                } else {
-                    break;
-                }
-            }
+            node.drain_live_edge_to_scratch(frame_count);
 
             // Sidechain auto-ducking with multi-microphone arbitration (taking maximum attenuation / minimum gain)
             if let Some(ref ducking) = node.config.ducking {
@@ -334,15 +474,14 @@ impl InputManager {
             }
 
             // Unconditional Voice Only bus accumulation (pure voice audio at capture volume)
-            let out_len = scratch_voice_out.len().min(sample_count);
-            for f in 0..frame_count {
-                let val = node.scratch_buffer[f];
-                let out_idx = f * self.channels;
-                if out_idx + 1 < out_len {
-                    scratch_voice_out[out_idx] += val;
-                    scratch_voice_out[out_idx + 1] += val;
-                }
-            }
+            let voice_out_len = scratch_voice_out.len().min(sample_count);
+            mix_mono_frames_into_interleaved(
+                &node.scratch_buffer,
+                &mut scratch_voice_out[..voice_out_len],
+                frame_count,
+                self.channels,
+                1.0,
+            );
         }
 
         // Apply arbitrated ducking envelope to music bus ONLY (maximum attenuation, never cascading across mics)
@@ -361,16 +500,14 @@ impl InputManager {
         for node in &self.active_inputs {
             if node.config.monitor_direct {
                 let mon_vol = node.config.monitor_volume.max(0.0);
-                let music_len = music_buffer.len().min(sample_count);
-
-                for f in 0..frame_count {
-                    let val = node.scratch_buffer[f] * mon_vol;
-                    let out_idx = f * self.channels;
-                    if out_idx + 1 < music_len {
-                        music_buffer[out_idx] += val;
-                        music_buffer[out_idx + 1] += val;
-                    }
-                }
+                let music_out_len = music_buffer.len().min(sample_count);
+                mix_mono_frames_into_interleaved(
+                    &node.scratch_buffer,
+                    &mut music_buffer[..music_out_len],
+                    frame_count,
+                    self.channels,
+                    mon_vol,
+                );
             }
         }
     }

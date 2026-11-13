@@ -245,6 +245,22 @@ impl LiveRecorder {
             .map_err(|e| format!("Failed to create recording file '{}': {}", path, e))
     }
 
+    /// Opens the output file, allocates the SPSC ring buffer, and spawns the background
+    /// disk writer thread outside any real-time or engine-clock critical section.
+    pub fn prepare_start(
+        sample_rate: u32,
+        channels: usize,
+        format: WavFormat,
+        path: &str,
+    ) -> Result<(Self, rtrb::Producer<f32>), String> {
+        let sr = sample_rate.max(8000);
+        let ch = channels.max(1);
+        let (prod, cons) = rtrb::RingBuffer::new(sr as usize * ch * 4);
+        let mut rec = Self::new(sr, ch, format);
+        rec.start(path, cons)?;
+        Ok((rec, prod))
+    }
+
     /// Starts writing audio to `path` using the consumer end of an SPSC ring buffer.
     pub fn start(&mut self, path: &str, mut consumer: rtrb::Consumer<f32>) -> Result<(), String> {
         if self.is_recording() {
@@ -329,17 +345,18 @@ impl LiveRecorder {
                 };
 
                 while !stop_sig.load(Ordering::Acquire) {
-                    let has_drained = consumer_arc
-                        .lock()
-                        .map(|mut c| wav_writer.drain_consumer(&mut c))
-                        .unwrap_or(false);
+                    let has_drained = {
+                        let mut c = crate::sync::lock_unpoisoned(&consumer_arc);
+                        wav_writer.drain_consumer(&mut c)
+                    };
 
                     if !has_drained {
                         std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
 
-                if let Ok(mut consumer) = consumer_arc.lock() {
+                {
+                    let mut consumer = crate::sync::lock_unpoisoned(&consumer_arc);
                     let _ = wav_writer.drain_consumer(&mut consumer);
                 }
 

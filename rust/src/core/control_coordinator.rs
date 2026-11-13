@@ -1,0 +1,994 @@
+//! Off-RT control coordinator orchestrating epoch serialization, I/O opens, and standby pre-warming.
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+use std::thread::JoinHandle;
+
+use crossbeam_channel::{Receiver, Sender};
+
+use crate::buffer::CustomSourceRegistry;
+use crate::core::dual_source::{AudioSourceCore, CustomSourceFactory, StreamingDeck};
+use crate::core::dual_source_control::{
+    PlanOutcome, PlannedOpenSpec, TransitionCommitMode,
+};
+use crate::core::engine_actor::{
+    capture_track_snapshot, snapshot_queue_ids, EngineActorHandle, RtControlHint,
+    TrackTransitionSnapshot,
+};
+use crate::core::io_pool::{
+    ActiveOpenJob, ActiveOpenKind, IoCompletion, IoOpenOutcome, IoWorkerPool, OpenWaiter,
+    PrewarmJob,
+};
+use crate::core::types::PlaybackState;
+use crate::dsp::visualizer::VisualizerData;
+use crate::sync::{lock_unpoisoned, read_unpoisoned, CancelToken};
+
+/// Callback invoked on asynchronous background commits (e.g., RT-triggered auto-advance
+/// or active track replacement after `removeAt`) so UI telemetry stays synchronized.
+pub type AsyncCommitCallback = Arc<dyn Fn(TrackTransitionSnapshot) + Send + Sync>;
+
+enum CoordWake {
+    PrewarmCheck { retry_if_failed: bool },
+    Shutdown,
+}
+
+enum PlannedDispatch {
+    Immediate {
+        snap: TrackTransitionSnapshot,
+        needs_prewarm: bool,
+    },
+    NeedOpen {
+        spec: PlannedOpenSpec,
+        queue_changed: bool,
+        include_replay_gain: bool,
+    },
+}
+
+struct CoordInner {
+    engine: EngineActorHandle,
+    io_pool: Mutex<Option<Arc<IoWorkerPool>>>,
+    custom_registry: CustomSourceRegistry,
+    transport_epoch: AtomicU64,
+    prewarm_epoch: AtomicU64,
+    dispatch_lock: Mutex<()>,
+    prewarm_lock: Mutex<()>,
+    last_prewarm: Mutex<Option<(u64, i64, String, bool)>>,
+    auto_advance_inflight: Mutex<Option<(usize, u64)>>,
+    disposed: AtomicBool,
+    on_async_commit: AsyncCommitCallback,
+    wake_tx: Sender<CoordWake>,
+}
+
+/// Non-blocking orchestrator separating fast RT engine commands from interruptible track I/O.
+#[derive(Clone)]
+pub struct ControlCoordinator {
+    inner: Arc<CoordInner>,
+    coord_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
+
+impl ControlCoordinator {
+    pub fn spawn(
+        engine: EngineActorHandle,
+        custom_registry: CustomSourceRegistry,
+        hint_rx: Receiver<RtControlHint>,
+        on_async_commit: AsyncCommitCallback,
+    ) -> Self {
+        let (wake_tx, wake_rx) = crossbeam_channel::bounded::<CoordWake>(64);
+        let reaper = engine.reaper().clone();
+
+        let inner = Arc::new(CoordInner {
+            engine,
+            io_pool: Mutex::new(None),
+            custom_registry,
+            transport_epoch: AtomicU64::new(0),
+            prewarm_epoch: AtomicU64::new(0),
+            dispatch_lock: Mutex::new(()),
+            prewarm_lock: Mutex::new(()),
+            last_prewarm: Mutex::new(None),
+            auto_advance_inflight: Mutex::new(None),
+            disposed: AtomicBool::new(false),
+            on_async_commit,
+            wake_tx,
+        });
+
+        let weak_for_pool = Arc::downgrade(&inner);
+        let reaper_for_pool = reaper.clone();
+        let pool = IoWorkerPool::spawn(
+            reaper,
+            Arc::new(move |completion| {
+                if let Some(coord) = weak_for_pool.upgrade() {
+                    coord.handle_io_completion(completion);
+                } else {
+                    match completion {
+                        IoCompletion::Active { job, outcome } => {
+                            if let IoOpenOutcome::Opened(deck) = outcome {
+                                reaper_for_pool.reap_boxed(deck);
+                            }
+                            if let Some(w) = job.waiter {
+                                w.resolve(Ok(None));
+                            }
+                        }
+                        IoCompletion::Prewarm { outcome, .. } => {
+                            if let IoOpenOutcome::Opened(deck) = outcome {
+                                reaper_for_pool.reap_boxed(deck);
+                            }
+                        }
+                    }
+                }
+            }),
+        );
+        *lock_unpoisoned(&inner.io_pool) = Some(pool);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let coord_jh = {
+            let weak = Arc::downgrade(&inner);
+            std::thread::Builder::new()
+                .name("map-ctrl-coord".to_string())
+                .spawn(move || Self::coord_loop(weak, hint_rx, wake_rx))
+                .ok()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let coord_jh: Option<JoinHandle<()>> = {
+            let _ = (hint_rx, wake_rx);
+            None
+        };
+
+        Self {
+            inner,
+            coord_thread: Arc::new(Mutex::new(coord_jh)),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn coord_loop(
+        weak: Weak<CoordInner>,
+        hint_rx: Receiver<RtControlHint>,
+        wake_rx: Receiver<CoordWake>,
+    ) {
+        loop {
+            crossbeam_channel::select! {
+                recv(wake_rx) -> msg => {
+                    let Some(coord) = weak.upgrade() else { return; };
+                    match msg {
+                        Ok(CoordWake::Shutdown) | Err(_) => return,
+                        Ok(CoordWake::PrewarmCheck { retry_if_failed }) => {
+                            coord.run_prewarm_check(retry_if_failed);
+                        }
+                    }
+                }
+                recv(hint_rx) -> msg => {
+                    let Some(coord) = weak.upgrade() else { return; };
+                    match msg {
+                        Ok(RtControlHint::PrewarmNeeded) => {
+                            coord.run_prewarm_check(true);
+                        }
+                        Ok(RtControlHint::AutoAdvanceNeeded {
+                            expected_deck_id,
+                            expected_open_gen,
+                            next_idx,
+                            item,
+                            should_auto_xfade,
+                            auto_ms,
+                            dur_ms,
+                            pos_ms,
+                        }) => {
+                            coord.handle_auto_advance_hint(
+                                expected_deck_id,
+                                expected_open_gen,
+                                next_idx,
+                                item,
+                                should_auto_xfade,
+                                auto_ms,
+                                dur_ms,
+                                pos_ms,
+                            );
+                        }
+                        Err(_) => return,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Triggers an asynchronous pre-warm evaluation on `map-ctrl-coord`.
+    pub fn schedule_prewarm(&self) {
+        self.inner.schedule_prewarm(false);
+    }
+
+    /// Returns telemetry counters for coalescing/stress assertions in tests.
+    pub fn io_pool_stats(&self) -> (u64, u64) {
+        if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
+            (
+                pool.active_opens_executed.load(Ordering::Relaxed),
+                pool.active_opens_coalesced.load(Ordering::Relaxed),
+            )
+        } else {
+            (0, 0)
+        }
+    }
+
+    /// Replaces the playback queue using fresh pre-built decks so `map-engine-clock` never joins threads.
+    pub fn set_queue(
+        &self,
+        items: Vec<AudioSourceCore>,
+        custom_factory: CustomSourceFactory,
+    ) -> Result<(f32, f32), String> {
+        let sr = self.inner.engine.snapshots().sample_rate;
+        let clean_a = StreamingDeck::new_deck(sr, 2, 1024)
+            .map_err(|e| format!("Failed to allocate clean deck A: {}", e))?;
+        let clean_b = StreamingDeck::new_deck(sr, 2, 1024)
+            .map_err(|e| format!("Failed to allocate clean deck B: {}", e))?;
+
+        let pre_epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(pre_epoch);
+        self.inner.custom_registry.abort_all();
+
+        let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+        let epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(epoch);
+        self.inner.custom_registry.abort_all();
+
+        let (old_a, old_b, rg) = self.inner.engine.exec(move |ply| {
+            ply.music_manager.set_custom_source_factory(custom_factory);
+            let (oa, ob) = ply
+                .music_manager
+                .inner
+                .set_queue_swap_decks(items, clean_a, clean_b);
+            let rg = ply.recalculate_and_apply_replay_gain();
+            (oa, ob, rg)
+        })?;
+
+        let reaper = self.inner.engine.reaper();
+        reaper.reap_boxed(old_a);
+        reaper.reap_boxed(old_b);
+        Ok(rg)
+    }
+
+    pub fn append(&self, items: Vec<AudioSourceCore>) -> Result<(), String> {
+        self.inner.bump_prewarm_epoch();
+        self.inner.cancel_prewarms();
+        self.inner.engine.exec(move |ply| {
+            ply.music_manager.append(items);
+        })?;
+        self.schedule_prewarm();
+        Ok(())
+    }
+
+    pub fn insert_next(&self, item: AudioSourceCore) -> Result<(), String> {
+        self.inner.bump_prewarm_epoch();
+        self.inner.cancel_prewarms();
+        self.inner.engine.exec(move |ply| {
+            ply.music_manager.insert_next(item);
+        })?;
+        self.schedule_prewarm();
+        Ok(())
+    }
+
+    pub fn remove_at(
+        &self,
+        index: usize,
+        include_meta: bool,
+    ) -> Result<(bool, i64, Option<TrackTransitionSnapshot>), String> {
+        self.inner.bump_prewarm_epoch();
+        self.inner.cancel_prewarms();
+
+        let waiter_opt = {
+            let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+            let (removed, cur_idx, spec_opt) = self.inner.engine.exec(move |ply| {
+                let (rem, spec) = ply.music_manager.inner.remove_item_at_plan(index);
+                (rem.is_some(), ply.music_manager.current_index() as i64, spec)
+            })?;
+
+            if !removed {
+                return Ok((false, cur_idx, None));
+            }
+            let Some(spec) = spec_opt else {
+                self.schedule_prewarm();
+                return Ok((true, cur_idx, None));
+            };
+
+            let epoch = self.inner.bump_epochs();
+            let waiter = OpenWaiter::new();
+            self.inner.submit_open_spec(
+                epoch,
+                spec,
+                false,
+                include_meta,
+                true,
+                Some(waiter.clone()),
+            );
+            Some(waiter)
+        };
+
+        if let Some(w) = waiter_opt {
+            if let Some(Ok(snap_opt)) = w.wait() {
+                let cur = self.inner.engine.snapshots().current_index();
+                self.schedule_prewarm();
+                return Ok((true, cur, snap_opt));
+            }
+        }
+        Ok((true, self.inner.engine.snapshots().current_index(), None))
+    }
+
+    pub fn reorder(&self, old_index: usize, new_index: usize) -> Result<bool, String> {
+        self.inner.bump_prewarm_epoch();
+        self.inner.cancel_prewarms();
+        let moved = self
+            .inner
+            .engine
+            .exec(move |ply| ply.music_manager.reorder(old_index, new_index))?;
+        if moved {
+            self.schedule_prewarm();
+        }
+        Ok(moved)
+    }
+
+    pub fn reorder_by_ids(&self, ordered_ids: Vec<i64>) -> Result<bool, String> {
+        self.inner.bump_prewarm_epoch();
+        self.inner.cancel_prewarms();
+        let changed = self
+            .inner
+            .engine
+            .exec(move |ply| ply.music_manager.reorder_by_ids(&ordered_ids))?;
+        if changed {
+            self.schedule_prewarm();
+        }
+        Ok(changed)
+    }
+
+    pub fn clear_queue(&self, keep_current: bool) -> Result<i64, String> {
+        if keep_current {
+            self.inner.bump_prewarm_epoch();
+            self.inner.cancel_prewarms();
+        } else {
+            let pre_epoch = self.inner.bump_epochs();
+            self.inner.cancel_all_io(pre_epoch);
+        }
+        let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+        if !keep_current {
+            let epoch = self.inner.bump_epochs();
+            self.inner.cancel_all_io(epoch);
+        }
+        let idx = self.inner.engine.exec(move |ply| {
+            ply.music_manager.clear_queue(keep_current);
+            ply.music_manager.inner.sync_planned_index_to_current();
+            ply.music_manager.current_index() as i64
+        })?;
+        if keep_current {
+            self.schedule_prewarm();
+        }
+        Ok(idx)
+    }
+
+    pub fn set_loop_mode(&self, mode: i32) -> Result<bool, String> {
+        let changed = self.inner.engine.exec(move |ply| {
+            let prev = ply.music_manager.inner.loop_mode.load(Ordering::Relaxed);
+            if prev != mode {
+                ply.music_manager.set_loop_mode(mode);
+                true
+            } else {
+                false
+            }
+        })?;
+        if changed {
+            self.inner.bump_prewarm_epoch();
+            self.inner.cancel_prewarms();
+            self.schedule_prewarm();
+        }
+        Ok(changed)
+    }
+
+    pub fn set_shuffle(&self, enabled: bool) -> Result<Option<i64>, String> {
+        self.inner.bump_prewarm_epoch();
+        self.inner.cancel_prewarms();
+        let res = self.inner.engine.exec(move |ply| {
+            let prev = ply.music_manager.is_shuffled();
+            if prev != enabled {
+                ply.music_manager.set_shuffle(enabled);
+                ply.music_manager.inner.sync_planned_index_to_current();
+                Some(ply.music_manager.current_index() as i64)
+            } else {
+                None
+            }
+        })?;
+        if res.is_some() {
+            self.schedule_prewarm();
+        }
+        Ok(res)
+    }
+
+    fn execute_planned_transition<F>(
+        &self,
+        include_meta: bool,
+        plan_fn: F,
+    ) -> Result<Option<TrackTransitionSnapshot>, String>
+    where
+        F: FnOnce(&mut crate::core::miniaudio_player::MiniaudioPlayer, bool) -> Result<PlannedDispatch, String>
+            + Send
+            + 'static,
+    {
+        let waiter = {
+            let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+            let has_inflight = self.inner.has_active_io();
+            let dispatch = self
+                .inner
+                .engine
+                .exec(move |ply| plan_fn(ply, has_inflight))??;
+
+            match dispatch {
+                PlannedDispatch::Immediate { snap, needs_prewarm } => {
+                    if needs_prewarm {
+                        self.inner.bump_prewarm_epoch();
+                        self.schedule_prewarm();
+                    }
+                    return Ok(Some(snap));
+                }
+                PlannedDispatch::NeedOpen {
+                    spec,
+                    queue_changed,
+                    include_replay_gain,
+                } => {
+                    let epoch = self.inner.bump_epochs();
+                    let w = OpenWaiter::new();
+                    self.inner.submit_open_spec(
+                        epoch,
+                        spec,
+                        queue_changed,
+                        include_meta,
+                        include_replay_gain,
+                        Some(w.clone()),
+                    );
+                    w
+                }
+            }
+        };
+
+        let result = waiter.wait().unwrap_or(Ok(None));
+        if matches!(result, Ok(Some(_))) {
+            self.schedule_prewarm();
+        }
+        result
+    }
+
+    pub fn play(
+        &self,
+        id: Option<i64>,
+        position: Option<usize>,
+        shuffled: Option<bool>,
+        seek_ms: Option<i64>,
+        include_meta: bool,
+    ) -> Result<Option<TrackTransitionSnapshot>, String> {
+        self.execute_planned_transition(include_meta, move |ply, _has_inflight| {
+            let prev_ids = snapshot_queue_ids(ply).0;
+            let plan = ply
+                .music_manager
+                .inner
+                .plan_play(id, position, shuffled, seek_ms);
+            let new_ids = snapshot_queue_ids(ply).0;
+            let q_changed = prev_ids != new_ids;
+            match plan {
+                PlanOutcome::Immediate(Ok(())) => {
+                    let snap = capture_track_snapshot(ply, q_changed, include_meta, true);
+                    Ok(PlannedDispatch::Immediate {
+                        snap,
+                        needs_prewarm: false,
+                    })
+                }
+                PlanOutcome::Immediate(Err(e)) => Err(e),
+                PlanOutcome::CommittedStandby => {
+                    let _ = ply.recalculate_and_apply_replay_gain();
+                    let snap = capture_track_snapshot(ply, q_changed, include_meta, true);
+                    Ok(PlannedDispatch::Immediate {
+                        snap,
+                        needs_prewarm: true,
+                    })
+                }
+                PlanOutcome::NeedOpen(spec) => Ok(PlannedDispatch::NeedOpen {
+                    spec,
+                    queue_changed: q_changed,
+                    include_replay_gain: true,
+                }),
+            }
+        })
+    }
+
+    pub fn next(
+        &self,
+        manual_crossfade_ms: Option<u64>,
+        include_meta: bool,
+    ) -> Result<Option<TrackTransitionSnapshot>, String> {
+        self.execute_planned_transition(include_meta, move |ply, has_inflight| {
+            let plan = ply
+                .music_manager
+                .inner
+                .plan_next(manual_crossfade_ms, has_inflight);
+            match plan {
+                PlanOutcome::Immediate(Ok(())) => {
+                    let snap = capture_track_snapshot(ply, false, include_meta, false);
+                    Ok(PlannedDispatch::Immediate {
+                        snap,
+                        needs_prewarm: false,
+                    })
+                }
+                PlanOutcome::Immediate(Err(e)) => Err(e),
+                PlanOutcome::CommittedStandby => {
+                    let _ = ply.recalculate_and_apply_replay_gain();
+                    let snap = capture_track_snapshot(ply, false, include_meta, false);
+                    Ok(PlannedDispatch::Immediate {
+                        snap,
+                        needs_prewarm: true,
+                    })
+                }
+                PlanOutcome::NeedOpen(spec) => Ok(PlannedDispatch::NeedOpen {
+                    spec,
+                    queue_changed: false,
+                    include_replay_gain: false,
+                }),
+            }
+        })
+    }
+
+    pub fn previous(&self, include_meta: bool) -> Result<Option<TrackTransitionSnapshot>, String> {
+        self.execute_planned_transition(include_meta, move |ply, has_inflight| {
+            let plan = ply.music_manager.inner.plan_previous(has_inflight);
+            match plan {
+                PlanOutcome::Immediate(Ok(())) => {
+                    let snap = capture_track_snapshot(ply, false, include_meta, false);
+                    Ok(PlannedDispatch::Immediate {
+                        snap,
+                        needs_prewarm: false,
+                    })
+                }
+                PlanOutcome::Immediate(Err(e)) => Err(e),
+                PlanOutcome::CommittedStandby => {
+                    let _ = ply.recalculate_and_apply_replay_gain();
+                    let snap = capture_track_snapshot(ply, false, include_meta, false);
+                    Ok(PlannedDispatch::Immediate {
+                        snap,
+                        needs_prewarm: true,
+                    })
+                }
+                PlanOutcome::NeedOpen(spec) => Ok(PlannedDispatch::NeedOpen {
+                    spec,
+                    queue_changed: false,
+                    include_replay_gain: false,
+                }),
+            }
+        })
+    }
+
+    /// Cancels any pending opens immediately without waiting and pauses the active deck.
+    pub fn pause(&self) -> Result<(i32, bool), String> {
+        let pre_epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(pre_epoch);
+
+        let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+        let epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(epoch);
+        self.inner.engine.exec(|ply| {
+            ply.music_manager.pause();
+            ply.music_manager.inner.sync_planned_index_to_current();
+            (
+                ply.music_manager
+                    .inner
+                    .playback_state
+                    .load(Ordering::Relaxed),
+                ply.music_manager.inner.crossfade.is_active(),
+            )
+        })
+    }
+
+    /// Cancels any pending opens immediately without waiting and stops playback.
+    pub fn stop(&self) -> Result<(i32, bool), String> {
+        let pre_epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(pre_epoch);
+
+        let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+        let epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(epoch);
+        self.inner.engine.exec(|ply| {
+            ply.music_manager.stop();
+            ply.music_manager.inner.sync_planned_index_to_current();
+            ply.output_manager
+                .visualizer_seqlock
+                .write(|d| *d = VisualizerData::default());
+            (
+                ply.music_manager
+                    .inner
+                    .playback_state
+                    .load(Ordering::Relaxed),
+                ply.music_manager.inner.crossfade.is_active(),
+            )
+        })
+    }
+
+    /// Shuts down `map-ctrl-coord`, cancels all pending/active I/O opens, and joins pool threads.
+    pub fn shutdown(&self) {
+        if self.inner.disposed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let epoch = self.inner.bump_epochs();
+        self.inner.cancel_all_io(epoch);
+        self.inner.custom_registry.abort_all();
+        let _ = self.inner.wake_tx.try_send(CoordWake::Shutdown);
+        if let Some(jh) = lock_unpoisoned(&self.coord_thread).take() {
+            let _ = jh.join();
+        }
+        if let Some(pool) = lock_unpoisoned(&self.inner.io_pool).take() {
+            pool.shutdown();
+        }
+    }
+}
+
+impl CoordInner {
+    fn bump_epochs(&self) -> u64 {
+        self.prewarm_epoch.fetch_add(1, Ordering::AcqRel);
+        *lock_unpoisoned(&self.auto_advance_inflight) = None;
+        self.transport_epoch.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    fn bump_prewarm_epoch(&self) -> u64 {
+        self.prewarm_epoch.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    fn has_active_io(&self) -> bool {
+        lock_unpoisoned(&self.io_pool)
+            .as_ref()
+            .is_some_and(|p| p.has_active_work())
+    }
+
+    fn cancel_all_io(&self, epoch: u64) {
+        if let Some(ref pool) = *lock_unpoisoned(&self.io_pool) {
+            pool.cancel_all_at_epoch(epoch);
+        }
+    }
+
+    fn cancel_prewarms(&self) {
+        if let Some(ref pool) = *lock_unpoisoned(&self.io_pool) {
+            pool.cancel_prewarms();
+        }
+    }
+
+    fn schedule_prewarm(&self, retry_if_failed: bool) {
+        if self.disposed.load(Ordering::Acquire) {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = self.wake_tx.try_send(CoordWake::PrewarmCheck { retry_if_failed });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.run_prewarm_check(retry_if_failed);
+        }
+    }
+
+    fn submit_open_spec(
+        &self,
+        epoch: u64,
+        spec: PlannedOpenSpec,
+        queue_changed: bool,
+        include_meta: bool,
+        include_replay_gain: bool,
+        waiter: Option<OpenWaiter>,
+    ) {
+        let Some(pool) = lock_unpoisoned(&self.io_pool).clone() else {
+            if let Some(w) = waiter {
+                w.resolve(Ok(None));
+            }
+            return;
+        };
+        let job = ActiveOpenJob {
+            epoch,
+            target_idx: spec.target_idx,
+            item: spec.item,
+            custom_factory: spec.custom_factory,
+            template: spec.template,
+            seek_ms: spec.seek_ms,
+            kind: ActiveOpenKind::Manual {
+                manual_crossfade_ms: spec.manual_crossfade_ms,
+                force_play: spec.force_play,
+            },
+            queue_changed,
+            include_meta,
+            include_replay_gain,
+            cancel: CancelToken::new(),
+            waiter,
+        };
+        pool.submit_active(job);
+    }
+
+    fn run_prewarm_check(&self, retry_if_failed: bool) {
+        if self.disposed.load(Ordering::Acquire) || self.has_active_io() {
+            return;
+        }
+        let _guard = lock_unpoisoned(&self.prewarm_lock);
+        let p_epoch = self.prewarm_epoch.load(Ordering::Acquire);
+        let Ok(candidate) = self.engine.exec(|ply| {
+            let Some((_idx, item)) = ply.music_manager.inner.expected_prewarm_target() else {
+                return None;
+            };
+            if ply.music_manager.inner.standby_is_ready_for(&item) {
+                return None;
+            }
+            let tpl = ply.music_manager.inner.capture_dsp_template();
+            let factory = ply.music_manager.inner.custom_source_factory.clone();
+            Some((item, tpl, factory))
+        }) else {
+            return;
+        };
+        let Some((item, template, custom_factory)) = candidate else {
+            return;
+        };
+        if p_epoch != self.prewarm_epoch.load(Ordering::Acquire) {
+            return;
+        }
+
+        {
+            let mut last = lock_unpoisoned(&self.last_prewarm);
+            if let Some((e, id, ref src, retried)) = *last {
+                if e == p_epoch && id == item.id && src == &item.source {
+                    if !retry_if_failed || retried {
+                        return;
+                    }
+                }
+            }
+            *last = Some((p_epoch, item.id, item.source.clone(), retry_if_failed));
+        }
+
+        if let Some(pool) = lock_unpoisoned(&self.io_pool).clone() {
+            pool.submit_prewarm(PrewarmJob {
+                epoch: p_epoch,
+                item,
+                custom_factory,
+                template,
+                cancel: CancelToken::new(),
+            });
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_auto_advance_hint(
+        &self,
+        expected_deck_id: usize,
+        expected_open_gen: u64,
+        next_idx: usize,
+        hint_item: AudioSourceCore,
+        should_auto_xfade: bool,
+        auto_ms: u64,
+        dur_ms: i64,
+        pos_ms: i64,
+    ) {
+        if self.disposed.load(Ordering::Acquire) {
+            return;
+        }
+        let key = (expected_deck_id, expected_open_gen);
+        {
+            let mut inflight = lock_unpoisoned(&self.auto_advance_inflight);
+            if *inflight == Some(key) {
+                return;
+            }
+            *inflight = Some(key);
+        }
+
+        let _guard = lock_unpoisoned(&self.dispatch_lock);
+        if self.has_active_io() {
+            return;
+        }
+        let Ok(Some((tpl, factory, live_item))) = self.engine.exec(move |ply| {
+            let cur_playback = PlaybackState::from_i32(
+                ply.music_manager
+                    .inner
+                    .playback_state
+                    .load(Ordering::Relaxed),
+            );
+            let active = ply.music_manager.active_deck_ref();
+            if cur_playback != PlaybackState::Playing
+                || ply.music_manager.inner.crossfade.is_active()
+                || active.deck_id != expected_deck_id
+                || active.open_generation.load(Ordering::Acquire) != expected_open_gen
+            {
+                return None;
+            }
+            let item = read_unpoisoned(&ply.music_manager.inner.queue)
+                .get(next_idx)
+                .cloned()?;
+            if item.id != hint_item.id {
+                return None;
+            }
+            Some((
+                ply.music_manager.inner.capture_dsp_template(),
+                ply.music_manager.inner.custom_source_factory.clone(),
+                item,
+            ))
+        }) else {
+            *lock_unpoisoned(&self.auto_advance_inflight) = None;
+            return;
+        };
+
+        let Some(pool) = lock_unpoisoned(&self.io_pool).clone() else {
+            return;
+        };
+        let epoch = self.bump_epochs();
+        pool.submit_active(ActiveOpenJob {
+            epoch,
+            target_idx: next_idx,
+            item: live_item,
+            custom_factory: factory,
+            template: tpl,
+            seek_ms: None,
+            kind: ActiveOpenKind::AutoAdvance {
+                should_auto_xfade,
+                auto_ms,
+                dur_ms,
+                pos_ms,
+            },
+            queue_changed: false,
+            include_meta: true,
+            include_replay_gain: !should_auto_xfade,
+            cancel: CancelToken::new(),
+            waiter: None,
+        });
+    }
+
+    fn handle_io_completion(self: &Arc<Self>, completion: IoCompletion) {
+        let reaper = self.engine.reaper().clone();
+        match completion {
+            IoCompletion::Prewarm { job, outcome } => {
+                let IoOpenOutcome::Opened(deck) = outcome else {
+                    return;
+                };
+                if job.epoch != self.prewarm_epoch.load(Ordering::Acquire)
+                    || self.disposed.load(Ordering::Acquire)
+                {
+                    reaper.reap_boxed(deck);
+                    return;
+                }
+                let expected_epoch = job.epoch;
+                let item = job.item;
+                let coord = self.clone();
+                let reaper_cb = reaper.clone();
+                self.engine.exec_async(move |ply| {
+                    if expected_epoch != coord.prewarm_epoch.load(Ordering::Acquire) {
+                        reaper_cb.reap_boxed(deck);
+                        return;
+                    }
+                    match ply.music_manager.inner.commit_prepared_standby(deck, &item) {
+                        Ok(displaced) => reaper_cb.reap_boxed(displaced),
+                        Err(unused) => reaper_cb.reap_boxed(unused),
+                    }
+                });
+            }
+            IoCompletion::Active { job, outcome } => {
+                let waiter = job.waiter.clone();
+                let resolve_ok_none = || {
+                    if let Some(ref w) = waiter {
+                        w.resolve(Ok(None));
+                    }
+                };
+
+                if job.epoch != self.transport_epoch.load(Ordering::Acquire)
+                    || self.disposed.load(Ordering::Acquire)
+                {
+                    if let IoOpenOutcome::Opened(deck) = outcome {
+                        reaper.reap_boxed(deck);
+                    }
+                    resolve_ok_none();
+                    return;
+                }
+
+                match outcome {
+                    IoOpenOutcome::Aborted => resolve_ok_none(),
+                    IoOpenOutcome::Failed(code) => {
+                        let is_auto_adv = matches!(job.kind, ActiveOpenKind::AutoAdvance { .. });
+                        let coord = self.clone();
+                        let expected_epoch = job.epoch;
+                        let _ = self.engine.exec(move |ply| {
+                            if is_auto_adv
+                                && expected_epoch == coord.transport_epoch.load(Ordering::Acquire)
+                            {
+                                ply.music_manager.inner.sync_planned_index_to_current();
+                                ply.music_manager
+                                    .inner
+                                    .playback_state
+                                    .store(PlaybackState::Stopped.as_i32(), Ordering::Release);
+                                ply.music_manager.active_deck_mut().finish_at_end();
+                            }
+                        });
+                        if is_auto_adv {
+                            *lock_unpoisoned(&self.auto_advance_inflight) = None;
+                        }
+                        if let Some(ref w) = waiter {
+                            w.resolve(Err(format!("Failed to open track: error {}", code)));
+                        }
+                    }
+                    IoOpenOutcome::Opened(deck) => {
+                        let coord = self.clone();
+                        let expected_epoch = job.epoch;
+                        let item = job.item.clone();
+                        let target_idx = job.target_idx;
+                        let seek_ms = job.seek_ms;
+                        let kind = job.kind.clone();
+                        let queue_changed = job.queue_changed;
+                        let include_meta = job.include_meta;
+                        let include_rg = job.include_replay_gain;
+
+                        let exec_res = self.engine.exec(move |ply| {
+                            if expected_epoch != coord.transport_epoch.load(Ordering::Acquire) {
+                                return Err(deck);
+                            }
+                            let exists = read_unpoisoned(&ply.music_manager.inner.queue)
+                                .iter()
+                                .any(|it| it.id == item.id);
+                            if !exists {
+                                return Err(deck);
+                            }
+
+                            let mode = match kind {
+                                ActiveOpenKind::Manual {
+                                    manual_crossfade_ms,
+                                    force_play,
+                                } => TransitionCommitMode::Manual {
+                                    manual_crossfade_ms,
+                                    force_play,
+                                },
+                                ActiveOpenKind::AutoAdvance {
+                                    should_auto_xfade,
+                                    auto_ms,
+                                    ..
+                                } => {
+                                    let active = ply.music_manager.active_deck_ref();
+                                    let dur = active.duration_ms.load(Ordering::Relaxed);
+                                    let pos = active.position_ms.load(Ordering::Relaxed);
+                                    let exhausted = active.track_exhausted.load(Ordering::Acquire);
+                                    if should_auto_xfade
+                                        && !exhausted
+                                        && dur > pos + 50
+                                    {
+                                        let eff_ms = ((dur - pos) as u64).clamp(50, auto_ms);
+                                        TransitionCommitMode::AutoCrossfade { eff_ms }
+                                    } else {
+                                        TransitionCommitMode::AutoAdvanceGapless
+                                    }
+                                }
+                            };
+
+                            let displaced = ply.music_manager.inner.commit_transition_internal(
+                                Some(deck),
+                                target_idx,
+                                &item,
+                                seek_ms,
+                                mode,
+                            );
+                            let _ = ply.recalculate_and_apply_replay_gain();
+                            let snap =
+                                capture_track_snapshot(ply, queue_changed, include_meta, include_rg);
+                            Ok((displaced, snap))
+                        });
+
+                        match exec_res {
+                            Ok(Ok((displaced_opt, snap))) => {
+                                if let Some(displaced) = displaced_opt {
+                                    reaper.reap_boxed(displaced);
+                                }
+                                if let Some(ref w) = waiter {
+                                    w.resolve(Ok(Some(snap)));
+                                } else {
+                                    (self.on_async_commit)(snap);
+                                    self.schedule_prewarm(false);
+                                }
+                            }
+                            Ok(Err(unused_deck)) => {
+                                reaper.reap_boxed(unused_deck);
+                                resolve_ok_none();
+                            }
+                            Err(_) => {
+                                resolve_ok_none();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

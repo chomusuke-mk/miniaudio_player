@@ -533,6 +533,7 @@ words:
   - repacketized
   - repacketizer
   - repacketizing
+  - reqs
   - requried
   - rereleased
   - resampler
@@ -674,6 +675,7 @@ words:
   - unobservably
   - unpadded
   - unpadding
+  - unpoisoned
   - unquant
   - unquantized
   - unseekable
@@ -700,6 +702,7 @@ words:
   - vorb
   - vorbisfile
   - VSHR
+  - vsize
   - wakeup
   - Wakeup
   - wakeups

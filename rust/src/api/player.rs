@@ -3,23 +3,197 @@
 //! Exposes `RustMiniaudioPlayer` orchestrating music decks, RAM sound effects,
 //! multi-destination output matrix, and microphone capture sidechain.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::buffer::{CustomDartByteSource, CustomSourceRegistry};
+use crate::core::control_coordinator::ControlCoordinator;
 use crate::core::dual_source::AudioSourceCore;
-use crate::core::miniaudio_player::MiniaudioPlayer;
+use crate::core::engine_actor::{
+    snapshot_queue_ids, EngineActorHandle, RtEngineNotice, TrackTransitionSnapshot,
+};
+use crate::core::hw_supervisor::{device_id_matches, HardwareDeviceSupervisor};
 use crate::core::recording::WavFormat;
-use crate::core::types::{PlaybackState, QueueTransition};
+use crate::core::types::PlaybackState;
 use crate::core::voice_pool::{EffectCatalogItem, EffectConfig};
 use crate::dsp::equalizer::EqualizerParams;
 use crate::dsp::reverb::ReverbConfig;
 use crate::dsp::silence::SilenceConfig;
 use crate::frb_generated::StreamSink;
 use crate::map_log;
+use crate::sync::{lock_unpoisoned, read_unpoisoned, write_unpoisoned};
 
 use super::types::*;
+
+const SENTINEL_NONE: i64 = i64::MIN;
+const OPT_BOOL_FALSE: u8 = 1;
+const OPT_BOOL_TRUE: u8 = 2;
+
+#[inline]
+fn encode_opt_bool(v: bool) -> u8 {
+    if v { OPT_BOOL_TRUE } else { OPT_BOOL_FALSE }
+}
+
+#[derive(Default)]
+struct ComplexTelemetryCache {
+    replay_gain: Option<(u32, u32)>,
+    metadata: Option<RustAudioMetadata>,
+    audio_info: Option<RustAudioInfo>,
+    visualizer: Option<RustVisualizerData>,
+}
+
+struct AtomicTelemetryFilter {
+    state: AtomicI64,
+    pos: AtomicI64,
+    index: AtomicI64,
+    buffered_end: AtomicI64,
+    is_buffering: AtomicU8,
+    is_xfading: AtomicU8,
+    is_recording: AtomicU8,
+    is_ducking: AtomicU8,
+    is_playing: AtomicU8,
+    active_voices: AtomicI64,
+    complex: Mutex<ComplexTelemetryCache>,
+}
+
+impl Default for AtomicTelemetryFilter {
+    fn default() -> Self {
+        Self {
+            state: AtomicI64::new(0),
+            pos: AtomicI64::new(0),
+            index: AtomicI64::new(-1),
+            buffered_end: AtomicI64::new(SENTINEL_NONE),
+            is_buffering: AtomicU8::new(OPT_BOOL_FALSE),
+            is_xfading: AtomicU8::new(OPT_BOOL_FALSE),
+            is_recording: AtomicU8::new(OPT_BOOL_FALSE),
+            is_ducking: AtomicU8::new(OPT_BOOL_FALSE),
+            is_playing: AtomicU8::new(OPT_BOOL_FALSE),
+            active_voices: AtomicI64::new(SENTINEL_NONE),
+            complex: Mutex::new(ComplexTelemetryCache::default()),
+        }
+    }
+}
+
+impl AtomicTelemetryFilter {
+    fn reset(&self) {
+        self.state.store(0, Ordering::Release);
+        self.pos.store(0, Ordering::Release);
+        self.index.store(-1, Ordering::Release);
+        self.buffered_end.store(SENTINEL_NONE, Ordering::Release);
+        self.is_buffering.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.is_xfading.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.is_recording.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.is_ducking.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.is_playing.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.active_voices.store(SENTINEL_NONE, Ordering::Release);
+        *lock_unpoisoned(&self.complex) = ComplexTelemetryCache::default();
+    }
+
+    #[inline]
+    fn should_emit_opt_bool(slot: &AtomicU8, val: bool) -> bool {
+        let encoded = encode_opt_bool(val);
+        slot.swap(encoded, Ordering::AcqRel) != encoded
+    }
+
+    #[inline]
+    fn should_emit_i64(slot: &AtomicI64, val: i64) -> bool {
+        slot.swap(val, Ordering::AcqRel) != val
+    }
+
+    fn should_emit(&self, event: &RustPlayerEvent) -> bool {
+        match event {
+            RustPlayerEvent::PlaybackState(s) => Self::should_emit_i64(&self.state, *s as i64),
+            RustPlayerEvent::CurrentIndex(idx) => {
+                if Self::should_emit_i64(&self.index, *idx as i64) {
+                    self.buffered_end.store(SENTINEL_NONE, Ordering::Release);
+                    let mut complex = lock_unpoisoned(&self.complex);
+                    complex.audio_info = None;
+                    complex.metadata = None;
+                    true
+                } else {
+                    false
+                }
+            }
+            RustPlayerEvent::IsPlaying(b) => Self::should_emit_opt_bool(&self.is_playing, *b),
+            RustPlayerEvent::IsBuffering(b) => Self::should_emit_opt_bool(&self.is_buffering, *b),
+            RustPlayerEvent::IsCrossfading(b) => Self::should_emit_opt_bool(&self.is_xfading, *b),
+            RustPlayerEvent::IsRecording(b) => Self::should_emit_opt_bool(&self.is_recording, *b),
+            RustPlayerEvent::IsDuckingActive(b) => Self::should_emit_opt_bool(&self.is_ducking, *b),
+            RustPlayerEvent::ActiveVoices(v) => {
+                Self::should_emit_i64(&self.active_voices, *v as i64)
+            }
+            RustPlayerEvent::Buffer(r) => {
+                let prev_end = self.buffered_end.swap(r.end_ms, Ordering::AcqRel);
+                let encoded_buf = encode_opt_bool(r.is_buffering);
+                let prev_buf = self.is_buffering.swap(encoded_buf, Ordering::AcqRel);
+                prev_end != r.end_ms || prev_buf != encoded_buf
+            }
+            RustPlayerEvent::Position(p) => {
+                let mut prev = self.pos.load(Ordering::Acquire);
+                loop {
+                    if (*p - prev).abs() < 10 && !(*p == 0 && prev != 0) {
+                        break false;
+                    }
+                    match self.pos.compare_exchange_weak(
+                        prev,
+                        *p,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break true,
+                        Err(actual) => prev = actual,
+                    }
+                }
+            }
+            RustPlayerEvent::ReplayGain(rg) => {
+                let key = (rg.gain_db.to_bits(), rg.peak.to_bits());
+                let mut complex = lock_unpoisoned(&self.complex);
+                if complex.replay_gain == Some(key) {
+                    false
+                } else {
+                    complex.replay_gain = Some(key);
+                    true
+                }
+            }
+            RustPlayerEvent::AudioInfo(info) => {
+                let mut complex = lock_unpoisoned(&self.complex);
+                if complex.audio_info.as_ref() == Some(info) {
+                    false
+                } else {
+                    complex.audio_info = Some(info.clone());
+                    true
+                }
+            }
+            RustPlayerEvent::AudioMetadata(m) => {
+                let mut complex = lock_unpoisoned(&self.complex);
+                if complex.metadata.as_ref() == Some(m) {
+                    false
+                } else {
+                    complex.metadata = Some(m.clone());
+                    true
+                }
+            }
+            RustPlayerEvent::Visualizer(v) => {
+                let mut complex = lock_unpoisoned(&self.complex);
+                if complex.visualizer.as_ref() == Some(v) {
+                    false
+                } else {
+                    complex.visualizer = Some(v.clone());
+                    true
+                }
+            }
+            _ => true,
+        }
+    }
+}
+
+#[derive(Default)]
+struct EventSinkState {
+    sink: Option<StreamSink<RustPlayerEvent>>,
+    pending: Vec<RustPlayerEvent>,
+}
 
 /// Internal telemetry deduplication filter preventing flooding of the Flutter Rust Bridge channel.
 pub struct TelemetryFilter {
@@ -77,190 +251,89 @@ impl Default for TelemetryFilter {
 /// Dispatches engine events to the Flutter Rust Bridge stream sink with deduplication filtering.
 #[derive(Clone)]
 pub struct EventReporter {
-    event_sink: Arc<Mutex<Option<StreamSink<RustPlayerEvent>>>>,
-    pending_events: Arc<Mutex<Vec<RustPlayerEvent>>>,
-    filter: Arc<Mutex<TelemetryFilter>>,
+    sink_state: Arc<Mutex<EventSinkState>>,
+    filter: Arc<AtomicTelemetryFilter>,
 }
 
 impl EventReporter {
     /// Creates a new empty `EventReporter` instance.
     pub fn new() -> Self {
         Self {
-            event_sink: Arc::new(Mutex::new(None)),
-            pending_events: Arc::new(Mutex::new(Vec::new())),
-            filter: Arc::new(Mutex::new(TelemetryFilter::default())),
+            sink_state: Arc::new(Mutex::new(EventSinkState::default())),
+            filter: Arc::new(AtomicTelemetryFilter::default()),
         }
     }
 
-    /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events.
+    /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events atomically.
     pub fn set_sink(&self, sink: StreamSink<RustPlayerEvent>) {
-        if let Ok(mut pending) = self.pending_events.lock() {
-            for ev in pending.drain(..) {
-                let _ = sink.add(ev);
-            }
+        let mut state = lock_unpoisoned(&self.sink_state);
+        for ev in state.pending.drain(..) {
+            let _ = sink.add(ev);
         }
-        let mut guard = self.event_sink.lock().unwrap();
-        *guard = Some(sink);
+        state.sink = Some(sink);
     }
 
     /// Detaches the active stream sink.
     pub fn clear_sink(&self) {
-        if let Ok(mut guard) = self.event_sink.lock() {
-            *guard = None;
+        let mut state = lock_unpoisoned(&self.sink_state);
+        state.sink = None;
+    }
+
+    fn push_filtered_events<I>(&self, state: &mut EventSinkState, events: I)
+    where
+        I: IntoIterator<Item = RustPlayerEvent>,
+    {
+        for event in events {
+            if !self.filter.should_emit(&event) {
+                continue;
+            }
+            if let Some(ref sink) = state.sink {
+                let _ = sink.add(event);
+            } else {
+                state.pending.push(event);
+            }
         }
+    }
+
+    /// Atomically evaluates deduplication filters and emits an ordered sequence of events
+    /// under `sink_state`, guaranteeing strict cross-thread event ordering.
+    pub(crate) fn emit_batch<I>(&self, events: I)
+    where
+        I: IntoIterator<Item = RustPlayerEvent>,
+    {
+        let mut state = lock_unpoisoned(&self.sink_state);
+        self.push_filtered_events(&mut state, events);
+    }
+
+    /// Atomically resets telemetry deduplication caches and emits initial baseline events.
+    pub(crate) fn reset_and_emit_batch<I>(&self, events: I)
+    where
+        I: IntoIterator<Item = RustPlayerEvent>,
+    {
+        let mut state = lock_unpoisoned(&self.sink_state);
+        self.filter.reset();
+        self.push_filtered_events(&mut state, events);
     }
 
     /// Emits an event to Dart if it passes the deduplication filter.
     pub fn emit(&self, event: RustPlayerEvent) {
-        let mut filter = self.filter.lock().unwrap();
-        let should_emit = match &event {
-            RustPlayerEvent::PlaybackState(s) => {
-                if filter.state == Some(*s) {
-                    false
-                } else {
-                    filter.state = Some(*s);
-                    true
-                }
-            }
-            RustPlayerEvent::CurrentIndex(idx) => {
-                if filter.index == Some(*idx) {
-                    false
-                } else {
-                    filter.index = Some(*idx);
-                    filter.audio_info = None;
-                    filter.metadata = None;
-                    filter.buffered_end = None;
-                    true
-                }
-            }
-            RustPlayerEvent::IsPlaying(b) => {
-                if filter.is_playing == Some(*b) {
-                    false
-                } else {
-                    filter.is_playing = Some(*b);
-                    true
-                }
-            }
-            RustPlayerEvent::IsBuffering(b) => {
-                if filter.is_buffering == Some(*b) {
-                    false
-                } else {
-                    filter.is_buffering = Some(*b);
-                    true
-                }
-            }
-            RustPlayerEvent::IsCrossfading(b) => {
-                if filter.is_xfading == Some(*b) {
-                    false
-                } else {
-                    filter.is_xfading = Some(*b);
-                    true
-                }
-            }
-            RustPlayerEvent::IsRecording(b) => {
-                if filter.is_recording == Some(*b) {
-                    false
-                } else {
-                    filter.is_recording = Some(*b);
-                    true
-                }
-            }
-            RustPlayerEvent::IsDuckingActive(b) => {
-                if filter.is_ducking == Some(*b) {
-                    false
-                } else {
-                    filter.is_ducking = Some(*b);
-                    true
-                }
-            }
-            RustPlayerEvent::ReplayGain(rg) => {
-                let key = (rg.gain_db.to_bits(), rg.peak.to_bits());
-                if filter.replay_gain == Some(key) {
-                    false
-                } else {
-                    filter.replay_gain = Some(key);
-                    true
-                }
-            }
-            RustPlayerEvent::Buffer(r) => {
-                if filter.buffered_end == Some(r.end_ms) && filter.is_buffering == Some(r.is_buffering) {
-                    false
-                } else {
-                    filter.buffered_end = Some(r.end_ms);
-                    filter.is_buffering = Some(r.is_buffering);
-                    true
-                }
-            }
-            RustPlayerEvent::ActiveVoices(v) => {
-                if filter.active_voices == Some(*v) {
-                    false
-                } else {
-                    filter.active_voices = Some(*v);
-                    true
-                }
-            }
-            RustPlayerEvent::Position(p) => {
-                if (*p - filter.pos).abs() < 10 && !(*p == 0 && filter.pos != 0) {
-                    false
-                } else {
-                    filter.pos = *p;
-                    true
-                }
-            }
-            RustPlayerEvent::AudioInfo(info) => {
-                if filter.audio_info.as_ref() == Some(info) {
-                    false
-                } else {
-                    filter.audio_info = Some(info.clone());
-                    true
-                }
-            }
-            RustPlayerEvent::AudioMetadata(m) => {
-                if filter.metadata.as_ref() == Some(m) {
-                    false
-                } else {
-                    filter.metadata = Some(m.clone());
-                    true
-                }
-            }
-            RustPlayerEvent::Visualizer(v) => {
-                if filter.visualizer.as_ref() == Some(v) {
-                    false
-                } else {
-                    filter.visualizer = Some(v.clone());
-                    true
-                }
-            }
-            _ => true,
-        };
-        if !should_emit {
-            return;
-        }
-        drop(filter);
-
-        if let Ok(guard) = self.event_sink.lock() {
-            if let Some(ref sink) = *guard {
-                let _ = sink.add(event);
-                return;
-            }
-        }
-        if let Ok(mut pending) = self.pending_events.lock() {
-            pending.push(event);
-        }
+        self.emit_batch(std::iter::once(event));
     }
 }
 
 /// Primary native audio engine instance exposed to Dart via Flutter Rust Bridge.
 pub struct RustMiniaudioPlayer {
-    inner: Arc<Mutex<Box<MiniaudioPlayer>>>,
+    engine: EngineActorHandle,
+    coordinator: ControlCoordinator,
+    hw: HardwareDeviceSupervisor,
     reporter: EventReporter,
-    custom_handle: Arc<Mutex<Option<crate::buffer::CustomByteSourceHandle>>>,
+    custom_registry: CustomSourceRegistry,
     monitor_running: Arc<AtomicBool>,
-    _monitor_thread: Option<JoinHandle<()>>,
+    monitor_thread: Mutex<Option<JoinHandle<()>>>,
     device_trigger: Arc<(Mutex<bool>, Condvar)>,
-    _watcher_thread: Option<JoinHandle<()>>,
-    _clock_thread: Option<JoinHandle<()>>,
+    watcher_thread: Mutex<Option<JoinHandle<()>>>,
     metadata_enabled: Arc<AtomicBool>,
+    disposed: AtomicBool,
 }
 
 unsafe impl Send for RustMiniaudioPlayer {}
@@ -270,6 +343,52 @@ impl Drop for RustMiniaudioPlayer {
     fn drop(&mut self) {
         self.dispose();
     }
+}
+
+fn emit_track_transition_core(
+    reporter: &EventReporter,
+    meta_enabled: bool,
+    emit_queue: Option<&dyn Fn()>,
+    snap: TrackTransitionSnapshot,
+    emit_shuffle: bool,
+) {
+    if snap.queue_changed {
+        if let Some(cb) = emit_queue {
+            cb();
+        }
+    }
+    let mut events = Vec::with_capacity(11);
+    if let Some((gain_db, peak)) = snap.replay_gain {
+        events.push(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+            gain_db,
+            peak,
+        }));
+    }
+    if emit_shuffle {
+        events.push(RustPlayerEvent::IsShuffled(snap.is_shuffled));
+    }
+    events.push(RustPlayerEvent::CurrentIndex(snap.cur_idx as i32));
+    if meta_enabled {
+        events.push(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+        if let Some(meta) = snap.initial_meta {
+            events.push(RustPlayerEvent::AudioMetadata(meta));
+        }
+    }
+    events.push(RustPlayerEvent::Position(snap.initial_pos));
+    if snap.initial_info.sample_rate > 0 {
+        events.push(RustPlayerEvent::AudioInfo(snap.initial_info));
+    }
+    if let Some((start_ms, end_ms, is_buffering)) = snap.buffered_range {
+        events.push(RustPlayerEvent::Buffer(RustBuffer {
+            start_ms,
+            end_ms,
+            is_buffering,
+        }));
+    }
+    events.push(RustPlayerEvent::PlaybackState(snap.playback_state));
+    events.push(RustPlayerEvent::IsPlaying(snap.is_playing));
+    events.push(RustPlayerEvent::IsCrossfading(snap.is_xfading));
+    reporter.emit_batch(events);
 }
 
 impl RustMiniaudioPlayer {
@@ -283,30 +402,55 @@ impl RustMiniaudioPlayer {
         initial_outputs: Vec<RustAudioOutput>,
     ) -> Result<RustMiniaudioPlayer, String> {
         let device_trigger = Arc::new((Mutex::new(true), Condvar::new()));
-        let mut player = MiniaudioPlayer::new(
+        let (engine, notify_rx, hint_rx) = EngineActorHandle::spawn(
             sample_rate,
             channels,
             period_size,
             config.max_voices as usize,
             config.max_ram_bytes,
             Some(device_trigger.clone()),
+            config.pause_on_device_change,
+            config.visualizer_source,
+            initial_outputs.clone(),
         )?;
-        player.output_manager.set_pause_on_device_change(config.pause_on_device_change);
-        player.output_manager.set_visualizer_source(AudioOutputSource::from(config.visualizer_source));
-        let _ = player.output_manager.set_outputs(initial_outputs.clone());
 
-        let inner = Arc::new(Mutex::new(player));
         let reporter = EventReporter::new();
         reporter.emit(RustPlayerEvent::Outputs(initial_outputs));
         reporter.emit(RustPlayerEvent::VisualizerSource(config.visualizer_source));
-        let custom_handle = Arc::new(Mutex::new(None));
+        let custom_registry = CustomSourceRegistry::new();
         let monitor_running = Arc::new(AtomicBool::new(true));
         let metadata_enabled = Arc::new(AtomicBool::new(false));
+        let coordinator = ControlCoordinator::spawn(
+            engine.clone(),
+            custom_registry.clone(),
+            hint_rx,
+            {
+                let coord_reporter = reporter.clone();
+                let coord_meta = metadata_enabled.clone();
+                Arc::new(move |snap| {
+                    emit_track_transition_core(
+                        &coord_reporter,
+                        coord_meta.load(Ordering::Relaxed),
+                        None,
+                        snap,
+                        false,
+                    );
+                })
+            },
+        );
+
+        let hw = HardwareDeviceSupervisor::new(
+            engine.clone(),
+            engine.reaper().clone(),
+            device_trigger.clone(),
+        );
 
         let watcher_trigger = device_trigger.clone();
         let watcher_running = monitor_running.clone();
         let watcher_reporter = reporter.clone();
-        let watcher_inner = inner.clone();
+        let watcher_hw = hw.clone();
+        let watcher_coordinator = coordinator.clone();
+        let watcher_snapshots = engine.snapshots().clone();
 
         // Background device watcher: reacts to hardware changes with ultra-low latency (<15ms on disconnect, <=200ms on connect/change)
         // and runs asynchronously to never block real-time audio, telemetry, or UI threads.
@@ -320,9 +464,11 @@ impl RustMiniaudioPlayer {
                 let mut last_default_in_id: Option<String> = None;
 
                 while watcher_running.load(Ordering::Relaxed) {
-                    let mut triggered = lock.lock().unwrap();
+                    let mut triggered = lock_unpoisoned(lock);
                     while !*triggered && watcher_running.load(Ordering::Relaxed) {
-                        let (new_triggered, _) = cvar.wait_timeout(triggered, Duration::from_millis(200)).unwrap();
+                        let (new_triggered, _) = cvar
+                            .wait_timeout(triggered, Duration::from_millis(200))
+                            .unwrap_or_else(|e| e.into_inner());
                         triggered = new_triggered;
                         if *triggered {
                             break;
@@ -359,14 +505,6 @@ impl RustMiniaudioPlayer {
                         in_devs.len()
                     );
 
-                    let t_lock = Instant::now();
-                    let mut ply = watcher_inner.lock().unwrap();
-                    map_log!(
-                        4,
-                        "[WATCHER] Acquired inner player lock in {}ms",
-                        t_lock.elapsed().as_millis()
-                    );
-
                     // =========================================================================
                     // 1. RECONCILIATION OF OUTPUTS
                     // =========================================================================
@@ -394,7 +532,8 @@ impl RustMiniaudioPlayer {
                         let cur_out_def_id = cur_out_def.map(|d| d.effective_id.clone());
                         let default_out_changed = last_default_out_id.is_some()
                             && last_default_out_id != cur_out_def_id;
-                        let initial_or_dormant_attach = last_default_out_id.is_none() && cur_out_def_id.is_some();
+                        let initial_or_dormant_attach =
+                            last_default_out_id.is_none() && cur_out_def_id.is_some();
 
                         if default_out_changed {
                             map_log!(
@@ -412,7 +551,7 @@ impl RustMiniaudioPlayer {
                         }
                         last_default_out_id = cur_out_def_id.clone();
 
-                        let mut outputs = ply.output_manager.outputs.clone();
+                        let mut outputs = watcher_snapshots.outputs();
                         let mut outputs_mutated = false;
                         let mut device_disconnected = false;
 
@@ -420,12 +559,12 @@ impl RustMiniaudioPlayer {
                         if let Some(ref prev_devs) = prev_out_devices {
                             outputs.retain(|out| {
                                 if out.device_id != "AUTO" {
-                                    let was_in_prev = prev_devs.iter().any(|d| {
-                                        d.id == out.device_id || d.effective_id == out.device_id || d.name == out.device_id
-                                    });
-                                    let is_in_cur = out_devs.iter().any(|d| {
-                                        d.id == out.device_id || d.effective_id == out.device_id || d.name == out.device_id
-                                    });
+                                    let was_in_prev = prev_devs
+                                        .iter()
+                                        .any(|d| device_id_matches(d, &out.device_id));
+                                    let is_in_cur = out_devs
+                                        .iter()
+                                        .any(|d| device_id_matches(d, &out.device_id));
                                     if was_in_prev && !is_in_cur {
                                         device_disconnected = true;
                                         outputs_mutated = true;
@@ -434,7 +573,7 @@ impl RustMiniaudioPlayer {
                                             "[WATCHER:EVICT_OUT] Evicting disconnected physical output device ID '{}'",
                                             out.device_id
                                         );
-                                        return false; // Evict disconnected device
+                                        return false;
                                     }
                                 }
                                 true
@@ -442,47 +581,33 @@ impl RustMiniaudioPlayer {
                         }
 
                         let has_auto_output = outputs.iter().any(|o| o.device_id == "AUTO");
+                        let should_pause =
+                            device_disconnected || (has_auto_output && default_out_changed);
+                        let need_pause_check =
+                            should_pause && watcher_snapshots.pause_on_device_change();
+                        let need_reconcile = outputs_mutated
+                            || (has_auto_output
+                                && (default_out_changed || initial_or_dormant_attach));
 
-                        // Handle pause_on_device_change:
-                        let should_pause = device_disconnected || (has_auto_output && default_out_changed);
-                        map_log!(
-                            3,
-                            "[WATCHER:PAUSE_CHECK] should_pause={}, pause_on_device_change={}, deck_state={}",
-                            should_pause,
-                            ply.output_manager.pause_on_device_change.load(Ordering::Relaxed),
-                            ply.music_manager.active_deck_ref().state.load(Ordering::Relaxed)
-                        );
-                        if should_pause {
-                            if ply.output_manager.pause_on_device_change.load(Ordering::Relaxed) {
-                                let deck = ply.music_manager.active_deck_ref();
-                                if deck.state.load(Ordering::Relaxed) == crate::core::dual_source::STATE_PLAYING {
-                                    map_log!(
-                                        2,
-                                        "[WATCHER:PAUSE] Auto-pausing playback deck due to output device change/disconnect!"
-                                    );
-                                    let _ = ply.music_manager.pause();
-                                    watcher_reporter.emit(RustPlayerEvent::PlaybackState(crate::core::types::PlaybackState::Paused.as_i32()));
-                                    watcher_reporter.emit(RustPlayerEvent::IsPlaying(false));
-                                }
+                        if need_pause_check || need_reconcile {
+                            let (auto_paused, reconciled_outs) =
+                                watcher_hw.reconcile_outputs_from_watcher(
+                                    &watcher_coordinator,
+                                    prev_out_devices,
+                                    out_devs.clone(),
+                                    cur_out_def_id.clone(),
+                                    default_out_changed,
+                                    initial_or_dormant_attach,
+                                );
+                            if auto_paused {
+                                watcher_reporter.emit(RustPlayerEvent::PlaybackState(
+                                    crate::core::types::PlaybackState::Paused.as_i32(),
+                                ));
+                                watcher_reporter.emit(RustPlayerEvent::IsPlaying(false));
                             }
-                        }
-
-                        // Synchronize output manager with pre-resolved auto ID bypass
-                        if outputs_mutated || (has_auto_output && (default_out_changed || initial_or_dormant_attach)) {
-                            map_log!(
-                                3,
-                                "[WATCHER:RECONCILE_OUTPUTS:START] Calling set_outputs_with_resolved ({} outputs, cur_def={:?})...",
-                                outputs.len(),
-                                cur_out_def_id
-                            );
-                            let t_reconcile = Instant::now();
-                            let _ = ply.output_manager.set_outputs_with_resolved(outputs.clone(), cur_out_def_id);
-                            map_log!(
-                                3,
-                                "[WATCHER:RECONCILE_OUTPUTS:DONE] set_outputs_with_resolved finished in {}ms",
-                                t_reconcile.elapsed().as_millis()
-                            );
-                            watcher_reporter.emit(RustPlayerEvent::Outputs(outputs));
+                            if let Some(outs) = reconciled_outs {
+                                watcher_reporter.emit(RustPlayerEvent::Outputs(outs));
+                            }
                         }
                     }
 
@@ -513,7 +638,8 @@ impl RustMiniaudioPlayer {
                         let cur_in_def_id = cur_in_def.map(|d| d.effective_id.clone());
                         let default_in_changed = last_default_in_id.is_some()
                             && last_default_in_id != cur_in_def_id;
-                        let initial_or_dormant_attach_in = last_default_in_id.is_none() && cur_in_def_id.is_some();
+                        let initial_or_dormant_attach_in =
+                            last_default_in_id.is_none() && cur_in_def_id.is_some();
                         if default_in_changed {
                             map_log!(
                                 2,
@@ -530,19 +656,18 @@ impl RustMiniaudioPlayer {
                         }
                         last_default_in_id = cur_in_def_id.clone();
 
-                        let mut inputs = ply.input_manager.current_inputs();
+                        let mut inputs = watcher_snapshots.inputs();
                         let mut inputs_mutated = false;
 
-                        // Only evict non-AUTO inputs that were physically present before and have disappeared
                         if let Some(ref prev_devs) = prev_in_devices {
                             inputs.retain(|inp| {
                                 if inp.device_id != "AUTO" {
-                                    let was_in_prev = prev_devs.iter().any(|d| {
-                                        d.id == inp.device_id || d.effective_id == inp.device_id || d.name == inp.device_id
-                                    });
-                                    let is_in_cur = in_devs.iter().any(|d| {
-                                        d.id == inp.device_id || d.effective_id == inp.device_id || d.name == inp.device_id
-                                    });
+                                    let was_in_prev = prev_devs
+                                        .iter()
+                                        .any(|d| device_id_matches(d, &inp.device_id));
+                                    let is_in_cur = in_devs
+                                        .iter()
+                                        .any(|d| device_id_matches(d, &inp.device_id));
                                     if was_in_prev && !is_in_cur {
                                         inputs_mutated = true;
                                         map_log!(
@@ -550,7 +675,7 @@ impl RustMiniaudioPlayer {
                                             "[WATCHER:EVICT_IN] Evicting missing physical input device ID '{}'",
                                             inp.device_id
                                         );
-                                        return false; // Evict disconnected microphone
+                                        return false;
                                     }
                                 }
                                 true
@@ -558,32 +683,28 @@ impl RustMiniaudioPlayer {
                         }
 
                         let has_auto_input = inputs.iter().any(|i| i.device_id == "AUTO");
+                        let need_reconcile_in = inputs_mutated
+                            || (has_auto_input
+                                && (default_in_changed || initial_or_dormant_attach_in));
 
-                        // Synchronize input manager with pre-resolved auto ID bypass
-                        if inputs_mutated || (has_auto_input && (default_in_changed || initial_or_dormant_attach_in)) {
-                            map_log!(
-                                3,
-                                "[WATCHER:RECONCILE_INPUTS:START] Calling set_inputs_with_resolved ({} inputs, cur_def={:?})...",
-                                inputs.len(),
-                                cur_in_def_id
-                            );
-                            let t_reconcile = Instant::now();
-                            let _ = ply.input_manager.set_inputs_with_resolved(inputs.clone(), cur_in_def_id);
-                            map_log!(
-                                3,
-                                "[WATCHER:RECONCILE_INPUTS:DONE] set_inputs_with_resolved finished in {}ms",
-                                t_reconcile.elapsed().as_millis()
-                            );
-                            watcher_reporter.emit(RustPlayerEvent::Inputs(inputs));
+                        if need_reconcile_in {
+                            if let Some(reconciled_ins) = watcher_hw.reconcile_inputs_from_watcher(
+                                prev_in_devices,
+                                in_devs.clone(),
+                                cur_in_def_id.clone(),
+                                default_in_changed,
+                                initial_or_dormant_attach_in,
+                            ) {
+                                watcher_reporter.emit(RustPlayerEvent::Inputs(reconciled_ins));
+                            }
                         }
                     }
-
-                    drop(ply);
                 }
             })
             .ok();
 
-        let worker_inner = inner.clone();
+        let worker_snapshots = engine.snapshots().clone();
+        let worker_effects = engine.effects().clone();
         let worker_reporter = reporter.clone();
         let worker_running = monitor_running.clone();
         let meta_enabled = metadata_enabled.clone();
@@ -593,343 +714,172 @@ impl RustMiniaudioPlayer {
             .spawn(move || {
                 // Dedicated metadata single-emission state registers to guarantee zero per-tick parsing/serialization overhead
                 let mut last_emitted_meta_deck = -1i32;
+                let mut last_emitted_meta_deck_id = usize::MAX;
+                let mut last_emitted_meta_open_gen = u64::MAX;
                 let mut last_emitted_meta_version = u32::MAX;
                 let mut last_emitted_meta_flush = u64::MAX;
                 let mut last_meta_enabled = false;
+                let mut tick_events: Vec<RustPlayerEvent> = Vec::with_capacity(24);
 
                 while worker_running.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(16));
+                    tick_events.clear();
 
-                    let Ok(mut ply) = worker_inner.try_lock() else {
-                        continue;
-                    };
-
-                    // Check crossfade completion (auto and manual)
-                    let xfade_trans = ply.music_manager.inner.crossfade.transition();
-                    let is_xfade_active = xfade_trans != QueueTransition::Idle;
-                    let mut xfade_done = ply.music_manager.inner.crossfade_completed_flag.swap(false, Ordering::AcqRel);
-                    let cur_f = ply.music_manager.inner.crossfade.current_frame.load(Ordering::Relaxed);
-                    let tot_f = ply.music_manager.inner.crossfade.total_frames.load(Ordering::Relaxed);
-                    let target_id = ply.music_manager.inner.crossfade_target_id.load(Ordering::Relaxed);
-
-                    if !xfade_done && is_xfade_active && (tot_f > 0 && cur_f >= tot_f) {
-                        ply.music_manager.inner.crossfade.abort();
-                        xfade_done = true;
-                    }
-                    if !xfade_done && !is_xfade_active && target_id >= 0 {
-                        xfade_done = true;
-                    }
-
-                    if xfade_done {
-                        let to_deck = ply.music_manager.inner.crossfade.to_deck.load(Ordering::Relaxed);
-                        ply.music_manager.inner.active_deck.store(to_deck, Ordering::Release);
-                        let from_slot = if to_deck == 0 {
-                            &mut ply.music_manager.inner.deck_b
-                        } else {
-                            &mut ply.music_manager.inner.deck_a
-                        };
-                        from_slot.stop();
-
-                        let target_id = ply.music_manager.inner.crossfade_target_id.swap(-1, Ordering::AcqRel);
-                        if target_id >= 0 {
-                            let new_idx_opt = ply
-                                .music_manager
-                                .inner
-                                .queue
-                                .read()
-                                .unwrap()
-                                .iter()
-                                .position(|it| it.id == target_id);
-                            if let Some(new_idx) = new_idx_opt {
-                                ply.music_manager.inner.current_index.store(new_idx as i64, Ordering::Release);
-                                let (g, p) = ply.recalculate_and_apply_replay_gain();
-                                worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                                    gain_db: g,
-                                    peak: p,
-                                }));
+                    for notice in notify_rx.try_iter() {
+                        match notice {
+                            RtEngineNotice::IsCrossfading(v) => {
+                                tick_events.push(RustPlayerEvent::IsCrossfading(v));
                             }
-                        }
-
-                        ply.music_manager.inner.preload_standby_deck();
-                        worker_reporter.emit(RustPlayerEvent::IsCrossfading(false));
-                    }
-
-                    // Auto-crossfade & queue advance evaluation
-                    let cur_playback = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
-                    let is_xfading = ply.music_manager.inner.crossfade.is_active();
-                    let active_deck = ply.music_manager.active_deck_ref();
-                    let pos = active_deck.position_ms.load(Ordering::Relaxed);
-                    let dur = active_deck.duration_ms.load(Ordering::Relaxed);
-                    let current_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
-
-                    let can_trigger = !is_xfading
-                        && current_idx >= 0
-                        && cur_playback == PlaybackState::Playing;
-
-                    if can_trigger {
-                        let auto_ms = ply.music_manager.inner.auto_crossfade_duration_ms.load(Ordering::Relaxed);
-                        let q_len = ply.music_manager.inner.queue.read().unwrap().len();
-                        let loop_m = ply.music_manager.inner.loop_mode.load(Ordering::Relaxed);
-
-                        let has_next_track = if q_len > 0 {
-                            let n = current_idx + 1;
-                            (n as usize) < q_len || loop_m == 2
-                        } else {
-                            false
-                        };
-
-                        let should_auto_xfade = has_next_track
-                            && auto_ms > 0
-                            && dur > (auto_ms as i64)
-                            && (pos + (auto_ms as i64) >= dur);
-                        let is_eof = !should_auto_xfade && (
-                            active_deck.track_exhausted.swap(false, Ordering::AcqRel)
-                            || (dur > 0 && pos >= dur && pos > 0)
-                        );
-
-                        if should_auto_xfade || is_eof {
-                            let next_idx_opt = if loop_m == 1 && is_eof && !should_auto_xfade {
-                                Some(current_idx as usize)
-                            } else if has_next_track {
-                                let n = current_idx + 1;
-                                if (n as usize) < q_len {
-                                    Some(n as usize)
-                                } else {
-                                    Some(0)
-                                }
-                            } else {
-                                None
-                            };
-
-                            if let Some(next_idx) = next_idx_opt {
-                                let item_opt = ply.music_manager.inner.queue.read().unwrap().get(next_idx).cloned();
-                                if let Some(item) = item_opt {
-                                    let custom_factory = ply.music_manager.inner.custom_source_factory.clone();
-                                    let active_id = ply.music_manager.inner.active_deck.load(Ordering::Relaxed);
-                                    let to_deck = if active_id == 0 { 1 } else { 0 };
-                                    let to_slot = if to_deck == 0 {
-                                        &mut ply.music_manager.inner.deck_a
-                                    } else {
-                                        &mut ply.music_manager.inner.deck_b
-                                    };
-                                    let open_res = crate::core::dual_source::DualSource::open_deck_source(to_slot, &item, custom_factory.as_ref());
-                                    if open_res == 0 {
-                                        to_slot.play();
-                                        if should_auto_xfade {
-                                            let sr = ply.music_manager.sample_rate.max(1);
-                                            let eff_ms = if dur > pos {
-                                                ((dur - pos) as u64).clamp(50, auto_ms)
-                                            } else {
-                                                auto_ms
-                                            };
-                                            let xfade_frames = (eff_ms * sr as u64) / 1000;
-                                            let curve = ply.music_manager.inner.crossfade_curve.load(Ordering::Relaxed);
-                                            ply.music_manager.inner.crossfade.begin(active_id, to_deck, xfade_frames, curve, QueueTransition::AutoCrossfade);
-                                            ply.music_manager.inner.crossfade_target_id.store(item.id, Ordering::Release);
-                                            worker_reporter.emit(RustPlayerEvent::IsCrossfading(true));
-                                        } else {
-                                            let from_slot = if active_id == 0 {
-                                                &mut ply.music_manager.inner.deck_a
-                                            } else {
-                                                &mut ply.music_manager.inner.deck_b
-                                            };
-                                            from_slot.stop();
-                                            ply.music_manager.inner.active_deck.store(to_deck, Ordering::Release);
-                                            ply.music_manager.inner.current_index.store(next_idx as i64, Ordering::Release);
-                                            let (g, p) = ply.recalculate_and_apply_replay_gain();
-                                            worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                                                gain_db: g,
-                                                peak: p,
-                                            }));
-                                        }
-                                    }
-                                }
-                            } else if is_eof {
-                                ply.music_manager.inner.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
-                                let active_deck = ply.music_manager.active_deck_mut();
-                                active_deck.finish_at_end();
+                            RtEngineNotice::ReplayGain { gain_db, peak } => {
+                                tick_events.push(RustPlayerEvent::ReplayGain(
+                                    RustReplayGainConfig { gain_db, peak },
+                                ));
+                            }
+                            RtEngineNotice::NeedMoreTracks {
+                                current_track_id,
+                                remaining_tracks,
+                            } => {
+                                tick_events.push(RustPlayerEvent::NeedMoreTracks {
+                                    current_track_id,
+                                    remaining_tracks,
+                                });
                             }
                         }
                     }
 
-                    // Check infinite mix queue replenishment
-                    if ply.music_manager.inner.infinite_mix_enabled.load(Ordering::Relaxed) {
-                        let cur_playback = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
-                        let is_playing = cur_playback == PlaybackState::Playing;
-
-                        if is_playing {
-                            let current_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
-                            let q = ply.music_manager.inner.queue.read().unwrap();
-                            let q_len = q.len();
-                            if current_idx >= 0 && (current_idx as usize) < q_len {
-                                let current_id = q[current_idx as usize].id;
-                                let remaining = (q_len - 1).saturating_sub(current_idx as usize);
-                                let threshold = ply.music_manager.inner.infinite_mix_threshold.load(Ordering::Relaxed);
-                                if remaining < threshold {
-                                    let last_id = ply.music_manager.inner.last_notified_infinite_mix_id.load(Ordering::Relaxed);
-                                    if last_id != current_id {
-                                        ply.music_manager.inner.last_notified_infinite_mix_id.store(current_id, Ordering::Release);
-                                        worker_reporter.emit(RustPlayerEvent::NeedMoreTracks {
-                                            current_track_id: current_id,
-                                            remaining_tracks: remaining as u32,
-                                        });
-                                    }
-                                }
-                            }
+                    // Drain completed voices and process LRU RAM eviction completely lock-free.
+                    if worker_effects.has_pending_completions() {
+                        let (completed_ids, eviction_info) =
+                            worker_effects.drain_completed_and_evict();
+                        for v_id in completed_ids {
+                            tick_events.push(RustPlayerEvent::VoiceCompleted(v_id));
                         }
-                    }
-
-                    // Check completed voice pool effects & reactive eviction (Trigger 2)
-                    if let Ok(mut vp) = ply.effects_manager.pool.try_lock() {
-                        let mut any_completed = false;
-                        while let Ok(v_id) = vp.completed_voices_consumer.pop() {
-                            any_completed = true;
-                            worker_reporter.emit(RustPlayerEvent::VoiceCompleted(v_id));
-                        }
-                        if any_completed && vp.on_voice_completed() {
-                            let ids = vp.loaded_effect_ids();
-                            let allocated_bytes = vp.allocated_ram_bytes;
-                            worker_reporter.emit(RustPlayerEvent::LoadedEffects {
+                        if let Some((ids, allocated_bytes)) = eviction_info {
+                            tick_events.push(RustPlayerEvent::LoadedEffects {
                                 ids,
                                 allocated_bytes,
                             });
                         }
                     }
 
-                    // Query active deck
-                    let active_deck = ply.music_manager.active_deck_ref();
-                    let playback_state = PlaybackState::from_i32(ply.music_manager.inner.playback_state.load(Ordering::Relaxed));
-                    let is_buffering = active_deck.is_buffering.load(Ordering::Relaxed);
-                    let pos = active_deck.position_ms.load(Ordering::Relaxed);
-                    let audio_info = active_deck.get_audio_info();
-                    let mut br = crate::bridge::ffi::MiniaudioBufferedRange::default();
-                    let has_br = active_deck.get_buffered_range(&mut br) == 0;
-                    let idx = ply.music_manager.current_index();
-                    let is_xfading = ply.music_manager.is_crossfading();
-                    let is_rec = ply.output_manager.is_recording();
-                    let is_ducking = ply.input_manager.is_ducking_active();
-                    let mic_rms = ply.input_manager.last_rms_db();
+                    let playback_state = worker_snapshots.playback_state();
+                    let is_buffering = worker_snapshots.is_buffering();
+                    let pos = worker_snapshots.position_ms();
+                    let audio_info = worker_snapshots.audio_info();
+                    let buffered_range = worker_snapshots.buffered_range();
+                    let idx = worker_snapshots.current_index();
+                    let is_xfading = worker_snapshots.is_xfading();
+                    let is_rec = worker_snapshots.is_recording();
+                    let is_ducking = worker_snapshots.is_ducking();
+                    let mic_rms = worker_snapshots.mic_rms_db();
 
                     let cur_meta_enabled = meta_enabled.load(Ordering::Relaxed);
-                    let active_deck_idx = ply.music_manager.inner.active_deck.load(Ordering::Relaxed);
-                    let cur_flush = active_deck.flush_generation.load(Ordering::Acquire);
-                    let cur_meta_ver = active_deck.get_meta_bytes_version();
+                    let active_deck_idx = worker_snapshots.active_deck();
+                    let active_deck_id = worker_snapshots.active_deck_id();
+                    let active_open_gen = worker_snapshots.active_open_gen();
+                    let cur_flush = worker_snapshots.flush_generation();
+                    let cur_meta_ver = worker_snapshots.meta_version();
 
-                    let should_emit_meta = cur_meta_enabled && (
-                        !last_meta_enabled
-                        || active_deck_idx != last_emitted_meta_deck
-                        || cur_flush != last_emitted_meta_flush
-                        || cur_meta_ver != last_emitted_meta_version
-                    );
+                    let should_emit_meta = cur_meta_enabled
+                        && (!last_meta_enabled
+                            || active_deck_idx != last_emitted_meta_deck
+                            || active_deck_id != last_emitted_meta_deck_id
+                            || active_open_gen != last_emitted_meta_open_gen
+                            || cur_flush != last_emitted_meta_flush
+                            || cur_meta_ver != last_emitted_meta_version);
 
                     let meta_to_send = if should_emit_meta {
-                        active_deck.get_parsed_metadata()
+                        worker_snapshots.parsed_metadata()
                     } else {
                         None
                     };
-                    let rg = ply.music_dsp.equalizer.replay_gain();
-                    let active_voices = ply.effects_manager.active_voices_count();
+                    let (rg_gain_db, rg_peak) = worker_snapshots.unpack_rg();
+                    let active_voices = worker_effects.active_voices_count();
 
-                    let vis_data = if ply.output_manager.visualizer_enabled.load(Ordering::Relaxed) {
-                        Some(ply.output_manager.visualizer_seqlock.read())
+                    let vis_data = if worker_snapshots.visualizer_enabled() {
+                        Some(worker_snapshots.read_visualizer())
                     } else {
                         None
                     };
-
-                    drop(ply);
 
                     let is_playing = playback_state == PlaybackState::Playing;
 
-                    worker_reporter.emit(RustPlayerEvent::PlaybackState(playback_state.as_i32()));
-                    worker_reporter.emit(RustPlayerEvent::IsPlaying(is_playing));
-                    worker_reporter.emit(RustPlayerEvent::IsBuffering(is_buffering));
-                    worker_reporter.emit(RustPlayerEvent::Position(pos));
-                    worker_reporter.emit(RustPlayerEvent::CurrentIndex(idx as i32));
+                    tick_events.push(RustPlayerEvent::PlaybackState(playback_state.as_i32()));
+                    tick_events.push(RustPlayerEvent::IsPlaying(is_playing));
+                    tick_events.push(RustPlayerEvent::IsBuffering(is_buffering));
+                    tick_events.push(RustPlayerEvent::Position(pos));
+                    tick_events.push(RustPlayerEvent::CurrentIndex(idx as i32));
                     if audio_info.sample_rate > 0 {
-                        worker_reporter.emit(RustPlayerEvent::AudioInfo(audio_info));
+                        tick_events.push(RustPlayerEvent::AudioInfo(audio_info));
                     }
-                    worker_reporter.emit(RustPlayerEvent::ActiveVoices(active_voices));
-                    if has_br {
-                        worker_reporter.emit(RustPlayerEvent::Buffer(RustBuffer {
-                            start_ms: br.start_ms,
-                            end_ms: br.end_ms,
-                            is_buffering: br.is_buffering != 0,
+                    tick_events.push(RustPlayerEvent::ActiveVoices(active_voices));
+                    if let Some((start_ms, end_ms, range_buffering)) = buffered_range {
+                        tick_events.push(RustPlayerEvent::Buffer(RustBuffer {
+                            start_ms,
+                            end_ms,
+                            is_buffering: range_buffering,
                         }));
                     }
-                    worker_reporter.emit(RustPlayerEvent::IsCrossfading(is_xfading));
-                    worker_reporter.emit(RustPlayerEvent::IsRecording(is_rec));
-                    worker_reporter.emit(RustPlayerEvent::IsDuckingActive(is_ducking));
+                    tick_events.push(RustPlayerEvent::IsCrossfading(is_xfading));
+                    tick_events.push(RustPlayerEvent::IsRecording(is_rec));
+                    tick_events.push(RustPlayerEvent::IsDuckingActive(is_ducking));
                     if mic_rms > -90.0 {
-                        worker_reporter.emit(RustPlayerEvent::MicRmsLevel(mic_rms));
+                        tick_events.push(RustPlayerEvent::MicRmsLevel(mic_rms));
                     }
                     if should_emit_meta {
                         last_emitted_meta_deck = active_deck_idx;
+                        last_emitted_meta_deck_id = active_deck_id;
+                        last_emitted_meta_open_gen = active_open_gen;
                         last_emitted_meta_version = cur_meta_ver;
                         last_emitted_meta_flush = cur_flush;
                         last_meta_enabled = true;
                         if let Some(meta) = meta_to_send {
-                            worker_reporter.emit(RustPlayerEvent::AudioMetadata(meta));
+                            tick_events.push(RustPlayerEvent::AudioMetadata(meta));
                         } else {
-                            worker_reporter.emit(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+                            tick_events.push(RustPlayerEvent::AudioMetadata(
+                                RustAudioMetadata::default(),
+                            ));
                         }
                     } else if !cur_meta_enabled && last_meta_enabled {
                         last_meta_enabled = false;
                         last_emitted_meta_version = u32::MAX;
-                        worker_reporter.emit(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+                        tick_events
+                            .push(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
                     }
-                    worker_reporter.emit(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                        gain_db: rg.gain_db,
-                        peak: rg.peak,
+                    tick_events.push(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                        gain_db: rg_gain_db,
+                        peak: rg_peak,
                     }));
                     if let Some(vis) = vis_data {
-                        worker_reporter.emit(RustPlayerEvent::Visualizer(
+                        tick_events.push(RustPlayerEvent::Visualizer(
                             RustVisualizerData::from(vis),
                         ));
                     }
-                }
-            })
-            .ok();
-
-        let clock_inner = inner.clone();
-        let clock_running = monitor_running.clone();
-        let clock_period = period_size;
-        let clock_sr = sample_rate;
-
-        let clock_thread = thread::Builder::new()
-            .name("map-engine-clock".to_string())
-            .spawn(move || {
-                let period_duration = Duration::from_nanos(
-                    (clock_period as u64 * 1_000_000_000) / clock_sr.max(1) as u64,
-                );
-                let mut next_tick = Instant::now();
-
-                while clock_running.load(Ordering::Relaxed) {
-                    if let Ok(mut ply) = clock_inner.lock() {
-                        ply.render_pcm(clock_period as usize);
-                    }
-
-                    next_tick += period_duration;
-                    let now = Instant::now();
-                    if now < next_tick {
-                        thread::sleep(next_tick - now);
-                    } else {
-                        next_tick = now;
-                    }
+                    worker_reporter.emit_batch(tick_events.drain(..));
                 }
             })
             .ok();
 
         Ok(RustMiniaudioPlayer {
-            inner,
+            engine,
+            coordinator,
+            hw,
             reporter,
-            custom_handle,
+            custom_registry,
             monitor_running,
-            _monitor_thread: monitor_thread,
+            monitor_thread: Mutex::new(monitor_thread),
             device_trigger,
-            _watcher_thread: watcher_thread,
-            _clock_thread: clock_thread,
+            watcher_thread: Mutex::new(watcher_thread),
             metadata_enabled,
+            disposed: AtomicBool::new(false),
         })
+    }
+
+    fn notify_device_watcher(&self) {
+        let (lock, cvar) = &*self.device_trigger;
+        let mut flag = lock_unpoisoned(lock);
+        *flag = true;
+        cvar.notify_all();
     }
 
     /// Subscribes a Dart StreamSink to real-time engine events and telemetry updates.
@@ -939,21 +889,14 @@ impl RustMiniaudioPlayer {
     ) -> Result<(), String> {
         self.reporter.set_sink(sink);
 
-        let current_outputs = self.inner.lock().unwrap().output_manager.outputs.clone();
-        self.reporter.emit(RustPlayerEvent::Outputs(current_outputs));
-
-        let current_vis_source = self.inner.lock().unwrap().output_manager.visualizer_source() as i32;
-        self.reporter.emit(RustPlayerEvent::VisualizerSource(current_vis_source));
-
-        let current_inputs = self.inner.lock().unwrap().input_manager.current_inputs();
-        self.reporter.emit(RustPlayerEvent::Inputs(current_inputs));
+        let snap = self.engine.snapshots();
+        self.reporter.emit(RustPlayerEvent::Outputs(snap.outputs()));
+        self.reporter
+            .emit(RustPlayerEvent::VisualizerSource(snap.visualizer_source()));
+        self.reporter.emit(RustPlayerEvent::Inputs(snap.inputs()));
 
         // Asynchronously notify background device watcher to deliver initial device snapshot
-        let (lock, cvar) = &*self.device_trigger;
-        if let Ok(mut flag) = lock.lock() {
-            *flag = true;
-            cvar.notify_one();
-        }
+        self.notify_device_watcher();
         Ok(())
     }
 
@@ -962,22 +905,23 @@ impl RustMiniaudioPlayer {
     }
 
     fn emit_queue(&self) {
-        if let Ok(ply) = self.inner.lock() {
-            let q: Vec<i64> = ply
-                .music_manager
-                .inner
-                .queue
-                .read()
-                .unwrap()
-                .iter()
-                .map(|it| it.id)
-                .collect();
-            let cur_idx = ply.music_manager.inner.current_index.load(Ordering::Relaxed) as i32;
+        if let Ok((queue, current_index)) = self.engine.exec(|ply| snapshot_queue_ids(ply)) {
             self.emit_event(RustPlayerEvent::Queue {
-                queue: q,
-                current_index: cur_idx,
+                queue,
+                current_index,
             });
         }
+    }
+
+    fn emit_track_transition(&self, snap: TrackTransitionSnapshot, emit_shuffle: bool) {
+        let meta_on = self.metadata_enabled.load(Ordering::Relaxed);
+        emit_track_transition_core(
+            &self.reporter,
+            meta_on,
+            Some(&|| self.emit_queue()),
+            snap,
+            emit_shuffle,
+        );
     }
 
     // =========================================================================
@@ -993,167 +937,80 @@ impl RustMiniaudioPlayer {
         shuffled: Option<bool>,
         seek_ms: Option<i64>,
     ) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        let prev_ids: Vec<i64> = ply
-            .music_manager
-            .inner
-            .queue
-            .read()
-            .unwrap()
-            .iter()
-            .map(|i| i.id)
-            .collect();
-        ply.music_manager.play(id, position, shuffled, seek_ms)?;
-        let new_ids: Vec<i64> = ply
-            .music_manager
-            .inner
-            .queue
-            .read()
-            .unwrap()
-            .iter()
-            .map(|i| i.id)
-            .collect();
-        let queue_changed = prev_ids != new_ids;
-        let cur_idx = ply.music_manager.current_index();
-        let is_shuffled = ply.music_manager.is_shuffled();
-        let active_deck = ply.music_manager.active_deck_ref();
-        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-        let is_playing = state == PlaybackState::Playing.as_i32();
-        let is_xfading = ply.music_manager.inner.crossfade.is_active();
-        let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
-        let initial_info = active_deck.get_audio_info();
-        let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
-            active_deck.get_parsed_metadata()
-        } else {
-            None
-        };
-        let mut initial_br = crate::bridge::ffi::MiniaudioBufferedRange::default();
-        let has_br = active_deck.get_buffered_range(&mut initial_br) == 0;
-        let rg = if cur_idx >= 0 {
-            Some(Self::sync_deck_replay_gain(&mut ply, cur_idx as usize))
-        } else {
-            None
-        };
-        drop(ply);
-        if let Some((g, p)) = rg {
-            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                gain_db: g,
-                peak: p,
-            }));
+        let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
+        if let Some(snap) =
+            self.coordinator
+                .play(id, position, shuffled, seek_ms, include_meta)?
+        {
+            self.emit_track_transition(snap, true);
         }
-        if queue_changed {
-            self.emit_queue();
-        }
-        self.emit_event(RustPlayerEvent::IsShuffled(is_shuffled));
-        self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
-        if self.metadata_enabled.load(Ordering::Relaxed) {
-            self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
-            if let Some(meta) = initial_meta {
-                self.emit_event(RustPlayerEvent::AudioMetadata(meta));
-            }
-        }
-        self.emit_event(RustPlayerEvent::Position(initial_pos));
-        if initial_info.sample_rate > 0 {
-            self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
-        }
-        if has_br {
-            self.emit_event(RustPlayerEvent::Buffer(RustBuffer {
-                start_ms: initial_br.start_ms,
-                end_ms: initial_br.end_ms,
-                is_buffering: initial_br.is_buffering != 0,
-            }));
-        }
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
-        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(())
     }
 
     /// Pauses playback on the active audio deck without releasing resources.
     pub fn pause(&self) {
-        map_log!(3, "[NATIVE:PAUSE:START] pause() requested from Dart. Acquiring player inner lock...");
+        map_log!(3, "[NATIVE:PAUSE:START] pause() requested from Dart. Cancelling pending opens and dispatching to engine actor...");
         let t0 = Instant::now();
-        let mut ply = self.inner.lock().unwrap();
-        map_log!(
-            3,
-            "[NATIVE:PAUSE] Player inner lock acquired in {}ms. Calling music_manager.pause()...",
-            t0.elapsed().as_millis()
-        );
-        ply.music_manager.pause();
-        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-        let is_xfading = ply.music_manager.inner.crossfade.is_active();
-        drop(ply);
-        map_log!(
-            3,
-            "[NATIVE:PAUSE:DONE] pause() completed and lock released in {}ms. Emitting events...",
-            t0.elapsed().as_millis()
-        );
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsPlaying(false));
-        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
+        if let Ok((state, is_xfading)) = self.coordinator.pause() {
+            map_log!(
+                3,
+                "[NATIVE:PAUSE:DONE] pause() completed in {}ms. Emitting events...",
+                t0.elapsed().as_millis()
+            );
+            self.reporter.emit_batch([
+                RustPlayerEvent::PlaybackState(state),
+                RustPlayerEvent::IsPlaying(false),
+                RustPlayerEvent::IsCrossfading(is_xfading),
+            ]);
+        }
     }
 
     /// Stops playback and resets elapsed position to the beginning.
     pub fn stop(&self) {
-        map_log!(3, "[NATIVE:STOP:START] stop() requested from Dart. Acquiring player inner lock...");
+        map_log!(3, "[NATIVE:STOP:START] stop() requested from Dart. Cancelling pending opens and dispatching to engine actor...");
         let t0 = Instant::now();
-        let mut ply = self.inner.lock().unwrap();
-        map_log!(
-            3,
-            "[NATIVE:STOP] Player inner lock acquired in {}ms. Calling music_manager.stop()...",
-            t0.elapsed().as_millis()
-        );
-        ply.music_manager.stop();
-        ply.output_manager
-            .visualizer_seqlock
-            .write(|d| *d = crate::dsp::visualizer::VisualizerData::default());
-        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-        let is_xfading = ply.music_manager.inner.crossfade.is_active();
-        drop(ply);
-        map_log!(
-            3,
-            "[NATIVE:STOP:DONE] stop() completed and lock released in {}ms. Emitting events...",
-            t0.elapsed().as_millis()
-        );
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::Position(0));
-        self.emit_event(RustPlayerEvent::IsPlaying(false));
-        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
-        self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
+        if let Ok((state, is_xfading)) = self.coordinator.stop() {
+            map_log!(
+                3,
+                "[NATIVE:STOP:DONE] stop() completed in {}ms. Emitting events...",
+                t0.elapsed().as_millis()
+            );
+            self.reporter.emit_batch([
+                RustPlayerEvent::PlaybackState(state),
+                RustPlayerEvent::Position(0),
+                RustPlayerEvent::IsPlaying(false),
+                RustPlayerEvent::IsCrossfading(is_xfading),
+                RustPlayerEvent::Visualizer(RustVisualizerData::default()),
+            ]);
+        }
     }
 
     /// Seeks to the specified position in milliseconds within the current track.
     pub fn seek(&self, position_ms: i64) -> Result<(), String> {
-        map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Acquiring inner lock...", position_ms);
+        map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Dispatching to engine actor...", position_ms);
         let t0 = Instant::now();
-        let mut ply = self.inner.lock().unwrap();
-        map_log!(
-            3,
-            "[NATIVE:SEEK] Player inner lock acquired in {}ms. Calling music_manager.seek()...",
-            t0.elapsed().as_millis()
-        );
-        let res = ply.music_manager.seek(position_ms)?;
-        let cur_idx = ply.music_manager.current_index();
-        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-        let is_playing = state == PlaybackState::Playing.as_i32();
-        let is_xfading = ply.music_manager.inner.crossfade.is_active();
-        drop(ply);
+        let (cur_idx, state, is_playing, is_xfading) = self.engine.exec(move |ply| {
+            ply.music_manager.seek(position_ms)?;
+            let cur_idx = ply.music_manager.current_index();
+            let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
+            let is_playing = state == PlaybackState::Playing.as_i32();
+            let is_xfading = ply.music_manager.inner.crossfade.is_active();
+            Ok::<_, String>((cur_idx, state, is_playing, is_xfading))
+        })??;
         map_log!(
             3,
             "[NATIVE:SEEK:DONE] seek() completed in {}ms. Emitting events...",
             t0.elapsed().as_millis()
         );
-        self.emit_event(RustPlayerEvent::Position(position_ms));
-        self.emit_event(RustPlayerEvent::CurrentIndex(cur_idx as i32));
-        self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
-        Ok(res)
+        self.reporter.emit_batch([
+            RustPlayerEvent::Position(position_ms),
+            RustPlayerEvent::CurrentIndex(cur_idx as i32),
+            RustPlayerEvent::IsPlaying(is_playing),
+            RustPlayerEvent::PlaybackState(state),
+            RustPlayerEvent::IsCrossfading(is_xfading),
+        ]);
+        Ok(())
     }
-
-fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlayer, _idx: usize) -> (f32, f32) {
-    ply.recalculate_and_apply_replay_gain()
-}
 
     // =========================================================================
     // Queue Management Methods
@@ -1162,85 +1019,88 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Replaces the entire playback queue with `queue` without starting playback.
     pub fn set_queue(&self, queue: Vec<RustAudioSource>) -> Result<(), String> {
         let core_queue: Vec<AudioSourceCore> = queue.into_iter().map(Into::into).collect();
+        self.custom_registry.abort_all();
         let reporter_clone = self.reporter.clone();
-        let handle_arc = self.custom_handle.clone();
+        let registry_clone = self.custom_registry.clone();
         let custom_factory = Arc::new(
             move |stream_id: u32, total_size: Option<u64>| {
                 let rc = reporter_clone.clone();
                 let req_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
                     rc.emit(RustPlayerEvent::DartReadRequest(req.into()));
                 });
-                let (src, h) = crate::buffer::CustomDartByteSource::new(
+                CustomDartByteSource::with_registry(
                     stream_id,
                     total_size,
                     true,
                     req_sender,
-                );
-                if let Ok(mut g) = handle_arc.lock() {
-                    *g = Some(h.clone());
-                }
-                (src, h)
+                    Some(registry_clone.clone()),
+                )
             },
         );
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_manager.set_custom_source_factory(custom_factory);
-        ply.music_manager.set_queue(core_queue);
-        let (g, p) = ply.recalculate_and_apply_replay_gain();
-        if let Ok(mut f) = self.reporter.filter.lock() {
-            *f = TelemetryFilter::default();
-        }
-        drop(ply);
-        self.emit_queue();
-        self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-            gain_db: g,
-            peak: p,
-        }));
-        self.emit_event(RustPlayerEvent::CurrentIndex(-1));
-        self.emit_event(RustPlayerEvent::IsPlaying(false));
-        self.emit_event(RustPlayerEvent::Position(0));
-        self.emit_event(RustPlayerEvent::AudioInfo(RustAudioInfo::default()));
-        self.emit_event(RustPlayerEvent::PlaybackState(0));
+        let (g, p) = self.coordinator.set_queue(core_queue, custom_factory)?;
+        let queue_evt = self
+            .engine
+            .exec(|ply| snapshot_queue_ids(ply))
+            .ok()
+            .map(|(queue, current_index)| RustPlayerEvent::Queue {
+                queue,
+                current_index,
+            });
+        self.reporter.reset_and_emit_batch(queue_evt.into_iter().chain([
+            RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: g,
+                peak: p,
+            }),
+            RustPlayerEvent::CurrentIndex(-1),
+            RustPlayerEvent::IsPlaying(false),
+            RustPlayerEvent::Position(0),
+            RustPlayerEvent::AudioInfo(RustAudioInfo::default()),
+            RustPlayerEvent::PlaybackState(0),
+        ]));
         Ok(())
     }
 
     /// Appends a batch of audio sources to the end of the playlist queue.
     pub fn append(&self, sources: Vec<RustAudioSource>) {
         let core_sources: Vec<AudioSourceCore> = sources.into_iter().map(Into::into).collect();
-        self.inner.lock().unwrap().music_manager.append(core_sources);
-        self.emit_queue();
+        if self.coordinator.append(core_sources).is_ok() {
+            self.emit_queue();
+        }
     }
 
     /// Inserts an audio source directly after the currently playing track.
     pub fn insert_next(&self, source: RustAudioSource) {
-        self.inner.lock().unwrap().music_manager.insert_next(source.into());
-        self.emit_queue();
+        let core_src: AudioSourceCore = source.into();
+        if self.coordinator.insert_next(core_src).is_ok() {
+            self.emit_queue();
+        }
     }
 
     /// Removes an audio source at the specified index from the playlist queue.
     pub fn remove_at(&self, index: usize) -> bool {
-        let (res, idx) = {
-            let mut ply = self.inner.lock().unwrap();
-            let r = ply.music_manager.remove_at(index).is_some();
-            let i = ply.music_manager.current_index();
-            (r, i)
+        let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
+        let Ok((res, idx, snap)) = self.coordinator.remove_at(index, include_meta) else {
+            return false;
         };
         if res {
             self.emit_queue();
-            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+            if let Some(snap) = snap {
+                self.emit_track_transition(snap, false);
+            } else {
+                self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+            }
         }
         res
     }
 
     /// Reorders a track within the queue from `old_index` to `new_index`.
     pub fn reorder(&self, old_index: usize, new_index: usize) -> bool {
-        let (res, idx) = {
-            let mut ply = self.inner.lock().unwrap();
-            let r = ply.music_manager.reorder(old_index, new_index);
-            let i = ply.music_manager.current_index();
-            (r, i)
+        let Ok(res) = self.coordinator.reorder(old_index, new_index) else {
+            return false;
         };
         if res {
             self.emit_queue();
+            let idx = self.engine.snapshots().current_index();
             self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         }
         res
@@ -1248,14 +1108,12 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Reorders the playlist queue to match the specified list of track IDs.
     pub fn reorder_by_ids(&self, ids: Vec<i64>) -> bool {
-        let (res, idx) = {
-            let mut ply = self.inner.lock().unwrap();
-            let r = ply.music_manager.reorder_by_ids(&ids);
-            let i = ply.music_manager.current_index();
-            (r, i)
+        let Ok(res) = self.coordinator.reorder_by_ids(ids) else {
+            return false;
         };
         if res {
             self.emit_queue();
+            let idx = self.engine.snapshots().current_index();
             self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
         }
         res
@@ -1263,128 +1121,40 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Clears pending tracks from the queue, optionally preserving the currently active track.
     pub fn clear_queue(&self, keep_current: bool) {
-        let idx = {
-            let mut ply = self.inner.lock().unwrap();
-            ply.music_manager.clear_queue(keep_current);
-            ply.music_manager.current_index()
-        };
-        self.emit_queue();
-        self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+        if let Ok(idx) = self.coordinator.clear_queue(keep_current) {
+            self.emit_queue();
+            self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
+        }
     }
 
     /// Skips to the next track in the queue, optionally overriding crossfade duration.
     pub fn next(&self, crossfade_duration_ms: Option<u64>) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_manager.next(crossfade_duration_ms)?;
-        let idx = ply.music_manager.current_index();
-        let active_deck = ply.music_manager.active_deck_ref();
-        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-        let is_playing = state == PlaybackState::Playing.as_i32();
-        let is_xfading = ply.music_manager.inner.crossfade.is_active();
-        let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
-        let initial_info = active_deck.get_audio_info();
-        let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
-            active_deck.get_parsed_metadata()
-        } else {
-            None
-        };
-        let rg = if idx >= 0 {
-            Some(Self::sync_deck_replay_gain(&mut ply, idx as usize))
-        } else {
-            None
-        };
-        drop(ply);
-        if let Some((g, p)) = rg {
-            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                gain_db: g,
-                peak: p,
-            }));
+        let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
+        if let Some(snap) = self.coordinator.next(crossfade_duration_ms, include_meta)? {
+            self.emit_track_transition(snap, false);
         }
-        self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
-        if self.metadata_enabled.load(Ordering::Relaxed) {
-            self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
-            if let Some(meta) = initial_meta {
-                self.emit_event(RustPlayerEvent::AudioMetadata(meta));
-            }
-        }
-        self.emit_event(RustPlayerEvent::Position(initial_pos));
-        if initial_info.sample_rate > 0 {
-            self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
-        }
-        self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(())
     }
 
     /// Rewinds or skips to the previous track in the queue.
     pub fn previous(&self) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_manager.previous()?;
-        let idx = ply.music_manager.current_index();
-        let active_deck = ply.music_manager.active_deck_ref();
-        let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-        let is_playing = state == PlaybackState::Playing.as_i32();
-        let is_xfading = ply.music_manager.inner.crossfade.is_active();
-        let initial_pos = active_deck.position_ms.load(Ordering::Relaxed);
-        let initial_info = active_deck.get_audio_info();
-        let initial_meta = if self.metadata_enabled.load(Ordering::Relaxed) {
-            active_deck.get_parsed_metadata()
-        } else {
-            None
-        };
-        let rg = if idx >= 0 {
-            Some(Self::sync_deck_replay_gain(&mut ply, idx as usize))
-        } else {
-            None
-        };
-        drop(ply);
-        if let Some((g, p)) = rg {
-            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                gain_db: g,
-                peak: p,
-            }));
+        let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
+        if let Some(snap) = self.coordinator.previous(include_meta)? {
+            self.emit_track_transition(snap, false);
         }
-        self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
-        if self.metadata_enabled.load(Ordering::Relaxed) {
-            self.emit_event(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
-            if let Some(meta) = initial_meta {
-                self.emit_event(RustPlayerEvent::AudioMetadata(meta));
-            }
-        }
-        self.emit_event(RustPlayerEvent::Position(initial_pos));
-        if initial_info.sample_rate > 0 {
-            self.emit_event(RustPlayerEvent::AudioInfo(initial_info));
-        }
-        self.emit_event(RustPlayerEvent::IsPlaying(is_playing));
-        self.emit_event(RustPlayerEvent::PlaybackState(state));
-        self.emit_event(RustPlayerEvent::IsCrossfading(is_xfading));
         Ok(())
     }
 
     /// Sets the queue loop policy (0: off, 1: one, 2: all).
     pub fn set_loop_mode(&self, mode: i32) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_manager.inner.loop_mode.load(std::sync::atomic::Ordering::Relaxed);
-        if prev != mode {
-            ply.music_manager.set_loop_mode(mode);
+        if let Ok(true) = self.coordinator.set_loop_mode(mode) {
             self.emit_event(RustPlayerEvent::LoopMode(mode));
         }
     }
 
     /// Enables or disables playlist shuffle mode.
     pub fn set_shuffle(&self, enabled: bool) {
-        let changed_idx = {
-            let mut ply = self.inner.lock().unwrap();
-            let prev = ply.music_manager.is_shuffled();
-            if prev != enabled {
-                ply.music_manager.set_shuffle(enabled);
-                Some(ply.music_manager.current_index())
-            } else {
-                None
-            }
-        };
-        if let Some(idx) = changed_idx {
+        if let Ok(Some(idx)) = self.coordinator.set_shuffle(enabled) {
             self.emit_queue();
             self.emit_event(RustPlayerEvent::IsShuffled(enabled));
             self.emit_event(RustPlayerEvent::CurrentIndex(idx as i32));
@@ -1393,24 +1163,44 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
     pub fn set_infinite_mix(&self, config: RustInfiniteMixConfig) {
-        let ply = self.inner.lock().unwrap();
-        ply.music_manager.inner.infinite_mix_enabled.store(config.enabled, Ordering::Release);
-        ply.music_manager.inner.infinite_mix_threshold.store(config.remaining_tracks_threshold as usize, Ordering::Release);
-        if config.enabled {
-            ply.music_manager.inner.last_notified_infinite_mix_id.store(-1, Ordering::Release);
+        let enabled = config.enabled;
+        let threshold = config.remaining_tracks_threshold as usize;
+        if self
+            .engine
+            .exec(move |ply| {
+                ply.music_manager
+                    .inner
+                    .infinite_mix_enabled
+                    .store(enabled, Ordering::Release);
+                ply.music_manager
+                    .inner
+                    .infinite_mix_threshold
+                    .store(threshold, Ordering::Release);
+                if enabled {
+                    ply.music_manager
+                        .inner
+                        .last_notified_infinite_mix_id
+                        .store(-1, Ordering::Release);
+                }
+            })
+            .is_ok()
+        {
+            self.emit_event(RustPlayerEvent::InfiniteMix(config));
         }
-        drop(ply);
-        self.emit_event(RustPlayerEvent::InfiniteMix(config));
     }
 
     /// Configures automatic and manual crossfade durations and curve formulas.
     pub fn set_crossfade(&self, config: RustCrossfadeConfig) {
-        self.inner.lock().unwrap().music_manager.set_crossfade(
-            config.auto_duration_ms,
-            config.manual_duration_ms,
-            config.curve,
-        );
-        self.emit_event(RustPlayerEvent::CrossfadeConfig(config));
+        let auto_ms = config.auto_duration_ms;
+        let manual_ms = config.manual_duration_ms;
+        let curve = config.curve;
+        if self
+            .engine
+            .exec(move |ply| ply.music_manager.set_crossfade(auto_ms, manual_ms, curve))
+            .is_ok()
+        {
+            self.emit_event(RustPlayerEvent::CrossfadeConfig(config));
+        }
     }
 
     // =========================================================================
@@ -1419,88 +1209,127 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Sets the master output volume level (0.0 to 1.0+).
     pub fn set_volume(&self, volume: f32) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_dsp.volume;
-        if (prev - volume).abs() > 1e-5 {
-            ply.set_volume(volume);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.music_dsp.volume;
+            if (prev - volume).abs() > 1e-5 {
+                ply.set_volume(volume);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Volume(volume));
         }
     }
 
     /// Sets the playback speed multiplier with automatic pitch compensation.
     pub fn set_rate(&self, rate: f32) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_manager.rate();
-        if (prev - rate).abs() > 1e-5 {
-            ply.music_manager.set_rate(rate);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.music_manager.rate();
+            if (prev - rate).abs() > 1e-5 {
+                ply.music_manager.set_rate(rate);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Rate(rate));
         }
     }
 
     /// Sets the pitch shift frequency multiplier independently of playback speed.
     pub fn set_pitch(&self, pitch: f32) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_manager.pitch();
-        if (prev - pitch).abs() > 1e-5 {
-            ply.music_manager.set_pitch(pitch);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.music_manager.pitch();
+            if (prev - pitch).abs() > 1e-5 {
+                ply.music_manager.set_pitch(pitch);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Pitch(pitch));
         }
     }
 
     /// Sets the stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
     pub fn set_balance(&self, balance: f32) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_dsp.balance;
-        ply.music_dsp.set_balance(balance);
-        let actual = ply.music_dsp.balance;
-        if (prev - actual).abs() > 1e-5 {
+        if let Ok(Some(actual)) = self.engine.exec(move |ply| {
+            let prev = ply.music_dsp.balance;
+            ply.music_dsp.set_balance(balance);
+            let actual = ply.music_dsp.balance;
+            if (prev - actual).abs() > 1e-5 {
+                Some(actual)
+            } else {
+                None
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Balance(actual));
         }
     }
 
     /// Toggles mono downmixing of multi-channel audio.
     pub fn set_mono(&self, enabled: bool) {
-        let mut ply = self.inner.lock().unwrap();
-        if ply.music_dsp.mono != enabled {
-            ply.music_dsp.set_mono(enabled);
-            ply.inherit_dsp.set_mono(enabled);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            if ply.music_dsp.mono != enabled {
+                ply.music_dsp.set_mono(enabled);
+                ply.inherit_dsp.set_mono(enabled);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Mono(enabled));
         }
     }
 
     /// Sets the equalizer pre-amplification gain in decibels.
     pub fn set_preamp(&self, preamp_db: f32) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.music_dsp.equalizer.preamp_db();
-        if (prev - preamp_db).abs() > 1e-5 {
-            ply.music_dsp.set_preamp(preamp_db);
-            ply.inherit_dsp.set_preamp(preamp_db);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.music_dsp.equalizer.preamp_db();
+            if (prev - preamp_db).abs() > 1e-5 {
+                ply.music_dsp.set_preamp(preamp_db);
+                ply.inherit_dsp.set_preamp(preamp_db);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Preamp(preamp_db));
         }
     }
 
     /// Sets the Bauer binaural headphone crossfeed configuration.
     pub fn set_crossfeed(&self, config: RustCrossfeedConfig) {
-        let mut ply = self.inner.lock().unwrap();
-        let core_cfg: crate::dsp::crossfeed::CrossfeedConfig = config.into();
-        let prev = *ply.music_manager.inner.deck_a.crossfeed_config.read().unwrap();
-        if prev != core_cfg {
-            ply.music_manager.inner.deck_a.set_crossfeed(core_cfg);
-            ply.music_manager.inner.deck_b.set_crossfeed(core_cfg);
-            drop(ply);
+        let core_cfg: crate::dsp::crossfeed::CrossfeedConfig = config.clone().into();
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.music_manager.inner.deck_a.crossfeed_config;
+            if prev != core_cfg {
+                ply.music_manager.inner.deck_a.set_crossfeed(core_cfg);
+                ply.music_manager.inner.deck_b.set_crossfeed(core_cfg);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Crossfeed(config));
         }
     }
 
     /// Enables or disables 3D stereo widening spatializer with width multiplier.
     pub fn set_spatializer(&self, enabled: bool, width: f32) {
-        let mut ply = self.inner.lock().unwrap();
         let w = width.clamp(0.0, 2.0);
-        let prev_en = ply.music_dsp.equalizer.spatializer_enabled();
-        let prev_w = ply.music_dsp.equalizer.spatializer_width();
-        if prev_en != enabled || (prev_w - w).abs() > 1e-5 {
-            ply.music_dsp.equalizer.set_spatializer(enabled, w);
-            ply.inherit_dsp.equalizer.set_spatializer(enabled, w);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev_en = ply.music_dsp.equalizer.spatializer_enabled();
+            let prev_w = ply.music_dsp.equalizer.spatializer_width();
+            if prev_en != enabled || (prev_w - w).abs() > 1e-5 {
+                ply.music_dsp.equalizer.set_spatializer(enabled, w);
+                ply.inherit_dsp.equalizer.set_spatializer(enabled, w);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Spatializer { enabled, width: w });
         }
     }
@@ -1512,78 +1341,76 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         id: Option<i64>,
         position: Option<usize>,
     ) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        let target_idx = {
-            let q = ply.music_manager.inner.queue.read().unwrap();
-            if let Some(target_id) = id {
-                q.iter().position(|it| it.id == target_id)
-            } else if let Some(pos) = position {
-                if pos < q.len() {
-                    Some(pos)
+        let rg_update = self.engine.exec(move |ply| {
+            let target_idx = {
+                let q = read_unpoisoned(&ply.music_manager.inner.queue);
+                if let Some(target_id) = id {
+                    q.iter().position(|it| it.id == target_id)
+                } else if let Some(pos) = position {
+                    if pos < q.len() {
+                        Some(pos)
+                    } else {
+                        None
+                    }
                 } else {
-                    None
+                    let cur = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
+                    if cur >= 0 && (cur as usize) < q.len() {
+                        Some(cur as usize)
+                    } else if !q.is_empty() {
+                        Some(0)
+                    } else {
+                        None
+                    }
                 }
-            } else {
-                let cur = ply
-                    .music_manager
-                    .inner
-                    .current_index
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                if cur >= 0 && (cur as usize) < q.len() {
-                    Some(cur as usize)
-                } else if !q.is_empty() {
-                    Some(0)
-                } else {
-                    None
-                }
-            }
-        };
+            };
 
-        if let Some(idx) = target_idx {
-            let (new_gain, new_peak) = match config {
-                Some(ref c) => (Some(c.gain_db), Some(c.peak)),
-                None => (None, None),
-            };
-            {
-                let mut q = ply.music_manager.inner.queue.write().unwrap();
-                if idx < q.len() {
-                    q[idx].replay_gain_db = new_gain;
-                    q[idx].replay_peak = new_peak;
+            if let Some(idx) = target_idx {
+                let (new_gain, new_peak) = match config {
+                    Some(ref c) => (Some(c.gain_db), Some(c.peak)),
+                    None => (None, None),
+                };
+                {
+                    let mut q = write_unpoisoned(&ply.music_manager.inner.queue);
+                    if idx < q.len() {
+                        q[idx].replay_gain_db = new_gain;
+                        q[idx].replay_peak = new_peak;
+                    }
+                }
+                {
+                    let mut cq = write_unpoisoned(&ply.music_manager.inner.canonical_queue);
+                    if idx < cq.len() {
+                        cq[idx].replay_gain_db = new_gain;
+                        cq[idx].replay_peak = new_peak;
+                    }
+                }
+                let cur = ply.music_manager.inner.current_index.load(Ordering::Relaxed);
+                let is_target_active = if cur >= 0 {
+                    cur as usize == idx
+                } else {
+                    idx == 0
+                };
+                if is_target_active {
+                    return Some(ply.recalculate_and_apply_replay_gain());
                 }
             }
-            {
-                let mut cq = ply.music_manager.inner.canonical_queue.write().unwrap();
-                if idx < cq.len() {
-                    cq[idx].replay_gain_db = new_gain;
-                    cq[idx].replay_peak = new_peak;
-                }
-            }
-            let cur = ply
-                .music_manager
-                .inner
-                .current_index
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let is_target_active = if cur >= 0 {
-                cur as usize == idx
-            } else {
-                idx == 0
-            };
-            if is_target_active {
-                let (g, p) = ply.recalculate_and_apply_replay_gain();
-                self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                    gain_db: g,
-                    peak: p,
-                }));
-            }
+            None
+        })?;
+
+        if let Some((g, p)) = rg_update {
+            self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: g,
+                peak: p,
+            }));
         }
         Ok(())
     }
 
     /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
     pub fn set_replay_gain_mode(&self, mode: u32) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.replay_gain_mode = mode;
-        let (g, p) = ply.recalculate_and_apply_replay_gain();
+        let (g, p) = self.engine.exec(move |ply| {
+            ply.replay_gain_mode = mode;
+            ply.recalculate_and_apply_replay_gain()
+        })?;
         self.emit_event(RustPlayerEvent::ReplayGainMode(mode));
         self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db: g,
@@ -1594,9 +1421,10 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
     pub fn set_default_replay_gain(&self, gain_db: f32, peak: f32) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.default_replay_gain = (gain_db, peak);
-        let (g, p) = ply.recalculate_and_apply_replay_gain();
+        let (g, p) = self.engine.exec(move |ply| {
+            ply.default_replay_gain = (gain_db, peak);
+            ply.recalculate_and_apply_replay_gain()
+        })?;
         self.emit_event(RustPlayerEvent::DefaultReplayGain(gain_db));
         self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db: g,
@@ -1607,10 +1435,11 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Configures automatic silence skipping and trimming parameters.
     pub fn set_silence_config(&self, config: RustSilenceConfig) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
         let sc = SilenceConfig::from(config.clone());
-        ply.music_manager.inner.deck_a.set_silence_config(&sc);
-        ply.music_manager.inner.deck_b.set_silence_config(&sc);
+        self.engine.exec(move |ply| {
+            ply.music_manager.inner.deck_a.set_silence_config(&sc);
+            ply.music_manager.inner.deck_b.set_silence_config(&sc);
+        })?;
         self.emit_event(RustPlayerEvent::SilenceConfig(config));
         Ok(())
     }
@@ -1618,12 +1447,12 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
     pub fn set_equalizer(&self, params: RustEqualizerParams) -> Result<(), String> {
         let eq = EqualizerParams::from(params.clone());
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_dsp.set_equalizer(&eq);
-        ply.inherit_dsp.set_equalizer(&eq);
-        ply.music_manager.inner.deck_a.set_equalizer(&eq);
-        ply.music_manager.inner.deck_b.set_equalizer(&eq);
-        drop(ply);
+        self.engine.exec(move |ply| {
+            ply.music_dsp.set_equalizer(&eq);
+            ply.inherit_dsp.set_equalizer(&eq);
+            ply.music_manager.inner.deck_a.set_equalizer(&eq);
+            ply.music_manager.inner.deck_b.set_equalizer(&eq);
+        })?;
         self.emit_event(RustPlayerEvent::Equalizer(params));
         Ok(())
     }
@@ -1638,29 +1467,40 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             wet: params.wet,
             dry: params.dry,
         };
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_dsp.set_reverb(conf);
-        ply.inherit_dsp.set_reverb(conf);
+        self.engine.exec(move |ply| {
+            ply.music_dsp.set_reverb(conf);
+            ply.inherit_dsp.set_reverb(conf);
+        })?;
         self.emit_event(RustPlayerEvent::Reverb(params));
         Ok(())
     }
 
     /// Enables or disables the output brickwall peak limiter.
     pub fn set_limiter(&self, enabled: bool) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.master_limiter.is_enabled();
-        if prev != enabled {
-            ply.master_limiter.set_enabled(enabled);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.master_limiter.is_enabled();
+            if prev != enabled {
+                ply.master_limiter.set_enabled(enabled);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::Limiter(enabled));
         }
     }
 
     /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
     pub fn set_visualizer_enabled(&self, enabled: bool) {
-        let mut ply = self.inner.lock().unwrap();
-        let prev = ply.output_manager.visualizer_enabled.load(std::sync::atomic::Ordering::Relaxed);
-        if prev != enabled {
-            ply.output_manager.set_visualizer_enabled(enabled);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply.output_manager.visualizer_enabled.load(Ordering::Relaxed);
+            if prev != enabled {
+                ply.output_manager.set_visualizer_enabled(enabled);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::VisualizerEnabled(enabled));
             if !enabled {
                 self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
@@ -1670,20 +1510,25 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Configures the audio bus feeding the real-time FFT spectrum visualizer.
     pub fn set_visualizer_source(&self, source: i32) {
-        let mut ply = self.inner.lock().unwrap();
-        let src = AudioOutputSource::from(source);
-        ply.output_manager.set_visualizer_source(src);
-        self.emit_event(RustPlayerEvent::VisualizerSource(source));
+        if self
+            .engine
+            .exec(move |ply| {
+                let src = AudioOutputSource::from(source);
+                ply.output_manager.set_visualizer_source(src);
+            })
+            .is_ok()
+        {
+            self.emit_event(RustPlayerEvent::VisualizerSource(source));
+        }
     }
 
     /// Enables or disables forwarding of audio metadata payloads.
     pub fn set_metadata_enabled(&self, enabled: bool) {
-        let prev = self.metadata_enabled.swap(enabled, std::sync::atomic::Ordering::Relaxed);
+        let prev = self.metadata_enabled.swap(enabled, Ordering::Relaxed);
         if prev != enabled {
             self.emit_event(RustPlayerEvent::MetadataEnabled(enabled));
             if enabled {
-                let ply = self.inner.lock().unwrap();
-                if let Some(meta) = ply.music_manager.active_deck_ref().get_parsed_metadata() {
+                if let Some(meta) = self.engine.snapshots().parsed_metadata() {
                     self.emit_event(RustPlayerEvent::AudioMetadata(meta));
                 }
             } else {
@@ -1694,11 +1539,16 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Adjusts the audio stream buffer frame size.
     pub fn set_buffer_size(&self, buffer_size_frames: u32) {
-        let mut ply = self.inner.lock().unwrap();
-        ply.music_manager.inner.deck_a.set_buffer_size(buffer_size_frames);
-        ply.music_manager.inner.deck_b.set_buffer_size(buffer_size_frames);
-        drop(ply);
-        self.emit_event(RustPlayerEvent::BufferSize(buffer_size_frames));
+        if self
+            .engine
+            .exec(move |ply| {
+                ply.music_manager.inner.deck_a.set_buffer_size(buffer_size_frames);
+                ply.music_manager.inner.deck_b.set_buffer_size(buffer_size_frames);
+            })
+            .is_ok()
+        {
+            self.emit_event(RustPlayerEvent::BufferSize(buffer_size_frames));
+        }
     }
 
     // =========================================================================
@@ -1708,11 +1558,10 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Declaratively registers the catalog of sound effects with the autonomous RAM engine.
     pub fn set_effects(&self, effects: Vec<RustAudioEffect>) -> Result<(), String> {
         let catalog: Vec<EffectCatalogItem> = effects.into_iter().map(Into::into).collect();
-        let ply = self.inner.lock().unwrap();
-        ply.effects_manager.set_effects(catalog)?;
-        let loaded_ids = ply.effects_manager.loaded_effect_ids();
-        let ram_bytes = ply.effects_manager.allocated_ram_bytes();
-        drop(ply);
+        let fx = self.engine.effects();
+        fx.set_effects(catalog)?;
+        let loaded_ids = fx.loaded_effect_ids();
+        let ram_bytes = fx.allocated_ram_bytes();
         self.emit_event(RustPlayerEvent::LoadedEffects {
             ids: loaded_ids,
             allocated_bytes: ram_bytes,
@@ -1723,19 +1572,19 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Returns the list of currently loaded sound effect IDs in RAM.
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_loaded_effect_ids(&self) -> Vec<String> {
-        self.inner.lock().unwrap().effects_manager.loaded_effect_ids()
+        self.engine.effects().loaded_effect_ids()
     }
 
     /// Returns the total RAM bytes occupied by decoded sound effect buffers.
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_allocated_ram_bytes(&self) -> usize {
-        self.inner.lock().unwrap().effects_manager.allocated_ram_bytes()
+        self.engine.effects().allocated_ram_bytes()
     }
 
     /// Returns the current number of concurrently playing sound effect voices.
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_active_voices_count(&self) -> u32 {
-        self.inner.lock().unwrap().effects_manager.active_voices_count()
+        self.engine.effects().active_voices_count()
     }
 
     /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
@@ -1746,25 +1595,12 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         config: RustEffectConfig,
     ) -> Result<u32, String> {
         let core_config = EffectConfig::from(config);
-        let (voice_id, ram_changed, loaded_ids, ram_bytes) = {
-            let ply = self.inner.lock().unwrap();
-            let (vid, changed) = ply.effects_manager.play_effect(&id, core_config)?;
-            let ids = if changed {
-                ply.effects_manager.loaded_effect_ids()
-            } else {
-                Vec::new()
-            };
-            let bytes = if changed {
-                ply.effects_manager.allocated_ram_bytes()
-            } else {
-                0
-            };
-            (vid, changed, ids, bytes)
-        };
+        let fx = self.engine.effects();
+        let (voice_id, ram_changed) = fx.play_effect(&id, core_config)?;
         if ram_changed {
             self.emit_event(RustPlayerEvent::LoadedEffects {
-                ids: loaded_ids,
-                allocated_bytes: ram_bytes,
+                ids: fx.loaded_effect_ids(),
+                allocated_bytes: fx.allocated_ram_bytes(),
             });
         }
         Ok(voice_id)
@@ -1772,49 +1608,50 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.
     pub fn stop_effect(&self, voice_id: u32, fade_out_ms: u64) {
-        let sr = self.inner.lock().unwrap().sample_rate;
+        let sr = self.engine.snapshots().sample_rate;
         let fade_samples = (fade_out_ms as f64 * (sr as f64 / 1000.0)) as usize;
-        self.inner.lock().unwrap().effects_manager.stop_effect(voice_id, fade_samples);
+        self.engine.effects().stop_effect(voice_id, fade_samples);
     }
 
     /// Stops all actively playing sound effect voices with an optional fade-out ramp in milliseconds.
     pub fn stop_all_effects(&self, fade_out_ms: u64) {
-        let sr = self.inner.lock().unwrap().sample_rate;
+        let sr = self.engine.snapshots().sample_rate;
         let fade_samples = (fade_out_ms as f64 * (sr as f64 / 1000.0)) as usize;
-        self.inner.lock().unwrap().effects_manager.stop_all_effects(fade_samples);
+        self.engine.effects().stop_all_effects(fade_samples);
     }
 
     /// Modulates the volume of an active sound effect voice.
     pub fn set_effect_volume(&self, voice_id: u32, volume: f32) {
-        self.inner.lock().unwrap().effects_manager.set_voice_volume(voice_id, volume);
+        self.engine.effects().set_voice_volume(voice_id, volume);
     }
 
     /// Modulates the pitch multiplier of an active sound effect voice.
     pub fn set_effect_pitch(&self, voice_id: u32, pitch: f32) {
-        self.inner.lock().unwrap().effects_manager.set_voice_pitch(voice_id, pitch);
+        self.engine.effects().set_voice_pitch(voice_id, pitch);
     }
 
     /// Adjusts stereo pan balance of an active sound effect voice.
     pub fn set_effect_balance(&self, voice_id: u32, balance: f32) {
-        self.inner.lock().unwrap().effects_manager.set_voice_balance(voice_id, balance);
+        self.engine.effects().set_voice_balance(voice_id, balance);
     }
 
     /// Updates the 3D spatial emitter parameters for an active sound effect voice.
     pub fn set_effect_emitter(&self, voice_id: u32, emitter: Option<RustSpatialEmitter>) {
-        self.inner.lock().unwrap().effects_manager.set_voice_emitter(
-            voice_id,
-            emitter.map(Into::into),
-        );
+        self.engine
+            .effects()
+            .set_voice_emitter(voice_id, emitter.map(Into::into));
     }
 
     /// Updates the global 3D audio listener position, velocity, and orientation vectors.
     pub fn set_listener(&self, listener: RustSpatialListener) {
-        self.inner.lock().unwrap().effects_manager.set_listener(listener.into());
+        self.engine.effects().set_listener(listener.into());
     }
 
     /// Configures global Doppler factor and medium speed of sound in meters per second.
     pub fn set_doppler_parameters(&self, factor: f32, speed_of_sound: f32) {
-        self.inner.lock().unwrap().effects_manager.set_doppler_parameters(factor, speed_of_sound);
+        self.engine
+            .effects()
+            .set_doppler_parameters(factor, speed_of_sound);
     }
 
     // =========================================================================
@@ -1823,16 +1660,13 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Replaces the active audio output destinations in the multi-sink matrix.
     pub fn set_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
-        map_log!(3, "[NATIVE:SET_OUTPUTS:START] set_outputs() called with {} outputs. Acquiring inner lock...", outputs.len());
-        let t0 = Instant::now();
-        let mut ply = self.inner.lock().unwrap();
         map_log!(
             3,
-            "[NATIVE:SET_OUTPUTS] Inner lock acquired in {}ms. Calling output_manager.set_outputs()...",
-            t0.elapsed().as_millis()
+            "[NATIVE:SET_OUTPUTS:START] set_outputs() called with {} outputs. Opening hardware off-clock...",
+            outputs.len()
         );
-        ply.output_manager.set_outputs(outputs.clone())?;
-        drop(ply);
+        let t0 = Instant::now();
+        self.hw.set_outputs(outputs.clone())?;
         map_log!(
             3,
             "[NATIVE:SET_OUTPUTS:DONE] set_outputs() finished in {}ms. Emitting event...",
@@ -1840,51 +1674,24 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         );
 
         self.emit_event(RustPlayerEvent::Outputs(outputs));
-
-        let (lock, cvar) = &*self.device_trigger;
-        if let Ok(mut flag) = lock.lock() {
-            *flag = true;
-            cvar.notify_one();
-        }
+        self.notify_device_watcher();
         Ok(())
     }
 
     /// Adds or routes an audio output destination to the output matrix.
     pub fn add_output(&self, output: RustAudioOutput) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        let mut current = ply.output_manager.outputs.clone();
-        if !current.contains(&output) {
-            current.push(output);
-            ply.output_manager.set_outputs(current.clone())?;
-            drop(ply);
-
+        if let Some(current) = self.hw.add_output(output)? {
             self.emit_event(RustPlayerEvent::Outputs(current));
-
-            let (lock, cvar) = &*self.device_trigger;
-            if let Ok(mut flag) = lock.lock() {
-                *flag = true;
-                cvar.notify_one();
-            }
+            self.notify_device_watcher();
         }
         Ok(())
     }
 
     /// Removes an audio output destination from the output matrix.
     pub fn remove_output(&self, output: RustAudioOutput) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        let mut current = ply.output_manager.outputs.clone();
-        if let Some(pos) = current.iter().position(|x| *x == output) {
-            current.remove(pos);
-            ply.output_manager.set_outputs(current.clone())?;
-            drop(ply);
-
+        if let Some(current) = self.hw.remove_output(output)? {
             self.emit_event(RustPlayerEvent::Outputs(current));
-
-            let (lock, cvar) = &*self.device_trigger;
-            if let Ok(mut flag) = lock.lock() {
-                *flag = true;
-                cvar.notify_one();
-            }
+            self.notify_device_watcher();
         }
         Ok(())
     }
@@ -1896,7 +1703,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
             _ => WavFormat::Pcm16,
         };
         let src = AudioOutputSource::from(source);
-        self.inner.lock().unwrap().output_manager.start_recording(&path, fmt, src)?;
+        self.hw.start_recording(path, fmt, src)?;
         self.emit_event(RustPlayerEvent::IsRecording(true));
         self.emit_event(RustPlayerEvent::RecordingState {
             is_recording: true,
@@ -1907,9 +1714,7 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Stops active file recording and returns the finalization metrics.
     pub fn stop_recording(&self) -> Result<RustRecordingResult, String> {
-        let mut ply = self.inner.lock().unwrap();
-        let (path, dur_ms, bytes_written, sample_count) = ply.output_manager.stop_recording()?;
-        drop(ply);
+        let (path, dur_ms, bytes_written, sample_count) = self.hw.stop_recording()?;
         self.emit_event(RustPlayerEvent::IsRecording(false));
         self.emit_event(RustPlayerEvent::RecordingState {
             is_recording: false,
@@ -1930,17 +1735,13 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
     pub fn set_inputs(&self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
-        map_log!(3, "[NATIVE:SET_INPUTS:START] set_inputs() called with {} inputs. Acquiring inner lock...", inputs.len());
-        let t0 = Instant::now();
-        let mut ply = self.inner.lock().unwrap();
         map_log!(
             3,
-            "[NATIVE:SET_INPUTS] Inner lock acquired in {}ms. Calling input_manager.set_inputs()...",
-            t0.elapsed().as_millis()
+            "[NATIVE:SET_INPUTS:START] set_inputs() called with {} inputs. Opening capture hardware off-clock...",
+            inputs.len()
         );
-        ply.input_manager.set_inputs(inputs)?;
-        let current = ply.input_manager.current_inputs();
-        drop(ply);
+        let t0 = Instant::now();
+        let current = self.hw.set_inputs(inputs)?;
         map_log!(
             3,
             "[NATIVE:SET_INPUTS:DONE] set_inputs() finished in {}ms. Emitting event...",
@@ -1953,22 +1754,14 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
 
     /// Adds an audio input capture node.
     pub fn add_input(&self, input: RustAudioInput) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.input_manager.add_input(input)?;
-        let current = ply.input_manager.current_inputs();
-        drop(ply);
-
+        let current = self.hw.add_input(input)?;
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())
     }
 
     /// Removes an audio input capture node by matching device identifier.
     pub fn remove_input(&self, input: RustAudioInput) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.input_manager.remove_input(input.device_id)?;
-        let current = ply.input_manager.current_inputs();
-        drop(ply);
-
+        let current = self.hw.remove_input(input.device_id)?;
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())
     }
@@ -1979,21 +1772,25 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         device_id: String,
         config: RustAudioInputConfig,
     ) -> Result<(), String> {
-        let mut ply = self.inner.lock().unwrap();
-        ply.input_manager.configure_input(device_id, config)?;
-        let current = ply.input_manager.current_inputs();
-        drop(ply);
-
+        let current = self.hw.configure_input(device_id, config)?;
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())
     }
 
     /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
     pub fn set_pause_on_device_change(&self, enabled: bool) {
-        let ply = self.inner.lock().unwrap();
-        let prev = ply.output_manager.pause_on_device_change.load(std::sync::atomic::Ordering::Relaxed);
-        if prev != enabled {
-            ply.output_manager.set_pause_on_device_change(enabled);
+        if let Ok(true) = self.engine.exec(move |ply| {
+            let prev = ply
+                .output_manager
+                .pause_on_device_change
+                .load(Ordering::Relaxed);
+            if prev != enabled {
+                ply.output_manager.set_pause_on_device_change(enabled);
+                true
+            } else {
+                false
+            }
+        }) {
             self.emit_event(RustPlayerEvent::PauseOnDeviceChange(enabled));
         }
     }
@@ -2094,18 +1891,9 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
         bytes: Vec<u8>,
         is_eof: bool,
     ) -> Result<(), String> {
-        if let Ok(guard) = self.custom_handle.lock() {
-            if let Some(ref handle) = *guard {
-                handle.supply_bytes(request_id, bytes, is_eof);
-                return Ok(());
-            }
-        }
-        if let Ok(ply) = self.inner.try_lock() {
-            let active = ply.music_manager.active_deck_ref();
-            if let Some(ref handle) = *active.custom_source_handle.read().unwrap() {
-                handle.supply_bytes(request_id, bytes, is_eof);
-            }
-        }
+        let _ = self
+            .custom_registry
+            .resolve_request(request_id, bytes, is_eof);
         Ok(())
     }
 
@@ -2116,19 +1904,20 @@ fn sync_deck_replay_gain(ply: &mut crate::core::miniaudio_player::MiniaudioPlaye
     /// Releases all native audio devices, worker threads, DSP chains, and memory.
     #[flutter_rust_bridge::frb(sync)]
     pub fn dispose(&self) {
+        if self.disposed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         self.monitor_running.store(false, Ordering::Release);
-        let (lock, cvar) = &*self.device_trigger;
-        if let Ok(mut flag) = lock.lock() {
-            *flag = true;
-            cvar.notify_all();
-        }
+        self.notify_device_watcher();
         self.reporter.clear_sink();
-        if let Ok(mut guard) = self.custom_handle.lock() {
-            *guard = None;
+        self.coordinator.shutdown();
+        if let Some(jh) = lock_unpoisoned(&self.monitor_thread).take() {
+            let _ = jh.join();
         }
-        if let Ok(mut ply) = self.inner.lock() {
-            ply.dispose();
+        if let Some(jh) = lock_unpoisoned(&self.watcher_thread).take() {
+            let _ = jh.join();
         }
+        self.engine.shutdown();
     }
 }
 

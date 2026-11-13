@@ -299,7 +299,7 @@ impl MusicManager {
     /// Returns a copy of the playlist queue items.
     #[inline]
     pub fn queue_items(&self) -> Vec<AudioSourceCore> {
-        self.inner.queue.read().unwrap().clone()
+        crate::sync::read_unpoisoned(&self.inner.queue).clone()
     }
 
     /// Destroys and cleans up both streaming decks.

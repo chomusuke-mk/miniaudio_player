@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use crate::sync::{lock_unpoisoned, wait_timeout_unpoisoned};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::sync::MonotonicInstant;
 
@@ -258,20 +259,21 @@ fn insert_and_coalesce_sparse(chunks: &mut BTreeMap<u64, Vec<u8>>, offset: u64, 
     if let Some((&prev_start, prev_vec)) = chunks.range(..=new_start).next_back() {
         let prev_end = prev_start + prev_vec.len() as u64;
         if prev_end >= new_start {
-            let prev_data = chunks.remove(&prev_start).unwrap();
-            let prefix_len = (new_start - prev_start) as usize;
-            let mut combined = Vec::with_capacity(
-                (prev_end.max(new_end) - prev_start) as usize,
-            );
-            combined.extend_from_slice(&prev_data[..prefix_len]);
-            combined.extend_from_slice(&merged);
-            if prev_end > new_end {
-                let tail_start = (new_end - prev_start) as usize;
-                combined.extend_from_slice(&prev_data[tail_start..]);
+            if let Some(prev_data) = chunks.remove(&prev_start) {
+                let prefix_len = (new_start - prev_start) as usize;
+                let mut combined = Vec::with_capacity(
+                    (prev_end.max(new_end) - prev_start) as usize,
+                );
+                combined.extend_from_slice(&prev_data[..prefix_len]);
+                combined.extend_from_slice(&merged);
+                if prev_end > new_end {
+                    let tail_start = (new_end - prev_start) as usize;
+                    combined.extend_from_slice(&prev_data[tail_start..]);
+                }
+                new_start = prev_start;
+                new_end = new_start + combined.len() as u64;
+                merged = combined;
             }
-            new_start = prev_start;
-            new_end = new_start + combined.len() as u64;
-            merged = combined;
         }
     }
 
@@ -281,7 +283,9 @@ fn insert_and_coalesce_sparse(chunks: &mut BTreeMap<u64, Vec<u8>>, offset: u64, 
         let Some(k) = next_key else {
             break;
         };
-        let next_data = chunks.remove(&k).unwrap();
+        let Some(next_data) = chunks.remove(&k) else {
+            break;
+        };
         let next_end = k + next_data.len() as u64;
         if next_end > new_end {
             let overlap = (new_end - k) as usize;
@@ -538,7 +542,7 @@ impl StreamBuffer {
         playback_rate: f32,
     ) {
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
                 capacity,
                 anchor_offset,
@@ -575,7 +579,7 @@ impl StreamBuffer {
             return;
         }
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
                 capacity,
                 anchor_offset,
@@ -606,7 +610,7 @@ impl StreamBuffer {
             return;
         }
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
                 capacity,
                 anchor_offset,
@@ -633,7 +637,7 @@ impl StreamBuffer {
 
     /// Returns a snapshot of the resolved [`SlidingWindowState`] if this buffer is `Circular`.
     pub fn sliding_window_state(&self) -> Option<SlidingWindowState> {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular { window, .. } = *guard {
             Some(window)
         } else {
@@ -646,7 +650,7 @@ impl StreamBuffer {
         if !self.is_circular || self.should_abort.load(Ordering::Acquire) {
             return None;
         }
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             capacity,
             anchor_offset,
@@ -688,7 +692,7 @@ impl StreamBuffer {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let start_time = MonotonicInstant::now();
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             self.is_producer_waiting.store(true, Ordering::Release);
             let result = loop {
                 if self.should_abort.load(Ordering::Acquire) || self.is_eof.load(Ordering::Acquire) {
@@ -727,7 +731,7 @@ impl StreamBuffer {
                     break None;
                 }
                 let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
-                let (new_guard, _) = self.data_signal.wait_timeout(guard, wait_slice).unwrap();
+                let (new_guard, _) = wait_timeout_unpoisoned(&self.data_signal, guard, wait_slice);
                 guard = new_guard;
             };
             self.is_producer_waiting.store(false, Ordering::Release);
@@ -737,7 +741,7 @@ impl StreamBuffer {
 
     /// Returns the number of unread forward bytes (`Ahead`) currently buffered ahead of `read_cursor`.
     pub fn ahead_bytes(&self) -> u64 {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             anchor_offset,
             range_start,
@@ -758,7 +762,7 @@ impl StreamBuffer {
 
     /// Returns the number of retained backward bytes (`Back`) currently buffered behind `read_cursor`.
     pub fn back_buffered_bytes(&self) -> u64 {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             anchor_offset,
             range_start,
@@ -812,7 +816,7 @@ impl StreamBuffer {
                 return true;
             }
             let start_time = MonotonicInstant::now();
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             self.is_producer_waiting.store(true, Ordering::Release);
             let result = loop {
                 if self.should_abort.load(Ordering::Acquire) {
@@ -847,7 +851,7 @@ impl StreamBuffer {
                     break false;
                 }
                 let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
-                let (new_guard, _) = self.data_signal.wait_timeout(guard, wait_slice).unwrap();
+                let (new_guard, _) = wait_timeout_unpoisoned(&self.data_signal, guard, wait_slice);
                 guard = new_guard;
             };
             self.is_producer_waiting.store(false, Ordering::Release);
@@ -859,7 +863,7 @@ impl StreamBuffer {
     pub fn wait_signal(&self, timeout: Duration) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let guard = self.backend.lock().unwrap();
+            let guard = lock_unpoisoned(&self.backend);
             let _ = self.data_signal.wait_timeout(guard, timeout);
         }
         #[cfg(target_arch = "wasm32")]
@@ -907,7 +911,7 @@ impl StreamBuffer {
 
     /// Attaches or updates the on-demand `ByteFetchTask` (`getRealBytes`).
     pub fn set_fetcher(&self, fetcher: Option<ByteFetchTask>) {
-        let mut guard = self.backend.lock().unwrap();
+        let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             fetcher: ref mut f, ..
         } = *guard
@@ -918,7 +922,7 @@ impl StreamBuffer {
 
     /// Configures whether a background push streamer thread is actively feeding this circular buffer.
     pub fn set_push_streaming(&self, active: bool) {
-        let mut guard = self.backend.lock().unwrap();
+        let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             ref mut push_streaming,
             ..
@@ -930,7 +934,7 @@ impl StreamBuffer {
 
     /// Configures the circular buffer anchor offset (`audio_start`) and resets its window if empty.
     pub fn set_circular_anchor(&self, anchor: u64) {
-        let mut guard = self.backend.lock().unwrap();
+        let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             ref mut anchor_offset,
             ref mut range_start,
@@ -950,7 +954,7 @@ impl StreamBuffer {
 
     /// Sets the upper byte boundary of the audio payload (`audio_end`).
     pub fn set_audio_end(&self, end: Option<u64>) {
-        let mut guard = self.backend.lock().unwrap();
+        let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             anchor_offset,
             range_start,
@@ -975,7 +979,7 @@ impl StreamBuffer {
 
     /// Sets the virtual stream size for a `Sparse` buffer.
     pub fn set_virtual_size(&self, size: Option<u64>) {
-        let mut guard = self.backend.lock().unwrap();
+        let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Sparse {
             ref mut virtual_size,
             ..
@@ -987,7 +991,7 @@ impl StreamBuffer {
 
     /// Returns the virtual size for a `Sparse` buffer, or the current length for `Linear`.
     pub fn virtual_size(&self) -> Option<u64> {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         match *guard {
             BufferBackend::Linear { ref data, .. } => Some(data.len() as u64),
             BufferBackend::Sparse {
@@ -1013,7 +1017,7 @@ impl StreamBuffer {
     /// Replaces the linear buffer contents with `bytes` or writes at offset 0.
     pub fn set_linear_bytes(&self, bytes: &[u8]) {
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Linear {
                 ref mut data,
                 min_growth,
@@ -1033,7 +1037,7 @@ impl StreamBuffer {
 
     /// Returns the byte length of a `Linear` buffer.
     pub fn linear_len(&self) -> usize {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         match *guard {
             BufferBackend::Linear { ref data, .. } => data.len(),
             _ => 0,
@@ -1050,7 +1054,7 @@ impl StreamBuffer {
         }
 
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             match *guard {
                 BufferBackend::Linear {
                     ref mut data,
@@ -1156,7 +1160,7 @@ impl StreamBuffer {
         }
 
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             match *guard {
                 BufferBackend::Circular {
                     ref mut storage,
@@ -1230,7 +1234,7 @@ impl StreamBuffer {
     /// Flushes the circular buffer and re-anchors it at `new_stream_offset`, marking `is_buffering = true`.
     pub fn flush_circular(&self, new_stream_offset: u64) {
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
                 ref mut anchor_offset,
                 ref mut range_start,
@@ -1269,7 +1273,7 @@ impl StreamBuffer {
         let cache_miss_fetch: Option<(ByteFetchTask, u64, usize)>;
 
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             match *guard {
                 BufferBackend::Linear { ref data, .. } => {
                     if offset < data.len() as u64 {
@@ -1417,7 +1421,7 @@ impl StreamBuffer {
                 Ok(bytes) if !bytes.is_empty() => {
                     let _ = self.commit_chunk(f_pos, &bytes);
                     // Re-read now that data is committed
-                    let guard = self.backend.lock().unwrap();
+                    let guard = lock_unpoisoned(&self.backend);
                     if let BufferBackend::Circular {
                         ref storage,
                         capacity,
@@ -1505,7 +1509,7 @@ impl StreamBuffer {
                         }
                         let remaining = max_wait - elapsed;
                         let slice_wait = remaining.min(Duration::from_millis(20));
-                        let guard = self.backend.lock().unwrap();
+                        let guard = lock_unpoisoned(&self.backend);
                         if self.should_abort.load(Ordering::Acquire) {
                             return Err(BufferError::Aborted);
                         }
@@ -1520,7 +1524,7 @@ impl StreamBuffer {
     /// Updates dynamic ICY stream metadata bytes in a `Sparse` metadata buffer.
     pub fn set_icy_meta(&self, data: &[u8]) {
         {
-            let mut guard = self.backend.lock().unwrap();
+            let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Sparse {
                 ref mut icy_override,
                 ..
@@ -1536,7 +1540,7 @@ impl StreamBuffer {
 
     /// Synthesizes a contiguous metadata byte snapshot from a `Sparse` metadata buffer.
     pub fn synthesize_meta_bytes(&self) -> Vec<u8> {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         match *guard {
             BufferBackend::Sparse {
                 ref chunks,
@@ -1583,7 +1587,7 @@ impl StreamBuffer {
 
     /// Returns `(range_start, range_end, capacity)` for a `Circular` buffer.
     pub fn circular_metrics(&self) -> (u64, u64, usize) {
-        let guard = self.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
             range_start,
             range_end,
@@ -1853,7 +1857,7 @@ impl StreamSession {
 
     /// Returns a copy of trailing metadata bytes if present after `audio_start`.
     pub fn tail_data(&self) -> Vec<u8> {
-        let guard = self.metadata.backend.lock().unwrap();
+        let guard = lock_unpoisoned(&self.metadata.backend);
         if let BufferBackend::Sparse { ref chunks, .. } = *guard {
             let start_floor = self.audio_start.load(Ordering::Acquire).max(1);
             if let Some((_, data)) = chunks.range(start_floor..).next_back() {
@@ -2035,7 +2039,7 @@ impl StreamSession {
                             return Err(BufferError::WouldBlock);
                         }
                         let slice_wait = (max_wait - elapsed).min(Duration::from_millis(20));
-                        let guard = self.body.backend.lock().unwrap();
+                        let guard = lock_unpoisoned(&self.body.backend);
                         if self.body.should_abort.load(Ordering::Acquire) {
                             return Err(BufferError::Aborted);
                         }

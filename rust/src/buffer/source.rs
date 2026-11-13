@@ -6,11 +6,13 @@
 //! - `StreamByteSource`: Progressive HTTP streaming over `StreamSession` (`Head` + `Body`).
 //! - `CustomDartByteSource`: Asynchronous Pull-with-Prefetch bridge for Dart DRM/decryption.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{
     BufReader, Cursor, Error as IoError, ErrorKind, Read, Result as IoResult, Seek, SeekFrom,
 };
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 use symphonia::core::io::MediaSource;
 
@@ -321,13 +323,15 @@ struct CustomSharedState {
     aborted: bool,
 }
 
+#[inline]
+fn custom_aborted_error() -> IoError {
+    IoError::new(ErrorKind::ConnectionAborted, "custom stream aborted")
+}
+
 impl CustomSharedState {
     fn drain_into(&mut self, out: &mut [u8]) -> Option<IoResult<usize>> {
         if self.aborted {
-            return Some(Err(IoError::new(
-                ErrorKind::Interrupted,
-                "custom stream aborted",
-            )));
+            return Some(Err(custom_aborted_error()));
         }
         let res = self.received_data.as_mut()?;
         match res {
@@ -353,6 +357,103 @@ impl CustomSharedState {
     }
 }
 
+/// Global monotonic counter ensuring `DartReadRequest.request_id` never collides across
+/// concurrent custom streams (active deck, standby pre-warm, or acoustic analysis).
+static NEXT_CUSTOM_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Lock-poisoning safe mutex acquisition helper.
+#[inline]
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Decoupled registry routing asynchronous Dart byte responses directly to the originating
+/// `CustomByteSourceHandle` by `request_id`, eliminating global single-handle races and locks.
+#[derive(Clone, Default)]
+pub struct CustomSourceRegistry {
+    inner: Arc<Mutex<CustomRegistryState>>,
+}
+
+#[derive(Default)]
+struct CustomRegistryState {
+    by_request: HashMap<u64, CustomByteSourceHandle>,
+    active_handles: Vec<Weak<(Mutex<CustomSharedState>, Condvar)>>,
+}
+
+impl CustomSourceRegistry {
+    /// Creates an empty `CustomSourceRegistry`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers an active `CustomByteSourceHandle` for bulk abort on shutdown.
+    pub fn register_handle(&self, handle: &CustomByteSourceHandle) {
+        let mut guard = lock_unpoisoned(&self.inner);
+        guard.active_handles.retain(|w| w.strong_count() > 0);
+        guard.active_handles.push(Arc::downgrade(&handle.shared));
+    }
+
+    /// Associates a pending `request_id` with its owning `CustomByteSourceHandle` prior to dispatch.
+    pub fn register_request(&self, request_id: u64, handle: &CustomByteSourceHandle) {
+        let mut guard = lock_unpoisoned(&self.inner);
+        guard.by_request.insert(request_id, handle.clone());
+    }
+
+    /// Delivers bytes and EOF status to the handle awaiting `request_id`, removing the entry.
+    pub fn resolve_request(&self, request_id: u64, data: Vec<u8>, is_eof: bool) -> bool {
+        let handle = {
+            let mut guard = lock_unpoisoned(&self.inner);
+            guard.by_request.remove(&request_id)
+        };
+        if let Some(h) = handle {
+            h.supply_bytes(request_id, data, is_eof);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Delivers an error payload to the handle awaiting `request_id`, removing the entry.
+    pub fn fail_request(&self, request_id: u64, err_msg: String) -> bool {
+        let handle = {
+            let mut guard = lock_unpoisoned(&self.inner);
+            guard.by_request.remove(&request_id)
+        };
+        if let Some(h) = handle {
+            h.notify_error(request_id, err_msg);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Removes an expired, timed-out, or aborted `request_id` mapping.
+    pub fn unregister_request(&self, request_id: u64) {
+        let mut guard = lock_unpoisoned(&self.inner);
+        guard.by_request.remove(&request_id);
+    }
+
+    /// Immediately aborts all live custom streams registered with this registry.
+    pub fn abort_all(&self) {
+        let (requests, handles) = {
+            let mut guard = lock_unpoisoned(&self.inner);
+            let reqs: Vec<CustomByteSourceHandle> = guard.by_request.drain().map(|(_, v)| v).collect();
+            let weak_handles: Vec<Arc<(Mutex<CustomSharedState>, Condvar)>> = guard
+                .active_handles
+                .drain(..)
+                .filter_map(|w| w.upgrade())
+                .collect();
+            (reqs, weak_handles)
+        };
+        for h in requests {
+            h.abort();
+        }
+        for shared in handles {
+            CustomByteSourceHandle { shared }.abort();
+        }
+    }
+}
+
 /// Thread-safe controller handle for supplying bytes or error notifications to a `CustomDartByteSource`.
 #[derive(Clone)]
 pub struct CustomByteSourceHandle {
@@ -363,7 +464,7 @@ impl CustomByteSourceHandle {
     /// Delivers requested byte data and EOF status to the awaiting reader thread.
     pub fn supply_bytes(&self, request_id: u64, data: Vec<u8>, is_eof: bool) {
         let (lock, cvar) = &*self.shared;
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock_unpoisoned(lock);
         if guard.pending_request_id == request_id || guard.pending_request_id == 0 {
             guard.received_data = Some(Ok(data));
             guard.is_eof = is_eof;
@@ -374,17 +475,18 @@ impl CustomByteSourceHandle {
     /// Notifies the awaiting reader thread that a custom stream read operation failed.
     pub fn notify_error(&self, request_id: u64, err_msg: String) {
         let (lock, cvar) = &*self.shared;
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock_unpoisoned(lock);
         if guard.pending_request_id == request_id || guard.pending_request_id == 0 {
             guard.received_data = Some(Err(err_msg));
             cvar.notify_all();
         }
     }
 
-    /// Aborts any pending read operation immediately.
+    /// Aborts any pending or subsequent read operation immediately.
     pub fn abort(&self) {
         let (lock, cvar) = &*self.shared;
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock_unpoisoned(lock);
+        guard.aborted = true;
         guard.received_data = Some(Err("Aborted".to_string()));
         cvar.notify_all();
     }
@@ -396,9 +498,10 @@ pub struct CustomDartByteSource {
     total_size: Option<u64>,
     seekable: bool,
     cursor: u64,
-    request_counter: u64,
     shared: Arc<(Mutex<CustomSharedState>, Condvar)>,
     request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
+    registry: Option<CustomSourceRegistry>,
+    last_request_id: u64,
 }
 
 impl CustomDartByteSource {
@@ -414,6 +517,17 @@ impl CustomDartByteSource {
         seekable: bool,
         request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
     ) -> (Self, CustomByteSourceHandle) {
+        Self::with_registry(stream_id, total_size, seekable, request_sender, None)
+    }
+
+    /// Creates a new `CustomDartByteSource` registered against an optional [`CustomSourceRegistry`].
+    pub fn with_registry(
+        stream_id: u32,
+        total_size: Option<u64>,
+        seekable: bool,
+        request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
+        registry: Option<CustomSourceRegistry>,
+    ) -> (Self, CustomByteSourceHandle) {
         let shared = Arc::new((
             Mutex::new(CustomSharedState {
                 pending_request_id: 0,
@@ -427,15 +541,19 @@ impl CustomDartByteSource {
         let handle = CustomByteSourceHandle {
             shared: shared.clone(),
         };
+        if let Some(ref reg) = registry {
+            reg.register_handle(&handle);
+        }
 
         let source = Self {
             stream_id,
             total_size,
             seekable,
             cursor: 0,
-            request_counter: 0,
             shared,
             request_sender,
+            registry,
+            last_request_id: 0,
         };
 
         (source, handle)
@@ -449,15 +567,22 @@ impl CustomDartByteSource {
     }
 
     fn request_and_await_chunk(&mut self, min_len: usize) -> IoResult<()> {
-        self.request_counter += 1;
-        let req_id = self.request_counter;
+        let req_id = NEXT_CUSTOM_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        self.last_request_id = req_id;
         let req_len = min_len.max(Self::MIN_PREFETCH_BYTES) as u32;
 
         let (lock, cvar) = &*self.shared;
         {
-            let mut guard = lock.lock().unwrap();
+            let mut guard = lock_unpoisoned(lock);
+            if guard.aborted {
+                return Err(custom_aborted_error());
+            }
             guard.pending_request_id = req_id;
             guard.received_data = None;
+        }
+
+        if let Some(ref reg) = self.registry {
+            reg.register_request(req_id, &self.handle());
         }
 
         (self.request_sender)(DartReadRequest {
@@ -468,7 +593,7 @@ impl CustomDartByteSource {
         });
 
         #[allow(unused_mut)]
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock_unpoisoned(lock);
         #[cfg(target_arch = "wasm32")]
         {
             let _ = cvar;
@@ -485,15 +610,23 @@ impl CustomDartByteSource {
             while guard.received_data.is_none() && !guard.aborted {
                 let elapsed = start.elapsed();
                 if elapsed >= Self::RESPONSE_TIMEOUT {
+                    if let Some(ref reg) = self.registry {
+                        reg.unregister_request(req_id);
+                    }
                     return Err(IoError::new(
                         ErrorKind::TimedOut,
                         "timed out waiting for Dart bytes",
                     ));
                 }
                 let remaining = Self::RESPONSE_TIMEOUT - elapsed;
-                let (new_guard, wait_res) = cvar.wait_timeout(guard, remaining).unwrap();
+                let (new_guard, wait_res) = cvar
+                    .wait_timeout(guard, remaining)
+                    .unwrap_or_else(|e| e.into_inner());
                 guard = new_guard;
                 if wait_res.timed_out() && guard.received_data.is_none() {
+                    if let Some(ref reg) = self.registry {
+                        reg.unregister_request(req_id);
+                    }
                     return Err(IoError::new(
                         ErrorKind::TimedOut,
                         "timed out waiting for Dart bytes",
@@ -503,10 +636,10 @@ impl CustomDartByteSource {
         }
 
         if guard.aborted {
-            return Err(IoError::new(
-                ErrorKind::Interrupted,
-                "custom stream aborted",
-            ));
+            if let Some(ref reg) = self.registry {
+                reg.unregister_request(req_id);
+            }
+            return Err(custom_aborted_error());
         }
         Ok(())
     }
@@ -552,7 +685,7 @@ impl Read for CustomDartByteSource {
 
         {
             let (lock, _) = &*self.shared;
-            let mut guard = lock.lock().unwrap();
+            let mut guard = lock_unpoisoned(lock);
             if let Some(result) = guard.drain_into(buf) {
                 let bytes = result?;
                 self.cursor += bytes as u64;
@@ -563,7 +696,7 @@ impl Read for CustomDartByteSource {
         self.request_and_await_chunk(buf.len())?;
 
         let (lock, _) = &*self.shared;
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock_unpoisoned(lock);
         match guard.drain_into(buf) {
             Some(Ok(bytes)) => {
                 self.cursor += bytes as u64;
@@ -585,9 +718,12 @@ impl Seek for CustomDartByteSource {
         }
 
         let new_cursor = self.resolve_seek_target(pos)?;
+        let (lock, _) = &*self.shared;
+        let mut guard = lock_unpoisoned(lock);
+        if guard.aborted {
+            return Err(custom_aborted_error());
+        }
         if new_cursor != self.cursor {
-            let (lock, _) = &*self.shared;
-            let mut guard = lock.lock().unwrap();
             guard.received_data = None;
             self.cursor = new_cursor;
         }
@@ -609,11 +745,27 @@ impl ByteSource for CustomDartByteSource {
     }
 
     fn abort(&mut self) -> IoResult<()> {
+        if let Some(ref reg) = self.registry {
+            if self.last_request_id != 0 {
+                reg.unregister_request(self.last_request_id);
+            }
+        }
         let (lock, cvar) = &*self.shared;
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock_unpoisoned(lock);
         guard.aborted = true;
+        guard.received_data = Some(Err("Aborted".to_string()));
         cvar.notify_all();
         Ok(())
+    }
+}
+
+impl Drop for CustomDartByteSource {
+    fn drop(&mut self) {
+        if let Some(ref reg) = self.registry {
+            if self.last_request_id != 0 {
+                reg.unregister_request(self.last_request_id);
+            }
+        }
     }
 }
 

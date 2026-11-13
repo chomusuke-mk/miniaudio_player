@@ -12,12 +12,18 @@ class PlayerAction<T> {
   /// Creates a [PlayerAction] command dispatcher for [_player] and [_rust].
   PlayerAction(this._player, this._rust);
 
-  Future<void> _commandTail = Future.value();
+  /// Lane 1 (Queue & Track Navigation): FIFO chain serializing playlist mutations
+  /// and foreground cursor transitions (`setQueue`, `append`, `insertNext`,
+  /// `removeAt`, `reorder*`, `clearQueue`, `setLoopMode`, `setShuffle`, `play`,
+  /// `next`, `previous`). Immediate RT controls (`pause`, `stop`, `seek`,
+  /// `setReplayGain`, volume, DSP, SFX) and hardware/catalog ops bypass this
+  /// lane completely so slow HTTP opens never cause head-of-line blocking.
+  Future<void> _queueTail = Future.value();
   int _activePlayEpoch = 0;
 
-  Future<R> _serialize<R>(Future<R> Function() action) {
+  Future<R> _serializeQueue<R>(Future<R> Function() action) {
     final completer = Completer<R>();
-    _commandTail = _commandTail.then((_) async {
+    _queueTail = _queueTail.then((_) async {
       try {
         final result = await action();
         completer.complete(result);
@@ -112,7 +118,7 @@ class PlayerAction<T> {
     Duration? seek,
   }) {
     final currentEpoch = ++_activePlayEpoch;
-    return _serialize(() async {
+    return _serializeQueue(() async {
       if (currentEpoch != _activePlayEpoch) {
         MapLogger.info(
           'play(id: $id, position: $position) skipped (superseded by newer request epoch $currentEpoch < $_activePlayEpoch)',
@@ -147,47 +153,46 @@ class PlayerAction<T> {
     });
   }
 
-  /// Pauses audio playback at current position.
-  Future<void> pause() => _serialize(() async {
-        _player._ensureNotDisposed();
-        MapLogger.info(
-            '[ACTION:PAUSE] pause() requested. Calling native rust.pause()...');
-        final sw = Stopwatch()..start();
-        await _rust.pause();
-        MapLogger.info(
-          '[ACTION:PAUSE] native rust.pause() returned successfully in ${sw.elapsedMilliseconds}ms',
-        );
-      });
-
-  /// Stops playback and rewinds position to zero.
-  Future<void> stop() {
+  /// Pauses audio playback at current position (Immediate RT lane).
+  Future<void> pause() async {
+    _player._ensureNotDisposed();
     ++_activePlayEpoch;
-    return _serialize(() async {
-      _player._ensureNotDisposed();
-      MapLogger.info(
-          '[ACTION:STOP] stop() requested. Calling native rust.stop()...');
-      final sw = Stopwatch()..start();
-      await _rust.stop();
-      MapLogger.info(
-        '[ACTION:STOP] native rust.stop() returned successfully in ${sw.elapsedMilliseconds}ms',
-      );
-    });
+    MapLogger.info(
+        '[ACTION:PAUSE] pause() requested. Calling native rust.pause()...');
+    final sw = Stopwatch()..start();
+    await _rust.pause();
+    MapLogger.info(
+      '[ACTION:PAUSE] native rust.pause() returned successfully in ${sw.elapsedMilliseconds}ms',
+    );
   }
 
-  /// Seeks to specified position in the currently playing track.
-  Future<void> seek(Duration position) => _serialize(() async {
-        _player._ensureNotDisposed();
-        final targetPosition =
-            position < Duration.zero ? Duration.zero : position;
-        MapLogger.info(
-          '[ACTION:SEEK] seek() requested -> ${targetPosition.inMilliseconds}ms. Calling native rust.seek()...',
-        );
-        final sw = Stopwatch()..start();
-        await _rust.seek(positionMs: targetPosition.inMilliseconds);
-        MapLogger.info(
-          '[ACTION:SEEK] native rust.seek() returned successfully in ${sw.elapsedMilliseconds}ms',
-        );
-      });
+  /// Stops playback and rewinds position to zero (Immediate RT lane).
+  Future<void> stop() async {
+    _player._ensureNotDisposed();
+    ++_activePlayEpoch;
+    MapLogger.info(
+        '[ACTION:STOP] stop() requested. Calling native rust.stop()...');
+    final sw = Stopwatch()..start();
+    await _rust.stop();
+    MapLogger.info(
+      '[ACTION:STOP] native rust.stop() returned successfully in ${sw.elapsedMilliseconds}ms',
+    );
+  }
+
+  /// Seeks to specified position in the currently playing track (Immediate RT lane).
+  Future<void> seek(Duration position) async {
+    _player._ensureNotDisposed();
+    final targetPosition =
+        position < Duration.zero ? Duration.zero : position;
+    MapLogger.info(
+      '[ACTION:SEEK] seek() requested -> ${targetPosition.inMilliseconds}ms. Calling native rust.seek()...',
+    );
+    final sw = Stopwatch()..start();
+    await _rust.seek(positionMs: targetPosition.inMilliseconds);
+    MapLogger.info(
+      '[ACTION:SEEK] native rust.seek() returned successfully in ${sw.elapsedMilliseconds}ms',
+    );
+  }
 
   // =========================================================================
   // Playlist Queue Management
@@ -198,7 +203,7 @@ class PlayerAction<T> {
   /// Resets `state.currentIndex` to `null` until [play] is invoked.
   Future<void> setQueue(List<AudioSource<T>> sources) {
     ++_activePlayEpoch;
-    return _serialize(() async {
+    return _serializeQueue(() async {
       _player._ensureNotDisposed();
       MapLogger.info('setQueue() requested with ${sources.length} items');
 
@@ -226,110 +231,128 @@ class PlayerAction<T> {
   }
 
   /// Appends tracks to the end of the current playlist queue.
-  Future<void> append(List<AudioSource<T>> sources) async {
+  Future<void> append(List<AudioSource<T>> sources) {
     _player._ensureNotDisposed();
-    if (sources.isEmpty) return;
+    if (sources.isEmpty) return Future.value();
 
-    final normalized = <AudioSource<T>>[];
-    final rustSources = <rust_types.RustAudioSource>[];
-    for (final s in sources) {
-      final (retained, rustSource) = _prepareSource(s);
-      normalized.add(retained);
-      rustSources.add(rustSource);
-    }
-    _player.state._queue = List.unmodifiable([
-      ..._player.state.queue,
-      ...normalized,
-    ]);
-    await _rust.append(sources: rustSources);
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      final normalized = <AudioSource<T>>[];
+      final rustSources = <rust_types.RustAudioSource>[];
+      for (final s in sources) {
+        final (retained, rustSource) = _prepareSource(s);
+        normalized.add(retained);
+        rustSources.add(rustSource);
+      }
+      _player.state._queue = List.unmodifiable([
+        ..._player.state.queue,
+        ...normalized,
+      ]);
+      await _rust.append(sources: rustSources);
+    });
   }
 
   /// Inserts a track immediately after the active playing track.
-  Future<void> insertNext(AudioSource<T> source) async {
+  Future<void> insertNext(AudioSource<T> source) {
     _player._ensureNotDisposed();
-    final (retained, rustSource) = _prepareSource(source);
-    final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
-    final curIdx = _player.state.currentIndex;
-    final insertIdx =
-        (curIdx != null && curIdx >= 0 && curIdx < currentQueue.length)
-            ? curIdx + 1
-            : currentQueue.length;
-    currentQueue.insert(insertIdx, retained);
-    _player.state._queue = List.unmodifiable(currentQueue);
-    await _rust.insertNext(source: rustSource);
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      final (retained, rustSource) = _prepareSource(source);
+      final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
+      final curIdx = _player.state.currentIndex;
+      final insertIdx =
+          (curIdx != null && curIdx >= 0 && curIdx < currentQueue.length)
+              ? curIdx + 1
+              : currentQueue.length;
+      currentQueue.insert(insertIdx, retained);
+      _player.state._queue = List.unmodifiable(currentQueue);
+      await _rust.insertNext(source: rustSource);
+    });
   }
 
   /// Removes a track at [index] from the playlist queue.
-  Future<void> removeAt(int index) async {
+  Future<void> removeAt(int index) {
     _player._ensureNotDisposed();
-    final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
-    if (index >= 0 && index < currentQueue.length) {
-      final removed = currentQueue.removeAt(index);
-      if (removed.id != null) {
-        _player._sourceRegistry.remove(removed.id);
-        _player._customProviders.remove(removed.id);
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
+      if (index >= 0 && index < currentQueue.length) {
+        final removed = currentQueue.removeAt(index);
+        if (removed.id != null) {
+          _player._sourceRegistry.remove(removed.id);
+          _player._customProviders.remove(removed.id);
+        }
+        _player.state._queue = List.unmodifiable(currentQueue);
+        await _rust.removeAt(index: BigInt.from(index));
       }
-      _player.state._queue = List.unmodifiable(currentQueue);
-      await _rust.removeAt(index: BigInt.from(index));
-    }
+    });
   }
 
   /// Reorders a track from [oldIndex] to [newIndex] within the queue.
-  Future<void> reorder(int oldIndex, int newIndex) async {
+  Future<void> reorder(int oldIndex, int newIndex) {
     _player._ensureNotDisposed();
-    final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
-    if (oldIndex >= 0 &&
-        oldIndex < currentQueue.length &&
-        newIndex >= 0 &&
-        newIndex < currentQueue.length) {
-      final item = currentQueue.removeAt(oldIndex);
-      currentQueue.insert(newIndex, item);
-      _player.state._queue = List.unmodifiable(currentQueue);
-      final ids = currentQueue.map((s) => s.id ?? 0).toList();
-      await _rust.reorderByIds(ids: Int64List.fromList(ids));
-    }
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
+      if (oldIndex >= 0 &&
+          oldIndex < currentQueue.length &&
+          newIndex >= 0 &&
+          newIndex < currentQueue.length) {
+        final item = currentQueue.removeAt(oldIndex);
+        currentQueue.insert(newIndex, item);
+        _player.state._queue = List.unmodifiable(currentQueue);
+        final ids = currentQueue.map((s) => s.id ?? 0).toList();
+        await _rust.reorderByIds(ids: Int64List.fromList(ids));
+      }
+    });
   }
 
   /// Reorders the playlist queue using an ordered list of unique track [ids].
-  Future<void> reorderByIds(List<int> ids) async {
+  Future<void> reorderByIds(List<int> ids) {
     _player._ensureNotDisposed();
-    final reordered = <AudioSource<T>>[];
-    for (final id in ids) {
-      final s = _player._sourceRegistry[id];
-      if (s != null) reordered.add(s);
-    }
-    if (reordered.length == _player.state.queue.length) {
-      _player.state._queue = List.unmodifiable(reordered);
-    }
-    await _rust.reorderByIds(ids: Int64List.fromList(ids));
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      final reordered = <AudioSource<T>>[];
+      for (final id in ids) {
+        final s = _player._sourceRegistry[id];
+        if (s != null) reordered.add(s);
+      }
+      if (reordered.length == _player.state.queue.length) {
+        _player.state._queue = List.unmodifiable(reordered);
+      }
+      await _rust.reorderByIds(ids: Int64List.fromList(ids));
+    });
   }
 
   /// Clears the playlist queue. If [keepCurrent] is true, retains the playing track.
-  Future<void> clearQueue({bool keepCurrent = false}) async {
+  Future<void> clearQueue({bool keepCurrent = false}) {
     _player._ensureNotDisposed();
-    final curIdx = _player.state.currentIndex;
-    if (keepCurrent &&
-        _player.state.queue.isNotEmpty &&
-        curIdx != null &&
-        curIdx >= 0 &&
-        curIdx < _player.state.queue.length) {
-      final cur = _player.state.queue[curIdx];
-      _player.state._queue = List.unmodifiable([cur]);
-      _player.state._currentIndex = 0;
-      final curId = cur.id;
-      _player._sourceRegistry.removeWhere((id, _) => id != curId);
-      _player._customProviders.removeWhere((id, _) => id != curId);
-    } else {
-      _player.state._queue = const [];
-      _player.state._currentIndex = null;
-      _player._sourceRegistry.clear();
-      _player._customProviders.clear();
-    }
-    await _rust.clearQueue(keepCurrent: keepCurrent);
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      final curIdx = _player.state.currentIndex;
+      if (keepCurrent &&
+          _player.state.queue.isNotEmpty &&
+          curIdx != null &&
+          curIdx >= 0 &&
+          curIdx < _player.state.queue.length) {
+        final cur = _player.state.queue[curIdx];
+        _player.state._queue = List.unmodifiable([cur]);
+        _player.state._currentIndex = 0;
+        final curId = cur.id;
+        _player._sourceRegistry.removeWhere((id, _) => id != curId);
+        _player._customProviders.removeWhere((id, _) => id != curId);
+      } else {
+        _player.state._queue = const [];
+        _player.state._currentIndex = null;
+        _player._sourceRegistry.clear();
+        _player._customProviders.clear();
+      }
+      await _rust.clearQueue(keepCurrent: keepCurrent);
+    });
   }
 
   /// Advances to the next track in the playlist queue.
-  Future<void> next({Duration? crossfadeDuration}) => _serialize(() async {
+  Future<void> next({Duration? crossfadeDuration}) => _serializeQueue(() async {
         _player._ensureNotDisposed();
         await _rust.next(
           crossfadeDurationMs: crossfadeDuration != null
@@ -339,21 +362,27 @@ class PlayerAction<T> {
       });
 
   /// Skips back to the previous track, or start of current track if > 3s played.
-  Future<void> previous() => _serialize(() async {
+  Future<void> previous() => _serializeQueue(() async {
         _player._ensureNotDisposed();
         await _rust.previous();
       });
 
   /// Configures playlist repeat mode ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
-  Future<void> setLoopMode(LoopMode mode) async {
+  Future<void> setLoopMode(LoopMode mode) {
     _player._ensureNotDisposed();
-    await _rust.setLoopMode(mode: mode.index);
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      await _rust.setLoopMode(mode: mode.index);
+    });
   }
 
   /// Enables or disables non-destructive shuffle on the playlist queue.
-  Future<void> setShuffle(bool enabled) async {
+  Future<void> setShuffle(bool enabled) {
     _player._ensureNotDisposed();
-    await _rust.setShuffle(enabled: enabled);
+    return _serializeQueue(() async {
+      _player._ensureNotDisposed();
+      await _rust.setShuffle(enabled: enabled);
+    });
   }
 
   /// Sets the dynamic queue replenishment provider callback for Infinite Mix.
@@ -526,43 +555,41 @@ class PlayerAction<T> {
     int? position,
   }) async {
     _player._ensureNotDisposed();
-    return _serialize(() async {
-      await _rust.setReplayGain(
-        config: config != null
-            ? rust_types.RustReplayGainConfig(
-                gainDb: config.gainDb,
-                peak: config.peak,
-              )
-            : null,
-        id: id,
-        position: position != null ? BigInt.from(position) : null,
-      );
+    await _rust.setReplayGain(
+      config: config != null
+          ? rust_types.RustReplayGainConfig(
+              gainDb: config.gainDb,
+              peak: config.peak,
+            )
+          : null,
+      id: id,
+      position: position != null ? BigInt.from(position) : null,
+    );
 
-      // Synchronize ReplayGain metadata on the targeted AudioSource
-      AudioSource<dynamic>? target;
-      if (id != null) {
-        target = _player._sourceRegistry[id];
-        if (target == null) {
-          for (final item in _player.state.queue) {
-            if (item.id == id) {
-              target = item;
-              break;
-            }
+    // Synchronize ReplayGain metadata on the targeted AudioSource
+    AudioSource<dynamic>? target;
+    if (id != null) {
+      target = _player._sourceRegistry[id];
+      if (target == null) {
+        for (final item in _player.state.queue) {
+          if (item.id == id) {
+            target = item;
+            break;
           }
         }
-      } else if (position != null) {
-        if (position >= 0 && position < _player.state.queue.length) {
-          target = _player.state.queue[position];
-        }
-      } else {
-        target = _player.state.currentItem;
       }
+    } else if (position != null) {
+      if (position >= 0 && position < _player.state.queue.length) {
+        target = _player.state.queue[position];
+      }
+    } else {
+      target = _player.state.currentItem;
+    }
 
-      if (target != null) {
-        target._replayGainDb = config?.gainDb;
-        target._replayPeak = config?.peak;
-      }
-    });
+    if (target != null) {
+      target._replayGainDb = config?.gainDb;
+      target._replayPeak = config?.peak;
+    }
   }
 
   /// Sets preamplifier gain in decibels.

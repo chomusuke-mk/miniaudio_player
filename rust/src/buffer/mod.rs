@@ -7,8 +7,9 @@ pub mod stream_buffer;
 
 pub use demux_reader::{DemuxedStreamReader, MetadataStreamReader};
 pub use source::{
-    ByteSource, ByteSourceStream, CustomByteSourceHandle, CustomDartByteSource, DartReadRequest,
-    FileByteSource, MemoryByteSource, SourceKind, StreamByteSource,
+    ByteSource, ByteSourceStream, CustomByteSourceHandle, CustomDartByteSource,
+    CustomSourceRegistry, DartReadRequest, FileByteSource, MemoryByteSource, SourceKind,
+    StreamByteSource,
 };
 pub use stream_buffer::{
     BlockFetchOrder, BlockFetchPhase, BufferBackend, BufferError, BufferRange, BufferState,

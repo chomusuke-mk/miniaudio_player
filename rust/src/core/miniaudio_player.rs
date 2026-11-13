@@ -133,7 +133,7 @@ impl MiniaudioPlayer {
             0 => (0.0, 1.0, 0), // Disabled
             2 => (self.default_replay_gain.0, self.default_replay_gain.1, 1), // Forced
             _ => { // Track
-                let q = self.music_manager.inner.queue.read().unwrap();
+                let q = crate::sync::read_unpoisoned(&self.music_manager.inner.queue);
                 let cur = self.music_manager.inner.current_index.load(Ordering::Relaxed);
                 let idx = if cur >= 0 && (cur as usize) < q.len() {
                     Some(cur as usize)

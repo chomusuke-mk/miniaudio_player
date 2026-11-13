@@ -113,6 +113,22 @@ impl Drop for ActiveOutputDevice {
     }
 }
 
+/// Pre-opened physical output changes staged off `map-engine-clock`.
+pub struct PreparedOutputs {
+    pub desired_outputs: Vec<RustAudioOutput>,
+    pub keep_keys: Vec<(String, String, i32)>,
+    pub new_devices: Vec<ActiveOutputDevice>,
+}
+
+/// Active recording handles extracted atomically from `OutputManager` for off-clock finalization.
+pub struct DetachedRecording {
+    pub path: String,
+    pub recorder: LiveRecorder,
+    pub producer: Option<rtrb::Producer<f32>>,
+    pub sample_count: u64,
+    pub duration_ms: u64,
+}
+
 /// Domain manager governing output routing, live selective disk recording, and visualizer.
 pub struct OutputManager {
     /// Declarative configurations of requested outputs.
@@ -209,6 +225,219 @@ impl OutputManager {
         }
     }
 
+    /// Returns lightweight descriptors `(device_id, resolved_id, source)` for all open devices.
+    pub fn current_device_keys(&self) -> Vec<(String, String, i32)> {
+        self.active_devices
+            .iter()
+            .map(|dev| (dev.device_id.clone(), dev.resolved_id.clone(), dev.source as i32))
+            .collect()
+    }
+
+    fn resolve_effective_configs(
+        outputs: &[RustAudioOutput],
+        pre_resolved_auto_id: Option<String>,
+    ) -> Vec<(RustAudioOutput, String)> {
+        let current_auto_def =
+            pre_resolved_auto_id.or_else(|| Self::resolve_physical_output_id("AUTO"));
+        let mut effective_configs: Vec<(RustAudioOutput, String)> = Vec::new();
+
+        // 1. Prioritize AUTO outputs first
+        for cfg in outputs {
+            if cfg.device_id == "AUTO" {
+                let auto_res_id = current_auto_def
+                    .clone()
+                    .unwrap_or_else(|| "AUTO".to_string());
+                if !effective_configs.iter().any(|(_, r)| r == &auto_res_id) {
+                    effective_configs.push((cfg.clone(), auto_res_id));
+                }
+            }
+        }
+
+        // 2. Add specific physical devices whose endpoints are not already claimed by AUTO
+        for cfg in outputs {
+            if cfg.device_id != "AUTO" {
+                if let Some(res_id) = Self::resolve_physical_output_id(&cfg.device_id) {
+                    let already_claimed = effective_configs.iter().any(|(c, r)| {
+                        r == &res_id
+                            || (c.device_id == "AUTO" && current_auto_def.as_ref() == Some(&res_id))
+                    });
+                    if !already_claimed {
+                        effective_configs.push((cfg.clone(), res_id));
+                    }
+                }
+            }
+        }
+
+        effective_configs
+    }
+
+    fn open_physical_device(
+        sample_rate: u32,
+        channels: usize,
+        device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
+        cfg: &RustAudioOutput,
+        target_resolved_id: &str,
+    ) -> Option<ActiveOutputDevice> {
+        map_log!(
+            3,
+            "[OUTPUT_MGR:CREATE:START] Opening new physical output device '{}' (target resolved '{}', source={:?})...",
+            cfg.device_id,
+            target_resolved_id,
+            AudioOutputSource::from(cfg.source)
+        );
+        let buffer_capacity = sample_rate as usize * channels * 2;
+        let (prod, cons) = rtrb::RingBuffer::new(buffer_capacity);
+        let renderer = Box::new(OutputDeviceRenderer {
+            header: PcmRendererHeader {
+                render_fn: output_device_render_trampoline,
+                notif_fn: output_device_notif_trampoline,
+            },
+            consumer: cons,
+            channels,
+            device_trigger,
+        });
+        let renderer_ptr = Box::into_raw(renderer);
+
+        let dev_c = if target_resolved_id == "AUTO" {
+            None
+        } else {
+            CString::new(target_resolved_id).ok()
+        };
+        let dev_ptr = dev_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null());
+
+        let mut dev_res = 0;
+        let t_create = Instant::now();
+        let ctx = unsafe {
+            map_device_create(
+                sample_rate,
+                channels as u32,
+                1024,
+                dev_ptr,
+                renderer_ptr as *mut c_void,
+                &mut dev_res,
+            )
+        };
+
+        map_log!(
+            3,
+            "[OUTPUT_MGR:CREATE:DONE] map_device_create returned result={} (ctx={:?}) in {}ms",
+            dev_res,
+            ctx,
+            t_create.elapsed().as_millis()
+        );
+
+        if !ctx.is_null() && dev_res == 0 {
+            let t_start = Instant::now();
+            unsafe {
+                map_device_start(ctx);
+            }
+            map_log!(
+                3,
+                "[OUTPUT_MGR:START:DONE] map_device_start succeeded in {}ms",
+                t_start.elapsed().as_millis()
+            );
+            Some(ActiveOutputDevice {
+                device_id: cfg.device_id.clone(),
+                resolved_id: target_resolved_id.to_string(),
+                source: AudioOutputSource::from(cfg.source),
+                device_ctx: ctx,
+                renderer_ptr: renderer_ptr as *mut c_void,
+                producer: prod,
+            })
+        } else {
+            map_log!(
+                1,
+                "[OUTPUT_MGR:CREATE:FAIL] Failed to open physical device '{}' (code {})",
+                target_resolved_id,
+                dev_res
+            );
+            unsafe {
+                drop(Box::from_raw(renderer_ptr));
+            }
+            None
+        }
+    }
+
+    /// Resolves and opens any newly needed physical output devices completely outside
+    /// `map-engine-clock`.
+    pub fn prepare_outputs_off_rt(
+        sample_rate: u32,
+        channels: usize,
+        device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
+        existing_open: &[(String, String, i32)],
+        outputs: Vec<RustAudioOutput>,
+        pre_resolved_auto_id: Option<String>,
+    ) -> PreparedOutputs {
+        let effective_configs = Self::resolve_effective_configs(&outputs, pre_resolved_auto_id);
+        let keep_keys: Vec<(String, String, i32)> = effective_configs
+            .iter()
+            .map(|(c, r)| (c.device_id.clone(), r.clone(), c.source))
+            .collect();
+
+        let mut new_devices = Vec::new();
+        for (cfg, target_resolved_id) in &effective_configs {
+            let already_open = existing_open.iter().any(|(dev_id, res_id, src)| {
+                res_id == target_resolved_id && dev_id == &cfg.device_id && *src == cfg.source
+            });
+            if !already_open {
+                if let Some(dev) = Self::open_physical_device(
+                    sample_rate,
+                    channels,
+                    device_trigger.clone(),
+                    cfg,
+                    target_resolved_id,
+                ) {
+                    new_devices.push(dev);
+                }
+            }
+        }
+
+        PreparedOutputs {
+            desired_outputs: outputs,
+            keep_keys,
+            new_devices,
+        }
+    }
+
+    /// Swaps pre-opened devices into `active_devices` in O(N) without touching OS APIs,
+    /// returning displaced devices so the caller / `map-reaper` can drop them off-RT.
+    pub fn apply_prepared_outputs(&mut self, batch: PreparedOutputs) -> Vec<ActiveOutputDevice> {
+        self.outputs = batch.desired_outputs;
+        let mut kept = Vec::with_capacity(self.active_devices.len() + batch.new_devices.len());
+        let mut evicted = Vec::new();
+
+        for dev in self.active_devices.drain(..) {
+            let keep = batch.keep_keys.iter().any(|(dev_id, res_id, src)| {
+                *res_id == dev.resolved_id
+                    && *dev_id == dev.device_id
+                    && *src == (dev.source as i32)
+            });
+            if keep {
+                kept.push(dev);
+            } else {
+                evicted.push(dev);
+            }
+        }
+
+        for new_dev in batch.new_devices {
+            let dup = kept.iter().any(|d| {
+                d.resolved_id == new_dev.resolved_id
+                    && d.device_id == new_dev.device_id
+                    && d.source == new_dev.source
+            });
+            if dup {
+                evicted.push(new_dev);
+            } else {
+                kept.push(new_dev);
+            }
+        }
+        self.active_devices = kept;
+        evicted
+    }
+
     /// Updates the active outputs and synchronizes physical audio devices.
     pub fn set_outputs(&mut self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         self.set_outputs_with_resolved(outputs, None)
@@ -220,178 +449,66 @@ impl OutputManager {
         outputs: Vec<RustAudioOutput>,
         pre_resolved_auto_id: Option<String>,
     ) -> Result<(), String> {
-        self.outputs = outputs;
-
-        let current_auto_def = pre_resolved_auto_id
-            .or_else(|| Self::resolve_physical_output_id("AUTO"));
-
-        map_log!(
-            3,
-            "[OUTPUT_MGR:SET_OUTPUTS:START] Setting {} outputs (current active={}), auto_endpoint={:?}",
-            self.outputs.len(),
-            self.active_devices.len(),
-            current_auto_def
+        let existing = self.current_device_keys();
+        let batch = Self::prepare_outputs_off_rt(
+            self.sample_rate,
+            self.channels,
+            self.device_trigger.clone(),
+            &existing,
+            outputs,
+            pre_resolved_auto_id,
         );
-
-        // Deduplicate physical hardware targets:
-        // If both AUTO and a specific device resolve to the same physical OS endpoint,
-        // prioritize AUTO and its configuration over specific/explicit devices.
-        // The user's declared `self.outputs` list remains completely intact.
-        let mut effective_configs: Vec<(RustAudioOutput, String)> = Vec::new();
-
-        // 1. Prioritize AUTO outputs first
-        for cfg in &self.outputs {
-            if cfg.device_id == "AUTO" {
-                let auto_res_id = current_auto_def.clone().unwrap_or_else(|| "AUTO".to_string());
-                if !effective_configs.iter().any(|(_, r)| r == &auto_res_id) {
-                    effective_configs.push((cfg.clone(), auto_res_id));
-                }
-            }
-        }
-
-        // 2. Add specific physical devices whose endpoints are not already claimed by AUTO
-        for cfg in &self.outputs {
-            if cfg.device_id != "AUTO" {
-                if let Some(res_id) = Self::resolve_physical_output_id(&cfg.device_id) {
-                    let already_claimed = effective_configs.iter().any(|(c, r)| {
-                        r == &res_id || (c.device_id == "AUTO" && current_auto_def.as_ref() == Some(&res_id))
-                    });
-                    if !already_claimed {
-                        effective_configs.push((cfg.clone(), res_id));
-                    }
-                }
-            }
-        }
-
-        map_log!(
-            3,
-            "[OUTPUT_MGR:EFFECTIVE] Resolved {} effective physical target endpoints",
-            effective_configs.len()
-        );
-
-        // 3. Evict active devices no longer present in effective_configs
-        self.active_devices.retain_mut(|dev| {
-            let still_active = effective_configs.iter().any(|(cfg, res_id)| {
-                *res_id == dev.resolved_id
-                    && cfg.device_id == dev.device_id
-                    && cfg.source == (dev.source as i32)
-            });
-
-            if !still_active {
-                map_log!(
-                    2,
-                    "[OUTPUT_MGR:DESTROY] Evicting active device '{}' (resolved '{}', source={:?}) via RAII drop...",
-                    dev.device_id,
-                    dev.resolved_id,
-                    dev.source
-                );
-                false
-            } else {
-                true
-            }
-        });
-
-        // 4. Open newly requested devices
-        for (cfg, target_resolved_id) in &effective_configs {
-            let already_open = self.active_devices.iter().any(|dev| {
-                dev.resolved_id == *target_resolved_id
-                    && dev.device_id == cfg.device_id
-                    && (dev.source as i32) == cfg.source
-            });
-
-            if !already_open {
-                map_log!(
-                    3,
-                    "[OUTPUT_MGR:CREATE:START] Opening new physical output device '{}' (target resolved '{}', source={:?})...",
-                    cfg.device_id,
-                    target_resolved_id,
-                    AudioOutputSource::from(cfg.source)
-                );
-                let buffer_capacity = self.sample_rate as usize * self.channels * 2;
-                let (prod, cons) = rtrb::RingBuffer::new(buffer_capacity);
-                let renderer = Box::new(OutputDeviceRenderer {
-                    header: PcmRendererHeader {
-                        render_fn: output_device_render_trampoline,
-                        notif_fn: output_device_notif_trampoline,
-                    },
-                    consumer: cons,
-                    channels: self.channels,
-                    device_trigger: self.device_trigger.clone(),
-                });
-                let renderer_ptr = Box::into_raw(renderer);
-
-                let dev_c = if target_resolved_id == "AUTO" {
-                    None
-                } else {
-                    CString::new(target_resolved_id.as_str()).ok()
-                };
-                let dev_ptr = dev_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
-
-                let mut dev_res = 0;
-                let t_create = Instant::now();
-                let ctx = unsafe {
-                    map_device_create(
-                        self.sample_rate,
-                        self.channels as u32,
-                        1024,
-                        dev_ptr,
-                        renderer_ptr as *mut c_void,
-                        &mut dev_res,
-                    )
-                };
-
-                map_log!(
-                    3,
-                    "[OUTPUT_MGR:CREATE:DONE] map_device_create returned result={} (ctx={:?}) in {}ms",
-                    dev_res,
-                    ctx,
-                    t_create.elapsed().as_millis()
-                );
-
-                if !ctx.is_null() && dev_res == 0 {
-                    let t_start = Instant::now();
-                    unsafe {
-                        map_device_start(ctx);
-                    }
-                    map_log!(
-                        3,
-                        "[OUTPUT_MGR:START:DONE] map_device_start succeeded in {}ms",
-                        t_start.elapsed().as_millis()
-                    );
-                    self.active_devices.push(ActiveOutputDevice {
-                        device_id: cfg.device_id.clone(),
-                        resolved_id: target_resolved_id.clone(),
-                        source: AudioOutputSource::from(cfg.source),
-                        device_ctx: ctx,
-                        renderer_ptr: renderer_ptr as *mut c_void,
-                        producer: prod,
-                    });
-                } else {
-                    map_log!(
-                        1,
-                        "[OUTPUT_MGR:CREATE:FAIL] Failed to open physical device '{}' (code {})",
-                        target_resolved_id,
-                        dev_res
-                    );
-                    unsafe {
-                        drop(Box::from_raw(renderer_ptr));
-                    }
-                }
-            }
-        }
-
-        map_log!(
-            3,
-            "[OUTPUT_MGR:SET_OUTPUTS:DONE] set_outputs_with_resolved completed successfully. Active devices: {}",
-            self.active_devices.len()
-        );
-
+        let evicted = self.apply_prepared_outputs(batch);
+        drop(evicted);
         Ok(())
     }
 
     // =========================================================================
     // Selective Recording Subsystem
     // =========================================================================
+
+    /// Installs a pre-opened `LiveRecorder` and ring-buffer producer without touching disk/threads.
+    pub fn attach_prepared_recording(
+        &mut self,
+        path: String,
+        source: AudioOutputSource,
+        recorder: LiveRecorder,
+        producer: rtrb::Producer<f32>,
+    ) -> (Option<LiveRecorder>, Option<rtrb::Producer<f32>>) {
+        let prev_prod = self.record_producer.take();
+        let prev_rec = self.live_recorder.take();
+        self.live_recorder = Some(recorder);
+        self.record_producer = Some(producer);
+        self.recording_source = source;
+        self.recording_path = Some(path);
+        self.recorded_frames.store(0, Ordering::Release);
+        self.is_recording.store(true, Ordering::Release);
+        (prev_rec, prev_prod)
+    }
+
+    /// Extracts the active recording handles atomically without joining the writer thread.
+    pub fn detach_recording_for_stop(&mut self) -> Result<DetachedRecording, String> {
+        self.is_recording.store(false, Ordering::Release);
+        let producer = self.record_producer.take();
+        let path = self
+            .recording_path
+            .take()
+            .ok_or_else(|| "Recording was not active".to_string())?;
+        let recorder = self
+            .live_recorder
+            .take()
+            .ok_or_else(|| "Live recorder was not initialized".to_string())?;
+        let sample_count = self.recorded_frames.load(Ordering::Relaxed) * self.channels as u64;
+        let duration_ms = (sample_count * 1000)
+            / (self.sample_rate as u64 * self.channels as u64).max(1);
+        Ok(DetachedRecording {
+            path,
+            recorder,
+            producer,
+            sample_count,
+            duration_ms,
+        })
+    }
 
     /// Begins recording rendered audio to a WAV file at `path` with a selective source.
     pub fn start_recording(
@@ -400,33 +517,28 @@ impl OutputManager {
         format: WavFormat,
         source: AudioOutputSource,
     ) -> Result<(), String> {
-        let (prod, cons) = rtrb::RingBuffer::new(self.sample_rate as usize * self.channels * 4);
-        let mut rec = LiveRecorder::new(self.sample_rate, self.channels, format);
-        rec.start(path, cons)?;
-        self.live_recorder = Some(rec);
-        self.record_producer = Some(prod);
-        self.recording_source = source;
-        self.recording_path = Some(path.to_string());
-        self.recorded_frames.store(0, Ordering::Release);
-        self.is_recording.store(true, Ordering::Release);
+        let (rec, prod) =
+            LiveRecorder::prepare_start(self.sample_rate, self.channels, format, path)?;
+        let (prev_rec, prev_prod) =
+            self.attach_prepared_recording(path.to_string(), source, rec, prod);
+        drop(prev_prod);
+        if let Some(mut old) = prev_rec {
+            let _ = old.stop();
+        }
         Ok(())
     }
 
     /// Stops the active recording session and returns (path, duration_ms, bytes_written, sample_count).
     pub fn stop_recording(&mut self) -> Result<(String, u64, usize, u64), String> {
-        self.is_recording.store(false, Ordering::Release);
-        self.record_producer = None;
-        let path = self.recording_path.take().ok_or_else(|| "Recording was not active".to_string())?;
-
-        if let Some(mut rec) = self.live_recorder.take() {
-            let bytes_written = rec.stop().unwrap_or(0) as usize;
-            let sample_count = self.recorded_frames.load(Ordering::Relaxed) * self.channels as u64;
-            let duration_ms = (sample_count * 1000)
-                / (self.sample_rate as u64 * self.channels as u64).max(1);
-            Ok((path, duration_ms, bytes_written, sample_count))
-        } else {
-            Err("Live recorder was not initialized".to_string())
-        }
+        let mut detached = self.detach_recording_for_stop()?;
+        drop(detached.producer);
+        let bytes_written = detached.recorder.stop().unwrap_or(0) as usize;
+        Ok((
+            detached.path,
+            detached.duration_ms,
+            bytes_written,
+            detached.sample_count,
+        ))
     }
 
     /// Returns whether live recording is actively capturing audio frames.

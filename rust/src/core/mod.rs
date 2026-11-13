@@ -2,10 +2,15 @@
 
 pub mod capture;
 pub mod config;
+pub mod control_coordinator;
 pub mod dsp_processor;
 pub mod dual_source;
+pub mod dual_source_control;
 pub mod effects_manager;
+pub mod engine_actor;
+pub mod hw_supervisor;
 pub mod input_manager;
+pub mod io_pool;
 pub mod miniaudio_player;
 pub mod music_manager;
 pub mod output_manager;
