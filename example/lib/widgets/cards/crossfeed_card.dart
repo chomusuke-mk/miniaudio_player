@@ -3,27 +3,86 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 
 import '../../controllers/audio_engine_controller.dart';
 import '../../theme/studio_colors.dart';
-import '../common/studio_badge.dart';
+import '../common/compact_slider_overlay.dart';
+import '../common/dsp_sub_card.dart';
 import '../common/studio_card.dart';
 
-/// Dedicated Bauer Stereophonic-to-Binaural (BS2B) crossfeed filtering card.
-///
-/// Reduces headphone listening fatigue by simulating the natural acoustic
-/// cross-bleeding of loudspeaker soundwaves between left and right ears.
-class CrossfeedCard extends StatelessWidget {
+enum _CrossfeedPreset { moffatBauer, chuMoy, custom }
+
+/// Sub-card module for Bauer Stereophonic-to-Binaural (BS2B) crossfeed,
+/// designed to match Smart Silence Skipping inside [DspEffectsCard].
+class BauerCrossfeedSubCard extends StatelessWidget {
   final AudioEngineController controller;
 
-  const CrossfeedCard({super.key, required this.controller});
+  const BauerCrossfeedSubCard({super.key, required this.controller});
 
-  String _detectPreset(Crossfeed cf) {
-    if (!cf.enabled) return 'Off';
-    if ((cf.cutoffHz - 700.0).abs() < 1.0 && (cf.feedDb - 4.5).abs() < 0.1) {
-      return 'Moffat-Bauer';
+  _CrossfeedPreset _detectPreset(Crossfeed cf) {
+    final cutoffRounded = cf.cutoffHz.round();
+    final feedTenths = (cf.feedDb * 10).round();
+    if (cutoffRounded == 700 && feedTenths == 45) {
+      return _CrossfeedPreset.moffatBauer;
     }
-    if ((cf.cutoffHz - 700.0).abs() < 1.0 && (cf.feedDb - 6.0).abs() < 0.1) {
-      return 'Chu Moy';
+    if (cutoffRounded == 700 && feedTenths == 60) {
+      return _CrossfeedPreset.chuMoy;
     }
-    return 'Custom';
+    return _CrossfeedPreset.custom;
+  }
+
+  Widget _buildPresetDropdown(Crossfeed cf, _CrossfeedPreset currentPreset) {
+    return DropdownButtonFormField<_CrossfeedPreset>(
+      key: ValueKey(currentPreset),
+      initialValue: currentPreset,
+      isExpanded: true,
+      dropdownColor: const Color(0xFF0E1424),
+      decoration: const InputDecoration(
+        labelText: 'Preset',
+        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      ),
+      items: [
+        const DropdownMenuItem(
+          value: _CrossfeedPreset.moffatBauer,
+          child: Text(
+            'Moffat-Bauer',
+            style: TextStyle(fontSize: 10.5),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const DropdownMenuItem(
+          value: _CrossfeedPreset.chuMoy,
+          child: Text(
+            'Chu Moy',
+            style: TextStyle(fontSize: 10.5),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        DropdownMenuItem(
+          value: _CrossfeedPreset.custom,
+          enabled: currentPreset == _CrossfeedPreset.custom,
+          child: Text(
+            'Custom',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontStyle: FontStyle.italic,
+              color: currentPreset == _CrossfeedPreset.custom
+                  ? StudioColors.accentCyan
+                  : StudioColors.textMuted,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+      onChanged: cf.enabled
+          ? (preset) {
+              if (preset == null || preset == _CrossfeedPreset.custom) return;
+              final target = preset == _CrossfeedPreset.moffatBauer
+                  ? Crossfeed.moffatBauer
+                  : Crossfeed.chuMoy;
+              controller.setCrossfeed(
+                cf.copyWith(cutoffHz: target.cutoffHz, feedDb: target.feedDb),
+              );
+            }
+          : null,
+    );
   }
 
   @override
@@ -34,258 +93,64 @@ class CrossfeedCard extends StatelessWidget {
         final cf = controller.crossfeed;
         final currentPreset = _detectPreset(cf);
 
-        return StudioCard(
+        return DspSubCard(
           icon: Icons.headphones,
-          title: 'BAUER BS2B BINAURAL CROSSFEED',
-          subtitle: 'Acoustic Left-Right Interaural Time & Amplitude Blending for Headphones',
-          trailing: StudioBadge(
-            label: cf.enabled ? currentPreset.toUpperCase() : 'BYPASS',
-            color: cf.enabled
-                ? StudioColors.accentCyan
-                : StudioColors.textMuted,
-          ),
+          title: 'Bauer BS2B Crossfeed',
+          subtitle: cf.enabled
+              ? 'Active: ${cf.cutoffHz.round()}Hz • ${cf.feedDb.toStringAsFixed(1)}dB crossfeed'
+              : 'Reduces headphone fatigue via subtle inter-ear bleed',
+          enabled: cf.enabled,
+          accentColor: StudioColors.accentCyan,
+          onToggle: controller.toggleCrossfeed,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Master On/Off Switch & Presets Bar
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0A0F1D),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: StudioColors.cardBorder,
-                    width: 1.0,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.headphones,
-                      size: 16,
-                      color: cf.enabled
-                          ? StudioColors.accentCyan
-                          : StudioColors.textMuted,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Crossfeed Active',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                          Text(
-                            cf.enabled
-                                ? 'Simulating loudspeaker acoustic bleed (${cf.cutoffHz.round()}Hz, ${cf.feedDb.toStringAsFixed(1)}dB)'
-                                : 'Disabled: pure discrete channel stereo isolation',
-                            style: const TextStyle(
-                              fontSize: 9.5,
-                              color: StudioColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Switch(
-                      value: cf.enabled,
-                      activeThumbColor: StudioColors.accentCyan,
-                      onChanged: (val) => controller.toggleCrossfeed(val),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // 2. Preset Chips
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: [
-                  ChoiceChip(
-                    label: const Text(
-                      'Off (Bypass)',
-                      style: TextStyle(fontSize: 9.5),
-                    ),
-                    selected: !cf.enabled,
-                    selectedColor: StudioColors.accentRose,
-                    backgroundColor: StudioColors.backgroundDark,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onSelected: (_) => controller.setCrossfeed(Crossfeed.off),
-                  ),
-                  ChoiceChip(
-                    label: const Text(
-                      'Moffat-Bauer (700Hz, 4.5dB)',
-                      style: TextStyle(fontSize: 9.5),
-                    ),
-                    selected: cf.enabled && currentPreset == 'Moffat-Bauer',
-                    selectedColor: StudioColors.accentCyan,
-                    backgroundColor: StudioColors.backgroundDark,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onSelected: (_) =>
-                        controller.setCrossfeed(Crossfeed.moffatBauer),
-                  ),
-                  ChoiceChip(
-                    label: const Text(
-                      'Chu Moy (700Hz, 6.0dB)',
-                      style: TextStyle(fontSize: 9.5),
-                    ),
-                    selected: cf.enabled && currentPreset == 'Chu Moy',
-                    selectedColor: StudioColors.accentCyan,
-                    backgroundColor: StudioColors.backgroundDark,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    onSelected: (_) =>
-                        controller.setCrossfeed(Crossfeed.chuMoy),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-
-              // 3. Cutoff Frequency & Feed Level Controls
-              Opacity(
-                opacity: cf.enabled ? 1.0 : 0.45,
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF070B14),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: StudioColors.cardBorder),
-                  ),
-                  child: Column(
-                    children: [
-                      // Cutoff Frequency Slider
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Lowpass Cutoff Frequency',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${cf.cutoffHz.round()} Hz',
-                            style: const TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'monospace',
-                              color: StudioColors.accentCyan,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Slider(
-                        value: cf.cutoffHz.clamp(300.0, 2000.0),
-                        min: 300.0,
-                        max: 2000.0,
-                        divisions: 34,
-                        activeColor: StudioColors.accentCyan,
-                        onChanged: cf.enabled
-                            ? (v) => controller.setCrossfeedCutoff(v)
-                            : null,
-                      ),
-                      const SizedBox(height: 4),
-
-                      // Feed Level Slider
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Crossfeed Level (Feed dB)',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${cf.feedDb.toStringAsFixed(1)} dB',
-                            style: const TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'monospace',
-                              color: StudioColors.accentCyan,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Slider(
-                        value: cf.feedDb.clamp(1.0, 15.0),
-                        min: 1.0,
-                        max: 15.0,
-                        divisions: 28,
-                        activeColor: StudioColors.accentCyan,
-                        onChanged: cf.enabled
-                            ? (v) => controller.setCrossfeedFeed(v)
-                            : null,
-                      ),
-                    ],
-                  ),
-                ),
+              _buildPresetDropdown(cf, currentPreset),
+              const SizedBox(height: 8),
+              CompactSliderControl(
+                icon: Icons.waves,
+                label: 'Lowpass Cutoff: ${cf.cutoffHz.round()} Hz',
+                value: cf.cutoffHz,
+                defaultValue: Crossfeed.moffatBauer.cutoffHz,
+                min: 300.0,
+                max: 2000.0,
+                activeColor: StudioColors.accentCyan,
+                disabled: !cf.enabled,
+                onChanged: controller.setCrossfeedCutoff,
               ),
               const SizedBox(height: 8),
-
-              // 4. Acoustic Binaural Bleed Visual Diagram
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF070B14),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: StudioColors.cardBorder,
-                    width: 0.8,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.compare_arrows,
-                      size: 14,
-                      color: StudioColors.accentCyan,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        cf.enabled
-                            ? 'L ↔ R acoustic bleed: ~${(cf.feedDb / 15.0 * 100).round()}% blend below ${cf.cutoffHz.round()} Hz'
-                            : 'Left and Right audio channels are completely isolated',
-                        style: const TextStyle(
-                          fontSize: 9.5,
-                          color: StudioColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+              CompactSliderControl(
+                icon: Icons.compare_arrows,
+                label: 'Crossfeed Level: ${cf.feedDb.toStringAsFixed(1)} dB',
+                value: cf.feedDb,
+                defaultValue: Crossfeed.moffatBauer.feedDb,
+                min: 1.0,
+                max: 15.0,
+                activeColor: StudioColors.accentPurple,
+                disabled: !cf.enabled,
+                onChanged: controller.setCrossfeedFeed,
               ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+/// Standalone Bauer BS2B card wrapper kept for backwards compatibility;
+/// the active studio console mounts [BauerCrossfeedSubCard] inside [DspEffectsCard].
+class CrossfeedCard extends StatelessWidget {
+  final AudioEngineController controller;
+
+  const CrossfeedCard({super.key, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return StudioCard(
+      icon: Icons.headphones,
+      title: 'BAUER BS2B CROSSFEED',
+      child: BauerCrossfeedSubCard(controller: controller),
     );
   }
 }

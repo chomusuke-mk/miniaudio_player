@@ -18,6 +18,7 @@ class CompactSliderControl extends StatefulWidget {
   final double max;
   final Color activeColor;
   final ValueChanged<double> onChanged;
+  final bool disabled;
 
   const CompactSliderControl({
     super.key,
@@ -29,6 +30,7 @@ class CompactSliderControl extends StatefulWidget {
     required this.max,
     this.activeColor = StudioColors.accentCyan,
     required this.onChanged,
+    this.disabled = false,
   });
 
   @override
@@ -49,6 +51,11 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
   @override
   void didUpdateWidget(covariant CompactSliderControl oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.disabled && _isOpen) {
+      _overlayEntry?.remove();
+      _overlayEntry = null;
+      _isOpen = false;
+    }
     if (widget.value != oldWidget.value) {
       _currentVal = widget.value;
       if (_isOpen && _overlayEntry != null) {
@@ -62,6 +69,7 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
   }
 
   void _toggleOverlay() {
+    if (widget.disabled) return;
     if (_isOpen) {
       _closeOverlay();
     } else {
@@ -202,27 +210,35 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = widget.disabled
+        ? StudioColors.textMuted
+        : widget.activeColor;
+
     return InkWell(
-      onTap: _toggleOverlay,
+      onTap: widget.disabled ? null : _toggleOverlay,
       borderRadius: BorderRadius.circular(6),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
-          color: _isOpen
-              ? widget.activeColor.withValues(alpha: 0.18)
-              : StudioColors.backgroundDark,
+          color: widget.disabled
+              ? StudioColors.backgroundDark.withValues(alpha: 0.5)
+              : (_isOpen
+                    ? widget.activeColor.withValues(alpha: 0.18)
+                    : StudioColors.backgroundDark),
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
-            color: _isOpen
-                ? widget.activeColor
-                : StudioColors.cardBorderFocused,
+            color: widget.disabled
+                ? StudioColors.cardBorder
+                : (_isOpen
+                      ? widget.activeColor
+                      : StudioColors.cardBorderFocused),
             width: 1.0,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(widget.icon, size: 14, color: widget.activeColor),
+            Icon(widget.icon, size: 14, color: effectiveColor),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
@@ -232,7 +248,9 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
-                  color: _isOpen ? Colors.white : StudioColors.textPrimary,
+                  color: widget.disabled
+                      ? StudioColors.textMuted
+                      : (_isOpen ? Colors.white : StudioColors.textPrimary),
                   fontFamily: 'monospace',
                 ),
               ),

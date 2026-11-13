@@ -4,7 +4,6 @@ import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../widgets/cards/algorithmic_reverb_card.dart';
 import '../widgets/cards/audio_analyzer_card.dart';
-import '../widgets/cards/crossfeed_card.dart';
 import '../widgets/cards/dsp_effects_card.dart';
 import '../widgets/cards/equalizer_card.dart';
 import '../widgets/cards/hardware_routing_card.dart';
@@ -54,7 +53,6 @@ class StudioConsoleView extends StatelessWidget {
             analyzerController: analyzerController,
           ),
         ),
-        RepaintBoundary(child: CrossfeedCard(controller: playerController)),
         RepaintBoundary(child: DspEffectsCard(controller: playerController)),
         RepaintBoundary(child: EqualizerCard(controller: playerController)),
         RepaintBoundary(

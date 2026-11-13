@@ -145,15 +145,34 @@ void main() {
 
           final scrollable = find.byType(Scrollable).first;
 
-          // 1. Crossfeed Mode Preset Selection
-          final crossfeedChip = find.textContaining('Moffat-Bauer');
-          expect(crossfeedChip, findsOneWidget);
+          // 1. Crossfeed Mode Preset Dropdown & Enable Switch Selection
+          final crossfeedCard = find
+              .ancestor(
+                of: find.text('Bauer BS2B Crossfeed'),
+                matching: find.byType(Container),
+              )
+              .first;
+          expect(crossfeedCard, findsOneWidget);
           await tester.scrollUntilVisible(
-            crossfeedChip,
+            crossfeedCard,
             200,
             scrollable: scrollable,
           );
-          await tester.tap(crossfeedChip);
+          final crossfeedSwitch = find.descendant(
+            of: crossfeedCard,
+            matching: find.byType(Switch),
+          );
+          expect(crossfeedSwitch, findsOneWidget);
+          await tester.tap(crossfeedSwitch);
+          await settleFrames(tester, frames: 3);
+
+          final crossfeedPresetTrigger = find.descendant(
+            of: crossfeedCard,
+            matching: find.text('Moffat-Bauer'),
+          );
+          await tester.tap(crossfeedPresetTrigger);
+          await settleFrames(tester, frames: 5);
+          await tester.tap(find.text('Chu Moy').last, warnIfMissed: false);
           await settleFrames(tester, frames: 5);
           expect(tester.takeException(), isNull);
 

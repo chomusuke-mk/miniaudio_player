@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
 import 'package:miniaudio_player_example/widgets/cards/spectrum_visualizer_card.dart';
+import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -40,8 +41,8 @@ void main() {
 
         // Hardware I/O is decoupled to HardwareRoutingCard
         expect(find.text('AUDIO HARDWARE ROUTING MATRIX'), findsOneWidget);
-        // Crossfeed presets are decoupled to CrossfeedCard ChoiceChips
-        expect(find.text('BAUER BS2B BINAURAL CROSSFEED'), findsOneWidget);
+        // Bauer BS2B Crossfeed is embedded inside DspEffectsCard alongside Smart Silence Skipping
+        expect(find.text('Bauer BS2B Crossfeed'), findsOneWidget);
       },
     );
 
@@ -186,6 +187,12 @@ void main() {
           findsWidgets,
           reason: 'Sub-controls must be dimmed with opacity 0.38 when OFF',
         );
+
+        // Threshold pill inside Smart Silence Skipping must be disabled when OFF
+        final thresholdPill = tester.widget<CompactSliderControl>(
+          find.widgetWithText(CompactSliderControl, 'Threshold: -45.0 dB'),
+        );
+        expect(thresholdPill.disabled, isTrue);
       },
     );
 

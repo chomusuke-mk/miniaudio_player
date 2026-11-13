@@ -147,11 +147,15 @@ class AudioEngineController extends ChangeNotifier {
   double get reverbWetDry => engine.state.reverb.wet;
   bool get reverbEnabled => engine.state.reverb.enabled;
 
-  Crossfeed get crossfeed => engine.state.crossfeed;
+  Crossfeed? _crossfeedOverride;
+  int _pendingCrossfeedUpdates = 0;
+  Crossfeed get crossfeed => _crossfeedOverride ?? engine.state.crossfeed;
+  bool? _spatializerEnabledOverride;
   double? _spatializerWidthOverride;
   double get spatializerWidth =>
       _spatializerWidthOverride ?? engine.state.spatializerWidth;
-  bool get spatializerEnabled => engine.state.spatializerEnabled;
+  bool get spatializerEnabled =>
+      _spatializerEnabledOverride ?? engine.state.spatializerEnabled;
 
   double? _stereoBalanceOverride;
   double get stereoBalance => _stereoBalanceOverride ?? engine.state.balance;
@@ -164,6 +168,8 @@ class AudioEngineController extends ChangeNotifier {
 
   SilenceSkipMode _silenceMode = SilenceSkipMode.all;
   bool? _silenceEnabledOverride;
+  double? _silenceThresholdDbOverride;
+  int _pendingSilenceThresholdUpdates = 0;
 
   bool get silenceEnabled =>
       _silenceEnabledOverride ??
@@ -172,7 +178,8 @@ class AudioEngineController extends ChangeNotifier {
       engine.state.silenceConfig.mode != SilenceSkipMode.disabled
       ? engine.state.silenceConfig.mode
       : _silenceMode;
-  double get silenceThresholdDb => engine.state.silenceConfig.thresholdDb;
+  double get silenceThresholdDb =>
+      _silenceThresholdDbOverride ?? engine.state.silenceConfig.thresholdDb;
   int get minSilenceDurationMs =>
       engine.state.silenceConfig.minSilenceDuration.inMilliseconds;
   int get silencePaddingMs => engine.state.silenceConfig.padding.inMilliseconds;
@@ -330,7 +337,10 @@ class AudioEngineController extends ChangeNotifier {
       }),
     );
     _subscriptions.add(
-      engine.stream.spatializerEnabled.listen((_) => notifyListeners()),
+      engine.stream.spatializerEnabled.listen((_) {
+        _spatializerEnabledOverride = null;
+        notifyListeners();
+      }),
     );
     _subscriptions.add(
       engine.stream.visualizerEnabled.listen((_) {
@@ -359,6 +369,9 @@ class AudioEngineController extends ChangeNotifier {
     _subscriptions.add(
       engine.stream.silenceConfig.listen((_) {
         _silenceEnabledOverride = null;
+        if (_pendingSilenceThresholdUpdates == 0) {
+          _silenceThresholdDbOverride = null;
+        }
         notifyListeners();
       }),
     );
@@ -418,7 +431,12 @@ class AudioEngineController extends ChangeNotifier {
       engine.stream.replayGainMode.listen((_) => notifyListeners()),
     );
     _subscriptions.add(
-      engine.stream.crossfeed.listen((_) => notifyListeners()),
+      engine.stream.crossfeed.listen((_) {
+        if (_pendingCrossfeedUpdates == 0) {
+          _crossfeedOverride = null;
+        }
+        notifyListeners();
+      }),
     );
     _subscriptions.add(
       engine.stream.silenceConfig.listen((_) => notifyListeners()),
@@ -696,29 +714,40 @@ class AudioEngineController extends ChangeNotifier {
 
   // --- Crossfeed Controls ---
   Future<void> setCrossfeed(Crossfeed cf) async {
-    await engine.action.setCrossfeed(cf);
+    _pendingCrossfeedUpdates++;
+    _crossfeedOverride = cf;
     notifyListeners();
+    try {
+      await engine.action.setCrossfeed(cf);
+    } finally {
+      _pendingCrossfeedUpdates--;
+      if (_pendingCrossfeedUpdates == 0 && engine.state.crossfeed == cf) {
+        _crossfeedOverride = null;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> toggleCrossfeed(bool enabled) async {
-    await setCrossfeed(engine.state.crossfeed.copyWith(enabled: enabled));
+    await setCrossfeed(crossfeed.copyWith(enabled: enabled));
   }
 
   Future<void> setCrossfeedCutoff(double cutoffHz) async {
-    await setCrossfeed(engine.state.crossfeed.copyWith(cutoffHz: cutoffHz));
+    await setCrossfeed(crossfeed.copyWith(cutoffHz: cutoffHz));
   }
 
   Future<void> setCrossfeedFeed(double feedDb) async {
-    await setCrossfeed(engine.state.crossfeed.copyWith(feedDb: feedDb));
+    await setCrossfeed(crossfeed.copyWith(feedDb: feedDb));
   }
 
   // --- Spatializer, Balance, Mono, Limiter ---
   Future<void> setSpatializerEnabled(bool enabled) async {
+    _spatializerEnabledOverride = enabled;
+    notifyListeners();
     await engine.action.setSpatializer(
       enabled: enabled,
       width: spatializerWidth,
     );
-    notifyListeners();
   }
 
   Future<void> setSpatializerWidth(double width) async {
@@ -754,7 +783,11 @@ class AudioEngineController extends ChangeNotifier {
     notifyListeners();
     final modeToApply = enabled ? _silenceMode : SilenceSkipMode.disabled;
     await engine.action.setSilenceConfig(
-      engine.state.silenceConfig.copyWith(enabled: enabled, mode: modeToApply),
+      engine.state.silenceConfig.copyWith(
+        enabled: enabled,
+        mode: modeToApply,
+        thresholdDb: silenceThresholdDb,
+      ),
     );
   }
 
@@ -764,16 +797,32 @@ class AudioEngineController extends ChangeNotifier {
       engine.state.silenceConfig.copyWith(
         enabled: mode != SilenceSkipMode.disabled,
         mode: mode,
+        thresholdDb: silenceThresholdDb,
       ),
     );
     notifyListeners();
   }
 
   Future<void> setSilenceThresholdDb(double thresholdDb) async {
-    await engine.action.setSilenceConfig(
-      engine.state.silenceConfig.copyWith(thresholdDb: thresholdDb),
-    );
+    _pendingSilenceThresholdUpdates++;
+    _silenceThresholdDbOverride = thresholdDb;
     notifyListeners();
+    try {
+      await engine.action.setSilenceConfig(
+        engine.state.silenceConfig.copyWith(
+          enabled: silenceEnabled,
+          mode: silenceEnabled ? _silenceMode : SilenceSkipMode.disabled,
+          thresholdDb: thresholdDb,
+        ),
+      );
+    } finally {
+      _pendingSilenceThresholdUpdates--;
+      if (_pendingSilenceThresholdUpdates == 0 &&
+          engine.state.silenceConfig.thresholdDb == thresholdDb) {
+        _silenceThresholdDbOverride = null;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> setMinSilenceDurationMs(int durationMs) async {
