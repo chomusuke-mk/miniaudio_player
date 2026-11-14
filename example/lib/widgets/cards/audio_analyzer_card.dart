@@ -19,7 +19,7 @@ import '../painters/discrete_waveform_painter.dart';
 /// and a [isLoading] flag. When loading, all fields display "loading..." in gray.
 /// If analysis is null or any field is null, it displays strictly "--" without
 /// any fallbacks or defaults.
-class AudioAnalyzerCard extends StatelessWidget {
+class AudioAnalyzerCard extends StatefulWidget {
   /// Complete acoustic analysis result, or null if unanalyzed.
   final AudioAnalysisResult? analysis;
 
@@ -51,6 +51,13 @@ class AudioAnalyzerCard extends StatelessWidget {
     this.playerController,
     this.analyzerController,
   });
+
+  @override
+  State<AudioAnalyzerCard> createState() => _AudioAnalyzerCardState();
+}
+
+class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
+  bool _isExpanded = true;
 
   String _formatDuration(Duration? d) {
     if (d == null || d == Duration.zero) return '--';
@@ -104,7 +111,7 @@ class AudioAnalyzerCard extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 95,
+            width: 86,
             child: Text(
               label,
               style: const TextStyle(
@@ -135,7 +142,8 @@ class AudioAnalyzerCard extends StatelessWidget {
     required IconData icon,
     required Color accentColor,
     required String title,
-    required String subtitle,
+    String? subtitle,
+    List<InlineSpan>? subtitleSpans,
     Widget? trailing,
   }) {
     final titleRow = Row(
@@ -155,6 +163,12 @@ class AudioAnalyzerCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+
+    const subtitleStyle = TextStyle(
+      fontSize: 8.5,
+      color: StudioColors.textMuted,
+      height: 1.3,
     );
 
     return Container(
@@ -181,15 +195,15 @@ class AudioAnalyzerCard extends StatelessWidget {
               runSpacing: 2,
               children: [titleRow, trailing],
             ),
-          const SizedBox(height: 3),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              fontSize: 8.5,
-              color: StudioColors.textMuted,
-              height: 1.3,
+          if (subtitleSpans != null) ...[
+            const SizedBox(height: 3),
+            Text.rich(
+              TextSpan(style: subtitleStyle, children: subtitleSpans),
             ),
-          ),
+          ] else if (subtitle != null) ...[
+            const SizedBox(height: 3),
+            Text(subtitle, style: subtitleStyle),
+          ],
         ],
       ),
     );
@@ -348,27 +362,34 @@ class AudioAnalyzerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     // If controller references are passed, merge listenables for real-time reactivity
     final listenables = <Listenable>[];
-    if (analyzerController != null) listenables.add(analyzerController!);
-    if (playerController != null) listenables.add(playerController!);
+    if (widget.analyzerController != null) {
+      listenables.add(widget.analyzerController!);
+    }
+    if (widget.playerController != null) {
+      listenables.add(widget.playerController!);
+    }
 
     if (listenables.isNotEmpty) {
       return ListenableBuilder(
         listenable: Listenable.merge(listenables),
         builder: (context, _) {
-          final effectiveTrack = track ?? playerController?.selectedTrack;
+          final effectiveTrack =
+              widget.track ?? widget.playerController?.selectedTrack;
           final effectiveCanAnalyze =
-              canAnalyze && (effectiveTrack?.canAnalyze ?? true);
+              widget.canAnalyze && (effectiveTrack?.canAnalyze ?? true);
           final effectiveAnalysis =
-              analysis ?? analyzerController?.getResultForTrack(effectiveTrack);
+              widget.analysis ??
+              widget.analyzerController?.getResultForTrack(effectiveTrack);
           final effectiveIsLoading =
-              isLoading ||
-              (analyzerController?.isAnalyzingTrack(effectiveTrack) ?? false);
+              widget.isLoading ||
+              (widget.analyzerController?.isAnalyzingTrack(effectiveTrack) ??
+                  false);
           final effectiveOnReanalyze =
-              onReanalyze ??
+              widget.onReanalyze ??
               (effectiveCanAnalyze && effectiveTrack != null
-                  ? () => analyzerController?.analyze(
+                  ? () => widget.analyzerController?.analyze(
                       effectiveTrack,
-                      engine: playerController?.engine,
+                      engine: widget.playerController?.engine,
                       force: true,
                     )
                   : null);
@@ -387,11 +408,11 @@ class AudioAnalyzerCard extends StatelessWidget {
 
     return _buildContent(
       context: context,
-      track: track,
-      analysis: analysis,
-      isLoading: isLoading,
-      canAnalyze: canAnalyze,
-      onReanalyze: onReanalyze,
+      track: widget.track,
+      analysis: widget.analysis,
+      isLoading: widget.isLoading,
+      canAnalyze: widget.canAnalyze,
+      onReanalyze: widget.onReanalyze,
     );
   }
 
@@ -411,15 +432,17 @@ class AudioAnalyzerCard extends StatelessWidget {
       subtitle: canAnalyze
           ? 'BS.1770-4 / EBU R128 single-pass acoustic decoding & header probing'
           : 'Disabled: ${track?.displayType ?? "Source"} does not support single-pass offline analysis',
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      showChild: _isExpanded,
+      trailing: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 2,
+        runSpacing: 4,
         children: [
           _buildStatusPill(
             canAnalyze: canAnalyze,
             isLoading: isLoading,
             isReady: isReady,
           ),
-          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 18),
             color: canAnalyze && !isLoading
@@ -429,92 +452,140 @@ class AudioAnalyzerCard extends StatelessWidget {
             visualDensity: VisualDensity.compact,
             onPressed: canAnalyze && !isLoading ? onReanalyze : null,
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 1. REPLAY GAIN SECTION
-          _buildReplayGainSection(analysis, isLoading),
-          const SizedBox(height: 14),
-
-          // 2. WAVEFORM SECTION
-          _buildWaveformSection(analysis, isLoading),
-          const SizedBox(height: 14),
-
-          // 3, 4 & 5. AUDIO INFO, METADATA & CHROMAPRINT
-          // Responsive: 3 columns (1/3 + 1/3 + 1/3) -> 2+1 (1/2 + 1/2, 1) -> 1 + 1 + 1
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isThreeColumn = constraints.maxWidth >= 720;
-              final audioInfoWidget = _buildAudioInfoSection(
-                analysis,
-                isLoading,
-              );
-              final metadataWidget = _buildMetadataSection(
-                context,
-                analysis,
-                isLoading,
-                track,
-              );
-              final chromaprintWidget = _buildChromaprintSection(
-                context,
-                analysis,
-                isLoading,
-                track,
-                fingerprintMaxLines: isThreeColumn ? 14 : 2,
-              );
-
-              if (isThreeColumn) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 1, child: audioInfoWidget),
-                    const SizedBox(width: 12),
-                    Expanded(flex: 1, child: metadataWidget),
-                    const SizedBox(width: 12),
-                    Expanded(flex: 1, child: chromaprintWidget),
-                  ],
-                );
-              }
-
-              if (constraints.maxWidth >= 520) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 1, child: audioInfoWidget),
-                        const SizedBox(width: 12),
-                        Expanded(flex: 1, child: metadataWidget),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    chromaprintWidget,
-                  ],
-                );
-              }
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  audioInfoWidget,
-                  const SizedBox(height: 12),
-                  metadataWidget,
-                  const SizedBox(height: 12),
-                  chromaprintWidget,
-                ],
-              );
+          IconButton(
+            icon: Icon(
+              _isExpanded
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.keyboard_arrow_up_rounded,
+              size: 20,
+            ),
+            color: StudioColors.textSecondary,
+            tooltip: _isExpanded ? 'Hide Analyzer Body' : 'Show Analyzer Body',
+            visualDensity: VisualDensity.compact,
+            onPressed: () {
+              setState(() {
+                _isExpanded = !_isExpanded;
+              });
             },
           ),
         ],
       ),
+      child: _isExpanded
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 1. WAVEFORM SECTION
+                _buildWaveformSection(analysis, isLoading),
+                const SizedBox(height: 14),
+
+                // 2, 3, 4 & 5. REPLAY GAIN, AUDIO INFO, METADATA & CHROMAPRINT
+                // Responsive: 4 columns (1/4 each) -> 2x2 (1/2 each) -> 1 column stack
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isFourColumn = constraints.maxWidth >= 760;
+                    final replayGainWidget = _buildReplayGainSection(
+                      analysis,
+                      isLoading,
+                    );
+                    final audioInfoWidget = _buildAudioInfoSection(
+                      analysis,
+                      isLoading,
+                    );
+                    final metadataWidget = _buildMetadataSection(
+                      context,
+                      analysis,
+                      isLoading,
+                      track,
+                    );
+                    final chromaprintWidget = _buildChromaprintSection(
+                      context,
+                      analysis,
+                      isLoading,
+                      track,
+                      fingerprintMaxLines: isFourColumn ? 14 : 2,
+                    );
+
+                    return _buildResponsiveSubCardsGrid(
+                      maxWidth: constraints.maxWidth,
+                      replayGainWidget: replayGainWidget,
+                      audioInfoWidget: audioInfoWidget,
+                      metadataWidget: metadataWidget,
+                      chromaprintWidget: chromaprintWidget,
+                    );
+                  },
+                ),
+              ],
+            )
+          : const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildResponsiveSubCardsGrid({
+    required double maxWidth,
+    required Widget replayGainWidget,
+    required Widget audioInfoWidget,
+    required Widget metadataWidget,
+    required Widget chromaprintWidget,
+  }) {
+    if (maxWidth >= 760) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: replayGainWidget),
+          const SizedBox(width: 12),
+          Expanded(child: audioInfoWidget),
+          const SizedBox(width: 12),
+          Expanded(child: metadataWidget),
+          const SizedBox(width: 12),
+          Expanded(child: chromaprintWidget),
+        ],
+      );
+    }
+
+    if (maxWidth >= 500) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: replayGainWidget),
+              const SizedBox(width: 12),
+              Expanded(child: audioInfoWidget),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: metadataWidget),
+              const SizedBox(width: 12),
+              Expanded(child: chromaprintWidget),
+            ],
+          ),
+        ],
+      );
+    }
+
+    final cards = [
+      replayGainWidget,
+      audioInfoWidget,
+      metadataWidget,
+      chromaprintWidget,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (int i = 0; i < cards.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          cards[i],
+        ],
+      ],
     );
   }
 
   // ===========================================================================
-  // 1. REPLAY GAIN SECTION
+  // REPLAY GAIN SECTION (Vertical card at start of analyzer sub-cards row)
   // ===========================================================================
   Widget _buildReplayGainSection(
     AudioAnalysisResult? analysis,
@@ -522,12 +593,12 @@ class AudioAnalyzerCard extends StatelessWidget {
   ) {
     final rg = analysis?.replayGain;
 
-    String gainStr;
-    Color gainColor;
-    String peakStr;
-    Color peakColor;
-    String lufsStr;
-    Color lufsColor;
+    final String gainStr;
+    final Color gainColor;
+    final String peakStr;
+    final Color peakColor;
+    final String lufsStr;
+    final Color lufsColor;
 
     if (isLoading) {
       gainStr = 'loading...';
@@ -552,8 +623,25 @@ class AudioAnalyzerCard extends StatelessWidget {
       lufsColor = StudioColors.textMuted;
     }
 
+    final tiles = [
+      _buildCompactKpiTile(
+        label: 'REPLAY GAIN',
+        value: gainStr,
+        color: gainColor,
+      ),
+      _buildCompactKpiTile(
+        label: 'TRUE-PEAK',
+        value: peakStr,
+        color: peakColor,
+      ),
+      _buildCompactKpiTile(
+        label: 'INTEGRATED LOUDNESS',
+        value: lufsStr,
+        color: lufsColor,
+      ),
+    ];
+
     return Container(
-      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFF070B14),
         borderRadius: BorderRadius.circular(8),
@@ -562,84 +650,24 @@ class AudioAnalyzerCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Row(
-            children: [
-              Icon(Icons.tune, size: 14, color: StudioColors.accentPurple),
-              SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  'REPLAY GAIN (BS.1770-4 / EBU R128)',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    color: Colors.white,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+          _buildSubCardHeader(
+            icon: Icons.tune,
+            accentColor: StudioColors.accentPurple,
+            title: 'REPLAY GAIN (BS.1770-4 / EBU R128)',
+            subtitle:
+                'ReplayGain normalizes playback volume to target loudness (-18.0 LUFS). Peak represents true-peak sample headroom to prevent clipping, and Gain specifies the recommended volume compensation offset.',
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'ReplayGain normalizes playback volume to target loudness (-18.0 LUFS). Peak represents true-peak sample headroom to prevent clipping, and Gain specifies the recommended volume compensation offset.',
-            style: TextStyle(
-              fontSize: 9,
-              color: StudioColors.textMuted,
-              height: 1.35,
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (int i = 0; i < tiles.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 8),
+                  tiles[i],
+                ],
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-
-          // 3 Compact Tiles: Replay Gain, True-Peak, Integrated Loudness
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isNarrow = constraints.maxWidth < 360;
-
-              final tiles = [
-                _buildCompactKpiTile(
-                  label: 'REPLAY GAIN',
-                  value: gainStr,
-                  color: gainColor,
-                ),
-                _buildCompactKpiTile(
-                  label: 'TRUE-PEAK',
-                  value: peakStr,
-                  color: peakColor,
-                ),
-                _buildCompactKpiTile(
-                  label: 'INTEGRATED LOUDNESS',
-                  value: lufsStr,
-                  color: lufsColor,
-                ),
-              ];
-
-              if (isNarrow) {
-                return Column(
-                  children: tiles
-                      .map(
-                        (t) => Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: t,
-                        ),
-                      )
-                      .toList(),
-                );
-              }
-
-              return Row(
-                children: tiles
-                    .map(
-                      (t) => Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: t,
-                        ),
-                      ),
-                    )
-                    .toList(),
-              );
-            },
           ),
         ],
       ),
@@ -652,7 +680,7 @@ class AudioAnalyzerCard extends StatelessWidget {
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF0A0F1D),
         borderRadius: BorderRadius.circular(6),
@@ -664,7 +692,7 @@ class AudioAnalyzerCard extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(
-              fontSize: 7.5,
+              fontSize: 8.5,
               fontWeight: FontWeight.w700,
               color: StudioColors.textSecondary,
               letterSpacing: 0.4,
@@ -672,14 +700,16 @@ class AudioAnalyzerCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           FittedBox(
             fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
             child: Text(
               value,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 18,
                 fontWeight: FontWeight.w900,
+                fontFamily: 'monospace',
                 color: color,
               ),
             ),
@@ -976,7 +1006,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                   child: Row(
                     children: [
                       const SizedBox(
-                        width: 95,
+                        width: 86,
                         child: Text(
                           'Thumbnails',
                           style: TextStyle(
@@ -1114,7 +1144,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                   child: Row(
                     children: [
                       const SizedBox(
-                        width: 95,
+                        width: 86,
                         child: Text(
                           'Extended Tags',
                           style: TextStyle(
@@ -1233,16 +1263,16 @@ class AudioAnalyzerCard extends StatelessWidget {
     final durationSeconds =
         (analysis?.audioInfo.duration?.inMilliseconds ?? 0) / 1000.0;
 
-    String algoBadge;
-    Color algoColor;
+    final String algoText;
+    final Color algoColor;
     if (isLoading) {
-      algoBadge = 'loading...';
+      algoText = 'Algorithm: loading...';
       algoColor = const Color(0xFF64748B);
     } else if (chromaprint != null) {
-      algoBadge = 'ALGORITHM TEST2 ($algorithm)';
+      algoText = 'ALGORITHM TEST2 ($algorithm)';
       algoColor = StudioColors.accentCyan;
     } else {
-      algoBadge = '--';
+      algoText = 'Algorithm: --';
       algoColor = StudioColors.textMuted;
     }
 
@@ -1260,16 +1290,20 @@ class AudioAnalyzerCard extends StatelessWidget {
             icon: Icons.fingerprint,
             accentColor: StudioColors.accentCyan,
             title: 'CHROMAPRINT / ACOUSTID FINGERPRINT',
-            subtitle: 'Digital acoustic fingerprint generated via Chromaprint for automated AcoustID track identification and MusicBrainz metadata cross-referencing.',
-            trailing: Text(
-              algoBadge,
-              style: TextStyle(
-                fontSize: 8.5,
-                fontWeight: FontWeight.w700,
-                color: algoColor,
-                fontFamily: 'monospace',
+            subtitleSpans: [
+              const TextSpan(
+                text:
+                    'Digital acoustic fingerprint generated via Chromaprint for automated AcoustID track identification and MusicBrainz metadata cross-referencing. ',
               ),
-            ),
+              TextSpan(
+                text: algoText,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: algoColor,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
           ),
 
           Padding(
@@ -1366,7 +1400,7 @@ class AudioAnalyzerCard extends StatelessWidget {
                           (!isLoading &&
                               fpString != null &&
                               fpString.isNotEmpty &&
-                              analyzerController != null)
+                              widget.analyzerController != null)
                           ? () {
                               showDialog(
                                 context: context,
@@ -1374,7 +1408,8 @@ class AudioAnalyzerCard extends StatelessWidget {
                                   fingerprint: fpString,
                                   durationSeconds: durationSeconds,
                                   trackTitle: track?.title ?? 'Track',
-                                  analyzerController: analyzerController!,
+                                  analyzerController:
+                                      widget.analyzerController!,
                                 ),
                               );
                             }

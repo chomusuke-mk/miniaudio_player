@@ -325,7 +325,7 @@ class AudioAnalyzerController extends ChangeNotifier {
       replayGain: true,
       metadata: true,
       chromaprint: true,
-      waveformPoints: 72,
+      waveformPoints: 100,
     );
   }
 

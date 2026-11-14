@@ -136,7 +136,7 @@ void main() {
         );
         expect(bs2bDarkContainers, findsOneWidget);
 
-        // No StudioBadge on Bauer BS2B Crossfeed; uses Preset dropdown + stacked pills directly
+        // No StudioBadge on Bauer BS2B Crossfeed; uses Preset dropdown + left-aligned Wrap pills directly
         expect(
           find.descendant(
             of: crossfeedSubCard,
@@ -170,41 +170,33 @@ void main() {
         );
         expect(cutoffPill, findsOneWidget);
         expect(crossfeedPill, findsOneWidget);
-        expect(
-          tester.getTopLeft(crossfeedPill).dy,
-          greaterThan(tester.getTopLeft(cutoffPill).dy + 20),
-        );
 
-        // Smart Silence Threshold is a CompactSliderControl pill instead of an inline Slider
+        // Smart Silence Threshold is a CompactSliderControl pill inside a left-aligned Wrap
         expect(
           find.descendant(of: silenceSubCard, matching: find.byType(Slider)),
           findsNothing,
         );
-        expect(
-          find.descendant(
-            of: silenceSubCard,
-            matching: find.widgetWithText(
-              CompactSliderControl,
-              'Threshold: -45.0 dB',
-            ),
+        final thresholdPill = find.descendant(
+          of: silenceSubCard,
+          matching: find.widgetWithText(
+            CompactSliderControl,
+            'Threshold: -45.0 dB',
           ),
-          findsOneWidget,
         );
+        expect(thresholdPill, findsOneWidget);
 
         // Stereo Widener uses the same DspSubCard layout with a Width CompactSliderControl pill
         expect(
           find.descendant(of: widenerSubCard, matching: find.byType(Slider)),
           findsNothing,
         );
-        expect(
-          find.descendant(
-            of: widenerSubCard,
-            matching: find.widgetWithText(CompactSliderControl, 'Width: 1.00x'),
-          ),
-          findsOneWidget,
+        final widenerWidthPill = find.descendant(
+          of: widenerSubCard,
+          matching: find.widgetWithText(CompactSliderControl, 'Width: 1.00x'),
         );
+        expect(widenerWidthPill, findsOneWidget);
 
-        // Algorithmic Reverb mirrors BS2B: Preset dropdown + 5 vertical CompactSliderControl pills
+        // Algorithmic Reverb mirrors BS2B: Preset dropdown + 5 CompactSliderControl pills in a Wrap
         expect(
           find.descendant(of: reverbSubCard, matching: find.byType(Slider)),
           findsNothing,
@@ -249,22 +241,93 @@ void main() {
         expect(reverbWidthPill, findsOneWidget);
         expect(wetPill, findsOneWidget);
         expect(dryPill, findsOneWidget);
-        expect(
-          tester.getTopLeft(dampingPill).dy,
-          greaterThan(tester.getTopLeft(roomSizePill).dy + 20),
+
+        for (final pair in [
+          (silenceSubCard, thresholdPill, silenceBox),
+          (crossfeedSubCard, cutoffPill, crossfeedBox),
+          (widenerSubCard, widenerWidthPill, widenerBox),
+          (reverbSubCard, roomSizePill, reverbBox),
+        ]) {
+          final wrapFinder = find.ancestor(
+            of: pair.$2,
+            matching: find.byWidgetPredicate(
+              (w) => w is Wrap && w.alignment == WrapAlignment.start,
+            ),
+          );
+          expect(
+            find.descendant(of: pair.$1, matching: wrapFinder),
+            findsOneWidget,
+          );
+          expect(
+            tester.getTopLeft(pair.$2).dx,
+            closeTo(pair.$3.left + 10, 1.0),
+          );
+        }
+
+        // At wider card width (where pills fit side by side even with square test font glyphs),
+        // multiple pills share Row 1 left-aligned and overflow pills wrap left-aligned onto Row 2.
+        await pumpDspCard(tester, size: const Size(2400, 900));
+        final wideCrossfeedCard = subCardFor('Bauer BS2B Crossfeed');
+        final wideCutoffRect = tester.getRect(
+          find.descendant(
+            of: wideCrossfeedCard,
+            matching: find.widgetWithText(
+              CompactSliderControl,
+              'Lowpass Cutoff: 700 Hz',
+            ),
+          ),
         );
-        expect(
-          tester.getTopLeft(reverbWidthPill).dy,
-          greaterThan(tester.getTopLeft(dampingPill).dy + 20),
+        final wideFeedRect = tester.getRect(
+          find.descendant(
+            of: wideCrossfeedCard,
+            matching: find.widgetWithText(
+              CompactSliderControl,
+              'Crossfeed Level: 4.5 dB',
+            ),
+          ),
         );
+        expect(wideFeedRect.top, closeTo(wideCutoffRect.top, 0.5));
+        expect(wideFeedRect.left, greaterThan(wideCutoffRect.right));
         expect(
-          tester.getTopLeft(wetPill).dy,
-          greaterThan(tester.getTopLeft(reverbWidthPill).dy + 20),
+          wideCutoffRect.left,
+          closeTo(
+            tester.getRect(subCardBoxFor('Bauer BS2B Crossfeed')).left + 10,
+            1.0,
+          ),
         );
-        expect(
-          tester.getTopLeft(dryPill).dy,
-          greaterThan(tester.getTopLeft(wetPill).dy + 20),
+
+        final wideReverbCard = subCardFor('Algorithmic Reverb');
+        final wideRoomRect = tester.getRect(
+          find.descendant(
+            of: wideReverbCard,
+            matching: find.widgetWithText(
+              CompactSliderControl,
+              'Room Size: 0.50',
+            ),
+          ),
         );
+        final wideDampingRect = tester.getRect(
+          find.descendant(
+            of: wideReverbCard,
+            matching: find.widgetWithText(
+              CompactSliderControl,
+              'Damping: 0.50',
+            ),
+          ),
+        );
+        final wideWetRect = tester.getRect(
+          find.descendant(
+            of: wideReverbCard,
+            matching: find.widgetWithText(
+              CompactSliderControl,
+              'Wet Level: 0.30x',
+            ),
+          ),
+        );
+        expect(wideDampingRect.top, closeTo(wideRoomRect.top, 0.5));
+        expect(wideDampingRect.left, greaterThan(wideRoomRect.right));
+        expect(wideWetRect.top, greaterThan(wideRoomRect.bottom));
+        expect(wideWetRect.left, closeTo(wideRoomRect.left, 0.5));
       },
     );
 
@@ -478,7 +541,7 @@ void main() {
     );
 
     testWidgets(
-      'Algorithmic Reverb Switch, Preset dropdown, Custom mode, and 5 vertical pills behave like Bauer BS2B',
+      'Algorithmic Reverb Switch, Preset dropdown, Custom mode, and 5 wrapped pills behave like Bauer BS2B',
       (tester) async {
         await pumpDspCard(tester, size: const Size(900, 900));
 

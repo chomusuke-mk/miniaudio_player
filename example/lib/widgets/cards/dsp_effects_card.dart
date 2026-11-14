@@ -91,18 +91,26 @@ class DspEffectsCard extends StatelessWidget {
                 : null,
           ),
           const SizedBox(height: 8),
-          CompactSliderControl(
-            icon: Icons.graphic_eq,
-            label:
-                'Threshold: ${controller.silenceThresholdDb.toStringAsFixed(1)} dB',
-            value: controller.silenceThresholdDb.clamp(-90.0, -20.0),
-            defaultValue: -45.0,
-            min: -90.0,
-            max: -20.0,
-            activeColor: StudioColors.accentPurple,
-            disabled: !controller.silenceEnabled,
-            valueFormatter: (v) => '${v.toStringAsFixed(1)} dB',
-            onChanged: controller.setSilenceThresholdDb,
+          Wrap(
+            alignment: WrapAlignment.start,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              CompactSliderControl(
+                icon: Icons.graphic_eq,
+                label:
+                    'Threshold: ${controller.silenceThresholdDb.toStringAsFixed(1)} dB',
+                value: controller.silenceThresholdDb.clamp(-90.0, -20.0),
+                defaultValue: -45.0,
+                min: -90.0,
+                max: -20.0,
+                activeColor: StudioColors.accentPurple,
+                disabled: !controller.silenceEnabled,
+                valueFormatter: (v) => '${v.toStringAsFixed(1)} dB',
+                onChanged: controller.setSilenceThresholdDb,
+              ),
+            ],
           ),
         ],
       ),
@@ -119,8 +127,11 @@ class DspEffectsCard extends StatelessWidget {
       enabled: controller.spatializerEnabled,
       accentColor: StudioColors.accentCyan,
       onToggle: controller.setSpatializerEnabled,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Wrap(
+        alignment: WrapAlignment.start,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 6,
+        runSpacing: 6,
         children: [
           CompactSliderControl(
             icon: Icons.swap_horiz,

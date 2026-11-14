@@ -7,6 +7,7 @@ import 'package:miniaudio_player_example/app.dart';
 import 'package:miniaudio_player_example/controllers/audio_analyzer_controller.dart';
 import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
 import 'package:miniaudio_player_example/models/audio_track.dart';
+import 'package:miniaudio_player_example/theme/studio_colors.dart';
 import 'package:miniaudio_player_example/widgets/cards/audio_analyzer_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
 import 'package:miniaudio_player_example/widgets/common/metadata_inspector_modal.dart';
@@ -74,6 +75,7 @@ void main() {
       final res = await controller.analyze(track1);
 
       expect(res, isNotNull);
+      expect(res!.waveform?.points.length, equals(100));
       expect(controller.hasResultForTrack(track1), isTrue);
       final result1 = controller.getResultForTrack(track1);
       expect(result1, isNotNull);
@@ -417,9 +419,38 @@ void main() {
         expect(find.text('VBR'), findsOneWidget);
         expect(find.text('Master Track'), findsOneWidget);
         expect(find.textContaining('VIEW EXTENDED (1)'), findsOneWidget);
-        expect(find.text('ALGORITHM TEST2 (1)'), findsOneWidget);
+        expect(find.textContaining('ALGORITHM TEST2 (1)'), findsOneWidget);
         expect(find.text('AQADtEmyREmURImC5_jx'), findsOneWidget);
         expect(find.text('IDENTIFY TRACK (AcoustID API)'), findsOneWidget);
+
+        // Verify Replay Gain stacks vertically with larger values than Audio Info
+        final gainRect = tester.getRect(find.text('-3.5 dB'));
+        final peakRect = tester.getRect(find.text('0.9800'));
+        final lufsRect = tester.getRect(find.text('-17.5 LUFS'));
+        expect(gainRect.top, lessThan(peakRect.top));
+        expect(peakRect.top, lessThan(lufsRect.top));
+        final gainText = tester.widget<Text>(find.text('-3.5 dB'));
+        final audioInfoValText = tester.widget<Text>(find.text('VBR'));
+        expect(
+          gainText.style!.fontSize!,
+          greaterThan(audioInfoValText.style!.fontSize!),
+        );
+
+        // Verify Chromaprint algorithm is inline in description with highlighted color
+        final chromaDescFinder = find.byWidgetPredicate((w) {
+          if (w is! Text || w.textSpan is! TextSpan) return false;
+          final root = w.textSpan! as TextSpan;
+          final spans = root.children?.whereType<TextSpan>().toList() ?? [];
+          return spans.any(
+                (s) => (s.text ?? '').contains('Digital acoustic fingerprint'),
+              ) &&
+              spans.any(
+                (s) =>
+                    s.text == 'ALGORITHM TEST2 (1)' &&
+                    s.style?.color == StudioColors.accentCyan,
+              );
+        });
+        expect(chromaDescFinder, findsOneWidget);
       },
     );
 
@@ -668,7 +699,7 @@ void main() {
     );
 
     testWidgets(
-      'AudioAnalyzerCard adapts Audio Info, Metadata, and Chromaprint across 1/3+1/3+1/3, 1/2+1/2+1, and 1+1+1 layouts',
+      'AudioAnalyzerCard adapts ReplayGain, Audio Info, Metadata, and Chromaprint across 1/4x4, 2x2, and 1x4 layouts',
       (tester) async {
         addTearDown(() {
           tester.view.resetPhysicalSize();
@@ -678,7 +709,7 @@ void main() {
         final analysis = _makeTestAnalysis();
 
         Future<void> pumpAtWidth(double width) async {
-          tester.view.physicalSize = Size(width, 1400);
+          tester.view.physicalSize = Size(width, 1600);
           tester.view.devicePixelRatio = 1.0;
           await tester.pumpWidget(
             MaterialApp(
@@ -697,51 +728,137 @@ void main() {
           expect(tester.takeException(), isNull);
         }
 
-        // 1. Wide (>= 720 inner width): all 3 sections on one row (1/3 + 1/3 + 1/3)
-        // Stacked vertically alongside Audio Info & Metadata -> 12 fingerprint lines
+        // 1. Wide (>= 760 inner width): all 4 sections on one row starting with ReplayGain (1/4 each)
         await pumpAtWidth(1000);
+        final rgWide = tester.getTopLeft(
+          find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'),
+        );
         final audioWide = tester.getTopLeft(find.text('AUDIO INFO'));
         final metaWide = tester.getTopLeft(find.text('METADATA'));
         final chromaWide = tester.getTopLeft(
           find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
         );
+        expect(rgWide.dx, lessThan(audioWide.dx));
         expect(audioWide.dx, lessThan(metaWide.dx));
         expect(metaWide.dx, lessThan(chromaWide.dx));
+        expect((rgWide.dy - audioWide.dy).abs(), lessThan(8));
         expect((audioWide.dy - metaWide.dy).abs(), lessThan(8));
         expect((metaWide.dy - chromaWide.dy).abs(), lessThan(8));
-        expect(find.text('ALGORITHM TEST2 (1)'), findsOneWidget);
+        expect(find.textContaining('ALGORITHM TEST2 (1)'), findsOneWidget);
         expect(
           tester.widget<SelectableText>(find.byType(SelectableText)).maxLines,
           14,
         );
 
-        // 2. Medium (520..719 inner width): Audio Info & Metadata 1/2 + 1/2, Chromaprint below (1 col -> 2 lines)
+        // 2. Medium (500..759 inner width): 2x2 grid ([ReplayGain, Audio Info] / [Metadata, Chromaprint])
         await pumpAtWidth(640);
+        final rgMed = tester.getTopLeft(
+          find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'),
+        );
         final audioMed = tester.getTopLeft(find.text('AUDIO INFO'));
         final metaMed = tester.getTopLeft(find.text('METADATA'));
         final chromaMed = tester.getTopLeft(
           find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
         );
-        expect(audioMed.dx, lessThan(metaMed.dx));
-        expect((audioMed.dy - metaMed.dy).abs(), lessThan(8));
-        expect(chromaMed.dy, greaterThan(audioMed.dy + 50));
+        expect(rgMed.dx, lessThan(audioMed.dx));
+        expect((rgMed.dy - audioMed.dy).abs(), lessThan(8));
+        expect(metaMed.dy, greaterThan(rgMed.dy + 50));
+        expect(metaMed.dx, lessThan(chromaMed.dx));
+        expect((metaMed.dy - chromaMed.dy).abs(), lessThan(8));
         expect(
           tester.widget<SelectableText>(find.byType(SelectableText)).maxLines,
           2,
         );
 
-        // 3. Compact (< 520 inner width): 1 + 1 + 1 vertical stack (1 col -> 2 lines)
+        // 3. Compact (< 500 inner width): 1+1+1+1 vertical stack starting with ReplayGain
         await pumpAtWidth(400);
+        final rgNarrow = tester.getTopLeft(
+          find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'),
+        );
         final audioNarrow = tester.getTopLeft(find.text('AUDIO INFO'));
         final metaNarrow = tester.getTopLeft(find.text('METADATA'));
         final chromaNarrow = tester.getTopLeft(
           find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
         );
+        expect(audioNarrow.dy, greaterThan(rgNarrow.dy + 50));
         expect(metaNarrow.dy, greaterThan(audioNarrow.dy + 50));
         expect(chromaNarrow.dy, greaterThan(metaNarrow.dy + 50));
         expect(
           tester.widget<SelectableText>(find.byType(SelectableText)).maxLines,
           2,
+        );
+      },
+    );
+
+    testWidgets(
+      'AudioAnalyzerCard v/up toggle next to Re-analyze hides and restores entire analyzer body',
+      (tester) async {
+        tester.view.physicalSize = const Size(1000, 1400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: AudioAnalyzerCard(
+                  analysis: _makeTestAnalysis(),
+                  isLoading: false,
+                  analyzerController: analyzerController,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Initially expanded: "v" chevron is next to Refresh and body is visible
+        final refreshCenter = tester.getCenter(
+          find.byIcon(Icons.refresh_rounded),
+        );
+        final collapseIcon = find.byIcon(Icons.keyboard_arrow_down_rounded);
+        expect(collapseIcon, findsOneWidget);
+        expect(
+          tester.getCenter(collapseIcon).dx,
+          greaterThan(refreshCenter.dx),
+        );
+        expect(find.text('WAVEFORM PROFILE'), findsOneWidget);
+        expect(find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'), findsOneWidget);
+        expect(find.text('AUDIO INFO'), findsOneWidget);
+        expect(find.text('METADATA'), findsOneWidget);
+        expect(
+          find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
+          findsOneWidget,
+        );
+
+        // Click "v": hides entire analyzer body and shows "^" button
+        await tester.tap(collapseIcon);
+        await tester.pumpAndSettle();
+
+        expect(find.text('UNIFIED AUDIO ANALYZER'), findsOneWidget);
+        expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsNothing);
+        expect(find.text('WAVEFORM PROFILE'), findsNothing);
+        expect(find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'), findsNothing);
+        expect(find.text('AUDIO INFO'), findsNothing);
+        expect(find.text('METADATA'), findsNothing);
+        expect(find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'), findsNothing);
+
+        // Click "^": restores entire analyzer body and flips back to "v"
+        await tester.tap(find.byIcon(Icons.keyboard_arrow_up_rounded));
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
+        expect(find.text('WAVEFORM PROFILE'), findsOneWidget);
+        expect(find.text('REPLAY GAIN (BS.1770-4 / EBU R128)'), findsOneWidget);
+        expect(find.text('AUDIO INFO'), findsOneWidget);
+        expect(find.text('METADATA'), findsOneWidget);
+        expect(
+          find.text('CHROMAPRINT / ACOUSTID FINGERPRINT'),
+          findsOneWidget,
         );
       },
     );

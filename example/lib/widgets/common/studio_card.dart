@@ -10,6 +10,7 @@ class StudioCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
   final int? subtitleMaxLines;
+  final bool showChild;
 
   const StudioCard({
     super.key,
@@ -20,6 +21,7 @@ class StudioCard extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(16.0),
     this.subtitleMaxLines = 1,
+    this.showChild = true,
   });
 
   Widget _buildTitleColumn() {
@@ -107,8 +109,10 @@ class StudioCard extends StatelessWidget {
                   const SizedBox(height: 8),
                   Align(alignment: Alignment.centerLeft, child: trailing!),
                 ],
-                const SizedBox(height: 14),
-                child,
+                if (showChild) ...[
+                  const SizedBox(height: 14),
+                  child,
+                ],
               ],
             );
           },
