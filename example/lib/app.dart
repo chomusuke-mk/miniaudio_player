@@ -5,6 +5,7 @@ import 'controllers/audio_engine_controller.dart';
 import 'models/audio_track.dart';
 import 'theme/studio_colors.dart';
 import 'theme/studio_theme.dart';
+import 'views/audio_analyzer_view.dart';
 import 'views/ingest_matrix_view.dart';
 import 'views/studio_console_view.dart';
 import 'widgets/common/studio_badge.dart';
@@ -246,6 +247,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
             const SizedBox(height: 16),
             switch (_currentMode) {
               ViewMode.studioConsole => StudioConsoleView(
+                playerController: _playerController,
+                analyzerController: _analyzerController,
+              ),
+              ViewMode.audioAnalyzer => AudioAnalyzerView(
                 playerController: _playerController,
                 analyzerController: _analyzerController,
               ),

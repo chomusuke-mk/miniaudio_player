@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
-import '../widgets/cards/audio_analyzer_card.dart';
 import '../widgets/cards/dsp_effects_card.dart';
 import '../widgets/cards/hardware_routing_card.dart';
 import '../widgets/cards/playback_engine_card.dart';
@@ -23,37 +22,63 @@ class StudioConsoleView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ResponsiveGrid(
-      leftColumn: [
-        RepaintBoundary(
-          child: PlaybackEngineCard(
-            controller: playerController,
-            analyzerController: analyzerController,
-          ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Row 1: Playing (2), Queue (2), Effects (1) — 2:2:1 responsive proportions
+        ResponsiveGrid.multi(
+          columns: [
+            ResponsiveColumnGroup(
+              flex: 2,
+              children: [
+                RepaintBoundary(
+                  child: PlaybackEngineCard(
+                    controller: playerController,
+                    analyzerController: analyzerController,
+                  ),
+                ),
+              ],
+            ),
+            ResponsiveColumnGroup(
+              flex: 2,
+              children: [
+                RepaintBoundary(
+                  child: PlaylistQueueCard(
+                    controller: playerController,
+                    analyzerController: analyzerController,
+                  ),
+                ),
+              ],
+            ),
+            ResponsiveColumnGroup(
+              flex: 1,
+              children: [
+                RepaintBoundary(
+                  child: RamSoundEffectsCard(controller: playerController),
+                ),
+              ],
+            ),
+          ],
         ),
-        RepaintBoundary(
-          child: PlaylistQueueCard(
-            controller: playerController,
-            analyzerController: analyzerController,
-          ),
-        ),
-        RepaintBoundary(
-          child: HardwareRoutingCard(controller: playerController),
-        ),
-        RepaintBoundary(
-          child: SpectrumVisualizerCard(controller: playerController),
-        ),
-      ],
-      rightColumn: [
-        RepaintBoundary(
-          child: AudioAnalyzerCard(
-            playerController: playerController,
-            analyzerController: analyzerController,
-          ),
-        ),
-        RepaintBoundary(child: DspEffectsCard(controller: playerController)),
-        RepaintBoundary(
-          child: RamSoundEffectsCard(controller: playerController),
+        const SizedBox(height: 16),
+
+        // Row 2: Hardware Routing + Spectrum Visualizer (1/3) and DSP Effects (2/3)
+        ResponsiveGrid(
+          leftFlex: 1,
+          rightFlex: 2,
+          leftColumn: [
+            RepaintBoundary(
+              child: HardwareRoutingCard(controller: playerController),
+            ),
+            RepaintBoundary(
+              child: SpectrumVisualizerCard(controller: playerController),
+            ),
+          ],
+          rightColumn: [
+            RepaintBoundary(
+              child: DspEffectsCard(controller: playerController),
+            ),
+          ],
         ),
       ],
     );

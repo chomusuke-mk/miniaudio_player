@@ -24,6 +24,7 @@ class AudioEngineController extends ChangeNotifier {
     ),
   );
 
+  bool _isDisposed = false;
   bool _isReady = false;
   bool _isLoadingTrack = false;
   List<AudioTrack> _cachedTracks = [];
@@ -283,6 +284,7 @@ class AudioEngineController extends ChangeNotifier {
 
   Future<void> init() async {
     _cachedTracks = await MockData.loadTracks();
+    if (_isDisposed) return;
 
     _bindSubscriptions();
 
@@ -296,6 +298,7 @@ class AudioEngineController extends ChangeNotifier {
       try {
         await engine.action.setQueue(items);
       } catch (_) {}
+      if (_isDisposed) return;
     }
 
     try {
@@ -311,6 +314,7 @@ class AudioEngineController extends ChangeNotifier {
         ),
       );
     } catch (_) {}
+    if (_isDisposed) return;
 
     // Load sample effects in the background so the console can mount immediately
     unawaited(loadSampleEffects());
@@ -944,6 +948,7 @@ class AudioEngineController extends ChangeNotifier {
 
   // --- Native RAM Sound Effects (Voices & Memory HUD) ---
   Future<void> loadSampleEffects() async {
+    if (_isDisposed) return;
     final beepBytes = MockData.generateSineWaveBytes(
       frequency: 440,
       durationSeconds: 0.25,
@@ -957,6 +962,7 @@ class AudioEngineController extends ChangeNotifier {
       durationSeconds: 0.35,
     );
 
+    if (_isDisposed) return;
     try {
       await engine.action.setEffects([
         AudioEffect(
@@ -977,7 +983,9 @@ class AudioEngineController extends ChangeNotifier {
       ]);
       notifyListeners();
     } catch (e) {
-      debugPrint('Failed to load sample sound effects: $e');
+      if (!_isDisposed) {
+        debugPrint('Failed to load sample sound effects: $e');
+      }
     }
   }
 
@@ -1042,7 +1050,15 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (!_isDisposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
   void dispose() {
+    _isDisposed = true;
     for (final s in _subscriptions) {
       s.cancel();
     }

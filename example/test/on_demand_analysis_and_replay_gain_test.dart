@@ -416,10 +416,14 @@ void main() {
 
         // Verify populated UI values
         expect(find.text('4 blocks'), findsOneWidget);
+        expect(find.textContaining('<= 2048 buckets'), findsOneWidget);
+        expect(find.text('-18.0 LUFS'), findsOneWidget);
         expect(find.text('VBR'), findsOneWidget);
         expect(find.text('Master Track'), findsOneWidget);
         expect(find.textContaining('VIEW EXTENDED (1)'), findsOneWidget);
         expect(find.textContaining('ALGORITHM TEST2 (1)'), findsOneWidget);
+        expect(find.text('2 × 32-bit'), findsOneWidget);
+        expect(find.text('20 chars'), findsOneWidget);
         expect(find.text('AQADtEmyREmURImC5_jx'), findsOneWidget);
         expect(find.text('IDENTIFY TRACK (AcoustID API)'), findsOneWidget);
 
@@ -455,13 +459,15 @@ void main() {
     );
 
     testWidgets(
-      'Full app mounts and displays acoustic analysis without errors',
+      'Full app mounts and displays acoustic analysis on Audio Analyzer tab without errors',
       (tester) async {
         tester.view.physicalSize = const Size(412 * 2.0, 915 * 2.0);
         tester.view.devicePixelRatio = 2.0;
-        addTearDown(() {
+        addTearDown(() async {
           tester.view.resetPhysicalSize();
           tester.view.resetDevicePixelRatio();
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(milliseconds: 100));
         });
 
         await tester.pumpWidget(const MiniaudioPlayerExampleApp());
@@ -472,7 +478,13 @@ void main() {
         });
         await tester.pump(const Duration(milliseconds: 100));
 
+        expect(find.text('UNIFIED AUDIO ANALYZER'), findsNothing);
+        await tester.tap(find.text('Audio Analyzer'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
         expect(find.text('UNIFIED AUDIO ANALYZER'), findsOneWidget);
+        expect(find.text('ANALYSIS PIPELINE & SESSION TELEMETRY'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
@@ -499,12 +511,44 @@ void main() {
         expect(find.textContaining('• asset://'), findsNothing);
         expect(find.textContaining('• file://'), findsNothing);
 
-        // 2. Verify Inspect Metadata button is present in PlaybackEngineCard
+        // 2. Verify Inspect Metadata button & Buffer badge sit side-by-side in PlaybackEngineCard
+        final engineCard = find.byType(PlaybackEngineCard);
         final inspectButton = find.descendant(
-          of: find.byType(PlaybackEngineCard),
+          of: engineCard,
           matching: find.byTooltip('Inspect Metadata (Static vs Dynamic)'),
         );
         expect(inspectButton, findsOneWidget);
+
+        final bufferBadge = find.descendant(
+          of: engineCard,
+          matching: find.byWidgetPredicate(
+            (w) =>
+                w is Text &&
+                ((w.textSpan?.toPlainText() ?? w.data ?? '').startsWith(
+                      'Buffer:',
+                    ) ||
+                    (w.textSpan?.toPlainText() ?? w.data ?? '').startsWith(
+                      'BUFFERING',
+                    )),
+          ),
+        );
+        expect(bufferBadge, findsOneWidget);
+        expect(
+          tester.getCenter(bufferBadge).dy,
+          closeTo(tester.getCenter(inspectButton).dy, 6.0),
+        );
+        expect(
+          tester.getRect(bufferBadge).left,
+          greaterThanOrEqualTo(tester.getRect(inspectButton).right - 1),
+        );
+        // Standalone buffer strip below waveform was removed
+        expect(
+          find.descendant(
+            of: engineCard,
+            matching: find.byIcon(Icons.download_done),
+          ),
+          findsNothing,
+        );
 
         // 3. Tap the Metadata Inspector button and verify modal opens
         await tester.tap(inspectButton);

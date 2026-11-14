@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/studio_colors.dart';
 
-enum ViewMode { studioConsole, ingestMatrix }
+enum ViewMode { studioConsole, audioAnalyzer, ingestMatrix }
 
 class ConsoleHeader extends StatelessWidget {
   final ViewMode currentMode;
@@ -16,23 +16,26 @@ class ConsoleHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _buildModeTab(
-            mode: ViewMode.studioConsole,
-            label: 'Studio Master Console',
-            icon: Icons.dashboard_outlined,
-          ),
-          const SizedBox(width: 8),
-          _buildModeTab(
-            mode: ViewMode.ingestMatrix,
-            label: 'Ingest & Buffer Matrix',
-            icon: Icons.layers_outlined,
-          ),
-        ],
-      ),
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _buildModeTab(
+          mode: ViewMode.studioConsole,
+          label: 'Studio Master Console',
+          icon: Icons.dashboard_outlined,
+        ),
+        _buildModeTab(
+          mode: ViewMode.audioAnalyzer,
+          label: 'Audio Analyzer',
+          icon: Icons.analytics_outlined,
+        ),
+        _buildModeTab(
+          mode: ViewMode.ingestMatrix,
+          label: 'Ingest & Buffer Matrix',
+          icon: Icons.layers_outlined,
+        ),
+      ],
     );
   }
 
@@ -71,14 +74,17 @@ class ConsoleHeader extends StatelessWidget {
                   : StudioColors.textSecondary,
             ),
             const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                color: isSelected
-                    ? StudioColors.accentCyan
-                    : StudioColors.textSecondary,
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  color: isSelected
+                      ? StudioColors.accentCyan
+                      : StudioColors.textSecondary,
+                ),
               ),
             ),
           ],

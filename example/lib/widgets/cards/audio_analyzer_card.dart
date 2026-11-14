@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -490,6 +492,7 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
                     final audioInfoWidget = _buildAudioInfoSection(
                       analysis,
                       isLoading,
+                      track,
                     );
                     final metadataWidget = _buildMetadataSection(
                       context,
@@ -641,6 +644,31 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
       ),
     ];
 
+    final String peakDbfsStr;
+    final String headroomStr;
+    final String clipGuardStr;
+    if (isLoading) {
+      peakDbfsStr = 'loading...';
+      headroomStr = 'loading...';
+      clipGuardStr = 'loading...';
+    } else if (rg != null) {
+      if (rg.peak > 0) {
+        final dbfs = 20 * math.log(rg.peak) / math.ln10;
+        peakDbfsStr = '${dbfs.toStringAsFixed(2)} dBFS';
+        headroomStr = rg.peak <= 1.0
+            ? '+${(-dbfs).toStringAsFixed(2)} dB'
+            : '-${dbfs.toStringAsFixed(2)} dB';
+      } else {
+        peakDbfsStr = '-inf dBFS';
+        headroomStr = 'Full';
+      }
+      clipGuardStr = rg.peak > 1.0 ? 'Over 0 dBFS' : 'Safe (<= 1.0)';
+    } else {
+      peakDbfsStr = '--';
+      headroomStr = '--';
+      clipGuardStr = '--';
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF070B14),
@@ -666,6 +694,30 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
                   if (i > 0) const SizedBox(height: 8),
                   tiles[i],
                 ],
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A0F1D),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: StudioColors.cardBorder,
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildPropertyRow(
+                        'Target Ref',
+                        isLoading ? 'loading...' : '-18.0 LUFS',
+                        isLoading,
+                      ),
+                      _buildPropertyRow('Peak dBFS', peakDbfsStr, isLoading),
+                      _buildPropertyRow('Headroom', headroomStr, isLoading),
+                      _buildPropertyRow('Clip Guard', clipGuardStr, isLoading),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -816,7 +868,84 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
                     ),
                   ),
           ),
+          if (points.isNotEmpty && !isLoading) ...[
+            const SizedBox(height: 8),
+            _buildWaveformTelemetryStrip(points),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildWaveformTelemetryStrip(List<double> points) {
+    final maxPt = points.reduce(math.max);
+    final minPt = points.reduce(math.min);
+    final meanRms = math.sqrt(
+      points.fold<double>(0.0, (sum, p) => sum + p * p) / points.length,
+    );
+    final crestStr = meanRms > 0
+        ? '${(20 * math.log(maxPt / meanRms) / math.ln10).toStringAsFixed(1)} dB'
+        : '--';
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        _buildMiniTelemetryBadge(
+          'PEAK',
+          '${(maxPt * 100).toStringAsFixed(0)}%',
+          StudioColors.accentCyan,
+        ),
+        _buildMiniTelemetryBadge(
+          'MEAN RMS',
+          '${(meanRms * 100).toStringAsFixed(0)}%',
+          StudioColors.accentViolet,
+        ),
+        _buildMiniTelemetryBadge(
+          'FLOOR',
+          '${(minPt * 100).toStringAsFixed(0)}%',
+          StudioColors.textSecondary,
+        ),
+        _buildMiniTelemetryBadge('CREST', crestStr, StudioColors.accentEmerald),
+        _buildMiniTelemetryBadge(
+          'DECIMATION',
+          '<= 2048 buckets',
+          StudioColors.accentAmber,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniTelemetryBadge(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0F1D),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: StudioColors.cardBorder, width: 0.8),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.w600,
+                color: StudioColors.textMuted,
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'monospace',
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -824,8 +953,40 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
   // ===========================================================================
   // 3. AUDIO INFO SECTION (Flex 50% / 100%)
   // ===========================================================================
-  Widget _buildAudioInfoSection(AudioAnalysisResult? analysis, bool isLoading) {
+  Widget _buildAudioInfoSection(
+    AudioAnalysisResult? analysis,
+    bool isLoading,
+    AudioTrack? track,
+  ) {
     final info = analysis?.audioInfo;
+    final durationMs = widget.analyzerController?.getDurationMsForTrack(track);
+    final servedFromCache =
+        widget.analyzerController?.wasLastServedFromCache(track) ?? false;
+    final String pcmThroughputStr;
+    if (isLoading) {
+      pcmThroughputStr = 'loading...';
+    } else if (info != null && info.sampleRate > 0 && info.channels > 0) {
+      final bits = (info.bitsPerSample != null && info.bitsPerSample! > 0)
+          ? info.bitsPerSample!
+          : 32;
+      final kbps = (info.sampleRate * info.channels * bits / 1000).round();
+      pcmThroughputStr = '$kbps kbps';
+    } else {
+      pcmThroughputStr = '--';
+    }
+
+    final String analyzeTimeStr;
+    if (isLoading) {
+      analyzeTimeStr = 'loading...';
+    } else if (servedFromCache) {
+      analyzeTimeStr = durationMs != null
+          ? '0 ms (cached • ${durationMs}ms pass)'
+          : '0 ms (cache hit)';
+    } else if (durationMs != null) {
+      analyzeTimeStr = '$durationMs ms (1-pass)';
+    } else {
+      analyzeTimeStr = '--';
+    }
 
     final rows = <(String, String)>[
       (
@@ -882,6 +1043,7 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
                   ? info.bitrateMode.name.toUpperCase()
                   : '--'),
       ),
+      ('Decoded PCM', pcmThroughputStr),
       (
         'Duration',
         isLoading
@@ -901,6 +1063,7 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
                   ? 'Lossless'
                   : (info?.lossless == false ? 'Lossy' : '--')),
       ),
+      ('Analysis Pass', analyzeTimeStr),
     ];
 
     return Container(
@@ -971,6 +1134,30 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
       ('RG Track Peak', _resolveText(metadata?.replayGainTrackPeak, isLoading)),
       ('RG Album Gain', _resolveText(metadata?.replayGainAlbumGain, isLoading)),
       ('RG Album Peak', _resolveText(metadata?.replayGainAlbumPeak, isLoading)),
+      (
+        'BPM',
+        isLoading
+            ? 'loading...'
+            : (metadata?.bpm != null
+                  ? metadata!.bpm!.toStringAsFixed(1)
+                  : '--'),
+      ),
+      (
+        'Chapters',
+        isLoading
+            ? 'loading...'
+            : (metadata != null && metadata.chapters.isNotEmpty
+                  ? '${metadata.chapters.length}'
+                  : '--'),
+      ),
+      (
+        'Lyrics',
+        isLoading
+            ? 'loading...'
+            : (metadata?.lyrics != null && metadata!.lyrics!.trim().isNotEmpty
+                  ? '${metadata.lyrics!.trim().length} chars'
+                  : '--'),
+      ),
     ];
 
     return Container(
@@ -1480,6 +1667,40 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
                         ),
                       ),
                     ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A0F1D),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: StudioColors.cardBorder,
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildPropertyRow(
+                        'Raw Vector',
+                        isLoading
+                            ? 'loading...'
+                            : (chromaprint != null
+                                  ? '${chromaprint.raw.length} × 32-bit'
+                                  : '--'),
+                        isLoading,
+                      ),
+                      _buildPropertyRow(
+                        'FP Length',
+                        isLoading
+                            ? 'loading...'
+                            : (fpString != null && fpString.isNotEmpty
+                                  ? '${fpString.length} chars'
+                                  : '--'),
+                        isLoading,
+                      ),
+                    ],
                   ),
                 ),
               ],

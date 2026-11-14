@@ -39,13 +39,38 @@ class AudioAnalyzerController extends ChangeNotifier {
 
   final Map<String, AudioAnalysisResult> _resultsByTrack = {};
   final Map<String, String> _errorsByTrack = {};
+  final Map<String, int> _analysisDurationMsByTrack = {};
+  final Map<String, bool> _lastServedFromCacheByTrack = {};
   final Map<String, AcoustIdLookupResult> _acoustIdCache = {};
   final Map<String, Future<AcoustIdLookupResult>> _pendingAcoustIdLookups = {};
   String? _currentTrackId;
   String? _activeWorkerTrackId;
   Completer<AudioAnalysisResult?>? _activeWorkerCompleter;
   _PendingAnalysisRequest? _queuedRequest;
+  int _cacheHits = 0;
+  int _freshAnalyses = 0;
+  int _coalescedSkips = 0;
   bool _disposed = false;
+
+  /// Number of tracks currently stored in the in-memory analysis session cache.
+  int get cachedTrackCount => _resultsByTrack.length;
+
+  /// Total number of session cache hits served without re-decoding.
+  int get cacheHits => _cacheHits;
+
+  /// Total number of full single-pass native/runner decodes completed.
+  int get freshAnalyses => _freshAnalyses;
+
+  /// Number of queued track analyses coalesced away during rapid track switching.
+  int get coalescedSkips => _coalescedSkips;
+
+  /// Elapsed decode duration (ms) for [track]'s last completed single-pass analysis.
+  int? getDurationMsForTrack(AudioTrack? track) =>
+      track == null ? null : _analysisDurationMsByTrack[track.id];
+
+  /// Whether [track]'s most recent retrieval came instantaneously from the session cache.
+  bool wasLastServedFromCache(AudioTrack? track) =>
+      track != null && (_lastServedFromCacheByTrack[track.id] ?? false);
 
   /// Cached acoustic analysis result for the active track, if available.
   AudioAnalysisResult? get result =>
@@ -183,6 +208,8 @@ class AudioAnalyzerController extends ChangeNotifier {
 
     // 1. Session Cache Hit Check
     if (!force && _resultsByTrack.containsKey(track.id)) {
+      _cacheHits++;
+      _lastServedFromCacheByTrack[track.id] = true;
       MapLogger.debug(
         '[ANALYZER:CACHE_HIT] Track "${track.title}" (ID: ${track.id}) retrieved from session cache in 0.05ms.',
       );
@@ -194,6 +221,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     if (force) {
       _resultsByTrack.remove(track.id);
       _errorsByTrack.remove(track.id);
+      _lastServedFromCacheByTrack.remove(track.id);
     }
 
     // 2. Join if already running for this track (unless re-analysis was forced).
@@ -216,6 +244,7 @@ class AudioAnalyzerController extends ChangeNotifier {
     if (_activeWorkerTrackId != null) {
       final existing = _queuedRequest;
       if (existing != null && existing.track.id != track.id) {
+        _coalescedSkips++;
         _queuedRequest = null;
         if (!existing.completer.isCompleted) {
           existing.completer.complete(null);
@@ -389,6 +418,9 @@ class AudioAnalyzerController extends ChangeNotifier {
 
       _resultsByTrack[track.id] = res;
       _errorsByTrack.remove(track.id);
+      _analysisDurationMsByTrack[track.id] = stopwatch.elapsedMilliseconds;
+      _lastServedFromCacheByTrack[track.id] = false;
+      _freshAnalyses++;
 
       MapLogger.info(
         '[ANALYZER:DONE] Analysis completed in ${stopwatch.elapsedMilliseconds}ms for "${track.title}": '

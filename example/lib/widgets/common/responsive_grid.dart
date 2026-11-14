@@ -1,21 +1,38 @@
 import 'package:flutter/material.dart';
 
+class ResponsiveColumnGroup {
+  final int flex;
+  final List<Widget> children;
+
+  const ResponsiveColumnGroup({
+    required this.flex,
+    required this.children,
+  });
+}
+
 class ResponsiveGrid extends StatelessWidget {
-  final List<Widget> leftColumn;
-  final List<Widget> rightColumn;
+  final List<ResponsiveColumnGroup> columns;
   final double spacing;
   final double breakpoint;
-  final int leftFlex;
-  final int rightFlex;
 
-  const ResponsiveGrid({
+  ResponsiveGrid({
     super.key,
-    required this.leftColumn,
-    required this.rightColumn,
+    required List<Widget> leftColumn,
+    required List<Widget> rightColumn,
     this.spacing = 16.0,
     this.breakpoint = 960.0,
-    this.leftFlex = 1,
-    this.rightFlex = 2,
+    int leftFlex = 1,
+    int rightFlex = 2,
+  }) : columns = [
+         ResponsiveColumnGroup(flex: leftFlex, children: leftColumn),
+         ResponsiveColumnGroup(flex: rightFlex, children: rightColumn),
+       ];
+
+  const ResponsiveGrid.multi({
+    super.key,
+    required this.columns,
+    this.spacing = 16.0,
+    this.breakpoint = 960.0,
   });
 
   @override
@@ -23,47 +40,52 @@ class ResponsiveGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth >= breakpoint) {
-          // Desktop / Tablet Studio 2-Column Console Layout (1/3 left, 2/3 right)
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          final rowChildren = <Widget>[];
+          for (int i = 0; i < columns.length; i++) {
+            final col = columns[i];
+            if (i > 0) {
+              rowChildren.add(SizedBox(width: spacing));
+            }
+            rowChildren.add(
               Expanded(
-                flex: leftFlex,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: _intersperse(leftColumn, SizedBox(height: spacing)),
-                ),
-              ),
-              SizedBox(width: spacing),
-              Expanded(
-                flex: rightFlex,
+                flex: col.flex,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: _intersperse(
-                    rightColumn,
+                    col.children,
                     SizedBox(height: spacing),
                   ),
                 ),
               ),
-            ],
-          );
-        } else {
-          // Mobile Responsive Fluid 1-Column Layout (zero overflows)
-          final combined = <Widget>[];
-          final maxLen = leftColumn.length > rightColumn.length
-              ? leftColumn.length
-              : rightColumn.length;
-
-          for (int i = 0; i < maxLen; i++) {
-            if (i < leftColumn.length) combined.add(leftColumn[i]);
-            if (i < rightColumn.length) combined.add(rightColumn[i]);
+            );
           }
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: _intersperse(combined, SizedBox(height: spacing)),
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: rowChildren,
           );
         }
+
+        // Mobile / narrow fluid 1-column layout (zero overflows)
+        final combined = <Widget>[];
+        int maxLen = 0;
+        for (final col in columns) {
+          if (col.children.length > maxLen) {
+            maxLen = col.children.length;
+          }
+        }
+        for (int i = 0; i < maxLen; i++) {
+          for (final col in columns) {
+            if (i < col.children.length) {
+              combined.add(col.children[i]);
+            }
+          }
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _intersperse(combined, SizedBox(height: spacing)),
+        );
       },
     );
   }

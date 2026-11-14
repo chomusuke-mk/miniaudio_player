@@ -4,8 +4,12 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/app.dart';
 import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
 import 'package:miniaudio_player_example/models/audio_track.dart';
+import 'package:miniaudio_player_example/theme/studio_colors.dart';
 import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/playlist_queue_card.dart';
+import 'package:miniaudio_player_example/widgets/cards/ram_sound_effects_card.dart';
+import 'package:miniaudio_player_example/widgets/common/studio_badge.dart';
+import 'package:miniaudio_player_example/widgets/common/studio_card.dart';
 import 'package:miniaudio_player_example/widgets/painters/waveform_painter.dart';
 
 void main() {
@@ -186,34 +190,331 @@ void main() {
         });
         await tester.pump(const Duration(milliseconds: 100));
 
-        // Verify queue index 1 became active (Metadata Inspector info icon renders only when isPlayingThis)
-        // and capture its live title (filename or decoded metadata tag).
+        // Verify metadata button is removed from PlaylistQueueCard while queue index 1 is highlighted active
+        expect(
+          find.descendant(
+            of: find.byType(PlaylistQueueCard),
+            matching: find.byIcon(Icons.info_outline),
+          ),
+          findsNothing,
+        );
         final updatedSecondTile = find
             .descendant(
               of: find.byType(PlaylistQueueCard),
               matching: find.byType(ListTile),
             )
             .at(1);
-        expect(
-          find.descendant(
-            of: updatedSecondTile,
-            matching: find.byIcon(Icons.info_outline),
-          ),
-          findsOneWidget,
-        );
-        final activeSecondTitle =
-            (tester.widget<ListTile>(updatedSecondTile).title as Text).data!;
+        final secondTitleWidget =
+            tester.widget<ListTile>(updatedSecondTile).title as Text;
+        expect(secondTitleWidget.style?.color, equals(StudioColors.accentCyan));
+        expect(secondTitleWidget.style?.fontWeight, equals(FontWeight.bold));
+        final activeSecondTitle = secondTitleWidget.data!;
 
         // Scroll back up to the top to verify active track banner
         await tester.drag(mainScrollable, const Offset(0, 700));
         await tester.pump(const Duration(milliseconds: 100));
 
         // Verify active track banner inside PlaybackEngineCard displays the selected second track title
+        // and keeps the single Inspect Metadata button in PlaybackEngineCard.
         final activeBannerTitle = find.descendant(
           of: find.byType(PlaybackEngineCard),
           matching: find.text(activeSecondTitle),
         );
         expect(activeBannerTitle, findsWidgets);
+        expect(
+          find.descendant(
+            of: find.byType(PlaybackEngineCard),
+            matching: find.byIcon(Icons.info_outline),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'PlaylistQueueCard places compact Curve dropdown, Auto/Manual, +, TRACKS badge, and Invert in one left-aligned Wrap row and removes queue metadata button',
+      (tester) async {
+        tester.view.physicalSize = const Size(900, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final controller = AudioEngineController();
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(milliseconds: 100));
+          controller.dispose();
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: PlaylistQueueCard(controller: controller),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(tester.takeException(), isNull);
+
+        final queueCard = find.byType(PlaylistQueueCard);
+        expect(queueCard, findsOneWidget);
+
+        // No metadata inspect button in queue items
+        expect(
+          find.descendant(
+            of: queueCard,
+            matching: find.byIcon(Icons.info_outline),
+          ),
+          findsNothing,
+        );
+        // Replaced ChoiceChips with labeled compact DropdownButtonFormField<CrossfadeCurve>
+        expect(
+          find.descendant(of: queueCard, matching: find.byType(ChoiceChip)),
+          findsNothing,
+        );
+
+        final curveDropdown = find.descendant(
+          of: queueCard,
+          matching: find.byWidgetPredicate(
+            (w) => w is DropdownButtonFormField<CrossfadeCurve>,
+          ),
+        );
+        expect(curveDropdown, findsOneWidget);
+        expect(
+          find.descendant(of: curveDropdown, matching: find.text('Curve')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: curveDropdown,
+            matching: find.text('Equal Power'),
+          ),
+          findsOneWidget,
+        );
+
+        final autoPill = find.descendant(
+          of: queueCard,
+          matching: find.textContaining('Auto:'),
+        );
+        final manualPill = find.descendant(
+          of: queueCard,
+          matching: find.textContaining('Manual:'),
+        );
+        final addBtn = find.descendant(
+          of: queueCard,
+          matching: find.byIcon(Icons.add),
+        );
+        final tracksBadge = find.descendant(
+          of: queueCard,
+          matching: find.byWidgetPredicate(
+            (w) => w is StudioBadge && w.label.contains('TRACKS'),
+          ),
+        );
+        final invertBtn = find.descendant(
+          of: queueCard,
+          matching: find.byIcon(Icons.swap_vert),
+        );
+
+        // All 6 items share the same left-aligned Wrap
+        final sharedWrap = find.ancestor(
+          of: curveDropdown,
+          matching: find.byWidgetPredicate(
+            (w) => w is Wrap && w.alignment == WrapAlignment.start,
+          ),
+        );
+        expect(sharedWrap, findsOneWidget);
+        for (final item in [autoPill, manualPill, addBtn, tracksBadge, invertBtn]) {
+          expect(
+            find.descendant(of: sharedWrap, matching: item),
+            findsOneWidget,
+          );
+          expect(
+            tester.getCenter(item).dy,
+            closeTo(tester.getCenter(curveDropdown).dy, 6.0),
+          );
+        }
+
+        // Changing Curve dropdown to Linear updates controller.crossfadeConfig.curve
+        await tester.tap(curveDropdown);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.text('Linear').last);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(controller.crossfadeConfig.curve, equals(CrossfadeCurve.linear));
+
+        // Ultra-narrow 280px wraps cleanly without overflow
+        tester.view.physicalSize = const Size(280, 900);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.all(8),
+                child: PlaylistQueueCard(controller: controller),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'RamSoundEffectsCard uses Queue-like design with RAM badge, Reload, and Unload All in one Wrap row and icon+name list items',
+      (tester) async {
+        tester.view.physicalSize = const Size(900, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final controller = AudioEngineController();
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(milliseconds: 100));
+          controller.dispose();
+        });
+        await tester.runAsync(() => controller.loadSampleEffects());
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: RamSoundEffectsCard(controller: controller),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(tester.takeException(), isNull);
+
+        final effectsCard = find.byType(RamSoundEffectsCard);
+        expect(effectsCard, findsOneWidget);
+
+        // No trailing badge in StudioCard header (matches PlaylistQueueCard)
+        final studioCard = tester.widget<StudioCard>(
+          find.descendant(of: effectsCard, matching: find.byType(StudioCard)),
+        );
+        expect(studioCard.trailing, isNull);
+
+        final ramBadge = find.descendant(
+          of: effectsCard,
+          matching: find.byWidgetPredicate(
+            (w) => w is StudioBadge && w.label.contains('KB RAM'),
+          ),
+        );
+        final reloadBtn = find.descendant(
+          of: effectsCard,
+          matching: find.text('Reload'),
+        );
+        final unloadAllBtn = find.descendant(
+          of: effectsCard,
+          matching: find.text('Unload All'),
+        );
+
+        final sharedWrap = find.ancestor(
+          of: ramBadge,
+          matching: find.byWidgetPredicate(
+            (w) => w is Wrap && w.alignment == WrapAlignment.start,
+          ),
+        );
+        expect(sharedWrap, findsOneWidget);
+        for (final item in [ramBadge, reloadBtn, unloadAllBtn]) {
+          expect(
+            find.descendant(of: sharedWrap, matching: item),
+            findsOneWidget,
+          );
+          expect(
+            tester.getCenter(item).dy,
+            closeTo(tester.getCenter(ramBadge).dy, 6.0),
+          );
+        }
+
+        // Effect list shows only icon and name (no subtitle or trailing widgets)
+        final effectTiles = find.descendant(
+          of: effectsCard,
+          matching: find.byType(ListTile),
+        );
+        expect(effectTiles, findsNWidgets(3));
+        for (final expectedName in const [
+          'Laser SFX (880Hz)',
+          'Chime SFX (1320Hz)',
+          'Beep SFX (440Hz)',
+        ]) {
+          expect(
+            find.descendant(of: effectsCard, matching: find.text(expectedName)),
+            findsOneWidget,
+          );
+        }
+        for (var i = 0; i < 3; i++) {
+          final tile = tester.widget<ListTile>(effectTiles.at(i));
+          expect(tile.leading, isNotNull);
+          expect(tile.title, isNotNull);
+          expect(tile.subtitle, isNull);
+          expect(tile.trailing, isNull);
+        }
+
+        // Unload All empties list and sets badge to 0.0 KB RAM; Reload restores effects
+        await tester.tap(unloadAllBtn);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(
+          find.descendant(of: effectsCard, matching: find.byType(ListTile)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: effectsCard,
+            matching: find.byWidgetPredicate(
+              (w) => w is StudioBadge && w.label == '0.0 KB RAM',
+            ),
+          ),
+          findsOneWidget,
+        );
+
+        await tester.tap(reloadBtn);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(
+          find.descendant(of: effectsCard, matching: find.byType(ListTile)),
+          findsNWidgets(3),
+        );
+
+        // Ultra-narrow 280px wraps cleanly without overflow
+        tester.view.physicalSize = const Size(280, 900);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.all(8),
+                child: RamSoundEffectsCard(controller: controller),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(tester.takeException(), isNull);
       },
     );
   });

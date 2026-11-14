@@ -123,11 +123,10 @@ class PlaybackEngineCard extends StatelessWidget {
                             width: 1.0,
                           ),
                         ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // Thumbnail / Embedded Artwork or Fallback Icon
-                            Container(
+                        child: LayoutBuilder(
+                          builder: (context, trackConstraints) {
+                            final isWide = trackConstraints.maxWidth >= 460;
+                            final thumbnail = Container(
                               width: 38,
                               height: 38,
                               decoration: BoxDecoration(
@@ -161,9 +160,9 @@ class PlaybackEngineCard extends StatelessWidget {
                                           StudioColors.accentCyan,
                                       size: 20,
                                     ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
+                            );
+
+                            final titleColumn = Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisSize: MainAxisSize.min,
@@ -190,61 +189,128 @@ class PlaybackEngineCard extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            // Trailing Actions: Metadata Inspector & Resource Badge neatly aligned
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                if (activeTrack != null) ...[
-                                  SizedBox(
-                                    width: 28,
-                                    height: 28,
-                                    child: IconButton.filledTonal(
-                                      icon: const Icon(
-                                        Icons.info_outline,
-                                        size: 15,
+                            );
+
+                            final trailingWidgets = StreamBuilder<Buffer>(
+                              stream: engine.stream.buffer,
+                              initialData: engine.state.buffer,
+                              builder: (context, bufSnap) {
+                                final buf = bufSnap.data ?? engine.state.buffer;
+                                final rangeText =
+                                    '${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}';
+                                final bufferBadge = StudioBadge(
+                                  label: buf.isBuffering
+                                      ? 'BUFFERING ($rangeText)'
+                                      : 'Buffer: $rangeText',
+                                  color: buf.isBuffering
+                                      ? StudioColors.accentAmber
+                                      : StudioColors.accentEmerald,
+                                );
+
+                                final actions = <Widget>[
+                                  if (activeTrack != null)
+                                    SizedBox(
+                                      width: 28,
+                                      height: 28,
+                                      child: IconButton.filledTonal(
+                                        icon: const Icon(
+                                          Icons.info_outline,
+                                          size: 15,
+                                        ),
+                                        tooltip:
+                                            'Inspect Metadata (Static vs Dynamic)',
+                                        visualDensity: VisualDensity.compact,
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: StudioColors
+                                              .accentCyan
+                                              .withValues(alpha: 0.15),
+                                          foregroundColor:
+                                              StudioColors.accentCyan,
+                                          padding: EdgeInsets.zero,
+                                        ),
+                                        onPressed: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (_) =>
+                                                MetadataInspectorModal(
+                                                  track: activeTrack,
+                                                  staticMetadata:
+                                                      analysis?.metadata,
+                                                  dynamicMetadata:
+                                                      engine.state.metadata,
+                                                  staticAudioInfo:
+                                                      analysis?.audioInfo,
+                                                  dynamicAudioInfo:
+                                                      engine.state.audioInfo,
+                                                ),
+                                          );
+                                        },
                                       ),
-                                      tooltip: 'Inspect Metadata (Static vs Dynamic)',
-                                      visualDensity: VisualDensity.compact,
-                                      style: IconButton.styleFrom(
-                                        backgroundColor: StudioColors.accentCyan
-                                            .withValues(alpha: 0.15),
-                                        foregroundColor:
-                                            StudioColors.accentCyan,
-                                        padding: EdgeInsets.zero,
-                                      ),
-                                      onPressed: () {
-                                        showDialog(
-                                          context: context,
-                                          builder: (_) =>
-                                              MetadataInspectorModal(
-                                                track: activeTrack,
-                                                staticMetadata:
-                                                    analysis?.metadata,
-                                                dynamicMetadata:
-                                                    engine.state.metadata,
-                                                staticAudioInfo:
-                                                    analysis?.audioInfo,
-                                                dynamicAudioInfo:
-                                                    engine.state.audioInfo,
-                                              ),
-                                        );
-                                      },
                                     ),
+                                  bufferBadge,
+                                  StudioBadge(
+                                    label:
+                                        activeTrack?.resourceBadge ?? 'EMPTY',
+                                    color:
+                                        activeTrack?.iconColor ??
+                                        StudioColors.accentCyan,
                                   ),
-                                  const SizedBox(width: 6),
+                                ];
+
+                                if (isWide) {
+                                  return Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      for (var i = 0; i < actions.length; i++)
+                                        ...[
+                                          if (i > 0) const SizedBox(width: 6),
+                                          actions[i],
+                                        ],
+                                    ],
+                                  );
+                                }
+
+                                return Wrap(
+                                  alignment: WrapAlignment.start,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: actions,
+                                );
+                              },
+                            );
+
+                            if (isWide) {
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  thumbnail,
+                                  const SizedBox(width: 10),
+                                  titleColumn,
+                                  const SizedBox(width: 8),
+                                  trailingWidgets,
                                 ],
-                                StudioBadge(
-                                  label: activeTrack?.resourceBadge ?? 'EMPTY',
-                                  color:
-                                      activeTrack?.iconColor ??
-                                      StudioColors.accentCyan,
+                              );
+                            }
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    thumbnail,
+                                    const SizedBox(width: 10),
+                                    titleColumn,
+                                  ],
                                 ),
+                                const SizedBox(height: 6),
+                                trailingWidgets,
                               ],
-                            ),
-                          ],
+                            );
+                          },
                         ),
                       );
                     },
@@ -387,61 +453,6 @@ class PlaybackEngineCard extends StatelessWidget {
                                     ),
                                   ),
                                 ],
-                              ),
-                              const SizedBox(height: 4),
-
-                              // Continuous Buffer Range & Telemetry HUD
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF070B14),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(
-                                    color: StudioColors.cardBorder,
-                                    width: 0.8,
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      buf.isBuffering
-                                          ? Icons.sync
-                                          : Icons.download_done,
-                                      size: 13,
-                                      color: buf.isBuffering
-                                          ? StudioColors.accentAmber
-                                          : StudioColors.accentCyan,
-                                    ),
-                                    const SizedBox(width: 5),
-                                    Expanded(
-                                      child: Text(
-                                        'Buffer: ${_formatDuration(buf.start)} - ${_formatDuration(buf.end)}',
-                                        style: const TextStyle(
-                                          fontSize: 9.5,
-                                          fontFamily: 'monospace',
-                                          color: StudioColors.textPrimary,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Flexible(
-                                      child: buf.isBuffering
-                                          ? const StudioBadge(
-                                              label: 'BUFFERING',
-                                              color: StudioColors.accentAmber,
-                                            )
-                                          : StudioBadge(
-                                              label:
-                                                  '${_formatDuration(buf.end - buf.start)} cached',
-                                              color: StudioColors.accentEmerald,
-                                            ),
-                                    ),
-                                  ],
-                                ),
                               ),
                             ],
                           );

@@ -7,7 +7,6 @@ import '../../models/audio_track.dart';
 import '../../theme/studio_colors.dart';
 import '../common/add_source_dialog.dart';
 import '../common/compact_slider_overlay.dart';
-import '../common/metadata_inspector_modal.dart';
 import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
 
@@ -21,6 +20,47 @@ class PlaylistQueueCard extends StatelessWidget {
     this.analyzerController,
   });
 
+  Widget _buildCurveDropdown(CrossfadeCurve currentCurve) {
+    return SizedBox(
+      width: 148,
+      child: DropdownButtonFormField<CrossfadeCurve>(
+        key: ValueKey(currentCurve),
+        initialValue: currentCurve,
+        isExpanded: true,
+        isDense: true,
+        dropdownColor: const Color(0xFF0E1424),
+        decoration: const InputDecoration(
+          labelText: 'Curve',
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        ),
+        items: const [
+          DropdownMenuItem(
+            value: CrossfadeCurve.equalPower,
+            child: Text(
+              'Equal Power',
+              style: TextStyle(fontSize: 10),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          DropdownMenuItem(
+            value: CrossfadeCurve.linear,
+            child: Text(
+              'Linear',
+              style: TextStyle(fontSize: 10),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+        onChanged: (curve) {
+          if (curve != null) {
+            controller.setCrossfadeCurve(curve);
+          }
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -33,57 +73,10 @@ class PlaylistQueueCard extends StatelessWidget {
           icon: Icons.queue_music,
           title: 'DYNAMIC PLAYLIST QUEUE & TRANSITIONS',
           subtitle: 'Dual-Deck Queue Management • Equal Power / Linear Micro-Crossfade',
-          trailing: Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 6,
-            children: [
-              StudioBadge(
-                label: '${tracks.length} TRACKS',
-                color: StudioColors.accentCyan,
-              ),
-              IconButton.filledTonal(
-                icon: const Icon(Icons.swap_vert, size: 18),
-                tooltip: 'Reverse Queue via native reorderByIds',
-                visualDensity: VisualDensity.compact,
-                style: IconButton.styleFrom(
-                  backgroundColor: StudioColors.cardBorder,
-                  foregroundColor: StudioColors.accentPurple,
-                  padding: const EdgeInsets.all(6),
-                ),
-                onPressed: controller.reverseQueueByIds,
-              ),
-              IconButton.filledTonal(
-                icon: const Icon(Icons.add, size: 18),
-                tooltip: 'Add URL, URI, or file to queue',
-                visualDensity: VisualDensity.compact,
-                style: IconButton.styleFrom(
-                  backgroundColor: StudioColors.cardBorder,
-                  foregroundColor: StudioColors.accentCyan,
-                  padding: const EdgeInsets.all(6),
-                ),
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (_) => AddSourceDialog(
-                      onTrackAdded: (t) async {
-                        await controller.addTrack(t);
-                        if (analyzerController != null) {
-                          analyzerController!.analyze(
-                            t,
-                            engine: controller.engine,
-                          );
-                        }
-                      },
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Crossfade Settings Banner: Curve selection & Compact floating slider overlays
+              // Crossfade Settings Banner & Queue Actions in one left-aligned Wrap row
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
@@ -98,49 +91,9 @@ class PlaylistQueueCard extends StatelessWidget {
                   alignment: WrapAlignment.start,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 6,
-                  runSpacing: 4,
+                  runSpacing: 6,
                   children: [
-                    const Text(
-                      'CURVE: ',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        color: StudioColors.textSecondary,
-                      ),
-                    ),
-                    ChoiceChip(
-                      label: const Text(
-                        'Equal Power',
-                        style: TextStyle(fontSize: 9.5),
-                      ),
-                      selected: xfade.curve == CrossfadeCurve.equalPower,
-                      selectedColor: StudioColors.accentCyan,
-                      backgroundColor: StudioColors.backgroundDark,
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 0,
-                      ),
-                      onSelected: (_) => controller.setCrossfadeCurve(
-                        CrossfadeCurve.equalPower,
-                      ),
-                    ),
-                    ChoiceChip(
-                      label: const Text(
-                        'Linear',
-                        style: TextStyle(fontSize: 9.5),
-                      ),
-                      selected: xfade.curve == CrossfadeCurve.linear,
-                      selectedColor: StudioColors.accentCyan,
-                      backgroundColor: StudioColors.backgroundDark,
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 0,
-                      ),
-                      onSelected: (_) =>
-                          controller.setCrossfadeCurve(CrossfadeCurve.linear),
-                    ),
+                    _buildCurveDropdown(xfade.curve),
 
                     // Elegant Compact Floating Slider Overlays for Crossfade Durations
                     CompactSliderControl(
@@ -169,6 +122,47 @@ class PlaylistQueueCard extends StatelessWidget {
                         Duration(milliseconds: ms.round()),
                       ),
                     ),
+                    IconButton.filledTonal(
+                      icon: const Icon(Icons.add, size: 18),
+                      tooltip: 'Add URL, URI, or file to queue',
+                      visualDensity: VisualDensity.compact,
+                      style: IconButton.styleFrom(
+                        backgroundColor: StudioColors.cardBorder,
+                        foregroundColor: StudioColors.accentCyan,
+                        padding: const EdgeInsets.all(6),
+                      ),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (_) => AddSourceDialog(
+                            onTrackAdded: (t) async {
+                              await controller.addTrack(t);
+                              if (analyzerController != null) {
+                                analyzerController!.analyze(
+                                  t,
+                                  engine: controller.engine,
+                                );
+                              }
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                    StudioBadge(
+                      label: '${tracks.length} TRACKS',
+                      color: StudioColors.accentCyan,
+                    ),
+                    IconButton.filledTonal(
+                      icon: const Icon(Icons.swap_vert, size: 18),
+                      tooltip: 'Reverse Queue via native reorderByIds',
+                      visualDensity: VisualDensity.compact,
+                      style: IconButton.styleFrom(
+                        backgroundColor: StudioColors.cardBorder,
+                        foregroundColor: StudioColors.accentPurple,
+                        padding: const EdgeInsets.all(6),
+                      ),
+                      onPressed: controller.reverseQueueByIds,
+                    ),
                   ],
                 ),
               ),
@@ -176,7 +170,7 @@ class PlaylistQueueCard extends StatelessWidget {
 
               // Reorderable Playlist List with Thumbnails, Analyzed Metadata, and Inspector Modal
               Container(
-                height: 240,
+                height: 200,
                 decoration: BoxDecoration(
                   color: const Color(0xFF070B14),
                   borderRadius: BorderRadius.circular(6),
@@ -398,54 +392,6 @@ class PlaylistQueueCard extends StatelessWidget {
                                             WrapCrossAlignment.center,
                                         spacing: 4,
                                         children: [
-                                          // Button on current playing item to open Metadata Inspector Modal
-                                          if (isPlayingThis)
-                                            SizedBox(
-                                              width: 26,
-                                              height: 26,
-                                              child: IconButton.filledTonal(
-                                                icon: const Icon(
-                                                  Icons.info_outline,
-                                                  size: 15,
-                                                ),
-                                                tooltip: 'Inspect Metadata (Static vs Dynamic)',
-                                                visualDensity:
-                                                    VisualDensity.compact,
-                                                style: IconButton.styleFrom(
-                                                  backgroundColor: StudioColors
-                                                      .accentCyan
-                                                      .withValues(alpha: 0.15),
-                                                  foregroundColor:
-                                                      StudioColors.accentCyan,
-                                                  padding: EdgeInsets.zero,
-                                                ),
-                                                onPressed: () {
-                                                  showDialog(
-                                                    context: context,
-                                                    builder: (_) =>
-                                                        MetadataInspectorModal(
-                                                          track: track,
-                                                          staticMetadata:
-                                                              analysis
-                                                                  ?.metadata,
-                                                          dynamicMetadata:
-                                                              controller
-                                                                  .engine
-                                                                  .state
-                                                                  .metadata,
-                                                          staticAudioInfo:
-                                                              analysis
-                                                                  ?.audioInfo,
-                                                          dynamicAudioInfo:
-                                                              controller
-                                                                  .engine
-                                                                  .state
-                                                                  .audioInfo,
-                                                        ),
-                                                  );
-                                                },
-                                              ),
-                                            ),
                                           if (queue.isNotEmpty &&
                                               index < queue.length &&
                                               queue[index].id != null)

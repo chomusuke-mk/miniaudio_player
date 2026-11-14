@@ -4,7 +4,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
 import 'package:miniaudio_player_example/widgets/cards/dsp_effects_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
+import 'package:miniaudio_player_example/widgets/cards/hardware_routing_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
+import 'package:miniaudio_player_example/widgets/cards/playlist_queue_card.dart';
+import 'package:miniaudio_player_example/widgets/cards/ram_sound_effects_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/spectrum_visualizer_card.dart';
 import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
 
@@ -468,7 +471,7 @@ void main() {
     );
 
     testWidgets(
-      'Desktop ResponsiveGrid allocates 1/3 left column and 2/3 right column with zero overflows',
+      'Desktop StudioConsoleView lays out Playing/Queue/Effects 2:2:1 in Row 1, Hardware+DSP 1:2 below, and moves Audio Analyzer to its own tab',
       (tester) async {
         addTearDown(() async {
           tester.view.resetPhysicalSize();
@@ -487,6 +490,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
 
+        // Audio Analyzer lives on its own tab, not on Studio Master Console
+        expect(find.text('UNIFIED AUDIO ANALYZER'), findsNothing);
+        expect(find.text('Audio Analyzer'), findsOneWidget);
+
         for (final size in const [
           Size(1000, 900),
           Size(1440, 900),
@@ -497,11 +504,88 @@ void main() {
           await tester.pump(const Duration(milliseconds: 100));
           expect(tester.takeException(), isNull);
 
-          final leftRect = tester.getRect(find.byType(PlaybackEngineCard));
-          final rightRect = tester.getRect(find.byType(DspEffectsCard));
-          expect(rightRect.left, greaterThan(leftRect.right));
-          expect(rightRect.width / leftRect.width, closeTo(2.0, 0.02));
+          // Row 1: Playing (2), Queue (2), Effects (1)
+          final playingRect = tester.getRect(find.byType(PlaybackEngineCard));
+          final queueRect = tester.getRect(find.byType(PlaylistQueueCard));
+          final effectsRect = tester.getRect(find.byType(RamSoundEffectsCard));
+          expect(queueRect.top, closeTo(playingRect.top, 2.0));
+          expect(effectsRect.top, closeTo(playingRect.top, 2.0));
+          expect(queueRect.left, greaterThan(playingRect.right));
+          expect(effectsRect.left, greaterThan(queueRect.right));
+          expect(playingRect.width / effectsRect.width, closeTo(2.0, 0.03));
+          expect(queueRect.width / effectsRect.width, closeTo(2.0, 0.03));
+
+          // Row 2 below: Hardware Routing (1/3) and DSP Effects (2/3)
+          final routingRect = tester.getRect(find.byType(HardwareRoutingCard));
+          final dspRect = tester.getRect(find.byType(DspEffectsCard));
+          expect(routingRect.top, greaterThan(playingRect.bottom));
+          expect(dspRect.left, greaterThan(routingRect.right));
+          expect(dspRect.width / routingRect.width, closeTo(2.0, 0.02));
         }
+
+        // Below 960px breakpoint, Playing, Queue, and Effects stack vertically with zero overflows
+        tester.view.physicalSize = const Size(800, 900);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.takeException(), isNull);
+        final narrowPlayingRect = tester.getRect(
+          find.byType(PlaybackEngineCard),
+        );
+        final narrowQueueRect = tester.getRect(find.byType(PlaylistQueueCard));
+        final narrowEffectsRect = tester.getRect(
+          find.byType(RamSoundEffectsCard),
+        );
+        expect(
+          narrowQueueRect.top,
+          greaterThanOrEqualTo(narrowPlayingRect.bottom),
+        );
+        expect(
+          narrowEffectsRect.top,
+          greaterThanOrEqualTo(narrowQueueRect.bottom),
+        );
+
+        // Switching to Audio Analyzer tab shows telemetry, analyzer card, and optimization cards cleanly
+        await tester.tap(find.text('Audio Analyzer'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.takeException(), isNull);
+        expect(find.text('ANALYSIS PIPELINE & SESSION TELEMETRY'), findsOneWidget);
+        expect(find.text('UNIFIED AUDIO ANALYZER'), findsOneWidget);
+        expect(
+          find.text('SINGLE-PASS NATIVE PIPELINE (RUST DSP)'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('MEMORY, WORKER & CACHING OPTIMIZATIONS'),
+          findsOneWidget,
+        );
+
+        // Desktop and ultra-narrow 280px @ 1.5x TextScaler render Audio Analyzer tab with zero overflow
+        tester.view.physicalSize = const Size(1440, 900);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.takeException(), isNull);
+
+        tester.view.physicalSize = const Size(280, 653);
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(
+              size: Size(280, 653),
+              devicePixelRatio: 1.0,
+              textScaler: TextScaler.linear(1.5),
+            ),
+            child: const MiniaudioPlayerExampleApp(),
+          ),
+        );
+        await tester.pump();
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(seconds: 2));
+        });
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.tap(find.text('Audio Analyzer'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.takeException(), isNull);
       },
     );
   });
