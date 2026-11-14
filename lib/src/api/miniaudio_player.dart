@@ -1,12 +1,13 @@
 import 'dart:async';
-import 'dart:io';
 
-import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show Float32List, Int64List, PlatformInt64Util, Uint8List;
 
 import '../crossfeed.dart';
 import '../equalizer.dart';
 import '../infinite_mix.dart';
 import '../loader/custom_byte_provider.dart';
+import '../loader/platform_loader.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
 import '../rust/api/types.dart' as rust_types;
@@ -31,34 +32,39 @@ part 'player_state.dart';
 part 'player_stream.dart';
 part 'voice.dart';
 
-/// Ensures native Rust library is initialized before calling static methods.
-Future<void> ensureRustInitialized() async {
-  if (!RustLib.instance.initialized) {
-    try {
-      await RustLib.init(forceSameCodegenVersion: false);
-    } catch (_) {
-      final candidates = [
-        '../rust/target/debug/libminiaudio_player.so',
-        'rust/target/debug/libminiaudio_player.so',
-        '../rust/target/release/libminiaudio_player.so',
-        'rust/target/release/libminiaudio_player.so',
-      ];
-      bool loaded = false;
-      for (final candidate in candidates) {
-        if (File(candidate).existsSync()) {
-          try {
-            await RustLib.init(
-              forceSameCodegenVersion: false,
-              externalLibrary: ExternalLibrary.open(candidate),
-            );
-            loaded = true;
-            break;
-          } catch (_) {}
-        }
-      }
-      if (!loaded) rethrow;
-    }
+Future<void>? _rustInitFuture;
+
+/// Ensures the Flutter Rust Bridge runtime is initialized exactly once in the
+/// current isolate before calling static methods or constructing [MiniaudioPlayer].
+///
+/// Safe to invoke concurrently: simultaneous callers share the same in-flight
+/// [Future] rather than racing to call `RustLib.init()` twice. If initialization
+/// fails, the cached future is cleared so subsequent calls can retry.
+Future<void> ensureRustInitialized({String? libraryPath}) {
+  if (RustLib.instance.initialized) {
+    return Future<void>.value();
   }
+  return _rustInitFuture ??= _initRustRuntime(libraryPath).onError<Object>((
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    _rustInitFuture = null;
+    Error.throwWithStackTrace(error, stackTrace);
+  });
+}
+
+Future<void> _initRustRuntime(String? libraryPath) async {
+  if (RustLib.instance.initialized) return;
+  final externalLib = await resolvePlatformExternalLibrary(
+    customLibraryPath: libraryPath,
+  );
+  if (externalLib != null) {
+    registerIsolateWithLibrary(externalLib);
+  }
+  await RustLib.init(
+    forceSameCodegenVersion: false,
+    externalLibrary: externalLib,
+  );
 }
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
@@ -251,8 +257,11 @@ class MiniaudioPlayer<T> {
   static void resetGlobalConfig() => _globalConfig.reset();
 
   /// Ensures native Rust audio player backend is initialized.
-  static Future<void> ensureInitialized() async {
-    await ensureRustInitialized();
+  ///
+  /// Optionally accepts an explicit [libraryPath] to override the automatic
+  /// Native Assets / platform library resolution.
+  static Future<void> ensureInitialized({String? libraryPath}) async {
+    await ensureRustInitialized(libraryPath: libraryPath);
     setLogLevel(_globalConfig.logLevel);
   }
 
@@ -354,7 +363,9 @@ class MiniaudioPlayer<T> {
       chromaprint: chromaprint,
       waveformPoints: waveformPoints > 0 ? waveformPoints : 100,
       targetLufs: targetLufs,
-      maxDurationMs: maxAnalysisDuration?.inMilliseconds,
+      maxDurationMs: maxAnalysisDuration != null
+          ? PlatformInt64Util.from(maxAnalysisDuration.inMilliseconds)
+          : null,
     );
     try {
       final res = await rust.analyzeAudioSource(
@@ -414,7 +425,9 @@ class MiniaudioPlayer<T> {
       chromaprint: chromaprint,
       waveformPoints: waveformPoints > 0 ? waveformPoints : 100,
       targetLufs: targetLufs,
-      maxDurationMs: maxAnalysisDuration?.inMilliseconds,
+      maxDurationMs: maxAnalysisDuration != null
+          ? PlatformInt64Util.from(maxAnalysisDuration.inMilliseconds)
+          : null,
     );
     try {
       final res = rust.analyzeAudioSourceSync(

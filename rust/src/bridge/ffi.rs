@@ -142,9 +142,12 @@ extern "C" {
 #[cfg(target_arch = "wasm32")]
 mod wasm_device_bridge {
     use super::*;
-    use flutter_rust_bridge::for_generated::js_sys::Float32Array;
+    use flutter_rust_bridge::for_generated::js_sys::{
+        self, Array, Float32Array, Function, Reflect, Uint8Array,
+    };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
+    use flutter_rust_bridge::for_generated::wasm_bindgen::JsCast;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -207,48 +210,6 @@ mod wasm_device_bridge {
             self.devices.retain(|d| d.is_alive());
             self.devices.iter().any(|d| d.is_active())
         }
-
-        fn pump_quantum(&mut self, frames: u32) -> Float32Array {
-            let safe_frames = frames.clamp(64, 16384);
-            self.decoder_tasks.retain_mut(|task| task());
-            self.devices.retain(|d| d.is_alive());
-
-            let out_channels = self
-                .devices
-                .iter()
-                .find(|d| d.is_active())
-                .map(|d| d.channels)
-                .unwrap_or(2)
-                .clamp(1, 8);
-            let total_samples = (safe_frames * out_channels) as usize;
-
-            self.mix_buf.clear();
-            self.mix_buf.resize(total_samples, 0.0);
-
-            for dev in &self.devices {
-                if !dev.is_active() || dev.user_data_addr == 0 {
-                    continue;
-                }
-                let dev_samples = (safe_frames * dev.channels) as usize;
-                self.scratch_buf.clear();
-                self.scratch_buf.resize(dev_samples, 0.0);
-                unsafe {
-                    rust_render_pcm_frames(
-                        dev.user_data_addr as *mut c_void,
-                        self.scratch_buf.as_mut_ptr(),
-                        safe_frames,
-                    );
-                }
-                if dev.channels == out_channels {
-                    for (dst, src) in self.mix_buf.iter_mut().zip(self.scratch_buf.iter()) {
-                        *dst = (*dst + *src).clamp(-1.0, 1.0);
-                    }
-                }
-            }
-
-            self.monitor_tasks.retain_mut(|task| task());
-            Float32Array::from(self.mix_buf.as_slice())
-        }
     }
 
     static WORKER_RUNTIME: OnceLock<Mutex<WasmWorkerRuntime>> = OnceLock::new();
@@ -279,10 +240,134 @@ mod wasm_device_bridge {
 
     #[wasm_bindgen]
     pub fn wasm_worker_pump_quantum(frames: u32) -> Float32Array {
+        let safe_frames = frames.clamp(64, 16384);
+        let (mut decoder_tasks, mut monitor_tasks, devices, mut scratch_buf, mut mix_buf) = {
+            let Ok(mut rt) = runtime().lock() else {
+                return Float32Array::new_with_length(0);
+            };
+            rt.devices.retain(|d| d.is_alive());
+            (
+                std::mem::take(&mut rt.decoder_tasks),
+                std::mem::take(&mut rt.monitor_tasks),
+                rt.devices.clone(),
+                std::mem::take(&mut rt.scratch_buf),
+                std::mem::take(&mut rt.mix_buf),
+            )
+        };
+
+        decoder_tasks.retain_mut(|task| task());
+        monitor_tasks.retain_mut(|task| task());
+
+        let out_channels = devices
+            .iter()
+            .find(|d| d.is_active())
+            .map(|d| d.channels)
+            .unwrap_or(2)
+            .clamp(1, 8);
+        let total_samples = (safe_frames * out_channels) as usize;
+
+        mix_buf.clear();
+        mix_buf.resize(total_samples, 0.0);
+
+        for dev in &devices {
+            if !dev.is_active() || dev.user_data_addr == 0 {
+                continue;
+            }
+            let dev_samples = (safe_frames * dev.channels) as usize;
+            scratch_buf.clear();
+            scratch_buf.resize(dev_samples, 0.0);
+            unsafe {
+                rust_render_pcm_frames(
+                    dev.user_data_addr as *mut c_void,
+                    scratch_buf.as_mut_ptr(),
+                    safe_frames,
+                );
+            }
+            if dev.channels == out_channels {
+                for (dst, src) in mix_buf.iter_mut().zip(scratch_buf.iter()) {
+                    *dst = (*dst + *src).clamp(-1.0, 1.0);
+                }
+            }
+        }
+
+        let out = Float32Array::from(mix_buf.as_slice());
+
         if let Ok(mut rt) = runtime().lock() {
-            rt.pump_quantum(frames)
+            decoder_tasks.append(&mut rt.decoder_tasks);
+            rt.decoder_tasks = decoder_tasks;
+            monitor_tasks.append(&mut rt.monitor_tasks);
+            rt.monitor_tasks = monitor_tasks;
+            rt.scratch_buf = scratch_buf;
+            rt.mix_buf = mix_buf;
+        }
+
+        out
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_worker_get_sample_rate() -> u32 {
+        if let Ok(mut rt) = runtime().lock() {
+            rt.devices.retain(|d| d.is_alive());
+            rt.devices
+                .iter()
+                .find(|d| d.is_active())
+                .or_else(|| rt.devices.first())
+                .map(|d| d.sample_rate)
+                .unwrap_or(44100)
         } else {
-            Float32Array::new_with_length(0)
+            44100
+        }
+    }
+
+    /// Synchronously fetches an asset or HTTP audio source inside a Dedicated Web Worker
+    /// using the worker's `__miniaudioFetchBytesSync` host bridge.
+    pub fn wasm_fetch_source_bytes(
+        source: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+    ) -> Result<Vec<u8>, i32> {
+        let global = js_sys::global();
+        let func_val = Reflect::get(&global, &JsValue::from_str("__miniaudioFetchBytesSync"))
+            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+        let func = func_val
+            .dyn_into::<Function>()
+            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+
+        let headers_arr = Array::new();
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                let pair = Array::new();
+                pair.push(&JsValue::from_str(&h.key));
+                pair.push(&JsValue::from_str(&h.value));
+                headers_arr.push(&pair);
+            }
+        }
+
+        let res = func
+            .call2(
+                &JsValue::NULL,
+                &JsValue::from_str(source),
+                &headers_arr.into(),
+            )
+            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+
+        if let Some(err_code) = res.as_f64() {
+            let code = err_code as i32;
+            return Err(if code < 0 {
+                code
+            } else {
+                MAP_ERROR_FILE_NOT_FOUND
+            });
+        }
+
+        if let Ok(u8_arr) = res.dyn_into::<Uint8Array>() {
+            let vec = u8_arr.to_vec();
+            if vec.is_empty() {
+                Err(MAP_ERROR_FILE_NOT_FOUND)
+            } else {
+                Ok(vec)
+            }
+        } else {
+            Err(MAP_ERROR_FILE_NOT_FOUND)
         }
     }
 

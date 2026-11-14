@@ -370,6 +370,9 @@ class AudioAnalyzerController extends ChangeNotifier {
 
     final uri = track.source.uri;
     if (uri != null) {
+      if (kIsWeb) {
+        return await _analyzeTarget(track.source);
+      }
       if (uri.startsWith('asset://') ||
           uri.startsWith('asset:') ||
           uri.startsWith('assets/')) {

@@ -6,7 +6,8 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use crate::sync::MonotonicInstant as Instant;
 
 use crate::buffer::{CustomDartByteSource, CustomSourceRegistry};
 use crate::core::control_coordinator::ControlCoordinator;
@@ -494,6 +495,7 @@ impl RustMiniaudioPlayer {
 
         // Background device watcher: reacts to hardware changes with ultra-low latency (<15ms on disconnect, <=200ms on connect/change)
         // and runs asynchronously to never block real-time audio, telemetry, or UI threads.
+        #[cfg(not(target_arch = "wasm32"))]
         let watcher_thread = thread::Builder::new()
             .name("map-device-watcher".to_string())
             .spawn(move || {
@@ -742,6 +744,18 @@ impl RustMiniaudioPlayer {
                 }
             })
             .ok();
+        #[cfg(target_arch = "wasm32")]
+        let watcher_thread: Option<JoinHandle<()>> = {
+            let _ = (
+                watcher_trigger,
+                watcher_running,
+                watcher_reporter,
+                watcher_hw,
+                watcher_coordinator,
+                watcher_snapshots,
+            );
+            None
+        };
 
         let worker_snapshots = engine.snapshots().clone();
         let worker_effects = engine.effects().clone();
@@ -749,193 +763,210 @@ impl RustMiniaudioPlayer {
         let worker_running = monitor_running.clone();
         let meta_enabled = metadata_enabled.clone();
 
+        // Dedicated metadata single-emission state registers to guarantee zero per-tick parsing/serialization overhead
+        let mut last_emitted_meta_deck = -1i32;
+        let mut last_emitted_meta_deck_id = usize::MAX;
+        let mut last_emitted_meta_open_gen = u64::MAX;
+        let mut last_emitted_meta_version = u32::MAX;
+        let mut last_emitted_meta_flush = u64::MAX;
+        let mut last_meta_enabled = false;
+        let mut edge_events: Vec<RustPlayerEvent> = Vec::with_capacity(8);
+        let mut tick_events: Vec<RustPlayerEvent> = Vec::with_capacity(24);
+        let mut pending_notices: Vec<RustPlayerEvent> = Vec::with_capacity(8);
+
+        #[allow(unused_mut)]
+        let mut tick_telemetry = move || -> bool {
+            if !worker_running.load(Ordering::Relaxed) {
+                return false;
+            }
+            edge_events.clear();
+            tick_events.clear();
+
+            for notice in notify_rx.try_iter() {
+                match notice {
+                    RtEngineNotice::IsCrossfading(v) => {
+                        // Defer crossfade/ReplayGain notices until after CurrentIndex is
+                        // pushed from the consistent snapshot so Dart listeners always see
+                        // the updated track before its completion/gain transitions fire.
+                        pending_notices.push(RustPlayerEvent::IsCrossfading(v));
+                    }
+                    RtEngineNotice::ReplayGain { gain_db, peak } => {
+                        pending_notices.push(RustPlayerEvent::ReplayGain(
+                            RustReplayGainConfig { gain_db, peak },
+                        ));
+                    }
+                    RtEngineNotice::NeedMoreTracks {
+                        current_track_id,
+                        remaining_tracks,
+                    } => {
+                        edge_events.push(RustPlayerEvent::NeedMoreTracks {
+                            current_track_id,
+                            remaining_tracks,
+                        });
+                    }
+                }
+            }
+
+            // Drain completed voices and process LRU RAM eviction completely lock-free.
+            if worker_effects.has_pending_completions() {
+                let (completed_ids, eviction_info) =
+                    worker_effects.drain_completed_and_evict();
+                for v_id in completed_ids {
+                    edge_events.push(RustPlayerEvent::VoiceCompleted(v_id));
+                }
+                if let Some((ids, allocated_bytes)) = eviction_info {
+                    edge_events.push(RustPlayerEvent::LoadedEffects {
+                        ids,
+                        allocated_bytes,
+                    });
+                }
+            }
+
+            let Some(read_seq) = worker_snapshots.begin_consistent_read() else {
+                if !edge_events.is_empty() {
+                    worker_reporter.emit_batch(edge_events.drain(..));
+                }
+                return true;
+            };
+
+            let playback_state = worker_snapshots.playback_state();
+            let is_buffering = worker_snapshots.is_buffering();
+            let pos = worker_snapshots.position_ms();
+            let audio_info = worker_snapshots.audio_info();
+            let buffered_range = worker_snapshots.buffered_range();
+            let idx = worker_snapshots.current_index();
+            let is_xfading = worker_snapshots.is_xfading();
+            let is_rec = worker_snapshots.is_recording();
+            let rec_dur_ms = worker_snapshots.recorded_duration_ms();
+            let is_ducking = worker_snapshots.is_ducking();
+            let mic_rms = worker_snapshots.mic_rms_db();
+
+            let cur_meta_enabled = meta_enabled.load(Ordering::Relaxed);
+            let active_deck_idx = worker_snapshots.active_deck();
+            let active_deck_id = worker_snapshots.active_deck_id();
+            let active_open_gen = worker_snapshots.active_open_gen();
+            let cur_flush = worker_snapshots.flush_generation();
+            let cur_meta_ver = worker_snapshots.meta_version();
+
+            let should_emit_meta = cur_meta_enabled
+                && (!last_meta_enabled
+                    || active_deck_idx != last_emitted_meta_deck
+                    || active_deck_id != last_emitted_meta_deck_id
+                    || active_open_gen != last_emitted_meta_open_gen
+                    || cur_flush != last_emitted_meta_flush
+                    || cur_meta_ver != last_emitted_meta_version);
+
+            let meta_to_send = if should_emit_meta {
+                worker_snapshots.parsed_metadata()
+            } else {
+                None
+            };
+            let (rg_gain_db, rg_peak) = worker_snapshots.unpack_rg();
+            let active_voices = worker_effects.active_voices_count();
+
+            let vis_data = if worker_snapshots.visualizer_enabled() {
+                Some(worker_snapshots.read_visualizer())
+            } else {
+                None
+            };
+
+            if !worker_snapshots.is_consistent_since(read_seq) {
+                if !edge_events.is_empty() {
+                    worker_reporter.emit_batch(edge_events.drain(..));
+                }
+                return true;
+            }
+
+            let is_playing = playback_state == PlaybackState::Playing;
+
+            tick_events.push(RustPlayerEvent::PlaybackState(playback_state.as_i32()));
+            tick_events.push(RustPlayerEvent::IsPlaying(is_playing));
+            tick_events.push(RustPlayerEvent::IsBuffering(is_buffering));
+            tick_events.push(RustPlayerEvent::Position(pos));
+            tick_events.push(RustPlayerEvent::CurrentIndex(idx as i32));
+            if audio_info.sample_rate > 0 {
+                tick_events.push(RustPlayerEvent::AudioInfo(audio_info));
+            }
+            tick_events.push(RustPlayerEvent::ActiveVoices(active_voices));
+            if let Some((start_ms, end_ms, range_buffering)) = buffered_range {
+                tick_events.push(RustPlayerEvent::Buffer(RustBuffer {
+                    start_ms,
+                    end_ms,
+                    is_buffering: range_buffering,
+                }));
+            }
+            if !pending_notices.is_empty() {
+                tick_events.extend(pending_notices.iter().cloned());
+            }
+            tick_events.push(RustPlayerEvent::IsCrossfading(is_xfading));
+            tick_events.push(RustPlayerEvent::IsRecording(is_rec));
+            if is_rec {
+                tick_events.push(RustPlayerEvent::RecordedDuration(rec_dur_ms));
+            }
+            tick_events.push(RustPlayerEvent::IsDuckingActive(is_ducking));
+            if mic_rms > -90.0 {
+                tick_events.push(RustPlayerEvent::MicRmsLevel(mic_rms));
+            }
+            if should_emit_meta {
+                if let Some(meta) = meta_to_send {
+                    tick_events.push(RustPlayerEvent::AudioMetadata(meta));
+                } else {
+                    tick_events.push(RustPlayerEvent::AudioMetadata(
+                        RustAudioMetadata::default(),
+                    ));
+                }
+            } else if !cur_meta_enabled && last_meta_enabled {
+                tick_events
+                    .push(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
+            }
+            tick_events.push(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
+                gain_db: rg_gain_db,
+                peak: rg_peak,
+            }));
+            if let Some(vis) = vis_data {
+                tick_events.push(RustPlayerEvent::Visualizer(
+                    RustVisualizerData::from(vis),
+                ));
+            }
+            if worker_reporter.emit_snapshot_tick(
+                &worker_snapshots,
+                read_seq,
+                edge_events.drain(..),
+                tick_events.drain(..),
+            ) {
+                pending_notices.clear();
+                if should_emit_meta {
+                    last_emitted_meta_deck = active_deck_idx;
+                    last_emitted_meta_deck_id = active_deck_id;
+                    last_emitted_meta_open_gen = active_open_gen;
+                    last_emitted_meta_version = cur_meta_ver;
+                    last_emitted_meta_flush = cur_flush;
+                    last_meta_enabled = true;
+                } else if !cur_meta_enabled && last_meta_enabled {
+                    last_meta_enabled = false;
+                    last_emitted_meta_version = u32::MAX;
+                }
+            }
+            true
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
         let monitor_thread = thread::Builder::new()
             .name("map-telemetry-monitor".to_string())
             .spawn(move || {
-                // Dedicated metadata single-emission state registers to guarantee zero per-tick parsing/serialization overhead
-                let mut last_emitted_meta_deck = -1i32;
-                let mut last_emitted_meta_deck_id = usize::MAX;
-                let mut last_emitted_meta_open_gen = u64::MAX;
-                let mut last_emitted_meta_version = u32::MAX;
-                let mut last_emitted_meta_flush = u64::MAX;
-                let mut last_meta_enabled = false;
-                let mut edge_events: Vec<RustPlayerEvent> = Vec::with_capacity(8);
-                let mut tick_events: Vec<RustPlayerEvent> = Vec::with_capacity(24);
-                let mut pending_notices: Vec<RustPlayerEvent> = Vec::with_capacity(8);
-
-                while worker_running.load(Ordering::Relaxed) {
+                loop {
                     thread::sleep(Duration::from_millis(16));
-                    edge_events.clear();
-                    tick_events.clear();
-
-                    for notice in notify_rx.try_iter() {
-                        match notice {
-                            RtEngineNotice::IsCrossfading(v) => {
-                                // Defer crossfade/ReplayGain notices until after CurrentIndex is
-                                // pushed from the consistent snapshot so Dart listeners always see
-                                // the updated track before its completion/gain transitions fire.
-                                pending_notices.push(RustPlayerEvent::IsCrossfading(v));
-                            }
-                            RtEngineNotice::ReplayGain { gain_db, peak } => {
-                                pending_notices.push(RustPlayerEvent::ReplayGain(
-                                    RustReplayGainConfig { gain_db, peak },
-                                ));
-                            }
-                            RtEngineNotice::NeedMoreTracks {
-                                current_track_id,
-                                remaining_tracks,
-                            } => {
-                                edge_events.push(RustPlayerEvent::NeedMoreTracks {
-                                    current_track_id,
-                                    remaining_tracks,
-                                });
-                            }
-                        }
-                    }
-
-                    // Drain completed voices and process LRU RAM eviction completely lock-free.
-                    if worker_effects.has_pending_completions() {
-                        let (completed_ids, eviction_info) =
-                            worker_effects.drain_completed_and_evict();
-                        for v_id in completed_ids {
-                            edge_events.push(RustPlayerEvent::VoiceCompleted(v_id));
-                        }
-                        if let Some((ids, allocated_bytes)) = eviction_info {
-                            edge_events.push(RustPlayerEvent::LoadedEffects {
-                                ids,
-                                allocated_bytes,
-                            });
-                        }
-                    }
-
-                    let Some(read_seq) = worker_snapshots.begin_consistent_read() else {
-                        if !edge_events.is_empty() {
-                            worker_reporter.emit_batch(edge_events.drain(..));
-                        }
-                        continue;
-                    };
-
-                    let playback_state = worker_snapshots.playback_state();
-                    let is_buffering = worker_snapshots.is_buffering();
-                    let pos = worker_snapshots.position_ms();
-                    let audio_info = worker_snapshots.audio_info();
-                    let buffered_range = worker_snapshots.buffered_range();
-                    let idx = worker_snapshots.current_index();
-                    let is_xfading = worker_snapshots.is_xfading();
-                    let is_rec = worker_snapshots.is_recording();
-                    let rec_dur_ms = worker_snapshots.recorded_duration_ms();
-                    let is_ducking = worker_snapshots.is_ducking();
-                    let mic_rms = worker_snapshots.mic_rms_db();
-
-                    let cur_meta_enabled = meta_enabled.load(Ordering::Relaxed);
-                    let active_deck_idx = worker_snapshots.active_deck();
-                    let active_deck_id = worker_snapshots.active_deck_id();
-                    let active_open_gen = worker_snapshots.active_open_gen();
-                    let cur_flush = worker_snapshots.flush_generation();
-                    let cur_meta_ver = worker_snapshots.meta_version();
-
-                    let should_emit_meta = cur_meta_enabled
-                        && (!last_meta_enabled
-                            || active_deck_idx != last_emitted_meta_deck
-                            || active_deck_id != last_emitted_meta_deck_id
-                            || active_open_gen != last_emitted_meta_open_gen
-                            || cur_flush != last_emitted_meta_flush
-                            || cur_meta_ver != last_emitted_meta_version);
-
-                    let meta_to_send = if should_emit_meta {
-                        worker_snapshots.parsed_metadata()
-                    } else {
-                        None
-                    };
-                    let (rg_gain_db, rg_peak) = worker_snapshots.unpack_rg();
-                    let active_voices = worker_effects.active_voices_count();
-
-                    let vis_data = if worker_snapshots.visualizer_enabled() {
-                        Some(worker_snapshots.read_visualizer())
-                    } else {
-                        None
-                    };
-
-                    if !worker_snapshots.is_consistent_since(read_seq) {
-                        if !edge_events.is_empty() {
-                            worker_reporter.emit_batch(edge_events.drain(..));
-                        }
-                        continue;
-                    }
-
-                    let is_playing = playback_state == PlaybackState::Playing;
-
-                    tick_events.push(RustPlayerEvent::PlaybackState(playback_state.as_i32()));
-                    tick_events.push(RustPlayerEvent::IsPlaying(is_playing));
-                    tick_events.push(RustPlayerEvent::IsBuffering(is_buffering));
-                    tick_events.push(RustPlayerEvent::Position(pos));
-                    tick_events.push(RustPlayerEvent::CurrentIndex(idx as i32));
-                    if audio_info.sample_rate > 0 {
-                        tick_events.push(RustPlayerEvent::AudioInfo(audio_info));
-                    }
-                    tick_events.push(RustPlayerEvent::ActiveVoices(active_voices));
-                    if let Some((start_ms, end_ms, range_buffering)) = buffered_range {
-                        tick_events.push(RustPlayerEvent::Buffer(RustBuffer {
-                            start_ms,
-                            end_ms,
-                            is_buffering: range_buffering,
-                        }));
-                    }
-                    if !pending_notices.is_empty() {
-                        tick_events.extend(pending_notices.iter().cloned());
-                    }
-                    tick_events.push(RustPlayerEvent::IsCrossfading(is_xfading));
-                    tick_events.push(RustPlayerEvent::IsRecording(is_rec));
-                    if is_rec {
-                        tick_events.push(RustPlayerEvent::RecordedDuration(rec_dur_ms));
-                    }
-                    tick_events.push(RustPlayerEvent::IsDuckingActive(is_ducking));
-                    if mic_rms > -90.0 {
-                        tick_events.push(RustPlayerEvent::MicRmsLevel(mic_rms));
-                    }
-                    if should_emit_meta {
-                        if let Some(meta) = meta_to_send {
-                            tick_events.push(RustPlayerEvent::AudioMetadata(meta));
-                        } else {
-                            tick_events.push(RustPlayerEvent::AudioMetadata(
-                                RustAudioMetadata::default(),
-                            ));
-                        }
-                    } else if !cur_meta_enabled && last_meta_enabled {
-                        tick_events
-                            .push(RustPlayerEvent::AudioMetadata(RustAudioMetadata::default()));
-                    }
-                    tick_events.push(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
-                        gain_db: rg_gain_db,
-                        peak: rg_peak,
-                    }));
-                    if let Some(vis) = vis_data {
-                        tick_events.push(RustPlayerEvent::Visualizer(
-                            RustVisualizerData::from(vis),
-                        ));
-                    }
-                    if worker_reporter.emit_snapshot_tick(
-                        &worker_snapshots,
-                        read_seq,
-                        edge_events.drain(..),
-                        tick_events.drain(..),
-                    ) {
-                        pending_notices.clear();
-                        if should_emit_meta {
-                            last_emitted_meta_deck = active_deck_idx;
-                            last_emitted_meta_deck_id = active_deck_id;
-                            last_emitted_meta_open_gen = active_open_gen;
-                            last_emitted_meta_version = cur_meta_ver;
-                            last_emitted_meta_flush = cur_flush;
-                            last_meta_enabled = true;
-                        } else if !cur_meta_enabled && last_meta_enabled {
-                            last_meta_enabled = false;
-                            last_emitted_meta_version = u32::MAX;
-                        }
+                    if !tick_telemetry() {
+                        break;
                     }
                 }
             })
             .ok();
+        #[cfg(target_arch = "wasm32")]
+        let monitor_thread: Option<JoinHandle<()>> = {
+            crate::bridge::ffi::wasm_register_monitor_task(Box::new(tick_telemetry));
+            None
+        };
 
         Ok(RustMiniaudioPlayer {
             engine,

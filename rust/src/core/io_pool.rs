@@ -2,7 +2,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use crate::sync::MonotonicInstant as Instant;
 
 use crate::bridge::ffi::MAP_SUCCESS;
 use crate::core::dual_source::{
@@ -43,11 +44,16 @@ impl<T: Clone> AsyncWaiter<T> {
 
     /// Blocks until the operation completes or is superseded/cancelled.
     pub fn wait(&self) -> Option<T> {
-        let (lock, cv) = &*self.inner;
-        let mut guard = lock_unpoisoned(lock);
-        while guard.is_none() {
-            guard = cv.wait(guard).unwrap_or_else(|e| e.into_inner());
-        }
+        let (lock, _cv) = &*self.inner;
+        let guard = lock_unpoisoned(lock);
+        #[cfg(not(target_arch = "wasm32"))]
+        let guard = {
+            let mut guard = guard;
+            while guard.is_none() {
+                guard = _cv.wait(guard).unwrap_or_else(|e| e.into_inner());
+            }
+            guard
+        };
         guard.clone()
     }
 }

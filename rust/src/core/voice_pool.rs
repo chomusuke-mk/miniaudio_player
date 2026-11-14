@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::time::Instant;
+use crate::sync::MonotonicInstant as Instant;
 
 use crate::core::dual_source::{resolve_local_source_path, strip_file_prefix, AudioSourceCore};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
@@ -332,6 +332,14 @@ pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundB
     }
 
     let trimmed = source.source.trim();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bytes = crate::bridge::ffi::wasm_fetch_source_bytes(trimmed, source.headers.as_deref())
+            .map_err(|e| format!("Failed to fetch effect '{}' ({}): code {}", id, trimmed, e))?;
+        return SoundBuffer::decode_from_bytes(&bytes)
+            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         let agent = ureq::AgentBuilder::new()

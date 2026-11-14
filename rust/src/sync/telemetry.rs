@@ -430,16 +430,100 @@ impl MonotonicInstant {
     /// Measures the elapsed duration since this instant was recorded.
     #[inline]
     pub fn elapsed(&self) -> Duration {
+        Self::now().saturating_duration_since(*self)
+    }
+
+    /// Measures the duration from `earlier` to `self`, saturating at zero.
+    #[inline]
+    pub fn saturating_duration_since(&self, earlier: Self) -> Duration {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.inner.elapsed()
+            self.inner.saturating_duration_since(earlier.inner)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let now = flutter_rust_bridge::for_generated::js_sys::Date::now();
-            let diff_ms = (now - self.ms).max(0.0);
+            let diff_ms = (self.ms - earlier.ms).max(0.0);
             Duration::from_micros((diff_ms * 1000.0) as u64)
         }
+    }
+
+    /// Measures the duration from `earlier` to `self`.
+    #[inline]
+    pub fn duration_since(&self, earlier: Self) -> Duration {
+        self.saturating_duration_since(earlier)
+    }
+}
+
+impl PartialEq for MonotonicInstant {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.inner == other.inner
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.ms.to_bits() == other.ms.to_bits()
+        }
+    }
+}
+
+impl Eq for MonotonicInstant {}
+
+impl PartialOrd for MonotonicInstant {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MonotonicInstant {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.inner.cmp(&other.inner)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.ms.total_cmp(&other.ms)
+        }
+    }
+}
+
+impl std::ops::Add<Duration> for MonotonicInstant {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Duration) -> Self::Output {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self {
+                inner: self.inner + rhs,
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self {
+                ms: self.ms + rhs.as_secs_f64() * 1000.0,
+            }
+        }
+    }
+}
+
+impl std::ops::AddAssign<Duration> for MonotonicInstant {
+    #[inline]
+    fn add_assign(&mut self, rhs: Duration) {
+        *self = *self + rhs;
+    }
+}
+
+impl std::ops::Sub<Self> for MonotonicInstant {
+    type Output = Duration;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.saturating_duration_since(rhs)
     }
 }
 

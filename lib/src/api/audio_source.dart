@@ -250,6 +250,7 @@ class AudioSource<T> {
   /// Converts this source to Rust's internal queue representation.
   rust_types.RustAudioSource toRustSource([int? autoId]) {
     final effectiveId = id ?? autoId ?? 0;
+    final rustId = PlatformInt64Util.from(effectiveId);
     if (customProvider != null) {
       final provider = customProvider!;
       final streamId = provider.streamId != 0 ? provider.streamId : effectiveId;
@@ -257,7 +258,7 @@ class AudioSource<T> {
           ? 'custom://$streamId?size=${provider.totalBytes}'
           : 'custom://$streamId';
       return rust_types.RustAudioSource(
-        id: effectiveId,
+        id: rustId,
         source: url,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
@@ -265,7 +266,7 @@ class AudioSource<T> {
     }
     if (_isMemory) {
       return rust_types.RustAudioSource(
-        id: effectiveId,
+        id: rustId,
         source: '',
         dataBytes: _bytes,
         replayGainDb: replayGainDb,
@@ -273,7 +274,7 @@ class AudioSource<T> {
       );
     }
     return rust_types.RustAudioSource(
-      id: effectiveId,
+      id: rustId,
       source: uri ?? '',
       headers: headers?.entries
           .map((e) => rust_types.RustHttpHeader(key: e.key, value: e.value))

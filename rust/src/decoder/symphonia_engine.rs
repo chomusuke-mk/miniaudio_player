@@ -18,6 +18,8 @@ use symphonia::core::meta::{MetadataOptions, RawTag, RawValue};
 use symphonia::core::units::{Duration as SymphoniaDuration, Time, TimeBase, Timestamp};
 #[cfg(not(target_arch = "wasm32"))]
 use symphonia_adapter_libopus::OpusDecoder;
+#[cfg(target_arch = "wasm32")]
+use symphonia_opus::OpusDecoder;
 
 use super::ape::{ApeProbe, ApeReader};
 use super::dsf::{DsfProbe, DsfReader};
@@ -29,9 +31,9 @@ use crate::metadata::SymphoniaExtractedMeta;
 pub fn create_codec_registry() -> CodecRegistry {
     let mut registry = CodecRegistry::new();
     symphonia::default::register_enabled_codecs(&mut registry);
+    registry.register_audio_decoder::<OpusDecoder>();
     #[cfg(not(target_arch = "wasm32"))]
     {
-        registry.register_audio_decoder::<OpusDecoder>();
         registry.register_audio_decoder::<symphonia_adapter_fdk_aac::AacDecoder>();
     }
     registry

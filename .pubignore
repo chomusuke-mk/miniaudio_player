@@ -28,14 +28,19 @@ migrate_working_dir/
 .dart_tool/
 .flutter-plugins-dependencies
 /build/
+/rust/target/
+/example/build/
+/example/.dart_tool/
 /coverage/
 /temp/
 /docs/
 /.agents/
+/.github/
+/.vscode/
 
 # Pub specific ignores
 /cspell.yaml
-/test/fixtures/
+/test/
 
 /pictures/icons/
 /pictures/screenshots/

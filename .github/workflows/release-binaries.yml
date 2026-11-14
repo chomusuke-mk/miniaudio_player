@@ -1,0 +1,202 @@
+name: Build & Publish Native Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v3.0.2)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # ===========================================================================
+  # 1. Linux (x86_64 & aarch64) — Built with cargo-zigbuild targeting glibc 2.17
+  # ===========================================================================
+  build-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            zig_target: x86_64-unknown-linux-gnu.2.17
+          - target: aarch64-unknown-linux-gnu
+            zig_target: aarch64-unknown-linux-gnu.2.17
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        run: cargo install --locked cargo-zigbuild
+      - name: Build ${{ matrix.target }} (glibc >= 2.17)
+        run: |
+          cargo zigbuild --manifest-path rust/Cargo.toml --release --target ${{ matrix.zig_target }}
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" libminiaudio_player.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: miniaudio_player-*.tar.gz
+
+  # ===========================================================================
+  # 2. Android (arm64-v8a, armeabi-v7a, x86_64) — NDK r28 + 16 KB Page Alignment
+  # ===========================================================================
+  build-android:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            abi: arm64-v8a
+          - target: armv7-linux-androideabi
+            abi: armeabi-v7a
+          - target: x86_64-linux-android
+            abi: x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+      - name: Build ${{ matrix.target }}
+        env:
+          CARGO_ENCODED_RUSTFLAGS: "-Clink-arg=-Wl,-z,max-page-size=16384"
+        run: |
+          cargo ndk -t ${{ matrix.abi }} --platform 24 build --manifest-path rust/Cargo.toml --release
+          # Verify 16 KB ELF segment alignment on 64-bit Android targets
+          if [ "${{ matrix.abi }}" != "armeabi-v7a" ]; then
+            readelf -l "rust/target/${{ matrix.target }}/release/libminiaudio_player.so" | grep -E "LOAD.*0x0+4000"
+          fi
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" libminiaudio_player.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: miniaudio_player-*.tar.gz
+
+  # ===========================================================================
+  # 3. Apple (macOS & iOS — arm64, x86_64, Simulator)
+  # ===========================================================================
+  build-apple:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - aarch64-apple-ios
+          - aarch64-apple-ios-sim
+          - x86_64-apple-ios
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "10.15"
+          IPHONEOS_DEPLOYMENT_TARGET: "12.0"
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --release --target ${{ matrix.target }}
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" libminiaudio_player.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: miniaudio_player-*.tar.gz
+
+  # ===========================================================================
+  # 4. Windows (x86_64 & aarch64 MSVC)
+  # ===========================================================================
+  build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        shell: bash
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --release --target ${{ matrix.target }}
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" miniaudio_player.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: miniaudio_player-*.tar.gz
+
+  # ===========================================================================
+  # 5. WebAssembly (wasm32-unknown-unknown)
+  # ===========================================================================
+  build-web:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.100
+      - name: Build Web WASM
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown --release
+          wasm-bindgen rust/target/wasm32-unknown-unknown/release/miniaudio_player.wasm \
+            --out-dir web/pkg \
+            --target no-modules \
+            --no-typescript
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          ARCHIVE="miniaudio_player-${TAG}-wasm32-unknown-unknown.tar.gz"
+          tar -czf "$ARCHIVE" -C web/pkg miniaudio_player.js miniaudio_player_bg.wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-wasm32-unknown-unknown
+          path: miniaudio_player-*.tar.gz
+
+  # ===========================================================================
+  # 6. Checksum Generation & GitHub Release Publication
+  # ===========================================================================
+  publish-release:
+    needs: [build-linux, build-android, build-apple, build-windows, build-web]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums.sha256
+        run: |
+          cd dist
+          sha256sum miniaudio_player-*.tar.gz > checksums.sha256
+          cat checksums.sha256
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/miniaudio_player-*.tar.gz
+            dist/checksums.sha256
+          generate_release_notes: true

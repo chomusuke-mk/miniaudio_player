@@ -63,7 +63,7 @@ class PlayerAction<T> {
           ? 'custom://$streamId?size=${provider.totalBytes}'
           : 'custom://$streamId';
       return rust_types.RustAudioSource(
-        id: id,
+        id: PlatformInt64Util.from(id),
         source: url,
         dataBytes: null,
         replayGainDb: s.replayGainDb,
@@ -159,10 +159,10 @@ class PlayerAction<T> {
       );
       try {
         await _rust.play(
-          id: id,
+          id: id != null ? PlatformInt64Util.from(id) : null,
           position: position != null ? BigInt.from(position) : null,
           shuffled: shuffled,
-          seekMs: seekMs,
+          seekMs: seekMs != null ? PlatformInt64Util.from(seekMs) : null,
         );
       } catch (e) {
         if (e is MiniaudioPlayerException) rethrow;
@@ -206,7 +206,9 @@ class PlayerAction<T> {
       '[ACTION:SEEK] seek() requested -> ${targetPosition.inMilliseconds}ms. Calling native rust.seek()...',
     );
     final sw = Stopwatch()..start();
-    await _rust.seek(positionMs: targetPosition.inMilliseconds);
+    await _rust.seek(
+      positionMs: PlatformInt64Util.from(targetPosition.inMilliseconds),
+    );
     MapLogger.info(
       '[ACTION:SEEK] native rust.seek() returned successfully in ${sw.elapsedMilliseconds}ms',
     );
@@ -605,7 +607,7 @@ class PlayerAction<T> {
               peak: config.peak,
             )
           : null,
-      id: id,
+      id: id != null ? PlatformInt64Util.from(id) : null,
       position: position != null ? BigInt.from(position) : null,
     );
 
@@ -728,9 +730,11 @@ class PlayerAction<T> {
       );
     }
     await _rust.setEffects(effects: rustEffects);
-    _player.state._loadedEffectIds =
-        List.unmodifiable(_rust.getLoadedEffectIds());
-    _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
+    if (!kIsWeb) {
+      _player.state._loadedEffectIds =
+          List.unmodifiable(_rust.getLoadedEffectIds());
+      _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
+    }
   }
 
   /// Triggers playback of a polyphonic sound effect and returns a live [Voice] handle.

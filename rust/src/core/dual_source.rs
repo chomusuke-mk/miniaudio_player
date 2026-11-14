@@ -184,7 +184,6 @@ fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
     let lower_url = url.to_lowercase();
     let lower_ct = content_type.unwrap_or("").to_lowercase();
@@ -400,7 +399,6 @@ impl Read for IcyDemuxReader {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn resolve_hls_uri(base_url: &str, seg_uri: &str) -> String {
     let trimmed = seg_uri.trim();
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
@@ -1390,15 +1388,13 @@ impl DecoderWorker {
 
         self.poll_renderer_flags();
 
-        if self.handle_pending_seek() {
-            return true;
-        }
+        let _ = self.handle_pending_seek();
 
         let cur_state = PlaybackState::from_i32(self.state.load(Ordering::Relaxed));
         if cur_state == PlaybackState::Stopped {
             return true;
         }
-        if cur_state == PlaybackState::Paused && self.available_producer_slots() < 2048 {
+        if cur_state == PlaybackState::Paused && self.available_producer_slots() < 4096 {
             return true;
         }
 
@@ -1409,11 +1405,11 @@ impl DecoderWorker {
         self.dispatch_periodic_telemetry();
         self.check_buffering_recovery();
 
-        for _ in 0..8 {
+        for _ in 0..64 {
             if !self.pipeline.drain_pending_to(&self.producer_arc) {
                 break;
             }
-            if self.available_producer_slots() < 2048 {
+            if self.available_producer_slots() < 4096 {
                 break;
             }
             if self.decoder_eof_arc.load(Ordering::Relaxed) {
@@ -1421,6 +1417,7 @@ impl DecoderWorker {
             }
             self.decode_and_process_step();
         }
+        self.check_buffering_recovery();
 
         true
     }
@@ -2024,13 +2021,21 @@ impl StreamingDeck {
         if trimmed.starts_with("http://")
             || trimmed.starts_with("https://")
             || trimmed.starts_with("icy://")
+            || trimmed.starts_with("blob:")
         {
-            let url = if let Some(stripped) = trimmed.strip_prefix("icy://") {
-                format!("http://{}", stripped)
-            } else {
-                trimmed.to_string()
-            };
-            self.open_network_with_cancel(&url, headers, cancel)
+            #[cfg(target_arch = "wasm32")]
+            {
+                return self.open_network_with_cancel(trimmed, headers, cancel);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let url = if let Some(stripped) = trimmed.strip_prefix("icy://") {
+                    format!("http://{}", stripped)
+                } else {
+                    trimmed.to_string()
+                };
+                return self.open_network_with_cancel(&url, headers, cancel);
+            }
         } else {
             let resolved = resolve_local_source_path(trimmed);
             let res = self.open_file(&resolved);
@@ -2041,23 +2046,177 @@ impl StreamingDeck {
         }
     }
 
+    fn open_hls_from_m3u8_bytes<F>(
+        &mut self,
+        base_url: &str,
+        m3u8_bytes: &[u8],
+        cancel: Option<&CancelToken>,
+        mut fetch_bytes: F,
+    ) -> i32
+    where
+        F: FnMut(&str) -> Result<Vec<u8>, i32>,
+    {
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return self.mark_open_error(MAP_ERROR_ABORTED);
+        }
+        let parsed = match crate::hls::M3u8Parser::parse(m3u8_bytes) {
+            Ok(p) => p,
+            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+        };
+
+        let (base_media_url, media_playlist) = match parsed {
+            crate::hls::ParsedHlsPlaylist::Master { variants } => {
+                let Some(first_var) = variants.first() else {
+                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                };
+                if cancel.is_some_and(|c| c.is_cancelled()) {
+                    return self.mark_open_error(MAP_ERROR_ABORTED);
+                }
+                let media_url = resolve_hls_uri(base_url, &first_var.uri);
+                let media_bytes = match fetch_bytes(&media_url) {
+                    Ok(b) => b,
+                    Err(code) => return self.mark_open_error(code),
+                };
+                match crate::hls::M3u8Parser::parse(&media_bytes) {
+                    Ok(p) => (media_url, p),
+                    Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+                }
+            }
+            media => (base_url.to_string(), media),
+        };
+
+        let crate::hls::ParsedHlsPlaylist::Media {
+            is_live,
+            segments,
+            total_duration_seconds,
+            ..
+        } = media_playlist
+        else {
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        };
+
+        if segments.is_empty() {
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        }
+
+        let max_segs = if is_live { 8 } else { segments.len().min(512) };
+        let mut combined_audio = Vec::new();
+        let mut hint_ext: Option<&'static str> = None;
+
+        for seg in segments.iter().take(max_segs) {
+            if cancel.is_some_and(|c| c.is_cancelled()) {
+                return self.mark_open_error(MAP_ERROR_ABORTED);
+            }
+            let seg_url = resolve_hls_uri(&base_media_url, &seg.uri);
+            let Ok(raw_bytes) = fetch_bytes(&seg_url) else {
+                if combined_audio.is_empty() {
+                    return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+                }
+                break;
+            };
+            if raw_bytes.is_empty() {
+                continue;
+            }
+            if crate::hls::MpegTsDemuxer::is_mpeg_ts(&raw_bytes) {
+                let demuxed = crate::hls::MpegTsDemuxer::demux_segment(&raw_bytes);
+                if hint_ext.is_none() {
+                    hint_ext = match demuxed.codec {
+                        crate::hls::TsAudioCodec::AacAdts => Some("aac"),
+                        crate::hls::TsAudioCodec::Mp3 => Some("mp3"),
+                        _ => None,
+                    };
+                }
+                if !demuxed.audio_bytes.is_empty() {
+                    combined_audio.extend_from_slice(&demuxed.audio_bytes);
+                }
+            } else {
+                if hint_ext.is_none() {
+                    let fmt = infer_network_encoding_format(&seg_url, None);
+                    hint_ext = encoding_format_to_extension(fmt);
+                }
+                combined_audio.extend_from_slice(&raw_bytes);
+            }
+        }
+
+        if combined_audio.is_empty() {
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        }
+
+        if is_live {
+            let fmt = match hint_ext {
+                Some("aac") => 5,
+                Some("mp3") => 3,
+                _ => 0,
+            };
+            let res_code =
+                self.open_stream_ex(&combined_audio, None, -1, true, 4 * 1024 * 1024, fmt);
+            if res_code == MAP_SUCCESS {
+                if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
+                    session.mark_eof();
+                }
+            }
+            return res_code;
+        }
+
+        let res_code = self.open_memory_with_hint(&combined_audio, hint_ext);
+        if res_code == MAP_SUCCESS && total_duration_seconds > 0.0 {
+            let dur_ms = (total_duration_seconds * 1000.0) as i64;
+            self.duration_ms.store(dur_ms, Ordering::SeqCst);
+            self.telemetry
+                .post_event(EventType::Duration, MapEventData { duration_ms: dur_ms });
+        }
+        res_code
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub fn open_network(
         &mut self,
-        _url: &str,
-        _headers: Option<&[crate::api::types::RustHttpHeader]>,
+        url: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
     ) -> i32 {
-        self.mark_open_error(MAP_ERROR_UNSUPPORTED)
+        self.open_network_with_cancel(url, headers, None)
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn open_network_with_cancel(
         &mut self,
-        _url: &str,
-        _headers: Option<&[crate::api::types::RustHttpHeader]>,
-        _cancel: Option<&CancelToken>,
+        url: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+        cancel: Option<&CancelToken>,
     ) -> i32 {
-        self.mark_open_error(MAP_ERROR_UNSUPPORTED)
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return self.mark_open_error(MAP_ERROR_ABORTED);
+        }
+        let _ = self.begin_open();
+        self.open_generation.fetch_add(1, Ordering::AcqRel);
+
+        let bytes = match crate::bridge::ffi::wasm_fetch_source_bytes(url, headers) {
+            Ok(b) => b,
+            Err(code) => return self.mark_open_error(code),
+        };
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return self.mark_open_error(MAP_ERROR_ABORTED);
+        }
+
+        if crate::hls::M3u8Parser::is_m3u8(&bytes) {
+            return self.open_hls_from_m3u8_bytes(url, &bytes, cancel, |seg_url| {
+                crate::bridge::ffi::wasm_fetch_source_bytes(seg_url, headers)
+            });
+        }
+
+        if url.starts_with("icy://") {
+            let fmt = infer_network_encoding_format(url, None);
+            let res_code = self.open_stream_ex(&bytes, None, -1, true, 4 * 1024 * 1024, fmt);
+            if res_code == MAP_SUCCESS {
+                if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
+                    session.mark_eof();
+                }
+            }
+            return res_code;
+        }
+
+        let ext = StreamClassifier::extract_extension_hint(url);
+        self.open_memory_with_hint(&bytes, ext)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2629,54 +2788,87 @@ impl StreamingDeck {
         self.open_generation.fetch_add(1, Ordering::AcqRel);
         crate::map_log!(3, "open_file: path={}", path);
 
-        let source = match crate::buffer::FileByteSource::open(std::path::Path::new(path)) {
-            Ok(s) => s,
-            Err(_) => {
-                crate::map_log!(1, "open_file failed: file not found: {}", path);
-                return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let bytes = match crate::bridge::ffi::wasm_fetch_source_bytes(path, None) {
+                Ok(b) => b,
+                Err(code) => {
+                    crate::map_log!(1, "open_file (wasm) failed for {}: code {}", path, code);
+                    return self.mark_open_error(code);
+                }
+            };
+            if crate::hls::M3u8Parser::is_m3u8(&bytes) {
+                return self.open_hls_from_m3u8_bytes(path, &bytes, None, |seg_path| {
+                    let resolved = resolve_local_source_path(seg_path);
+                    crate::bridge::ffi::wasm_fetch_source_bytes(&resolved, None)
+                });
             }
-        };
+            let ext = StreamClassifier::extract_extension_hint(path);
+            return self.open_memory_with_hint(&bytes, ext);
+        }
 
-        let file_size = source.size();
-        let ext = std::path::Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str());
-
-        let (initial_buf, tail_data, boundary) = if let Ok(mut f) = File::open(path) {
-            Self::extract_seekable_head_and_tail(&mut f, file_size as i64)
-        } else {
-            (Vec::new(), None, BoundaryInfo::new())
-        };
-
-        let effective_hint = boundary.container.hint_extension().or(ext);
-        crate::map_log!(
-            4,
-            "open_file sniffed: container={:?}, effective_hint={:?}, size={}",
-            boundary.container,
-            effective_hint,
-            file_size
-        );
-
-        let eng = match SymphoniaEngine::new(source, effective_hint) {
-            Ok(e) => e,
-            Err(e) => {
-                crate::map_log!(1, "open_file failed: decode error for {}: {:?}", path, e);
-                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if path.to_ascii_lowercase().ends_with(".m3u8") {
+                if let Ok(m3u8_bytes) = std::fs::read(path) {
+                    if crate::hls::M3u8Parser::is_m3u8(&m3u8_bytes) {
+                        return self.open_hls_from_m3u8_bytes(path, &m3u8_bytes, None, |seg_path| {
+                            let resolved = resolve_local_source_path(seg_path);
+                            std::fs::read(&resolved).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)
+                        });
+                    }
+                }
             }
-        };
 
-        let session = StreamSession::new(65536, Some(file_size), false);
-        let classified_boundary = session.ingest_classified(
-            &initial_buf,
-            tail_data.as_ref().map(|(v, off)| (v.as_slice(), *off)),
-        );
-        session.mark_eof();
-        *write_unpoisoned(&self.boundary_info) = Some(classified_boundary);
-        *write_unpoisoned(&self.stream_session) = Some(session);
+            let source = match crate::buffer::FileByteSource::open(std::path::Path::new(path)) {
+                Ok(s) => s,
+                Err(_) => {
+                    crate::map_log!(1, "open_file failed: file not found: {}", path);
+                    return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+                }
+            };
 
-        self.init_engine(eng, false, file_size, &initial_buf);
-        crate::map_log!(3, "open_file successfully opened: {}", path);
-        MAP_SUCCESS
+            let file_size = source.size();
+            let ext = std::path::Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str());
+
+            let (initial_buf, tail_data, boundary) = if let Ok(mut f) = File::open(path) {
+                Self::extract_seekable_head_and_tail(&mut f, file_size as i64)
+            } else {
+                (Vec::new(), None, BoundaryInfo::new())
+            };
+
+            let effective_hint = boundary.container.hint_extension().or(ext);
+            crate::map_log!(
+                4,
+                "open_file sniffed: container={:?}, effective_hint={:?}, size={}",
+                boundary.container,
+                effective_hint,
+                file_size
+            );
+
+            let eng = match SymphoniaEngine::new(source, effective_hint) {
+                Ok(e) => e,
+                Err(e) => {
+                    crate::map_log!(1, "open_file failed: decode error for {}: {:?}", path, e);
+                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                }
+            };
+
+            let session = StreamSession::new(65536, Some(file_size), false);
+            let classified_boundary = session.ingest_classified(
+                &initial_buf,
+                tail_data.as_ref().map(|(v, off)| (v.as_slice(), *off)),
+            );
+            session.mark_eof();
+            *write_unpoisoned(&self.boundary_info) = Some(classified_boundary);
+            *write_unpoisoned(&self.stream_session) = Some(session);
+
+            self.init_engine(eng, false, file_size, &initial_buf);
+            crate::map_log!(3, "open_file successfully opened: {}", path);
+            MAP_SUCCESS
+        }
     }
 
     pub fn open_memory(&mut self, data: &[u8], _take_ownership: bool) -> i32 {

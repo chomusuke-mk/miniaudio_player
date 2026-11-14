@@ -129,7 +129,52 @@ impl ControlCoordinator {
         };
         #[cfg(target_arch = "wasm32")]
         let coord_jh: Option<JoinHandle<()>> = {
-            let _ = (hint_rx, wake_rx);
+            let weak = Arc::downgrade(&inner);
+            crate::bridge::ffi::wasm_register_monitor_task(Box::new(move || {
+                let Some(coord) = weak.upgrade() else {
+                    return false;
+                };
+                if coord.disposed.load(Ordering::Acquire) {
+                    return false;
+                }
+                while let Ok(msg) = wake_rx.try_recv() {
+                    match msg {
+                        CoordWake::Shutdown => return false,
+                        CoordWake::PrewarmCheck { retry_if_failed } => {
+                            coord.run_prewarm_check(retry_if_failed);
+                        }
+                    }
+                }
+                while let Ok(msg) = hint_rx.try_recv() {
+                    match msg {
+                        RtControlHint::PrewarmNeeded => {
+                            coord.run_prewarm_check(true);
+                        }
+                        RtControlHint::AutoAdvanceNeeded {
+                            expected_deck_id,
+                            expected_open_gen,
+                            next_idx,
+                            item,
+                            should_auto_xfade,
+                            auto_ms,
+                            dur_ms,
+                            pos_ms,
+                        } => {
+                            coord.handle_auto_advance_hint(
+                                expected_deck_id,
+                                expected_open_gen,
+                                next_idx,
+                                item,
+                                should_auto_xfade,
+                                auto_ms,
+                                dur_ms,
+                                pos_ms,
+                            );
+                        }
+                    }
+                }
+                true
+            }));
             None
         };
 
@@ -657,14 +702,7 @@ impl CoordInner {
         if self.disposed.load(Ordering::Acquire) {
             return;
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = self.wake_tx.try_send(CoordWake::PrewarmCheck { retry_if_failed });
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.run_prewarm_check(retry_if_failed);
-        }
+        let _ = self.wake_tx.try_send(CoordWake::PrewarmCheck { retry_if_failed });
     }
 
     fn submit_open_spec(

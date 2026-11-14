@@ -7,7 +7,7 @@ use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use crate::sync::MonotonicInstant as Instant;
 
 use crate::api::types::{AudioOutputSource, RustAudioOutput};
 use crate::bridge::ffi::{

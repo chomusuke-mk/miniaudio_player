@@ -2,7 +2,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::sync::MonotonicInstant as Instant;
 
 use crate::sync::lock_unpoisoned;
 
@@ -107,15 +109,23 @@ impl CancelToken {
 
     /// Sleeps up to `total`, returning `true` early if the token is cancelled.
     pub fn sleep_interruptible(&self, total: Duration) -> bool {
-        let start = Instant::now();
-        while !self.is_cancelled() {
-            let elapsed = start.elapsed();
-            if elapsed >= total {
-                return false;
-            }
-            let step = (total - elapsed).min(Duration::from_millis(5));
-            std::thread::sleep(step);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = total;
+            self.is_cancelled()
         }
-        true
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let start = Instant::now();
+            while !self.is_cancelled() {
+                let elapsed = start.elapsed();
+                if elapsed >= total {
+                    return false;
+                }
+                let step = (total - elapsed).min(Duration::from_millis(5));
+                std::thread::sleep(step);
+            }
+            true
+        }
     }
 }

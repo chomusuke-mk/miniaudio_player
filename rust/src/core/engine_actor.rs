@@ -7,9 +7,16 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+#[cfg(target_arch = "wasm32")]
+use std::thread::JoinHandle;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::sync::MonotonicInstant as Instant;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crossbeam_channel::RecvTimeoutError;
 
 use crate::api::types::{RustAudioInfo, RustAudioInput, RustAudioMetadata, RustAudioOutput};
@@ -796,6 +803,12 @@ fn tick_music_lifecycle(
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+struct WasmActorState {
+    player: Option<Box<MiniaudioPlayer>>,
+    pub_cache: SnapshotPublishCache,
+}
+
 /// Handle to the single-owner `map-engine-clock` audio actor, SFX controller, and wait-free snapshots.
 #[derive(Clone)]
 pub struct EngineActorHandle {
@@ -805,6 +818,8 @@ pub struct EngineActorHandle {
     reaper: ReaperHandle,
     disposed: Arc<AtomicBool>,
     clock_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
+    #[cfg(target_arch = "wasm32")]
+    wasm_state: Arc<Mutex<WasmActorState>>,
 }
 
 impl EngineActorHandle {
@@ -827,6 +842,7 @@ impl EngineActorHandle {
         ),
         String,
     > {
+        #[allow(unused_mut)]
         let mut player = MiniaudioPlayer::new(
             sample_rate,
             channels,
@@ -858,85 +874,148 @@ impl EngineActorHandle {
         let (hint_tx, hint_rx) = crossbeam_channel::bounded::<RtControlHint>(RT_HINT_CAP);
 
         let period_frames = period_size.max(64) as usize;
-        let clock_sr = sample_rate.max(8000);
+        let _clock_sr = sample_rate.max(8000);
         let snap_clone = snapshots.clone();
 
-        let clock_jh = thread::Builder::new()
-            .name("map-engine-clock".to_string())
-            .spawn(move || {
-                let period_duration = Duration::from_nanos(
-                    (period_frames as u64 * 1_000_000_000) / clock_sr as u64,
-                );
-                let mut next_tick = Instant::now();
-                let mut pub_cache = SnapshotPublishCache::default();
-                let mut hint_state = LifecycleHintState::default();
-                let mut pending_notices: Vec<RtEngineNotice> = Vec::with_capacity(8);
-                publish_snapshots(&player, &snap_clone, &mut pub_cache);
+        #[cfg(not(target_arch = "wasm32"))]
+        let clock_jh = {
+            let clock_sr = _clock_sr;
+            let jh = thread::Builder::new()
+                .name("map-engine-clock".to_string())
+                .spawn(move || {
+                    let period_duration = Duration::from_nanos(
+                        (period_frames as u64 * 1_000_000_000) / clock_sr as u64,
+                    );
+                    let mut next_tick = Instant::now();
+                    let mut pub_cache = SnapshotPublishCache::default();
+                    let mut hint_state = LifecycleHintState::default();
+                    let mut pending_notices: Vec<RtEngineNotice> = Vec::with_capacity(8);
+                    publish_snapshots(&player, &snap_clone, &mut pub_cache);
 
-                loop {
-                    while let Ok(msg) = cmd_rx.try_recv() {
-                        match msg {
-                            RtActorMsg::Call(task) => {
-                                let post = task(&mut player);
-                                publish_snapshots(&player, &snap_clone, &mut pub_cache);
-                                if let Some(cb) = post {
-                                    cb();
+                    loop {
+                        while let Ok(msg) = cmd_rx.try_recv() {
+                            match msg {
+                                RtActorMsg::Call(task) => {
+                                    let post = task(&mut player);
+                                    publish_snapshots(&player, &snap_clone, &mut pub_cache);
+                                    if let Some(cb) = post {
+                                        cb();
+                                    }
+                                }
+                                RtActorMsg::Shutdown(ack) => {
+                                    player.dispose();
+                                    drop(player);
+                                    let _ = ack.send(());
+                                    return;
                                 }
                             }
-                            RtActorMsg::Shutdown(ack) => {
-                                player.dispose();
-                                drop(player);
-                                let _ = ack.send(());
-                                return;
+                        }
+
+                        let now = Instant::now();
+                        if now >= next_tick {
+                            player.render_pcm(period_frames);
+                            tick_music_lifecycle(
+                                &mut player,
+                                &mut pending_notices,
+                                &hint_tx,
+                                &mut hint_state,
+                            );
+                            publish_snapshots(&player, &snap_clone, &mut pub_cache);
+                            // Dispatch edge notices only after snapshot publication so monitors reading
+                            // `EngineUiSnapshots` on wake never observe stale track index/metadata.
+                            for notice in pending_notices.drain(..) {
+                                let _ = notify_tx.try_send(notice);
+                            }
+                            next_tick += period_duration;
+                            let after = Instant::now();
+                            if next_tick + period_duration < after {
+                                next_tick = after;
+                            }
+                        } else {
+                            match cmd_rx.recv_timeout(next_tick - now) {
+                                Ok(RtActorMsg::Call(task)) => {
+                                    let post = task(&mut player);
+                                    publish_snapshots(&player, &snap_clone, &mut pub_cache);
+                                    if let Some(cb) = post {
+                                        cb();
+                                    }
+                                }
+                                Ok(RtActorMsg::Shutdown(ack)) => {
+                                    player.dispose();
+                                    drop(player);
+                                    let _ = ack.send(());
+                                    return;
+                                }
+                                Err(RecvTimeoutError::Timeout) => {}
+                                Err(RecvTimeoutError::Disconnected) => {
+                                    player.dispose();
+                                    return;
+                                }
                             }
                         }
                     }
+                })
+                .map_err(|e| format!("Failed to spawn map-engine-clock: {}", e))?;
+            Some(jh)
+        };
 
-                    let now = Instant::now();
-                    if now >= next_tick {
-                        player.render_pcm(period_frames);
-                        tick_music_lifecycle(
-                            &mut player,
-                            &mut pending_notices,
-                            &hint_tx,
-                            &mut hint_state,
-                        );
-                        publish_snapshots(&player, &snap_clone, &mut pub_cache);
-                        // Dispatch edge notices only after snapshot publication so monitors reading
-                        // `EngineUiSnapshots` on wake never observe stale track index/metadata.
-                        for notice in pending_notices.drain(..) {
-                            let _ = notify_tx.try_send(notice);
-                        }
-                        next_tick += period_duration;
-                        let after = Instant::now();
-                        if next_tick + period_duration < after {
-                            next_tick = after;
-                        }
-                    } else {
-                        match cmd_rx.recv_timeout(next_tick - now) {
-                            Ok(RtActorMsg::Call(task)) => {
-                                let post = task(&mut player);
-                                publish_snapshots(&player, &snap_clone, &mut pub_cache);
+        #[cfg(target_arch = "wasm32")]
+        let (clock_jh, wasm_state) = {
+            let mut pub_cache = SnapshotPublishCache::default();
+            publish_snapshots(&player, &snap_clone, &mut pub_cache);
+            let state = Arc::new(Mutex::new(WasmActorState {
+                player: Some(player),
+                pub_cache,
+            }));
+            let state_for_worker = state.clone();
+            let mut hint_state = LifecycleHintState::default();
+            let mut pending_notices: Vec<RtEngineNotice> = Vec::with_capacity(8);
+
+            crate::bridge::ffi::wasm_register_monitor_task(Box::new(move || {
+                let mut guard = crate::sync::lock_unpoisoned(&state_for_worker);
+                let WasmActorState {
+                    ref mut player,
+                    ref mut pub_cache,
+                } = *guard;
+                while let Ok(msg) = cmd_rx.try_recv() {
+                    match msg {
+                        RtActorMsg::Call(task) => {
+                            if let Some(ref mut ply) = player {
+                                let post = task(ply);
+                                publish_snapshots(ply, &snap_clone, pub_cache);
                                 if let Some(cb) = post {
                                     cb();
                                 }
                             }
-                            Ok(RtActorMsg::Shutdown(ack)) => {
-                                player.dispose();
-                                drop(player);
-                                let _ = ack.send(());
-                                return;
+                        }
+                        RtActorMsg::Shutdown(ack) => {
+                            if let Some(mut ply) = player.take() {
+                                ply.dispose();
                             }
-                            Err(RecvTimeoutError::Timeout) => {}
-                            Err(RecvTimeoutError::Disconnected) => {
-                                player.dispose();
-                                return;
-                            }
+                            let _ = ack.send(());
+                            return false;
                         }
                     }
                 }
-            })
-            .map_err(|e| format!("Failed to spawn map-engine-clock: {}", e))?;
+                let Some(ref mut ply) = player else {
+                    return false;
+                };
+                ply.render_pcm(period_frames);
+                tick_music_lifecycle(
+                    ply,
+                    &mut pending_notices,
+                    &hint_tx,
+                    &mut hint_state,
+                );
+                publish_snapshots(ply, &snap_clone, pub_cache);
+                for notice in pending_notices.drain(..) {
+                    let _ = notify_tx.try_send(notice);
+                }
+                true
+            }));
+
+            (None, state)
+        };
 
         Ok((
             Self {
@@ -945,7 +1024,9 @@ impl EngineActorHandle {
                 effects,
                 reaper,
                 disposed: Arc::new(AtomicBool::new(false)),
-                clock_thread: Arc::new(Mutex::new(Some(clock_jh))),
+                clock_thread: Arc::new(Mutex::new(clock_jh)),
+                #[cfg(target_arch = "wasm32")]
+                wasm_state,
             },
             notify_rx,
             hint_rx,
@@ -979,17 +1060,34 @@ impl EngineActorHandle {
         if self.disposed.load(Ordering::Acquire) {
             return Err("AudioEngineDisposed: engine has been disposed".to_string());
         }
-        let (tx, rx) = crossbeam_channel::bounded::<R>(1);
-        self.cmd_tx
-            .send(RtActorMsg::Call(Box::new(move |ply| {
-                let res = f(ply);
-                Some(Box::new(move || {
-                    let _ = tx.send(res);
-                }))
-            })))
-            .map_err(|_| "AudioEngineDisposed: clock actor stopped".to_string())?;
-        rx.recv()
-            .map_err(|_| "AudioEngineDisposed: clock actor dropped reply".to_string())
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut guard = crate::sync::lock_unpoisoned(&self.wasm_state);
+            let WasmActorState {
+                ref mut player,
+                ref mut pub_cache,
+            } = *guard;
+            let Some(ref mut ply) = player else {
+                return Err("AudioEngineDisposed: engine has been disposed".to_string());
+            };
+            let res = f(ply);
+            publish_snapshots(ply, &self.snapshots, pub_cache);
+            return Ok(res);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (tx, rx) = crossbeam_channel::bounded::<R>(1);
+            self.cmd_tx
+                .send(RtActorMsg::Call(Box::new(move |ply| {
+                    let res = f(ply);
+                    Some(Box::new(move || {
+                        let _ = tx.send(res);
+                    }))
+                })))
+                .map_err(|_| "AudioEngineDisposed: clock actor stopped".to_string())?;
+            rx.recv()
+                .map_err(|_| "AudioEngineDisposed: clock actor dropped reply".to_string())
+        }
     }
 
     /// Posts an asynchronous fire-and-forget mutation to `map-engine-clock`.
@@ -1000,10 +1098,26 @@ impl EngineActorHandle {
         if self.disposed.load(Ordering::Acquire) {
             return;
         }
-        let _ = self.cmd_tx.send(RtActorMsg::Call(Box::new(move |ply| {
-            f(ply);
-            None
-        })));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut guard = crate::sync::lock_unpoisoned(&self.wasm_state);
+            let WasmActorState {
+                ref mut player,
+                ref mut pub_cache,
+            } = *guard;
+            if let Some(ref mut ply) = player {
+                f(ply);
+                publish_snapshots(ply, &self.snapshots, pub_cache);
+            }
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = self.cmd_tx.send(RtActorMsg::Call(Box::new(move |ply| {
+                f(ply);
+                None
+            })));
+        }
     }
 
     /// Shuts down `map-engine-clock` and `map-reaper` deterministically (idempotent).
@@ -1011,9 +1125,20 @@ impl EngineActorHandle {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded::<()>(1);
-        if self.cmd_tx.send(RtActorMsg::Shutdown(ack_tx)).is_ok() {
-            let _ = ack_rx.recv_timeout(Duration::from_secs(3));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut guard = crate::sync::lock_unpoisoned(&self.wasm_state);
+            if let Some(mut ply) = guard.player.take() {
+                ply.dispose();
+            }
+            let _ = &self.cmd_tx;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (ack_tx, ack_rx) = crossbeam_channel::bounded::<()>(1);
+            if self.cmd_tx.send(RtActorMsg::Shutdown(ack_tx)).is_ok() {
+                let _ = ack_rx.recv_timeout(Duration::from_secs(3));
+            }
         }
         if let Some(jh) = crate::sync::lock_unpoisoned(&self.clock_thread).take() {
             let _ = jh.join();
