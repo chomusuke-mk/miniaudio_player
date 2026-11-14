@@ -1,33 +1,46 @@
 # Changelog
 
-## 3.1.0
+## 4.0.0
 
-- **Library Initialization & Startup Safety (`MiniaudioPlayer.ensureInitialized`)**:
-  - Made explicit initialization mandatory via `await MiniaudioPlayer.ensureInitialized();` in `main()` prior to any player instantiation.
-  - Added an early defensive check inside `MiniaudioPlayer` constructor throwing a descriptive `StateError` with actionable troubleshooting if instantiated before initialization.
-- **Buffer Telemetry Simplification & Zero Bloat (`Buffer`)**:
-  - Replaced legacy `BufferedRange` and eliminated `bufferedPosition` and `bufferedPercentage` in favor of a clean, unbloated `Buffer` model (`start`, `end`, `isBuffering`).
-  - Removed duplicate convenience getters and redundant utility methods to maintain strict, clean separation of concerns.
-- **Reactive Stream Activators & Event Switches (`visualizerEnabled` & `metaBytesEnabled`)**:
-  - Added `action.setVisualizerEnabled(bool)` and `action.setMetaBytesEnabled(bool)` control switches.
-  - Telemetry event streams for 10-band BPF visualizer and raw metadata packets operate at 0% idle CPU and zero channel saturation by default until activated.
-  - Added synchronous state flags (`state.visualizerEnabled`, `state.metaBytesEnabled`) and reactive broadcast streams (`stream.visualizerEnabled`, `stream.metaBytesEnabled`).
-  - Raw stream metadata bytes are detected and streamed 100% natively from Rust via `stream.metaBytes` without Dart-side parsing or polling overhead.
-- **Native RAM Sound Effects & Memory Management (100% Rust Decoded Voice Pool)**:
-  - Transitioned RAM sound effects management 100% to Rust via Symphonia, completely bypassing Dart garbage collection and isolate heap memory.
-  - Zero Dart memory duplication: audio bytes and file references transfer memory ownership directly to Rust.
-  - Real-time Rust memory tracking: exposes `state.allocatedRamBytes`, `state.loadedEffectIds`, and `state.activeVoicesCount` (along with reactive broadcast streams).
-  - Polyphonic concurrent playback up to 64 voices with independent volume and pitch control via `action.playEffect()`, `action.stopEffect()`, `action.loadEffect()`, and `action.unloadEffect()`.
-- **Monotonic 64-bit Queue IDs & Native Reordering (`reorderByIds`)**:
-  - Each `AudioSource` added to a playlist queue is assigned an immutable, monotonically increasing 64-bit integer ID (`id: 1, 2, 3...`) unique across the player lifecycle.
-  - Added `action.reorderByIds(List<int> ids)` for deterministic $\mathcal{O}(1)$ queue reordering directly in Rust without re-allocating or re-encoding.
-  - Refactored `AudioSource` factory constructors with clean Dart 3 pattern matching, removing `source is AudioSource` anti-patterns.
-- **Studio Master Console Example Overhaul**:
-  - Fixed startup crash where `MiniaudioPlayer` was instantiated before `RustLib.init()`.
-  - Added live Continuous Buffer Range and Buffering Status telemetry strip in `PlaybackEngineCard`.
-  - Added MetaBytes Stream Event Bus activator and live packet counter.
-  - Added dedicated `RamSoundEffectsCard` showcasing real-time Rust RAM allocation (in KB), active voice count, polyphonic laser/chime/beep sound triggers, and immediate 0 KB release upon unload.
-  - Enhanced `PlaylistQueueCard` with monotonic track ID badges (`#1`, `#2`, ...) and `reverseQueueByIds` native reordering demonstration.
+Major architectural evolution introducing a pure-Rust audio/DSP/buffering core paired with a thin C11 hardware device bridge and `flutter_rust_bridge` v2 bindings, unifying music playback, effects, multi-routing, recording, and acoustic analysis under `MiniaudioPlayer<T>`.
+
+### Core Architecture & FFI
+- **Rust Engine Core + Minimal C11 Device Bridge**:
+  - Migrated decoding, buffering, resampling, mixing, DSP, spatialization, recording, and analysis into `miniaudio_player_rust` (`rust/`), keeping a minimal C11 device enumeration and PCM callback bridge (`rust/c_src/miniaudio_device_bridge.c` + `miniaudio.h`).
+  - Configured size- and speed-optimized release builds (`opt-level = "s"`, `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`).
+  - Added explicit startup safety via `await MiniaudioPlayer.ensureInitialized();` with a defensive `StateError` if `MiniaudioPlayer` is instantiated before initialization.
+- **Single-Owner Actor (`map-engine-clock`) & Lock-Free Concurrency**:
+  - Replaced coarse outer mutexes with exclusive single-owner RT thread execution (`EngineActor` / `map-engine-clock`), non-blocking `ControlCoordinator`, `HardwareDeviceSupervisor`, and off-thread asynchronous disposal (`ReaperHandle` / `map-reaper`).
+  - Published telemetry via wait-free atomics and `CachePaddedSeqlock<VisualizerData>` (`EngineUiSnapshots`), isolating UI polling from audio callbacks.
+  - Adopted `IoWorkerPool` with a zero-delay local lane (`map-io-local`) and `4` coalesced network workers (`map-io-net-*`, 18 ms quiet / 140 ms burst cap, monotonic epoch & `CancelToken` pre-emption) plus standby-deck pre-warming (`PrewarmJob`).
+- **Canonical `MiniaudioPlayer<T>` API & Breaking Cleanups**:
+  - Consolidated `MiniaudioEngine` and player APIs into canonical `MiniaudioPlayer<T>` with orthogonal `player.action`, `player.state`, and `player.stream` namespaces, monotonic 64-bit queue item IDs, and serialized queue vs immediate RT action lanes (`_serializeQueue` + epoch superseding).
+  - Unified all media sources into a single concrete `AudioSource<T>` accepting file paths/`Uri`, `Uint8List`/`List<int>` (transferred directly to Rust and cleared on Dart via `_clearBytes()`), `data:` URIs, `asset://`, HTTP/HTTPS VOD, ICY live streams, HLS `.m3u8` playlists, and `CustomByteProvider` (`custom://<streamId>`).
+  - Replaced legacy `BufferedRange` with clean `Buffer` (`start`, `end`, `isBuffering`), replaced raw `metaBytes` drafts with parsed `setMetadataEnabled` / `stream.metadata` (`AudioMetadata`) and `setVisualizerEnabled` switches, and removed legacy exclusive mode and Dart `assetLoader` hooks.
+
+### Decoding, Streaming & Buffering
+- **Symphonia 0.6 Multi-Codec Engine & HLS + AES-128-CBC**:
+  - Replaced C decoders with Symphonia 0.6 (`MP3`, `FLAC`, `Vorbis`, `AAC`, `ALAC`, `WAV`, `AIFF`, `CAF`, `MKV/WebM/MKA`), `symphonia-adapter-libopus` (`Opus`), `symphonia-adapter-fdk-aac`, plus native Rust readers for **Monkey's Audio (`.ape`)**, **WavPack (`.wv`)**, **DSF/DSD (`.dsf`)**, and **Extended PCM** (`RF64`, `RIFX`, `W64`, `BWF`, high-depth PCM/float).
+  - Added full **HLS (`.m3u8`)** streaming (`m3u8-rs`), **AES-128-CBC** key/IV segment decryption, **MPEG-TS** demuxing, and inline **Shoutcast/Icecast ICY** live metadata extraction.
+- **3-Plane `StreamSession` & Progressive Sliding-Window Fetch**:
+  - Replaced legacy C `map_buffer_t` with `StreamSession`: linear pinned `Head` (`BufferBackend::Linear`, >= 64 KB), 8 MB default sliding circular `Body` (`BufferBackend::Circular` `[B_back | B_ahead]`), and sparse `Metadata` (`BTreeMap<u64, Vec<u8>>`), bridged via `DemuxedStreamReader` and `MetadataStreamReader`.
+  - Implemented 3-phase `BlockFetchPhase` (`UrgentBootstrap` -> `Stabilization` -> `CoalescedCruise` 15 s super-blocks) with rate-scaled lookahead (`1.0x..3.0x`) and `O(1)` in-window seeks.
+
+### Playback, Mixing, DSP, SFX & Analysis
+- **Dual-Deck Queue, Crossfade, Infinite Mix & Rust DSP Pipeline**:
+  - Migrated authoritative playlists, Fisher-Yates shuffle, `reorderByIds`, `EqualPower`/`Linear` crossfading, and `InfiniteMixConfig` (`stream.needMoreTracks`) natively into `MusicManager` (`DualSource`).
+  - Added `Rubato` high-order resampler, `SonicStream` / `TimeStretch` independent rate & pitch, `SilenceDetector` FSM with 5 ms crossfade and saved-duration tracking, ISO 266 10-band DF2T `Equalizer` + Preamp, `Bs2bCrossfeed`, `Freeverb` algorithmic reverb, `Spatializer`, `SoftLimiter` brickwall peak limiter, `SimdMixer` (AVX2/FMA & NEON), and per-deck `ReplayGainMode` (`disabled`, `track`, `forced`) eliminating crossfade loudness jumps.
+- **64-Voice Polyphonic RAM Effects Pool & 3D Spatial Audio + Doppler**:
+  - Added `EffectsManager` (`VoicePoolRt`) for up to 64 concurrent voices with zero Dart heap duplication, configurable memory limits (`maxRamBytes`, LRU eviction for file/network SFX while pinning memory-backed SFX), `EffectConfig` (`DspRouting::{inherit, isolate, bypass}`, `VoiceStealingPolicy`, gain/pitch/pan jitter), and controllable `Voice` handles.
+  - Added 3D spatial positioning and velocity-driven Doppler pitch shifting (`SpatialListener`, `SpatialEmitter`, `DistanceModel`, `Vector3`).
+- **Multi-Output Routing Matrix, Multi-Input Auto-Ducking & Live WAV Recording**:
+  - Added concurrent multi-device `AudioOutput` routing across 5 isolated audio buses (`all`, `musicMix`, `activeTrack`, `standbyTrack`, `voiceOnly`) for DJ CUE pre-listening and clean broadcasts, with hardware OS endpoint deduplication (`AUTO` vs explicit ID) and hot-plug detection (`pauseOnDeviceChange`).
+  - Added multi-microphone `AudioInput` capture, live-edge jitter drop, configurable direct monitoring, and lock-free RMS sidechain `AutoDucker` (`DuckingConfig`) with max-attenuation multi-mic arbitration.
+  - Added lock-free WAV disk recording (`startRecording` / `stopRecording`, `WavFormat.pcm16` & `float32`, selective `AudioOutputSource` capture).
+- **Single-Pass Audio Analyzer, Lofty Metadata & Chromaprint**:
+  - Added `MiniaudioPlayer.analyzeAudio` / `analyzeAudioSync` executing header fast-path or a single decode pass for ITU-R BS.1770-4 LUFS / ReplayGain, O(1)-RAM adaptive 2:1 RMS decimated waveforms (`100` points default), full `lofty` + chapter/artwork `AudioMetadata`, and `Chromaprint` (`Algorithm::Test2`) fingerprints for AcoustID lookup.
+- **Studio Master Console Example App**:
+  - Rebuilt `example/` into three responsive views: `Studio Master Console` (`2:2:1` top row for Playing, Queue, Effects and `1:2` bottom row for Hardware Routing + Spectrum Visualizer and compact DSP grid), `Audio Analyzer` (100-block interactive waveform, collapsible telemetry, AcoustID lookup, and native optimization breakdowns), and the updated v4.0.0 `Ingest & Buffer Matrix`.
 
 ## 3.0.2
 

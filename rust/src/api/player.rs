@@ -37,6 +37,7 @@ fn encode_opt_bool(v: bool) -> u8 {
     if v { OPT_BOOL_TRUE } else { OPT_BOOL_FALSE }
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 #[derive(Default)]
 struct ComplexTelemetryCache {
     replay_gain: Option<(u32, u32)>,
@@ -45,6 +46,7 @@ struct ComplexTelemetryCache {
     visualizer: Option<RustVisualizerData>,
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 struct AtomicTelemetryFilter {
     state: AtomicI64,
     pos: AtomicI64,
@@ -60,6 +62,7 @@ struct AtomicTelemetryFilter {
     complex: Mutex<ComplexTelemetryCache>,
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 impl Default for AtomicTelemetryFilter {
     fn default() -> Self {
         Self {
@@ -79,6 +82,7 @@ impl Default for AtomicTelemetryFilter {
     }
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 impl AtomicTelemetryFilter {
     fn reset(&self) {
         self.state.store(0, Ordering::Release);
@@ -201,6 +205,7 @@ impl AtomicTelemetryFilter {
     }
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 #[derive(Default)]
 struct EventSinkState {
     sink: Option<StreamSink<RustPlayerEvent>>,

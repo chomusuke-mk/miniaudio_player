@@ -12,6 +12,34 @@
       "problemMatcher": []
     },
     {
+      "label": "rust: build native (release)",
+      "detail": "Compiles the native Rust audio engine (release) via rust/Cargo.toml.",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--release",
+        "--manifest-path",
+        "rust/Cargo.toml"
+      ],
+      "group": "build",
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "rust: check wasm32",
+      "detail": "Type-checks the Rust audio engine for the wasm32-unknown-unknown target.",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "check",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--target",
+        "wasm32-unknown-unknown"
+      ],
+      "problemMatcher": "$rustc"
+    },
+    {
       "label": "frb: build web wasm (release)",
       "detail": "Compiles the Rust audio engine to WebAssembly (web/pkg/) without SharedArrayBuffer/COOP-COEP server header requirements.",
       "type": "shell",
@@ -28,6 +56,17 @@
         "--release",
         "rust"
       ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "rust: build all (native + web wasm)",
+      "detail": "Sequentially compiles both the native release library and the WebAssembly bundle.",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "rust: build native (release)",
+        "frb: build web wasm (release)"
+      ],
       "group": {
         "kind": "build",
         "isDefault": true
@@ -43,6 +82,59 @@
         "frb: build web wasm (release)"
       ],
       "problemMatcher": []
+    },
+    {
+      "label": "frb: generate & build all (native + web)",
+      "detail": "Regenerates FRB bindings and compiles both native release Rust and WebAssembly bundles.",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "frb: generate bindings",
+        "rust: build native (release)",
+        "frb: build web wasm (release)"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "rust: test",
+      "detail": "Runs the Rust unit and integration test suites in release mode (matching benchmark latency targets).",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--release",
+        "--manifest-path",
+        "rust/Cargo.toml"
+      ],
+      "group": "test",
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "dart: analyze package",
+      "detail": "Runs static analysis on the miniaudio_player Dart package.",
+      "type": "shell",
+      "command": "dart",
+      "args": [
+        "analyze"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "example: test",
+      "detail": "Runs Flutter widget tests in the example app.",
+      "type": "shell",
+      "command": "flutter",
+      "args": [
+        "test",
+        "-j",
+        "1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/example"
+      },
+      "group": "test",
+      "problemMatcher": []
     }
   ]
 }
+

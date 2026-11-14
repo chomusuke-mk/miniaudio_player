@@ -84,6 +84,7 @@ symphonia-adapter-fdk-aac = "0.2"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 wasm-bindgen-futures = "0.4"
 
 [build-dependencies]

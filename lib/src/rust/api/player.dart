@@ -7,8 +7,11 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit_event`, `emit_queue`, `sync_deck_replay_gain`
+// These functions are ignored because they are not marked as `pub`: `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AtomicTelemetryFilter`, `ComplexTelemetryCache`, `EventSinkState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `default`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Sets the global native diagnostic logging verbosity level.
 void setLogLevel({required int level}) =>
@@ -41,7 +44,7 @@ abstract class EventReporter implements RustOpaqueInterface {
   static Future<EventReporter> newInstance() =>
       RustLib.instance.api.crateApiPlayerEventReporterNew();
 
-  /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events.
+  /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events atomically.
   Stream<RustPlayerEvent> setSink();
 }
 

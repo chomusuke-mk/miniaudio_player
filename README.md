@@ -1,816 +1,450 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/banner.svg" alt="miniaudio_player banner" width="100%" />
-</p>
+<div align="center">
 
-# <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/icons/icon.png" alt="miniaudio_player icon" width="40" height="40" align="center" /> miniaudio_player
+![miniaudio_player Banner](pictures/banner.svg)
 
-[![pub package](https://img.shields.io/pub/v/miniaudio_player.svg?logo=dart&color=blue)](https://pub.dev/packages/miniaudio_player)
-[![Demo](https://img.shields.io/badge/demo-online-blueviolet?logo=googlechrome&logoColor=white)](https://miniaudio_player.chomusuke.dev/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/platform-android%20|%20ios%20|%20macos%20|%20windows%20|%20linux%20|%20web-blue.svg)](https://pub.dev/packages/miniaudio_player)
-[![Dart FFI & Wasm](https://img.shields.io/badge/Dart-FFI%20Native%20Assets%20%7C%20WebAssembly-0175C2.svg?logo=dart)](https://dart.dev/interop/c-interop)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](#)
-[![Donate (Buy me a coffee)](https://img.shields.io/badge/Donate-Buy%20me%20a%20coffee-orange?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/chomusuke)
-[![Donate (Patreon)](https://img.shields.io/badge/Donate-Patreon-critical?logo=patreon&logoColor=white)](https://www.patreon.com/chomusuke_dev)
-[![Donate (Ko-fi)](https://img.shields.io/badge/Donate-Ko--fi-yellow?logo=kofi&logoColor=white)](https://ko-fi.com/chomusuke_dev)
+[![pub package](https://img.shields.io/pub/v/miniaudio_player.svg?style=for-the-badge&color=0284c7)](https://pub.dev/packages/miniaudio_player)
+[![License: MIT](https://img.shields.io/badge/License-MIT-8b5cf6.svg?style=for-the-badge)](LICENSE)
+[![Engine Core](https://img.shields.io/badge/Engine-Rust%20%2B%20C99%20HAL-f97316?style=for-the-badge)](#architecture-highlights)
+[![Decoders](https://img.shields.io/badge/Audio-Symphonia%200.6%20%2B%20miniaudio-38bdf8?style=for-the-badge)](#supported-formats--codecs)
+[![Platforms](https://img.shields.io/badge/Platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android%20%7C%20iOS%20%7C%20Web-10b981?style=for-the-badge)](#platform-support)
 
-An **ultra-low-resource, high-performance cross-platform audio player, queue orchestrator, and studio DSP engine** for Flutter, Dart, and Web. Powered by the industry-standard [miniaudio](https://miniaud.io/) C99 engine, [Sonic DSP](https://github.com/waywardgeek/sonic), **Dart Native Assets** with 100% pure FFI on mobile/desktop, and **WebAssembly AudioWorklet** pipelines in modern browsers.
+**The high-performance native audio engine for Flutter & Dart — powered by a lock-free Rust DSP & decoding core (`miniaudio_player_rust` + Symphonia 0.6), a minimal C99 `miniaudio` hardware bridge, and `flutter_rust_bridge` v2.**
 
-Engineered from the ground up for professional electroacoustic fidelity, sub-microsecond command latency, deterministic real-time execution ($\mathcal{O}(1)$), and zero UI stutter by isolating audio processing across dedicated OS real-time audio threads and Web Workers.
+</div>
 
 ---
 
-## 📸 Studio Master Console (Hero Preview)
+## Table of Contents
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/studio_console_hero.png" alt="miniaudio_player - Studio Master Console Overview" width="100%" />
-</p>
-
-<p align="center">
-  🎮 <strong>Live Demo:</strong> <a href="https://miniaudio_player.chomusuke.dev/"><strong>https://miniaudio_player.chomusuke.dev/</strong></a>
-</p>
-
-_The newly overhauled **Studio Master Console** demonstration app included in `example/`. Features high-resolution audio playback with interactive waveform seekbars, dynamic dual-deck queue management with continuous mathematical crossfading, real-time 10-band spectrum visualizer and stereo VU meters, offline single-pass ITU-R BS.1770-4 / EBU R128 loudness analysis, ISO 266 10-band biquad equalizer with interactive frequency curves, Freeverb algorithmic reverb, and spatial/limiter/silence processing._
-
----
-
-## ✨ Features at a Glance
-
-- 🎛️ **High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)**: Automated dual-deck orchestrator wrapping two dedicated players (_Deck A_ and _Deck B_) that alternate between Active and Standby roles. Features an explicit 8-state Finite State Machine (`EnginePhase`), serialized FIFO command dispatch, continuous Equal-Power ($\cos / \sin$) and Linear crossfades (`CrossfadeConfig`), non-destructive Fisher-Yates shuffle with exact un-shuffle restoration, loop modes (`LoopMode.off`, `.one`, `.all`), generic domain item encapsulation directly via `AudioSource<T>`, per-track ReplayGain calibration, and proactive Infinite Mix prefetching (`InfiniteMixProvider<T>`).
-- 🌐 **Full Web Platform Support (WebAssembly & AudioWorklet)**: First-class execution in Flutter Web ([Live Demo](https://miniaudio_player.chomusuke.dev/)). Miniaudio's C core is cross-compiled to WebAssembly (`miniaudio_player.wasm`) running in background Web Workers, streaming decoded PCM frames directly to native `AudioWorkletNode` pipelines with zero UI thread contention.
-- 🔐 **Custom Audio Sources, DRM & On-The-Fly Decryption (`AudioByteProvider`)**: Plug-and-play stream abstraction enabling developers to play encrypted, DRM-protected, or proprietary media formats (AES-128, ChaCha20, custom cloud storage, peer-to-peer streams) with **zero temporary files and zero disk writes**. Decrypted audio streams exist exclusively in memory RAM and are piped directly to native C buffers with automatic reactive backpressure and random-access seek support.
-- 🌊 **Native Tripartite Memory Buffer (`map_buffer_t`) & 5-Level Capability Promotion**: Decouples audio ingestion from consumer codecs. Divides stream memory into a Pinned Head (immutable headers), Pure Audio Ring ($\mathcal{O}(1)$ lock-free circular buffer), and Tail Buffer (seek tables and trailing metadata). Automatically resolves and promotes any source through a 5-level hierarchy (`File`, `Memory`, `Asset`, `Network VOD`, `LiveStream`, and `FdByteProvider`).
-- ⚡ **Strict Real-Time Determinism ($\mathcal{O}(1)$) & Zero Allocations**: The real-time OS audio callback runs in bounded $\mathcal{O}(1)$ time with **0 dynamic heap memory allocations (`malloc`, `free`)**, ensuring completely glitch-free playback even under heavy system or UI load.
-- 🔀 **100% Pure FFI & Zero Platform Channels**: On mobile and desktop, commands execute via direct C pointer invocations in sub-microseconds ($< 1\ \mu\text{s}$), completely bypassing Flutter `MethodChannel` message-passing overhead and isolate memory bloat. Automatic resource reclamation via `NativeFinalizer`.
-- 🛡️ **Hardware-Grade Output Limiter (True-Peak Soft-Knee)**: True-Peak brickwall limiter operating immediately before DAC handoff. Mathematically transparent in the linear zone ($|x| \le 0.95$ FS) with **0.00000% THD** and **141.4 dB SNR**, smoothly compressing digital overshoots (+3.5 dBFS capped safely at 0.996 FS) to eliminate digital clipping.
-- 🎧 **Binaural Headphone Crossfeed (Bauer bs2b)**: Acoustic speaker crosstalk emulation for fatigue-free headphone listening with standard Moffat-Bauer ($700\text{ Hz}, 4.5\text{ dB}$) and Chu Moy ($700\text{ Hz}, 6.0\text{ dB}$) presets.
-- 🎛️ **Standard ISO 266 10-Band Parametric Equalizer**: Native Direct Form II Transposed (DF2T) biquad cascade centered at standard preferred 1/1 octave frequencies (`31Hz` to `16kHz`) with analytical RBJ curves (**0.00 dB analytical error**) and acoustic presets (_Rock_, _Pop_, _Jazz_, _Classical_, _Bass Boost_, _Flat_).
-- 🏛️ **Studio-Grade Algorithmic Reverb (Freeverb Topology)**: Native C stereophonic algorithmic reverb featuring 8 parallel lowpass feedback comb filters and 4 cascaded allpass filters per channel with stereo decorrelation. Includes studio acoustic presets (_Small Room_, _Studio_, _Concert Hall_, _Cathedral_, _Plate_, _Ambient_) and full dynamic control over room size, damping, stereo width, and wet/dry mix with hardware anti-denormal protection (_Flush-To-Zero_).
-- 📈 **Real-Time Reactive Visualizer & Spectrum Analyzer**: 10-band hardware BPF filter bank embedded directly in the native C playback pipeline matching the ISO 266 equalizer, stereo VU meters (L/R), RMS, and peak metrics (< 0.5% CPU active, **0% idle CPU** via automatic on-demand streaming at ~30 fps).
-- 🔇 **Dynamic Silence Skipping & Edge Trimming**: Native C real-time silence detector upstream of time-stretching and EQ. Trims lead-in/lead-out silence for gapless music and dynamically skips conversational pauses for podcasts and audiobooks with a 5 ms anti-click crossfade ramp and cumulative saved time tracking.
-- 🎚️ **Mono Downmix, Channel Balance & Stereo Spatializer**: Built-in channel routing for mono accessibility, precision stereo balance panning, and stereo field widening.
-- 📊 **Unified Single-Pass Audio Analysis (Loudness, ReplayGain & Waveform)**: High-speed, non-blocking offline analysis in a single decoding pass on background native C OS threads (< 100 KB constant RAM). Computes ITU-R BS.1770-4 / EBU R128 loudness (LUFS), true peak, recommended gain (dB), anti-clipping defense, and normalized amplitude waveform points for UI seekbars without spawning Dart Isolates or freezing Flutter frames.
-- 🚀 **High-Definition Pitch & Speed (Sonic DSP)**: Real-time time-stretching and independent pitch shifting (0.25x to 4.0x rate, 0.5x to 2.0x pitch) with pristine acoustic clarity and seamless rate transitions.
-- 🔌 **Dynamic Audio Device Routing & 0 ms Leakage (`pauseOnDeviceChange`)**: Real-time switching between audio output endpoints (speakers, wired headphones, Bluetooth A2DP/SCO). When enabled, disconnecting headphones triggers an atomic pause directly within the native C core before PCM frames are scheduled to the new hardware output, guaranteeing **0 ms of acoustic leakage**.
-- 📦 **Extensive Audio Codec Support**: Built-in native decoding for MP3, WAV, FLAC, OGG, Opus, AAC, M4A (AAC & ALAC), AIFF, W64, and more without external system dependencies.
-- 🔄 **Tripartite Facade Paradigm (`.action`, `.state`, `.stream`)**: Both `MiniaudioPlayer` (single-track) and `MiniaudioEngine<T>` (multi-track queue & crossfade) adhere to the Zero-Alias Axiom: `.action` for commands, `.state` for synchronous instant snapshots, and `.stream` for reactive broadcast telemetry.
+- [Why miniaudio_player v4.0.0?](#why-miniaudio_player-v400)
+- [Core Capabilities](#core-capabilities)
+- [Supported Formats & Codecs](#supported-formats--codecs)
+- [Platform Support](#platform-support)
+- [Installation & Initialization](#installation--initialization)
+- [Quick Start](#quick-start)
+- [API Highlights & Recipes](#api-highlights--recipes)
+  - [Dual-Deck Crossfade, Shuffle & Infinite Mix](#dual-deck-crossfade-shuffle--infinite-mix)
+  - [DSP Mastering, Equalizer, Reverb & ReplayGain](#dsp-mastering-equalizer-reverb--replaygain)
+  - [64-Voice Polyphonic RAM Effects & 3D Spatial / Doppler](#64-voice-polyphonic-ram-effects--3d-spatial--doppler)
+  - [Multi-Output Matrix, DJ CUE, Auto-Ducking & WAV Recording](#multi-output-matrix-dj-cue-auto-ducking--wav-recording)
+  - [Single-Pass Acoustic Analysis (BS.1770-4, Waveform, Lofty, Chromaprint)](#single-pass-acoustic-analysis-bs1770-4-waveform-lofty-chromaprint)
+  - [Custom Pull Streaming (`CustomByteProvider`)](#custom-pull-streaming-custombyteprovider)
+- [Studio Master Console Showcase & Screenshot Guide](#studio-master-console-showcase--screenshot-guide)
+- [Architecture Highlights](#architecture-highlights)
+- [License & Links](#license--links)
 
 ---
 
-## 🚀 Performance & Architecture
+## Why miniaudio_player v4.0.0?
 
-### 1. Audio DSP Processing Chain
+`miniaudio_player` 4.0.0 moves decoding, buffering, resampling, mixing, DSP, spatialization, recording, and analysis into a dedicated **pure-Rust engine core** driven by a single-owner real-time thread (`map-engine-clock`), leaving `miniaudio.h` focused strictly on low-level OS device I/O (`ma_context` / `ma_device`).
 
-The native DSP pipeline inside `ma_equalizer_node_process_pcm_frames` ([`src/map_dsp.c`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/src/map_dsp.c)) is ordered strategically to maximize signal-to-noise ratio, minimize phase distortion, and guarantee headroom before final DAC output:
-
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                                Audio PCM Frames In                                     │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │    1. Preamp & ReplayGain Volume Ramping      │
-                    │       - Target Gain Smoothing (Anti-Pop)      │
-                    │       - Peak-Aware Anti-Clipping Attenuation  │
-                    └───────────────────────┬───────────────────────┘
-                                            │
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │  2. 10-Band Biquad Cascade SIMD (DF2T, RBJ)   │
-                    │       - ISO 266 Preferred Octave Frequencies  │
-                    │       - 0.00 dB Analytical Filter Accuracy    │
-                    └───────────────────────┬───────────────────────┘
-                                            │
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │ 3. Algorithmic Stereo Reverb (Freeverb 8C+4A) │
-                    │       - 8 Parallel Comb + 4 Allpass / Channel │
-                    │       - Hardware Anti-Denormal Guards (FTZ)   │
-                    └───────────────────────┬───────────────────────┘
-                                            │
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │ 4. Binaural Crossfeed / Stereo Spatializer    │
-                    │       - Bauer bs2b (Moffat-Bauer / Chu Moy)   │
-                    │       - Mid/Side Difference Matrix Widening   │
-                    └───────────────────────┬───────────────────────┘
-                                            │
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │          5. Mono Downmixing (Optional)        │
-                    │       - Constant-Power Mono Summing Matrix    │
-                    └───────────────────────┬───────────────────────┘
-                                            │
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │       6. Stereo Balance / Panning Pan         │
-                    └───────┬───────────────────────────────┬───────┘
-                            │                               │
-                            ▼                               ▼
-      ┌───────────────────────────────────┐   ┌───────────────────────────┐
-      │  7. Visualizer Tap (10-Band BPF)  │   │  8. Master Volume Fader   │
-      │     - Hardware BPF Filter Bank    │   │     - Steady-State Bypass │
-      │     - Cache-Line Aligned Seqlock  │   └─────────────┬─────────────┘
-      └───────────────────────────────────┘                 │
-                                                            ▼
-                                      ┌───────────────────────────────────┐
-                                      │ 9. True-Peak Soft-Knee Limiter    │
-                                      │    - Linear Zone (|x| <= 0.95 FS) │
-                                      │    - Branchless Tanh Soft-Knee    │
-                                      └─────────────────────┬─────────────┘
-                                                            │
-                                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                             Hardware Audio DMA Output                                  │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 2. Multi-Threaded Decoupled Architecture
-
-Unlike traditional plugins that hop through platform channels with UI thread contention and serialization overhead, `miniaudio_player` separates execution across three fully decoupled asynchronous domains:
-
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                             Flutter UI / Dart Main Thread                              │
-│  • Sub-microsecond direct FFI invocations (< 1 µs latency) on Native                   │
-│  • Web Worker message channel & AudioWorklet pipe on Web                              │
-│  • Reactive broadcast telemetry streams (.stream.*)                                    │
-│  • Automatic memory cleanup via NativeFinalizer                                        │
-└───────────────────────┬────────────────────────────────────────▲───────────────────────┘
-                        │ Commands                               │ Seqlock Telemetry
-                        │ (play, seek, eq...)                    │ (Atomic 56-byte snapshot)
-┌───────────────────────▼────────────────────────┐   ┌───────────┴───────────────────────┐
-│     C Background Decoder Worker Thread         │   │   RT Audio Device Callback Thread │
-│  • Map_buffer_t progressive byte consumption   │   │  • High-priority OS real-time RT  │
-│  • FTZ/DAZ denormal purging (map_disable_...)  │   │  • 0 heap allocations (O(1))      │
-│  • Sonic varispeed with 64K frame headroom     │   │  • Lock-free SPSC ring buffer read│
-│  • Pre-faulted cache-aligned buffers (64B)     │   │  • Complete DSP processing chain  │
-└───────────────────────┬────────────────────────┘   │  • Branchless True-Peak limiter   │
-                        │ SPSC Commit                │  • Seqlock write (< 2 cycles)     │
-                        ▼                            └───────────────────────────────────┘
-          ┌───────────────────────────┐
-          │ Lock-Free SPSC Ring Buffer│
-          │ (64-byte Cache-Line Split)│
-          │ worker_is_sleeping flag   │
-          └───────────────────────────┘
-```
-
-1. **Zero UI Thread Blocking**: All decoding, Sonic time-stretching, equalizer filtering, and audio output run on dedicated native OS audio threads with real-time priority. Commands (`play`, `pause`, `seek`, `setVolume`, `setEqualizer`) execute in sub-microseconds without dropping Flutter frames.
-2. **Zero Dynamic Memory Allocations in RT**: Real-time audio callbacks operate in $\mathcal{O}(1)$ time without calling `malloc`, `free`, or OS memory allocators.
-3. **Lock-Free Seqlock Synchronization**: Telemetry data (visualizer, VU levels, position) is written atomically inside a minimal 56-byte critical section (< 2 CPU cycles) with explicit hardware memory barriers (`DMB ISH` on ARM, compiler fences on x86 TSO).
-4. **Priority Inversion Protection**: The RT thread signals the decoder worker via atomic flag check (`worker_is_sleeping`) with hysteresis, completely bypassing POSIX mutex acquisitions.
-
-### 3. The Tripartite Facade Pattern (`.action`, `.state`, `.stream`)
-
-Both [`MiniaudioPlayer`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/lib/src/api/miniaudio_player.dart) and [`MiniaudioEngine<T>`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/lib/src/api/miniaudio_engine.dart) enforce a strict separation between commands, synchronous state snapshots, and reactive streams:
-
-| Facade Domain | Component Type                  | Execution Timing               | Primary Responsibilities                                                                                                                                                                                                                          |
-| :------------ | :------------------------------ | :----------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`.action`** | `PlayerAction` / `EngineAction` | Asynchronous (`Future<T>`)     | Transports commands (`open`, `play`, `pause`, `seek`, `stop`), DSP modifiers (`setEqualizer`, `setReverb`, `setVolume`), and queue transitions (`next`, `previous`, `skipToIndex`, `setShuffle`). Enforces the Opening Gate and Zero-Alias Axiom. |
-| **`.state`**  | `PlayerState` / `EngineState`   | Synchronous ($\mathcal{O}(1)$) | Immediate, zero-cost access to playback metrics: `position`, `duration`, `playbackState`, `volume`, `rate`, `pitch`, `equalizer`, `reverb`, `buffer`, `visualizer`, `audioDevice`, `pauseOnDeviceChange`, and `currentItem`.                      |
-| **`.stream`** | `PlayerStream` / `EngineStream` | Reactive (`Stream<T>`)         | Fine-grained broadcast streams for UI widgets (`StreamBuilder`). Delivers granular updates only when specific properties change without widget rebuilding overhead.                                                                               |
+* **No Dart Isolate Audio Bottlenecks**: All decoding, ring buffering, DSP filtering, and polyphonic mixing run natively in compiled Rust (`opt-level = "s"`, `lto = true`, AVX2/FMA & NEON SIMD).
+* **Wait-Free Real-Time Audio Path**: Hardware callbacks pull from lock-free `rtrb` SPSC ring buffers, UI visualizer metrics publish through `CachePaddedSeqlock`, and displaced native objects drop asynchronously on `map-reaper`.
+* **Zero Duplicate RAM Ownership**: Passing `Uint8List` / `List<int>` or `AudioEffect` bytes hands ownership straight to Rust and releases Dart heap buffers immediately.
+* **Canonical 3-Namespace API**: Control everything from music playlists and HLS streams to 64-voice 3D SFX, multi-room hardware routing, and WAV recording through one class: `MiniaudioPlayer<T>` (`.action`, `.state`, `.stream`).
 
 ---
 
-## 📊 Platform Support Matrix
+## Core Capabilities
 
-| Audio Player & Engine Capability                    |    Android [^1]    |   Windows [^2]   |       Linux       |    iOS    |   macOS   |          Web [^3]          |
-| :-------------------------------------------------- | :----------------: | :--------------: | :---------------: | :-------: | :-------: | :------------------------: |
-| **Native Audio Backend**                            | AAudio / OpenSL ES | WASAPI Pro Audio | PulseAudio / ALSA | CoreAudio | CoreAudio | WebAssembly / AudioWorklet |
-| **Local File Playback (`AudioSource.file`)**        |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |      N/A (Sandboxed)       |
-| **Web Audio Files (HTTP/HTTPS Range Seek)**         |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Live Audio Streams (Icecast / Radio)**            |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Direct In-Memory Playback (`Uint8List` RAM)**     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Direct Zero-Disk Flutter Asset Playback**         |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Custom Streams & DRM (`AudioByteProvider`)**      |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Dual-Deck Queue & Crossfade (`MiniaudioEngine`)** |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Shuffle, Loop Modes & Infinite Mix**              |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Per-Track ReplayGain & Normalization**            |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **10-Band Equalizer (ISO 266)**                     |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **True-Peak Limiter (Soft-Knee)**                   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Binaural Crossfeed (Bauer bs2b)**                 |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Mono Downmix & Stereo Balance**                   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Stereo Spatializer / Widener**                    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Algorithmic Reverb (Freeverb)**                   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Real-Time Reactive Visualizer**                   |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Silence Detection & Skipping**                    |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Audio Analysis (LUFS & Waveform)**                |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Speed & Pitch Scaling (Sonic DSP)**               |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-| **Dynamic Device Routing & 0 ms Leak**              |         ✅         |        ✅        |        ✅         |    ✅     |    ✅     |             ✅             |
-
-[^1]: **Android**: Device discovery uses an autonomous pure C JNI bridge with zero MethodChannels and no Kotlin glue code. Binaries are compiled with `-Wl,-z,max-page-size=16384` for Android 15+ 16 KB memory page compatibility and ARM NEON SIMD.
-
-[^2]: **Windows**: Audio threads automatically engage MMCSS Pro Audio real-time scheduling (`AvSetMmThreadCharacteristicsA`) and 1 ms high-precision timer resolution (`timeBeginPeriod(1)`).
-
-[^3]: **Web**: Powered by `assets/miniaudio_player.wasm` running in a dedicated Web Worker and zero-copy rendering to `AudioWorkletNode`.
+* **Unified `MiniaudioPlayer<T>` API**: Strict separation of imperative controls (`player.action`), $O(1)$ synchronous snapshots (`player.state`), and reactive broadcast telemetry (`player.stream`).
+* **Universal `AudioSource<T>` + 3-Plane `StreamSession`**:
+  * Accepts local files, `asset://` paths, `Uint8List` / `List<int>`, `data:` URIs, `http(s)://` VOD (HTTP `Range`), live `icy://` radio streams, `.m3u8` **HLS with AES-128-CBC decryption & MPEG-TS demuxing**, and `CustomByteProvider` pull streams.
+  * Isolates pinned container headers (`Linear` `Head >= 64 KB`), a sliding circular audio ring (`Body`), and sparse tag storage (`Sparse` `BTreeMap`) with 3-phase progressive block coalescing (`UrgentBootstrap` -> `Stabilization` -> `CoalescedCruise` 15s super-blocks).
+  * Multi-lane `IoWorkerPool` (`1` zero-wait local lane + `4` rapid-skip coalesced network workers with epoch cancellation and background standby pre-warming).
+* **Dual-Deck Engine & Gapless/Crossfade Transitions**: Alternating Deck A / Deck B pipelines with `CrossfadeCurve.equalPower` or `linear`, manual/automatic overlap durations, native monotonic 64-bit queue IDs, `reorderByIds`, Fisher-Yates shuffle, and `InfiniteMixConfig` auto-fill (`stream.needMoreTracks`).
+* **Full Rust DSP Suite (`f32` SIMD)**:
+  * **10-Band ISO 266 Parametric Equalizer**: Direct Form II Transposed (`DF2T`) biquad cascade + Preamp (`dB`).
+  * **Algorithmic Reverb**: Stereo Freeverb (`roomSize`, `damping`, `width`, `wet`, `dry`) + 6 presets.
+  * **Bauer BS2B Headphone Crossfeed**, **Mid/Side Stereo Widener**, **Mono Downmix**, **Stereo Balance**.
+  * **Sonic Time-Stretching & Pitch Shifting** + **Rubato** high-order resampler.
+  * **Smart Silence Skipping FSM**: `trimEdges`, `continuous`, and `all` modes with 5 ms smooth crossfades and `silenceSavedDuration` telemetry.
+  * **Per-Deck ReplayGain**: Isolated per-deck loudness normalization (`disabled`, `track`, `forced`) eliminating double-scaling or jumps during crossfades, plus **Soft-Knee Brickwall Peak Limiter**.
+* **64-Voice Polyphonic RAM Effects Pool & 3D Spatial + Doppler**:
+  * On-demand Symphonia decoding into pinned or LRU-managed Rust RAM (`maxRamBytes` default 50 MB), up to 64 simultaneous voices (`Voice` live handle), `DspRouting` (`inherit`, `isolate`, `bypass`), `VoiceStealingPolicy`, gain/pitch/balance randomization jitter, and 3D `SpatialListener` / `SpatialEmitter` kinematics with Doppler shift.
+* **Multi-Destination Output Matrix, Capture & Recording**:
+  * Stream concurrently to N physical devices across 5 independent audio buses (`all`, `musicMix`, `activeTrack`, `standbyTrack` for DJ CUE, and `voiceOnly`), with automatic OS `'AUTO'` physical endpoint deduplication and `pauseOnDeviceChange`.
+  * Multi-microphone `AudioInput` matrix with live-edge latency capping, toggleable direct monitoring, and lock-free RMS sidechain `AutoDucker` (`DuckingConfig`).
+  * Lock-free background **WAV Recording** (`startRecording` / `stopRecording`) capturing any selected `AudioOutputSource`.
+* **Unified Single-Pass Acoustic Analyzer (`analyzeAudio` / `analyzeAudioSync`)**:
+  * Reads container headers at zero decode cost, or runs a single native decode pass for **ITU-R BS.1770-4 / EBU R128 LUFS & ReplayGain**, bounded O(1)-RAM **adaptive 2:1 RMS decimated waveforms** (`100` buckets default), rich **Lofty + ID3v2 `CHAP` + artwork metadata**, and **Chromaprint (`Algorithm::Test2`)** acoustic fingerprints for AcoustID lookup.
+* **10-Band Real-Time Visualizer**: On-demand DF2T bandpass energy extraction across selectable audio buses (`CachePaddedSeqlock`).
 
 ---
 
-## 📦 Supported Audio Formats
+## Supported Formats & Codecs
 
-| Format                   | Extensions                               | Decoding Backend                                          |
-| :----------------------- | :--------------------------------------- | :-------------------------------------------------------- |
-| **MPEG Audio**           | `.mp3`, `.mp2`, `.mp1`                   | Native miniaudio (`dr_mp3`)                               |
-| **Waveform Audio**       | `.wav`, `.bwf`, `.rifx`, `.w64`, `.rf64` | Native miniaudio (`dr_wav`)                               |
-| **FLAC**                 | `.flac`                                  | Native miniaudio (`dr_flac`)                              |
-| **Ogg Vorbis**           | `.ogg`, `.oga`                           | Native miniaudio (`stb_vorbis`)                           |
-| **Opus**                 | `.opus`                                  | Native Opus decoder (`libopus`)                           |
-| **Apple Lossless / AAC** | `.m4a`, `.aac`                           | Native ALAC / Helix AAC                                   |
-| **HTTP Live Streaming**  | `.m3u8`, `.m3u`                          | Native HLS pipeline (`HlsByteProvider` + Helix AAC / MP3) |
-| **Audio Interchange**    | `.aif`, `.aiff`, `.aifc`                 | Native miniaudio                                          |
+| Category | Formats / Containers | Native Engine / Crate |
+| :--- | :--- | :--- |
+| **Lossy Compressed** | `.mp3`, `.mp2`, `.mp1`, `.ogg` (Vorbis), `.opus`, `.aac`, `.m4a` (AAC/ALAC), ADTS | `symphonia 0.6`, `symphonia-adapter-libopus`, `symphonia-adapter-fdk-aac` |
+| **Lossless Compressed** | `.flac`, `.ape` (Monkey's Audio), `.wv` (WavPack), `.m4a` (ALAC), `.oga` | `symphonia 0.6`, `ape-decoder`, `wavicle` |
+| **Uncompressed & Hi-Res PCM** | `.wav`, `.aif`, `.aiff`, `.aifc`, `.caf`, `RF64`, `RIFX`, `W64`, `BWF` | `symphonia 0.6` + custom `ExtendedPcmReader` |
+| **Direct Stream Digital** | `.dsf` (DSD64+) | Custom `DsfReader` |
+| **Multimedia & Streaming** | `.webm`, `.mkv`, `.mka`, `.m3u8` (HLS + **AES-128-CBC** + **MPEG-TS**), `icy://` Shoutcast/Icecast | `symphonia 0.6`, `m3u8-rs`, `aes` + `cbc`, custom MPEG-TS & ICY demuxers |
 
 ---
 
-## 🛠️ Getting Started
+## Platform Support
+
+| Platform | Output & Capture HAL | Build Integration |
+| :--- | :--- | :--- |
+| **Linux** | PulseAudio / PipeWire / ALSA (`miniaudio.h`) | Dart Native Assets / Rust build hook |
+| **Windows** | WASAPI (`miniaudio.h`) | Dart Native Assets / Rust build hook |
+| **macOS** | CoreAudio (`miniaudio.h`) | Dart Native Assets / Rust build hook |
+| **Android** | AAudio / OpenSL ES (`miniaudio.h` + AAudio safe wait hook) | Dart Native Assets / Rust build hook |
+| **iOS** | CoreAudio / AVAudioSession (`miniaudio.h`) | Dart Native Assets / Rust build hook |
+| **Web** | Web Audio (`wasm32` quantum pump worker) | WASM compilation target |
+
+---
+
+## Installation & Initialization
 
 Add `miniaudio_player` to your `pubspec.yaml`:
 
-```bash
-flutter pub add miniaudio_player
+```yaml
+dependencies:
+  miniaudio_player: ^4.0.0
 ```
 
-Or for pure Dart console / backend applications:
-
-```bash
-dart pub add miniaudio_player
-```
-
-### Initialization
-
-Before creating any player or engine instances, initialize the native Rust engine in your application's `main()` entrypoint:
+Because v4.0.0 runs natively on a compiled Rust engine via `flutter_rust_bridge`, **explicit one-time initialization in `main()` is required** before constructing any `MiniaudioPlayer`:
 
 ```dart
-void main() async {
+import 'package:flutter/widgets.dart';
+import 'package:miniaudio_player/miniaudio_player.dart';
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Ensures the native Rust library and FFI bridge are initialized
+  // Required: initializes native Rust bindings & worker pools before creating players.
   await MiniaudioPlayer.ensureInitialized();
+
+  // Optional: configure global buffer lookahead targets and native log verbosity.
+  MiniaudioPlayer.config(
+    logLevel: MiniaudioLogLevel.warning,
+    bufferLocalDuration: const Duration(seconds: 30),
+    bufferNetworkDuration: const Duration(seconds: 30),
+  );
 
   runApp(const MyApp());
 }
 ```
 
-### Platform Setup
-
-- **Android / iOS / macOS / Windows / Linux**: No additional build setup required! Dart Native Assets automatically orchestrates C/Rust compilation and bundles native binaries with optimal link flags.
-- **Flutter Web**: Ensure `assets/miniaudio_player.wasm` is included in your `pubspec.yaml` assets (included by default when adding the package).
-
 ---
 
-## 💻 Usage Examples (Canonical v3.0.0 API)
-
-### 7.1 Universal Single-Track Playback (`MiniaudioPlayer` & `AudioSource`)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/playback_engine.png" alt="High-Res Audio Playback Engine Controls" width="600" />
-</p>
-
-`miniaudio_player` provides a single, canonical `open()` method adhering to the **Zero-Alias Axiom**. Opening a source strictly prepares the audio pipeline; playback is triggered cleanly via `action.play()`:
+## Quick Start
 
 ```dart
-import 'package:flutter/services.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
-final player = MiniaudioPlayer();
-await player.init();
+Future<void> playMusicExample() async {
+  final player = MiniaudioPlayer<String>(
+    queue: [
+      AudioSource('/path/to/local_track.flac', data: 'Track 1'),
+      AudioSource('https://example.com/audio/stream.mp3', data: 'Remote VOD'),
+      AudioSource('https://radio.example.com/live.m3u8', data: 'HLS Radio'),
+    ],
+  );
 
-// Configure optional asset loader for zero-disk-copy Flutter asset streaming
-MiniaudioPlayerGlobalConfig.assetLoader = (key) async {
-  final byteData = await rootBundle.load(key);
-  return byteData.buffer.asUint8List();
-};
+  // Subscribe to reactive broadcasts
+  final posSub = player.stream.position.listen((pos) {
+    print('Position: $pos / ${player.state.duration}');
+  });
 
-// 1. Play local file (direct path or AudioSource.file)
-await player.action.open(AudioSource.file('/path/to/song.flac'));
-await player.action.play();
+  final metaSub = player.stream.metadata.listen((meta) {
+    print('Now Playing: ${meta.title} - ${meta.artist}');
+  });
 
-// 2. Progressive HTTP/HTTPS Web streaming with byte-range seeking
-await player.action.open(
-  AudioSource.network(
-    Uri.parse('https://example.com/audio/track.mp3'),
-    headers: {'Authorization': 'Bearer YOUR_TOKEN'},
-    bufferAhead: const Duration(seconds: 30),
-  ),
-);
-await player.action.play();
+  // Enable on-demand metadata & visualizer telemetry
+  await player.action.setMetadataEnabled(true);
+  await player.action.setVisualizerEnabled(true);
 
-// 3. Boundless Live Internet Radio (Icecast / Shoutcast)
-await player.action.open(
-  AudioSource.liveStream(
-    Uri.parse('icy://icecast.radiofrance.fr/fip-midfi.mp3'),
-    jitterBuffer: const Duration(seconds: 4),
-  ),
-);
-await player.action.play();
+  // Start playback immediately
+  await player.action.play();
 
-// 4. HTTP Live Streaming (HLS / M3U8 Livestreams & VOD)
-// Supports Master/Media playlists, ID3 metadata extraction, and automatic in-band #EXTM3U sniffing!
-await player.action.open(
-  AudioSource.uri('https://mdstrm.com/audio/5fab0687bcd6c2389ee9480c/live.m3u8'),
-);
-await player.action.play();
+  // Instant O(1) snapshot access without waiting for async futures
+  print('Current state: ${player.state.playbackState}');
 
-// 5. In-Memory Playback directly from RAM (Uint8List)
-final Uint8List rawBytes = getDecryptedAudioBytes();
-await player.action.open(AudioSource.memory(rawBytes));
-await player.action.play();
-
-// 6. Direct Flutter Asset Bundle Playback (No temporary disk file created!)
-await player.action.open(AudioSource.asset('assets/music/theme.wav'));
-await player.action.play();
-
-// Transport Controls
-await player.action.seek(const Duration(seconds: 45));
-await player.action.pause();
-await player.action.play();
-await player.action.stop();
-```
-
----
-
-### 7.2 High-Level Dual-Deck Queue & Crossfade Engine (`MiniaudioEngine<T>`)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/playlist_queue.png" alt="Dynamic Playlist Queue & Crossfade Engine" width="600" />
-</p>
-
-[`MiniaudioEngine<T>`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/lib/src/api/miniaudio_engine.dart) is a first-class orchestrator that coordinates dual playback decks for gapless and crossfading transitions. It preserves your strongly typed user payload model `T` directly within `AudioSource<T>`:
-
-```dart
-class SongMetadata {
-  final String title;
-  final String artist;
-  SongMetadata(this.title, this.artist);
+  // Clean shutdown when finished
+  await posSub.cancel();
+  await metaSub.cancel();
+  await player.dispose();
 }
-
-final engine = MiniaudioEngine<SongMetadata>(
-  crossfadeConfig: CrossfadeConfig(
-    duration: const Duration(seconds: 5), // Automatic end-of-track crossfade
-    manualDuration: const Duration(milliseconds: 300), // Manual skip crossfade
-    curve: CrossfadeCurve.equalPower, // Constant acoustic energy curve
-  ),
-);
-await engine.init();
-
-// Prepare queue items with domain metadata and optional ReplayGain
-final playlist = [
-  AudioSource.file(
-    '/music/track1.mp3',
-    data: SongMetadata('Track One', 'Artist A'),
-    replayGainDb: -1.2,
-  ),
-  AudioSource.network(
-    Uri.parse('https://example.com/track2.flac'),
-    data: SongMetadata('Track Two', 'Artist B'),
-    replayGainDb: 0.5,
-  ),
-  AudioSource.asset(
-    'assets/music/track3.ogg',
-    data: SongMetadata('Track Three', 'Artist C'),
-  ),
-];
-
-// Open queue and start playback
-await engine.action.open(playlist, startIndex: 0);
-await engine.action.play();
-
-// Seamless Crossfade Navigation
-await engine.action.next(); // Smooth manual crossfade into track 2
-await engine.action.previous();
-
-// Non-destructive Fisher-Yates Shuffling & Loop Modes
-await engine.action.setShuffle(true); // Pinned active track, shuffles rest
-await engine.action.setShuffle(false); // Restores exact original playlist order
-await engine.action.setLoopMode(LoopMode.all);
-
-// Proactive Infinite Mix lookahead
-engine.action.setInfiniteMix(true);
-engine.setInfiniteMixProvider((count) async {
-  final newTracks = await fetchRecommendationsFromBackend(count);
-  return newTracks.map((t) => AudioSource.uri(t.url, data: t)).toList();
-});
 ```
 
 ---
 
-### 7.3 🔐 Custom Audio Sources: On-The-Fly Decryption, DRM & Custom Streaming (`AudioByteProvider`)
+## API Highlights & Recipes
 
-`miniaudio_player` allows developers to implement custom audio loaders by extending [`AudioByteProvider`](https://github.com/chomusuke-mk/miniaudio_player/blob/main/lib/src/loader/audio_byte_provider.dart).
-
-> [!IMPORTANT]
-> **Zero Disk Footprint**: Audio decrypted or unpacked on the fly in Dart **never touches the physical disk**. The decrypted bytes stream directly through memory into native C ring buffers (`map_buffer_t`) and the OS hardware audio DAC. This completely prevents sensitive or DRM-protected audio from ever leaking to temporary folders or app cache directories.
+### Dual-Deck Crossfade, Shuffle & Infinite Mix
 
 ```dart
-import 'dart:async';
-import 'dart:io';
-import 'dart:typed_data';
-import 'package:miniaudio_player/miniaudio_player.dart';
+// Smooth 5 s Equal-Power auto transitions and 500 ms manual skip crossfades
+await player.action.setCrossfade(const CrossfadeConfig(
+  autoDuration: Duration(seconds: 5),
+  manualDuration: Duration(milliseconds: 500),
+  curve: CrossfadeCurve.equalPower,
+));
 
-/// A custom provider that decrypts AES-CTR encrypted audio on the fly.
-class AesEncryptedFileByteProvider extends AudioByteProvider {
-  final File file;
-  final Uint8List encryptionKey;
-  RandomAccessFile? _raf;
+await player.action.setLoopMode(LoopMode.all);
+await player.action.setShuffle(true);
 
-  AesEncryptedFileByteProvider(this.file, this.encryptionKey);
-
-  @override
-  String get sourceId => file.path;
-
-  @override
-  Future<AudioByteStreamResponse> open({int offset = 0, int? length}) async {
-    _raf ??= await file.open(mode: FileMode.read);
-    final totalSize = await _raf!.length();
-
-    // Stream chunks and decrypt in-memory on the fly
-    final controller = StreamController<Uint8List>();
-
-    () async {
-      await _raf!.setPosition(offset);
-      int current = offset;
-      const chunkSize = 64 * 1024; // 64 KB chunks
-
-      while (current < totalSize && !controller.isClosed) {
-        final bytesToRead = (totalSize - current).clamp(0, chunkSize);
-        final cipherBytes = await _raf!.read(bytesToRead);
-
-        // Decrypt chunk in RAM (e.g. using AES-CTR cipher block counter)
-        final plainBytes = decryptAesCtrChunk(cipherBytes, current, encryptionKey);
-        controller.add(plainBytes);
-        current += cipherBytes.length;
-      }
-      await controller.close();
-    }();
-
-    return AudioByteStreamResponse(
-      stream: controller.stream,
-      totalBytes: totalSize,
-      isSeekable: true,
-      contentType: 'audio/mpeg',
-    );
-  }
-
-  @override
-  Future<void> abortActiveStream() async {
-    // Called when the user seeks: close stream without destroying RAF
-  }
-
-  @override
-  Future<void> close() async {
-    await _raf?.close();
-    _raf = null;
-  }
-}
-
-// Usage: Play directly into MiniaudioPlayer or MiniaudioEngine!
-final provider = AesEncryptedFileByteProvider(File('/storage/protected_track.enc'), secretKey);
-
-await player.action.open(AudioSource.custom(provider));
-await player.action.play();
-```
-
----
-
-### 7.4 Real-Time Reactive Visualizer & Stereo VU Meters
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/spectrum_visualizer.png" alt="Real-Time Reactive Spectrum Visualizer" width="600" />
-</p>
-
-The visualizer engine embeds a 10-band hardware BPF filter bank directly inside the native audio pipeline matching the ISO 266 equalizer frequencies. In Dart, the visualizer stream is always listening, but native telemetry events are only emitted when `visualizerEnabled` is set to `true`:
-
-```dart
-// 1. Enable visualizer stream emission (disabled by default for 0% CPU consumption)
-await player.action.setVisualizerEnabled(true);
-
-// 2. Query state synchronously
-print('Visualizer active: ${player.state.visualizerEnabled}');
-
-// 3. Subscribe reactively (~30 fps telemetry updates, 0% CPU when disabled)
-player.stream.visualizer.listen((VisualizerData data) {
-  final List<double> bands = data.bands; // 10 normalized filter bank magnitudes (0.0 to 1.0)
-  final double leftVu = data.left;       // Left channel peak/RMS level
-  final double rightVu = data.right;     // Right channel peak/RMS level
-
-  // Update CustomPainter or UI spectrum analyzer widgets
-});
-```
-
----
-
-### 7.5 Raw Stream Metadata & Event Bus Activator (`metaBytesEnabled`)
-
-For live network streams (such as ICY/Shoutcast, Icecast, or HLS timed ID3 metadata), raw metadata bytes are detected and parsed 100% natively in Rust without any Dart-side polling or parsing:
-
-```dart
-// Activate raw metadata event streaming (disabled by default to prevent channel saturation)
-await player.action.setMetaBytesEnabled(true);
-
-// Subscribe to raw byte packets
-player.stream.metaBytes.listen((Uint8List? rawBytes) {
-  if (rawBytes != null) {
-    print('Received ${rawBytes.length} bytes of raw stream metadata');
-  }
-});
-```
-
----
-
-### 7.6 Continuous Buffer Telemetry (`Buffer`)
-
-Audio buffer state is encapsulated in a clean `Buffer` model without superfluous or confusing convenience getters:
-
-```dart
-// Synchronous state snapshot
-final Buffer buffer = player.state.buffer;
-print('Buffer Range: ${buffer.start} to ${buffer.end}');
-print('Duration in buffer: ${buffer.end - buffer.start}');
-print('Is actively re-buffering: ${buffer.isBuffering}');
-
-// Reactive broadcast stream for custom waveform progress bars & loading spinners
-player.stream.buffer.listen((Buffer buffer) {
-  final double bufferedFraction = duration != null && duration.inMilliseconds > 0
-      ? (buffer.end.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-      : 0.0;
-  // Update UI seekbar cached range
-});
-```
-
----
-
-### 7.7 Native RAM Sound Effects & Memory Management (100% Rust Decoded Voice Pool)
-
-Sound effects (SFX) are decoded and managed **100% natively in Rust** via Symphonia, completely bypassing Dart garbage collection and isolate heap memory. Dart hands over audio bytes or file references directly to Rust with zero memory duplication:
-
-```dart
-// 1. Preload sound effect into native RAM (decoded once, ready for instant polyphonic playback)
-await player.action.loadEffect(
-  AudioEffect(
-    id: 'laser_sfx',
-    source: AudioSource.file('/path/to/laser.wav'), // Or AudioSource(bytes)
-    maxPolyphony: 8, // Up to 8 concurrent voices
-  ),
-);
-
-// 2. Play concurrent polyphonic voices with independent pitch and volume
-final int voice1 = await player.action.playEffect('laser_sfx', volume: 0.9, pitch: 1.0);
-final int voice2 = await player.action.playEffect('laser_sfx', volume: 0.7, pitch: 1.5);
-
-// 3. Inspect real-time native memory consumption and voice allocations
-print('Allocated RAM in Rust: ${player.state.allocatedRamBytes} bytes');
-print('Active polyphonic voices: ${player.state.activeVoicesCount}');
-print('Loaded SFX IDs: ${player.state.loadedEffectIds}');
-
-// 4. Stop voice or unload sound effect (immediately frees native RAM)
-await player.action.stopEffect(voice1);
-await player.action.unloadEffect('laser_sfx');
-// RAM drops back to 0 bytes immediately!
-```
-
----
-
-### 7.8 Monotonic 64-bit Queue IDs & Native Reordering (`reorderByIds`)
-
-Each track added to a playlist queue is assigned an immutable, monotonically increasing 64-bit integer ID (`id: 1, 2, 3...`) unique across the player lifecycle:
-
-```dart
-// Inspect assigned unique IDs
-for (final source in player.state.queue) {
-  print('Track ID: #${source.id}');
-}
-
-// Reorder queue by IDs in O(1) natively in Rust without re-allocating or re-encoding
-final List<int> reversedIds = player.state.queue
-    .map((s) => s.id!)
+// Deterministically reorder queued tracks natively in Rust using monotonic track IDs
+final reversedIds = player.state.queue
+    .map((item) => item.id!)
     .toList()
     .reversed
     .toList();
-
 await player.action.reorderByIds(reversedIds);
+
+// Auto-replenish queue before tracks run out
+player.stream.needMoreTracks.listen((event) async {
+  final nextBatch = await fetchRecommendations(event.remainingTracks);
+  await player.action.append(nextBatch);
+});
+await player.action.setInfiniteMix(const InfiniteMixConfig(
+  enabled: true,
+  remainingTracksThreshold: 3,
+));
 ```
 
----
-
-### 7.9 Unified Single-Pass Audio Analysis (Loudness, True-Peak & Waveform)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/audio_analyzer.png" alt="Unified Audio Analyzer - Loudness & Waveform" width="600" />
-</p>
-
-Analyzes audio files in a single, high-speed decoding pass in background native C threads (< 100 KB constant RAM), returning ITU-R BS.1770-4 / EBU R128 loudness and downsampled waveform points:
+### DSP Mastering, Equalizer, Reverb & ReplayGain
 
 ```dart
-final AudioAnalysisResult result = await MiniaudioPlayer.analyzeAudioFile(
-  '/path/to/song.mp3',
-  targetLufs: -14.0,       // Standard EBU R128 broadcast target
-  waveformPointsCount: 100, // Normalized amplitude points for seekbars
-);
-
-print('Integrated Loudness: ${result.replayGain.lufs} LUFS');
-print('True Peak: ${result.peak} dBFS');
-print('Recommended Gain: ${result.replayGain.gainDb} dB');
-print('Waveform Points: ${result.waveform.points}'); // List<double> from 0.0 to 1.0
-
-// Apply calculated ReplayGain with automatic anti-clipping headroom limiter
-await player.action.setReplayGain(
-  gainDb: result.replayGain.gainDb,
-  peak: result.peak,
-  preventClipping: true,
-);
-```
-
----
-
-### 7.10 Standard ISO 266 10-Band Parametric Equalizer
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/equalizer.png" alt="ISO 266 10-Band Parametric Equalizer" width="600" />
-</p>
-
-Features Direct Form II Transposed (DF2T) SIMD biquads centered at standard ISO 266 frequencies (`31Hz`, `63Hz`, `125Hz`, `250Hz`, `500Hz`, `1kHz`, `2kHz`, `4kHz`, `8kHz`, `16kHz`) with analytical RBJ curves:
-
-```dart
-// Apply built-in acoustic presets
 await player.action.setEqualizer(Equalizer.rock);
-await player.action.setEqualizer(Equalizer.bassBoost);
-await player.action.setEqualizer(Equalizer.flat);
-
-// Or adjust individual frequency bands (-12.0 dB to +12.0 dB)
-// Band 0 = 31Hz, Band 1 = 63Hz, ..., Band 9 = 16kHz
-await player.action.setEqualizerBand(0, 4.5); // +4.5 dB bass boost
-await player.action.setEqualizerBand(9, 2.0); // +2.0 dB air shelf
-
-// Set hardware pre-amplification
-await player.action.setPreamp(1.5); // +1.5 dB preamp
-```
-
----
-
-### 7.11 Studio-Grade Algorithmic Reverb (Freeverb Model)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/algorithmic_reverb.png" alt="Studio Algorithmic Reverb" width="600" />
-</p>
-
-Stereophonic algorithmic reverb in native C with 8 parallel comb filters and 4 cascaded allpass filters per channel with anti-denormal protection:
-
-```dart
-// Apply built-in acoustic space presets
-await player.action.setReverb(Reverb.concertHall);
-await player.action.setReverb(Reverb.smallRoom);
-await player.action.setReverb(Reverb.cathedral);
+await player.action.setPreamp(-1.5);
 await player.action.setReverb(Reverb.studio);
-
-// Or customize rotary parameters dynamically
-await player.action.setReverb(
-  Reverb(
-    roomSize: 0.85,
-    damping: 0.25,
-    width: 1.0,
-    wet: 0.35,
-    dry: 0.75,
-  ),
-);
-```
-
----
-
-### 7.12 Spatial Processing, Limiter & Silence Detection
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/spatial_limiter_silence.png" alt="Spatial Processing, Limiter & Silence Detection" width="600" />
-</p>
-
-```dart
-// 1. Binaural Headphone Crossfeed (Bauer bs2b) & Stereo Widening
-await player.action.setCrossfeed(CrossfeedMode.chuMoy);
-await player.action.setSpatializer(enabled: true, width: 1.4); // 1.0 = normal, 2.0 = ultra-wide
-
-// 2. Hardware-Grade True-Peak Soft-Knee Limiter (Prevents digital clipping)
+await player.action.setCrossfeed(Crossfeed.moffatBauer);
+await player.action.setSpatializer(enabled: true, width: 1.35);
 await player.action.setLimiter(true);
 
-// 3. Dynamic Silence Trimming & Skipping (Podcasts & Audiobooks)
-await player.action.setSilenceConfig(
-  SilenceSkipConfig(
-    enabled: true,
-    thresholdDb: -45.0, // Silence threshold
-    minDuration: const Duration(milliseconds: 300), // Minimum pause duration
+// Per-deck ReplayGain normalization prevents volume jumps during crossfades
+await player.action.setReplayGainMode(ReplayGainMode.track);
+await player.action.setDefaultReplayGain(-3.0, peak: 0.98);
+
+// Silence skipping (ideal for podcasts & audiobooks)
+await player.action.setSilenceConfig(const SilenceSkipConfig.continuous(
+  thresholdDb: -45.0,
+  minSilenceDuration: Duration(milliseconds: 300),
+  padding: Duration(milliseconds: 50),
+));
+```
+
+### 64-Voice Polyphonic RAM Effects & 3D Spatial / Doppler
+
+```dart
+final sfxPlayer = MiniaudioPlayer<void>(
+  effects: [
+    AudioEffect(
+      id: 'laser',
+      source: AudioSource(laserBytes), // Zero Dart heap duplication; pinned in Rust RAM
+      pinned: true,
+    ),
+    AudioEffect(
+      id: 'footstep',
+      source: AudioSource('/assets/sfx/step.wav'),
+      maxPolyphony: 8,
+    ),
+  ],
+  config: const PlayerConfig(
+    maxVoices: 64,
+    maxRamBytes: 50 * 1024 * 1024, // 50 MB LRU budget
+    voiceStealingPolicy: VoiceStealingPolicy.lowestPriority,
   ),
 );
 
-// Inspect cumulative time saved
-player.stream.silenceSaved.listen((savedDuration) {
-  print('Saved time via silence skipping: ${savedDuration.inSeconds} seconds');
-});
+await sfxPlayer.action.setListener(const SpatialListener(
+  position: Vector3(0, 0, 0),
+  forward: Vector3(0, 0, -1),
+));
+
+// Trigger a 3D spatial moving voice and modulate it live
+final Voice engineVoice = await sfxPlayer.action.playEffect(
+  'laser',
+  config: const EffectConfig(
+    volume: 0.85,
+    pitchJitter: 0.08,
+    dspRouting: DspRouting.isolate,
+    spatial: SpatialEmitter(
+      position: Vector3(4.0, 0.0, -2.0),
+      velocity: Vector3(-12.0, 0.0, 0.0), // Doppler pitch shift
+    ),
+  ),
+);
+
+await engineVoice.setEmitter(const SpatialEmitter(
+  position: Vector3(1.5, 0.0, -1.0),
+  velocity: Vector3(-12.0, 0.0, 0.0),
+));
 ```
 
----
-
-### 7.13 Hardware Routing & Zero-Leak Pause (`pauseOnDeviceChange`)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/hardware_routing.png" alt="Hardware Audio Routing & Zero-Leak Protection" width="600" />
-</p>
+### Multi-Output Matrix, DJ CUE, Auto-Ducking & WAV Recording
 
 ```dart
-// Enumerate available hardware audio output devices
-final List<AudioDevice> devices = await player.getAudioDevices();
-for (final dev in devices) {
-  print('Device: ${dev.name} [ID: ${dev.id}, Type: ${dev.type}]');
-}
+final outputs = await MiniaudioPlayer.getOutputDevices();
+final headphones = outputs.firstWhere((d) => !d.isAuto, orElse: () => outputs.first);
 
-// Switch to a specific device (e.g. Bluetooth sink or USB DAC)
-await player.action.setDevice(devices.firstWhere((d) => d.name.contains('Headphones')));
+final studio = MiniaudioPlayer<String>(
+  outputs: {
+    const AudioOutput(deviceId: 'AUTO', source: AudioOutputSource.all),
+    AudioOutput(deviceId: headphones.id, source: AudioOutputSource.standbyTrack), // DJ CUE
+  },
+  inputs: {
+    const AudioInput(
+      deviceId: 'AUTO',
+      config: AudioInputConfig(
+        gain: 1.2,
+        monitorDirect: true,
+        ducking: DuckingConfig(
+          enabled: true,
+          duckingDb: -14.0,
+          thresholdDb: -30.0,
+          attackMs: 30.0,
+          holdMs: 250.0,
+          releaseMs: 400.0,
+        ),
+      ),
+    ),
+  },
+);
 
-// Enable 0 ms acoustic leakage prevention
-// Pauses atomically inside native C before the new physical endpoint opens!
-player.action.setPauseOnDeviceChange(true);
+// Record clean un-ducked, SFX-free music mix directly to WAV on disk
+await studio.action.startRecording(
+  '/tmp/clean_set_recording.wav',
+  format: AudioFileFormat.wav,
+  source: AudioOutputSource.musicMix,
+);
 ```
 
----
-
-### 7.14 Ingest Matrix & Native Tripartite Buffer (`map_buffer_t`)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/ingest_matrix.png" alt="Ingest & Buffer Matrix Architecture" width="600" />
-</p>
-
-The Ingest Matrix view in the example app visualizes the engine's 5-level promotion hierarchy and the memory layout of `map_buffer_t`. It clearly shows how raw bytes stream seamlessly into Pinned Head, Pure Audio Ring, and Tail Buffer segments before reaching consumer decoders.
-
----
-
-### 7.15 Flutter UI Integration (Reactive StreamBuilder & Instant State Sync)
+### Single-Pass Acoustic Analysis (`BS.1770-4`, Waveform, Lofty, Chromaprint)
 
 ```dart
-class NowPlayingWidget extends StatelessWidget {
-  final MiniaudioPlayer player;
-  const NowPlayingWidget({super.key, required this.player});
+final analysis = await MiniaudioPlayer.analyzeAudio(
+  '/path/to/track.flac',
+  replayGain: true,
+  waveform: true,
+  metadata: true,
+  chromaprint: true,
+  waveformPoints: 100,
+  targetLufs: -18.0,
+);
+
+print('Loudness: ${analysis.replayGain?.lufs.toStringAsFixed(2)} LUFS');
+print('Recommended RG: ${analysis.replayGain?.gainDb.toStringAsFixed(2)} dB');
+print('100-block waveform samples: ${analysis.waveform?.points.length}');
+print('Metadata: ${analysis.metadata?.title} / Chapters: ${analysis.metadata?.chapters.length}');
+print('Chromaprint (${analysis.chromaprint?.algorithm}): ${analysis.chromaprint?.fingerprint}');
+```
+
+### Custom Pull Streaming (`CustomByteProvider`)
+
+```dart
+class EncryptedChunkProvider extends CustomByteProvider {
+  @override
+  int? get totalBytes => myRemoteEncryptedLength;
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Instant synchronous state read (0 async latency)
-        Text('Device: ${player.state.audioDevice.name}'),
-
-        // Granular position stream with zero unnecessary repaints
-        StreamBuilder<Duration>(
-          stream: player.stream.position,
-          initialData: player.state.position,
-          builder: (context, snapshot) {
-            final position = snapshot.data ?? Duration.zero;
-            return Text('Time: ${position.inMinutes}:${(position.inSeconds % 60).toString().padLeft(2, '0')}');
-          },
-        ),
-
-        // Playback state toggle
-        StreamBuilder<PlaybackState>(
-          stream: player.stream.playbackState,
-          initialData: player.state.playbackState,
-          builder: (context, snapshot) {
-            final isPlaying = snapshot.data == PlaybackState.playing;
-            return IconButton(
-              icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
-              onPressed: () => isPlaying ? player.action.pause() : player.action.play(),
-            );
-          },
-        ),
-      ],
-    );
+  Future<Uint8List> onRead(int offset, int size) async {
+    return await fetchAndDecryptSlice(offset, size);
   }
 }
+
+final customSource = AudioSource<String>(EncryptedChunkProvider());
+await player.action.setQueue([customSource]);
+await player.action.play();
 ```
 
 ---
 
-## ⚡ Verification, Quality Assurance & Acoustic Certification
+## Studio Master Console Showcase & Screenshot Guide
 
-The engine is backed by an automated test suite spanning unit, integration, stress, and acoustic certification tests:
+The [`example/`](example) application demonstrates all v4.0.0 features across **three responsive tabs** (`Studio Master Console`, `Audio Analyzer`, and `Ingest & Buffer Matrix`).
 
-| Metric                          | Target Specification       | Measured Value                   | Verification Method                               |
-| :------------------------------ | :------------------------- | :------------------------------- | :------------------------------------------------ |
-| **Real-Time Allocations**       | 0 heap allocations         | **0 calls to malloc/free**       | Native address-sanitizer hook on render thread    |
-| **Limiter THD**                 | $< 0.0001\%$ ($x\le 0.95$) | **$0.00000\%$**                  | Ultra-pure 1 kHz sine-wave FFT spectral analysis  |
-| **Limiter SNR**                 | $> 130\text{ dB}$          | **$141.4\text{ dB}$**            | Full-scale 24-bit test signal evaluation          |
-| **EQ Analytical Accuracy**      | $\pm 0.01\text{ dB}$       | **$0.00\text{ dB}$**             | Robert Bristow-Johnson (RBJ) reference comparison |
-| **Command Latency**             | $< 10\ \mu\text{s}$        | **$< 1\ \mu\text{s}$**           | Direct FFI benchmark timing                       |
-| **Idle CPU (Buffer Saturated)** | $< 1\%$                    | **$0.0\%$**                      | Reactive backpressure verification                |
-| **Concurrency Fuzzing**         | 0 deadlocks                | **10,000+ chaotic calls passed** | Automated multi-threaded fuzz testing             |
+### 1. Studio Master Console Overview
+
+![Studio Master Console Hero](pictures/studio_console_hero.png)
+
+> **File**: `pictures/studio_console_hero.png`  
+> **Should show**: Full desktop view of the **Studio Master Console** tab displaying Row 1 (`2:2:1` Playing, Queue, Effects) and Row 2 (`1:2` Hardware Routing + Spectrum Visualizer alongside the unified Dynamic DSP & Spatial Mastering panel).
 
 ---
 
-## 🤝 Contributing, License & Acknowledgements
+### 2. Row 1 (`2:2:1`) — Playback, Queue & Effects
 
-Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/chomusuke-mk/miniaudio_player).
+| Playback Engine (`flex: 2`) | Playlist Queue & Transitions (`flex: 2`) | Native RAM Sound Effects (`flex: 1`) |
+| :---: | :---: | :---: |
+| ![Playback Engine](pictures/screenshots/playback_engine.png) | ![Playlist Queue](pictures/screenshots/playlist_queue.png) | ![RAM Sound Effects](pictures/screenshots/ram_sound_effects.png) |
+| **Transport, Inline Buffer Badge & Waveform Seekbar**<br>Displays the track title, codec badge, **Buffer `[start..end]` badge** beside **Inspect Metadata**, interactive **100-block waveform** overlay, Speed/Pitch sliders, and `Loop` / `Infinite Mix` switches. | **Queue & Compact Crossfade Controls**<br>Displays the inline wrap toolbar (`Curve` dropdown, `Auto` & `Manual` pills, `+` Add Track, track count, native `reorderByIds` Reverse action), Shuffle toggle, and monotonic ID rows (`#1`, `#2`, ...). | **Polyphonic SFX Memory Pool**<br>Displays live Rust RAM usage badge, active polyphony count badge, `Reload` + `Unload All` buttons in one row, and compact icon+name effect trigger chips (`Laser`, `Chime`, `Beep`, etc.). |
 
-### Permissive Licensing & Third-Party Credits
+---
 
-`miniaudio_player` is distributed under the permissive **MIT License**. It bundles and optimizes the following world-class C libraries:
+### 3. Row 2 (`1:2`) — Hardware Routing, Visualizer & Unified DSP Suite
 
-- **[miniaudio](https://miniaud.io/)** (Public Domain / MIT-0) by David Reid: Core cross-platform audio device abstraction, mixer, and built-in decoders (`dr_mp3`, `dr_wav`, `dr_flac`, `stb_vorbis`).
-- **[Sonic DSP](https://github.com/waywardgeek/sonic)** (Apache 2.0) by Bill Cox: High-fidelity time-stretching and pitch-scaling algorithm.
-- **Freeverb** (Public Domain) by Jezar at Dreampoint: Stereophonic algorithmic reverberation tank model.
-- **Bauer stereophonic-to-binaural DSP (bs2b)** (MIT) by Boris Mikhaylov: Binaural headphone crosstalk emulation.
-- **libopus** (BSD-3-Clause) by Xiph.Org Foundation: Ultra-low-latency, high-efficiency speech and audio codec.
-- **Helix AAC** (RealNetworks Public Source License): High-speed AAC fixed-point decoder.
+| Hardware Routing Matrix (`1/3` Col) | Real-Time Reactive Visualizer (`1/3` Col) |
+| :---: | :---: |
+| ![Hardware Routing Matrix](pictures/screenshots/hardware_routing.png) | ![Real-Time Reactive Visualizer](pictures/screenshots/spectrum_visualizer.png) |
+| **Multi-Output Sinks, Mics & WAV Recording**<br>Multi-output device toggles + bus selectors (`All Mix`, `Music Only`, `Active Track`, `Standby CUE`, `Voice Only`), `AUTO` deduplication indicator, mic auto-ducking & WAV capture controls. | **10-Band DF2T Spectrum & Level Meters**<br>Bus selector (`All`, `Music`, `Active`, `Standby`, `Voice`), enable switch, stereo Peak/RMS bars, and 10 live reactive spectrum bands (`31 Hz – 16 kHz`). |
+
+![Dynamic DSP & Spatial Mastering Grid](pictures/screenshots/dsp_mastering_grid.png)
+
+> **File**: `pictures/screenshots/dsp_mastering_grid.png` *(replaces the old separated EQ / Reverb / Spatial cards in the `1:2` right column)*  
+> **Should show**: Full `DYNAMIC DSP & SPATIAL MASTERING` card featuring `ReplayGain Normalization` (first in row), `Preamp Gain`, `Stereo Balance`, `True-Peak Limiter`, `Mono Downmix`, wrapped horizontal preset pills on `Smart Silence Skipping`, `Bauer BS2B Crossfeed`, `Stereo Widener`, and `Algorithmic Reverb`, the responsive `ISO 266 10-Band Equalizer`, plus `Pause on Device Change` and `Dynamic Metadata Event Stream`.
+
+---
+
+### 4. Dedicated `Audio Analyzer` & `Ingest & Buffer Matrix` Tabs
+
+| Audio Analyzer Tab (`Audio Analyzer`) | Ingest & Buffer Matrix Tab (`Ingest & Buffer Matrix`) |
+| :---: | :---: |
+| ![Audio Analyzer Tab](pictures/screenshots/audio_analyzer.png) | ![Ingest & Buffer Matrix Tab](pictures/screenshots/ingest_matrix.png) |
+| **Single-Pass Analysis & Optimization Telemetry**<br>Tracks queue selector, collapsible **Unified Audio Analyzer** (vertical emphasized ReplayGain card at start of row, Audio Info, Metadata + Chapters/Art, Chromaprint with highlighted algorithm, 100-block waveform), plus **Single-Pass Native Pipeline** & **Memory/Worker/Cache Optimizations** cards. | **v4.0.0 ByteSource & StreamSession Architecture**<br>Row 1: **ByteSource Routing & IoWorkerPool** (`File`, `Memory`, `Net VOD`, `ICY/HLS AES-128`, `CustomDart`) + **3-Plane StreamSession** (`Head` Linear, `Body` Circular, `Metadata` Sparse). Row 2: **3-Phase Sliding-Window Coalescing** & **Downstream Decode -> DSP -> 5-Bus SPSC Matrix**. |
+
+---
+
+### Manual Screenshot Update Checklist
+
+Use this mapping when capturing updated screenshots from `example/`:
+
+| Image File Path | Target Tab / Card | Key Elements to Capture |
+| :--- | :--- | :--- |
+| `pictures/studio_console_hero.png` | **Studio Master Console** (Full Window) | Header tabs + `2:2:1` top row + `1:2` bottom row with active track playing & visualizer running. |
+| `pictures/screenshots/playback_engine.png` | **Studio Master Console** → `HIGH-RES AUDIO PLAYBACK ENGINE` | Buffer badge beside `Inspect Metadata`, 100-block waveform seekbar, rate/pitch sliders. |
+| `pictures/screenshots/playlist_queue.png` | **Studio Master Console** → `DYNAMIC PLAYLIST QUEUE & TRANSITIONS` | Inline Curve dropdown + Auto/Manual + `+` + count + Reverse toolbar, `#N` ID queue items. |
+| `pictures/screenshots/ram_sound_effects.png` | **Studio Master Console** → `NATIVE RAM SOUND EFFECTS & MEMORY` *(new)* | RAM KB badge, active voice badge, `Reload` / `Unload All` row, icon+name SFX triggers. |
+| `pictures/screenshots/hardware_routing.png` | **Studio Master Console** → `AUDIO HARDWARE ROUTING MATRIX` | Output bus toggles (`Standby CUE`, `Music Only`), mic ducking sliders, live WAV recording toggle. |
+| `pictures/screenshots/spectrum_visualizer.png` | **Studio Master Console** → `Real-Time Reactive Visualizer` | Bus selector, live 10-band spectrum bars, RMS & peak meters. |
+| `pictures/screenshots/dsp_mastering_grid.png` | **Studio Master Console** → `DYNAMIC DSP & SPATIAL MASTERING` *(replaces old `equalizer.png`, `algorithmic_reverb.png`, `spatial_limiter_silence.png`)* | All 5 top tiles (`ReplayGain` first), wrapped preset pills on Silence/BS2B/Widener/Reverb, 10-band EQ, device/metadata toggles. |
+| `pictures/screenshots/audio_analyzer.png` | **Audio Analyzer** Tab | Telemetry strip + expanded 100-block waveform + vertical ReplayGain + Chromaprint algorithm + bottom optimization cards. |
+| `pictures/screenshots/ingest_matrix.png` | **Ingest & Buffer Matrix** Tab | Updated 4-card v4.0.0 Rust grid (`ByteSource`, 3-plane `StreamSession` strip, `3-Phase Coalescing`, `5-Bus SPSC Matrix`). |
+
+---
+
+## Architecture Highlights
+
+```text
+Flutter / Dart (MiniaudioPlayer<T>: .action • .state • .stream)
+   └──► flutter_rust_bridge v2
+         ├──► Control & I/O Plane
+         │     ├── ControlCoordinator & HardwareDeviceSupervisor (AUTO deduplication + hot-plug)
+         │     ├── IoWorkerPool (1x map-io-local + 4x map-io-net-* coalescing + PrewarmJob)
+         │     └── StreamSession (Head Linear | Body Circular | Metadata Sparse -> Symphonia/Lofty)
+         ├──► Single-Owner RT Audio Actor (map-engine-clock)
+         │     ├── MusicManager (Deck A & Deck B: Sonic + Per-Deck ReplayGain + Crossfade)
+         │     ├── DspProcessor (Preamp, 10-Band DF2T EQ, Reverb, Spatializer, Mono, Balance)
+         │     ├── InputManager (Multi-mic live-edge capture + RMS AutoDucker + Direct Monitor)
+         │     ├── EffectsManager (64-Voice VoicePoolRt + 3D Spatial/Doppler + DspRouting)
+         │     ├── SimdMixer (AVX2/FMA / NEON) + Master SoftLimiter
+         │     └── OutputManager (5 Buses -> rtrb SPSC -> WavRecorder & CachePaddedSeqlock Visualizer)
+         └──► ReaperHandle (map-reaper off-thread teardown) + miniaudio_device_bridge.c (OS HAL)
+```
+
+For full signal-flow diagrams, thread synchronization guarantees, sliding-window formulas, and crate-level internals, read the complete [**Architecture Guide**](docs/ARCHITECTURE.md).
+
+---
+
+## License & Links
+
+* **Repository**: [github.com/chomusuke-mk/miniaudio_player](https://github.com/chomusuke-mk/miniaudio_player)
+* **Changelog**: [CHANGELOG.md](CHANGELOG.md)
+* **Deep Architecture**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+* **License**: [MIT](LICENSE)

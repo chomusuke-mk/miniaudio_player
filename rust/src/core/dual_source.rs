@@ -2244,6 +2244,7 @@ impl StreamingDeck {
         self.open_network_with_cancel(url, headers, None)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_network_with_cancel(
         &mut self,
         url: &str,

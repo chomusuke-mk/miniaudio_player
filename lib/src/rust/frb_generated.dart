@@ -8486,7 +8486,7 @@ class EventReporterImpl extends RustOpaque implements EventReporter {
   Future<void> emit({required RustPlayerEvent event}) => RustLib.instance.api
       .crateApiPlayerEventReporterEmit(that: this, event: event);
 
-  /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events.
+  /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events atomically.
   Stream<RustPlayerEvent> setSink() =>
       RustLib.instance.api.crateApiPlayerEventReporterSetSink(
         that: this,
