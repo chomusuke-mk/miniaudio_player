@@ -6,9 +6,6 @@ import 'package:path/path.dart' as p;
 
 import '../rust/frb_generated.dart';
 
-/// Indicates whether the current runtime is targeting WebAssembly / JavaScript.
-const bool kIsWeb = false;
-
 /// Resolves and opens the native `miniaudio_player` dynamic library across all
 /// Dart and Flutter execution environments (`dart test`, `flutter test`,
 /// `dart run`, `dart build cli`, `flutter run`, and desktop/mobile AOT bundles).
@@ -137,11 +134,3 @@ final class _IsolateRegistration implements ffi.Finalizable {
   // ignore: unused_field
   final ffi.NativeFinalizer _finalizer;
 }
-
-/// No-op on native platforms (`std::fs` and `ureq` handle local files and HTTP
-/// directly in Rust).
-Future<Uint8List?> resolveWebSourceBytes(
-  String? uri, {
-  Map<String, String>? headers,
-}) =>
-    Future.value(null);

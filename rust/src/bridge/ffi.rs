@@ -143,11 +143,12 @@ extern "C" {
 mod wasm_device_bridge {
     use super::*;
     use flutter_rust_bridge::for_generated::js_sys::{
-        self, Array, Float32Array, Function, Reflect, Uint8Array,
+        Array, Float32Array, Function, Uint8Array,
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
     use flutter_rust_bridge::for_generated::wasm_bindgen::JsCast;
+    use std::cell::RefCell;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -158,6 +159,7 @@ mod wasm_device_bridge {
         user_data_addr: usize,
         alive: AtomicBool,
         active: AtomicBool,
+        prebuffering: AtomicBool,
     }
 
     impl WasmDeviceState {
@@ -172,91 +174,40 @@ mod wasm_device_bridge {
         }
     }
 
-    /// Central flow coordinator for message-driven Web Worker audio decoding,
-    /// PCM rendering, and dual-deck engine monitoring without `setTimeout`.
-    struct WasmWorkerRuntime {
-        decoder_tasks: Vec<Box<dyn FnMut() -> bool + Send>>,
-        monitor_tasks: Vec<Box<dyn FnMut() -> bool + Send>>,
-        devices: Vec<Arc<WasmDeviceState>>,
-        scratch_buf: Vec<f32>,
-        mix_buf: Vec<f32>,
+    static DEVICES: OnceLock<Mutex<Vec<Arc<WasmDeviceState>>>> = OnceLock::new();
+
+    fn devices_registry() -> &'static Mutex<Vec<Arc<WasmDeviceState>>> {
+        DEVICES.get_or_init(|| Mutex::new(Vec::new()))
     }
 
-    impl WasmWorkerRuntime {
-        fn new() -> Self {
-            Self {
-                decoder_tasks: Vec::new(),
-                monitor_tasks: Vec::new(),
-                devices: Vec::new(),
-                scratch_buf: Vec::new(),
-                mix_buf: Vec::new(),
-            }
-        }
-
-        fn register_decoder(&mut self, task: Box<dyn FnMut() -> bool + Send>) {
-            self.decoder_tasks.push(task);
-        }
-
-        fn register_monitor(&mut self, task: Box<dyn FnMut() -> bool + Send>) {
-            self.monitor_tasks.push(task);
-        }
-
-        fn register_device(&mut self, device: Arc<WasmDeviceState>) {
-            self.devices.retain(|d| d.is_alive());
-            self.devices.push(device);
-        }
-
-        fn has_active_work(&mut self) -> bool {
-            self.devices.retain(|d| d.is_alive());
-            self.devices.iter().any(|d| d.is_active())
-        }
-    }
-
-    static WORKER_RUNTIME: OnceLock<Mutex<WasmWorkerRuntime>> = OnceLock::new();
-
-    fn runtime() -> &'static Mutex<WasmWorkerRuntime> {
-        WORKER_RUNTIME.get_or_init(|| Mutex::new(WasmWorkerRuntime::new()))
-    }
-
-    pub fn wasm_register_decoder_task(task: Box<dyn FnMut() -> bool + Send>) {
-        if let Ok(mut rt) = runtime().lock() {
-            rt.register_decoder(task);
-        }
-    }
-
-    pub fn wasm_register_monitor_task(task: Box<dyn FnMut() -> bool + Send>) {
-        if let Ok(mut rt) = runtime().lock() {
-            rt.register_monitor(task);
-        }
-    }
-
-    #[wasm_bindgen]
-    pub fn wasm_worker_has_active_work() -> bool {
-        runtime()
-            .lock()
-            .map(|mut rt| rt.has_active_work())
-            .unwrap_or(false)
-    }
-
-    #[wasm_bindgen]
-    pub fn wasm_worker_pump_quantum(frames: u32) -> Float32Array {
-        let safe_frames = frames.clamp(64, 16384);
-        let (mut decoder_tasks, mut monitor_tasks, devices, mut scratch_buf, mut mix_buf) = {
-            let Ok(mut rt) = runtime().lock() else {
-                return Float32Array::new_with_length(0);
-            };
-            rt.devices.retain(|d| d.is_alive());
-            (
-                std::mem::take(&mut rt.decoder_tasks),
-                std::mem::take(&mut rt.monitor_tasks),
-                rt.devices.clone(),
-                std::mem::take(&mut rt.scratch_buf),
-                std::mem::take(&mut rt.mix_buf),
-            )
+    thread_local! {
+        static RENDER_BUFFERS: RefCell<(Vec<f32>, Vec<f32>)> = const {
+            RefCell::new((Vec::new(), Vec::new()))
         };
+        static SYNC_FETCH_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+    }
 
-        decoder_tasks.retain_mut(|task| task());
-        monitor_tasks.retain_mut(|task| task());
+    #[wasm_bindgen]
+    pub fn wasm_has_active_work() -> bool {
+        devices_registry()
+            .try_lock()
+            .map(|mut devs| {
+                devs.retain(|d| d.is_alive());
+                devs.iter().any(|d| d.is_active())
+            })
+            .unwrap_or(true)
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_render_web_audio(frames: u32) -> Float32Array {
+        let safe_frames = frames.clamp(64, 16384);
+        let devices = {
+            let Ok(mut devs) = devices_registry().try_lock() else {
+                return Float32Array::new_with_length((safe_frames * 2) as u32);
+            };
+            devs.retain(|d| d.is_alive());
+            devs.clone()
+        };
 
         let out_channels = devices
             .iter()
@@ -266,52 +217,68 @@ mod wasm_device_bridge {
             .clamp(1, 8);
         let total_samples = (safe_frames * out_channels) as usize;
 
-        mix_buf.clear();
-        mix_buf.resize(total_samples, 0.0);
+        RENDER_BUFFERS.with(|cell| {
+            let mut bufs = cell.borrow_mut();
+            let (ref mut scratch_buf, ref mut mix_buf) = *bufs;
+            mix_buf.clear();
+            mix_buf.resize(total_samples, 0.0);
 
-        for dev in &devices {
-            if !dev.is_active() || dev.user_data_addr == 0 {
-                continue;
-            }
-            let dev_samples = (safe_frames * dev.channels) as usize;
-            scratch_buf.clear();
-            scratch_buf.resize(dev_samples, 0.0);
-            unsafe {
-                rust_render_pcm_frames(
-                    dev.user_data_addr as *mut c_void,
-                    scratch_buf.as_mut_ptr(),
-                    safe_frames,
-                );
-            }
-            if dev.channels == out_channels {
-                for (dst, src) in mix_buf.iter_mut().zip(scratch_buf.iter()) {
-                    *dst = (*dst + *src).clamp(-1.0, 1.0);
+            for dev in &devices {
+                if !dev.is_active() || dev.user_data_addr == 0 {
+                    continue;
+                }
+                let ch = dev.channels.clamp(1, 8) as usize;
+                let dev_samples = (safe_frames as usize) * ch;
+
+                unsafe {
+                    let renderer = &mut *(dev.user_data_addr
+                        as *mut crate::core::output_manager::OutputDeviceRenderer);
+                    let avail = renderer.consumer.slots();
+                    let max_latency = 8192 * ch;
+                    let target_cushion = 4096 * ch;
+                    if avail > max_latency {
+                        if let Ok(chunk) = renderer.consumer.read_chunk(avail - target_cushion) {
+                            chunk.commit_all();
+                        }
+                    }
+                    let avail = renderer.consumer.slots();
+                    if dev.prebuffering.load(Ordering::Relaxed) {
+                        if avail < dev_samples + (2048 * ch) {
+                            continue;
+                        }
+                        dev.prebuffering.store(false, Ordering::Relaxed);
+                    } else if avail < dev_samples {
+                        dev.prebuffering.store(true, Ordering::Relaxed);
+                        continue;
+                    }
+
+                    scratch_buf.clear();
+                    scratch_buf.resize(dev_samples, 0.0);
+                    rust_render_pcm_frames(
+                        dev.user_data_addr as *mut c_void,
+                        scratch_buf.as_mut_ptr(),
+                        safe_frames,
+                    );
+                }
+
+                if dev.channels == out_channels {
+                    for (dst, src) in mix_buf.iter_mut().zip(scratch_buf.iter()) {
+                        *dst = (*dst + *src).clamp(-1.0, 1.0);
+                    }
                 }
             }
-        }
 
-        let out = Float32Array::from(mix_buf.as_slice());
-
-        if let Ok(mut rt) = runtime().lock() {
-            decoder_tasks.append(&mut rt.decoder_tasks);
-            rt.decoder_tasks = decoder_tasks;
-            monitor_tasks.append(&mut rt.monitor_tasks);
-            rt.monitor_tasks = monitor_tasks;
-            rt.scratch_buf = scratch_buf;
-            rt.mix_buf = mix_buf;
-        }
-
-        out
+            Float32Array::from(mix_buf.as_slice())
+        })
     }
 
     #[wasm_bindgen]
-    pub fn wasm_worker_get_sample_rate() -> u32 {
-        if let Ok(mut rt) = runtime().lock() {
-            rt.devices.retain(|d| d.is_alive());
-            rt.devices
-                .iter()
+    pub fn wasm_get_sample_rate() -> u32 {
+        if let Ok(mut devs) = devices_registry().try_lock() {
+            devs.retain(|d| d.is_alive());
+            devs.iter()
                 .find(|d| d.is_active())
-                .or_else(|| rt.devices.first())
+                .or_else(|| devs.first())
                 .map(|d| d.sample_rate)
                 .unwrap_or(44100)
         } else {
@@ -319,18 +286,93 @@ mod wasm_device_bridge {
         }
     }
 
-    /// Synchronously fetches an asset or HTTP audio source inside a Dedicated Web Worker
-    /// using the worker's `__miniaudioFetchBytesSync` host bridge.
+    /// Synchronously fetches an asset or HTTP audio source inside a Web Worker.
     pub fn wasm_fetch_source_bytes(
         source: &str,
         headers: Option<&[crate::api::types::RustHttpHeader]>,
     ) -> Result<Vec<u8>, i32> {
-        let global = js_sys::global();
-        let func_val = Reflect::get(&global, &JsValue::from_str("__miniaudioFetchBytesSync"))
-            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
-        let func = func_val
-            .dyn_into::<Function>()
-            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+        let func = SYNC_FETCH_FN.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                let code = r#"
+                    var raw = String(src || '').trim();
+                    if (!raw) return -2;
+                    if (raw.indexOf('data:') === 0) {
+                        try {
+                            var comma = raw.indexOf(',');
+                            if (comma < 0) return -6;
+                            var meta = raw.substring(0, comma);
+                            var payload = raw.substring(comma + 1);
+                            if (meta.indexOf(';base64') >= 0) {
+                                var bin = atob(payload);
+                                var out = new Uint8Array(bin.length);
+                                for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+                                return out;
+                            }
+                            return new TextEncoder().encode(decodeURIComponent(payload));
+                        } catch (_) {
+                            return -6;
+                        }
+                    }
+                    var origin = (self.location && self.location.origin && self.location.origin !== 'null')
+                        ? self.location.origin
+                        : '';
+                    var resolveAssetUrl = function(rel) {
+                        var clean = rel.replace(/^\/+/, '');
+                        var encoded = clean.split('/').map(function(seg) {
+                            return seg.replace(/#/g, '%23');
+                        }).join('/');
+                        return origin ? (origin + '/' + encoded) : encoded;
+                    };
+                    var candidates = [];
+                    if (raw.indexOf('icy://') === 0) {
+                        candidates.push('http://' + raw.substring(6));
+                    } else if (raw.indexOf('http://') === 0 || raw.indexOf('https://') === 0 || raw.indexOf('blob:') === 0) {
+                        candidates.push(raw);
+                    } else {
+                        var stripped = raw;
+                        if (stripped.indexOf('asset:///') === 0) stripped = stripped.substring(9);
+                        else if (stripped.indexOf('asset://') === 0) stripped = stripped.substring(8);
+                        else if (stripped.indexOf('file:///') === 0) stripped = stripped.substring(8);
+                        else if (stripped.indexOf('file://') === 0) stripped = stripped.substring(7);
+                        stripped = stripped.replace(/^\/+/, '');
+                        if (stripped.indexOf('assets/') === 0) {
+                            candidates.push(resolveAssetUrl('assets/' + stripped));
+                            candidates.push(resolveAssetUrl(stripped));
+                        } else {
+                            candidates.push(resolveAssetUrl(stripped));
+                            candidates.push(resolveAssetUrl('assets/' + stripped));
+                        }
+                    }
+                    for (var c = 0; c < candidates.length; c++) {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open('GET', candidates[c], false);
+                            xhr.responseType = 'arraybuffer';
+                            if (hdrs && hdrs.length) {
+                                for (var h = 0; h < hdrs.length; h++) {
+                                    var kv = hdrs[h];
+                                    if (kv && kv.length >= 2) {
+                                        var k = String(kv[0] || '');
+                                        if (k.toLowerCase() !== 'icy-metadata') {
+                                            try { xhr.setRequestHeader(k, String(kv[1] || '')); } catch (_) {}
+                                        }
+                                    }
+                                }
+                            }
+                            xhr.send(null);
+                            if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
+                                var u8 = new Uint8Array(xhr.response);
+                                if (u8.byteLength > 0) return u8;
+                            }
+                        } catch (_) {}
+                    }
+                    return -5;
+                "#;
+                *slot = Some(Function::new_with_args("src, hdrs", code));
+            }
+            slot.clone().unwrap()
+        });
 
         let headers_arr = Array::new();
         if let Some(hdrs) = headers {
@@ -383,7 +425,7 @@ mod wasm_device_bridge {
             *out_result = MAP_SUCCESS;
         }
         let mut info = MapDeviceInfo::default();
-        let name_bytes = b"WebAudio Worker";
+        let name_bytes = b"WebAudio Output";
         info.name[..name_bytes.len()].copy_from_slice(name_bytes);
         let id_bytes = b"auto";
         info.id[..id_bytes.len()].copy_from_slice(id_bytes);
@@ -397,11 +439,13 @@ mod wasm_device_bridge {
             user_data_addr: rust_user_data as usize,
             alive: AtomicBool::new(true),
             active: AtomicBool::new(false),
+            prebuffering: AtomicBool::new(true),
         });
 
         if !rust_user_data.is_null() {
-            if let Ok(mut rt) = runtime().lock() {
-                rt.register_device(state.clone());
+            if let Ok(mut devs) = devices_registry().lock() {
+                devs.retain(|d| d.is_alive());
+                devs.push(state.clone());
             }
         }
 
@@ -426,24 +470,25 @@ mod wasm_device_bridge {
             user_data_addr: 0,
             alive: AtomicBool::new(false),
             active: AtomicBool::new(false),
+            prebuffering: AtomicBool::new(true),
         });
         Arc::into_raw(state) as *mut MapDeviceContext
     }
 
     pub unsafe fn map_device_start(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
-            (*(ctx as *const WasmDeviceState))
-                .active
-                .store(true, Ordering::Relaxed);
+            let state = &*(ctx as *const WasmDeviceState);
+            state.prebuffering.store(true, Ordering::Relaxed);
+            state.active.store(true, Ordering::Relaxed);
         }
         MAP_SUCCESS
     }
 
     pub unsafe fn map_device_stop(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
-            (*(ctx as *const WasmDeviceState))
-                .active
-                .store(false, Ordering::Relaxed);
+            let state = &*(ctx as *const WasmDeviceState);
+            state.active.store(false, Ordering::Relaxed);
+            state.prebuffering.store(true, Ordering::Relaxed);
         }
         MAP_SUCCESS
     }

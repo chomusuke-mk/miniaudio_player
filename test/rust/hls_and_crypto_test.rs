@@ -92,7 +92,7 @@ segment101.ts\n\
 fn test_aes128_cbc_pkcs7_and_no_padding_decryption() {
     use aes::Aes128;
     use cbc::cipher::block_padding::{NoPadding, Pkcs7};
-    use cbc::cipher::{BlockEncryptMut, KeyIvInit};
+    use cbc::cipher::{BlockModeEncrypt, KeyIvInit};
     type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
     let key = [0x42u8; 16];
@@ -109,7 +109,7 @@ fn test_aes128_cbc_pkcs7_and_no_padding_decryption() {
     let mut encrypted_buf = vec![0u8; plaintext.len() + 16];
     let encryptor = Aes128CbcEnc::new((&key).into(), (&hex_iv).into());
     let enc_len = encryptor
-        .encrypt_padded_b2b_mut::<Pkcs7>(plaintext, &mut encrypted_buf)
+        .encrypt_padded_b2b::<Pkcs7>(plaintext, &mut encrypted_buf)
         .expect("Encryption should succeed")
         .len();
     encrypted_buf.truncate(enc_len);
@@ -123,7 +123,7 @@ fn test_aes128_cbc_pkcs7_and_no_padding_decryption() {
     let mut enc_blocks = [0u8; 64];
     let enc_no_pad = Aes128CbcEnc::new((&key).into(), (&hex_iv).into());
     enc_no_pad
-        .encrypt_padded_b2b_mut::<NoPadding>(&raw_blocks, &mut enc_blocks)
+        .encrypt_padded_b2b::<NoPadding>(&raw_blocks, &mut enc_blocks)
         .unwrap();
 
     let dec_no_pad =

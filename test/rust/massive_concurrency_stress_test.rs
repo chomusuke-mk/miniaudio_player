@@ -32,7 +32,7 @@ use miniaudio_player::core::recording::WavFormat;
 use miniaudio_player::core::voice_pool::{SoundBuffer, MAX_VOICES};
 use miniaudio_player::sync::{lock_unpoisoned, wait_timeout_unpoisoned};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 fn spin_yield_until<F>(timeout: Duration, mut pred: F) -> bool
 where
@@ -285,7 +285,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 match tid % 3 {
                     0 => {
                         // Queue mutator lane
-                        match rng.gen_range(0..6) {
+                        match rng.random_range(0..6) {
                             0 => {
                                 let base = nid.fetch_add(10, Ordering::Relaxed);
                                 let _ = p.set_queue(vec![
@@ -342,42 +342,42 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                                 });
                             }
                             3 => {
-                                let _ = p.remove_at(rng.gen_range(0..4));
+                                let _ = p.remove_at(rng.random_range(0..4));
                             }
                             4 => {
-                                let _ = p.reorder(rng.gen_range(0..3), rng.gen_range(0..3));
+                                let _ = p.reorder(rng.random_range(0..3), rng.random_range(0..3));
                             }
-                            _ => p.clear_queue(rng.gen_bool(0.5)),
+                            _ => p.clear_queue(rng.random_bool(0.5)),
                         }
                     }
                     1 => {
                         // Transport & Navigation lane (tolerate expected errors on broken fixtures)
-                        match rng.gen_range(0..9) {
+                        match rng.random_range(0..9) {
                             0 => {
                                 let _ = p.play(
                                     None,
-                                    Some(rng.gen_range(0..5)),
-                                    Some(rng.gen_bool(0.3)),
-                                    Some(rng.gen_range(0..400)),
+                                    Some(rng.random_range(0..5)),
+                                    Some(rng.random_bool(0.3)),
+                                    Some(rng.random_range(0..400)),
                                 );
                             }
                             1 => {
-                                let _ = p.next(Some(rng.gen_range(0..100)));
+                                let _ = p.next(Some(rng.random_range(0..100)));
                             }
                             2 => {
                                 let _ = p.previous();
                             }
                             3 => {
-                                let _ = p.seek(rng.gen_range(0..800));
+                                let _ = p.seek(rng.random_range(0..800));
                             }
                             4 => p.pause(),
                             5 => p.stop(),
-                            6 => p.set_loop_mode(rng.gen_range(0..=2)),
-                            7 => p.set_shuffle(rng.gen_bool(0.5)),
+                            6 => p.set_loop_mode(rng.random_range(0..=2)),
+                            7 => p.set_shuffle(rng.random_bool(0.5)),
                             _ => p.set_crossfade(RustCrossfadeConfig {
-                                auto_duration_ms: rng.gen_range(0..300),
-                                manual_duration_ms: rng.gen_range(0..150),
-                                curve: rng.gen_range(0..=1),
+                                auto_duration_ms: rng.random_range(0..300),
+                                manual_duration_ms: rng.random_range(0..150),
+                                curve: rng.random_range(0..=1),
                             }),
                         }
                     }
@@ -543,47 +543,47 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
                 // 4 threads issuing 350 DSP mutations each = 1400 DSP updates (> 1000 target)
                 for iter in 0..350 {
                     match iter % 12 {
-                        0 => p.set_volume(rng.gen_range(0.1..=1.2)),
-                        1 => p.set_rate(rng.gen_range(0.5..=2.0)),
-                        2 => p.set_pitch(rng.gen_range(0.6..=1.8)),
-                        3 => p.set_balance(rng.gen_range(-1.0..=1.0)),
-                        4 => p.set_mono(rng.gen_bool(0.5)),
+                        0 => p.set_volume(rng.random_range(0.1..=1.2)),
+                        1 => p.set_rate(rng.random_range(0.5..=2.0)),
+                        2 => p.set_pitch(rng.random_range(0.6..=1.8)),
+                        3 => p.set_balance(rng.random_range(-1.0..=1.0)),
+                        4 => p.set_mono(rng.random_bool(0.5)),
                         5 => {
-                            let gains: Vec<f32> = (0..10).map(|_| rng.gen_range(-12.0..=12.0)).collect();
+                            let gains: Vec<f32> = (0..10).map(|_| rng.random_range(-12.0..=12.0)).collect();
                             let _ = p.set_equalizer(RustEqualizerParams {
                                 gains,
-                                enabled: rng.gen_bool(0.8),
+                                enabled: rng.random_bool(0.8),
                             });
                         }
                         6 => p.set_crossfeed(RustCrossfeedConfig {
-                            enabled: rng.gen_bool(0.7),
-                            cutoff_hz: rng.gen_range(400.0..=1600.0),
-                            feed_db: rng.gen_range(2.0..=10.0),
+                            enabled: rng.random_bool(0.7),
+                            cutoff_hz: rng.random_range(400.0..=1600.0),
+                            feed_db: rng.random_range(2.0..=10.0),
                         }),
-                        7 => p.set_spatializer(rng.gen_bool(0.7), rng.gen_range(0.2..=1.8)),
+                        7 => p.set_spatializer(rng.random_bool(0.7), rng.random_range(0.2..=1.8)),
                         8 => {
                             let _ = p.set_reverb(RustReverbParams {
-                                room_size: rng.gen_range(0.1..=0.95),
-                                damping: rng.gen_range(0.1..=0.9),
-                                wet: rng.gen_range(0.0..=0.8),
-                                dry: rng.gen_range(0.4..=1.0),
-                                width: rng.gen_range(0.0..=1.0),
+                                room_size: rng.random_range(0.1..=0.95),
+                                damping: rng.random_range(0.1..=0.9),
+                                wet: rng.random_range(0.0..=0.8),
+                                dry: rng.random_range(0.4..=1.0),
+                                width: rng.random_range(0.0..=1.0),
                                 mode: 0.0,
-                                enabled: rng.gen_bool(0.7),
+                                enabled: rng.random_bool(0.7),
                             });
                         }
-                        9 => p.set_limiter(rng.gen_bool(0.8)),
+                        9 => p.set_limiter(rng.random_bool(0.8)),
                         10 => {
-                            let _ = p.set_replay_gain_mode(rng.gen_range(0..=2));
-                            let _ = p.set_default_replay_gain(rng.gen_range(-6.0..=2.0), 0.95);
+                            let _ = p.set_replay_gain_mode(rng.random_range(0..=2));
+                            let _ = p.set_default_replay_gain(rng.random_range(-6.0..=2.0), 0.95);
                         }
                         _ => {
                             let _ = p.set_silence_config(RustSilenceConfig {
-                                mode: rng.gen_range(0..=3),
+                                mode: rng.random_range(0..=3),
                                 threshold_db: -45.0,
                                 min_silence_duration_ms: 150,
                                 padding_ms: 20,
-                                enabled: rng.gen_bool(0.5),
+                                enabled: rng.random_bool(0.5),
                             });
                         }
                     }
@@ -592,9 +592,9 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
             } else if tid < 6 {
                 // 2 threads driving seeks, crossfades, and navigation simultaneously
                 for _ in 0..35 {
-                    let _ = p.seek(rng.gen_range(0..1500));
-                    let _ = p.next(Some(rng.gen_range(20..180)));
-                    let _ = p.seek(rng.gen_range(0..1200));
+                    let _ = p.seek(rng.random_range(0..1500));
+                    let _ = p.next(Some(rng.random_range(20..180)));
+                    let _ = p.seek(rng.random_range(0..1200));
                     let _ = p.previous();
                 }
             } else {
@@ -619,16 +619,16 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
                             z: 0.0,
                         },
                     });
-                    p.set_effect_volume(voice_id, rng.gen_range(0.1..=0.8));
-                    p.set_effect_pitch(voice_id, rng.gen_range(0.7..=1.5));
-                    p.set_effect_balance(voice_id, rng.gen_range(-1.0..=1.0));
+                    p.set_effect_volume(voice_id, rng.random_range(0.1..=0.8));
+                    p.set_effect_pitch(voice_id, rng.random_range(0.7..=1.5));
+                    p.set_effect_balance(voice_id, rng.random_range(-1.0..=1.0));
                     p.set_effect_emitter(
                         voice_id,
                         Some(RustSpatialEmitter {
                             position: RustVector3 {
-                                x: rng.gen_range(-5.0..=5.0),
+                                x: rng.random_range(-5.0..=5.0),
                                 y: 0.0,
-                                z: rng.gen_range(1.0..=10.0),
+                                z: rng.random_range(1.0..=10.0),
                             },
                             ..Default::default()
                         }),
@@ -737,10 +737,10 @@ fn scenario_3_massive_sfx_polyphony_and_lru_eviction_storm() {
                     let _ = p.set_effects(target);
                 }
 
-                let idx = rng.gen_range(0..20);
+                let idx = rng.random_range(0..20);
                 let id = if step % 9 == 0 {
                     "broken_missing".to_string()
-                } else if rng.gen_bool(0.5) {
+                } else if rng.random_bool(0.5) {
                     format!("sfx_a_{}", idx)
                 } else {
                     format!("sfx_b_{}", idx)
@@ -750,11 +750,11 @@ fn scenario_3_massive_sfx_polyphony_and_lru_eviction_storm() {
                     id,
                     RustEffectConfig {
                         volume: 0.2,
-                        balance: rng.gen_range(-1.0..=1.0),
-                        pitch: rng.gen_range(0.8..=1.4),
+                        balance: rng.random_range(-1.0..=1.0),
+                        pitch: rng.random_range(0.8..=1.4),
                         rate: 1.0,
-                        looping: rng.gen_bool(0.5),
-                        priority: rng.gen_range(0..=10),
+                        looping: rng.random_bool(0.5),
+                        priority: rng.random_range(0..=10),
                         ..Default::default()
                     },
                 ) {

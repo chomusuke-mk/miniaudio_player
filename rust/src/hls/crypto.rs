@@ -2,7 +2,7 @@
 
 use aes::Aes128;
 use cbc::cipher::block_padding::{NoPadding, Pkcs7};
-use cbc::cipher::{BlockDecryptMut, KeyIvInit};
+use cbc::cipher::{BlockModeDecrypt, KeyIvInit};
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
@@ -71,7 +71,7 @@ impl Aes128SegmentDecryptor {
         let mut buf = encrypted_data.to_vec();
         let decryptor = Aes128CbcDec::new(key.into(), iv.into());
         let unpadded = decryptor
-            .decrypt_padded_mut::<Pkcs7>(&mut buf)
+            .decrypt_padded::<Pkcs7>(&mut buf)
             .map_err(|_| "AES-128-CBC PKCS#7 unpadding failed".to_string())?;
         Ok(unpadded.to_vec())
     }
@@ -90,7 +90,7 @@ impl Aes128SegmentDecryptor {
         let mut buf = encrypted_data.to_vec();
         let decryptor = Aes128CbcDec::new(key.into(), iv.into());
         let plain = decryptor
-            .decrypt_padded_mut::<NoPadding>(&mut buf)
+            .decrypt_padded::<NoPadding>(&mut buf)
             .map_err(|_| "AES-128-CBC raw block decryption failed".to_string())?;
         Ok(plain.to_vec())
     }

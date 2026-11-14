@@ -16,7 +16,6 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 use symphonia::core::io::MediaSource;
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::sync::MonotonicInstant;
 
 use super::demux_reader::DemuxedStreamReader;
@@ -592,46 +591,32 @@ impl CustomDartByteSource {
             length: req_len,
         });
 
-        #[allow(unused_mut)]
         let mut guard = lock_unpoisoned(lock);
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = cvar;
-            if guard.received_data.is_none() && !guard.aborted {
+        let start = MonotonicInstant::now();
+        while guard.received_data.is_none() && !guard.aborted {
+            let elapsed = start.elapsed();
+            if elapsed >= Self::RESPONSE_TIMEOUT {
+                if let Some(ref reg) = self.registry {
+                    reg.unregister_request(req_id);
+                }
                 return Err(IoError::new(
-                    ErrorKind::WouldBlock,
-                    "waiting for Dart bytes",
+                    ErrorKind::TimedOut,
+                    "timed out waiting for Dart bytes",
                 ));
             }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let start = MonotonicInstant::now();
-            while guard.received_data.is_none() && !guard.aborted {
-                let elapsed = start.elapsed();
-                if elapsed >= Self::RESPONSE_TIMEOUT {
-                    if let Some(ref reg) = self.registry {
-                        reg.unregister_request(req_id);
-                    }
-                    return Err(IoError::new(
-                        ErrorKind::TimedOut,
-                        "timed out waiting for Dart bytes",
-                    ));
+            let remaining = Self::RESPONSE_TIMEOUT - elapsed;
+            let (new_guard, wait_res) = cvar
+                .wait_timeout(guard, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+            guard = new_guard;
+            if wait_res.timed_out() && guard.received_data.is_none() {
+                if let Some(ref reg) = self.registry {
+                    reg.unregister_request(req_id);
                 }
-                let remaining = Self::RESPONSE_TIMEOUT - elapsed;
-                let (new_guard, wait_res) = cvar
-                    .wait_timeout(guard, remaining)
-                    .unwrap_or_else(|e| e.into_inner());
-                guard = new_guard;
-                if wait_res.timed_out() && guard.received_data.is_none() {
-                    if let Some(ref reg) = self.registry {
-                        reg.unregister_request(req_id);
-                    }
-                    return Err(IoError::new(
-                        ErrorKind::TimedOut,
-                        "timed out waiting for Dart bytes",
-                    ));
-                }
+                return Err(IoError::new(
+                    ErrorKind::TimedOut,
+                    "timed out waiting for Dart bytes",
+                ));
             }
         }
 

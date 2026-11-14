@@ -47,3 +47,349 @@ pub fn read_unpoisoned<T>(rw: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 pub fn write_unpoisoned<T>(rw: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     rw.write().unwrap_or_else(|e| e.into_inner())
 }
+
+/// Returns `true` if the current thread is allowed to block on `Atomics.wait` / futexes.
+#[inline]
+pub fn can_block_current_thread() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        !thread::is_web_main_thread()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
+    }
+}
+
+/// Initializes the main-thread Web Worker spawner on `wasm32` (no-op on native targets).
+#[inline]
+pub fn init_wasm_thread_spawner() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        thread::ensure_main_thread_spawner();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod thread {
+    pub use std::thread::*;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub mod thread {
+    use std::cell::RefCell;
+    use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, OnceLock};
+    use std::time::Duration;
+
+    use flutter_rust_bridge::for_generated::js_sys::{self, Function, Reflect};
+    use flutter_rust_bridge::for_generated::wasm_bindgen;
+    use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
+
+    pub use std::thread::{Result, yield_now};
+
+    const SPAWNER_CHANNEL_NAME: &str = "__miniaudio_wasm_thread_spawner__";
+    static SCRIPT_SRC: OnceLock<String> = OnceLock::new();
+    static MAIN_SPAWNER_READY: AtomicBool = AtomicBool::new(false);
+
+    thread_local! {
+        static DISPATCH_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+        static SPAWNER_SETUP_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+        static POST_CHANNEL_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+    }
+
+    #[inline]
+    pub fn is_web_main_thread() -> bool {
+        let global = js_sys::global();
+        Reflect::has(&global, &JsValue::from_str("window")).unwrap_or(false)
+            && Reflect::has(&global, &JsValue::from_str("document")).unwrap_or(false)
+    }
+
+    #[inline]
+    pub fn sleep(dur: Duration) {
+        if !is_web_main_thread() {
+            std::thread::sleep(dur);
+        }
+    }
+
+    fn resolve_script_src() -> String {
+        SCRIPT_SRC
+            .get_or_init(|| {
+                if let Ok(val) = js_sys::eval(
+                    r#"(() => {
+                        if (typeof document !== 'undefined') {
+                            const scripts = document.getElementsByTagName('script');
+                            for (let i = scripts.length - 1; i >= 0; i--) {
+                                if (scripts[i].src && scripts[i].src.indexOf('miniaudio_player') !== -1) {
+                                    return scripts[i].src;
+                                }
+                            }
+                        }
+                        try {
+                            throw new Error();
+                        } catch (e) {
+                            const m = e.stack && e.stack.match(/(?:\(|@)(https?:\/\/[^\s:)"]+\.js):\d+:\d+/);
+                            if (m) return m[1];
+                        }
+                        if (typeof location !== 'undefined' && location.origin) {
+                            return location.origin + '/pkg/miniaudio_player.js';
+                        }
+                        return 'pkg/miniaudio_player.js';
+                    })()"#,
+                ) {
+                    if let Some(s) = val.as_string() {
+                        if !s.is_empty() {
+                            return s;
+                        }
+                    }
+                }
+                "pkg/miniaudio_player.js".to_string()
+            })
+            .clone()
+    }
+
+    pub fn ensure_main_thread_spawner() {
+        if !is_web_main_thread() {
+            return;
+        }
+        let script_src = resolve_script_src();
+        let func = SPAWNER_SETUP_FN.with(|slot| {
+            let mut borrow = slot.borrow_mut();
+            if borrow.is_none() {
+                let code = r#"
+                    if (self.__miniaudioSpawnerChannel) return true;
+                    try {
+                        var ch = new BroadcastChannel(channelName);
+                        ch.onmessage = function(ev) {
+                            var ptr = ev.data | 0;
+                            if (ptr !== 0 && typeof self.__miniaudioDispatchWorkerTask === 'function') {
+                                self.__miniaudioDispatchWorkerTask(ptr, scriptSrc, mod, mem);
+                            }
+                        };
+                        self.__miniaudioSpawnerChannel = ch;
+                        return true;
+                    } catch (_) {
+                        return false;
+                    }
+                "#;
+                *borrow = Some(Function::new_with_args(
+                    "channelName, scriptSrc, mod, mem",
+                    code,
+                ));
+            }
+            borrow.clone().unwrap()
+        });
+        let _ = dispatch_task_to_worker(0);
+        if let Ok(ok) = func.call4(
+            &JsValue::NULL,
+            &JsValue::from_str(SPAWNER_CHANNEL_NAME),
+            &JsValue::from_str(&script_src),
+            &wasm_bindgen::module(),
+            &wasm_bindgen::memory(),
+        ) {
+            if ok.as_bool() == Some(true) {
+                MAIN_SPAWNER_READY.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    fn dispatch_task_to_worker(task_ptr: u32) -> std::result::Result<(), JsValue> {
+        let script_src = resolve_script_src();
+        let func = DISPATCH_FN.with(|slot| {
+            let mut borrow = slot.borrow_mut();
+            if borrow.is_none() {
+                let code = r#"
+                    if (!self.__miniaudioDispatchWorkerTask) {
+                        self.__miniaudioIdleWorkers = self.__miniaudioIdleWorkers || [];
+                        self.__miniaudioDispatchWorkerTask = function(ptr, src, wasmMod, wasmMem) {
+                            if (ptr === 0) return true;
+                            var pool = self.__miniaudioIdleWorkers;
+                            var worker = pool.pop();
+                            if (!worker) {
+                                var workerCode = "importScripts('" + src + "');\n" +
+                                    "onmessage = function(e) {\n" +
+                                    "  var d = e.data;\n" +
+                                    "  var initP = wasm_bindgen({ module_or_path: d[0], memory: d[1] });\n" +
+                                    "  onmessage = async function(ev) {\n" +
+                                    "    await initP;\n" +
+                                    "    try { wasm_bindgen.wasm_thread_entry_point(ev.data); }\n" +
+                                    "    finally { postMessage(0); }\n" +
+                                    "  };\n" +
+                                    "};";
+                                var blob = new Blob([workerCode], { type: 'text/javascript' });
+                                var url = URL.createObjectURL(blob);
+                                worker = new Worker(url);
+                                URL.revokeObjectURL(url);
+                                worker.postMessage([wasmMod, wasmMem]);
+                            }
+                            worker.onmessage = function() {
+                                pool.push(worker);
+                            };
+                            worker.postMessage(ptr);
+                            return true;
+                        };
+                    }
+                    return self.__miniaudioDispatchWorkerTask(taskPtr, scriptSrc, mod, mem);
+                "#;
+                *borrow = Some(Function::new_with_args(
+                    "taskPtr, scriptSrc, mod, mem",
+                    code,
+                ));
+            }
+            borrow.clone().unwrap()
+        });
+        func.call4(
+            &JsValue::NULL,
+            &JsValue::from_f64(task_ptr as f64),
+            &JsValue::from_str(&script_src),
+            &wasm_bindgen::module(),
+            &wasm_bindgen::memory(),
+        )?;
+        Ok(())
+    }
+
+    fn post_spawn_to_main_thread(task_ptr: u32) -> std::result::Result<(), JsValue> {
+        let func = POST_CHANNEL_FN.with(|slot| {
+            let mut borrow = slot.borrow_mut();
+            if borrow.is_none() {
+                let code = r#"
+                    var ch = new BroadcastChannel(channelName);
+                    ch.postMessage(taskPtr);
+                    ch.close();
+                    return true;
+                "#;
+                *borrow = Some(Function::new_with_args("channelName, taskPtr", code));
+            }
+            borrow.clone().unwrap()
+        });
+        func.call2(
+            &JsValue::NULL,
+            &JsValue::from_str(SPAWNER_CHANNEL_NAME),
+            &JsValue::from_f64(task_ptr as f64),
+        )?;
+        Ok(())
+    }
+
+    pub struct ThreadTask {
+        started: Arc<AtomicBool>,
+        func: Box<dyn FnOnce() + Send + 'static>,
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_thread_entry_point(task_ptr: u32) {
+        if task_ptr == 0 {
+            return;
+        }
+        let task = unsafe { Box::from_raw(task_ptr as *mut ThreadTask) };
+        task.started.store(true, Ordering::Release);
+        (task.func)();
+    }
+
+    struct SharedJoinState<T> {
+        result: Mutex<Option<Result<T>>>,
+        done: AtomicBool,
+        cvar: Condvar,
+    }
+
+    pub struct JoinHandle<T> {
+        started: Arc<AtomicBool>,
+        state: Arc<SharedJoinState<T>>,
+    }
+
+    impl<T> JoinHandle<T> {
+        pub fn join(self) -> Result<T> {
+            if !self.state.done.load(Ordering::Acquire)
+                && !is_web_main_thread()
+                && self.started.load(Ordering::Acquire)
+            {
+                let mut guard = super::lock_unpoisoned(&self.state.result);
+                while guard.is_none() && !self.state.done.load(Ordering::Acquire) {
+                    let (g, timeout_res) = super::wait_timeout_unpoisoned(
+                        &self.state.cvar,
+                        guard,
+                        Duration::from_millis(250),
+                    );
+                    guard = g;
+                    if timeout_res.timed_out() {
+                        break;
+                    }
+                }
+            }
+            if let Some(res) = super::lock_unpoisoned(&self.state.result).take() {
+                res
+            } else {
+                Err(Box::new("wasm worker join deferred"))
+            }
+        }
+    }
+
+    #[derive(Default)]
+    pub struct Builder {
+        name: Option<String>,
+    }
+
+    impl Builder {
+        pub fn new() -> Self {
+            Self { name: None }
+        }
+
+        pub fn name(mut self, name: String) -> Self {
+            self.name = Some(name);
+            self
+        }
+
+        pub fn spawn<F, T>(self, f: F) -> io::Result<JoinHandle<T>>
+        where
+            F: FnOnce() -> T + Send + 'static,
+            T: Send + 'static,
+        {
+            let _ = &self.name;
+            let started = Arc::new(AtomicBool::new(false));
+            let state = Arc::new(SharedJoinState {
+                result: Mutex::new(None),
+                done: AtomicBool::new(false),
+                cvar: Condvar::new(),
+            });
+
+            let state_for_worker = state.clone();
+            let task = Box::new(ThreadTask {
+                started: started.clone(),
+                func: Box::new(move || {
+                    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+                    if let Ok(mut slot) = state_for_worker.result.lock() {
+                        *slot = Some(res);
+                    }
+                    state_for_worker.done.store(true, Ordering::Release);
+                    state_for_worker.cvar.notify_all();
+                }),
+            });
+            let task_ptr = Box::into_raw(task) as usize as u32;
+
+            if is_web_main_thread() {
+                ensure_main_thread_spawner();
+                if dispatch_task_to_worker(task_ptr).is_err() {
+                    unsafe {
+                        drop(Box::from_raw(task_ptr as *mut ThreadTask));
+                    }
+                    return Err(io::Error::other("failed to dispatch wasm worker task"));
+                }
+            } else if MAIN_SPAWNER_READY.load(Ordering::Acquire) {
+                let sent = post_spawn_to_main_thread(task_ptr);
+                if sent.is_err() && dispatch_task_to_worker(task_ptr).is_err() {
+                    unsafe {
+                        drop(Box::from_raw(task_ptr as *mut ThreadTask));
+                    }
+                    return Err(io::Error::other("failed to post wasm worker spawn request"));
+                }
+            } else if dispatch_task_to_worker(task_ptr).is_err() {
+                unsafe {
+                    drop(Box::from_raw(task_ptr as *mut ThreadTask));
+                }
+                return Err(io::Error::other("failed to spawn nested wasm worker"));
+            }
+
+            Ok(JoinHandle { started, state })
+        }
+    }
+}

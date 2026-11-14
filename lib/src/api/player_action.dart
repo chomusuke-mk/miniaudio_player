@@ -730,11 +730,9 @@ class PlayerAction<T> {
       );
     }
     await _rust.setEffects(effects: rustEffects);
-    if (!kIsWeb) {
-      _player.state._loadedEffectIds =
-          List.unmodifiable(_rust.getLoadedEffectIds());
-      _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
-    }
+    _player.state._loadedEffectIds =
+        List.unmodifiable(_rust.getLoadedEffectIds());
+    _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
   }
 
   /// Triggers playback of a polyphonic sound effect and returns a live [Voice] handle.

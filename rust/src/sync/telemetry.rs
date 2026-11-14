@@ -2,10 +2,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread;
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
+
+use crate::sync::thread;
 
 use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -399,133 +398,12 @@ pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>
 /// Strongly-typed event callback closure type.
 pub type TypedEventCallback = Box<dyn Fn(&TelemetryEvent) + Send + Sync>;
 
-/// Cross-platform monotonic instant that uses `std::time::Instant` on native targets
-/// and `js_sys::Date::now()` on `wasm32-unknown-unknown` (avoiding `Instant::now()` panics).
-#[derive(Debug, Clone, Copy)]
-pub struct MonotonicInstant {
-    #[cfg(not(target_arch = "wasm32"))]
-    inner: Instant,
-    #[cfg(target_arch = "wasm32")]
-    ms: f64,
-}
-
-impl MonotonicInstant {
-    /// Returns the current monotonic instant.
-    #[inline]
-    pub fn now() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Self {
-                inner: Instant::now(),
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            Self {
-                ms: flutter_rust_bridge::for_generated::js_sys::Date::now(),
-            }
-        }
-    }
-
-    /// Measures the elapsed duration since this instant was recorded.
-    #[inline]
-    pub fn elapsed(&self) -> Duration {
-        Self::now().saturating_duration_since(*self)
-    }
-
-    /// Measures the duration from `earlier` to `self`, saturating at zero.
-    #[inline]
-    pub fn saturating_duration_since(&self, earlier: Self) -> Duration {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.inner.saturating_duration_since(earlier.inner)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let diff_ms = (self.ms - earlier.ms).max(0.0);
-            Duration::from_micros((diff_ms * 1000.0) as u64)
-        }
-    }
-
-    /// Measures the duration from `earlier` to `self`.
-    #[inline]
-    pub fn duration_since(&self, earlier: Self) -> Duration {
-        self.saturating_duration_since(earlier)
-    }
-}
-
-impl PartialEq for MonotonicInstant {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.inner == other.inner
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.ms.to_bits() == other.ms.to_bits()
-        }
-    }
-}
-
-impl Eq for MonotonicInstant {}
-
-impl PartialOrd for MonotonicInstant {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for MonotonicInstant {
-    #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.inner.cmp(&other.inner)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.ms.total_cmp(&other.ms)
-        }
-    }
-}
-
-impl std::ops::Add<Duration> for MonotonicInstant {
-    type Output = Self;
-
-    #[inline]
-    fn add(self, rhs: Duration) -> Self::Output {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Self {
-                inner: self.inner + rhs,
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            Self {
-                ms: self.ms + rhs.as_secs_f64() * 1000.0,
-            }
-        }
-    }
-}
-
-impl std::ops::AddAssign<Duration> for MonotonicInstant {
-    #[inline]
-    fn add_assign(&mut self, rhs: Duration) {
-        *self = *self + rhs;
-    }
-}
-
-impl std::ops::Sub<Self> for MonotonicInstant {
-    type Output = Duration;
-
-    #[inline]
-    fn sub(self, rhs: Self) -> Self::Output {
-        self.saturating_duration_since(rhs)
-    }
-}
+/// Cross-platform monotonic instant (`std::time::Instant` on native, `web_time::Instant` on `wasm32`).
+#[cfg(not(target_arch = "wasm32"))]
+pub type MonotonicInstant = std::time::Instant;
+/// Cross-platform monotonic instant (`std::time::Instant` on native, `web_time::Instant` on `wasm32`).
+#[cfg(target_arch = "wasm32")]
+pub type MonotonicInstant = web_time::Instant;
 
 static START_TIME: std::sync::OnceLock<MonotonicInstant> = std::sync::OnceLock::new();
 
@@ -585,7 +463,6 @@ impl CallbackRegistry {
 pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callbacks: Arc<CallbackRegistry>,
-    #[allow(dead_code)]
     tx: crossbeam_channel::Sender<TelemetryEvent>,
     worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -613,16 +490,6 @@ impl TelemetryDispatcher {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn spawn_worker(
-        _is_running: Arc<AtomicBool>,
-        _callbacks: Arc<CallbackRegistry>,
-        _rx: crossbeam_channel::Receiver<TelemetryEvent>,
-    ) -> Option<thread::JoinHandle<()>> {
-        None
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn spawn_worker(
         is_running: Arc<AtomicBool>,
         callbacks: Arc<CallbackRegistry>,
@@ -667,17 +534,7 @@ impl TelemetryDispatcher {
         let event_type = event.event_type();
         let event_data = event.to_map_event_data();
         self.callbacks.notify_rust(event_type, &event_data);
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let mut last_pos = -1;
-            self.callbacks
-                .notify_typed_batch(std::slice::from_ref(&event), &mut last_pos);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = self.tx.send(event);
-        }
+        let _ = self.tx.send(event);
     }
 
     /// Posts an untyped event by converting `(event_type, data)` into a [`TelemetryEvent`].

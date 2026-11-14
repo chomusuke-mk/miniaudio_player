@@ -1,12 +1,11 @@
 //! Central thread-safe player coordinator integrating decoding, DSP, buffering, and device output.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread;
-use std::thread::JoinHandle;
+use crate::sync::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::bridge::ffi::*;
@@ -220,36 +219,48 @@ fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn build_network_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    ureq::Agent::config_builder()
         .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
-        .timeout_connect(Duration::from_secs(5))
-        .timeout_read(Duration::from_secs(15))
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_recv_response(Some(Duration::from_secs(15)))
+        .timeout_per_read(Some(Duration::from_secs(15)))
         .max_idle_connections(0)
         .build()
+        .into()
 }
 
 /// Bounded HTTP probe agent used during cancellable initial stream open/header sniff.
 #[cfg(not(target_arch = "wasm32"))]
 fn build_network_probe_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    ureq::Agent::config_builder()
         .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
-        .timeout_connect(Duration::from_secs(5))
-        .timeout_read(Duration::from_secs(8))
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_recv_response(Some(Duration::from_secs(8)))
+        .timeout_per_read(Some(Duration::from_secs(8)))
         .max_idle_connections(0)
         .build()
+        .into()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn apply_http_headers(
-    mut req: ureq::Request,
+    mut req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
     headers: Option<&[crate::api::types::RustHttpHeader]>,
-) -> ureq::Request {
+) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
     if let Some(hdrs) = headers {
         for h in hdrs {
-            req = req.set(&h.key, &h.value);
+            req = req.header(&h.key, &h.value);
         }
     }
     req
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn response_header_str<'a>(
+    res: &'a ureq::http::Response<ureq::Body>,
+    name: &str,
+) -> Option<&'a str> {
+    res.headers().get(name).and_then(|v| v.to_str().ok())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -430,9 +441,9 @@ fn fetch_hls_segment_audio(
 ) -> Option<(Vec<u8>, i32)> {
     let req = apply_http_headers(agent.get(seg_url), headers);
     let res = req.call().ok()?;
-    let content_type = res.header("content-type").map(|s| s.to_string());
+    let content_type = response_header_str(&res, "content-type").map(|s| s.to_string());
     let mut raw_bytes = Vec::new();
-    res.into_reader().read_to_end(&mut raw_bytes).ok()?;
+    res.into_body().into_reader().read_to_end(&mut raw_bytes).ok()?;
     if raw_bytes.is_empty() {
         return None;
     }
@@ -463,14 +474,15 @@ fn fetch_range_bytes(
         return None;
     }
     let range_hdr = format!("bytes={}-{}", start, end_inclusive);
-    let req = apply_http_headers(agent.get(url), headers).set("Range", &range_hdr);
+    let req = apply_http_headers(agent.get(url), headers).header("Range", &range_hdr);
     let res = req.call().ok()?;
-    if res.status() != 206 {
+    if res.status().as_u16() != 206 {
         return None;
     }
     let expected = (end_inclusive - start + 1) as usize;
     let mut buf = Vec::with_capacity(expected.min(4 * 1024 * 1024));
-    res.into_reader()
+    res.into_body()
+        .into_reader()
         .take(expected as u64)
         .read_to_end(&mut buf)
         .ok()?;
@@ -481,6 +493,7 @@ fn fetch_range_bytes(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prefetch_initial_stream_bytes_cancellable(
     reader: &mut impl Read,
     content_length: i64,
@@ -612,10 +625,10 @@ fn spawn_network_streamer_thread(
                         let range_hdr = format!("bytes={}-", order.offset);
                         let agent = build_network_agent();
                         let req = apply_http_headers(agent.get(&url), headers.as_deref())
-                            .set("Range", &range_hdr);
+                            .header("Range", &range_hdr);
                         match req.call() {
-                            Ok(res) if res.status() == 206 => {
-                                reader = Box::new(res.into_reader());
+                            Ok(res) if res.status().as_u16() == 206 => {
+                                reader = Box::new(res.into_body().into_reader());
                                 stream_pos = order.offset;
                             }
                             _ => {
@@ -656,10 +669,10 @@ fn spawn_network_streamer_thread(
                                 let agent = build_network_agent();
                                 let req =
                                     apply_http_headers(agent.get(&url), headers.as_deref())
-                                        .set("Range", &range_hdr);
+                                        .header("Range", &range_hdr);
                                 if let Ok(res) = req.call() {
-                                    if res.status() == 206 {
-                                        reader = Box::new(res.into_reader());
+                                    if res.status().as_u16() == 206 {
+                                        reader = Box::new(res.into_body().into_reader());
                                         stream_pos = current_end;
                                         continue;
                                     }
@@ -736,10 +749,10 @@ fn spawn_network_streamer_thread(
                                 let agent = build_network_agent();
                                 let req =
                                     apply_http_headers(agent.get(&url), headers.as_deref())
-                                        .set("Range", &range_hdr);
+                                        .header("Range", &range_hdr);
                                 if let Ok(res) = req.call() {
-                                    if res.status() == 206 {
-                                        reader = Box::new(res.into_reader());
+                                    if res.status().as_u16() == 206 {
+                                        reader = Box::new(res.into_body().into_reader());
                                         stream_pos = current_end;
                                         continue;
                                     }
@@ -952,15 +965,11 @@ struct DecoderWorker {
 }
 
 impl DecoderWorker {
-    #[cfg(not(target_arch = "wasm32"))]
     fn wait_for_wake(&self, timeout_ms: u64) {
         let (lock, cvar) = &*self.wake;
         let guard = lock_unpoisoned(lock);
         let _ = wait_timeout_unpoisoned(cvar, guard, Duration::from_millis(timeout_ms));
     }
-
-    #[cfg(target_arch = "wasm32")]
-    fn wait_for_wake(&self, _timeout_ms: u64) {}
 
     fn available_producer_slots(&self) -> usize {
         self.producer_arc
@@ -1038,7 +1047,6 @@ impl DecoderWorker {
             return true;
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
         {
             let cur_flush = self.flush_generation.load(Ordering::Acquire);
             let start_wait = MonotonicInstant::now();
@@ -1048,7 +1056,7 @@ impl DecoderWorker {
                 if is_superseded() {
                     return true;
                 }
-                std::thread::sleep(Duration::from_millis(1));
+                thread::sleep(Duration::from_millis(1));
             }
         }
 
@@ -1233,7 +1241,6 @@ impl DecoderWorker {
                 if PlaybackState::from_i32(self.state.load(Ordering::Relaxed)) == PlaybackState::Playing {
                     self.set_buffering(true);
                 }
-                #[cfg(not(target_arch = "wasm32"))]
                 thread::sleep(Duration::from_millis(15));
                 return;
             }
@@ -1247,7 +1254,6 @@ impl DecoderWorker {
 
         self.set_buffering(false);
 
-        #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_millis(20));
     }
 
@@ -1281,7 +1287,6 @@ impl DecoderWorker {
                             {
                                 self.set_buffering(true);
                             }
-                            #[cfg(not(target_arch = "wasm32"))]
                             thread::sleep(Duration::from_millis(10));
                             return;
                         } else {
@@ -1328,7 +1333,6 @@ impl DecoderWorker {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn run(&mut self) {
         while self.running.load(Ordering::Relaxed) {
             self.poll_renderer_flags();
@@ -1378,48 +1382,6 @@ impl DecoderWorker {
 
             self.decode_and_process_step();
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn step_quantum(&mut self) -> bool {
-        if !self.running.load(Ordering::Relaxed) {
-            return false;
-        }
-
-        self.poll_renderer_flags();
-
-        let _ = self.handle_pending_seek();
-
-        let cur_state = PlaybackState::from_i32(self.state.load(Ordering::Relaxed));
-        if cur_state == PlaybackState::Stopped {
-            return true;
-        }
-        if cur_state == PlaybackState::Paused && self.available_producer_slots() < 4096 {
-            return true;
-        }
-
-        if !self.ensure_stream_initialized() {
-            return true;
-        }
-
-        self.dispatch_periodic_telemetry();
-        self.check_buffering_recovery();
-
-        for _ in 0..64 {
-            if !self.pipeline.drain_pending_to(&self.producer_arc) {
-                break;
-            }
-            if self.available_producer_slots() < 4096 {
-                break;
-            }
-            if self.decoder_eof_arc.load(Ordering::Relaxed) {
-                break;
-            }
-            self.decode_and_process_step();
-        }
-        self.check_buffering_recovery();
-
-        true
     }
 }
 
@@ -1920,18 +1882,10 @@ impl StreamingDeck {
             },
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.decoder_thread = thread::Builder::new()
-                .name("map-decoder".to_string())
-                .spawn(move || worker.run())
-                .ok();
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            crate::bridge::ffi::wasm_register_decoder_task(Box::new(move || worker.step_quantum()));
-        }
+        self.decoder_thread = thread::Builder::new()
+            .name("map-decoder".to_string())
+            .spawn(move || worker.run())
+            .ok();
     }
 
 
@@ -2268,7 +2222,7 @@ impl StreamingDeck {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
                 let mut media_bytes = Vec::new();
-                if res.into_reader().read_to_end(&mut media_bytes).is_err() {
+                if res.into_body().into_reader().read_to_end(&mut media_bytes).is_err() {
                     return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
                 }
                 match crate::hls::M3u8Parser::parse(&media_bytes) {
@@ -2422,11 +2376,11 @@ impl StreamingDeck {
         } else {
             build_network_agent()
         };
-        let req = apply_http_headers(agent.get(url), headers).set("Icy-MetaData", "1");
+        let req = apply_http_headers(agent.get(url), headers).header("Icy-MetaData", "1");
 
         let res = match req.call() {
             Ok(r) => r,
-            Err(ureq::Error::Status(code, _)) => {
+            Err(ureq::Error::StatusCode(code)) => {
                 crate::map_log!(1, "open_network failed: HTTP status {} for {}", code, url);
                 let err = if code == 404 {
                     MAP_ERROR_FILE_NOT_FOUND
@@ -2449,28 +2403,24 @@ impl StreamingDeck {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
 
-        let content_length: i64 = res
-            .header("content-length")
+        let content_length: i64 = response_header_str(&res, "content-length")
             .and_then(|s| s.parse().ok())
             .unwrap_or(-1);
-        let content_type = res.header("content-type").map(|s| s.to_string());
-        let icy_metaint: usize = res
-            .header("icy-metaint")
+        let content_type = response_header_str(&res, "content-type").map(|s| s.to_string());
+        let icy_metaint: usize = response_header_str(&res, "icy-metaint")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-        let icy_name = res
-            .header("icy-name")
+        let icy_name = response_header_str(&res, "icy-name")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        let icy_genre = res
-            .header("icy-genre")
+        let icy_genre = response_header_str(&res, "icy-genre")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        let icy_url = res
-            .header("icy-url")
+        let icy_url = response_header_str(&res, "icy-url")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        let icy_br: Option<u32> = res.header("icy-br").and_then(|s| s.trim().parse().ok());
+        let icy_br: Option<u32> =
+            response_header_str(&res, "icy-br").and_then(|s| s.trim().parse().ok());
 
         if icy_metaint > 0
             || icy_name.is_some()
@@ -2503,14 +2453,14 @@ impl StreamingDeck {
 
         let mut reader: Box<dyn Read + Send> = if icy_metaint > 0 {
             Box::new(IcyDemuxReader::new(
-                Box::new(res.into_reader()),
+                Box::new(res.into_body().into_reader()),
                 icy_metaint,
                 session_slot.clone(),
                 latest_icy.clone(),
                 self.icy_metadata.clone(),
             ))
         } else {
-            Box::new(res.into_reader())
+            Box::new(res.into_body().into_reader())
         };
 
         let (initial_data, was_aborted) =
@@ -2666,6 +2616,7 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn extract_seekable_head_and_tail<R: Read + Seek>(
         reader: &mut R,
         total_size: i64,
@@ -4184,7 +4135,6 @@ impl StreamingDeck {
 
     #[inline]
     fn acknowledge_renderer_flush(&mut self) {
-        #[cfg(target_arch = "wasm32")]
         if let Some(ref mut renderer) = self.renderer {
             renderer.acknowledge_flush_if_needed();
         }
@@ -5227,12 +5177,12 @@ impl DualSource {
             self.current_index.store(0, Ordering::Release);
             if q.len() > 2 {
                 use rand::seq::SliceRandom;
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 q[1..].shuffle(&mut rng);
             }
         } else {
             use rand::seq::SliceRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             q.shuffle(&mut rng);
             self.current_index.store(0, Ordering::Release);
         }
@@ -5326,7 +5276,7 @@ impl DualSource {
             if effective_shuffled {
                 let mut q = can;
                 use rand::seq::SliceRandom;
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 if let Some(canon_idx) = target_canon_idx {
                     q.swap(0, canon_idx);
                     if q.len() > 2 {
@@ -5440,7 +5390,7 @@ impl DualSource {
                         q.swap(0, pos);
                         if q.len() > 2 {
                             use rand::seq::SliceRandom;
-                            let mut rng = rand::thread_rng();
+                            let mut rng = rand::rng();
                             q[1..].shuffle(&mut rng);
                         }
                     }

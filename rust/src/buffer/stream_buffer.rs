@@ -14,9 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use crate::sync::{lock_unpoisoned, wait_timeout_unpoisoned};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::sync::MonotonicInstant;
+use crate::sync::{lock_unpoisoned, wait_timeout_unpoisoned, MonotonicInstant};
 
 /// Operational states for a [`StreamBuffer`] or [`StreamSession`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -684,59 +682,51 @@ impl StreamBuffer {
         if !self.is_circular {
             return None;
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = timeout;
-            return self.next_block_request();
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let start_time = MonotonicInstant::now();
-            let mut guard = lock_unpoisoned(&self.backend);
-            self.is_producer_waiting.store(true, Ordering::Release);
-            let result = loop {
-                if self.should_abort.load(Ordering::Acquire) || self.is_eof.load(Ordering::Acquire) {
-                    break None;
-                }
-                if let BufferBackend::Circular {
+        let start_time = MonotonicInstant::now();
+        let mut guard = lock_unpoisoned(&self.backend);
+        self.is_producer_waiting.store(true, Ordering::Release);
+        let result = loop {
+            if self.should_abort.load(Ordering::Acquire) || self.is_eof.load(Ordering::Acquire) {
+                break None;
+            }
+            if let BufferBackend::Circular {
+                capacity,
+                anchor_offset,
+                range_start,
+                range_end,
+                audio_end,
+                ref window,
+                ..
+            } = *guard
+            {
+                let cursor = self.read_cursor.load(Ordering::Acquire);
+                let is_eof = self.is_eof.load(Ordering::Acquire);
+                if let Some(order) = Self::compute_next_block_order_locked(
+                    cursor,
                     capacity,
                     anchor_offset,
                     range_start,
                     range_end,
                     audio_end,
-                    ref window,
-                    ..
-                } = *guard
-                {
-                    let cursor = self.read_cursor.load(Ordering::Acquire);
-                    let is_eof = self.is_eof.load(Ordering::Acquire);
-                    if let Some(order) = Self::compute_next_block_order_locked(
-                        cursor,
-                        capacity,
-                        anchor_offset,
-                        range_start,
-                        range_end,
-                        audio_end,
-                        is_eof,
-                        window,
-                    ) {
-                        break Some(order);
-                    }
-                } else {
-                    break None;
+                    is_eof,
+                    window,
+                ) {
+                    break Some(order);
                 }
+            } else {
+                break None;
+            }
 
-                let elapsed = start_time.elapsed();
-                if elapsed >= timeout {
-                    break None;
-                }
-                let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
-                let (new_guard, _) = wait_timeout_unpoisoned(&self.data_signal, guard, wait_slice);
-                guard = new_guard;
-            };
-            self.is_producer_waiting.store(false, Ordering::Release);
-            result
-        }
+            let elapsed = start_time.elapsed();
+            if elapsed >= timeout {
+                break None;
+            }
+            let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
+            let (new_guard, _) = wait_timeout_unpoisoned(&self.data_signal, guard, wait_slice);
+            guard = new_guard;
+        };
+        self.is_producer_waiting.store(false, Ordering::Release);
+        result
     }
 
     /// Returns the number of unread forward bytes (`Ahead`) currently buffered ahead of `read_cursor`.
@@ -805,71 +795,56 @@ impl StreamBuffer {
     /// (respecting `back_retention_bytes` backward protection) are available in the circular buffer,
     /// or until `timeout` elapses or the buffer is aborted.
     pub fn wait_for_free_space(&self, min_free_bytes: usize, timeout: Duration) -> bool {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (min_free_bytes, timeout);
+        if !self.is_circular {
             return true;
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if !self.is_circular {
-                return true;
+        let start_time = MonotonicInstant::now();
+        let mut guard = lock_unpoisoned(&self.backend);
+        self.is_producer_waiting.store(true, Ordering::Release);
+        let result = loop {
+            if self.should_abort.load(Ordering::Acquire) {
+                break false;
             }
-            let start_time = MonotonicInstant::now();
-            let mut guard = lock_unpoisoned(&self.backend);
-            self.is_producer_waiting.store(true, Ordering::Release);
-            let result = loop {
-                if self.should_abort.load(Ordering::Acquire) {
-                    break false;
-                }
-                if let BufferBackend::Circular {
-                    capacity,
-                    anchor_offset,
-                    range_end,
-                    ref window,
-                    ..
-                } = *guard
-                {
-                    let cursor = self.read_cursor.load(Ordering::Acquire).max(anchor_offset);
-                    let eviction_floor = cursor
-                        .saturating_sub(window.back_retention_bytes as u64)
-                        .max(anchor_offset);
-                    let used = range_end.saturating_sub(eviction_floor) as usize;
-                    let free_space = capacity.saturating_sub(used);
-                    let target_free = min_free_bytes
-                        .max((capacity / 16).min(Self::DEFAULT_FREE_SPACE_RESUME_BYTES))
-                        .min(capacity.saturating_sub(window.back_retention_bytes).max(1));
-                    if free_space >= target_free {
-                        break true;
-                    }
-                } else {
+            if let BufferBackend::Circular {
+                capacity,
+                anchor_offset,
+                range_end,
+                ref window,
+                ..
+            } = *guard
+            {
+                let cursor = self.read_cursor.load(Ordering::Acquire).max(anchor_offset);
+                let eviction_floor = cursor
+                    .saturating_sub(window.back_retention_bytes as u64)
+                    .max(anchor_offset);
+                let used = range_end.saturating_sub(eviction_floor) as usize;
+                let free_space = capacity.saturating_sub(used);
+                let target_free = min_free_bytes
+                    .max((capacity / 16).min(Self::DEFAULT_FREE_SPACE_RESUME_BYTES))
+                    .min(capacity.saturating_sub(window.back_retention_bytes).max(1));
+                if free_space >= target_free {
                     break true;
                 }
+            } else {
+                break true;
+            }
 
-                let elapsed = start_time.elapsed();
-                if elapsed >= timeout {
-                    break false;
-                }
-                let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
-                let (new_guard, _) = wait_timeout_unpoisoned(&self.data_signal, guard, wait_slice);
-                guard = new_guard;
-            };
-            self.is_producer_waiting.store(false, Ordering::Release);
-            result
-        }
+            let elapsed = start_time.elapsed();
+            if elapsed >= timeout {
+                break false;
+            }
+            let wait_slice = (timeout - elapsed).min(Duration::from_millis(50));
+            let (new_guard, _) = wait_timeout_unpoisoned(&self.data_signal, guard, wait_slice);
+            guard = new_guard;
+        };
+        self.is_producer_waiting.store(false, Ordering::Release);
+        result
     }
 
     /// Suspends the calling thread on `data_signal` until signaled or `timeout` elapses.
     pub fn wait_signal(&self, timeout: Duration) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let guard = lock_unpoisoned(&self.backend);
-            let _ = self.data_signal.wait_timeout(guard, timeout);
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = timeout;
-        }
+        let guard = lock_unpoisoned(&self.backend);
+        let _ = self.data_signal.wait_timeout(guard, timeout);
     }
 
     /// Current mutation version counter.
@@ -1475,11 +1450,7 @@ impl StreamBuffer {
         out: &mut [u8],
         timeout: Option<Duration>,
     ) -> Result<usize, BufferError> {
-        #[cfg(target_arch = "wasm32")]
-        let _ = timeout;
-        #[cfg(not(target_arch = "wasm32"))]
         let max_wait = timeout.unwrap_or(Duration::from_millis(2000));
-        #[cfg(not(target_arch = "wasm32"))]
         let start_time = MonotonicInstant::now();
 
         loop {
@@ -1496,25 +1467,17 @@ impl StreamBuffer {
                         return Ok(0);
                     }
 
-                    #[cfg(target_arch = "wasm32")]
-                    {
+                    let elapsed = start_time.elapsed();
+                    if elapsed >= max_wait {
                         return Err(BufferError::WouldBlock);
                     }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let elapsed = start_time.elapsed();
-                        if elapsed >= max_wait {
-                            return Err(BufferError::WouldBlock);
-                        }
-                        let remaining = max_wait - elapsed;
-                        let slice_wait = remaining.min(Duration::from_millis(20));
-                        let guard = lock_unpoisoned(&self.backend);
-                        if self.should_abort.load(Ordering::Acquire) {
-                            return Err(BufferError::Aborted);
-                        }
-                        let _ = self.data_signal.wait_timeout(guard, slice_wait);
+                    let remaining = max_wait - elapsed;
+                    let slice_wait = remaining.min(Duration::from_millis(20));
+                    let guard = lock_unpoisoned(&self.backend);
+                    if self.should_abort.load(Ordering::Acquire) {
+                        return Err(BufferError::Aborted);
                     }
+                    let _ = self.data_signal.wait_timeout(guard, slice_wait);
                 }
                 Err(e) => return Err(e),
             }
@@ -2011,11 +1974,7 @@ impl StreamSession {
         out: &mut [u8],
         timeout: Option<Duration>,
     ) -> Result<usize, BufferError> {
-        #[cfg(target_arch = "wasm32")]
-        let _ = timeout;
-        #[cfg(not(target_arch = "wasm32"))]
         let max_wait = timeout.unwrap_or(Duration::from_millis(2000));
-        #[cfg(not(target_arch = "wasm32"))]
         let start_time = MonotonicInstant::now();
 
         loop {
@@ -2028,23 +1987,16 @@ impl StreamSession {
                     if self.body.is_eof() {
                         return Ok(0);
                     }
-                    #[cfg(target_arch = "wasm32")]
-                    {
+                    let elapsed = start_time.elapsed();
+                    if elapsed >= max_wait {
                         return Err(BufferError::WouldBlock);
                     }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let elapsed = start_time.elapsed();
-                        if elapsed >= max_wait {
-                            return Err(BufferError::WouldBlock);
-                        }
-                        let slice_wait = (max_wait - elapsed).min(Duration::from_millis(20));
-                        let guard = lock_unpoisoned(&self.body.backend);
-                        if self.body.should_abort.load(Ordering::Acquire) {
-                            return Err(BufferError::Aborted);
-                        }
-                        let _ = self.body.data_signal.wait_timeout(guard, slice_wait);
+                    let slice_wait = (max_wait - elapsed).min(Duration::from_millis(20));
+                    let guard = lock_unpoisoned(&self.body.backend);
+                    if self.body.should_abort.load(Ordering::Acquire) {
+                        return Err(BufferError::Aborted);
                     }
+                    let _ = self.body.data_signal.wait_timeout(guard, slice_wait);
                 }
                 Err(e) => return Err(e),
             }

@@ -1,3 +1,3 @@
-//! Symphonia adapter integration for libopus decoding.
+//! Pure-Rust Symphonia Opus decoder integration (`symphonia-opus`).
 
-pub use symphonia_adapter_libopus::OpusDecoder;
+pub use symphonia_opus::OpusDecoder;

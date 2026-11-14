@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::thread::JoinHandle;
+use crate::sync::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender};
 
@@ -119,63 +119,12 @@ impl ControlCoordinator {
         );
         *lock_unpoisoned(&inner.io_pool) = Some(pool);
 
-        #[cfg(not(target_arch = "wasm32"))]
         let coord_jh = {
             let weak = Arc::downgrade(&inner);
-            std::thread::Builder::new()
+            thread::Builder::new()
                 .name("map-ctrl-coord".to_string())
                 .spawn(move || Self::coord_loop(weak, hint_rx, wake_rx))
                 .ok()
-        };
-        #[cfg(target_arch = "wasm32")]
-        let coord_jh: Option<JoinHandle<()>> = {
-            let weak = Arc::downgrade(&inner);
-            crate::bridge::ffi::wasm_register_monitor_task(Box::new(move || {
-                let Some(coord) = weak.upgrade() else {
-                    return false;
-                };
-                if coord.disposed.load(Ordering::Acquire) {
-                    return false;
-                }
-                while let Ok(msg) = wake_rx.try_recv() {
-                    match msg {
-                        CoordWake::Shutdown => return false,
-                        CoordWake::PrewarmCheck { retry_if_failed } => {
-                            coord.run_prewarm_check(retry_if_failed);
-                        }
-                    }
-                }
-                while let Ok(msg) = hint_rx.try_recv() {
-                    match msg {
-                        RtControlHint::PrewarmNeeded => {
-                            coord.run_prewarm_check(true);
-                        }
-                        RtControlHint::AutoAdvanceNeeded {
-                            expected_deck_id,
-                            expected_open_gen,
-                            next_idx,
-                            item,
-                            should_auto_xfade,
-                            auto_ms,
-                            dur_ms,
-                            pos_ms,
-                        } => {
-                            coord.handle_auto_advance_hint(
-                                expected_deck_id,
-                                expected_open_gen,
-                                next_idx,
-                                item,
-                                should_auto_xfade,
-                                auto_ms,
-                                dur_ms,
-                                pos_ms,
-                            );
-                        }
-                    }
-                }
-                true
-            }));
-            None
         };
 
         Self {
@@ -184,7 +133,6 @@ impl ControlCoordinator {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn coord_loop(
         weak: Weak<CoordInner>,
         hint_rx: Receiver<RtControlHint>,

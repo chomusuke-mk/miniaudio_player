@@ -6,10 +6,10 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 
 use crate::core::voice_pool::{SoundBuffer, SoundBufferReaperFn};
 use crate::dsp::voice_pool::SoundBuffer as DspSoundBuffer;
+use crate::sync::thread::{self, JoinHandle};
 
 const REAPER_QUEUE_CAPACITY: usize = 1024;
 
@@ -49,39 +49,32 @@ impl ReaperHandle {
         }
     }
 
-    /// Spawns the dedicated `map-reaper` background thread on native targets.
+    /// Spawns the dedicated `map-reaper` background thread.
     pub fn spawn() -> Self {
-        #[cfg(target_arch = "wasm32")]
-        {
-            Self::noop()
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (tx, rx) = crossbeam_channel::bounded::<ReaperTrash>(REAPER_QUEUE_CAPACITY);
-            let stopped = Arc::new(AtomicBool::new(false));
-            let handle = std::thread::Builder::new()
-                .name("map-reaper".to_string())
-                .spawn(move || {
-                    while let Ok(item) = rx.recv() {
-                        match item {
-                            ReaperTrash::SoundBuffer(buf) => drop(buf),
-                            ReaperTrash::SoundBuffers(bufs) => drop(bufs),
-                            ReaperTrash::Deferred(task) => task(),
-                            ReaperTrash::Shutdown => break,
-                        }
+        let (tx, rx) = crossbeam_channel::bounded::<ReaperTrash>(REAPER_QUEUE_CAPACITY);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let handle = thread::Builder::new()
+            .name("map-reaper".to_string())
+            .spawn(move || {
+                while let Ok(item) = rx.recv() {
+                    match item {
+                        ReaperTrash::SoundBuffer(buf) => drop(buf),
+                        ReaperTrash::SoundBuffers(bufs) => drop(bufs),
+                        ReaperTrash::Deferred(task) => task(),
+                        ReaperTrash::Shutdown => break,
                     }
-                })
-                .ok();
-
-            if let Some(jh) = handle {
-                Self {
-                    tx: Some(tx),
-                    worker: Some(Arc::new(std::sync::Mutex::new(Some(jh)))),
-                    stopped,
                 }
-            } else {
-                Self::noop()
+            })
+            .ok();
+
+        if let Some(jh) = handle {
+            Self {
+                tx: Some(tx),
+                worker: Some(Arc::new(std::sync::Mutex::new(Some(jh)))),
+                stopped,
             }
+        } else {
+            Self::noop()
         }
     }
 

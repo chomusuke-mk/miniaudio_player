@@ -423,3 +423,217 @@ fn test_chromaprint_analysis_generation() {
     assert!(cp.algorithm >= 0, "Algorithm must be valid (>= 0)");
 }
 
+#[test]
+fn test_pure_rust_symphonia_opus_0_1_2_capabilities_and_accuracy() {
+    use symphonia::core::audio::{Channels, Position};
+    use symphonia::core::codecs::audio::{
+        AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
+    };
+    use symphonia::core::packet::PacketRef;
+    use symphonia::core::units::{Duration, Timestamp};
+    use symphonia_opus::OpusDecoder;
+
+    // 1. Registry must expose symphonia-opus 0.1.2 for CODEC_ID_OPUS
+    let registry = create_codec_registry();
+    assert!(registry.get_audio_decoder(CODEC_ID_OPUS).is_some());
+
+    // 2. Full decode & seek/reset validation on real Opus containers (.opus, .webm)
+    for (filename, ext) in &[("salida.opus", "opus"), ("salida.webm", "webm")]
+    {
+        let file = File::open(FixtureResolver::resolve(filename)).unwrap();
+        let mut engine = SymphoniaEngine::new(file, Some(ext))
+            .unwrap_or_else(|e| panic!("Opus open failed for {}: {}", filename, e));
+        assert_eq!(engine.codec(), "Opus");
+        assert_eq!(engine.sample_rate(), 48000);
+        assert!(engine.channels() >= 1);
+
+        let mut pcm = Vec::new();
+        let mut total_frames = 0usize;
+        while let Ok(true) = engine.decode_next_frame(&mut pcm) {
+            for &s in &pcm {
+                assert!(s.is_finite(), "{}: non-finite Opus sample", filename);
+            }
+            total_frames += pcm.len() / (engine.channels() as usize);
+        }
+        assert!(total_frames > 48000, "{}: expected > 1s of decoded Opus audio", filename);
+
+        // Seek before hitting container EOF (isomp4/mkv demuxers invalidate state once EOF is reached).
+        let seek_file = File::open(FixtureResolver::resolve(filename)).unwrap();
+        let mut seek_engine = SymphoniaEngine::new(seek_file, Some(ext)).unwrap();
+        for _ in 0..8 {
+            assert!(seek_engine.decode_next_frame(&mut pcm).unwrap());
+        }
+        seek_engine.seek_ms(1000).expect("Opus seek failed");
+        assert!(seek_engine.decode_next_frame(&mut pcm).unwrap());
+        for &s in &pcm {
+            assert!(s.is_finite(), "{}: non-finite Opus sample after seek", filename);
+        }
+    }
+
+    // 3. Container 44.1 kHz sample rate fallback to 48 kHz + Q7.8 OutputGain (+6.02 dB = 1536 -> ~2.0x)
+    let make_head = |channels: u8, output_gain: i16, family: u8, streams: u8, coupled: u8, map: &[u8]| -> Box<[u8]> {
+        let mut h = Vec::with_capacity(21 + map.len());
+        h.extend_from_slice(b"OpusHead");
+        h.push(1);
+        h.push(channels);
+        h.extend_from_slice(&0u16.to_le_bytes());
+        h.extend_from_slice(&44100u32.to_le_bytes());
+        h.extend_from_slice(&output_gain.to_le_bytes());
+        h.push(family);
+        if family != 0 {
+            h.push(streams);
+            h.push(coupled);
+            h.extend_from_slice(map);
+        }
+        h.into_boxed_slice()
+    };
+
+    let mut p_unity = AudioCodecParameters::new();
+    p_unity
+        .for_codec(CODEC_ID_OPUS)
+        .with_sample_rate(44100)
+        .with_extra_data(make_head(2, 0, 0, 1, 1, &[]));
+    let mut d_unity = OpusDecoder::try_new(&p_unity, &AudioDecoderOptions::default()).unwrap();
+    assert_eq!(d_unity.codec_params().sample_rate, Some(48000));
+
+    let mut p_gain = AudioCodecParameters::new();
+    p_gain
+        .for_codec(CODEC_ID_OPUS)
+        .with_sample_rate(44100)
+        .with_extra_data(make_head(2, 1536, 0, 1, 1, &[])); // +6.0 dB
+    let mut d_gain = OpusDecoder::try_new(&p_gain, &AudioDecoderOptions::default()).unwrap();
+    assert_eq!(d_gain.output_gain(), 1536);
+
+    // Non-silent CELT frame + empty PLC packet
+    let pkt_bytes = [0xFCu8, 0x10, 0x20, 0x30, 0x40, 0x50];
+    let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), &pkt_bytes);
+    let _ = d_unity.decode_ref(&pkt).unwrap();
+    let _ = d_gain.decode_ref(&pkt).unwrap();
+    let expected_scale = 10.0_f32.powf(1536.0 / (20.0 * 256.0));
+    let mut u_samples: Vec<f32> = Vec::new();
+    d_unity.last_decoded().copy_to_vec_interleaved(&mut u_samples);
+    let u_peak = u_samples.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+    let mut g_samples: Vec<f32> = Vec::new();
+    d_gain.last_decoded().copy_to_vec_interleaved(&mut g_samples);
+    let g_peak = g_samples.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+    assert!((g_peak - u_peak * expected_scale).abs() < 1e-4);
+
+    // PLC on empty packet must synthesize 960 finite samples without error
+    let plc_pkt = PacketRef::new(0, Timestamp::from(960u32), Duration::from(960u64), &[]);
+    let plc_out = d_unity.decode_ref(&plc_pkt).unwrap();
+    assert_eq!(plc_out.frames(), 960);
+
+    // 4. Surround 5.1 (Mapping Family 1, 6 channels = 4 streams / 2 coupled)
+    let mut p_51 = AudioCodecParameters::new();
+    p_51.for_codec(CODEC_ID_OPUS)
+        .with_sample_rate(48000)
+        .with_channels(Channels::Positioned(
+            Position::FRONT_LEFT
+                | Position::FRONT_CENTER
+                | Position::FRONT_RIGHT
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
+                | Position::LFE1,
+        ))
+        .with_extra_data(make_head(6, 0, 1, 4, 2, &[0, 4, 1, 2, 3, 5]));
+    let mut d_51 = registry
+        .make_audio_decoder(&p_51, &AudioDecoderOptions::default())
+        .expect("Opus 5.1 surround decoder must instantiate");
+    let pkt_51 = [
+        0xFCu8, 0x02, 0xFF, 0xFE, // Stream 0 (coupled, self-delimited)
+        0xFC, 0x02, 0xFF, 0xFE,   // Stream 1 (coupled, self-delimited)
+        0xF8, 0x02, 0xFF, 0xFE,   // Stream 2 (mono, self-delimited)
+        0xF8, 0xFF, 0xFE,         // Stream 3 (mono, final undelimited)
+    ];
+    let p_ref = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), &pkt_51);
+    let dec_51 = d_51.decode_ref(&p_ref).unwrap();
+    assert_eq!(dec_51.spec().channels().count(), 6);
+    assert_eq!(dec_51.frames(), 960);
+}
+
+#[test]
+fn test_pure_rust_rusty_aac_2_0_2_lc_sbr_ps_and_multichannel() {
+    use miniaudio_player::decoder::RustyAacDecoder;
+    use symphonia::core::codecs::audio::well_known::{
+        profiles::{CODEC_PROFILE_AAC_HE, CODEC_PROFILE_AAC_HE_V2, CODEC_PROFILE_AAC_LC},
+        CODEC_ID_AAC,
+    };
+    use symphonia::core::codecs::audio::{
+        AudioCodecParameters, AudioDecoderOptions,
+    };
+    use symphonia::core::codecs::registry::RegisterableAudioDecoder;
+
+    // 1. Verify CODEC_ID_AAC registers RustyAacDecoder and advertises LC / HE-AAC v1 / HE-AAC v2
+    let registry = create_codec_registry();
+    assert!(registry.get_audio_decoder(CODEC_ID_AAC).is_some());
+    let supported = RustyAacDecoder::supported_codecs();
+    let profiles = supported[0].info.profiles;
+    assert!(profiles.iter().any(|p| p.profile == CODEC_PROFILE_AAC_LC));
+    assert!(profiles.iter().any(|p| p.profile == CODEC_PROFILE_AAC_HE));
+    assert!(profiles.iter().any(|p| p.profile == CODEC_PROFILE_AAC_HE_V2));
+
+    // 2. Full decode + seek validation on real M4A AAC-LC and raw ADTS .aac fixtures
+    for (filename, ext) in &[("salida_aac.m4a", "m4a"), ("salida.aac", "aac")] {
+        let file = File::open(FixtureResolver::resolve(filename)).unwrap();
+        let mut engine = SymphoniaEngine::new(file, Some(ext))
+            .unwrap_or_else(|e| panic!("AAC open failed for {}: {}", filename, e));
+        assert_eq!(engine.codec(), "AAC");
+        assert_eq!(engine.sample_rate(), 48000);
+        assert_eq!(engine.channels(), 2);
+
+        let mut pcm = Vec::new();
+        let mut total_frames = 0usize;
+        while let Ok(true) = engine.decode_next_frame(&mut pcm) {
+            for &s in &pcm {
+                assert!(s.is_finite(), "{}: non-finite AAC sample", filename);
+            }
+            total_frames += pcm.len() / 2;
+        }
+        assert!(total_frames > 48000, "{}: expected > 1s of decoded AAC audio", filename);
+
+        if *filename != "salida.aac" {
+            let seek_file = File::open(FixtureResolver::resolve(filename)).unwrap();
+            let mut seek_engine = SymphoniaEngine::new(seek_file, Some(ext)).unwrap();
+            for _ in 0..8 {
+                assert!(seek_engine.decode_next_frame(&mut pcm).unwrap());
+            }
+            seek_engine.seek_ms(1000).expect("M4A AAC seek failed");
+            assert!(seek_engine.decode_next_frame(&mut pcm).unwrap());
+            for &s in &pcm {
+                assert!(s.is_finite(), "{}: non-finite AAC sample after seek", filename);
+            }
+        }
+    }
+
+    // 3. HE-AAC v1 (SBR, AOT 5: 24 kHz base -> 48 kHz output, stereo)
+    let mut p_sbr = AudioCodecParameters::new();
+    p_sbr
+        .for_codec(CODEC_ID_AAC)
+        .with_extra_data(Box::new([0x2B, 0x11, 0x88, 0x00]));
+    let dec_sbr = registry
+        .make_audio_decoder(&p_sbr, &AudioDecoderOptions::default())
+        .expect("HE-AAC v1 SBR must initialize");
+    assert_eq!(dec_sbr.codec_params().sample_rate, Some(48000));
+    assert_eq!(dec_sbr.codec_params().channels.as_ref().unwrap().count(), 2);
+
+    // 4. HE-AAC v2 (SBR + Parametric Stereo, AOT 29: 24 kHz mono base -> 48 kHz stereo output)
+    let mut p_ps = AudioCodecParameters::new();
+    p_ps.for_codec(CODEC_ID_AAC)
+        .with_extra_data(Box::new([0xEB, 0x09, 0x88, 0x00]));
+    let dec_ps = registry
+        .make_audio_decoder(&p_ps, &AudioDecoderOptions::default())
+        .expect("HE-AAC v2 SBR+PS must initialize");
+    assert_eq!(dec_ps.codec_params().sample_rate, Some(48000));
+    assert_eq!(dec_ps.codec_params().channels.as_ref().unwrap().count(), 2);
+
+    // 5. Surround 5.1 (6 channels) AAC-LC AudioSpecificConfig
+    let mut p_51 = AudioCodecParameters::new();
+    p_51.for_codec(CODEC_ID_AAC)
+        .with_extra_data(Box::new([0x11, 0xB0]));
+    let dec_51 = registry
+        .make_audio_decoder(&p_51, &AudioDecoderOptions::default())
+        .expect("5.1 surround AAC must initialize");
+    assert_eq!(dec_51.codec_params().sample_rate, Some(48000));
+    assert_eq!(dec_51.codec_params().channels.as_ref().unwrap().count(), 6);
+}
+

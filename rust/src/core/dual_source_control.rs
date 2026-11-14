@@ -457,7 +457,7 @@ impl DualSource {
             let start_idx: usize = if effective_shuffled {
                 let mut q = can;
                 use rand::seq::SliceRandom;
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 if let Some(canon_idx) = target_canon_idx {
                     q.swap(0, canon_idx);
                     if q.len() > 2 {

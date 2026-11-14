@@ -51,45 +51,45 @@ path = "../test/rust/massive_concurrency_stress_test.rs"
 
 [dependencies]
 # 100% Rust Audio Decoding and Demuxing
-symphonia = { version = "0.6", default-features = false, features = ["all-codecs", "all-formats", "all-meta"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["opt-simd", "all-codecs", "all-formats", "all-meta"] }
+symphonia-opus = "0.1.2"
+rusty_aac = "2.0.2"
 
 # Lock-Free Concurrency and Real-Time Synchronization
-log = "0.4"
-rand = "0.8"
-rtrb = "0.3"
-crossbeam-channel = "0.5"
-crossbeam-utils = "0.8"
+log = "0.4.35"
+rand = "0.10.3"
+rtrb = "0.4.1"
+crossbeam-channel = "0.5.17"
+crossbeam-utils = "0.8.23"
 flutter_rust_bridge = "=2.13.0"
 
 # DSP, Spectral Analysis, and Resampling
-rustfft = "6.2"
-rubato = "0.15"
-timestretch = "0.16"
+rustfft = "6.4.1"
+rubato = "5.1.0"
+audioadapter-buffers = "5.1.0"
+timestretch = "0.16.0"
 
 # HLS Streaming (M3U8) and Cryptography
-m3u8-rs = "6.0"
-aes = "0.8"
-cbc = "0.1"
+m3u8-rs = "6.0.1"
+aes = "0.9.4"
+cbc = "0.2.1"
 
 # Additional Audio Formats and Tag Metadata (MIT / Apache-2.0)
-ape-decoder = "0.3"
-wavicle = "0.1"
-lofty = "0.25.4"
+ape-decoder = "0.3.2"
+wavicle = "0.1.0"
+lofty = "0.25.5"
 # Audio Fingerprinting (Chromaprint / AcoustID 100% Rust)
 chromaprint-next = "0.1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-symphonia-adapter-libopus = "0.3"
-symphonia-adapter-fdk-aac = "0.2"
-ureq = { version = "2.10", default-features = false, features = ["tls"] }
+ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
-symphonia-opus = "0.1.1"
-wasm-bindgen-futures = "0.4"
+getrandom = { version = "0.4.3", features = ["wasm_js"] }
+web-time = "1.1.0"
 
 [build-dependencies]
-cc = "1.2"
+cc = "1.11.2"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
@@ -118,8 +118,8 @@ overflow-checks = true
 opt-level = "s"
 lto = true
 codegen-units = 1
-strip = true
+strip = "debuginfo"
 panic = "abort"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-mutable-globals", "--enable-nontrapping-float-to-int", "--enable-sign-ext"]
+wasm-opt = ["-O3", "--enable-threads", "--enable-bulk-memory", "--enable-mutable-globals", "--enable-nontrapping-float-to-int", "--enable-sign-ext"]

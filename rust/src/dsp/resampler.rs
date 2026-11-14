@@ -1,13 +1,14 @@
-//! High-Fidelity Resampler powered by Rubato (FftFixedInOut).
+//! High-Fidelity Resampler powered by Rubato (`Fft`).
 //!
 //! Provides dynamic sample rate conversion with SNR > 140 dB, zero phase distortion,
 //! and pre-allocated buffers for lock-free real-time audio pipelines.
 
-use rubato::{FftFixedInOut, Resampler};
+use audioadapter_buffers::direct::SequentialSliceOfVecs;
+use rubato::{Fft, FixedSync, Indexing, Resampler};
 
 /// High-fidelity FFT-based sample rate converter powered by Rubato with SNR > 140 dB.
 pub struct RubatoResampler {
-    resampler: Option<FftFixedInOut<f32>>,
+    resampler: Option<Fft<f32>>,
     sample_rate_in: u32,
     sample_rate_out: u32,
     channels: usize,
@@ -64,11 +65,12 @@ impl RubatoResampler {
             });
         }
 
-        let resampler = FftFixedInOut::<f32>::new(
+        let resampler = Fft::<f32>::new(
             sample_rate_in as usize,
             sample_rate_out as usize,
             chunk_size.max(256),
             ch,
+            FixedSync::Both,
         )
         .map_err(|e| format!("Failed to create Rubato resampler: {:?}", e))?;
 
@@ -144,8 +146,17 @@ impl RubatoResampler {
 
             let out_frames = {
                 let resampler = self.resampler.as_mut().unwrap();
+                let input_adapter =
+                    SequentialSliceOfVecs::new(&self.in_buffers, self.channels, self.chunk_size_in)
+                        .map_err(|e| format!("Rubato input buffer adapter error: {:?}", e))?;
+                let mut output_adapter = SequentialSliceOfVecs::new_mut(
+                    &mut self.out_buffers,
+                    self.channels,
+                    self.chunk_size_out,
+                )
+                .map_err(|e| format!("Rubato output buffer adapter error: {:?}", e))?;
                 let (_, out_frames) = resampler
-                    .process_into_buffer(&self.in_buffers, &mut self.out_buffers, None)
+                    .process_into_buffer(&input_adapter, &mut output_adapter, None)
                     .map_err(|e| format!("Rubato processing error: {:?}", e))?;
                 out_frames
             };
@@ -176,8 +187,23 @@ impl RubatoResampler {
 
         let out_frames = {
             let resampler = self.resampler.as_mut().unwrap();
+            let input_adapter =
+                SequentialSliceOfVecs::new(&self.in_buffers, self.channels, self.chunk_size_in)
+                    .map_err(|e| format!("Rubato flush input adapter error: {:?}", e))?;
+            let mut output_adapter = SequentialSliceOfVecs::new_mut(
+                &mut self.out_buffers,
+                self.channels,
+                self.chunk_size_out,
+            )
+            .map_err(|e| format!("Rubato flush output adapter error: {:?}", e))?;
+            let indexing = Indexing {
+                input_offset: 0,
+                output_offset: 0,
+                partial_len: Some(remaining),
+                active_channels_mask: None,
+            };
             let (_, out_frames) = resampler
-                .process_into_buffer(&self.in_buffers, &mut self.out_buffers, None)
+                .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
                 .map_err(|e| format!("Rubato flush error: {:?}", e))?;
             out_frames
         };
@@ -196,7 +222,7 @@ impl RubatoResampler {
             buf.clear();
         }
         if let Some(ref mut resampler) = self.resampler {
-            let _ = resampler.reset();
+            resampler.reset();
         }
     }
 

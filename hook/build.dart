@@ -887,7 +887,9 @@ void _provisionWebAssetsIfNeeded(BuildInput input) {
       final src = File(p.join(pkgWebDir.path, fileName));
       final dst = File(p.join(destPkgDir.path, fileName));
       if (src.existsSync()) {
-        if (!dst.existsSync() || src.lengthSync() != dst.lengthSync()) {
+        if (!dst.existsSync() ||
+            src.lengthSync() != dst.lengthSync() ||
+            src.lastModifiedSync().isAfter(dst.lastModifiedSync())) {
           src.copySync(dst.path);
         }
       }

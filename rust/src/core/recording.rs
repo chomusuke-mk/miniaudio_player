@@ -10,7 +10,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use crate::sync::thread::{self, JoinHandle};
 
 /// Supported WAV PCM encoding formats for live recording and offline bouncing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -278,7 +278,7 @@ impl LiveRecorder {
         let is_rec = self.is_recording.clone();
         let stop_sig = self.stop_signal.clone();
 
-        let handle = std::thread::Builder::new()
+        let handle = thread::Builder::new()
             .name("miniaudio-wav-writer".to_string())
             .spawn(move || {
                 let buf_writer = BufWriter::with_capacity(65536, &mut file);
@@ -292,7 +292,7 @@ impl LiveRecorder {
 
                 while !stop_sig.load(Ordering::Acquire) || consumer.slots() > 0 {
                     if !wav_writer.drain_consumer(&mut consumer) {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
 
@@ -332,7 +332,7 @@ impl LiveRecorder {
         let is_rec = self.is_recording.clone();
         let stop_sig = self.stop_signal.clone();
 
-        let handle = std::thread::Builder::new()
+        let handle = thread::Builder::new()
             .name("miniaudio-wav-writer-shared".to_string())
             .spawn(move || {
                 let buf_writer = BufWriter::with_capacity(65536, &mut file);
@@ -351,7 +351,7 @@ impl LiveRecorder {
                     };
 
                     if !has_drained {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
 

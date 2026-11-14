@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
+use crate::sync::thread::{self, JoinHandle};
 use crate::sync::MonotonicInstant as Instant;
 
 use crate::bridge::ffi::MAP_SUCCESS;
@@ -44,17 +45,24 @@ impl<T: Clone> AsyncWaiter<T> {
 
     /// Blocks until the operation completes or is superseded/cancelled.
     pub fn wait(&self) -> Option<T> {
-        let (lock, _cv) = &*self.inner;
-        let guard = lock_unpoisoned(lock);
-        #[cfg(not(target_arch = "wasm32"))]
-        let guard = {
-            let mut guard = guard;
+        let (lock, cv) = &*self.inner;
+        if crate::sync::can_block_current_thread() {
+            let mut guard = lock_unpoisoned(lock);
             while guard.is_none() {
-                guard = _cv.wait(guard).unwrap_or_else(|e| e.into_inner());
+                guard = cv.wait(guard).unwrap_or_else(|e| e.into_inner());
             }
-            guard
-        };
-        guard.clone()
+            guard.clone()
+        } else {
+            loop {
+                {
+                    let guard = lock_unpoisoned(lock);
+                    if guard.is_some() {
+                        return guard.clone();
+                    }
+                }
+                std::hint::spin_loop();
+            }
+        }
     }
 }
 
@@ -154,13 +162,11 @@ fn collect_inflight_active(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 enum NextPoolWork {
     Active(ActiveOpenJob),
     Prewarm(PrewarmJob),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WorkerLane {
     Local,
@@ -177,8 +183,7 @@ pub struct IoWorkerPool {
     shutdown_token: CancelToken,
     reaper: ReaperHandle,
     active_workers: Arc<(Mutex<usize>, Condvar)>,
-    #[cfg(not(target_arch = "wasm32"))]
-    workers_done_flags: Mutex<Vec<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>>,
+    workers_done_flags: Mutex<Vec<(Arc<AtomicBool>, JoinHandle<()>)>>,
     on_complete: CompletionCallback,
     latest_epoch: Arc<AtomicU64>,
     pub active_opens_executed: Arc<AtomicU64>,
@@ -226,7 +231,6 @@ impl IoWorkerPool {
             shutdown_token: CancelToken::new(),
             reaper,
             active_workers,
-            #[cfg(not(target_arch = "wasm32"))]
             workers_done_flags: Mutex::new(Vec::new()),
             on_complete,
             latest_epoch: Arc::new(AtomicU64::new(0)),
@@ -235,7 +239,6 @@ impl IoWorkerPool {
             prewarms_executed: Arc::new(AtomicU64::new(0)),
         });
 
-        #[cfg(not(target_arch = "wasm32"))]
         {
             let mut handles = lock_unpoisoned(&pool.workers_done_flags);
             Self::spawn_worker_thread(&pool, "map-io-local", WorkerLane::Local, &mut handles);
@@ -248,12 +251,11 @@ impl IoWorkerPool {
         pool
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn spawn_worker_thread(
         pool: &Arc<Self>,
         name: &str,
         lane: WorkerLane,
-        handles: &mut Vec<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>,
+        handles: &mut Vec<(Arc<AtomicBool>, JoinHandle<()>)>,
     ) {
         {
             let (wlock, _) = &*pool.active_workers;
@@ -266,7 +268,7 @@ impl IoWorkerPool {
         let worker_seq = Arc::new(AtomicUsize::new(0));
         let _ = worker_seq;
 
-        let jh = std::thread::Builder::new()
+        let jh = thread::Builder::new()
             .name(name.to_string())
             .spawn(move || {
                 while let Some(pool) = pool_weak.upgrade() {
@@ -399,167 +401,135 @@ impl IoWorkerPool {
             self.active_opens_coalesced.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        #[cfg(target_arch = "wasm32")]
+
+        let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
+        let mut waiters_to_resolve: Vec<OpenWaiter> = Vec::new();
+        let is_local = Self::is_local_item(&job.item);
+        let now = Instant::now();
+
         {
-            let outcome = Self::run_open(
-                &job.item,
-                job.custom_factory.as_ref(),
-                &job.template,
-                &job.cancel,
-                &self.shutdown_token,
+            let (lock, cv) = &*self.state;
+            let mut guard = lock_unpoisoned(lock);
+            if guard.shutdown {
+                job.cancel.cancel();
+                if let Some(ref w) = job.waiter {
+                    w.resolve(Ok(None));
+                }
+                return;
+            }
+
+            // Supersede both active queues cleanly so local skips never race stale HTTP opens.
+            if let Some(old) = guard.local_active.take() {
+                tokens_to_cancel.push(old.cancel);
+                if let Some(w) = old.waiter {
+                    waiters_to_resolve.push(w);
+                }
+                self.active_opens_coalesced.fetch_add(1, Ordering::Relaxed);
+            }
+            if let Some(old) = guard.net_active.take() {
+                tokens_to_cancel.push(old.cancel);
+                if let Some(w) = old.waiter {
+                    waiters_to_resolve.push(w);
+                }
+                self.active_opens_coalesced.fetch_add(1, Ordering::Relaxed);
+            }
+            // Drop queued/in-flight prewarms so they never race a user track change.
+            if let Some(old_p) = guard.local_prewarm.take() {
+                tokens_to_cancel.push(old_p.cancel);
+            }
+            if let Some(old_p) = guard.net_prewarm.take() {
+                tokens_to_cancel.push(old_p.cancel);
+            }
+
+            collect_inflight_active(
+                &guard.inflight_local_active,
+                &mut tokens_to_cancel,
+                &mut waiters_to_resolve,
             );
-            (self.on_complete)(IoCompletion::Active { job, outcome });
-            return;
-        }
+            collect_inflight_active(
+                &guard.inflight_net_active,
+                &mut tokens_to_cancel,
+                &mut waiters_to_resolve,
+            );
+            for (_, tok) in &guard.inflight_local_prewarm {
+                tokens_to_cancel.push(tok.clone());
+            }
+            for (_, tok) in &guard.inflight_net_prewarm {
+                tokens_to_cancel.push(tok.clone());
+            }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
-            let mut waiters_to_resolve: Vec<OpenWaiter> = Vec::new();
-            let is_local = Self::is_local_item(&job.item);
-            let now = Instant::now();
-
-            {
-                let (lock, cv) = &*self.state;
-                let mut guard = lock_unpoisoned(lock);
-                if guard.shutdown {
-                    job.cancel.cancel();
-                    if let Some(ref w) = job.waiter {
-                        w.resolve(Ok(None));
-                    }
-                    return;
-                }
-
-                // Supersede both active queues cleanly so local skips never race stale HTTP opens.
-                if let Some(old) = guard.local_active.take() {
-                    tokens_to_cancel.push(old.cancel);
-                    if let Some(w) = old.waiter {
-                        waiters_to_resolve.push(w);
-                    }
-                    self.active_opens_coalesced.fetch_add(1, Ordering::Relaxed);
-                }
-                if let Some(old) = guard.net_active.take() {
-                    tokens_to_cancel.push(old.cancel);
-                    if let Some(w) = old.waiter {
-                        waiters_to_resolve.push(w);
-                    }
-                    self.active_opens_coalesced.fetch_add(1, Ordering::Relaxed);
-                }
-                // Drop queued/in-flight prewarms so they never race a user track change.
-                if let Some(old_p) = guard.local_prewarm.take() {
-                    tokens_to_cancel.push(old_p.cancel);
-                }
-                if let Some(old_p) = guard.net_prewarm.take() {
-                    tokens_to_cancel.push(old_p.cancel);
-                }
-
-                collect_inflight_active(
-                    &guard.inflight_local_active,
-                    &mut tokens_to_cancel,
-                    &mut waiters_to_resolve,
-                );
-                collect_inflight_active(
-                    &guard.inflight_net_active,
-                    &mut tokens_to_cancel,
-                    &mut waiters_to_resolve,
-                );
-                for (_, tok) in &guard.inflight_local_prewarm {
-                    tokens_to_cancel.push(tok.clone());
-                }
-                for (_, tok) in &guard.inflight_net_prewarm {
-                    tokens_to_cancel.push(tok.clone());
-                }
-
-                if is_local {
+            if is_local {
+                guard.net_coalesce_until = None;
+                guard.net_burst_cap = None;
+                guard.local_active = Some(job);
+            } else {
+                if guard.inflight_net_active.is_empty() {
                     guard.net_coalesce_until = None;
                     guard.net_burst_cap = None;
-                    guard.local_active = Some(job);
                 } else {
-                    if guard.inflight_net_active.is_empty() {
-                        guard.net_coalesce_until = None;
-                        guard.net_burst_cap = None;
-                    } else {
-                        let cap = *guard
-                            .net_burst_cap
-                            .get_or_insert_with(|| now + Duration::from_millis(Self::COALESCE_BURST_CAP_MS));
-                        let target = now + Duration::from_millis(Self::COALESCE_QUIET_MS);
-                        guard.net_coalesce_until = Some(target.min(cap));
-                    }
-                    guard.net_active = Some(job);
+                    let cap = *guard
+                        .net_burst_cap
+                        .get_or_insert_with(|| now + Duration::from_millis(Self::COALESCE_BURST_CAP_MS));
+                    let target = now + Duration::from_millis(Self::COALESCE_QUIET_MS);
+                    guard.net_coalesce_until = Some(target.min(cap));
                 }
-
-                cv.notify_all();
+                guard.net_active = Some(job);
             }
 
-            for tok in tokens_to_cancel {
-                tok.cancel();
-            }
-            for w in waiters_to_resolve {
-                w.resolve(Ok(None));
-            }
+            cv.notify_all();
+        }
+
+        for tok in tokens_to_cancel {
+            tok.cancel();
+        }
+        for w in waiters_to_resolve {
+            w.resolve(Ok(None));
         }
     }
 
     /// Submits a background prewarm job unless an active track transition is already underway.
     pub fn submit_prewarm(&self, job: PrewarmJob) {
-        #[cfg(target_arch = "wasm32")]
+        let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
+        let is_local = Self::is_local_item(&job.item);
         {
-            let outcome = Self::run_open(
-                &job.item,
-                job.custom_factory.as_ref(),
-                &job.template,
-                &job.cancel,
-                &self.shutdown_token,
-            );
-            (self.on_complete)(IoCompletion::Prewarm { job, outcome });
-            return;
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
-            let is_local = Self::is_local_item(&job.item);
+            let (lock, cv) = &*self.state;
+            let mut guard = lock_unpoisoned(lock);
+            if guard.shutdown {
+                return;
+            }
+            if guard.local_active.is_some()
+                || guard.net_active.is_some()
+                || !guard.inflight_local_active.is_empty()
+                || !guard.inflight_net_active.is_empty()
             {
-                let (lock, cv) = &*self.state;
-                let mut guard = lock_unpoisoned(lock);
-                if guard.shutdown {
-                    return;
-                }
-                if guard.local_active.is_some()
-                    || guard.net_active.is_some()
-                    || !guard.inflight_local_active.is_empty()
-                    || !guard.inflight_net_active.is_empty()
-                {
-                    return;
-                }
-
-                if let Some(old) = guard.local_prewarm.take() {
-                    tokens_to_cancel.push(old.cancel);
-                }
-                if let Some(old) = guard.net_prewarm.take() {
-                    tokens_to_cancel.push(old.cancel);
-                }
-                for (_, tok) in &guard.inflight_local_prewarm {
-                    tokens_to_cancel.push(tok.clone());
-                }
-                for (_, tok) in &guard.inflight_net_prewarm {
-                    tokens_to_cancel.push(tok.clone());
-                }
-
-                if is_local {
-                    guard.local_prewarm = Some(job);
-                } else {
-                    guard.net_prewarm = Some(job);
-                }
-                cv.notify_all();
+                return;
             }
-            for tok in tokens_to_cancel {
-                tok.cancel();
+
+            if let Some(old) = guard.local_prewarm.take() {
+                tokens_to_cancel.push(old.cancel);
             }
+            if let Some(old) = guard.net_prewarm.take() {
+                tokens_to_cancel.push(old.cancel);
+            }
+            for (_, tok) in &guard.inflight_local_prewarm {
+                tokens_to_cancel.push(tok.clone());
+            }
+            for (_, tok) in &guard.inflight_net_prewarm {
+                tokens_to_cancel.push(tok.clone());
+            }
+
+            if is_local {
+                guard.local_prewarm = Some(job);
+            } else {
+                guard.net_prewarm = Some(job);
+            }
+            cv.notify_all();
+        }
+        for tok in tokens_to_cancel {
+            tok.cancel();
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn take_next_work(&self, lane: WorkerLane) -> Option<NextPoolWork> {
         let (lock, cv) = &*self.state;
         let mut guard = lock_unpoisoned(lock);
@@ -665,7 +635,6 @@ impl IoWorkerPool {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn finish_inflight(&self, lane: WorkerLane, is_active: bool, epoch: u64) {
         let (lock, cv) = &*self.state;
         let mut guard = lock_unpoisoned(lock);
@@ -689,7 +658,6 @@ impl IoWorkerPool {
         cv.notify_all();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn execute_work(&self, lane: WorkerLane, work: NextPoolWork) {
         match work {
             NextPoolWork::Active(job) => {
@@ -702,7 +670,6 @@ impl IoWorkerPool {
                     &job.cancel,
                     &self.shutdown_token,
                 );
-                #[cfg(not(target_arch = "wasm32"))]
                 self.finish_inflight(lane, true, epoch);
 
                 match outcome {
@@ -730,7 +697,6 @@ impl IoWorkerPool {
                     &job.cancel,
                     &self.shutdown_token,
                 );
-                #[cfg(not(target_arch = "wasm32"))]
                 self.finish_inflight(lane, false, epoch);
 
                 match outcome {
@@ -797,8 +763,7 @@ impl IoWorkerPool {
         }
         self.cancel_all();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
+        if crate::sync::can_block_current_thread() {
             let deadline = Instant::now() + Duration::from_millis(280);
             let (wlock, wcv) = &*self.active_workers;
             let mut guard = lock_unpoisoned(wlock);
@@ -812,18 +777,17 @@ impl IoWorkerPool {
                     .unwrap_or_else(|e| e.into_inner());
                 guard = g;
             }
-            drop(guard);
-
-            let mut handles = lock_unpoisoned(&self.workers_done_flags);
-            let mut remaining = Vec::new();
-            for (done, jh) in handles.drain(..) {
-                if done.load(Ordering::Acquire) {
-                    let _ = jh.join();
-                } else {
-                    remaining.push((done, jh));
-                }
-            }
-            *handles = remaining;
         }
+
+        let mut handles = lock_unpoisoned(&self.workers_done_flags);
+        let mut remaining = Vec::new();
+        for (done, jh) in handles.drain(..) {
+            if done.load(Ordering::Acquire) {
+                let _ = jh.join();
+            } else {
+                remaining.push((done, jh));
+            }
+        }
+        *handles = remaining;
     }
 }

@@ -442,8 +442,8 @@ fn test_audio_analysis_ffmpeg_reference_comparison() {
         TestCase { filename: "salida.mp3", float_decoder: true },
         TestCase { filename: "salida.ogg", float_decoder: true },
         TestCase { filename: "salida.opus", float_decoder: true },
-        TestCase { filename: "salida_aac.m4a", float_decoder: false },
-        TestCase { filename: "la_isla_bonita.m4a", float_decoder: false },
+        TestCase { filename: "salida_aac.m4a", float_decoder: true },
+        TestCase { filename: "la_isla_bonita.m4a", float_decoder: true },
     ];
 
     for case in cases {

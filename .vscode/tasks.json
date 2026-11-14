@@ -27,71 +27,36 @@
     },
     {
       "label": "rust: check wasm32",
-      "detail": "Type-checks the Rust audio engine for the wasm32-unknown-unknown target.",
+      "detail": "Type-checks the Rust audio engine for the wasm32-unknown-unknown target with atomics/shared-memory.",
       "type": "shell",
       "command": "cargo",
       "args": [
+        "+nightly",
         "check",
         "--manifest-path",
         "rust/Cargo.toml",
         "--target",
-        "wasm32-unknown-unknown"
+        "wasm32-unknown-unknown",
+        "-Z",
+        "build-std=std,panic_abort"
       ],
+      "options": {
+        "env": {
+          "RUSTFLAGS": "-C target-feature=+atomics,+bulk-memory,+mutable-globals"
+        }
+      },
       "problemMatcher": "$rustc"
     },
     {
       "label": "frb: build web wasm (release)",
-      "detail": "Compiles the Rust audio engine to WebAssembly (web/pkg/) without SharedArrayBuffer/COOP-COEP server header requirements.",
+      "detail": "Compiles the Rust audio engine to multi-threaded WebAssembly (web/pkg/) via flutter_rust_bridge_codegen.",
       "type": "shell",
-      "command": "wasm-pack",
+      "command": "flutter_rust_bridge_codegen",
       "args": [
-        "build",
-        "-t",
-        "no-modules",
-        "-d",
-        "../web/pkg",
-        "--no-typescript",
-        "--out-name",
-        "miniaudio_player",
-        "--release",
-        "rust"
+        "build-web",
+        "--release"
       ],
       "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "rust: build all (native + web wasm)",
-      "detail": "Sequentially compiles both the native release library and the WebAssembly bundle.",
-      "dependsOrder": "sequence",
-      "dependsOn": [
-        "rust: build native (release)",
-        "frb: build web wasm (release)"
-      ],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "frb: generate & build web wasm",
-      "detail": "Regenerates FRB bindings and compiles the release WebAssembly bundle.",
-      "dependsOrder": "sequence",
-      "dependsOn": [
-        "frb: generate bindings",
-        "frb: build web wasm (release)"
-      ],
-      "problemMatcher": []
-    },
-    {
-      "label": "frb: generate & build all (native + web)",
-      "detail": "Regenerates FRB bindings and compiles both native release Rust and WebAssembly bundles.",
-      "dependsOrder": "sequence",
-      "dependsOn": [
-        "frb: generate bindings",
-        "rust: build native (release)",
-        "frb: build web wasm (release)"
-      ],
       "problemMatcher": []
     },
     {
@@ -107,17 +72,6 @@
       ],
       "group": "test",
       "problemMatcher": "$rustc"
-    },
-    {
-      "label": "dart: analyze package",
-      "detail": "Runs static analysis on the miniaudio_player Dart package.",
-      "type": "shell",
-      "command": "dart",
-      "args": [
-        "analyze"
-      ],
-      "group": "test",
-      "problemMatcher": []
     },
     {
       "label": "example: test",

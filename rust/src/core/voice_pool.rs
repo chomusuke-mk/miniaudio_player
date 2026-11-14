@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use crate::sync::MonotonicInstant as Instant;
 
-use crate::core::dual_source::{resolve_local_source_path, strip_file_prefix, AudioSourceCore};
+use crate::core::dual_source::AudioSourceCore;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::core::dual_source::{resolve_local_source_path, strip_file_prefix};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 pub use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoiceStealingPolicy};
 
@@ -341,36 +343,41 @@ pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundB
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(std::time::Duration::from_secs(5))
-            .timeout_read(std::time::Duration::from_secs(10))
-            .max_idle_connections(0)
-            .build();
-        let mut req = agent.get(trimmed);
-        if let Some(ref hdrs) = source.headers {
-            for h in hdrs {
-                req = req.set(&h.key, &h.value);
+    {
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .timeout_connect(Some(std::time::Duration::from_secs(5)))
+                .timeout_recv_response(Some(std::time::Duration::from_secs(10)))
+                .timeout_per_read(Some(std::time::Duration::from_secs(10)))
+                .max_idle_connections(0)
+                .build()
+                .into();
+            let mut req = agent.get(trimmed);
+            if let Some(ref hdrs) = source.headers {
+                for h in hdrs {
+                    req = req.header(&h.key, &h.value);
+                }
             }
+            let resp = req
+                .call()
+                .map_err(|e| format!("Failed to fetch network effect '{}' ({}): {}", id, trimmed, e))?;
+            let mut bytes = Vec::new();
+            use std::io::Read;
+            resp.into_body()
+                .into_reader()
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Failed to read network effect '{}' bytes: {}", id, e))?;
+            return SoundBuffer::decode_from_bytes(&bytes)
+                .map_err(|e| format!("Decoding network effect '{}' failed: {}", id, e));
         }
-        let resp = req
-            .call()
-            .map_err(|e| format!("Failed to fetch network effect '{}' ({}): {}", id, trimmed, e))?;
-        let mut bytes = Vec::new();
-        use std::io::Read;
-        resp.into_reader()
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("Failed to read network effect '{}' bytes: {}", id, e))?;
-        return SoundBuffer::decode_from_bytes(&bytes)
-            .map_err(|e| format!("Decoding network effect '{}' failed: {}", id, e));
-    }
 
-    let stripped = strip_file_prefix(trimmed);
-    let path = resolve_local_source_path(&stripped);
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("Failed to read effect file '{}' for '{}': {}", path, id, e))?;
-    SoundBuffer::decode_from_bytes(&bytes)
-        .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+        let stripped = strip_file_prefix(trimmed);
+        let path = resolve_local_source_path(&stripped);
+        let bytes = std::fs::read(&path)
+            .map_err(|e| format!("Failed to read effect file '{}' for '{}': {}", path, id, e))?;
+        SoundBuffer::decode_from_bytes(&bytes)
+            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+    }
 }
 
 pub struct VoicePool {

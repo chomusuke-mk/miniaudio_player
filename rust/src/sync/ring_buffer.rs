@@ -13,23 +13,10 @@ impl AudioProducer {
     /// Returns the number of samples actually written.
     #[inline(always)]
     pub fn write_chunk(&mut self, samples: &[f32]) -> usize {
-        let slots = self.producer.slots();
-        let to_write = slots.min(samples.len());
-        if to_write == 0 {
+        if samples.is_empty() {
             return 0;
         }
-        if let Ok(mut chunk) = self.producer.write_chunk(to_write) {
-            let (first, second) = chunk.as_mut_slices();
-            let first_len = first.len();
-            first.copy_from_slice(&samples[..first_len]);
-            if !second.is_empty() {
-                second.copy_from_slice(&samples[first_len..first_len + second.len()]);
-            }
-            chunk.commit_all();
-            to_write
-        } else {
-            0
-        }
+        self.producer.push_partial_slice(samples).0.len()
     }
 
     /// Returns the number of vacant sample slots currently available for writing.
@@ -62,23 +49,10 @@ impl AudioConsumer {
     /// Returns the number of samples actually read.
     #[inline(always)]
     pub fn read_chunk(&mut self, out_samples: &mut [f32]) -> usize {
-        let slots = self.consumer.slots();
-        let to_read = slots.min(out_samples.len());
-        if to_read == 0 {
+        if out_samples.is_empty() {
             return 0;
         }
-        if let Ok(chunk) = self.consumer.read_chunk(to_read) {
-            let (first, second) = chunk.as_slices();
-            let first_len = first.len();
-            out_samples[..first_len].copy_from_slice(first);
-            if !second.is_empty() {
-                out_samples[first_len..first_len + second.len()].copy_from_slice(second);
-            }
-            chunk.commit_all();
-            to_read
-        } else {
-            0
-        }
+        self.consumer.pop_partial_slice(out_samples).0.len()
     }
 
     /// Returns the number of readable samples currently stored in the ring buffer.

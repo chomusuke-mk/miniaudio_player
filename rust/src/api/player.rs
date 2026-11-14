@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread::{self, JoinHandle};
+use crate::sync::thread::{self, JoinHandle};
 use std::time::Duration;
 use crate::sync::MonotonicInstant as Instant;
 
@@ -442,6 +442,7 @@ impl RustMiniaudioPlayer {
         period_size: u32,
         initial_outputs: Vec<RustAudioOutput>,
     ) -> Result<RustMiniaudioPlayer, String> {
+        crate::sync::init_wasm_thread_spawner();
         let device_trigger = Arc::new((Mutex::new(true), Condvar::new()));
         let (engine, notify_rx, hint_rx) = EngineActorHandle::spawn(
             sample_rate,
@@ -495,7 +496,6 @@ impl RustMiniaudioPlayer {
 
         // Background device watcher: reacts to hardware changes with ultra-low latency (<15ms on disconnect, <=200ms on connect/change)
         // and runs asynchronously to never block real-time audio, telemetry, or UI threads.
-        #[cfg(not(target_arch = "wasm32"))]
         let watcher_thread = thread::Builder::new()
             .name("map-device-watcher".to_string())
             .spawn(move || {
@@ -744,18 +744,6 @@ impl RustMiniaudioPlayer {
                 }
             })
             .ok();
-        #[cfg(target_arch = "wasm32")]
-        let watcher_thread: Option<JoinHandle<()>> = {
-            let _ = (
-                watcher_trigger,
-                watcher_running,
-                watcher_reporter,
-                watcher_hw,
-                watcher_coordinator,
-                watcher_snapshots,
-            );
-            None
-        };
 
         let worker_snapshots = engine.snapshots().clone();
         let worker_effects = engine.effects().clone();
@@ -950,7 +938,6 @@ impl RustMiniaudioPlayer {
             true
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
         let monitor_thread = thread::Builder::new()
             .name("map-telemetry-monitor".to_string())
             .spawn(move || {
@@ -962,11 +949,6 @@ impl RustMiniaudioPlayer {
                 }
             })
             .ok();
-        #[cfg(target_arch = "wasm32")]
-        let monitor_thread: Option<JoinHandle<()>> = {
-            crate::bridge::ffi::wasm_register_monitor_task(Box::new(tick_telemetry));
-            None
-        };
 
         Ok(RustMiniaudioPlayer {
             engine,

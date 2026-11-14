@@ -16,26 +16,20 @@ use symphonia::core::formats::{
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::{MetadataOptions, RawTag, RawValue};
 use symphonia::core::units::{Duration as SymphoniaDuration, Time, TimeBase, Timestamp};
-#[cfg(not(target_arch = "wasm32"))]
-use symphonia_adapter_libopus::OpusDecoder;
-#[cfg(target_arch = "wasm32")]
-use symphonia_opus::OpusDecoder;
-
+use super::aac_decoder::RustyAacDecoder;
 use super::ape::{ApeProbe, ApeReader};
 use super::dsf::{DsfProbe, DsfReader};
 use super::extended_pcm::{ExtendedPcmProbe, ExtendedPcmReader};
+use super::opus_decoder::OpusDecoder;
 use super::wavpack::{WavpackProbe, WavpackReader};
 use crate::metadata::SymphoniaExtractedMeta;
 
-/// Constructs a Symphonia `CodecRegistry` preloaded with standard codecs and external Opus/AAC adapters.
+/// Constructs a Symphonia `CodecRegistry` preloaded with standard codecs and pure-Rust Opus/AAC decoders.
 pub fn create_codec_registry() -> CodecRegistry {
     let mut registry = CodecRegistry::new();
     symphonia::default::register_enabled_codecs(&mut registry);
     registry.register_audio_decoder::<OpusDecoder>();
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        registry.register_audio_decoder::<symphonia_adapter_fdk_aac::AacDecoder>();
-    }
+    registry.register_audio_decoder::<RustyAacDecoder>();
     registry
 }
 
