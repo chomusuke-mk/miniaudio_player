@@ -5,6 +5,8 @@ class ResponsiveGrid extends StatelessWidget {
   final List<Widget> rightColumn;
   final double spacing;
   final double breakpoint;
+  final int leftFlex;
+  final int rightFlex;
 
   const ResponsiveGrid({
     super.key,
@@ -12,6 +14,8 @@ class ResponsiveGrid extends StatelessWidget {
     required this.rightColumn,
     this.spacing = 16.0,
     this.breakpoint = 960.0,
+    this.leftFlex = 1,
+    this.rightFlex = 2,
   });
 
   @override
@@ -19,11 +23,12 @@ class ResponsiveGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth >= breakpoint) {
-          // Desktop / Tablet Studio 2-Column Console Layout matching SVG
+          // Desktop / Tablet Studio 2-Column Console Layout (1/3 left, 2/3 right)
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
+                flex: leftFlex,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: _intersperse(leftColumn, SizedBox(height: spacing)),
@@ -31,6 +36,7 @@ class ResponsiveGrid extends StatelessWidget {
               ),
               SizedBox(width: spacing),
               Expanded(
+                flex: rightFlex,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: _intersperse(

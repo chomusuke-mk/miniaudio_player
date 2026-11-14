@@ -16,6 +16,7 @@ class CompactSliderControl extends StatefulWidget {
   final Color activeColor;
   final ValueChanged<double> onChanged;
   final bool disabled;
+  final bool showTriggerIcon;
   final String Function(double value)? valueFormatter;
 
   const CompactSliderControl({
@@ -29,6 +30,7 @@ class CompactSliderControl extends StatefulWidget {
     this.activeColor = StudioColors.accentCyan,
     required this.onChanged,
     this.disabled = false,
+    this.showTriggerIcon = true,
     this.valueFormatter,
   });
 
@@ -264,8 +266,10 @@ class _CompactSliderControlState extends State<CompactSliderControl> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(widget.icon, size: 14, color: effectiveColor),
-            const SizedBox(width: 4),
+            if (widget.showTriggerIcon) ...[
+              Icon(widget.icon, size: 14, color: effectiveColor),
+              const SizedBox(width: 4),
+            ],
             Flexible(
               child: Text(
                 widget.label,

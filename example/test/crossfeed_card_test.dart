@@ -80,7 +80,9 @@ void main() {
         expect(find.text('Bauer BS2B Crossfeed'), findsOneWidget);
         expect(find.text('Stereo Widener'), findsOneWidget);
         expect(find.text('Algorithmic Reverb'), findsOneWidget);
-        expect(find.byType(DspSubCard), findsNWidgets(4));
+        expect(find.text('ISO 266 10-Band Equalizer'), findsOneWidget);
+        expect(find.byType(EqualizerSubCard), findsOneWidget);
+        expect(find.byType(DspSubCard), findsNWidgets(5));
         expect(find.byType(ChoiceChip), findsNothing);
         expect(
           find.text('Left and Right audio channels are completely isolated'),
@@ -91,15 +93,18 @@ void main() {
         final crossfeedSubCard = subCardFor('Bauer BS2B Crossfeed');
         final widenerSubCard = subCardFor('Stereo Widener');
         final reverbSubCard = subCardFor('Algorithmic Reverb');
+        final eqSubCard = subCardFor('ISO 266 10-Band Equalizer');
         expect(silenceSubCard, findsOneWidget);
         expect(crossfeedSubCard, findsOneWidget);
         expect(widenerSubCard, findsOneWidget);
         expect(reverbSubCard, findsOneWidget);
+        expect(eqSubCard, findsOneWidget);
 
         final silenceBox = tester.getRect(subCardBoxFor('Smart Silence Skipping'));
         final crossfeedBox = tester.getRect(subCardBoxFor('Bauer BS2B Crossfeed'));
         final widenerBox = tester.getRect(subCardBoxFor('Stereo Widener'));
         final reverbBox = tester.getRect(subCardBoxFor('Algorithmic Reverb'));
+        final eqBox = tester.getRect(subCardBoxFor('ISO 266 10-Band Equalizer'));
         // All 4 sit in the same Row, each occupying ~1/4 width with matched height
         expect(crossfeedBox.top, closeTo(silenceBox.top, 0.5));
         expect(widenerBox.top, closeTo(silenceBox.top, 0.5));
@@ -113,6 +118,10 @@ void main() {
         expect(crossfeedBox.height, closeTo(silenceBox.height, 0.5));
         expect(widenerBox.height, closeTo(silenceBox.height, 0.5));
         expect(reverbBox.height, closeTo(silenceBox.height, 0.5));
+        // Equalizer spans full width (1) on Row 2 below the 4 mastering subcards
+        expect(eqBox.top, greaterThanOrEqualTo(silenceBox.bottom));
+        expect(eqBox.left, closeTo(silenceBox.left, 0.5));
+        expect(eqBox.right, closeTo(reverbBox.right, 0.5));
 
         // Unboxed pills: only ONE #070B14 container encloses Bauer BS2B Crossfeed (its own DspSubCard)
         final bs2bDarkContainers = find.ancestor(
@@ -289,12 +298,12 @@ void main() {
           isTrue,
         );
 
-        // Baseline: Preamp (-12..12) and Balance (-1..1) sliders exist in DspEffectsCard,
-        // so an overlay slider would be the 3rd Slider. Tapping disabled controls opens nothing.
-        expect(find.byType(Slider), findsNWidgets(2));
+        // Baseline: No inline sliders exist in DspEffectsCard when all pills are closed.
+        // Tapping disabled controls opens nothing.
+        expect(find.byType(Slider), findsNothing);
         await tester.tap(cutoffPillFinder, warnIfMissed: false);
         await tester.pump();
-        expect(find.byType(Slider), findsNWidgets(2));
+        expect(find.byType(Slider), findsNothing);
 
         await tester.tap(find.text('Moffat-Bauer'), warnIfMissed: false);
         await tester.pump();
@@ -568,10 +577,11 @@ void main() {
     );
 
     testWidgets(
-      'Adapts 1/4 -> 1/3 -> 1/2 (2x2) -> 1 column across wide, medium, and narrow viewports with zero overflows',
+      'Adapts 1/4 -> 1/3 -> 1/2 (2x2) -> 1 column across wide, medium, and narrow viewports with Equalizer 1 or 2/3 and zero overflows',
       (tester) async {
-        // 740px host (684px inner width -> 620 <= w < 780): Silence + BS2B + Widener 1/3 row, Reverb drops below
-        await pumpDspCard(tester, size: const Size(740, 900));
+        // 740px host (684px inner width -> 620 <= w < 780): Silence + BS2B + Widener 1/3 row,
+        // Reverb (1/3) + Equalizer (2/3) share Row 2 with aligned seams
+        await pumpDspCard(tester, size: const Size(740, 1000));
         final thirdSilenceRect = tester.getRect(
           subCardBoxFor('Smart Silence Skipping'),
         );
@@ -584,6 +594,9 @@ void main() {
         final droppedReverbRect = tester.getRect(
           subCardBoxFor('Algorithmic Reverb'),
         );
+        final thirdEqRect = tester.getRect(
+          subCardBoxFor('ISO 266 10-Band Equalizer'),
+        );
         expect(thirdCrossfeedRect.top, closeTo(thirdSilenceRect.top, 0.5));
         expect(thirdWidenerRect.top, closeTo(thirdSilenceRect.top, 0.5));
         expect(thirdCrossfeedRect.width, closeTo(thirdSilenceRect.width, 1.5));
@@ -592,9 +605,15 @@ void main() {
           droppedReverbRect.top,
           greaterThanOrEqualTo(thirdSilenceRect.bottom),
         );
+        expect(droppedReverbRect.left, closeTo(thirdSilenceRect.left, 0.5));
+        expect(droppedReverbRect.width, closeTo(thirdSilenceRect.width, 1.5));
+        expect(thirdEqRect.top, closeTo(droppedReverbRect.top, 0.5));
+        expect(thirdEqRect.left, closeTo(thirdCrossfeedRect.left, 0.5));
+        expect(thirdEqRect.right, closeTo(thirdWidenerRect.right, 0.5));
+        expect(thirdEqRect.height, closeTo(droppedReverbRect.height, 0.5));
 
-        // 560px host (504px inner width -> 420 <= w < 620): 2x2 grid where each occupies 1/2
-        await pumpDspCard(tester, size: const Size(560, 900));
+        // 560px host (504px inner width -> 420 <= w < 620): 2x2 grid (1/2 each) + full-width Equalizer (1)
+        await pumpDspCard(tester, size: const Size(560, 1100));
         final halfSilenceRect = tester.getRect(
           subCardBoxFor('Smart Silence Skipping'),
         );
@@ -607,6 +626,9 @@ void main() {
         final halfReverbRect = tester.getRect(
           subCardBoxFor('Algorithmic Reverb'),
         );
+        final halfEqRect = tester.getRect(
+          subCardBoxFor('ISO 266 10-Band Equalizer'),
+        );
         expect(halfCrossfeedRect.top, closeTo(halfSilenceRect.top, 0.5));
         expect(halfCrossfeedRect.width, closeTo(halfSilenceRect.width, 1.0));
         expect(
@@ -615,20 +637,32 @@ void main() {
         );
         expect(halfReverbRect.top, closeTo(halfWidenerRect.top, 0.5));
         expect(halfReverbRect.width, closeTo(halfWidenerRect.width, 1.0));
+        expect(halfEqRect.top, greaterThanOrEqualTo(halfReverbRect.bottom));
+        expect(halfEqRect.left, closeTo(halfSilenceRect.left, 0.5));
+        expect(halfEqRect.right, closeTo(halfCrossfeedRect.right, 0.5));
 
-        // 480px card host (424px inner width = 960px desktop 2-col column width) also keeps 2x2 cleanly
-        await pumpDspCard(tester, size: const Size(480, 900));
+        // 480px card host (424px inner width = 960px desktop 2-col column width) also keeps 2x2 + full-width Equalizer
+        await pumpDspCard(tester, size: const Size(480, 1100));
         final wideSilenceRect = tester.getRect(
           subCardBoxFor('Smart Silence Skipping'),
         );
         final wideCrossfeedRect = tester.getRect(
           subCardBoxFor('Bauer BS2B Crossfeed'),
         );
+        final wideReverbRect = tester.getRect(
+          subCardBoxFor('Algorithmic Reverb'),
+        );
+        final wideEqRect = tester.getRect(
+          subCardBoxFor('ISO 266 10-Band Equalizer'),
+        );
         expect(wideCrossfeedRect.top, closeTo(wideSilenceRect.top, 0.5));
         expect(wideCrossfeedRect.width, closeTo(wideSilenceRect.width, 1.0));
+        expect(wideEqRect.top, greaterThanOrEqualTo(wideReverbRect.bottom));
+        expect(wideEqRect.left, closeTo(wideSilenceRect.left, 0.5));
+        expect(wideEqRect.right, closeTo(wideCrossfeedRect.right, 0.5));
 
-        // 390px mobile (< 420 inner width): all 4 stack vertically 1 / 1 / 1 / 1
-        await pumpDspCard(tester, size: const Size(390, 844));
+        // 390px mobile (< 420 inner width): all 5 stack vertically 1 / 1 / 1 / 1 / 1
+        await pumpDspCard(tester, size: const Size(390, 1200));
         final silenceRect = tester.getRect(
           subCardBoxFor('Smart Silence Skipping'),
         );
@@ -637,9 +671,13 @@ void main() {
         );
         final widenerRect = tester.getRect(subCardBoxFor('Stereo Widener'));
         final reverbRect = tester.getRect(subCardBoxFor('Algorithmic Reverb'));
+        final eqRect = tester.getRect(
+          subCardBoxFor('ISO 266 10-Band Equalizer'),
+        );
         expect(crossfeedRect.top, greaterThanOrEqualTo(silenceRect.bottom));
         expect(widenerRect.top, greaterThanOrEqualTo(crossfeedRect.bottom));
         expect(reverbRect.top, greaterThanOrEqualTo(widenerRect.bottom));
+        expect(eqRect.top, greaterThanOrEqualTo(reverbRect.bottom));
 
         await pumpDspCard(tester, size: const Size(280, 653), textScale: 1.5);
       },
@@ -943,7 +981,7 @@ void main() {
     );
 
     testWidgets(
-      'ReplayGain Normalization shares 1/3 header row with Limiter and Mono Downmix using styled Output-style dropdown',
+      'DSP compact row hosts 7 tiles (1/7 when wide) with >=215px min width including Pause on Device Change & Dynamic Metadata Event Stream',
       (tester) async {
         Finder headerTileFor(String title) => find
             .ancestor(
@@ -958,24 +996,152 @@ void main() {
             )
             .first;
 
-        // Wide (800px host -> 744px inner width >= 620): all 3 share 1 row at 1/3 each
-        await pumpDspCard(tester, size: const Size(800, 900));
+        // Ultra-wide (1620px host -> 1564px inner width >= 1553): all 7 share 1 row at 1/7 each (>=215px wide)
+        await pumpDspCard(tester, size: const Size(1620, 900));
 
+        final rgTile = headerTileFor('ReplayGain Normalization');
         final limiterTile = headerTileFor('True-Peak Limiter');
         final monoTile = headerTileFor('Mono Downmix');
-        final rgTile = headerTileFor('ReplayGain Normalization');
+        final preampTile = headerTileFor('Preamp Gain');
+        final balanceTile = headerTileFor('Stereo Balance');
+        final pauseTile = headerTileFor('Pause on Device Change');
+        final metadataTile = headerTileFor('Dynamic Metadata Event Stream');
 
+        final rgRect = tester.getRect(rgTile);
         final limiterRect = tester.getRect(limiterTile);
         final monoRect = tester.getRect(monoTile);
-        final rgRect = tester.getRect(rgTile);
+        final preampRect = tester.getRect(preampTile);
+        final balanceRect = tester.getRect(balanceTile);
+        final pauseRect = tester.getRect(pauseTile);
+        final metadataRect = tester.getRect(metadataTile);
 
-        expect(monoRect.top, closeTo(limiterRect.top, 0.5));
-        expect(rgRect.top, closeTo(limiterRect.top, 0.5));
+        expect(limiterRect.top, closeTo(rgRect.top, 0.5));
+        expect(monoRect.top, closeTo(rgRect.top, 0.5));
+        expect(preampRect.top, closeTo(rgRect.top, 0.5));
+        expect(balanceRect.top, closeTo(rgRect.top, 0.5));
+        expect(pauseRect.top, closeTo(rgRect.top, 0.5));
+        expect(metadataRect.top, closeTo(rgRect.top, 0.5));
+
         expect(rgRect.right, lessThanOrEqualTo(limiterRect.left));
         expect(limiterRect.right, lessThanOrEqualTo(monoRect.left));
-        expect(monoRect.width, closeTo(limiterRect.width, 1.5));
-        expect(rgRect.width, closeTo(limiterRect.width, 1.5));
-        expect(rgRect.height, closeTo(limiterRect.height, 0.5));
+        expect(monoRect.right, lessThanOrEqualTo(preampRect.left));
+        expect(preampRect.right, lessThanOrEqualTo(balanceRect.left));
+        expect(balanceRect.right, lessThanOrEqualTo(pauseRect.left));
+        expect(pauseRect.right, lessThanOrEqualTo(metadataRect.left));
+
+        for (final rect in [
+          rgRect,
+          limiterRect,
+          monoRect,
+          preampRect,
+          balanceRect,
+          pauseRect,
+          metadataRect,
+        ]) {
+          expect(rect.width, greaterThanOrEqualTo(215.0));
+          expect(rect.width, closeTo(rgRect.width, 1.5));
+          expect(rect.height, closeTo(rgRect.height, 0.5));
+        }
+
+        // Verify Preamp & Stereo Balance tiles: [Icon, Title+Subtitle, Value-only pill (no pill icon/label)]
+        final preampPill = find.descendant(
+          of: preampTile,
+          matching: find.byType(CompactSliderControl),
+        );
+        final balancePill = find.descendant(
+          of: balanceTile,
+          matching: find.byType(CompactSliderControl),
+        );
+        expect(preampPill, findsOneWidget);
+        expect(balancePill, findsOneWidget);
+        expect(
+          tester.widget<CompactSliderControl>(preampPill).showTriggerIcon,
+          isFalse,
+        );
+        expect(
+          tester.widget<CompactSliderControl>(balancePill).showTriggerIcon,
+          isFalse,
+        );
+        expect(
+          find.descendant(of: preampPill, matching: find.byType(Icon)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: balancePill, matching: find.byType(Icon)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: preampPill, matching: find.text('+0.0 dB')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: balancePill, matching: find.text('Center')),
+          findsOneWidget,
+        );
+
+        // Open Stereo Balance pill overlay, drag slider, and verify live update & pill text
+        await tester.tap(balancePill);
+        await tester.pumpAndSettle();
+        final balanceSlider = find.byWidgetPredicate(
+          (w) => w is Slider && w.min == -1.0 && w.max == 1.0,
+        );
+        expect(balanceSlider, findsOneWidget);
+        await tester.drag(balanceSlider, const Offset(40, 0));
+        await tester.pump();
+        expect(controller.stereoBalance, greaterThan(0.0));
+        expect(find.textContaining('R '), findsWidgets);
+        await tester.tapAt(const Offset(5, 5));
+        await tester.pumpAndSettle();
+
+        // Verify Pause on Device Change & Dynamic Metadata Event Stream switches work inside DSP card
+        final pauseSwitch = find.descendant(
+          of: pauseTile,
+          matching: find.byType(Switch),
+        );
+        final metadataSwitch = find.descendant(
+          of: metadataTile,
+          matching: find.byType(Switch),
+        );
+        expect(pauseSwitch, findsOneWidget);
+        expect(metadataSwitch, findsOneWidget);
+        final initialPause = controller.pauseOnDeviceChange;
+        await tester.tap(pauseSwitch);
+        await tester.pump();
+        expect(controller.pauseOnDeviceChange, !initialPause);
+        final initialMetadata = controller.metadataEnabled;
+        await tester.tap(metadataSwitch);
+        await tester.pump();
+        expect(controller.metadataEnabled, !initialMetadata);
+
+        // 960px host (904px inner width: 884..1106 -> 4 cols, not cramped 5): 4 on row 1, 3 on row 2
+        await pumpDspCard(tester, size: const Size(960, 900));
+        final fourRg = tester.getRect(headerTileFor('ReplayGain Normalization'));
+        final fourPreamp = tester.getRect(headerTileFor('Preamp Gain'));
+        final fourBalance = tester.getRect(headerTileFor('Stereo Balance'));
+        final fourMetadata = tester.getRect(
+          headerTileFor('Dynamic Metadata Event Stream'),
+        );
+        expect(fourPreamp.top, closeTo(fourRg.top, 0.5));
+        expect(fourBalance.top, greaterThanOrEqualTo(fourRg.bottom));
+        expect(fourMetadata.top, closeTo(fourBalance.top, 0.5));
+        expect(fourRg.width, greaterThanOrEqualTo(215.0));
+
+        // 800px host (744px inner width: 661..883 -> 3 columns): 3 on row 1, 3 on row 2, 1 on row 3
+        await pumpDspCard(tester, size: const Size(800, 900));
+        final threeRg = tester.getRect(headerTileFor('ReplayGain Normalization'));
+        final threeLimiter = tester.getRect(headerTileFor('True-Peak Limiter'));
+        final threeMono = tester.getRect(headerTileFor('Mono Downmix'));
+        final threePreamp = tester.getRect(headerTileFor('Preamp Gain'));
+        final threePause = tester.getRect(headerTileFor('Pause on Device Change'));
+        final threeMetadata = tester.getRect(
+          headerTileFor('Dynamic Metadata Event Stream'),
+        );
+        expect(threeLimiter.top, closeTo(threeRg.top, 0.5));
+        expect(threeMono.top, closeTo(threeRg.top, 0.5));
+        expect(threePreamp.top, greaterThanOrEqualTo(threeRg.bottom));
+        expect(threePause.top, closeTo(threePreamp.top, 0.5));
+        expect(threeMetadata.top, greaterThanOrEqualTo(threePreamp.bottom));
+        expect(threeRg.width, greaterThanOrEqualTo(215.0));
 
         // Verify matching tile internals: Icon + [Title / Subtitle] + Output-style dropdown (no Switch)
         final rgIconRect = tester.getRect(
@@ -1034,17 +1200,25 @@ void main() {
         expect(controller.replayGainMode, ReplayGainMode.forced);
         expect(find.text('Operating Mode: FORCED'), findsOneWidget);
 
-        // Medium (480px host -> 424px inner width -> 2 columns): ReplayGain & Limiter row 1, Mono row 2
-        await pumpDspCard(tester, size: const Size(480, 900));
+        // Medium (540px host -> 484px inner width >= 438 -> 2 columns >=215px): ReplayGain & Limiter row 1, Mono row 2
+        await pumpDspCard(tester, size: const Size(540, 1000));
         final medLimiter = tester.getRect(headerTileFor('True-Peak Limiter'));
         final medMono = tester.getRect(headerTileFor('Mono Downmix'));
         final medRg = tester.getRect(headerTileFor('ReplayGain Normalization'));
         expect(medRg.top, closeTo(medLimiter.top, 0.5));
         expect(medRg.right, lessThanOrEqualTo(medLimiter.left));
+        expect(medRg.width, greaterThanOrEqualTo(215.0));
         expect(medMono.top, greaterThanOrEqualTo(medLimiter.bottom));
 
-        // Mobile (390px host -> 334px inner width < 360 -> 1 column): stacked ReplayGain / Limiter / Mono
-        await pumpDspCard(tester, size: const Size(390, 844));
+        // 480px host (424px inner width < 438 -> 1 column rather than squeezing below 215px) & 390px mobile
+        await pumpDspCard(tester, size: const Size(480, 1000));
+        final narrowLimiter = tester.getRect(headerTileFor('True-Peak Limiter'));
+        final narrowRg = tester.getRect(
+          headerTileFor('ReplayGain Normalization'),
+        );
+        expect(narrowLimiter.top, greaterThanOrEqualTo(narrowRg.bottom));
+
+        await pumpDspCard(tester, size: const Size(390, 1000));
         final mobLimiter = tester.getRect(headerTileFor('True-Peak Limiter'));
         final mobMono = tester.getRect(headerTileFor('Mono Downmix'));
         final mobRg = tester.getRect(headerTileFor('ReplayGain Normalization'));

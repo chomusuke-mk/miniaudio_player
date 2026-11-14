@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
+import 'package:miniaudio_player_example/widgets/cards/dsp_effects_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
+import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
 import 'package:miniaudio_player_example/widgets/cards/spectrum_visualizer_card.dart';
 import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
 
@@ -26,11 +28,11 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
 
-        // Verify specific form fields exist
+        // Verify unnecessary Hardware Buffer Period selector was removed and real selectors use DropdownButtonFormField
+        expect(find.text('Hardware Buffer Period'), findsNothing);
         expect(
           find.byWidgetPredicate((w) => w is DropdownButtonFormField<int>),
-          findsOneWidget,
-          reason: 'Buffer selector must be a DropdownButtonFormField<int>',
+          findsNothing,
         );
         expect(
           find.byWidgetPredicate(
@@ -94,7 +96,7 @@ void main() {
 
         final scrollable = find.byType(Scrollable).first;
 
-        final eqCard = find.byType(EqualizerCard);
+        final eqCard = find.byType(EqualizerSubCard);
         expect(eqCard, findsOneWidget);
         expect(
           find.descendant(of: eqCard, matching: find.text('Acoustic RBJ Curves')),
@@ -356,7 +358,7 @@ void main() {
     );
 
     testWidgets(
-      'Pause on Device Change: Displays toggle and reacts to tap events',
+      'Pause on Device Change & Dynamic Metadata Event Stream live in DspEffectsCard and react to tap events',
       (tester) async {
         addTearDown(() async {
           await tester.pumpWidget(const SizedBox());
@@ -371,12 +373,26 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
 
-        // Verify title exists
-        expect(find.text('Pause on Device Change'), findsOneWidget);
+        final dspCard = find.byType(DspEffectsCard);
+        expect(dspCard, findsOneWidget);
+        expect(
+          find.descendant(
+            of: dspCard,
+            matching: find.text('Pause on Device Change'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: dspCard,
+            matching: find.text('Dynamic Metadata Event Stream'),
+          ),
+          findsOneWidget,
+        );
 
         final scrollable = find.byType(Scrollable).first;
 
-        // Find Switch for Pause on Device Change
+        // Find Switch for Pause on Device Change inside DspEffectsCard
         final pauseRow = find
             .ancestor(
               of: find.text('Pause on Device Change'),
@@ -394,13 +410,9 @@ void main() {
           scrollable: scrollable,
         );
 
-        // Initial state is false (OFF)
+        // Initial state is false
         Switch pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isFalse);
-        expect(
-          find.descendant(of: pauseRow, matching: find.text('OFF')),
-          findsOneWidget,
-        );
 
         // Tap the switch to enable
         await tester.tap(switchFinder);
@@ -410,7 +422,12 @@ void main() {
         pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isTrue);
         expect(
-          find.descendant(of: pauseRow, matching: find.text('ON')),
+          find.descendant(
+            of: pauseRow,
+            matching: find.text(
+              'Immediate native pause (0ms leak) if physical endpoint changes',
+            ),
+          ),
           findsOneWidget,
         );
 
@@ -421,10 +438,70 @@ void main() {
 
         pauseSwitch = tester.widget(switchFinder);
         expect(pauseSwitch.value, isFalse);
-        expect(
-          find.descendant(of: pauseRow, matching: find.text('OFF')),
-          findsOneWidget,
+
+        // Toggle Dynamic Metadata Event Stream switch cleanly
+        final metadataRow = find
+            .ancestor(
+              of: find.text('Dynamic Metadata Event Stream'),
+              matching: find.byType(Container),
+            )
+            .first;
+        final metadataSwitchFinder = find.descendant(
+          of: metadataRow,
+          matching: find.byType(Switch),
         );
+        expect(metadataSwitchFinder, findsOneWidget);
+        await tester.scrollUntilVisible(
+          metadataSwitchFinder,
+          100,
+          scrollable: scrollable,
+        );
+        final initialMetaValue =
+            tester.widget<Switch>(metadataSwitchFinder).value;
+        await tester.tap(metadataSwitchFinder);
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(
+          tester.widget<Switch>(metadataSwitchFinder).value,
+          isNot(initialMetaValue),
+        );
+      },
+    );
+
+    testWidgets(
+      'Desktop ResponsiveGrid allocates 1/3 left column and 2/3 right column with zero overflows',
+      (tester) async {
+        addTearDown(() async {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(milliseconds: 100));
+        });
+
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(1000, 900);
+        await tester.pumpWidget(const MiniaudioPlayerExampleApp());
+        await tester.pump();
+        await tester.runAsync(() async {
+          await Future.delayed(const Duration(seconds: 2));
+        });
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        for (final size in const [
+          Size(1000, 900),
+          Size(1440, 900),
+          Size(1920, 1080),
+        ]) {
+          tester.view.physicalSize = size;
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(tester.takeException(), isNull);
+
+          final leftRect = tester.getRect(find.byType(PlaybackEngineCard));
+          final rightRect = tester.getRect(find.byType(DspEffectsCard));
+          expect(rightRect.left, greaterThan(leftRect.right));
+          expect(rightRect.width / leftRect.width, closeTo(2.0, 0.02));
+        }
       },
     );
   });

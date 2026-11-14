@@ -4,7 +4,6 @@ import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
 import '../widgets/cards/audio_analyzer_card.dart';
 import '../widgets/cards/dsp_effects_card.dart';
-import '../widgets/cards/equalizer_card.dart';
 import '../widgets/cards/hardware_routing_card.dart';
 import '../widgets/cards/playback_engine_card.dart';
 import '../widgets/cards/playlist_queue_card.dart';
@@ -53,7 +52,6 @@ class StudioConsoleView extends StatelessWidget {
           ),
         ),
         RepaintBoundary(child: DspEffectsCard(controller: playerController)),
-        RepaintBoundary(child: EqualizerCard(controller: playerController)),
         RepaintBoundary(
           child: RamSoundEffectsCard(controller: playerController),
         ),

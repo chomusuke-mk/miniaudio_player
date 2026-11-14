@@ -9,6 +9,7 @@ import '../common/studio_badge.dart';
 import '../common/studio_card.dart';
 import 'algorithmic_reverb_card.dart';
 import 'crossfeed_card.dart';
+import 'equalizer_card.dart';
 
 /// Card hosting DSP and spatial mastering processors:
 /// - True-Peak Brickwall Limiter
@@ -143,10 +144,18 @@ class DspEffectsCard extends StatelessWidget {
     double maxWidth, {
     int maxColumns = 4,
     double twoColumnBreakpoint = 420,
+    double? minItemWidth,
     double spacing = 10,
   }) {
     final int columns;
-    if (maxColumns >= 4 && maxWidth >= 780) {
+    if (minItemWidth != null) {
+      columns = maxColumns <= 1
+          ? 1
+          : ((maxWidth + spacing) / (minItemWidth + spacing)).floor().clamp(
+              1,
+              maxColumns,
+            );
+    } else if (maxColumns == 4 && maxWidth >= 780) {
       columns = 4;
     } else if (maxColumns >= 3 && maxWidth >= 620) {
       columns = 3;
@@ -312,6 +321,50 @@ class DspEffectsCard extends StatelessWidget {
     );
   }
 
+  static String _formatPreamp(double db) =>
+      '${db >= 0 ? '+' : ''}${db.toStringAsFixed(1)} dB';
+
+  static String _formatBalance(double balance) {
+    if (balance.abs() < 0.005) return 'Center';
+    return balance < 0
+        ? 'L ${(balance.abs() * 100).round()}%'
+        : 'R ${(balance * 100).round()}%';
+  }
+
+  Widget _buildCompactPillTile({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required String valueText,
+    required double value,
+    required double defaultValue,
+    required double min,
+    required double max,
+    required Color activeColor,
+    required ValueChanged<double> onChanged,
+    required String Function(double value) valueFormatter,
+  }) {
+    return _buildCompactHeaderTile(
+      icon: icon,
+      iconColor: iconColor,
+      title: title,
+      subtitle: subtitle,
+      trailing: CompactSliderControl(
+        icon: icon,
+        label: valueText,
+        value: value,
+        defaultValue: defaultValue,
+        min: min,
+        max: max,
+        activeColor: activeColor,
+        showTriggerIcon: false,
+        valueFormatter: valueFormatter,
+        onChanged: onChanged,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -330,10 +383,13 @@ class DspEffectsCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // =============================================================
-              // 1. True-Peak Limiter, Mono Downmix & ReplayGain Normalization
+              // 1. ReplayGain, Limiter, Mono Downmix, Preamp, Stereo Balance,
+              //    Pause on Device Change & Dynamic Metadata Event Stream
               // =============================================================
               LayoutBuilder(
                 builder: (context, constraints) {
+                  final replayGainWidget = _buildReplayGainTile();
+
                   final limiterWidget = _buildCompactToggleTile(
                     icon: Icons.shield_outlined,
                     title: 'True-Peak Limiter',
@@ -356,13 +412,75 @@ class DspEffectsCard extends StatelessWidget {
                     onChanged: controller.setMonoDownmix,
                   );
 
-                  final replayGainWidget = _buildReplayGainTile();
+                  final preampWidget = _buildCompactPillTile(
+                    icon: Icons.tune,
+                    iconColor: controller.preampDb != 0.0
+                        ? StudioColors.accentEmerald
+                        : StudioColors.textMuted,
+                    title: 'Preamp Gain',
+                    subtitle: 'Master stage gain',
+                    valueText: _formatPreamp(controller.preampDb),
+                    value: controller.preampDb.clamp(-12.0, 12.0),
+                    defaultValue: 0.0,
+                    min: -12.0,
+                    max: 12.0,
+                    activeColor: StudioColors.accentEmerald,
+                    valueFormatter: _formatPreamp,
+                    onChanged: controller.setPreamp,
+                  );
+
+                  final balanceWidget = _buildCompactPillTile(
+                    icon: Icons.compare_arrows,
+                    iconColor: controller.stereoBalance.abs() >= 0.005
+                        ? StudioColors.accentCyan
+                        : StudioColors.textMuted,
+                    title: 'Stereo Balance',
+                    subtitle: 'L/R pan field',
+                    valueText: _formatBalance(controller.stereoBalance),
+                    value: controller.stereoBalance.clamp(-1.0, 1.0),
+                    defaultValue: 0.0,
+                    min: -1.0,
+                    max: 1.0,
+                    activeColor: StudioColors.accentCyan,
+                    valueFormatter: _formatBalance,
+                    onChanged: controller.setStereoBalance,
+                  );
+
+                  final pauseOnDeviceWidget = _buildCompactToggleTile(
+                    icon: Icons.pause_circle_outline,
+                    title: 'Pause on Device Change',
+                    subtitle: controller.pauseOnDeviceChange
+                        ? 'Immediate native pause (0ms leak) if physical endpoint changes'
+                        : 'Inactive: audio switches to new endpoint without pausing',
+                    value: controller.pauseOnDeviceChange,
+                    activeColor: StudioColors.accentCyan,
+                    onChanged: controller.setPauseOnDeviceChange,
+                  );
+
+                  final metadataStreamWidget = _buildCompactToggleTile(
+                    icon: Icons.tag,
+                    title: 'Dynamic Metadata Event Stream',
+                    subtitle: controller.metadataEnabled
+                        ? 'Active: Rust streams live ID3v2/FLAC/Vorbis metadata events'
+                        : 'Disabled: zero channel bus saturation until activated',
+                    value: controller.metadataEnabled,
+                    activeColor: StudioColors.accentAmber,
+                    onChanged: controller.setMetadataEnabled,
+                  );
 
                   return _buildResponsiveSubCardGrid(
-                    [replayGainWidget, limiterWidget, monoWidget],
+                    [
+                      replayGainWidget,
+                      limiterWidget,
+                      monoWidget,
+                      preampWidget,
+                      balanceWidget,
+                      pauseOnDeviceWidget,
+                      metadataStreamWidget,
+                    ],
                     constraints.maxWidth,
-                    maxColumns: 3,
-                    twoColumnBreakpoint: 360,
+                    maxColumns: 7,
+                    minItemWidth: 215.0,
                     spacing: 8,
                   );
                 },
@@ -370,113 +488,67 @@ class DspEffectsCard extends StatelessWidget {
               const SizedBox(height: 10),
 
               // =============================================================
-              // 2. Intelligent Silence Skipping, BS2B Crossfeed, Stereo Widener & Reverb
+              // 2. Intelligent Silence Skipping, BS2B Crossfeed, Stereo Widener,
+              //    Algorithmic Reverb & 10-Band Equalizer
               // =============================================================
               LayoutBuilder(
                 builder: (context, constraints) {
-                  return _buildResponsiveSubCardGrid([
-                    _buildSmartSilenceSubCard(),
-                    BauerCrossfeedSubCard(controller: controller),
-                    _buildStereoWidenerSubCard(),
-                    ReverbSubCard(controller: controller),
-                  ], constraints.maxWidth);
+                  return _buildSubCardMasteringSection(constraints.maxWidth);
                 },
-              ),
-              const SizedBox(height: 10),
-
-              // =============================================================
-              // 4. Preamplifier Gain & Stereo Balance
-              // =============================================================
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF070B14),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: StudioColors.cardBorder),
-                ),
-                child: Column(
-                  children: [
-                    // Preamp Gain Slider
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Preamp Gain',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${controller.preampDb >= 0 ? "+" : ""}${controller.preampDb.toStringAsFixed(1)} dB',
-                          style: const TextStyle(
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'monospace',
-                            color: StudioColors.accentEmerald,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: controller.preampDb.clamp(-12.0, 12.0),
-                      min: -12.0,
-                      max: 12.0,
-                      activeColor: StudioColors.accentEmerald,
-                      onChanged: controller.setPreamp,
-                    ),
-                    const SizedBox(height: 4),
-
-                    // Stereo Balance Slider
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Stereo Balance / Pan',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          controller.stereoBalance == 0.0
-                              ? 'Center'
-                              : (controller.stereoBalance < 0
-                                    ? 'L ${(controller.stereoBalance.abs() * 100).round()}%'
-                                    : 'R ${(controller.stereoBalance * 100).round()}%'),
-                          style: const TextStyle(
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'monospace',
-                            color: StudioColors.accentCyan,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: controller.stereoBalance.clamp(-1.0, 1.0),
-                      min: -1.0,
-                      max: 1.0,
-                      activeColor: StudioColors.accentCyan,
-                      onChanged: controller.setStereoBalance,
-                    ),
-                  ],
-                ),
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildSubCardMasteringSection(double maxWidth) {
+    const spacing = 10.0;
+    final silence = _buildSmartSilenceSubCard();
+    final crossfeed = BauerCrossfeedSubCard(controller: controller);
+    final widener = _buildStereoWidenerSubCard();
+    final reverb = ReverbSubCard(controller: controller);
+    final equalizer = EqualizerSubCard(controller: controller);
+
+    if (maxWidth < 420) {
+      return _buildResponsiveSubCardGrid([
+        silence,
+        crossfeed,
+        widener,
+        reverb,
+        equalizer,
+      ], maxWidth, spacing: spacing);
+    }
+
+    final isThreeColDrop = maxWidth >= 620 && maxWidth < 780;
+    final topGridCards = isThreeColDrop
+        ? [silence, crossfeed, widener]
+        : [silence, crossfeed, widener, reverb];
+    final bottomSection = isThreeColDrop
+        ? IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: (maxWidth - spacing * 2) / 3,
+                  child: reverb,
+                ),
+                const SizedBox(width: spacing),
+                Expanded(child: equalizer),
+              ],
+            ),
+          )
+        : equalizer;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildResponsiveSubCardGrid(topGridCards, maxWidth, spacing: spacing),
+        const SizedBox(height: spacing),
+        bottomSection,
+      ],
     );
   }
 }

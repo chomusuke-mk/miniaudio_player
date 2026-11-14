@@ -178,9 +178,6 @@ void main() {
         await tester.ensureVisible(secondTile);
         await tester.pump(const Duration(milliseconds: 100));
 
-        final listTileWidget = tester.widget<ListTile>(secondTile);
-        final secondTitle = (listTileWidget.title as Text).data!;
-
         await tester.tap(secondTile);
         await tester.pump(const Duration(milliseconds: 100));
 
@@ -189,14 +186,32 @@ void main() {
         });
         await tester.pump(const Duration(milliseconds: 100));
 
+        // Verify queue index 1 became active (Metadata Inspector info icon renders only when isPlayingThis)
+        // and capture its live title (filename or decoded metadata tag).
+        final updatedSecondTile = find
+            .descendant(
+              of: find.byType(PlaylistQueueCard),
+              matching: find.byType(ListTile),
+            )
+            .at(1);
+        expect(
+          find.descendant(
+            of: updatedSecondTile,
+            matching: find.byIcon(Icons.info_outline),
+          ),
+          findsOneWidget,
+        );
+        final activeSecondTitle =
+            (tester.widget<ListTile>(updatedSecondTile).title as Text).data!;
+
         // Scroll back up to the top to verify active track banner
         await tester.drag(mainScrollable, const Offset(0, 700));
         await tester.pump(const Duration(milliseconds: 100));
 
-        // Verify active track banner inside PlaybackEngineCard displays second track title
+        // Verify active track banner inside PlaybackEngineCard displays the selected second track title
         final activeBannerTitle = find.descendant(
           of: find.byType(PlaybackEngineCard),
-          matching: find.text(secondTitle),
+          matching: find.text(activeSecondTitle),
         );
         expect(activeBannerTitle, findsWidgets);
       },

@@ -226,7 +226,6 @@ class AudioEngineController extends ChangeNotifier {
 
   double? _pitchOverride;
   double get pitch => _pitchOverride ?? engine.state.pitch;
-  int get selectedBufferSize => engine.state.bufferSize;
 
   // --- Output and Input Routing Matrix ---
   List<AudioDevice> get audioDevices => engine.state.globalOutputDevices;
@@ -1034,11 +1033,6 @@ class AudioEngineController extends ChangeNotifier {
     _pitchOverride = val;
     notifyListeners();
     await engine.action.setPitch(val);
-  }
-
-  Future<void> setBufferSize(int size) async {
-    await engine.action.setBufferSize(size);
-    notifyListeners();
   }
 
   Future<void> setPauseOnDeviceChange(bool enabled) async {

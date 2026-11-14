@@ -177,21 +177,25 @@ void main() {
           await settleFrames(tester, frames: 5);
           expect(tester.takeException(), isNull);
 
-          // 2. Buffer Size Dropdown
-          final bufDropdown = find.byWidgetPredicate(
-            (w) => w is DropdownButtonFormField<int>,
+          // 2. Hardware Buffer Period removed; Pause on Device Change & Dynamic Metadata Event Stream live in DSP card
+          expect(find.text('Hardware Buffer Period'), findsNothing);
+          final pauseTile = find
+              .ancestor(
+                of: find.text('Pause on Device Change'),
+                matching: find.byType(Container),
+              )
+              .first;
+          final pauseSwitch = find.descendant(
+            of: pauseTile,
+            matching: find.byType(Switch),
           );
-          expect(bufDropdown, findsOneWidget);
           await tester.scrollUntilVisible(
-            bufDropdown,
+            pauseSwitch,
             200,
             scrollable: scrollable,
           );
-          await tester.tap(bufDropdown);
-          await settleFrames(tester, frames: 5);
-          final bufItem = find.text('512 frames (~11.6ms @ 44.1kHz)').last;
-          await tester.tap(bufItem, warnIfMissed: false);
-          await settleFrames(tester, frames: 5);
+          await tester.tap(pauseSwitch);
+          await settleFrames(tester, frames: 3);
           expect(tester.takeException(), isNull);
 
           // 3. Hardware I/O Routing Lists (Multi-output & multi-input)
@@ -209,7 +213,7 @@ void main() {
           expect(tester.takeException(), isNull);
 
           // 4. EQ Enable Switch & Preset Dropdown Selection
-          final eqCard = find.byType(EqualizerCard);
+          final eqCard = find.byType(EqualizerSubCard);
           final eqSwitch = find.descendant(
             of: eqCard,
             matching: find.byType(Switch),
