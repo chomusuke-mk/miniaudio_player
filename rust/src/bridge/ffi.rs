@@ -243,6 +243,28 @@ mod wasm_device_bridge {
         source: &str,
         headers: Option<&[crate::api::types::RustHttpHeader]>,
     ) -> Result<Vec<u8>, i32> {
+        wasm_fetch_source_bytes_range(source, headers, None)
+    }
+
+    /// Synchronously fetches an asset or HTTP audio source (with optional byte range) inside a Web Worker.
+    pub fn wasm_fetch_source_bytes_range(
+        source: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+        byte_range: Option<(u64, u64)>,
+    ) -> Result<Vec<u8>, i32> {
+        let range_hdr = if let Some((length, offset)) = byte_range {
+            if length == 0 {
+                return Err(MAP_ERROR_DECODE_FAILED);
+            }
+            Some(format!(
+                "bytes={}-{}",
+                offset,
+                offset.saturating_add(length - 1)
+            ))
+        } else {
+            None
+        };
+
         let func = SYNC_FETCH_FN.with(|cell| {
             let mut slot = cell.borrow_mut();
             if slot.is_none() {
@@ -259,9 +281,9 @@ mod wasm_device_bridge {
                                 var bin = atob(payload);
                                 var out = new Uint8Array(bin.length);
                                 for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-                                return out;
+                                return [200, out];
                             }
-                            return new TextEncoder().encode(decodeURIComponent(payload));
+                            return [200, new TextEncoder().encode(decodeURIComponent(payload))];
                         } catch (_) {
                             return -6;
                         }
@@ -296,32 +318,48 @@ mod wasm_device_bridge {
                             candidates.push(resolveAssetUrl('assets/' + stripped));
                         }
                     }
-                    for (var c = 0; c < candidates.length; c++) {
-                        try {
-                            var xhr = new XMLHttpRequest();
-                            xhr.open('GET', candidates[c], false);
-                            xhr.responseType = 'arraybuffer';
-                            if (hdrs && hdrs.length) {
-                                for (var h = 0; h < hdrs.length; h++) {
-                                    var kv = hdrs[h];
-                                    if (kv && kv.length >= 2) {
-                                        var k = String(kv[0] || '');
-                                        if (k.toLowerCase() !== 'icy-metadata') {
-                                            try { xhr.setRequestHeader(k, String(kv[1] || '')); } catch (_) {}
-                                        }
-                                    }
+                    var doFetch = function(targetUrl, useRange) {
+                        var xhr = new XMLHttpRequest();
+                        xhr.open('GET', targetUrl, false);
+                        xhr.responseType = 'arraybuffer';
+                        var sentRange = false;
+                        if (hdrs && hdrs.length) {
+                            for (var h = 0; h < hdrs.length; h++) {
+                                var kv = hdrs[h];
+                                if (kv && kv.length >= 2) {
+                                    var k = String(kv[0] || '');
+                                    var lower = k.toLowerCase();
+                                    if (lower === 'icy-metadata') continue;
+                                    if (lower === 'range') sentRange = true;
+                                    try { xhr.setRequestHeader(k, String(kv[1] || '')); } catch (_) {}
                                 }
                             }
-                            xhr.send(null);
-                            if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-                                var u8 = new Uint8Array(xhr.response);
-                                if (u8.byteLength > 0) return u8;
-                            }
+                        }
+                        if (useRange && !sentRange && rangeHdr) {
+                            try { xhr.setRequestHeader('Range', String(rangeHdr)); } catch (_) {}
+                        }
+                        xhr.send(null);
+                        if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
+                            var u8 = new Uint8Array(xhr.response);
+                            if (u8.byteLength > 0) return [xhr.status, u8];
+                        }
+                        return null;
+                    };
+                    for (var c = 0; c < candidates.length; c++) {
+                        try {
+                            var first = doFetch(candidates[c], !!rangeHdr && candidates[c].indexOf('blob:') !== 0);
+                            if (first) return first;
                         } catch (_) {}
+                        if (rangeHdr && candidates[c].indexOf('blob:') !== 0) {
+                            try {
+                                var fallback = doFetch(candidates[c], false);
+                                if (fallback) return fallback;
+                            } catch (_) {}
+                        }
                     }
                     return -5;
                 "#;
-                *slot = Some(Function::new_with_args("src, hdrs", code));
+                *slot = Some(Function::new_with_args("src, hdrs, rangeHdr", code));
             }
             slot.clone().unwrap()
         });
@@ -336,11 +374,17 @@ mod wasm_device_bridge {
             }
         }
 
+        let range_arg = range_hdr
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL);
+
         let res = func
-            .call2(
+            .call3(
                 &JsValue::NULL,
                 &JsValue::from_str(source),
                 &headers_arr.into(),
+                &range_arg,
             )
             .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
 
@@ -353,16 +397,36 @@ mod wasm_device_bridge {
             });
         }
 
-        if let Ok(u8_arr) = res.dyn_into::<Uint8Array>() {
-            let vec = u8_arr.to_vec();
-            if vec.is_empty() {
-                Err(MAP_ERROR_FILE_NOT_FOUND)
-            } else {
-                Ok(vec)
-            }
-        } else {
-            Err(MAP_ERROR_FILE_NOT_FOUND)
+        let pair = res
+            .dyn_into::<Array>()
+            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+        if pair.length() < 2 {
+            return Err(MAP_ERROR_FILE_NOT_FOUND);
         }
+        let status = pair.get(0).as_f64().unwrap_or(200.0) as u16;
+        let u8_arr = pair
+            .get(1)
+            .dyn_into::<Uint8Array>()
+            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+        let mut vec = u8_arr.to_vec();
+        if vec.is_empty() {
+            return Err(MAP_ERROR_FILE_NOT_FOUND);
+        }
+
+        if let Some((length, offset)) = byte_range {
+            if status == 206 {
+                if let Ok(len_usize) = usize::try_from(length) {
+                    if vec.len() > len_usize {
+                        vec.truncate(len_usize);
+                    }
+                }
+            } else {
+                vec = crate::hls::slice_byte_range(&vec, length, offset)
+                    .ok_or(MAP_ERROR_DECODE_FAILED)?;
+            }
+        }
+
+        Ok(vec)
     }
 
     pub unsafe fn map_device_create(

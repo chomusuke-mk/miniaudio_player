@@ -3,11 +3,19 @@
 mod common;
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use common::FixtureResolver;
+use miniaudio_player::core::dual_source::StreamingDeck;
 use miniaudio_player::decoder::SymphoniaEngine;
-use miniaudio_player::hls::{M3u8Parser, MpegTsDemuxer, ParsedHlsPlaylist, TsAudioCodec};
+use miniaudio_player::hls::{
+    resolve_hls_uri, HlsPlaylistTracker, HlsSegmentTarget, M3u8Parser, MpegTsDemuxer,
+    ParsedHlsPlaylist, TsAudioCodec,
+};
 
 #[test]
 fn test_m3u8_master_playlist_parsing() {
@@ -217,4 +225,484 @@ fn test_real_hls_fixture_playlist_and_ts_segments() {
     let mut pcm = Vec::new();
     assert!(aac_engine.decode_next_frame(&mut pcm).unwrap());
     assert!(!pcm.is_empty());
+}
+
+#[test]
+fn test_m3u8_byterange_implicit_offsets_and_uri_resolution() {
+    let manifest = b"#EXTM3U\n\
+#EXT-X-VERSION:4\n\
+#EXT-X-TARGETDURATION:6\n\
+#EXTINF:5.0,\n\
+#EXT-X-BYTERANGE:1000@500\n\
+pack_a.ts\n\
+#EXTINF:5.0,\n\
+#EXT-X-BYTERANGE:2000\n\
+pack_a.ts\n\
+#EXTINF:5.0,\n\
+#EXT-X-BYTERANGE:1500\n\
+pack_a.ts\n\
+#EXTINF:4.0,\n\
+#EXT-X-BYTERANGE:800\n\
+pack_b.ts\n\
+#EXTINF:4.0,\n\
+#EXT-X-BYTERANGE:400@100\n\
+pack_b.ts\n\
+#EXT-X-ENDLIST\n";
+
+    let parsed = M3u8Parser::parse(manifest).expect("Byte-range playlist should parse");
+    match parsed {
+        ParsedHlsPlaylist::Media { segments, .. } => {
+            assert_eq!(segments.len(), 5);
+            assert_eq!(segments[0].byte_range, Some((1000, 500)));
+            assert_eq!(segments[1].byte_range, Some((2000, 1500)));
+            assert_eq!(segments[2].byte_range, Some((1500, 3500)));
+            assert_eq!(segments[3].byte_range, Some((800, 0)));
+            assert_eq!(segments[4].byte_range, Some((400, 100)));
+        }
+        _ => panic!("Expected Media playlist"),
+    }
+
+    assert_eq!(
+        resolve_hls_uri(
+            "https://cdn.example.com/live/master.m3u8?token=abc",
+            "low/stream.m3u8?x=1"
+        ),
+        "https://cdn.example.com/live/low/stream.m3u8?x=1"
+    );
+    assert_eq!(
+        resolve_hls_uri("https://cdn.example.com/live/master.m3u8", "/vod/seg0.ts"),
+        "https://cdn.example.com/vod/seg0.ts"
+    );
+    assert_eq!(
+        resolve_hls_uri("https://cdn.example.com/live/master.m3u8", "//edge.example.com/a.ts"),
+        "https://edge.example.com/a.ts"
+    );
+    assert_eq!(
+        resolve_hls_uri("http://127.0.0.1:8080/live.m3u8", "https://other.host/seg.ts"),
+        "https://other.host/seg.ts"
+    );
+}
+
+#[test]
+fn test_hls_playlist_tracker_live_reloads_and_endlist() {
+    let parse_media = |body: &[u8]| match M3u8Parser::parse(body).unwrap() {
+        ParsedHlsPlaylist::Media {
+            is_live,
+            target_duration,
+            media_sequence,
+            segments,
+            ..
+        } => (is_live, target_duration, media_sequence, segments),
+        _ => panic!("Expected media playlist"),
+    };
+
+    let (is_live0, td0, seq0, segs0) = parse_media(
+        b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:10\n\
+#EXTINF:4.0,\nseg10.ts\n#EXTINF:4.0,\nseg11.ts\n",
+    );
+    let mut tracker = HlsPlaylistTracker::new(
+        "http://127.0.0.1/live/stream.m3u8".to_string(),
+        is_live0,
+        td0,
+        seq0,
+        &segs0,
+    );
+    assert!(tracker.is_live());
+
+    // Poll 1: unchanged playlist yields zero new segments.
+    let new1 = tracker.ingest_media_playlist(seq0, is_live0, td0, &segs0);
+    assert!(new1.is_empty());
+
+    // Poll 2: compliant sliding window advance (#EXT-X-MEDIA-SEQUENCE: 10 -> 11).
+    let (is_live2, td2, seq2, segs2) = parse_media(
+        b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:11\n\
+#EXTINF:4.0,\nseg11.ts\n#EXTINF:4.0,\nseg12.ts\n#EXTINF:4.0,\nseg13.ts\n",
+    );
+    let new2 = tracker.ingest_media_playlist(seq2, is_live2, td2, &segs2);
+    assert_eq!(
+        new2,
+        vec![
+            HlsSegmentTarget {
+                url: "http://127.0.0.1/live/seg12.ts".to_string(),
+                byte_range: None,
+                sequence_number: 12,
+            },
+            HlsSegmentTarget {
+                url: "http://127.0.0.1/live/seg13.ts".to_string(),
+                byte_range: None,
+                sequence_number: 13,
+            },
+        ]
+    );
+
+    // Poll 3: non-compliant server forgets to increment EXT-X-MEDIA-SEQUENCE while rolling URI window.
+    let (is_live3, td3, seq3, segs3) = parse_media(
+        b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:11\n\
+#EXTINF:4.0,\nseg12.ts\n#EXTINF:4.0,\nseg13.ts\n#EXTINF:4.0,\nseg14.ts\n",
+    );
+    let new3 = tracker.ingest_media_playlist(seq3, is_live3, td3, &segs3);
+    assert_eq!(
+        new3,
+        vec![HlsSegmentTarget {
+            url: "http://127.0.0.1/live/seg14.ts".to_string(),
+            byte_range: None,
+            sequence_number: 13,
+        }]
+    );
+
+    // Poll 4: final segment appended with #EXT-X-ENDLIST stops live polling.
+    let (is_live4, td4, seq4, segs4) = parse_media(
+        b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:11\n\
+#EXTINF:4.0,\nseg13.ts\n#EXTINF:4.0,\nseg14.ts\n#EXTINF:4.0,\nseg15.ts\n#EXT-X-ENDLIST\n",
+    );
+    let new4 = tracker.ingest_media_playlist(seq4, is_live4, td4, &segs4);
+    assert_eq!(
+        new4,
+        vec![HlsSegmentTarget {
+            url: "http://127.0.0.1/live/seg15.ts".to_string(),
+            byte_range: None,
+            sequence_number: 13,
+        }]
+    );
+    assert!(!tracker.is_live());
+}
+
+fn spawn_hls_test_server<F>(handler: F) -> (String, Arc<AtomicBool>, std::thread::JoinHandle<()>)
+where
+    F: Fn(&str, Option<&str>) -> (u16, &'static str, Vec<u8>, Option<String>) + Send + Sync + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind ephemeral HTTP port");
+    listener
+        .set_nonblocking(true)
+        .expect("Failed to set listener non-blocking");
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://127.0.0.1:{}", addr.port());
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+
+    let handle = std::thread::spawn(move || {
+        while !stop_clone.load(Ordering::Acquire) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut request_line = String::new();
+                    if reader.read_line(&mut request_line).is_err() {
+                        continue;
+                    }
+                    let path = request_line
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("/")
+                        .to_string();
+                    let mut range_header: Option<String> = None;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            break;
+                        }
+                        if let Some((k, v)) = trimmed.split_once(':') {
+                            if k.trim().eq_ignore_ascii_case("Range") {
+                                range_header = Some(v.trim().to_string());
+                            }
+                        }
+                    }
+
+                    let (status, content_type, body, content_range) =
+                        handler(&path, range_header.as_deref());
+                    let reason = match status {
+                        200 => "OK",
+                        206 => "Partial Content",
+                        404 => "Not Found",
+                        _ => "Error",
+                    };
+                    let mut head = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
+                        status,
+                        reason,
+                        content_type,
+                        body.len()
+                    );
+                    if let Some(cr) = content_range {
+                        head.push_str(&format!("Content-Range: {}\r\n", cr));
+                    }
+                    head.push_str("\r\n");
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(&body);
+                    let _ = stream.flush();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    (base_url, stop, handle)
+}
+
+#[test]
+fn test_hls_live_manifest_periodic_polling_http() {
+    let seg_bytes: Vec<Vec<u8>> = (0..4)
+        .map(|i| std::fs::read(FixtureResolver::resolve(&format!("salida_{}.ts", i))).unwrap())
+        .collect();
+    let expected_total_demuxed: usize = seg_bytes
+        .iter()
+        .map(|b| MpegTsDemuxer::demux_segment(b).audio_bytes.len())
+        .sum();
+
+    let playlist_polls = Arc::new(AtomicUsize::new(0));
+    let requested_segments = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let seg_clone = seg_bytes.clone();
+    let polls_clone = playlist_polls.clone();
+    let reqs_clone = requested_segments.clone();
+
+    let (base_url, stop_srv, srv_handle) = spawn_hls_test_server(move |path, _range| match path {
+        "/master.m3u8" => (
+            200,
+            "application/vnd.apple.mpegurl",
+            b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\n/live/audio.m3u8\n".to_vec(),
+            None,
+        ),
+        "/live/audio.m3u8" => {
+            let poll = polls_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            let body = match poll {
+                1 => "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:10.0,\nseg0.ts\n",
+                2 => "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:10.0,\nseg1.ts\n#EXTINF:10.0,\nseg2.ts\n",
+                _ => "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:2\n#EXTINF:10.0,\nseg2.ts\n#EXTINF:10.0,\nseg3.ts\n#EXT-X-ENDLIST\n",
+            };
+            (
+                200,
+                "application/vnd.apple.mpegurl",
+                body.as_bytes().to_vec(),
+                None,
+            )
+        }
+        p if p.starts_with("/live/seg") && p.ends_with(".ts") => {
+            reqs_clone.lock().unwrap().push(p.to_string());
+            let idx = p["/live/seg".len()..p.len() - 3]
+                .parse::<usize>()
+                .unwrap_or(0);
+            (200, "video/mp2t", seg_clone[idx].clone(), None)
+        }
+        _ => (404, "text/plain", b"not found".to_vec(), None),
+    });
+
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).expect("Failed to create deck");
+    let master_url = format!("{}/master.m3u8", base_url);
+    let open_res = deck.open_network_with_cancel(&master_url, None, None);
+    assert_eq!(open_res, 0, "Live master HLS stream must open cleanly");
+
+    let session = deck
+        .stream_session
+        .read()
+        .unwrap()
+        .clone()
+        .expect("StreamSession must exist for HLS stream");
+
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while !session.body.is_eof() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    assert!(
+        session.body.is_eof(),
+        "Live HLS stream must reach EOF after #EXT-X-ENDLIST arrives via polling"
+    );
+    assert!(
+        playlist_polls.load(Ordering::SeqCst) >= 3,
+        "Expected at least 3 media playlist polls, got {}",
+        playlist_polls.load(Ordering::SeqCst)
+    );
+    assert_eq!(
+        *requested_segments.lock().unwrap(),
+        vec![
+            "/live/seg0.ts".to_string(),
+            "/live/seg1.ts".to_string(),
+            "/live/seg2.ts".to_string(),
+            "/live/seg3.ts".to_string(),
+        ]
+    );
+    assert_eq!(session.range_end(), expected_total_demuxed as u64);
+
+    let _ = deck.stop();
+    drop(deck);
+    stop_srv.store(true, Ordering::Release);
+    let _ = srv_handle.join();
+}
+
+#[test]
+fn test_hls_byterange_http_206_and_200_fallback() {
+    let seg_bytes: Vec<Vec<u8>> = (0..3)
+        .map(|i| std::fs::read(FixtureResolver::resolve(&format!("salida_{}.ts", i))).unwrap())
+        .collect();
+    let expected_total_demuxed: usize = seg_bytes
+        .iter()
+        .map(|b| MpegTsDemuxer::demux_segment(b).audio_bytes.len())
+        .sum();
+
+    let mut pack = Vec::new();
+    let len0 = seg_bytes[0].len();
+    let len1 = seg_bytes[1].len();
+    let len2 = seg_bytes[2].len();
+    pack.extend_from_slice(&seg_bytes[0]);
+    pack.extend_from_slice(&seg_bytes[1]);
+    pack.extend_from_slice(&seg_bytes[2]);
+
+    let playlist_text = format!(
+        "#EXTM3U\n\
+#EXT-X-VERSION:4\n\
+#EXT-X-TARGETDURATION:10\n\
+#EXTINF:10.0,\n\
+#EXT-X-BYTERANGE:{}@0\n\
+pack.ts\n\
+#EXTINF:10.0,\n\
+#EXT-X-BYTERANGE:{}\n\
+pack.ts\n\
+#EXTINF:10.0,\n\
+#EXT-X-BYTERANGE:{}@{}\n\
+pack.ts\n\
+#EXT-X-ENDLIST\n",
+        len0,
+        len1,
+        len2,
+        len0 + len1
+    );
+
+    for honor_range in [true, false] {
+        let pack_clone = pack.clone();
+        let pl_clone = playlist_text.as_bytes().to_vec();
+        let seen_ranges = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen_clone = seen_ranges.clone();
+
+        let (base_url, stop_srv, srv_handle) = spawn_hls_test_server(move |path, range_hdr| {
+            match path {
+                "/byterange.m3u8" => (
+                    200,
+                    "application/vnd.apple.mpegurl",
+                    pl_clone.clone(),
+                    None,
+                ),
+                "/pack.ts" => {
+                    if let Some(rh) = range_hdr {
+                        seen_clone.lock().unwrap().push(rh.to_string());
+                        if honor_range {
+                            if let Some(spec) = rh.strip_prefix("bytes=") {
+                                if let Some((s, e)) = spec.split_once('-') {
+                                    let start: usize = s.parse().unwrap();
+                                    let end_incl: usize = e.parse().unwrap();
+                                    let slice = pack_clone[start..=end_incl].to_vec();
+                                    let cr = format!(
+                                        "bytes {}-{}/{}",
+                                        start,
+                                        end_incl,
+                                        pack_clone.len()
+                                    );
+                                    return (206, "video/mp2t", slice, Some(cr));
+                                }
+                            }
+                        }
+                    }
+                    (200, "video/mp2t", pack_clone.clone(), None)
+                }
+                _ => (404, "text/plain", b"not found".to_vec(), None),
+            }
+        });
+
+        let mut deck = StreamingDeck::new_deck(48000, 2, 1024).expect("Failed to create deck");
+        let url = format!("{}/byterange.m3u8", base_url);
+        let res = deck.open_network_with_cancel(&url, None, None);
+        assert_eq!(
+            res, 0,
+            "Byte-range HLS failed (honor_range={}): {}",
+            honor_range, res
+        );
+
+        let session = deck
+            .stream_session
+            .read()
+            .unwrap()
+            .clone()
+            .expect("StreamSession must exist");
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !session.body.is_eof() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(15));
+        }
+
+        assert!(session.body.is_eof());
+        assert_eq!(
+            session.range_end(),
+            expected_total_demuxed as u64,
+            "Demuxed payload size mismatch when honor_range={}",
+            honor_range
+        );
+        assert_eq!(
+            *seen_ranges.lock().unwrap(),
+            vec![
+                format!("bytes=0-{}", len0 - 1),
+                format!("bytes={}-{}", len0, len0 + len1 - 1),
+                format!("bytes={}-{}", len0 + len1, len0 + len1 + len2 - 1),
+            ]
+        );
+
+        let _ = deck.stop();
+        drop(deck);
+        stop_srv.store(true, Ordering::Release);
+        let _ = srv_handle.join();
+    }
+}
+
+#[test]
+fn test_hls_byterange_local_file_open_file() {
+    let ts0 = std::fs::read(FixtureResolver::resolve("salida_0.ts")).unwrap();
+    let ts1 = std::fs::read(FixtureResolver::resolve("salida_1.ts")).unwrap();
+
+    let pack_path = FixtureResolver::scratch_file_path("hls_pack.ts");
+    let m3u8_path = FixtureResolver::scratch_file_path("hls_byterange_local.m3u8");
+
+    let mut pack = Vec::with_capacity(ts0.len() + ts1.len());
+    pack.extend_from_slice(&ts0);
+    pack.extend_from_slice(&ts1);
+    std::fs::write(&pack_path, &pack).expect("Failed to write temp TS pack");
+
+    let pack_name = pack_path.file_name().unwrap().to_string_lossy();
+    let m3u8_content = format!(
+        "#EXTM3U\n\
+#EXT-X-VERSION:4\n\
+#EXT-X-TARGETDURATION:10\n\
+#EXTINF:10.0,\n\
+#EXT-X-BYTERANGE:{}@0\n\
+{}\n\
+#EXTINF:10.0,\n\
+#EXT-X-BYTERANGE:{}\n\
+{}\n\
+#EXT-X-ENDLIST\n",
+        ts0.len(),
+        pack_name,
+        ts1.len(),
+        pack_name
+    );
+    std::fs::write(&m3u8_path, m3u8_content).expect("Failed to write temp local m3u8");
+
+    let mut deck = StreamingDeck::new_analysis_deck(48000, 2).expect("Failed to create deck");
+    let res = deck.open_file(&m3u8_path.to_string_lossy());
+    assert_eq!(res, 0, "Local byte-range m3u8 should open cleanly");
+
+    let mut pcm = Vec::new();
+    let has_audio = deck
+        .decode_next_analysis_frame(&mut pcm)
+        .expect("Decoding local byte-range HLS must succeed");
+    assert!(has_audio && !pcm.is_empty());
+
+    let _ = deck.stop();
+    drop(deck);
+    let _ = std::fs::remove_file(&m3u8_path);
+    let _ = std::fs::remove_file(&pack_path);
 }

@@ -326,40 +326,16 @@ impl Read for IcyDemuxReader {
     }
 }
 
-fn resolve_hls_uri(base_url: &str, seg_uri: &str) -> String {
-    let trimmed = seg_uri.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return trimmed.to_string();
-    }
-    let base_no_query = base_url.split('?').next().unwrap_or(base_url);
-    if trimmed.starts_with('/') {
-        if let Some(scheme_idx) = base_no_query.find("://") {
-            let after_scheme = &base_no_query[scheme_idx + 3..];
-            if let Some(slash_idx) = after_scheme.find('/') {
-                let origin = &base_no_query[..scheme_idx + 3 + slash_idx];
-                return format!("{}{}", origin, trimmed);
-            }
-        }
-        return trimmed.to_string();
-    }
-    if let Some(last_slash) = base_no_query.rfind('/') {
-        format!("{}/{}", &base_no_query[..last_slash], trimmed)
-    } else {
-        trimmed.to_string()
-    }
+#[cfg(not(target_arch = "wasm32"))]
+fn slice_byte_range(bytes: &[u8], length: u64, offset: u64) -> Option<Vec<u8>> {
+    crate::hls::slice_byte_range(bytes, length, offset)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn fetch_hls_segment_audio(
-    agent: &ureq::Agent,
+fn demux_or_wrap_hls_segment(
     seg_url: &str,
-    headers: Option<&[crate::api::types::RustHttpHeader]>,
+    content_type: Option<&str>,
+    raw_bytes: Vec<u8>,
 ) -> Option<(Vec<u8>, i32)> {
-    let req = apply_http_headers(agent.get(seg_url), headers);
-    let res = req.call().ok()?;
-    let content_type = response_header_str(&res, "content-type").map(|s| s.to_string());
-    let mut raw_bytes = Vec::new();
-    res.into_body().into_reader().read_to_end(&mut raw_bytes).ok()?;
     if raw_bytes.is_empty() {
         return None;
     }
@@ -374,8 +350,347 @@ fn fetch_hls_segment_audio(
             return Some((demuxed.audio_bytes, fmt));
         }
     }
-    let fmt = infer_network_encoding_format(seg_url, content_type.as_deref());
+    let fmt = infer_network_encoding_format(seg_url, content_type);
     Some((raw_bytes, fmt))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_local_segment_bytes(path: &str, byte_range: Option<(u64, u64)>) -> Option<Vec<u8>> {
+    if let Some((length, offset)) = byte_range {
+        if length == 0 {
+            return None;
+        }
+        let mut file = File::open(path).ok()?;
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        let cap = usize::try_from(length)
+            .unwrap_or(1024 * 1024)
+            .min(16 * 1024 * 1024);
+        let mut buf = Vec::with_capacity(cap);
+        file.take(length).read_to_end(&mut buf).ok()?;
+        if buf.is_empty() {
+            None
+        } else {
+            Some(buf)
+        }
+    } else {
+        std::fs::read(path).ok().filter(|b| !b.is_empty())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_hls_segment_audio(
+    agent: &ureq::Agent,
+    seg_url: &str,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+    byte_range: Option<(u64, u64)>,
+) -> Option<(Vec<u8>, i32)> {
+    let mut req = apply_http_headers(agent.get(seg_url), headers);
+    if let Some((length, offset)) = byte_range {
+        if length == 0 {
+            return None;
+        }
+        let end_inclusive = offset.saturating_add(length - 1);
+        let range_hdr = format!("bytes={}-{}", offset, end_inclusive);
+        req = req.header("Range", &range_hdr);
+    }
+    let res = req.call().ok()?;
+    let status = res.status().as_u16();
+    let content_type = response_header_str(&res, "content-type").map(|s| s.to_string());
+    let raw_bytes = if let Some((length, offset)) = byte_range {
+        let mut buf = Vec::new();
+        if status == 206 {
+            res.into_body()
+                .into_reader()
+                .take(length)
+                .read_to_end(&mut buf)
+                .ok()?;
+            buf
+        } else {
+            let max_read = offset.saturating_add(length);
+            res.into_body()
+                .into_reader()
+                .take(max_read)
+                .read_to_end(&mut buf)
+                .ok()?;
+            slice_byte_range(&buf, length, offset)?
+        }
+    } else {
+        let mut buf = Vec::new();
+        res.into_body().into_reader().read_to_end(&mut buf).ok()?;
+        buf
+    };
+    demux_or_wrap_hls_segment(seg_url, content_type.as_deref(), raw_bytes)
+}
+
+#[derive(Clone)]
+enum HlsFetchBackend {
+    #[cfg(not(target_arch = "wasm32"))]
+    Network {
+        agent: Arc<ureq::Agent>,
+        headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    LocalFile,
+    #[cfg(target_arch = "wasm32")]
+    Wasm {
+        headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+        is_network: bool,
+    },
+}
+
+impl HlsFetchBackend {
+    fn into_streaming_backend(&self) -> Self {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Network { headers, .. } => Self::Network {
+                agent: Arc::new(build_network_agent()),
+                headers: headers.clone(),
+            },
+            _ => self.clone(),
+        }
+    }
+
+    fn is_remote_http(&self) -> bool {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Network { .. } => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::LocalFile => false,
+            #[cfg(target_arch = "wasm32")]
+            Self::Wasm { is_network, .. } => *is_network,
+        }
+    }
+
+    fn fetch_playlist(&self, url: &str) -> Result<Vec<u8>, i32> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Network { agent, headers } => {
+                let req = apply_http_headers(agent.get(url), headers.as_deref());
+                match req.call() {
+                    Ok(res) => {
+                        let mut bytes = Vec::new();
+                        res.into_body()
+                            .into_reader()
+                            .read_to_end(&mut bytes)
+                            .map_err(|_| MAP_ERROR_DECODE_FAILED)?;
+                        if bytes.is_empty() {
+                            Err(MAP_ERROR_DECODE_FAILED)
+                        } else {
+                            Ok(bytes)
+                        }
+                    }
+                    Err(ureq::Error::StatusCode(code)) => Err(if code == 404 {
+                        MAP_ERROR_FILE_NOT_FOUND
+                    } else if code == 401 || code == 403 {
+                        MAP_ERROR_ACCESS_DENIED
+                    } else {
+                        MAP_ERROR_DECODE_FAILED
+                    }),
+                    Err(_) => Err(MAP_ERROR_FILE_NOT_FOUND),
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::LocalFile => {
+                let resolved = resolve_local_source_path(url);
+                std::fs::read(&resolved).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::Wasm { headers, .. } => {
+                crate::bridge::ffi::wasm_fetch_source_bytes_range(url, headers.as_deref(), None)
+            }
+        }
+    }
+
+    fn fetch_segment_audio(
+        &self,
+        seg_url: &str,
+        byte_range: Option<(u64, u64)>,
+    ) -> Option<(Vec<u8>, i32)> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Network { agent, headers } => {
+                fetch_hls_segment_audio(agent, seg_url, headers.as_deref(), byte_range)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::LocalFile => {
+                let resolved = resolve_local_source_path(seg_url);
+                let raw_bytes = read_local_segment_bytes(&resolved, byte_range)?;
+                demux_or_wrap_hls_segment(&resolved, None, raw_bytes)
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::Wasm {
+                headers,
+                is_network,
+            } => {
+                let target = if *is_network {
+                    seg_url.to_string()
+                } else {
+                    resolve_local_source_path(seg_url)
+                };
+                let raw_bytes = crate::bridge::ffi::wasm_fetch_source_bytes_range(
+                    &target,
+                    headers.as_deref(),
+                    byte_range,
+                )
+                .ok()?;
+                demux_or_wrap_hls_segment(&target, None, raw_bytes)
+            }
+        }
+    }
+}
+
+fn feed_hls_audio_chunked(
+    session: &StreamSession,
+    audio_bytes: &[u8],
+    abort: &AtomicBool,
+    dec_running: &AtomicBool,
+) -> bool {
+    const FEED_CHUNK_BYTES: usize = 32768;
+    let mut offset = 0;
+    while offset < audio_bytes.len()
+        && !abort.load(Ordering::Acquire)
+        && dec_running.load(Ordering::Acquire)
+    {
+        let step_end = (offset + FEED_CHUNK_BYTES).min(audio_bytes.len());
+        match session.feed_chunk(&audio_bytes[offset..step_end]) {
+            Ok(0) => {
+                session.wait_for_free_space(step_end - offset, Duration::from_millis(250));
+            }
+            Ok(written) => offset += written,
+            Err(crate::buffer::BufferError::Busy) => {
+                session.wait_for_free_space(step_end - offset, Duration::from_millis(250));
+            }
+            Err(_) => return false,
+        }
+    }
+    !abort.load(Ordering::Acquire) && dec_running.load(Ordering::Acquire)
+}
+
+fn sleep_interruptible(duration: Duration, abort: &AtomicBool, dec_running: &AtomicBool) -> bool {
+    let deadline = MonotonicInstant::now() + duration;
+    loop {
+        if abort.load(Ordering::Acquire) || !dec_running.load(Ordering::Acquire) {
+            return false;
+        }
+        let now = MonotonicInstant::now();
+        if now >= deadline {
+            return true;
+        }
+        thread::sleep((deadline - now).min(Duration::from_millis(50)));
+    }
+}
+
+fn spawn_hls_streamer_thread(
+    session: StreamSession,
+    abort_stream: Arc<AtomicBool>,
+    decoder_running: Arc<AtomicBool>,
+    backend: HlsFetchBackend,
+    mut tracker: crate::hls::HlsPlaylistTracker,
+    mut pending_targets: Vec<crate::hls::HlsSegmentTarget>,
+) {
+    let max_unchanged: u32 = if backend.is_remote_http() { 12 } else { 3 };
+    const MAX_RELOAD_ERRORS: u32 = 5;
+
+    let _ = thread::Builder::new()
+        .name("miniaudio-hls-streamer".to_string())
+        .spawn(move || {
+            let mut consecutive_unchanged = 0u32;
+            let mut consecutive_errors = 0u32;
+            let mut last_reload_had_new = true;
+
+            loop {
+                for target in pending_targets.drain(..) {
+                    if abort_stream.load(Ordering::Acquire)
+                        || !decoder_running.load(Ordering::Acquire)
+                    {
+                        return;
+                    }
+                    if let Some((audio_bytes, _)) =
+                        backend.fetch_segment_audio(&target.url, target.byte_range)
+                    {
+                        if !feed_hls_audio_chunked(
+                            &session,
+                            &audio_bytes,
+                            &abort_stream,
+                            &decoder_running,
+                        ) {
+                            return;
+                        }
+                    }
+                }
+
+                if !tracker.is_live() {
+                    session.mark_eof();
+                    return;
+                }
+
+                let wait_dur = tracker.poll_interval(last_reload_had_new);
+                if !sleep_interruptible(wait_dur, &abort_stream, &decoder_running) {
+                    return;
+                }
+
+                match backend.fetch_playlist(tracker.base_media_url()) {
+                    Ok(playlist_bytes) => {
+                        match crate::hls::M3u8Parser::parse(&playlist_bytes) {
+                            Ok(crate::hls::ParsedHlsPlaylist::Media {
+                                is_live,
+                                target_duration,
+                                media_sequence,
+                                segments,
+                                ..
+                            }) => {
+                                consecutive_errors = 0;
+                                let new_targets = tracker.ingest_media_playlist(
+                                    media_sequence,
+                                    is_live,
+                                    target_duration,
+                                    &segments,
+                                );
+                                if new_targets.is_empty() {
+                                    last_reload_had_new = false;
+                                    consecutive_unchanged += 1;
+                                    if !tracker.is_live() {
+                                        session.mark_eof();
+                                        return;
+                                    }
+                                    if consecutive_unchanged >= max_unchanged {
+                                        crate::map_log!(
+                                            2,
+                                            "HLS live playlist unchanged for {} polls; marking EOF",
+                                            consecutive_unchanged
+                                        );
+                                        session.mark_eof();
+                                        return;
+                                    }
+                                } else {
+                                    last_reload_had_new = true;
+                                    consecutive_unchanged = 0;
+                                    pending_targets = new_targets;
+                                }
+                            }
+                            Ok(crate::hls::ParsedHlsPlaylist::Master { .. }) | Err(_) => {
+                                last_reload_had_new = false;
+                                consecutive_errors += 1;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        last_reload_had_new = false;
+                        consecutive_errors += 1;
+                    }
+                }
+
+                if consecutive_errors >= MAX_RELOAD_ERRORS {
+                    crate::map_log!(
+                        1,
+                        "HLS live manifest reload failed {} times; marking EOF",
+                        consecutive_errors
+                    );
+                    session.mark_eof();
+                    return;
+                }
+            }
+        });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1872,126 +2187,196 @@ impl StreamingDeck {
         }
     }
 
-    fn open_hls_from_m3u8_bytes<F>(
+    fn open_hls_playlist_bytes(
         &mut self,
-        base_url: &str,
+        url: &str,
         m3u8_bytes: &[u8],
         cancel: Option<&CancelToken>,
-        mut fetch_bytes: F,
-    ) -> i32
-    where
-        F: FnMut(&str) -> Result<Vec<u8>, i32>,
-    {
+        backend: &HlsFetchBackend,
+        vod_use_memory: bool,
+    ) -> i32 {
         if cancel.is_some_and(|c| c.is_cancelled()) {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
+        crate::map_log!(3, "open_hls_playlist: url={}", url);
         let parsed = match crate::hls::M3u8Parser::parse(m3u8_bytes) {
             Ok(p) => p,
-            Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+            Err(_) => {
+                crate::map_log!(1, "open_hls_playlist failed: invalid m3u8 playlist");
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
         };
 
         let (base_media_url, media_playlist) = match parsed {
             crate::hls::ParsedHlsPlaylist::Master { variants } => {
+                crate::map_log!(
+                    4,
+                    "open_hls_playlist: Master playlist with {} variants",
+                    variants.len()
+                );
                 let Some(first_var) = variants.first() else {
+                    crate::map_log!(1, "open_hls_playlist failed: no variants in master playlist");
                     return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
                 };
                 if cancel.is_some_and(|c| c.is_cancelled()) {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
-                let media_url = resolve_hls_uri(base_url, &first_var.uri);
-                let media_bytes = match fetch_bytes(&media_url) {
+                let media_url = crate::hls::resolve_hls_uri(url, &first_var.uri);
+                let media_bytes = match backend.fetch_playlist(&media_url) {
                     Ok(b) => b,
-                    Err(code) => return self.mark_open_error(code),
+                    Err(code) => {
+                        if cancel.is_some_and(|c| c.is_cancelled()) {
+                            return self.mark_open_error(MAP_ERROR_ABORTED);
+                        }
+                        crate::map_log!(
+                            1,
+                            "open_hls_playlist failed to fetch media playlist from {}",
+                            media_url
+                        );
+                        return self.mark_open_error(code);
+                    }
                 };
+                if cancel.is_some_and(|c| c.is_cancelled()) {
+                    return self.mark_open_error(MAP_ERROR_ABORTED);
+                }
                 match crate::hls::M3u8Parser::parse(&media_bytes) {
                     Ok(p) => (media_url, p),
-                    Err(_) => return self.mark_open_error(MAP_ERROR_DECODE_FAILED),
+                    Err(_) => {
+                        crate::map_log!(
+                            1,
+                            "open_hls_playlist failed: invalid variant media playlist"
+                        );
+                        return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                    }
                 }
             }
-            media => (base_url.to_string(), media),
+            media => (url.to_string(), media),
         };
 
         let crate::hls::ParsedHlsPlaylist::Media {
             is_live,
+            target_duration,
+            media_sequence,
             segments,
             total_duration_seconds,
-            ..
         } = media_playlist
         else {
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         };
 
+        crate::map_log!(
+            3,
+            "open_hls_playlist: Media playlist parsed (segments={}, is_live={}, duration={:.2}s)",
+            segments.len(),
+            is_live,
+            total_duration_seconds
+        );
+
         if segments.is_empty() {
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         }
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return self.mark_open_error(MAP_ERROR_ABORTED);
+        }
 
-        let max_segs = if is_live { 8 } else { segments.len().min(512) };
-        let mut combined_audio = Vec::new();
-        let mut hint_ext: Option<&'static str> = None;
+        if !is_live && vod_use_memory {
+            let max_segs = segments.len().min(512);
+            let mut combined_audio = Vec::new();
+            let mut hint_ext: Option<&'static str> = None;
 
-        for seg in segments.iter().take(max_segs) {
-            if cancel.is_some_and(|c| c.is_cancelled()) {
-                return self.mark_open_error(MAP_ERROR_ABORTED);
-            }
-            let seg_url = resolve_hls_uri(&base_media_url, &seg.uri);
-            let Ok(raw_bytes) = fetch_bytes(&seg_url) else {
-                if combined_audio.is_empty() {
-                    return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+            for seg in segments.iter().take(max_segs) {
+                if cancel.is_some_and(|c| c.is_cancelled()) {
+                    return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
-                break;
-            };
-            if raw_bytes.is_empty() {
-                continue;
-            }
-            if crate::hls::MpegTsDemuxer::is_mpeg_ts(&raw_bytes) {
-                let demuxed = crate::hls::MpegTsDemuxer::demux_segment(&raw_bytes);
+                let seg_url = crate::hls::resolve_hls_uri(&base_media_url, &seg.uri);
+                let Some((audio_bytes, fmt)) =
+                    backend.fetch_segment_audio(&seg_url, seg.byte_range)
+                else {
+                    if combined_audio.is_empty() {
+                        return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+                    }
+                    break;
+                };
                 if hint_ext.is_none() {
-                    hint_ext = match demuxed.codec {
-                        crate::hls::TsAudioCodec::AacAdts => Some("aac"),
-                        crate::hls::TsAudioCodec::Mp3 => Some("mp3"),
-                        _ => None,
-                    };
-                }
-                if !demuxed.audio_bytes.is_empty() {
-                    combined_audio.extend_from_slice(&demuxed.audio_bytes);
-                }
-            } else {
-                if hint_ext.is_none() {
-                    let fmt = infer_network_encoding_format(&seg_url, None);
                     hint_ext = encoding_format_to_extension(fmt);
                 }
-                combined_audio.extend_from_slice(&raw_bytes);
+                combined_audio.extend_from_slice(&audio_bytes);
             }
-        }
 
-        if combined_audio.is_empty() {
-            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-        }
+            if combined_audio.is_empty() {
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
 
-        if is_live {
-            let fmt = match hint_ext {
-                Some("aac") => 5,
-                Some("mp3") => 3,
-                _ => 0,
-            };
-            let res_code =
-                self.open_stream_ex(&combined_audio, None, -1, true, 4 * 1024 * 1024, fmt);
-            if res_code == MAP_SUCCESS {
-                if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-                    session.mark_eof();
-                }
+            let res_code = self.open_memory_with_hint(&combined_audio, hint_ext);
+            if res_code == MAP_SUCCESS && total_duration_seconds > 0.0 {
+                let dur_ms = (total_duration_seconds * 1000.0) as i64;
+                self.duration_ms.store(dur_ms, Ordering::SeqCst);
+                self.telemetry
+                    .post_event(EventType::Duration, MapEventData { duration_ms: dur_ms });
             }
             return res_code;
         }
 
-        let res_code = self.open_memory_with_hint(&combined_audio, hint_ext);
-        if res_code == MAP_SUCCESS && total_duration_seconds > 0.0 {
+        let first_seg = &segments[0];
+        let first_seg_url = crate::hls::resolve_hls_uri(&base_media_url, &first_seg.uri);
+        let Some((first_audio, seg_fmt)) =
+            backend.fetch_segment_audio(&first_seg_url, first_seg.byte_range)
+        else {
+            if cancel.is_some_and(|c| c.is_cancelled()) {
+                return self.mark_open_error(MAP_ERROR_ABORTED);
+            }
+            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+        };
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return self.mark_open_error(MAP_ERROR_ABORTED);
+        }
+
+        let res_code =
+            self.open_stream_ex(&first_audio, None, -1, is_live, 4 * 1024 * 1024, seg_fmt);
+        if res_code != MAP_SUCCESS {
+            return res_code;
+        }
+
+        if !is_live && total_duration_seconds > 0.0 {
             let dur_ms = (total_duration_seconds * 1000.0) as i64;
             self.duration_ms.store(dur_ms, Ordering::SeqCst);
             self.telemetry
                 .post_event(EventType::Duration, MapEventData { duration_ms: dur_ms });
         }
-        res_code
+
+        if is_live && self.is_analysis {
+            crate::map_log!(
+                3,
+                "open_hls_playlist: livestream detected on analysis deck; skipping background HLS streamer thread for {}",
+                url
+            );
+            return MAP_SUCCESS;
+        }
+
+        self.network_streamer_abort.store(true, Ordering::Release);
+        let new_abort = Arc::new(AtomicBool::new(false));
+        self.network_streamer_abort = new_abort.clone();
+
+        if let Some(session) = read_unpoisoned(&self.stream_session).clone() {
+            let tracker = crate::hls::HlsPlaylistTracker::new(
+                base_media_url,
+                is_live,
+                target_duration,
+                media_sequence,
+                &segments,
+            );
+            let pending_targets = tracker.resolve_targets(&segments[1..]);
+            spawn_hls_streamer_thread(
+                session,
+                new_abort,
+                self.decoder_running.clone(),
+                backend.into_streaming_backend(),
+                tracker,
+                pending_targets,
+            );
+        }
+
+        MAP_SUCCESS
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2016,9 +2401,11 @@ impl StreamingDeck {
         }
 
         if crate::hls::M3u8Parser::is_m3u8(&bytes) {
-            return self.open_hls_from_m3u8_bytes(url, &bytes, cancel, |seg_url| {
-                crate::bridge::ffi::wasm_fetch_source_bytes(seg_url, headers)
-            });
+            let backend = HlsFetchBackend::Wasm {
+                headers: headers.map(|h| h.to_vec()),
+                is_network: true,
+            };
+            return self.open_hls_playlist_bytes(url, &bytes, cancel, &backend, true);
         }
 
         if url.starts_with("icy://") {
@@ -2049,166 +2436,15 @@ impl StreamingDeck {
         if cancel.is_some_and(|c| c.is_cancelled()) {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
-        crate::map_log!(3, "open_hls_network: url={}", url);
         let _ = reader.read_to_end(&mut m3u8_bytes);
         if cancel.is_some_and(|c| c.is_cancelled()) {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
-        let parsed = match crate::hls::M3u8Parser::parse(&m3u8_bytes) {
-            Ok(p) => p,
-            Err(_) => {
-                crate::map_log!(1, "open_hls_network failed: invalid m3u8 playlist");
-                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-            }
+        let backend = HlsFetchBackend::Network {
+            agent: Arc::new(agent),
+            headers: headers.map(|h| h.to_vec()),
         };
-
-        let (base_media_url, media_playlist) = match parsed {
-            crate::hls::ParsedHlsPlaylist::Master { variants } => {
-                crate::map_log!(4, "open_hls_network: Master playlist with {} variants", variants.len());
-                let Some(first_var) = variants.first() else {
-                    crate::map_log!(1, "open_hls_network failed: no variants in master playlist");
-                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-                };
-                if cancel.is_some_and(|c| c.is_cancelled()) {
-                    return self.mark_open_error(MAP_ERROR_ABORTED);
-                }
-                let media_url = resolve_hls_uri(url, &first_var.uri);
-                let req = apply_http_headers(agent.get(&media_url), headers);
-                let Ok(res) = req.call() else {
-                    if cancel.is_some_and(|c| c.is_cancelled()) {
-                        return self.mark_open_error(MAP_ERROR_ABORTED);
-                    }
-                    crate::map_log!(1, "open_hls_network failed to fetch media playlist from {}", media_url);
-                    return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
-                };
-                if cancel.is_some_and(|c| c.is_cancelled()) {
-                    return self.mark_open_error(MAP_ERROR_ABORTED);
-                }
-                let mut media_bytes = Vec::new();
-                if res.into_body().into_reader().read_to_end(&mut media_bytes).is_err() {
-                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-                }
-                match crate::hls::M3u8Parser::parse(&media_bytes) {
-                    Ok(p) => (media_url, p),
-                    Err(_) => {
-                        crate::map_log!(1, "open_hls_network failed: invalid variant media playlist");
-                        return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-                    }
-                }
-            }
-            media => (url.to_string(), media),
-        };
-
-        let crate::hls::ParsedHlsPlaylist::Media {
-            is_live,
-            segments,
-            total_duration_seconds,
-            ..
-        } = media_playlist
-        else {
-            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-        };
-
-        crate::map_log!(
-            3,
-            "open_hls_network: Media playlist parsed (segments={}, is_live={}, duration={:.2}s)",
-            segments.len(),
-            is_live,
-            total_duration_seconds
-        );
-
-        if segments.is_empty() {
-            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-        }
-        if cancel.is_some_and(|c| c.is_cancelled()) {
-            return self.mark_open_error(MAP_ERROR_ABORTED);
-        }
-
-        let first_seg_url = resolve_hls_uri(&base_media_url, &segments[0].uri);
-        let Some((first_audio, seg_fmt)) = fetch_hls_segment_audio(&agent, &first_seg_url, headers)
-        else {
-            if cancel.is_some_and(|c| c.is_cancelled()) {
-                return self.mark_open_error(MAP_ERROR_ABORTED);
-            }
-            return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-        };
-        if cancel.is_some_and(|c| c.is_cancelled()) {
-            return self.mark_open_error(MAP_ERROR_ABORTED);
-        }
-
-        let res_code = self.open_stream_ex(&first_audio, None, -1, is_live, 4 * 1024 * 1024, seg_fmt);
-        if res_code != MAP_SUCCESS {
-            return res_code;
-        }
-
-        if !is_live && total_duration_seconds > 0.0 {
-            let dur_ms = (total_duration_seconds * 1000.0) as i64;
-            self.duration_ms.store(dur_ms, Ordering::SeqCst);
-            self.telemetry.post_event(
-                EventType::Duration,
-                MapEventData {
-                    duration_ms: dur_ms,
-                },
-            );
-        }
-
-        if is_live && self.is_analysis {
-            crate::map_log!(
-                3,
-                "open_hls_network: livestream detected on analysis deck; skipping background HLS streamer thread for {}",
-                url
-            );
-            return MAP_SUCCESS;
-        }
-
-        self.network_streamer_abort.store(true, Ordering::Release);
-        let new_abort = Arc::new(AtomicBool::new(false));
-        self.network_streamer_abort = new_abort.clone();
-
-        if let Some(session) = read_unpoisoned(&self.stream_session).clone() {
-            let remaining_urls: Vec<String> = segments
-                .iter()
-                .skip(1)
-                .map(|s| resolve_hls_uri(&base_media_url, &s.uri))
-                .collect();
-            let owned_headers: Option<Vec<crate::api::types::RustHttpHeader>> =
-                headers.map(|h| h.to_vec());
-            let dec_running = self.decoder_running.clone();
-
-            let _ = std::thread::Builder::new()
-                .name("miniaudio-hls-streamer".to_string())
-                .spawn(move || {
-                    for seg_url in remaining_urls {
-                        if new_abort.load(Ordering::Relaxed) || !dec_running.load(Ordering::Relaxed)
-                        {
-                            return;
-                        }
-                        if let Some((audio_bytes, _)) =
-                            fetch_hls_segment_audio(&agent, &seg_url, owned_headers.as_deref())
-                        {
-                            let mut offset = 0;
-                            while offset < audio_bytes.len()
-                                && !new_abort.load(Ordering::Relaxed)
-                                && dec_running.load(Ordering::Relaxed)
-                            {
-                                match session.feed_chunk(&audio_bytes[offset..]) {
-                                    Ok(written) => offset += written,
-                                    Err(crate::buffer::BufferError::Busy) => {
-                                        session.wait_for_free_space(
-                                            audio_bytes.len() - offset,
-                                            Duration::from_millis(250),
-                                        );
-                                    }
-                                    Err(_) => return,
-                                }
-                            }
-                        }
-                    }
-                    session.mark_eof();
-                });
-        }
-
-        MAP_SUCCESS
+        self.open_hls_playlist_bytes(url, &m3u8_bytes, cancel, &backend, false)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2603,10 +2839,11 @@ impl StreamingDeck {
                 }
             };
             if crate::hls::M3u8Parser::is_m3u8(&bytes) {
-                return self.open_hls_from_m3u8_bytes(path, &bytes, None, |seg_path| {
-                    let resolved = resolve_local_source_path(seg_path);
-                    crate::bridge::ffi::wasm_fetch_source_bytes(&resolved, None)
-                });
+                let backend = HlsFetchBackend::Wasm {
+                    headers: None,
+                    is_network: false,
+                };
+                return self.open_hls_playlist_bytes(path, &bytes, None, &backend, true);
             }
             let ext = StreamClassifier::extract_extension_hint(path);
             return self.open_memory_with_hint(&bytes, ext);
@@ -2617,10 +2854,14 @@ impl StreamingDeck {
             if path.to_ascii_lowercase().ends_with(".m3u8") {
                 if let Ok(m3u8_bytes) = std::fs::read(path) {
                     if crate::hls::M3u8Parser::is_m3u8(&m3u8_bytes) {
-                        return self.open_hls_from_m3u8_bytes(path, &m3u8_bytes, None, |seg_path| {
-                            let resolved = resolve_local_source_path(seg_path);
-                            std::fs::read(&resolved).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)
-                        });
+                        let backend = HlsFetchBackend::LocalFile;
+                        return self.open_hls_playlist_bytes(
+                            path,
+                            &m3u8_bytes,
+                            None,
+                            &backend,
+                            true,
+                        );
                     }
                 }
             }
