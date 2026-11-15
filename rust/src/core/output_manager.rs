@@ -14,7 +14,7 @@ use crate::bridge::ffi::{
     map_device_create, map_device_destroy, map_device_start,
     MapDeviceContext,
 };
-use crate::core::recording::{LiveRecorder, WavFormat};
+use crate::core::recording::LiveRecorder;
 use crate::core::renderer::PcmRendererHeader;
 use crate::dsp::visualizer::{Visualizer, VisualizerData};
 use crate::map_log;
@@ -36,8 +36,13 @@ pub unsafe extern "C" fn output_device_render_trampoline(
     output: *mut f32,
     count: usize,
 ) {
+    if ptr.is_null() || output.is_null() || count == 0 {
+        return;
+    }
     let r = &mut *(ptr as *mut OutputDeviceRenderer);
-    r.render_pcm(output, count);
+    let total_samples = count * r.channels;
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(output, total_samples) };
+    r.render_pcm(out_slice);
 }
 
 pub unsafe extern "C" fn output_device_notif_trampoline(ptr: *mut c_void, notif: i32) {
@@ -58,12 +63,11 @@ pub unsafe extern "C" fn output_device_notif_trampoline(ptr: *mut c_void, notif:
 
 impl OutputDeviceRenderer {
     #[inline]
-    pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
-        if output_frames.is_null() || frame_count == 0 {
+    pub fn render_pcm(&mut self, out_slice: &mut [f32]) {
+        let total_samples = out_slice.len();
+        if total_samples == 0 {
             return;
         }
-        let total_samples = frame_count * self.channels;
-        let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
 
         let to_read = self.consumer.slots().min(total_samples);
         if to_read > 0 {
@@ -440,15 +444,6 @@ impl OutputManager {
 
     /// Updates the active outputs and synchronizes physical audio devices.
     pub fn set_outputs(&mut self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
-        self.set_outputs_with_resolved(outputs, None)
-    }
-
-    /// Updates active outputs with optional pre-resolved physical endpoint ID for 'AUTO'.
-    pub fn set_outputs_with_resolved(
-        &mut self,
-        outputs: Vec<RustAudioOutput>,
-        pre_resolved_auto_id: Option<String>,
-    ) -> Result<(), String> {
         let existing = self.current_device_keys();
         let batch = Self::prepare_outputs_off_rt(
             self.sample_rate,
@@ -456,7 +451,7 @@ impl OutputManager {
             self.device_trigger.clone(),
             &existing,
             outputs,
-            pre_resolved_auto_id,
+            None,
         );
         let evicted = self.apply_prepared_outputs(batch);
         drop(evicted);
@@ -510,24 +505,6 @@ impl OutputManager {
         })
     }
 
-    /// Begins recording rendered audio to a WAV file at `path` with a selective source.
-    pub fn start_recording(
-        &mut self,
-        path: &str,
-        format: WavFormat,
-        source: AudioOutputSource,
-    ) -> Result<(), String> {
-        let (rec, prod) =
-            LiveRecorder::prepare_start(self.sample_rate, self.channels, format, path)?;
-        let (prev_rec, prev_prod) =
-            self.attach_prepared_recording(path.to_string(), source, rec, prod);
-        drop(prev_prod);
-        if let Some(mut old) = prev_rec {
-            let _ = old.stop();
-        }
-        Ok(())
-    }
-
     /// Stops the active recording session and returns (path, duration_ms, bytes_written, sample_count).
     pub fn stop_recording(&mut self) -> Result<(String, u64, usize, u64), String> {
         let mut detached = self.detach_recording_for_stop()?;
@@ -545,12 +522,6 @@ impl OutputManager {
     #[inline]
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::Relaxed)
-    }
-
-    /// Returns the total audio frames captured during the current recording session.
-    #[inline]
-    pub fn recorded_frames(&self) -> u64 {
-        self.recorded_frames.load(Ordering::Relaxed)
     }
 
     /// Returns the duration of the current recording session in milliseconds.

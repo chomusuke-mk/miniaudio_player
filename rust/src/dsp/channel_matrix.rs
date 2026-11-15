@@ -26,16 +26,6 @@ impl ChannelMatrix {
         self.channels_out = channels_out.max(1);
     }
 
-    /// Returns the input channel count.
-    pub fn channels_in(&self) -> usize {
-        self.channels_in
-    }
-
-    /// Returns the output channel count.
-    pub fn channels_out(&self) -> usize {
-        self.channels_out
-    }
-
     /// Process interleaved frames from `input` into `output`.
     /// `input` must have a length multiple of `channels_in`.
     /// `output` is cleared and filled with interleaved frames of `channels_out`.
@@ -73,12 +63,13 @@ impl ChannelMatrix {
 
         // Case 2: Mono (1) -> Surround (5.1 or 7.1)
         if ch_in == 1 && ch_out >= 3 {
+            let k = std::f32::consts::FRAC_1_SQRT_2;
             for f in 0..frame_count {
                 let m = input[f];
                 let out_idx = f * ch_out;
                 // Center channel and Front L/R get mono signal
-                output[out_idx] = m * 0.7071; // L
-                output[out_idx + 1] = m * 0.7071; // R
+                output[out_idx] = m * k; // L
+                output[out_idx + 1] = m * k; // R
                 output[out_idx + 2] = m; // C
                                          // Remaining channels (LFE, surrounds) remain 0.0
             }
@@ -109,7 +100,8 @@ impl ChannelMatrix {
         // Case 5: 5.1 Surround (6) -> Stereo (2) [ITU-R BS.775 standard]
         // 5.1 order: [L, R, C, LFE, Ls, Rs]
         if ch_in == 6 && ch_out == 2 {
-            let inv_norm = 1.0 / (1.0 + 0.7071 + 0.7071);
+            let k = std::f32::consts::FRAC_1_SQRT_2;
+            let inv_norm = 1.0 / (1.0 + k + k);
             for f in 0..frame_count {
                 let in_idx = f * 6;
                 let l = input[in_idx];
@@ -119,8 +111,8 @@ impl ChannelMatrix {
                 let rs = input[in_idx + 5];
 
                 let out_idx = f * 2;
-                output[out_idx] = (l + 0.7071 * c + 0.7071 * ls) * inv_norm;
-                output[out_idx + 1] = (r + 0.7071 * c + 0.7071 * rs) * inv_norm;
+                output[out_idx] = (l + k * c + k * ls) * inv_norm;
+                output[out_idx + 1] = (r + k * c + k * rs) * inv_norm;
             }
             return;
         }
@@ -128,7 +120,8 @@ impl ChannelMatrix {
         // Case 6: 7.1 Surround (8) -> Stereo (2)
         // 7.1 order: [L, R, C, LFE, Lss, Rss, Lsr, Rsr]
         if ch_in == 8 && ch_out == 2 {
-            let inv_norm = 1.0 / (1.0 + 0.7071 + 0.7071 + 0.7071);
+            let k = std::f32::consts::FRAC_1_SQRT_2;
+            let inv_norm = 1.0 / (1.0 + k + k + k);
             for f in 0..frame_count {
                 let in_idx = f * 8;
                 let l = input[in_idx];
@@ -140,14 +133,15 @@ impl ChannelMatrix {
                 let rsr = input[in_idx + 7];
 
                 let out_idx = f * 2;
-                output[out_idx] = (l + 0.7071 * c + 0.7071 * (lss + lsr)) * inv_norm;
-                output[out_idx + 1] = (r + 0.7071 * c + 0.7071 * (rss + rsr)) * inv_norm;
+                output[out_idx] = (l + k * c + k * (lss + lsr)) * inv_norm;
+                output[out_idx + 1] = (r + k * c + k * (rss + rsr)) * inv_norm;
             }
             return;
         }
 
         // Case 7: 5.1 Surround (6) -> 7.1 Surround (8)
         if ch_in == 6 && ch_out == 8 {
+            let k = std::f32::consts::FRAC_1_SQRT_2;
             for f in 0..frame_count {
                 let in_idx = f * 6;
                 let out_idx = f * 8;
@@ -156,10 +150,10 @@ impl ChannelMatrix {
                 output[out_idx + 2] = input[in_idx + 2]; // C
                 output[out_idx + 3] = input[in_idx + 3]; // LFE
                                                          // Map Ls/Rs to side surrounds and rear surrounds
-                output[out_idx + 4] = input[in_idx + 4] * 0.7071; // Lss
-                output[out_idx + 5] = input[in_idx + 5] * 0.7071; // Rss
-                output[out_idx + 6] = input[in_idx + 4] * 0.7071; // Lsr
-                output[out_idx + 7] = input[in_idx + 5] * 0.7071; // Rsr
+                output[out_idx + 4] = input[in_idx + 4] * k; // Lss
+                output[out_idx + 5] = input[in_idx + 5] * k; // Rss
+                output[out_idx + 6] = input[in_idx + 4] * k; // Lsr
+                output[out_idx + 7] = input[in_idx + 5] * k; // Rsr
             }
             return;
         }

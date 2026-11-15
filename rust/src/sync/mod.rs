@@ -14,8 +14,8 @@ pub use reaper::{ReaperHandle, ReaperTrash};
 pub use ring_buffer::{AudioConsumer, AudioProducer, AudioRingBuffer};
 pub use seqlock::CachePaddedSeqlock;
 pub use telemetry::{
-    EventType, MapEvent, MapEventData, MonotonicInstant, TelemetryDispatcher,
-    TelemetryEvent, TypedEventCallback,
+    EventType, MapEventData, MonotonicInstant, TelemetryDispatcher, TelemetryEvent,
+    TypedEventCallback,
 };
 
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};

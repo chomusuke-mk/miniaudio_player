@@ -39,27 +39,6 @@ impl SoftLimiter {
         self.enabled
     }
 
-    /// Processes an individual sample through the soft-knee limiting saturation curve.
-    #[inline(always)]
-    pub fn process_sample(&self, x: f32) -> f32 {
-        if !self.enabled {
-            return x;
-        }
-
-        let abs_x = x.abs();
-        if abs_x > self.threshold {
-            let excess = (abs_x - self.threshold) * self.inv_range;
-            let sat = self.threshold + self.range * (excess / (1.0 + excess));
-            if x >= 0.0 {
-                sat
-            } else {
-                -sat
-            }
-        } else {
-            x
-        }
-    }
-
     /// Processes a slice of audio samples in-place, limiting peaks exceeding threshold.
     pub fn process_frames(&self, samples: &mut [f32]) {
         if !self.enabled || samples.is_empty() {

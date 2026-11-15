@@ -213,59 +213,6 @@ struct EventSinkState {
     pending: Vec<RustPlayerEvent>,
 }
 
-/// Internal telemetry deduplication filter preventing flooding of the Flutter Rust Bridge channel.
-pub struct TelemetryFilter {
-    /// Cached playback state code.
-    pub state: Option<i32>,
-    /// Cached track position in milliseconds.
-    pub pos: i64,
-    /// Cached active queue index.
-    pub index: Option<i32>,
-    /// Cached buffer end boundary in milliseconds.
-    pub buffered_end: Option<i64>,
-    /// Cached buffering status flag.
-    pub is_buffering: Option<bool>,
-    /// Cached crossfading status flag.
-    pub is_xfading: Option<bool>,
-    /// Cached recording status flag.
-    pub is_recording: Option<bool>,
-    /// Cached ducking active flag.
-    pub is_ducking: Option<bool>,
-    /// Cached playing status flag.
-    pub is_playing: Option<bool>,
-    /// Cached ReplayGain settings tuple (gain bits, peak bits).
-    pub replay_gain: Option<(u32, u32)>,
-    /// Cached audio metadata payload.
-    pub metadata: Option<RustAudioMetadata>,
-    /// Cached technical audio format information.
-    pub audio_info: Option<RustAudioInfo>,
-    /// Cached count of concurrent active sound effect voices.
-    pub active_voices: Option<u32>,
-    /// Cached visualizer data metrics.
-    pub visualizer: Option<RustVisualizerData>,
-}
-
-impl Default for TelemetryFilter {
-    fn default() -> Self {
-        Self {
-            state: Some(0),
-            pos: 0,
-            index: Some(-1),
-            buffered_end: None,
-            is_buffering: Some(false),
-            is_xfading: Some(false),
-            is_recording: Some(false),
-            is_ducking: Some(false),
-            is_playing: Some(false),
-            replay_gain: None,
-            metadata: None,
-            audio_info: None,
-            active_voices: None,
-            visualizer: None,
-        }
-    }
-}
-
 /// Dispatches engine events to the Flutter Rust Bridge stream sink with deduplication filtering.
 #[derive(Clone)]
 pub struct EventReporter {
@@ -762,7 +709,6 @@ impl RustMiniaudioPlayer {
         let mut tick_events: Vec<RustPlayerEvent> = Vec::with_capacity(24);
         let mut pending_notices: Vec<RustPlayerEvent> = Vec::with_capacity(8);
 
-        #[allow(unused_mut)]
         let mut tick_telemetry = move || -> bool {
             if !worker_running.load(Ordering::Relaxed) {
                 return false;

@@ -191,98 +191,6 @@ pub enum TelemetryEvent {
 }
 
 impl TelemetryEvent {
-    #[inline]
-    pub fn event_type(&self) -> EventType {
-        match self {
-            Self::None => EventType::None,
-            Self::State(_) => EventType::State,
-            Self::Position(_) => EventType::Position,
-            Self::Duration(_) => EventType::Duration,
-            Self::IsPlaying(_) => EventType::IsPlaying,
-            Self::IsBuffering(_) => EventType::IsBuffering,
-            Self::Volume(_) => EventType::Volume,
-            Self::Rate(_) => EventType::Rate,
-            Self::Pitch(_) => EventType::Pitch,
-            Self::Bitrate(_) => EventType::Bitrate,
-            Self::BufferSize(_) => EventType::BufferSize,
-            Self::Device(_) => EventType::Device,
-            Self::Visualizer(_) => EventType::Visualizer,
-            Self::VisualizerEnabled(_) => EventType::VisualizerEnabled,
-            Self::BufferedRange(_) => EventType::BufferedRange,
-            Self::SilenceConfig(_) => EventType::SilenceConfig,
-            Self::SilenceSaved(_) => EventType::SilenceSaved,
-            Self::Equalizer(_) => EventType::Equalizer,
-            Self::Preamp(_) => EventType::Preamp,
-            Self::ReplayGain(_) => EventType::ReplayGain,
-            Self::Balance(_) => EventType::Balance,
-            Self::Mono(_) => EventType::Mono,
-            Self::Crossfeed(_) => EventType::Crossfeed,
-            Self::Spatializer(_) => EventType::Spatializer,
-            Self::Reverb(_) => EventType::Reverb,
-            Self::Limiter(_) => EventType::Limiter,
-            Self::Error(_) => EventType::Error,
-        }
-    }
-
-    #[inline]
-    pub fn to_map_event_data(&self) -> MapEventData {
-        match self {
-            Self::None => MapEventData { state: 0 },
-            Self::State(s) => MapEventData { state: *s },
-            Self::Position(p) => MapEventData { position_ms: *p },
-            Self::Duration(d) => MapEventData { duration_ms: *d },
-            Self::IsPlaying(p) => MapEventData {
-                is_playing: i32::from(*p),
-            },
-            Self::IsBuffering(b) => MapEventData {
-                is_buffering: i32::from(*b),
-            },
-            Self::Volume(v) => MapEventData { volume: *v },
-            Self::Rate(r) => MapEventData { rate: *r },
-            Self::Pitch(p) => MapEventData { pitch: *p },
-            Self::Bitrate(b) => MapEventData { bitrate: *b },
-            Self::BufferSize(b) => MapEventData { buffer_size: *b },
-            Self::Device(d) => MapEventData { device: **d },
-            Self::Visualizer(v) => MapEventData { visualizer: *v },
-            Self::VisualizerEnabled(e) => MapEventData {
-                visualizer_enabled: i32::from(*e),
-            },
-            Self::BufferedRange(br) => MapEventData {
-                buffered_range: *br,
-            },
-            Self::SilenceConfig(sc) => MapEventData {
-                silence_config: *sc,
-            },
-            Self::SilenceSaved(s) => MapEventData {
-                silence_saved_ms: *s,
-            },
-            Self::Equalizer(eq) => MapEventData { equalizer: *eq },
-            Self::Preamp(p) => MapEventData { preamp_db: *p },
-            Self::ReplayGain(rg) => MapEventData { replay_gain: *rg },
-            Self::Balance(b) => MapEventData { balance: *b },
-            Self::Mono(m) => MapEventData {
-                mono_enabled: i32::from(*m),
-            },
-            Self::Crossfeed(c) => MapEventData { crossfeed: *c },
-            Self::Spatializer(sp) => MapEventData { spatializer: *sp },
-            Self::Reverb(rv) => MapEventData { reverb: *rv },
-            Self::Limiter(l) => MapEventData {
-                limiter_enabled: i32::from(*l),
-            },
-            Self::Error(e) => MapEventData { error_code: *e },
-        }
-    }
-
-    #[inline]
-    pub fn to_map_event(&self) -> MapEvent {
-        MapEvent {
-            event_type: self.event_type() as i32,
-            padding: 0,
-            timestamp_ns: monotonic_now_ns(),
-            data: self.to_map_event_data(),
-        }
-    }
-
     pub fn from_raw(event_type: EventType, data: &MapEventData) -> Self {
         unsafe {
             match event_type {
@@ -378,23 +286,6 @@ pub union MapEventData {
     pub error_code: i32,
 }
 
-/// Standard C-ABI telemetry event envelope.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct MapEvent {
-    /// Numeric [`EventType`] discriminant.
-    pub event_type: i32,
-    /// 4-byte padding for 64-bit alignment of `timestamp_ns`.
-    pub padding: i32,
-    /// Monotonic timestamp in nanoseconds when the event occurred.
-    pub timestamp_ns: i64,
-    /// Event data payload union.
-    pub data: MapEventData,
-}
-
-/// Internal Rust event callback closure type.
-pub type RustEventCallback = Box<dyn Fn(EventType, &MapEventData) + Send + Sync>;
-
 /// Strongly-typed event callback closure type.
 pub type TypedEventCallback = Box<dyn Fn(&TelemetryEvent) + Send + Sync>;
 
@@ -405,40 +296,16 @@ pub type MonotonicInstant = std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 pub type MonotonicInstant = web_time::Instant;
 
-static START_TIME: std::sync::OnceLock<MonotonicInstant> = std::sync::OnceLock::new();
-
-/// Returns the elapsed monotonic time in nanoseconds since engine startup.
-#[inline]
-pub fn monotonic_now_ns() -> i64 {
-    let start = START_TIME.get_or_init(MonotonicInstant::now);
-    start.elapsed().as_nanos() as i64
-}
-
 /// Encapsulates registered telemetry callbacks with single-responsibility notification methods.
 #[derive(Default)]
 struct CallbackRegistry {
-    rust_callback: RwLock<Option<RustEventCallback>>,
     typed_callback: RwLock<Option<TypedEventCallback>>,
 }
 
 impl CallbackRegistry {
-    fn set_rust(&self, cb: Option<RustEventCallback>) {
-        if let Ok(mut guard) = self.rust_callback.write() {
-            *guard = cb;
-        }
-    }
-
     fn set_typed(&self, cb: Option<TypedEventCallback>) {
         if let Ok(mut guard) = self.typed_callback.write() {
             *guard = cb;
-        }
-    }
-
-    fn notify_rust(&self, event_type: EventType, data: &MapEventData) {
-        if let Ok(guard) = self.rust_callback.read() {
-            if let Some(cb) = guard.as_ref() {
-                cb(event_type, data);
-            }
         }
     }
 
@@ -516,11 +383,6 @@ impl TelemetryDispatcher {
             .ok()
     }
 
-    /// Sets or clears the internal Rust event callback closure.
-    pub fn set_rust_callback(&self, callback: Option<RustEventCallback>) {
-        self.callbacks.set_rust(callback);
-    }
-
     /// Sets or clears the strongly-typed batch event callback closure.
     pub fn set_typed_callback(&self, callback: Option<TypedEventCallback>) {
         self.callbacks.set_typed(callback);
@@ -531,9 +393,6 @@ impl TelemetryDispatcher {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
         }
-        let event_type = event.event_type();
-        let event_data = event.to_map_event_data();
-        self.callbacks.notify_rust(event_type, &event_data);
         let _ = self.tx.send(event);
     }
 
@@ -543,24 +402,9 @@ impl TelemetryDispatcher {
         self.post(TelemetryEvent::from_raw(event_type, &data));
     }
 
-    /// Dispatches a raw C `MapEvent` immediately to all registered callbacks.
-    pub fn dispatch(&self, event: MapEvent) {
-        if !self.is_running.load(Ordering::Relaxed) {
-            return;
-        }
-        let event_type = EventType::from_i32(event.event_type);
-        let typed = TelemetryEvent::from_raw(event_type, &event.data);
-
-        let mut last_pos = -1;
-        self.callbacks
-            .notify_typed_batch(std::slice::from_ref(&typed), &mut last_pos);
-        self.callbacks.notify_rust(event_type, &event.data);
-    }
-
     /// Signals the dispatcher to stop all threads and release callbacks.
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
-        self.callbacks.set_rust(None);
         self.callbacks.set_typed(None);
         if let Ok(mut handle_guard) = self.worker_handle.lock() {
             if let Some(handle) = handle_guard.take() {

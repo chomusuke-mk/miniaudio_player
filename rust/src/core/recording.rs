@@ -9,7 +9,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use crate::sync::thread::{self, JoinHandle};
 
 /// Supported WAV PCM encoding formats for live recording and offline bouncing.
@@ -130,14 +130,6 @@ impl<W: Write> WavSampleWriter<W> {
         Ok(())
     }
 
-    /// Encodes and writes a contiguous slice of float PCM samples.
-    pub fn write_samples(&mut self, samples: &[f32]) -> std::io::Result<()> {
-        for &sample in samples {
-            self.write_sample(sample)?;
-        }
-        Ok(())
-    }
-
     /// Drains all currently available samples from an SPSC ring buffer consumer into the WAV writer.
     /// Returns `true` if at least one sample was drained.
     pub fn drain_consumer(&mut self, consumer: &mut rtrb::Consumer<f32>) -> bool {
@@ -166,43 +158,6 @@ impl<W: Write> WavSampleWriter<W> {
     }
 }
 
-/// Offline bounce renderer exporting raw or generated float PCM frames directly to a WAV file.
-pub fn offline_bounce_to_wav(
-    path: &str,
-    pcm_samples: &[f32],
-    sample_rate: u32,
-    channels: usize,
-    format: WavFormat,
-) -> Result<u64, String> {
-    if pcm_samples.is_empty() {
-        return Err("Cannot bounce empty PCM audio".to_string());
-    }
-
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|e| format!("Failed to create bounce file '{}': {}", path, e))?;
-
-    let buf_writer = BufWriter::new(&mut file);
-    let mut wav_writer = WavSampleWriter::new(buf_writer, sample_rate, channels as u16, format)
-        .map_err(|e| format!("Failed to write WAV header: {}", e))?;
-
-    wav_writer
-        .write_samples(pcm_samples)
-        .map_err(|e| format!("Write error: {}", e))?;
-
-    let (_, data_bytes) = wav_writer
-        .flush_and_into_parts()
-        .map_err(|e| format!("Flush error: {}", e))?;
-
-    finalize_wav_header(&mut file, data_bytes)
-        .map_err(|e| format!("Finalize header error: {}", e))?;
-
-    Ok(data_bytes as u64)
-}
-
 /// Real-time live audio recording manager running on a dedicated disk writer thread.
 pub struct LiveRecorder {
     is_recording: Arc<AtomicBool>,
@@ -229,11 +184,6 @@ impl LiveRecorder {
     /// Returns whether a background disk recording session is active.
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::Acquire)
-    }
-
-    /// Sets the target WAV sample encoding format (`Pcm16` or `Float32`).
-    pub fn set_format(&mut self, format: WavFormat) {
-        self.format = format;
     }
 
     fn open_recording_file(path: &str) -> Result<File, String> {
@@ -306,70 +256,6 @@ impl LiveRecorder {
                 Ok(total_bytes as u64)
             })
             .map_err(|e| format!("Failed to spawn disk writer thread: {}", e))?;
-
-        self.writer_thread = Some(handle);
-        Ok(())
-    }
-
-    /// Starts writing audio using a shared thread-safe SPSC consumer for multi-session recording.
-    pub fn start_shared(
-        &mut self,
-        path: &str,
-        consumer_arc: Arc<Mutex<rtrb::Consumer<f32>>>,
-    ) -> Result<(), String> {
-        if self.is_recording() {
-            return Err("Recording session is already active".to_string());
-        }
-
-        let mut file = Self::open_recording_file(path)?;
-        let sr = self.sample_rate;
-        let ch = self.channels as u16;
-        let fmt = self.format;
-
-        self.stop_signal.store(false, Ordering::Release);
-        self.is_recording.store(true, Ordering::Release);
-
-        let is_rec = self.is_recording.clone();
-        let stop_sig = self.stop_signal.clone();
-
-        let handle = thread::Builder::new()
-            .name("miniaudio-wav-writer-shared".to_string())
-            .spawn(move || {
-                let buf_writer = BufWriter::with_capacity(65536, &mut file);
-                let mut wav_writer = match WavSampleWriter::new(buf_writer, sr, ch, fmt) {
-                    Ok(w) => w,
-                    Err(e) => {
-                        is_rec.store(false, Ordering::Release);
-                        return Err(format!("Failed to write initial WAV header: {}", e));
-                    }
-                };
-
-                while !stop_sig.load(Ordering::Acquire) {
-                    let has_drained = {
-                        let mut c = crate::sync::lock_unpoisoned(&consumer_arc);
-                        wav_writer.drain_consumer(&mut c)
-                    };
-
-                    if !has_drained {
-                        thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                }
-
-                {
-                    let mut consumer = crate::sync::lock_unpoisoned(&consumer_arc);
-                    let _ = wav_writer.drain_consumer(&mut consumer);
-                }
-
-                let total_bytes = wav_writer
-                    .flush_and_into_parts()
-                    .map(|(_, bytes)| bytes)
-                    .unwrap_or(0);
-
-                let _ = finalize_wav_header(&mut file, total_bytes);
-                is_rec.store(false, Ordering::Release);
-                Ok(total_bytes as u64)
-            })
-            .map_err(|e| format!("Failed to spawn shared disk writer thread: {}", e))?;
 
         self.writer_thread = Some(handle);
         Ok(())

@@ -101,11 +101,6 @@ impl Visualizer {
         }
     }
 
-    /// Returns whether the visualizer is enabled.
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
     /// Updates the sample rate and recalculates bandpass filter coefficients.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if self.sample_rate != sample_rate && sample_rate > 0 {

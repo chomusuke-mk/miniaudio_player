@@ -24,12 +24,6 @@ pub const SONIC_MIN_PITCH_SETTING: f32 = 0.05;
 /// Maximum pitch scale setting (20.0x).
 pub const SONIC_MAX_PITCH_SETTING: f32 = 20.0;
 
-/// Minimum sample rate multiplier (0.05x).
-pub const SONIC_MIN_RATE: f32 = 0.05;
-
-/// Maximum sample rate multiplier (20.0x).
-pub const SONIC_MAX_RATE: f32 = 20.0;
-
 const SINC_FILTER_POINTS: usize = 12;
 const SINC_TABLE_SIZE: usize = 601;
 
@@ -85,13 +79,10 @@ pub struct SonicStream {
     down_sample_buffer: Vec<f32>,
 
     speed: f32,
-    volume: f32,
     pitch: f32,
-    rate: f32,
 
     old_rate_position: usize,
     new_rate_position: usize,
-    quality: i32,
 
     num_channels: usize,
     sample_rate: usize,
@@ -131,13 +122,10 @@ impl SonicStream {
             down_sample_buffer: vec![0.0; max_required],
 
             speed: 1.0,
-            volume: 1.0,
             pitch: 1.0,
-            rate: 1.0,
 
             old_rate_position: 0,
             new_rate_position: 0,
-            quality: 0,
 
             num_channels: ch,
             sample_rate: sr,
@@ -164,52 +152,9 @@ impl SonicStream {
         self.speed = speed.clamp(SONIC_MIN_SPEED, SONIC_MAX_SPEED);
     }
 
-    /// Returns the current playback speed ratio.
-    pub fn speed(&self) -> f32 {
-        self.speed
-    }
-
     /// Sets the pitch scale factor (e.g. 1.0 = normal, 2.0 = one octave up).
     pub fn set_pitch(&mut self, pitch: f32) {
         self.pitch = pitch.clamp(SONIC_MIN_PITCH_SETTING, SONIC_MAX_PITCH_SETTING);
-    }
-
-    /// Returns the current pitch scale factor.
-    pub fn pitch(&self) -> f32 {
-        self.pitch
-    }
-
-    /// Sets the playback rate factor (adjusting both speed and pitch simultaneously).
-    pub fn set_rate(&mut self, rate: f32) {
-        self.rate = rate.clamp(SONIC_MIN_RATE, SONIC_MAX_RATE);
-    }
-
-    /// Returns the current playback rate factor.
-    pub fn rate(&self) -> f32 {
-        self.rate
-    }
-
-    /// Sets the stream output volume scaling factor.
-    pub fn set_volume(&mut self, volume: f32) {
-        self.volume = volume;
-    }
-
-    /// Sets the pitch estimation quality (0 for fast AMDF with downsampling, 1 for full precision).
-    pub fn set_quality(&mut self, quality: i32) {
-        self.quality = quality;
-    }
-
-    /// Resets all internal audio buffers and time tracking states.
-    pub fn reset(&mut self) {
-        self.num_input_samples = 0;
-        self.num_output_samples = 0;
-        self.num_pitch_samples = 0;
-        self.input_play_time = 0.0;
-        self.time_error = 0.0;
-        self.old_rate_position = 0;
-        self.new_rate_position = 0;
-        self.prev_period = 0;
-        self.prev_min_diff = 0;
     }
 
     /// Returns the number of processed frames available to read.
@@ -263,7 +208,7 @@ impl SonicStream {
         let max_req = self.max_required;
         let remaining = self.num_input_samples;
         let speed = self.speed / self.pitch;
-        let rate = self.rate * self.pitch;
+        let rate = self.pitch;
         let expected_output = self.num_output_samples
             + (((remaining as f64 / speed as f64 + self.num_pitch_samples as f64) / rate as f64)
                 + 0.5) as usize;
@@ -329,7 +274,7 @@ impl SonicStream {
 
     fn process_stream_input(&mut self) -> bool {
         let orig_output = self.num_output_samples;
-        let rate = self.rate * self.pitch;
+        let rate = self.pitch;
 
         if self.num_input_samples == 0 {
             return true;
@@ -354,13 +299,6 @@ impl SonicStream {
 
         if (rate - 1.0).abs() > 0.0001 {
             self.adjust_rate(rate, orig_output);
-        }
-
-        if (self.volume - 1.0).abs() > 0.0001 {
-            let ch = self.num_channels;
-            for s in &mut self.output_buffer[orig_output * ch..self.num_output_samples * ch] {
-                *s *= self.volume;
-            }
         }
 
         true
@@ -552,7 +490,7 @@ impl SonicStream {
     fn find_pitch_period(&mut self, position: usize, prefer_new_period: bool) -> usize {
         let min_period = self.min_period;
         let max_period = self.max_period;
-        let skip = if self.sample_rate > SONIC_AMDF_FREQ && self.quality == 0 {
+        let skip = if self.sample_rate > SONIC_AMDF_FREQ {
             self.sample_rate / SONIC_AMDF_FREQ
         } else {
             1

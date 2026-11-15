@@ -8,55 +8,18 @@ use std::sync::atomic::{
 use std::sync::Arc;
 
 use common::{FixtureResolver, SignalGenerator};
-use miniaudio_player::buffer::MemoryByteSource;
-use miniaudio_player::core::config::PlayerConfig;
 use miniaudio_player::core::dual_source::{StreamingDeck, STATE_PLAYING};
-use miniaudio_player::core::recording::{offline_bounce_to_wav, LiveRecorder, WavFormat};
+use miniaudio_player::core::recording::{LiveRecorder, WavFormat};
 use miniaudio_player::core::renderer::{
     audio_renderer_notif_trampoline, audio_renderer_render_trampoline, AudioRenderer,
     PcmRendererHeader,
 };
-use miniaudio_player::core::types::{Decibels, PlayerError, SampleRate, Volume};
-use miniaudio_player::core::typestate::Player;
 use miniaudio_player::dsp::chain::DspChain;
 use miniaudio_player::dsp::sonic::SonicStream;
-use miniaudio_player::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 use miniaudio_player::dsp::visualizer::VisualizerData;
 use miniaudio_player::sync::ring_buffer::AudioRingBuffer;
 use miniaudio_player::sync::seqlock::CachePaddedSeqlock;
 
-#[test]
-fn test_domain_types_and_typestate_transitions() {
-    assert!(SampleRate::new(44100).is_ok());
-    assert!(SampleRate::new(48000).is_ok());
-    assert_eq!(SampleRate::new(0), Err(PlayerError::InvalidArgs));
-    assert_eq!(SampleRate::new(500000), Err(PlayerError::InvalidArgs));
-
-    assert!(Volume::new(1.0).is_ok());
-    assert_eq!(Volume::new(-0.1), Err(PlayerError::InvalidArgs));
-    assert_eq!(Volume::new(f32::NAN), Err(PlayerError::InvalidArgs));
-    assert_eq!(Volume::clamp(3.5).get(), 3.5);
-
-    let unity = Volume::new(1.0).unwrap();
-    let zero_db = Decibels::from_linear(unity);
-    assert!((zero_db.get() - 0.0).abs() < 0.001);
-    assert!((zero_db.to_linear().get() - 1.0).abs() < 0.001);
-
-    let config = PlayerConfig {
-        sample_rate: 44100,
-        channels: 2,
-        period_size: 1024,
-    };
-    let player = Player::new(config);
-    let open_player = player.open(MemoryByteSource::new(vec![0u8; 1024])).unwrap();
-    let mut active_player = open_player.play().unwrap();
-    active_player.set_volume(Volume::new(1.5).unwrap());
-    let paused_player = active_player.pause();
-    let active_player2 = paused_player.resume();
-    let stopped_player = active_player2.stop();
-    let closed_player = stopped_player.close();
-    assert_eq!(closed_player.config().channels, 2);
-}
 
 #[test]
 fn test_audio_renderer_instant_rate_and_pitch_response() {
@@ -105,9 +68,6 @@ fn test_audio_renderer_instant_rate_and_pitch_response() {
         sonic_in_buf: vec![0.0f32; 16384],
         visualizer_seqlock: Arc::new(CachePaddedSeqlock::new(VisualizerData::default())),
         visualizer_enabled: Arc::new(AtomicBool::new(false)),
-        spatial: SpatialProcessor::default(),
-        listener: SpatialListener::default(),
-        emitter: SpatialEmitter::default(),
         notification_callback: None,
     };
 
@@ -124,17 +84,7 @@ fn test_audio_renderer_instant_rate_and_pitch_response() {
 }
 
 #[test]
-fn test_offline_bounce_and_live_recorder_wav_writer() {
-    let bounce_path = FixtureResolver::scratch_file_path("test_bounce.wav");
-    let bounce_str = bounce_path.to_str().unwrap();
-
-    let samples = vec![0.5f32, -0.5f32, 0.25f32, -0.25f32];
-    let bytes_written =
-        offline_bounce_to_wav(bounce_str, &samples, 48000, 2, WavFormat::Pcm16).unwrap();
-    assert_eq!(bytes_written, 8);
-    assert_eq!(std::fs::metadata(&bounce_path).unwrap().len(), 52);
-    let _ = std::fs::remove_file(&bounce_path);
-
+fn test_live_recorder_wav_writer() {
     let live_path = FixtureResolver::scratch_file_path("test_live_rec.wav");
     let live_str = live_path.to_str().unwrap();
 
@@ -172,7 +122,7 @@ fn test_player_coordinator_lifecycle_on_manifest_fixtures() {
         "salida.ape",
     ];
 
-    let coordinator_res = StreamingDeck::new(
+    let coordinator_res = StreamingDeck::new_deck(
         48000,
         2,
         1024,
@@ -228,14 +178,34 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
             },
         ];
 
-        dual.set_queue(items);
-        // Before play(), current_index is -1 (null on Dart side)
+        dual.append_items(items);
+        // Before playback commit, current_index is -1 (null on Dart side)
         assert_eq!(dual.current_index.load(Ordering::SeqCst), -1);
         let q_ids: Vec<i64> = dual.queue.read().unwrap().iter().map(|i| i.id).collect();
         assert_eq!(q_ids, vec![101, 102, 103]);
 
-        // Universal play by id = 102
-        assert!(dual.play(Some(102), None, None, Some(500)).is_ok());
+        // Commit transition to id = 102
+        let item_102 = dual.queue.read().unwrap()[1].clone();
+        let mut deck_102 = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut deck_102,
+                &item_102,
+                None,
+                None,
+            ),
+            0
+        );
+        let displaced = dual.commit_transition_internal(
+            Some(deck_102),
+            &item_102,
+            None,
+            miniaudio_player::core::dual_source_control::TransitionCommitMode::Manual {
+                manual_crossfade_ms: Some(500),
+                force_play: true,
+            },
+        );
+        drop(displaced);
         assert_eq!(dual.current_index.load(Ordering::SeqCst), 1);
 
         // Simulate active auto-crossfade targeting id 103, then mutate queue to remove index 2 (id 103)
@@ -377,7 +347,7 @@ fn test_polyphonic_effects_inherit_reverb_and_tail_decay() {
     );
 
     // Stop active voices
-    player.stop_all(0);
+    player.effects_manager.stop_all_effects(0);
     assert_eq!(player.effects_manager.active_voices_count(), 0);
 }
 
@@ -415,7 +385,7 @@ fn test_music_only_is_not_ducked_by_microphone_and_multi_mic_does_not_cascade() 
     let sample_rate = 48000;
     for i in 1..=4 {
         let (capture_node, _) =
-            miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, std::ptr::null())
+            miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, None)
                 .unwrap();
         let (mut prod, consumer) = rtrb::RingBuffer::new(2048);
         for _ in 0..512 {
@@ -679,7 +649,7 @@ fn test_direct_monitoring_visualizer_and_all_mix_without_music() {
     };
 
     let (capture_node_1, _) =
-        miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, std::ptr::null())
+        miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, None)
             .unwrap();
     let (mut prod_1, consumer_1) = rtrb::RingBuffer::new(2048);
     for _ in 0..512 {
@@ -697,8 +667,8 @@ fn test_direct_monitoring_visualizer_and_all_mix_without_music() {
         scratch_buffer: vec![0.0f32; 1024],
     });
 
-    assert!(!player.input_manager.has_active_direct_monitoring());
-    assert!(player.input_manager.has_active_inputs());
+    assert!(!player.input_manager.active_inputs.iter().any(|n| n.config.monitor_direct));
+    assert!(!player.input_manager.active_inputs.is_empty());
 
     player.super_flow[..sample_count].fill(0.0);
     player.input_manager.process(
@@ -725,7 +695,7 @@ fn test_direct_monitoring_visualizer_and_all_mix_without_music() {
     };
 
     let (capture_node_2, _) =
-        miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, std::ptr::null())
+        miniaudio_player::core::capture::DeviceCaptureNode::new(sample_rate, 1, 1024, None)
             .unwrap();
     let (mut prod_2, consumer_2) = rtrb::RingBuffer::new(2048);
     for _ in 0..512 {
@@ -743,7 +713,7 @@ fn test_direct_monitoring_visualizer_and_all_mix_without_music() {
         scratch_buffer: vec![0.0f32; 1024],
     });
 
-    assert!(player.input_manager.has_active_direct_monitoring());
+    assert!(player.input_manager.active_inputs.iter().any(|n| n.config.monitor_direct));
 
     player.super_flow[..sample_count].fill(0.0);
     player.input_manager.process(
@@ -958,8 +928,11 @@ fn test_per_track_replay_gain_isolated_across_manual_and_auto_crossfade() {
                     .as_ref()
                     .map(|r| r.consumer.samples_available())
                     .unwrap_or(0);
-                let s_avail = mm
-                    .standby_deck_ref()
+                let s_avail = (if mm.active_deck.load(Ordering::Relaxed) == 0 {
+                    &mm.deck_b
+                } else {
+                    &mm.deck_a
+                })
                     .renderer
                     .as_ref()
                     .map(|r| r.consumer.samples_available())
@@ -983,16 +956,34 @@ fn test_per_track_replay_gain_isolated_across_manual_and_auto_crossfade() {
         let mut player = MiniaudioPlayer::new(sr, 2, block_frames as u32, 4, None, None).unwrap();
         player.master_limiter.set_enabled(false);
         player.music_manager.set_crossfade(500, 500, 1); // 500ms linear crossfade
-        player.music_manager.inner.set_queue(vec![
-            make_track(201, wav_x.clone(), Some(gain_x_db)),
-            make_track(202, wav_y.clone(), Some(0.0)),
-        ]);
-        player.recalculate_and_apply_replay_gain();
+        let item_x = make_track(201, wav_x.clone(), Some(gain_x_db));
+        let item_y = make_track(202, wav_y.clone(), Some(0.0));
         player
             .music_manager
             .inner
-            .play(Some(201), None, None, None)
-            .unwrap();
+            .append_items(vec![item_x.clone(), item_y.clone()]);
+        player.recalculate_and_apply_replay_gain();
+        let mut deck_x =
+            miniaudio_player::core::dual_source::StreamingDeck::new_deck(sr, 2, block_frames as u32)
+                .unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut deck_x,
+                &item_x,
+                None,
+                None,
+            ),
+            0
+        );
+        drop(player.music_manager.inner.commit_transition_internal(
+            Some(deck_x),
+            &item_x,
+            None,
+            TransitionCommitMode::Manual {
+                manual_crossfade_ms: None,
+                force_play: true,
+            },
+        ));
         player.recalculate_and_apply_replay_gain();
 
         pump_until_tone_settles(&mut player, block_frames, 5);
@@ -1006,11 +997,27 @@ fn test_per_track_replay_gain_isolated_across_manual_and_auto_crossfade() {
         );
 
         // Start manual crossfade to Track Y (0 dB).
-        player
-            .music_manager
-            .inner
-            .transition_to_index(1, Some(500), None, true)
-            .unwrap();
+        let mut deck_y =
+            miniaudio_player::core::dual_source::StreamingDeck::new_deck(sr, 2, block_frames as u32)
+                .unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut deck_y,
+                &item_y,
+                None,
+                None,
+            ),
+            0
+        );
+        drop(player.music_manager.inner.commit_transition_internal(
+            Some(deck_y),
+            &item_y,
+            None,
+            TransitionCommitMode::Manual {
+                manual_crossfade_ms: Some(500),
+                force_play: true,
+            },
+        ));
         let active_rg = player.recalculate_and_apply_replay_gain();
         assert!((active_rg.0 - 0.0).abs() < 1e-4);
         assert_eq!(player.music_dsp.equalizer.replay_gain().enabled, 0);
@@ -1078,33 +1085,61 @@ fn test_per_track_replay_gain_isolated_across_manual_and_auto_crossfade() {
         let mut player = MiniaudioPlayer::new(sr, 2, block_frames as u32, 4, None, None).unwrap();
         player.master_limiter.set_enabled(false);
         player.music_manager.set_crossfade(500, 500, 1); // 500ms linear crossfade
+        let item_x = make_track(301, wav_x, Some(0.0));
         let item_y = make_track(302, wav_y, Some(gain_x_db));
-        player.music_manager.inner.set_queue(vec![
-            make_track(301, wav_x, Some(0.0)),
-            item_y.clone(),
-        ]);
-        player.recalculate_and_apply_replay_gain();
         player
             .music_manager
             .inner
-            .play(Some(301), None, None, None)
-            .unwrap();
+            .append_items(vec![item_x.clone(), item_y.clone()]);
+        player.recalculate_and_apply_replay_gain();
+        let mut deck_x =
+            miniaudio_player::core::dual_source::StreamingDeck::new_deck(sr, 2, block_frames as u32)
+                .unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut deck_x,
+                &item_x,
+                None,
+                None,
+            ),
+            0
+        );
+        drop(player.music_manager.inner.commit_transition_internal(
+            Some(deck_x),
+            &item_x,
+            None,
+            TransitionCommitMode::Manual {
+                manual_crossfade_ms: None,
+                force_play: true,
+            },
+        ));
         player.recalculate_and_apply_replay_gain();
         pump_until_tone_settles(&mut player, block_frames, 5);
 
         // Prewarm standby and trigger TransitionCommitMode::AutoCrossfade directly.
-        player.music_manager.inner.preload_standby_deck();
-        let wait_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while !player.music_manager.inner.standby_is_ready_for(&item_y)
-            && std::time::Instant::now() < wait_deadline
+        let mut standby =
+            miniaudio_player::core::dual_source::StreamingDeck::new_deck(sr, 2, block_frames as u32)
+                .unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut standby,
+                &item_y,
+                None,
+                None,
+            ),
+            0
+        );
+        if let Ok(displaced) = player
+            .music_manager
+            .inner
+            .commit_prepared_standby(standby, &item_y)
         {
-            std::thread::yield_now();
+            drop(displaced);
         }
         assert!(player.music_manager.inner.standby_is_ready_for(&item_y));
 
         let _ = player.music_manager.inner.commit_transition_internal(
             None,
-            1,
             &item_y,
             None,
             TransitionCommitMode::AutoCrossfade { eff_ms: 500 },
@@ -1181,34 +1216,66 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
     {
         let mut player = MiniaudioPlayer::new(sr, 2, 480, 4, None, None).unwrap();
         player.music_manager.set_crossfade(500, 500, 0);
-        player.music_manager.inner.set_queue(vec![
-            AudioSourceCore {
-                id: 501,
-                source: "mem://501.wav".to_string(),
-                headers: None,
-                data_bytes: Some(wav_a.clone()),
-                replay_gain_db: Some(-12.0),
-                replay_peak: Some(0.9),
-            },
-            AudioSourceCore {
-                id: 502,
-                source: "mem://502.wav".to_string(),
-                headers: None,
-                data_bytes: Some(wav_b.clone()),
-                replay_gain_db: Some(-3.0),
-                replay_peak: Some(0.8),
-            },
-        ]);
+        let item_501 = AudioSourceCore {
+            id: 501,
+            source: "mem://501.wav".to_string(),
+            headers: None,
+            data_bytes: Some(wav_a.clone()),
+            replay_gain_db: Some(-12.0),
+            replay_peak: Some(0.9),
+        };
+        let item_502 = AudioSourceCore {
+            id: 502,
+            source: "mem://502.wav".to_string(),
+            headers: None,
+            data_bytes: Some(wav_b.clone()),
+            replay_gain_db: Some(-3.0),
+            replay_peak: Some(0.8),
+        };
         player
             .music_manager
             .inner
-            .play(Some(501), None, None, None)
-            .unwrap();
-        player
-            .music_manager
-            .inner
-            .transition_to_index(1, Some(500), None, true)
-            .unwrap();
+            .append_items(vec![item_501.clone(), item_502.clone()]);
+        let mut deck_501 =
+            miniaudio_player::core::dual_source::StreamingDeck::new_deck(sr, 2, 480).unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut deck_501,
+                &item_501,
+                None,
+                None,
+            ),
+            0
+        );
+        drop(player.music_manager.inner.commit_transition_internal(
+            Some(deck_501),
+            &item_501,
+            None,
+            miniaudio_player::core::dual_source_control::TransitionCommitMode::Manual {
+                manual_crossfade_ms: None,
+                force_play: true,
+            },
+        ));
+        let mut deck_502 =
+            miniaudio_player::core::dual_source::StreamingDeck::new_deck(sr, 2, 480).unwrap();
+        assert_eq!(
+            miniaudio_player::core::dual_source::DualSource::open_deck_source_with_cancel(
+                &mut deck_502,
+                &item_502,
+                None,
+                None,
+            ),
+            0
+        );
+        drop(player.music_manager.inner.commit_transition_internal(
+            Some(deck_502),
+            &item_502,
+            None,
+            miniaudio_player::core::dual_source_control::TransitionCommitMode::Manual {
+                manual_crossfade_ms: Some(500),
+                force_play: true,
+            },
+        ));
         let fg = player.recalculate_and_apply_replay_gain();
         assert!((fg.0 - (-3.0)).abs() < 1e-4);
 

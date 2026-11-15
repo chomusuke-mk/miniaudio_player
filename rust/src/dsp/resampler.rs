@@ -109,16 +109,6 @@ impl RubatoResampler {
         self.channels
     }
 
-    /// Returns the required input chunk size in frames per FFT step.
-    pub fn chunk_size_in(&self) -> usize {
-        self.chunk_size_in
-    }
-
-    /// Returns the generated output chunk size in frames per FFT step.
-    pub fn chunk_size_out(&self) -> usize {
-        self.chunk_size_out
-    }
-
     /// Resample interleaved PCM frames. Appends resampled frames to `output`.
     /// Returns the number of output frames written.
     pub fn process_interleaved(
@@ -248,24 +238,4 @@ impl RubatoResampler {
             }
         }
     }
-}
-
-/// Convenience function to resample an entire slice of interleaved audio.
-pub fn resample_slice(
-    input: &[f32],
-    sample_rate_in: u32,
-    sample_rate_out: u32,
-    channels: usize,
-) -> Result<Vec<f32>, String> {
-    if sample_rate_in == sample_rate_out {
-        return Ok(input.to_vec());
-    }
-
-    let mut resampler = RubatoResampler::new(sample_rate_in, sample_rate_out, channels, 1024)?;
-    let mut output = Vec::with_capacity(
-        ((input.len() as f64 * sample_rate_out as f64 / sample_rate_in as f64) * 1.05) as usize,
-    );
-    resampler.process_interleaved(input, &mut output)?;
-    resampler.flush(&mut output)?;
-    Ok(output)
 }

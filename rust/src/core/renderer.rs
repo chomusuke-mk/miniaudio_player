@@ -35,11 +35,6 @@ pub enum DspCommand {
     SetLimiter(bool),
     SetVisualizerEnabled(bool),
     SetSampleRate(u32),
-    SetSpatialEnabled(bool),
-    SetSpatialListener(crate::dsp::spatial::SpatialListener),
-    SetSpatialEmitter(crate::dsp::spatial::SpatialEmitter),
-    SetSpatialDopplerFactor(f32),
-    SetSpatialSpeedOfSound(f32),
 }
 
 /// C-ABI compatible renderer header containing function pointers for miniaudio callback hooks.
@@ -109,10 +104,6 @@ pub struct AudioRenderer {
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
     pub visualizer_enabled: Arc<AtomicBool>,
 
-    pub spatial: crate::dsp::spatial::SpatialProcessor,
-    pub listener: crate::dsp::spatial::SpatialListener,
-    pub emitter: crate::dsp::spatial::SpatialEmitter,
-
     pub notification_callback: Option<Arc<dyn Fn(i32) + Send + Sync>>,
 }
 
@@ -151,11 +142,6 @@ impl AudioRenderer {
                 let ch = self.device_channels.load(Ordering::Relaxed) as usize;
                 self.sonic = SonicStream::new(sr, ch.clamp(1, 8));
             }
-            DspCommand::SetSpatialEnabled(en) => self.spatial.set_enabled(en),
-            DspCommand::SetSpatialListener(l) => self.listener = l,
-            DspCommand::SetSpatialEmitter(e) => self.emitter = e,
-            DspCommand::SetSpatialDopplerFactor(factor) => self.emitter.doppler_factor = factor,
-            DspCommand::SetSpatialSpeedOfSound(c) => self.spatial.speed_of_sound = c,
         }
     }
 
@@ -173,40 +159,18 @@ impl AudioRenderer {
     }
 
     #[inline]
-    fn evaluate_spatial_frame(&mut self, frame_count: usize) -> (f32, f32, f32) {
-        if !self.spatial.is_enabled() {
-            return (1.0, 1.0, 0.0);
-        }
-        let eval = crate::dsp::spatial::SpatialProcessor::evaluate(
-            &self.listener,
-            &self.emitter,
-            self.spatial.speed_of_sound,
-        );
-        let sr = self.device_sample_rate.load(Ordering::Relaxed).max(1) as f32;
-        let dt = frame_count as f32 / sr;
-        self.spatial.update_smoothed(&eval, dt);
-        (
-            self.spatial.current_doppler_ratio(),
-            self.spatial.current_gain(),
-            self.spatial.current_pan(),
-        )
-    }
-
-    #[inline]
     fn pull_audio_frames(
         &mut self,
         out_slice: &mut [f32],
         frame_count: usize,
         ch: usize,
-        spatial_doppler: f32,
     ) -> (usize, i64) {
         let mut requested_rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
         if requested_rate > 1.0 && self.at_live_edge.load(Ordering::Relaxed) {
             requested_rate = 1.0;
         }
-        let cur_rate = (requested_rate * spatial_doppler).max(0.001);
-        let cur_pitch =
-            (f32::from_bits(self.pitch.load(Ordering::Relaxed)) * spatial_doppler).max(0.001);
+        let cur_rate = requested_rate.max(0.001);
+        let cur_pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed)).max(0.001);
         let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;
 
         if !is_stretched {
@@ -279,18 +243,9 @@ impl AudioRenderer {
     }
 
     #[inline]
-    fn apply_realtime_dsp_and_visualizer(
-        &mut self,
-        out_slice: &mut [f32],
-        spatial_gain: f32,
-        spatial_pan: f32,
-    ) {
-        let base_vol = f32::from_bits(self.volume.load(Ordering::Relaxed));
-        let vol = (base_vol * spatial_gain).max(0.0);
+    fn apply_realtime_dsp_and_visualizer(&mut self, out_slice: &mut [f32]) {
+        let vol = f32::from_bits(self.volume.load(Ordering::Relaxed)).max(0.0);
         self.dsp.set_volume(vol);
-        if self.spatial.is_enabled() {
-            self.dsp.set_balance(spatial_pan);
-        }
         self.dsp.process_frames(out_slice);
 
         if self.visualizer_enabled.load(Ordering::Relaxed) {
@@ -321,9 +276,8 @@ impl AudioRenderer {
             return;
         }
 
-        let (spatial_doppler, spatial_gain, spatial_pan) = self.evaluate_spatial_frame(frame_count);
         let (read_samples, un_stretched_frames_consumed) =
-            self.pull_audio_frames(out_slice, frame_count, ch, spatial_doppler);
+            self.pull_audio_frames(out_slice, frame_count, ch);
 
         self.update_playback_state_and_position(
             read_samples,
@@ -331,7 +285,7 @@ impl AudioRenderer {
             un_stretched_frames_consumed,
             out_slice,
         );
-        self.apply_realtime_dsp_and_visualizer(out_slice, spatial_gain, spatial_pan);
+        self.apply_realtime_dsp_and_visualizer(out_slice);
     }
 
     /// Dispatches hardware device state change notifications to registered listener callbacks.

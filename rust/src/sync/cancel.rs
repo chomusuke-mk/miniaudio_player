@@ -2,9 +2,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use crate::sync::{lock_unpoisoned, thread, MonotonicInstant as Instant};
+use crate::sync::lock_unpoisoned;
 
 type AbortHook = Box<dyn FnOnce() + Send + Sync>;
 
@@ -103,19 +102,5 @@ impl CancelToken {
     pub fn link_child(&self, child: &CancelToken) -> CancelHookGuard {
         let child_clone = child.clone();
         self.on_cancel(move || child_clone.cancel())
-    }
-
-    /// Sleeps up to `total`, returning `true` early if the token is cancelled.
-    pub fn sleep_interruptible(&self, total: Duration) -> bool {
-        let start = Instant::now();
-        while !self.is_cancelled() {
-            let elapsed = start.elapsed();
-            if elapsed >= total {
-                return false;
-            }
-            let step = (total - elapsed).min(Duration::from_millis(5));
-            thread::sleep(step);
-        }
-        true
     }
 }

@@ -49,12 +49,6 @@ impl MusicManager {
     // Direct Music Commands
     // =========================================================================
 
-    /// Replaces the playlist queue with a new list of audio sources.
-    #[inline]
-    pub fn set_queue(&mut self, queue: Vec<AudioSourceCore>) {
-        self.inner.set_queue(queue);
-    }
-
     /// Sets the custom byte source factory for Dart stream callbacks.
     #[inline]
     pub fn set_custom_source_factory(&mut self, factory: crate::core::dual_source::CustomSourceFactory) {
@@ -73,12 +67,6 @@ impl MusicManager {
         self.inner.insert_next_item(source);
     }
 
-    /// Removes an item at the specified index from the playlist queue.
-    #[inline]
-    pub fn remove_at(&mut self, index: usize) -> Option<AudioSourceCore> {
-        self.inner.remove_item_at(index)
-    }
-
     /// Reorders a playlist item from `old_index` to `new_index`.
     #[inline]
     pub fn reorder(&mut self, old_index: usize, new_index: usize) -> bool {
@@ -95,30 +83,6 @@ impl MusicManager {
     #[inline]
     pub fn clear_queue(&mut self, keep_current: bool) {
         self.inner.clear_items(keep_current);
-    }
-
-    /// Advances playback to the next item in the playlist queue with optional crossfade duration.
-    #[inline]
-    pub fn next(&mut self, manual_crossfade_ms: Option<u64>) -> Result<(), String> {
-        self.inner.next(manual_crossfade_ms)
-    }
-
-    /// Moves playback to the previous item in the playlist queue.
-    #[inline]
-    pub fn previous(&mut self) -> Result<(), String> {
-        self.inner.previous()
-    }
-
-    /// Initiates playback of the requested track ID or queue position.
-    #[inline]
-    pub fn play(
-        &mut self,
-        id: Option<i64>,
-        position: Option<usize>,
-        shuffled: Option<bool>,
-        seek_ms: Option<i64>,
-    ) -> Result<(), String> {
-        self.inner.play(id, position, shuffled, seek_ms)
     }
 
     /// Pauses music playback across active decks.
@@ -294,12 +258,6 @@ impl MusicManager {
     #[inline]
     pub fn is_crossfading(&self) -> bool {
         self.inner.crossfade.is_active()
-    }
-
-    /// Returns a copy of the playlist queue items.
-    #[inline]
-    pub fn queue_items(&self) -> Vec<AudioSourceCore> {
-        crate::sync::read_unpoisoned(&self.inner.queue).clone()
     }
 
     /// Destroys and cleans up both streaming decks.

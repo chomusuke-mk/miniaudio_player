@@ -1,6 +1,6 @@
 //! Bounded interruptible I/O worker pool with local fast-lane isolation and epoch coalescing.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use crate::sync::thread::{self, JoinHandle};
@@ -79,8 +79,6 @@ pub enum ActiveOpenKind {
     AutoAdvance {
         should_auto_xfade: bool,
         auto_ms: u64,
-        dur_ms: i64,
-        pos_ms: i64,
     },
 }
 
@@ -88,7 +86,6 @@ pub enum ActiveOpenKind {
 #[derive(Clone)]
 pub struct ActiveOpenJob {
     pub epoch: u64,
-    pub target_idx: usize,
     pub item: AudioSourceCore,
     pub custom_factory: Option<CustomSourceFactory>,
     pub template: DeckDspTemplate,
@@ -188,7 +185,6 @@ pub struct IoWorkerPool {
     latest_epoch: Arc<AtomicU64>,
     pub active_opens_executed: Arc<AtomicU64>,
     pub active_opens_coalesced: Arc<AtomicU64>,
-    prewarms_executed: Arc<AtomicU64>,
 }
 
 impl IoWorkerPool {
@@ -236,7 +232,6 @@ impl IoWorkerPool {
             latest_epoch: Arc::new(AtomicU64::new(0)),
             active_opens_executed: Arc::new(AtomicU64::new(0)),
             active_opens_coalesced: Arc::new(AtomicU64::new(0)),
-            prewarms_executed: Arc::new(AtomicU64::new(0)),
         });
 
         {
@@ -265,8 +260,6 @@ impl IoWorkerPool {
         let done = Arc::new(AtomicBool::new(false));
         let done_clone = done.clone();
         let pool_weak = Arc::downgrade(pool);
-        let worker_seq = Arc::new(AtomicUsize::new(0));
-        let _ = worker_seq;
 
         let jh = thread::Builder::new()
             .name(name.to_string())
@@ -674,7 +667,7 @@ impl IoWorkerPool {
 
                 match outcome {
                     IoOpenOutcome::Opened(deck) if job.cancel.is_cancelled() || self.shutdown_token.is_cancelled() => {
-                        self.reaper.reap_boxed(deck);
+                        self.reaper.reap_value(deck);
                         if let Some(ref w) = job.waiter {
                             w.resolve(Ok(None));
                         }
@@ -688,7 +681,6 @@ impl IoWorkerPool {
                 }
             }
             NextPoolWork::Prewarm(job) => {
-                self.prewarms_executed.fetch_add(1, Ordering::Relaxed);
                 let epoch = job.epoch;
                 let outcome = Self::run_open(
                     &job.item,
@@ -701,7 +693,7 @@ impl IoWorkerPool {
 
                 match outcome {
                     IoOpenOutcome::Opened(deck) if job.cancel.is_cancelled() || self.shutdown_token.is_cancelled() => {
-                        self.reaper.reap_boxed(deck);
+                        self.reaper.reap_value(deck);
                     }
                     other => {
                         (self.on_complete)(IoCompletion::Prewarm {

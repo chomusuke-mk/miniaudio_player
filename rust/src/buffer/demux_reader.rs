@@ -28,18 +28,6 @@ impl DemuxedStreamReader {
         Self { session, cursor: 0 }
     }
 
-    /// Current byte read offset.
-    #[inline]
-    pub fn cursor(&self) -> u64 {
-        self.cursor
-    }
-
-    /// Reference to the underlying `StreamSession`.
-    #[inline]
-    pub fn session(&self) -> &StreamSession {
-        &self.session
-    }
-
     fn resolve_seek_target(&self, pos: SeekFrom) -> IoResult<u64> {
         match pos {
             SeekFrom::Start(offset) => Ok(offset),
@@ -139,12 +127,6 @@ impl MetadataStreamReader {
     /// Creates a new `MetadataStreamReader` positioned at byte `0`.
     pub fn new(buffer: Arc<StreamBuffer>) -> Self {
         Self { buffer, cursor: 0 }
-    }
-
-    /// Current virtual byte offset.
-    #[inline]
-    pub fn cursor(&self) -> u64 {
-        self.cursor
     }
 }
 

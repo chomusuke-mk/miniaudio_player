@@ -20,7 +20,7 @@ use super::aac_decoder::RustyAacDecoder;
 use super::ape::{ApeProbe, ApeReader};
 use super::dsf::{DsfProbe, DsfReader};
 use super::extended_pcm::{ExtendedPcmProbe, ExtendedPcmReader};
-use super::opus_decoder::OpusDecoder;
+use symphonia_opus::OpusDecoder;
 use super::wavpack::{WavpackProbe, WavpackReader};
 use crate::metadata::SymphoniaExtractedMeta;
 

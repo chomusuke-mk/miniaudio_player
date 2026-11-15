@@ -67,12 +67,9 @@ flutter_rust_bridge = "=2.13.0"
 rustfft = "6.4.1"
 rubato = "5.1.0"
 audioadapter-buffers = "5.1.0"
-timestretch = "0.16.0"
 
-# HLS Streaming (M3U8) and Cryptography
+# HLS Streaming (M3U8)
 m3u8-rs = "6.0.1"
-aes = "0.9.4"
-cbc = "0.2.1"
 
 # Additional Audio Formats and Tag Metadata (MIT / Apache-2.0)
 ape-decoder = "0.3.2"

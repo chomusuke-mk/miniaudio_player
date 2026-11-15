@@ -19,7 +19,7 @@ pub mod sync;
 
 pub use bridge::ffi::*;
 pub use buffer::{
-    BufferBackend, BufferError, BufferRange, BufferState, ByteFetchTask, DemuxedStreamReader,
+    BufferBackend, BufferError, BufferRange, ByteFetchTask, DemuxedStreamReader,
     MetadataStreamReader, StreamBuffer, StreamSession,
 };
 pub use core::*;

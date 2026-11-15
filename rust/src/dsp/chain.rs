@@ -34,12 +34,6 @@ impl MasterVolumeStage {
         self.target_volume = volume.max(0.0);
     }
 
-    /// Returns the current target volume level.
-    #[inline]
-    pub fn volume(&self) -> f32 {
-        self.target_volume
-    }
-
     /// Applies smoothed volume scaling across interleaved audio frames.
     #[inline]
     pub fn process_frames(&mut self, frames: &mut [f32], channels: usize) {
@@ -108,12 +102,6 @@ impl DspChain {
     #[inline]
     pub fn set_volume(&mut self, volume: f32) {
         self.volume_stage.set_volume(volume);
-    }
-
-    /// Returns the target master volume level.
-    #[inline]
-    pub fn volume(&self) -> f32 {
-        self.volume_stage.volume()
     }
 
     /// Updates all 10 equalizer frequency band gains.

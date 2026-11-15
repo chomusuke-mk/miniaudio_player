@@ -14,7 +14,6 @@ pub mod reverb;
 pub mod silence;
 pub mod sonic;
 pub mod spatial;
-pub mod timestretch;
 pub mod visualizer;
 pub mod voice_pool;
 
@@ -29,12 +28,11 @@ pub use ducking::AutoDucker;
 pub use equalizer::{Equalizer, EqualizerParams, ReplayGainConfig};
 pub use limiter::SoftLimiter;
 pub use replaygain::ReplayGainScanner;
-pub use resampler::{resample_slice, RubatoResampler};
+pub use resampler::RubatoResampler;
 pub use reverb::{Freeverb, ReverbConfig};
 pub use silence::{SilenceConfig, SilenceDetector, SilenceMode, SilenceState};
 pub use sonic::SonicStream;
 pub use spatial::{
     DistanceModel, SpatialEmitter, SpatialEvaluation, SpatialListener, SpatialProcessor, Vector3,
 };
-pub use timestretch::{timestretch_audio, TimeStretchProcessor};
 pub use visualizer::{Visualizer, VisualizerData};

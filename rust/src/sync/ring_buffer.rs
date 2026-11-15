@@ -25,12 +25,6 @@ impl AudioProducer {
         self.producer.slots()
     }
 
-    /// Returns whether the ring buffer is completely full.
-    #[inline(always)]
-    pub fn is_full(&self) -> bool {
-        self.producer.is_full()
-    }
-
     /// Returns the total capacity of the ring buffer in samples.
     #[inline(always)]
     pub fn capacity(&self) -> usize {

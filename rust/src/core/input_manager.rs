@@ -244,13 +244,10 @@ impl InputManager {
         } else {
             CString::new(target_resolved_id).ok()
         };
-        let c_ptr = c_dev
-            .as_ref()
-            .map(|c| c.as_ptr())
-            .unwrap_or(std::ptr::null());
 
-        let (capture_node, consumer) = DeviceCaptureNode::new(sample_rate, 1, 512, c_ptr)
-            .map_err(|e| format!("Failed to create capture device: code {}", e))?;
+        let (capture_node, consumer) =
+            DeviceCaptureNode::new(sample_rate, 1, 512, c_dev.as_deref())
+                .map_err(|e| format!("Failed to create capture device: code {}", e))?;
 
         let _ = capture_node.start();
 
@@ -339,60 +336,6 @@ impl InputManager {
 
         self.active_inputs = kept;
         evicted
-    }
-
-    /// Reconciles active capture nodes with the requested inputs set.
-    pub fn set_inputs(&mut self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
-        self.set_inputs_with_resolved(inputs, None)
-    }
-
-    /// Reconciles active capture nodes with the requested inputs set, using optional pre-resolved AUTO endpoint.
-    pub fn set_inputs_with_resolved(
-        &mut self,
-        inputs: Vec<RustAudioInput>,
-        pre_resolved_auto_id: Option<String>,
-    ) -> Result<(), String> {
-        let existing = self.current_device_keys();
-        let batch = Self::prepare_inputs_off_rt(
-            self.sample_rate,
-            &existing,
-            inputs,
-            pre_resolved_auto_id,
-        )?;
-        let evicted = self.apply_prepared_inputs(batch);
-        drop(evicted);
-        Ok(())
-    }
-
-    /// Adds a new audio input capture node. Rejects if deviceId is already active.
-    pub fn add_input(&mut self, input: RustAudioInput) -> Result<(), String> {
-        if self
-            .inputs
-            .iter()
-            .any(|n| n.device_id == input.device_id)
-        {
-            return Err(format!(
-                "Input with device_id {} is already active",
-                input.device_id
-            ));
-        }
-
-        self.inputs.push(input);
-        self.set_inputs(self.inputs.clone())
-    }
-
-    /// Removes an audio input capture node by device identifier.
-    pub fn remove_input(&mut self, device_id: String) -> Result<(), String> {
-        if let Some(pos) = self
-            .inputs
-            .iter()
-            .position(|n| n.device_id == device_id)
-        {
-            self.inputs.remove(pos);
-            self.set_inputs(self.inputs.clone())
-        } else {
-            Ok(())
-        }
     }
 
     /// Configures runtime parameters for an active capture node without reopening hardware.
@@ -525,19 +468,5 @@ impl InputManager {
             .iter()
             .map(|n| n.ducker.last_rms_db())
             .fold(-100.0f32, |acc, val| acc.max(val))
-    }
-
-    /// Returns whether there are physical microphone or line-in capture nodes active.
-    #[inline]
-    pub fn has_active_inputs(&self) -> bool {
-        !self.active_inputs.is_empty()
-    }
-
-    /// Returns whether any active input capture node has direct monitoring enabled with non-zero volume.
-    #[inline]
-    pub fn has_active_direct_monitoring(&self) -> bool {
-        self.active_inputs
-            .iter()
-            .any(|n| n.config.monitor_direct && n.config.monitor_volume > 0.0)
     }
 }

@@ -1,7 +1,6 @@
 //! Core audio engine subsystems, managers, rendering pipelines, and domain logic.
 
 pub mod capture;
-pub mod config;
 pub mod control_coordinator;
 pub mod dsp_processor;
 pub mod dual_source;
@@ -18,16 +17,12 @@ pub mod recording;
 pub mod renderer;
 pub mod simd_mixer;
 pub mod types;
-pub mod typestate;
 pub mod voice_pool;
 
-pub use config::PlayerConfig;
 pub use dsp_processor::DspProcessor;
 pub use dual_source::{
-    AudioSourceCore, CrossfadeAtomic, DualSource, MiniaudioPlayerStatus,
-    MiniaudioStreamStatus, StreamingDeck, MAP_STREAM_SEEK_CACHE_HIT,
-    MAP_STREAM_SEEK_CACHE_HIT_PREFETCH, MAP_STREAM_SEEK_CACHE_MISS, STATE_PAUSED,
-    STATE_PLAYING, STATE_STOPPED,
+    AudioSourceCore, CrossfadeAtomic, DualSource, StreamingDeck, STATE_PAUSED, STATE_PLAYING,
+    STATE_STOPPED,
 };
 pub use effects_manager::EffectsManager;
 pub use input_manager::InputManager;
@@ -37,9 +32,8 @@ pub use output_manager::OutputManager;
 pub use recording::{LiveRecorder, WavFormat};
 pub use renderer::{AudioRenderer, DspCommand};
 pub use simd_mixer::SimdMixer;
-pub use types::{Decibels, PlaybackState, PlayerError, QueueTransition, SampleRate, Volume};
-pub use typestate::{Active, Open, Paused, Player, Stopped, Uninitialized};
+pub use types::{PlaybackState, QueueTransition};
 pub use voice_pool::{
-    DspRouting, EffectCatalogItem, EffectConfig, EffectSourceType, SoundBuffer, VoicePool,
+    DspRouting, EffectCatalogItem, EffectConfig, EffectSourceType, SoundBuffer,
     VoiceStealingPolicy,
 };

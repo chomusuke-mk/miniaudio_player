@@ -338,51 +338,6 @@ impl From<crate::dsp::visualizer::VisualizerData> for RustVisualizerData {
     }
 }
 
-/// Synchronous snapshot of playback telemetry metrics.
-#[derive(Debug, Clone, Default)]
-pub struct RustPlayerStatus {
-    /// Playback elapsed position in milliseconds.
-    pub position_ms: i64,
-    /// Total duration in milliseconds, or -1 if live or unbounded.
-    pub duration_ms: i64,
-    /// Playback state integer code.
-    pub state: i32,
-    /// Whether audio is actively rendering.
-    pub is_playing: bool,
-    /// Whether the engine is buffering.
-    pub is_buffering: bool,
-    /// Master volume level.
-    pub volume: f32,
-    /// Playback speed rate multiplier.
-    pub rate: f32,
-    /// Pitch shift multiplier.
-    pub pitch: f32,
-    /// Stream nominal bitrate in bits per second.
-    pub bitrate: u32,
-    /// Stream sample rate in Hz.
-    pub sample_rate: u32,
-    /// Number of output channels.
-    pub channels: u32,
-}
-
-impl From<crate::core::dual_source::MiniaudioPlayerStatus> for RustPlayerStatus {
-    fn from(status: crate::core::dual_source::MiniaudioPlayerStatus) -> Self {
-        Self {
-            position_ms: status.position_ms,
-            duration_ms: status.duration_ms,
-            state: status.state,
-            is_playing: status.is_playing != 0,
-            is_buffering: status.is_buffering != 0,
-            volume: status.volume,
-            rate: status.rate,
-            pitch: status.pitch,
-            bitrate: status.bitrate,
-            sample_rate: status.sample_rate,
-            channels: status.channels,
-        }
-    }
-}
-
 /// Bitrate encoding mode of an audio stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustBitrateMode {
@@ -979,21 +934,6 @@ impl From<crate::core::voice_pool::VoiceStealingPolicy> for RustVoiceStealingPol
             crate::core::voice_pool::VoiceStealingPolicy::Farthest => Self::Farthest,
         }
     }
-}
-
-/// Metadata and specifications of a decoded audio sample held in memory.
-#[derive(Debug, Clone, Default)]
-pub struct RustSoundBufferInfo {
-    /// Unique integer buffer identifier.
-    pub id: u64,
-    /// Audio sample rate in Hz.
-    pub sample_rate: u32,
-    /// Number of audio channels.
-    pub channels: u32,
-    /// Duration of audio in milliseconds.
-    pub duration_ms: i64,
-    /// Total audio frame count.
-    pub frame_count: usize,
 }
 
 /// Format and sample bit depth for captured audio recordings.

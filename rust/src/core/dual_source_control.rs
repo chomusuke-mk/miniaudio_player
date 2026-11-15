@@ -63,14 +63,12 @@ pub struct DeckLiveOverlay {
 /// Specification returned by synchronous planning when an asynchronous I/O open is required.
 #[derive(Clone)]
 pub struct PlannedOpenSpec {
-    pub target_idx: usize,
     pub item: AudioSourceCore,
     pub template: DeckDspTemplate,
     pub custom_factory: Option<CustomSourceFactory>,
     pub seek_ms: Option<i64>,
     pub manual_crossfade_ms: Option<u64>,
     pub force_play: bool,
-    pub was_playing_at_plan: bool,
 }
 
 /// Immediate or asynchronous result of planning a `play`, `next`, or `previous` command.
@@ -386,14 +384,12 @@ impl DualSource {
                 let item_opt = read_unpoisoned(&self.queue).get(cur as usize).cloned();
                 if let Some(item) = item_opt {
                     let spec = PlannedOpenSpec {
-                        target_idx: cur as usize,
                         item,
                         template: self.capture_dsp_template(),
                         custom_factory: self.custom_source_factory.clone(),
                         seek_ms: None,
                         manual_crossfade_ms: Some(0),
                         force_play: true,
-                        was_playing_at_plan: false,
                     };
                     return (removed, Some(spec));
                 }
@@ -478,14 +474,12 @@ impl DualSource {
             self.invalidate_standby();
 
             return PlanOutcome::NeedOpen(PlannedOpenSpec {
-                target_idx: start_idx,
                 item: start_item,
                 template: self.capture_dsp_template(),
                 custom_factory: self.custom_source_factory.clone(),
                 seek_ms,
                 manual_crossfade_ms: Some(0),
                 force_play: true,
-                was_playing_at_plan: false,
             });
         }
 
@@ -504,14 +498,12 @@ impl DualSource {
                         .cloned();
                     if let Some(item) = q_item {
                         return PlanOutcome::NeedOpen(PlannedOpenSpec {
-                            target_idx: effective_idx as usize,
                             item,
                             template: self.capture_dsp_template(),
                             custom_factory: self.custom_source_factory.clone(),
                             seek_ms: Some(seek_ms.unwrap_or(0)),
                             manual_crossfade_ms: None,
                             force_play: true,
-                            was_playing_at_plan: false,
                         });
                     }
                 }
@@ -575,16 +567,12 @@ impl DualSource {
 
         self.planned_index.store(target_idx as i64, Ordering::Release);
         PlanOutcome::NeedOpen(PlannedOpenSpec {
-            target_idx,
             item: target_item,
             template: self.capture_dsp_template(),
             custom_factory: self.custom_source_factory.clone(),
             seek_ms,
             manual_crossfade_ms: None,
             force_play: true,
-            was_playing_at_plan: PlaybackState::from_i32(
-                self.playback_state.load(Ordering::Relaxed),
-            ) == PlaybackState::Playing,
         })
     }
 
@@ -653,7 +641,6 @@ impl DualSource {
         {
             let _displaced = self.commit_transition_internal(
                 None,
-                target_idx,
                 &item,
                 None,
                 TransitionCommitMode::Manual {
@@ -665,16 +652,12 @@ impl DualSource {
         }
 
         PlanOutcome::NeedOpen(PlannedOpenSpec {
-            target_idx,
             item,
             template: self.capture_dsp_template(),
             custom_factory: self.custom_source_factory.clone(),
             seek_ms: None,
             manual_crossfade_ms,
             force_play: false,
-            was_playing_at_plan: PlaybackState::from_i32(
-                self.playback_state.load(Ordering::Relaxed),
-            ) == PlaybackState::Playing,
         })
     }
 
@@ -710,7 +693,6 @@ impl DualSource {
         {
             let _displaced = self.commit_transition_internal(
                 None,
-                target_idx,
                 &item,
                 None,
                 TransitionCommitMode::Manual {
@@ -722,16 +704,12 @@ impl DualSource {
         }
 
         PlanOutcome::NeedOpen(PlannedOpenSpec {
-            target_idx,
             item,
             template: self.capture_dsp_template(),
             custom_factory: self.custom_source_factory.clone(),
             seek_ms: None,
             manual_crossfade_ms: None,
             force_play: false,
-            was_playing_at_plan: PlaybackState::from_i32(
-                self.playback_state.load(Ordering::Relaxed),
-            ) == PlaybackState::Playing,
         })
     }
 
@@ -772,7 +750,6 @@ impl DualSource {
     pub fn commit_transition_internal(
         &mut self,
         prepared_opt: Option<Box<StreamingDeck>>,
-        fallback_idx: usize,
         item: &AudioSourceCore,
         seek_ms: Option<i64>,
         mode: TransitionCommitMode,
@@ -797,7 +774,6 @@ impl DualSource {
         };
 
         let index = resolved_idx;
-        let _ = fallback_idx;
 
         match mode {
             TransitionCommitMode::Manual { .. } if self.crossfade.is_active() => {

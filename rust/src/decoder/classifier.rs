@@ -77,16 +77,6 @@ pub struct BoundaryInfo {
     pub audio_start: i64,
     /// Byte offset where audio payload ends (-1 if unbounded/live).
     pub audio_end: i64,
-    /// Byte offset of the WAV data size field in RIFF headers.
-    pub wav_data_size_field_offset: i64,
-    /// Byte offset of MP4 mdat atom.
-    pub mp4_mdat_atom_offset: i64,
-    /// Header size of MP4 mdat atom.
-    pub mp4_mdat_header_size: u32,
-    /// Non-zero if the head segment contains an MPEG Xing or VBRI frame.
-    pub head_has_mpeg_frame: i32,
-    /// Block alignment or bytes per frame for PCM/WAV formats.
-    pub bytes_per_frame: u32,
     /// Number of stream bytes needed to resolve the container boundary when status is `NeedMore`.
     pub needed_bytes: i64,
 }
@@ -103,11 +93,6 @@ impl BoundaryInfo {
             container: ContainerFormat::Unknown,
             audio_start: -1,
             audio_end: -1,
-            wav_data_size_field_offset: -1,
-            mp4_mdat_atom_offset: -1,
-            mp4_mdat_header_size: 0,
-            head_has_mpeg_frame: 0,
-            bytes_per_frame: 1,
             needed_bytes: 0,
         }
     }
@@ -1112,13 +1097,6 @@ impl StreamClassifier {
                 ds64_data = le64(&c[16..24]);
             }
 
-            if c.starts_with(b"fmt ") && size >= 14 && p + 22 <= d.len() {
-                let block_align = le16(&c[20..22]);
-                if block_align > 0 {
-                    out.bytes_per_frame = block_align as u32;
-                }
-            }
-
             if c.starts_with(b"data") {
                 let mut data_size = size as u64;
                 if rf64 && size == 0xFFFFFFFF {
@@ -1126,7 +1104,6 @@ impl StreamClassifier {
                 }
 
                 out.container = ContainerFormat::Wav;
-                out.wav_data_size_field_offset = (p + 4) as i64;
                 out.audio_start = (p + 8) as i64;
                 if data_size == 0 || data_size == 0xFFFFFFFF {
                     out.audio_end = if total > 0 { total } else { -1 };
@@ -1157,16 +1134,8 @@ impl StreamClassifier {
             let c = &d[p..];
             let size = be32(&c[4..8]);
 
-            if c.starts_with(b"fmt ") && size >= 14 && p + 22 <= d.len() {
-                let block_align = be16(&c[20..22]);
-                if block_align > 0 {
-                    out.bytes_per_frame = block_align as u32;
-                }
-            }
-
             if c.starts_with(b"data") {
                 out.container = ContainerFormat::Wav;
-                out.wav_data_size_field_offset = (p + 4) as i64;
                 out.audio_start = (p + 8) as i64;
                 out.audio_end = out.audio_start + size as i64;
                 if total > 0 && out.audio_end > total {
@@ -1196,16 +1165,8 @@ impl StreamClassifier {
                 return BoundaryStatus::Unsupported;
             }
 
-            if &c[0..4] == b"fmt " && chunk_size >= 40 && p + 38 <= d.len() {
-                let block_align = le16(&c[36..38]);
-                if block_align > 0 {
-                    out.bytes_per_frame = block_align as u32;
-                }
-            }
-
             if &c[0..4] == b"data" {
                 out.container = ContainerFormat::Wav;
-                out.wav_data_size_field_offset = (p + 16) as i64;
                 out.audio_start = (p + 24) as i64;
                 let data_size = chunk_size - 24;
                 out.audio_end = out.audio_start + data_size as i64;
@@ -1353,8 +1314,6 @@ impl StreamClassifier {
 
             if atom_type == b"mdat" {
                 out.container = ContainerFormat::Mp4;
-                out.mp4_mdat_atom_offset = p as i64;
-                out.mp4_mdat_header_size = hdr;
                 out.audio_start = (p + hdr as usize) as i64;
                 if size32 == 0 {
                     out.audio_end = if total > 0 { total } else { -1 };
@@ -1372,8 +1331,6 @@ impl StreamClassifier {
 
             if atom_type == b"moof" {
                 out.container = ContainerFormat::Mp4;
-                out.mp4_mdat_atom_offset = -1;
-                out.mp4_mdat_header_size = 0;
                 out.audio_start = p as i64;
                 out.audio_end = if total > 0 { total } else { -1 };
                 return BoundaryStatus::Found;
@@ -1456,7 +1413,6 @@ impl StreamClassifier {
 
                 if is_vbr_frame {
                     out.audio_start = next;
-                    out.head_has_mpeg_frame = 1;
                 }
             }
             return BoundaryStatus::Found;
@@ -1585,16 +1541,6 @@ fn synchsafe32(b: &[u8]) -> u32 {
         | ((b[1] as u32 & 0x7F) << 14)
         | ((b[2] as u32 & 0x7F) << 7)
         | (b[3] as u32 & 0x7F)
-}
-
-#[inline]
-fn le16(b: &[u8]) -> u16 {
-    u16::from_le_bytes([b[0], b[1]])
-}
-
-#[inline]
-fn be16(b: &[u8]) -> u16 {
-    u16::from_be_bytes([b[0], b[1]])
 }
 
 #[inline]

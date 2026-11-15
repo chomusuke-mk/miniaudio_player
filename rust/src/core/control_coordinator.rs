@@ -102,7 +102,7 @@ impl ControlCoordinator {
                     match completion {
                         IoCompletion::Active { job, outcome } => {
                             if let IoOpenOutcome::Opened(deck) = outcome {
-                                reaper_for_pool.reap_boxed(deck);
+                                reaper_for_pool.reap_value(deck);
                             }
                             if let Some(w) = job.waiter {
                                 w.resolve(Ok(None));
@@ -110,7 +110,7 @@ impl ControlCoordinator {
                         }
                         IoCompletion::Prewarm { outcome, .. } => {
                             if let IoOpenOutcome::Opened(deck) = outcome {
-                                reaper_for_pool.reap_boxed(deck);
+                                reaper_for_pool.reap_value(deck);
                             }
                         }
                     }
@@ -162,8 +162,6 @@ impl ControlCoordinator {
                             item,
                             should_auto_xfade,
                             auto_ms,
-                            dur_ms,
-                            pos_ms,
                         }) => {
                             coord.handle_auto_advance_hint(
                                 expected_deck_id,
@@ -172,8 +170,6 @@ impl ControlCoordinator {
                                 item,
                                 should_auto_xfade,
                                 auto_ms,
-                                dur_ms,
-                                pos_ms,
                             );
                         }
                         Err(_) => return,
@@ -232,8 +228,8 @@ impl ControlCoordinator {
         })?;
 
         let reaper = self.inner.engine.reaper();
-        reaper.reap_boxed(old_a);
-        reaper.reap_boxed(old_b);
+        reaper.reap_value(old_a);
+        reaper.reap_value(old_b);
         Ok(rg)
     }
 
@@ -670,7 +666,6 @@ impl CoordInner {
         };
         let job = ActiveOpenJob {
             epoch,
-            target_idx: spec.target_idx,
             item: spec.item,
             custom_factory: spec.custom_factory,
             template: spec.template,
@@ -746,8 +741,6 @@ impl CoordInner {
         hint_item: AudioSourceCore,
         should_auto_xfade: bool,
         auto_ms: u64,
-        dur_ms: i64,
-        pos_ms: i64,
     ) {
         if self.disposed.load(Ordering::Acquire) {
             return;
@@ -802,7 +795,6 @@ impl CoordInner {
         let epoch = self.bump_epochs();
         pool.submit_active(ActiveOpenJob {
             epoch,
-            target_idx: next_idx,
             item: live_item,
             custom_factory: factory,
             template: tpl,
@@ -810,8 +802,6 @@ impl CoordInner {
             kind: ActiveOpenKind::AutoAdvance {
                 should_auto_xfade,
                 auto_ms,
-                dur_ms,
-                pos_ms,
             },
             queue_changed: false,
             include_meta: true,
@@ -831,7 +821,7 @@ impl CoordInner {
                 if job.epoch != self.prewarm_epoch.load(Ordering::Acquire)
                     || self.disposed.load(Ordering::Acquire)
                 {
-                    reaper.reap_boxed(deck);
+                    reaper.reap_value(deck);
                     return;
                 }
                 let expected_epoch = job.epoch;
@@ -840,12 +830,12 @@ impl CoordInner {
                 let reaper_cb = reaper.clone();
                 self.engine.exec_async(move |ply| {
                     if expected_epoch != coord.prewarm_epoch.load(Ordering::Acquire) {
-                        reaper_cb.reap_boxed(deck);
+                        reaper_cb.reap_value(deck);
                         return;
                     }
                     match ply.music_manager.inner.commit_prepared_standby(deck, &item) {
-                        Ok(displaced) => reaper_cb.reap_boxed(displaced),
-                        Err(unused) => reaper_cb.reap_boxed(unused),
+                        Ok(displaced) => reaper_cb.reap_value(displaced),
+                        Err(unused) => reaper_cb.reap_value(unused),
                     }
                 });
             }
@@ -861,7 +851,7 @@ impl CoordInner {
                     || self.disposed.load(Ordering::Acquire)
                 {
                     if let IoOpenOutcome::Opened(deck) = outcome {
-                        reaper.reap_boxed(deck);
+                        reaper.reap_value(deck);
                     }
                     resolve_ok_none();
                     return;
@@ -896,7 +886,6 @@ impl CoordInner {
                         let coord = self.clone();
                         let expected_epoch = job.epoch;
                         let item = job.item.clone();
-                        let target_idx = job.target_idx;
                         let seek_ms = job.seek_ms;
                         let kind = job.kind.clone();
                         let queue_changed = job.queue_changed;
@@ -925,7 +914,6 @@ impl CoordInner {
                                 ActiveOpenKind::AutoAdvance {
                                     should_auto_xfade,
                                     auto_ms,
-                                    ..
                                 } => {
                                     let active = ply.music_manager.active_deck_ref();
                                     let dur = active.duration_ms.load(Ordering::Relaxed);
@@ -945,7 +933,6 @@ impl CoordInner {
 
                             let displaced = ply.music_manager.inner.commit_transition_internal(
                                 Some(deck),
-                                target_idx,
                                 &item,
                                 seek_ms,
                                 mode,
@@ -959,7 +946,7 @@ impl CoordInner {
                         match exec_res {
                             Ok(Ok((displaced_opt, snap))) => {
                                 if let Some(displaced) = displaced_opt {
-                                    reaper.reap_boxed(displaced);
+                                    reaper.reap_value(displaced);
                                 }
                                 if let Some(ref w) = waiter {
                                     w.resolve(Ok(Some(snap)));
@@ -969,7 +956,7 @@ impl CoordInner {
                                 }
                             }
                             Ok(Err(unused_deck)) => {
-                                reaper.reap_boxed(unused_deck);
+                                reaper.reap_value(unused_deck);
                                 resolve_ok_none();
                             }
                             Err(_) => {

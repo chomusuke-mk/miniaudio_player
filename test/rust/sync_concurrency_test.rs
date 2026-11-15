@@ -7,9 +7,10 @@
 //! - `CaptureReceiver` lock-free real-time PCM frame transfer.
 //! - `StreamSession` concurrent producer feeding and consumer reading.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
+use std::time::Duration;
 
 use miniaudio_player::bridge::ffi::PcmCaptureHeader;
 use miniaudio_player::buffer::{BufferError, StreamSession};
@@ -17,8 +18,7 @@ use miniaudio_player::core::capture::{
     capture_receiver_capture_trampoline, capture_receiver_notif_trampoline, CaptureReceiver,
 };
 use miniaudio_player::sync::{
-    AudioRingBuffer, CachePaddedSeqlock, MapEvent, MapEventData,
-    TelemetryDispatcher,
+    AudioRingBuffer, CachePaddedSeqlock, TelemetryDispatcher, TelemetryEvent,
 };
 
 #[test]
@@ -157,17 +157,16 @@ fn test_seqlock_tear_free_multi_reader_concurrency() {
 #[test]
 fn test_telemetry_dispatcher_concurrent_multi_producer() {
     static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-    static LAST_EVENT_TYPE: AtomicI32 = AtomicI32::new(0);
 
     CALL_COUNT.store(0, Ordering::SeqCst);
     let dispatcher = Arc::new(TelemetryDispatcher::new());
-    dispatcher.set_rust_callback(Some(Box::new(|ev_type, _data| {
+    dispatcher.set_typed_callback(Some(Box::new(|_ev| {
         CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-        LAST_EVENT_TYPE.store(ev_type as i32, Ordering::SeqCst);
     })));
 
     let num_producers = 4;
     let events_per_producer = 50;
+    let expected_total = num_producers * events_per_producer;
     let barrier = Arc::new(Barrier::new(num_producers));
     let mut handles = Vec::new();
 
@@ -177,15 +176,7 @@ fn test_telemetry_dispatcher_concurrent_multi_producer() {
         handles.push(thread::spawn(move || {
             b.wait();
             for i in 0..events_per_producer {
-                let event = MapEvent {
-                    event_type: (p * 100 + i) as i32,
-                    padding: 0,
-                    timestamp_ns: 0,
-                    data: MapEventData {
-                        position_ms: (i * 10) as i64,
-                    },
-                };
-                disp.dispatch(event);
+                disp.post(TelemetryEvent::Duration(((p * 100 + i) * 10) as i64));
             }
         }));
     }
@@ -194,10 +185,14 @@ fn test_telemetry_dispatcher_concurrent_multi_producer() {
         h.join().unwrap();
     }
 
-    assert_eq!(
-        CALL_COUNT.load(Ordering::SeqCst),
-        num_producers * events_per_producer
-    );
+    for _ in 0..40 {
+        if CALL_COUNT.load(Ordering::SeqCst) >= expected_total {
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    assert_eq!(CALL_COUNT.load(Ordering::SeqCst), expected_total);
 }
 
 #[test]
@@ -216,7 +211,7 @@ fn test_capture_receiver_transfers_frames_lock_free() {
     };
 
     let input_samples = [0.1f32, 0.2f32, 0.3f32, 0.4f32];
-    receiver.on_captured_pcm(input_samples.as_ptr(), input_samples.len());
+    receiver.on_captured_pcm(&input_samples);
 
     assert_eq!(consumer.slots(), 4);
     let mut read_buf = [0.0f32; 4];

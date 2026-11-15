@@ -458,7 +458,7 @@ fn scenario_3_capture_1_5s_stall_live_edge_recovery() {
         .expect("MiniaudioPlayer::new failed");
 
     let (capture_node, _) =
-        DeviceCaptureNode::new(sample_rate, channels as u32, period_frames as u32, std::ptr::null())
+        DeviceCaptureNode::new(sample_rate, channels as u32, period_frames as u32, None)
             .expect("DeviceCaptureNode::new failed");
     let (mut producer, consumer) = rtrb::RingBuffer::new(sample_rate as usize * 2);
 
@@ -775,7 +775,7 @@ fn scenario_7_crossfade_prewarm_epoch_invalidation_and_queue_mutation_race() {
 }
 
 #[test]
-fn scenario_8_poison_recovery_and_single_thread_wasm_step_parity() {
+fn scenario_8_poison_recovery_and_render_step_parity() {
     // 1. Intentional Mutex/RwLock/Condvar poison simulation -> zero abort via unpoisoned helpers.
     let poisoned_mutex = Arc::new(Mutex::new(42u32));
     let m_clone = poisoned_mutex.clone();
@@ -805,7 +805,7 @@ fn scenario_8_poison_recovery_and_single_thread_wasm_step_parity() {
     let sb = StreamSession::new(4096, Some(16384), false);
     assert!(!sb.is_eof());
 
-    // 2. Single-thread synchronous WASM step parity: drive MiniaudioPlayer::render_pcm without threads.
+    // 2. Synchronous render callback step parity: drive MiniaudioPlayer::render_pcm directly.
     let mut player =
         MiniaudioPlayer::new(48000, 2, 512, 16, None, None).expect("MiniaudioPlayer::new failed");
     player.inherit_dsp.set_reverb(ReverbConfig {
@@ -817,8 +817,19 @@ fn scenario_8_poison_recovery_and_single_thread_wasm_step_parity() {
         dry: 1.0,
     });
     let wav = SignalGenerator::pcm16_wav_bytes(48000, 48000, 2);
-    player.music_manager.set_queue(vec![mem_source(1, wav)]);
-    player.music_manager.play(None, Some(0), None, None).expect("play failed");
+    let item = mem_source(1, wav.clone());
+    assert_eq!(
+        player
+            .music_manager
+            .active_deck_mut()
+            .open_memory_with_hint(&wav, Some("wav")),
+        0
+    );
+    player
+        .music_manager
+        .active_deck_mut()
+        .set_queue_item_assignment(&item);
+    assert_eq!(player.music_manager.active_deck_mut().play(), 0);
 
     let mut reached_pos = 0i64;
     let deadline = Instant::now() + Duration::from_secs(2);

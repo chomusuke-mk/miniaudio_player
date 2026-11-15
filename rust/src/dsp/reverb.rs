@@ -257,11 +257,6 @@ impl Freeverb {
         self.update_params();
     }
 
-    /// Returns a reference to the active reverb configuration.
-    pub fn config(&self) -> &ReverbConfig {
-        &self.config
-    }
-
     /// Returns whether the reverberation network is dormant (all delay lines silent).
     #[inline]
     pub fn is_dormant(&self) -> bool {

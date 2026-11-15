@@ -28,8 +28,6 @@ fn test_classifier_wav_and_id3v1_tail_detection() {
     assert_eq!(info.container, ContainerFormat::Wav);
     assert_eq!(info.audio_start, 44);
     assert_eq!(info.audio_end, wav_data.len() as i64);
-    assert_eq!(info.bytes_per_frame, 4);
-    assert_eq!(info.wav_data_size_field_offset, 40);
 
     // ID3v1 tail stripping
     let mut data = vec![0u8; 1000];
@@ -65,7 +63,7 @@ fn test_symphonia_registry_and_synthetic_wav_stream() {
     let wav_bytes = SignalGenerator::pcm16_wav_bytes(num_frames, sample_rate, channels);
 
     let buf = StreamSession::new(wav_bytes.len(), Some(wav_bytes.len() as u64), false);
-    buf.set_head(&wav_bytes[0..44]);
+    buf.head.set_linear_bytes(&wav_bytes[0..44]);
     buf.set_audio_start(44);
     buf.set_audio_end(wav_bytes.len() as u64);
     buf.feed_chunk(&wav_bytes[44..]).unwrap();
@@ -306,7 +304,7 @@ fn test_stream_chunk_probing_mp3_and_aiff() {
         let (_, boundary) = StreamClassifier::detect_head_boundary(&initial_data, total_len as i64);
         if boundary.audio_start > 0 {
             let head_len = (boundary.audio_start as usize).min(initial_data.len());
-            buf.set_head(&initial_data[..head_len]);
+            buf.head.set_linear_bytes(&initial_data[..head_len]);
             buf.set_audio_start(boundary.audio_start as u64);
             if initial_data.len() > head_len {
                 buf.feed_chunk(&initial_data[head_len..]).unwrap();

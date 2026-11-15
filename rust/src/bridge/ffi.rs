@@ -10,30 +10,16 @@ pub type MapDeviceContext = MapDeviceContextOpaque;
 /// Canonical error codes for miniaudio_player.
 /// Operation completed successfully.
 pub const MAP_SUCCESS: i32 = 0;
-/// Generic unspecified error.
-pub const MAP_ERROR_GENERIC: i32 = -1;
 /// Invalid arguments supplied.
 pub const MAP_ERROR_INVALID_ARGS: i32 = -2;
-/// Memory allocation failed.
-pub const MAP_ERROR_OUT_OF_MEMORY: i32 = -3;
-/// Audio backend engine initialization failed.
-pub const MAP_ERROR_ENGINE_INIT: i32 = -4;
 /// File or resource not found.
 pub const MAP_ERROR_FILE_NOT_FOUND: i32 = -5;
 /// Audio decoding failed.
 pub const MAP_ERROR_DECODE_FAILED: i32 = -6;
-/// Invalid player or device state.
-pub const MAP_ERROR_INVALID_STATE: i32 = -7;
-/// Seek operation failed.
-pub const MAP_ERROR_SEEK_FAILED: i32 = -8;
-/// Graph node operation failed.
-pub const MAP_ERROR_NODE_FAILED: i32 = -9;
 /// Requested feature is unsupported on this platform.
 pub const MAP_ERROR_UNSUPPORTED: i32 = -10;
 /// Hardware access permission denied.
 pub const MAP_ERROR_ACCESS_DENIED: i32 = -11;
-/// Audio subsystem or device is busy.
-pub const MAP_ERROR_BUSY: i32 = -12;
 
 /// Low-level audio device descriptor for C interop.
 #[repr(C)]
@@ -118,13 +104,6 @@ extern "C" {
     pub fn map_device_start(ctx: *mut MapDeviceContext) -> i32;
     pub fn map_device_stop(ctx: *mut MapDeviceContext) -> i32;
     pub fn map_device_destroy(ctx: *mut MapDeviceContext) -> i32;
-    pub fn map_device_get_sample_rate(ctx: *const MapDeviceContext) -> u32;
-    pub fn map_device_get_channels(ctx: *const MapDeviceContext) -> u32;
-    pub fn map_device_set_device(ctx: *mut MapDeviceContext, device_id: *const c_char) -> i32;
-    pub fn map_device_get_current_device_info(
-        ctx: *const MapDeviceContext,
-        out_device: *mut MapDeviceInfo,
-    ) -> i32;
 
     pub fn map_device_enumerate_devices(
         out_devices: *mut *mut MapDeviceInfo,
@@ -153,9 +132,7 @@ mod wasm_device_bridge {
     use std::sync::{Arc, Mutex, OnceLock};
 
     pub struct WasmDeviceState {
-        sample_rate: u32,
         channels: u32,
-        info: MapDeviceInfo,
         user_data_addr: usize,
         alive: AtomicBool,
         active: AtomicBool,
@@ -185,17 +162,6 @@ mod wasm_device_bridge {
             RefCell::new((Vec::new(), Vec::new()))
         };
         static SYNC_FETCH_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
-    }
-
-    #[wasm_bindgen]
-    pub fn wasm_has_active_work() -> bool {
-        devices_registry()
-            .try_lock()
-            .map(|mut devs| {
-                devs.retain(|d| d.is_alive());
-                devs.iter().any(|d| d.is_active())
-            })
-            .unwrap_or(true)
     }
 
     #[wasm_bindgen]
@@ -270,20 +236,6 @@ mod wasm_device_bridge {
 
             Float32Array::from(mix_buf.as_slice())
         })
-    }
-
-    #[wasm_bindgen]
-    pub fn wasm_get_sample_rate() -> u32 {
-        if let Ok(mut devs) = devices_registry().try_lock() {
-            devs.retain(|d| d.is_alive());
-            devs.iter()
-                .find(|d| d.is_active())
-                .or_else(|| devs.first())
-                .map(|d| d.sample_rate)
-                .unwrap_or(44100)
-        } else {
-            44100
-        }
     }
 
     /// Synchronously fetches an asset or HTTP audio source inside a Web Worker.
@@ -414,7 +366,7 @@ mod wasm_device_bridge {
     }
 
     pub unsafe fn map_device_create(
-        sample_rate: u32,
+        _sample_rate: u32,
         channels: u32,
         _period_size_in_frames: u32,
         _playback_device_id: *const c_char,
@@ -424,18 +376,9 @@ mod wasm_device_bridge {
         if !out_result.is_null() {
             *out_result = MAP_SUCCESS;
         }
-        let mut info = MapDeviceInfo::default();
-        let name_bytes = b"WebAudio Output";
-        info.name[..name_bytes.len()].copy_from_slice(name_bytes);
-        let id_bytes = b"auto";
-        info.id[..id_bytes.len()].copy_from_slice(id_bytes);
-
-        let sr = sample_rate.max(8000);
         let ch = channels.clamp(1, 8);
         let state = Arc::new(WasmDeviceState {
-            sample_rate: sr,
             channels: ch,
-            info,
             user_data_addr: rust_user_data as usize,
             alive: AtomicBool::new(true),
             active: AtomicBool::new(false),
@@ -453,7 +396,7 @@ mod wasm_device_bridge {
     }
 
     pub unsafe fn map_capture_device_create(
-        sample_rate: u32,
+        _sample_rate: u32,
         channels: u32,
         _period_size_in_frames: u32,
         _capture_device_id: *const c_char,
@@ -464,9 +407,7 @@ mod wasm_device_bridge {
             *out_result = MAP_SUCCESS;
         }
         let state = Arc::new(WasmDeviceState {
-            sample_rate: sample_rate.max(8000),
             channels: channels.clamp(1, 8),
-            info: MapDeviceInfo::default(),
             user_data_addr: 0,
             alive: AtomicBool::new(false),
             active: AtomicBool::new(false),
@@ -498,44 +439,6 @@ mod wasm_device_bridge {
             let state = Arc::from_raw(ctx as *const WasmDeviceState);
             state.active.store(false, Ordering::Relaxed);
             state.alive.store(false, Ordering::Relaxed);
-        }
-        MAP_SUCCESS
-    }
-
-    pub unsafe fn map_device_get_sample_rate(ctx: *const MapDeviceContext) -> u32 {
-        if ctx.is_null() {
-            48000
-        } else {
-            (*(ctx as *const WasmDeviceState)).sample_rate
-        }
-    }
-
-    pub unsafe fn map_device_get_channels(ctx: *const MapDeviceContext) -> u32 {
-        if ctx.is_null() {
-            2
-        } else {
-            (*(ctx as *const WasmDeviceState)).channels
-        }
-    }
-
-    pub unsafe fn map_device_set_device(
-        _ctx: *mut MapDeviceContext,
-        _device_id: *const c_char,
-    ) -> i32 {
-        MAP_SUCCESS
-    }
-
-    pub unsafe fn map_device_get_current_device_info(
-        ctx: *const MapDeviceContext,
-        out_device: *mut MapDeviceInfo,
-    ) -> i32 {
-        if out_device.is_null() {
-            return MAP_ERROR_INVALID_ARGS;
-        }
-        if ctx.is_null() {
-            *out_device = MapDeviceInfo::default();
-        } else {
-            *out_device = (*(ctx as *const WasmDeviceState)).info;
         }
         MAP_SUCCESS
     }

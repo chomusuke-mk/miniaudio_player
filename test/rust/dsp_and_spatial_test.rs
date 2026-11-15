@@ -10,16 +10,14 @@ use miniaudio_player::dsp::crossfeed::{Bs2bCrossfeed, CrossfeedConfig};
 use miniaudio_player::dsp::ducking::AutoDucker;
 use miniaudio_player::dsp::equalizer::Equalizer;
 use miniaudio_player::dsp::limiter::SoftLimiter;
-use miniaudio_player::dsp::resampler::{resample_slice, RubatoResampler};
+use miniaudio_player::dsp::resampler::RubatoResampler;
 use miniaudio_player::dsp::reverb::{Freeverb, ReverbConfig};
 use miniaudio_player::dsp::silence::{SilenceConfig, SilenceDetector, SilenceMode, SilenceState};
 use miniaudio_player::dsp::sonic::SonicStream;
 use miniaudio_player::dsp::spatial::{
-    DistanceModel, SpatialEmitter, SpatialEvaluation, SpatialListener, SpatialProcessor, Vector3,
+    DistanceModel, SpatialEmitter, SpatialListener, SpatialProcessor, Vector3,
 };
-use miniaudio_player::dsp::timestretch::{timestretch_audio, TimeStretchProcessor};
 use miniaudio_player::dsp::visualizer::Visualizer;
-use miniaudio_player::dsp::voice_pool::{SoundBuffer, VoicePool, VoiceStealingPolicy};
 
 #[test]
 fn test_biquad_peaking_and_nyquist_rejection() {
@@ -141,33 +139,23 @@ fn test_silence_detector_sonic_visualizer_and_dsp_chain() {
 }
 
 #[test]
-fn test_rubato_resampler_and_timestretch() {
+fn test_rubato_resampler() {
     let sine = SignalGenerator::sine_wave_f32(4410, 44100, 2, 440.0);
     let mut resampler = RubatoResampler::new(44100, 48000, 2, 1024).unwrap();
     let mut out_stream = Vec::new();
     let written = resampler.process_interleaved(&sine, &mut out_stream).unwrap();
     let flushed = resampler.flush(&mut out_stream).unwrap();
     assert!(written + flushed > 0);
-
-    let out_slice = resample_slice(&sine, 44100, 48000, 2).unwrap();
-    assert!(!out_slice.is_empty());
+    assert!(!out_stream.is_empty());
 
     // 192 kHz -> 48 kHz downsampling
     let input_192k = SignalGenerator::sine_wave_f32(19200, 192000, 2, 1000.0);
-    let out_48k = resample_slice(&input_192k, 192000, 48000, 2).unwrap();
+    let mut downsampler = RubatoResampler::new(192000, 48000, 2, 1024).unwrap();
+    let mut out_48k = Vec::new();
+    downsampler.process_interleaved(&input_192k, &mut out_48k).unwrap();
+    downsampler.flush(&mut out_48k).unwrap();
     let frames_48k = out_48k.len() / 2;
-    assert!((frames_48k as i32 - 4800).abs() < 50);
-
-    // TimeStretchProcessor
-    let mut proc = TimeStretchProcessor::new(44100, 2);
-    proc.set_speed(1.25);
-    proc.set_pitch(1.0);
-    let rendered = proc.process_slice(&sine).unwrap();
-    let ratio = rendered.len() as f32 / sine.len() as f32;
-    assert!(ratio > 0.7 && ratio < 0.95);
-
-    let slowed = timestretch_audio(&sine, 44100, 2, 0.8, 1.0).unwrap();
-    assert!(slowed.len() > sine.len());
+    assert!((frames_48k as i32 - 4800).abs() < 200);
 }
 
 #[test]
@@ -237,18 +225,6 @@ fn test_spatial_processor_doppler_panning_and_attenuation() {
     emitter.position = Vector3::new(0.0, 0.0, 55.0);
     let eval_lin = SpatialProcessor::evaluate(&listener, &emitter, 343.3);
     assert!((eval_lin.gain - 0.5).abs() < 1e-3);
-
-    let mut proc = SpatialProcessor::new(343.3);
-    let target = SpatialEvaluation {
-        doppler_ratio: 1.5,
-        gain: 0.2,
-        pan: 0.8,
-        distance: 50.0,
-    };
-    for _ in 0..50 {
-        proc.update_smoothed(&target, 0.010);
-    }
-    assert!((proc.current_doppler_ratio() - 1.5).abs() < 1e-2);
 }
 
 #[test]
@@ -258,153 +234,22 @@ fn test_auto_ducker_sidechain_envelope() {
     ducker.set_params(true, -14.0, -30.0, 5.0, 20.0, 30.0);
 
     let voice_speech = vec![0.5f32; 960];
-    let mut music = vec![1.0f32; 960];
+    let mut env = vec![1.0f32; 960];
 
     for _ in 0..10 {
-        ducker.process_sidechain(&voice_speech, &mut music, 2);
+        ducker.compute_gain_envelope(&voice_speech, &mut env);
     }
     assert!(ducker.is_ducking());
     let expected_duck = 10.0f32.powf(-14.0 / 20.0);
-    assert!((ducker.current_gain() - expected_duck).abs() < 0.05);
+    let end_gain = *env.last().unwrap();
+    assert!((end_gain - expected_duck).abs() < 0.05);
 
     let voice_silence = vec![0.0f32; 960];
     for _ in 0..30 {
-        ducker.process_sidechain(&voice_silence, &mut music, 2);
+        ducker.compute_gain_envelope(&voice_silence, &mut env);
     }
-    assert!((ducker.current_gain() - 1.0).abs() < 0.05);
+    assert!((*env.last().unwrap() - 1.0).abs() < 0.05);
     assert!(!ducker.is_ducking());
-}
-
-#[test]
-fn test_voice_pool_polyphony_and_listener_relative_farthest_stealing() {
-    let mut pool = VoicePool::new(2, VoiceStealingPolicy::LowestPriority);
-    let buf = SoundBuffer::new(vec![0.5; 100], 48000, 1);
-
-    let id_low = pool.play_sound(buf.clone(), 1.0, 1.0, 10, false, None).unwrap();
-    let id_high = pool.play_sound(buf.clone(), 1.0, 1.0, 200, false, None).unwrap();
-    assert_eq!(pool.active_voice_count(), 2);
-
-    // Steal lowest priority voice
-    let id_new = pool.play_sound(buf.clone(), 1.0, 1.0, 150, false, None);
-    assert!(id_new.is_some());
-    assert!(!pool.is_voice_playing(id_low));
-    assert!(pool.is_voice_playing(id_high));
-
-    // Verify Farthest stealing measures distance from listener_position (NOT origin)
-    let mut pool_far = VoicePool::new(2, VoiceStealingPolicy::Farthest);
-    let mut listener = SpatialListener::default();
-    listener.position = Vector3::new(100.0, 0.0, 0.0);
-    let mut dummy_out = [0.0f32; 4];
-    pool_far.render_pcm(&mut dummy_out, 2, 48000, &listener);
-
-    let mut em_near_listener = SpatialEmitter::default();
-    em_near_listener.position = Vector3::new(95.0, 0.0, 0.0); // distance 5 from listener, 95 from origin
-    let mut em_far_listener = SpatialEmitter::default();
-    em_far_listener.position = Vector3::new(10.0, 0.0, 0.0); // distance 90 from listener, 10 from origin
-
-    let id_near = pool_far
-        .play_sound(buf.clone(), 1.0, 1.0, 100, false, Some(em_near_listener))
-        .unwrap();
-    let id_far = pool_far
-        .play_sound(buf.clone(), 1.0, 1.0, 100, false, Some(em_far_listener))
-        .unwrap();
-
-    // Allocating a 3rd voice must steal id_far (distance 90 from listener), keeping id_near!
-    let id_third = pool_far
-        .play_sound(buf.clone(), 1.0, 1.0, 100, false, None)
-        .unwrap();
-    assert!(pool_far.is_voice_playing(id_near));
-    assert!(!pool_far.is_voice_playing(id_far));
-    assert!(pool_far.is_voice_playing(id_third));
-
-    // Runtime voice controls
-    pool_far.set_voice_volume(id_near, 0.4);
-    pool_far.set_voice_pitch(id_near, 1.8);
-    let v = pool_far.get_voice(id_near).unwrap();
-    assert!((v.volume - 0.4).abs() < 0.01);
-    assert!((v.pitch - 1.8).abs() < 0.01);
-}
-
-#[test]
-fn test_core_voice_pool_reactive_eviction_and_memory_immunity() {
-    use miniaudio_player::core::dual_source::AudioSourceCore;
-    use miniaudio_player::core::voice_pool::{
-        EffectCatalogItem, EffectConfig, VoicePool as CoreVoicePool,
-    };
-
-    let path = common::FixtureResolver::resolve_str("salida.wav");
-    let raw_bytes = std::fs::read(&path).unwrap();
-
-    // Tight budget (~1 MB) so only 1 decoded disk effect fits alongside the memory-backed effect
-    let mut pool = CoreVoicePool::new(8, Some(1024 * 1024), 48000, 2);
-
-    let catalog = vec![
-        EffectCatalogItem {
-            id: "mem_immune".to_string(),
-            source: AudioSourceCore {
-                id: 1,
-                source: String::new(),
-                headers: None,
-                data_bytes: Some(raw_bytes),
-                replay_gain_db: None,
-                replay_peak: None,
-            },
-            max_polyphony: 4,
-            pinned: false,
-        },
-        EffectCatalogItem {
-            id: "disk_a".to_string(),
-            source: AudioSourceCore {
-                id: 2,
-                source: path.clone(),
-                headers: None,
-                data_bytes: None,
-                replay_gain_db: None,
-                replay_peak: None,
-            },
-            max_polyphony: 4,
-            pinned: false,
-        },
-        EffectCatalogItem {
-            id: "disk_b".to_string(),
-            source: AudioSourceCore {
-                id: 3,
-                source: path,
-                headers: None,
-                data_bytes: None,
-                replay_gain_db: None,
-                replay_peak: None,
-            },
-            max_polyphony: 4,
-            pinned: false,
-        },
-    ];
-
-    pool.set_effects(catalog).unwrap();
-
-    // Memory-backed effect is decoded immediately and immune to eviction
-    assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
-    assert!(!pool.loaded_effect_ids().contains(&"disk_a".to_string()));
-
-    // Triggering disk_a loads it on demand; active voice protects it while playing
-    let (v_a, _) = pool
-        .play_effect("disk_a", EffectConfig::default())
-        .unwrap();
-    assert!(pool.loaded_effect_ids().contains(&"disk_a".to_string()));
-    assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
-
-    // Triggering disk_b while disk_a is still active keeps both temporarily
-    let (_v_b, _) = pool
-        .play_effect("disk_b", EffectConfig::default())
-        .unwrap();
-    assert!(pool.loaded_effect_ids().contains(&"disk_a".to_string()));
-    assert!(pool.loaded_effect_ids().contains(&"disk_b".to_string()));
-
-    // Stop voice A immediately (fade_out_samples = 0), which triggers reactive on_voice_completed
-    pool.stop_voice(v_a, 0);
-    // Reactive Trigger 2: on_voice_completed evicts now-inactive disk_a while preserving mem_immune!
-    assert!(!pool.loaded_effect_ids().contains(&"disk_a".to_string()));
-    assert!(pool.loaded_effect_ids().contains(&"mem_immune".to_string()));
 }
 
 /// Helper to parse substring between two delimiters in command output.

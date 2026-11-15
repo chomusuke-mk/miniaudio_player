@@ -300,8 +300,6 @@ pub enum RtControlHint {
         item: AudioSourceCore,
         should_auto_xfade: bool,
         auto_ms: u64,
-        dur_ms: i64,
-        pos_ms: i64,
     },
 }
 
@@ -701,7 +699,6 @@ fn tick_music_lifecycle(
                         };
                         let _displaced = ply.music_manager.inner.commit_transition_internal(
                             None,
-                            next_idx,
                             &item,
                             None,
                             mode,
@@ -729,8 +726,6 @@ fn tick_music_lifecycle(
                                 item,
                                 should_auto_xfade,
                                 auto_ms,
-                                dur_ms: dur,
-                                pos_ms: pos,
                             });
                         }
                     }
@@ -836,11 +831,6 @@ impl EngineActorHandle {
             max_ram_bytes,
             device_trigger,
         )?;
-        player
-            .music_manager
-            .inner
-            .auto_preload_standby
-            .store(false, Ordering::Release);
         player
             .output_manager
             .set_pause_on_device_change(pause_on_device_change);

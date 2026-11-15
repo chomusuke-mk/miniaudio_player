@@ -2,7 +2,9 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
-use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
+use std::io::Cursor;
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use crate::sync::thread::{self, JoinHandle};
@@ -11,7 +13,9 @@ use std::time::Duration;
 use crate::bridge::ffi::*;
 use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, StreamBuffer, StreamSession};
 use crate::core::renderer::{AudioRenderer, DspCommand};
-use crate::decoder::{BoundaryInfo, BoundaryStatus, StreamClassifier, SymphoniaEngine};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::decoder::BoundaryStatus;
+use crate::decoder::{BoundaryInfo, StreamClassifier, SymphoniaEngine};
 use crate::dsp::channel_matrix::ChannelMatrix;
 use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -40,94 +44,6 @@ pub const STATE_STOPPED: i32 = PlaybackState::Stopped.as_i32();
 pub const STATE_PLAYING: i32 = PlaybackState::Playing.as_i32();
 /// Deck playback state: playback is paused.
 pub const STATE_PAUSED: i32 = PlaybackState::Paused.as_i32();
-
-/// Stream seek cache miss: required target range must be downloaded.
-pub const MAP_STREAM_SEEK_CACHE_MISS: i32 = 0;
-/// Stream seek cache hit: target range is immediately available in memory buffer.
-pub const MAP_STREAM_SEEK_CACHE_HIT: i32 = 1;
-/// Stream seek cache hit within prefetch window.
-pub const MAP_STREAM_SEEK_CACHE_HIT_PREFETCH: i32 = 2;
-
-/// Telemetry metrics snapshot for a tripartite streaming buffer.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MiniaudioStreamStatus {
-    /// Total buffer capacity in bytes.
-    pub buffer_capacity: usize,
-    /// Currently populated bytes in buffer.
-    pub buffer_fill: usize,
-    /// Buffer fill percentage (0.0 to 1.0).
-    pub fill_percentage: f32,
-    /// Non-zero if player is paused waiting for buffer refill.
-    pub is_buffering: i32,
-    /// Non-zero if end-of-file has been reached by the stream loader.
-    pub is_eof: i32,
-    /// Current consumer read cursor in stream bytes.
-    pub read_cursor_byte: i64,
-    /// Start byte offset of the currently available contiguous buffer window.
-    pub range_start: i64,
-    /// End byte offset of the currently available contiguous buffer window.
-    pub range_end: i64,
-}
-
-/// Comprehensive synchronous telemetry status snapshot of a deck.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MiniaudioPlayerStatus {
-    /// Current elapsed playback position in milliseconds.
-    pub position_ms: i64,
-    /// Total track duration in milliseconds, or -1 if unknown.
-    pub duration_ms: i64,
-    /// Playback state integer code (`STATE_*`).
-    pub state: i32,
-    /// Non-zero if audio is actively playing.
-    pub is_playing: i32,
-    /// Non-zero if deck is stalled buffering.
-    pub is_buffering: i32,
-    /// Master volume level.
-    pub volume: f32,
-    /// Playback rate speed multiplier.
-    pub rate: f32,
-    /// Pitch shift multiplier.
-    pub pitch: f32,
-    /// Nominal bitrate in bps.
-    pub bitrate: u32,
-    /// Audio sample rate in Hz.
-    pub sample_rate: u32,
-    /// Audio channel count.
-    pub channels: u32,
-    /// Equalizer frequency band gains.
-    pub equalizer: EqualizerParams,
-    /// Active audio output device descriptor.
-    pub device: MapDeviceInfo,
-    /// Silence trimming configuration.
-    pub silence: SilenceConfig,
-    /// Cumulative silence skipped in milliseconds.
-    pub silence_saved_ms: i64,
-    /// Non-zero if FFT visualizer is enabled.
-    pub visualizer_enabled: i32,
-    /// Instantaneous FFT spectrum and amplitude metrics.
-    pub visualizer: VisualizerData,
-    /// Equalizer preamp gain in dB.
-    pub preamp_db: f32,
-    /// Active ReplayGain loudness normalization settings.
-    pub replay_gain: ReplayGainConfig,
-    /// Stereo balance pan (-1.0 to +1.0).
-    pub balance: f32,
-    /// Non-zero if stereo downmix to mono is active.
-    pub mono_enabled: i32,
-    /// Bauer binaural crossfeed settings.
-    pub crossfeed: CrossfeedConfig,
-    /// Non-zero if 3D stereo widening spatializer is enabled.
-    pub spatializer_enabled: i32,
-    /// 3D stereo widening factor.
-    pub spatializer_width: f32,
-    /// Algorithmic studio reverberation settings.
-    pub reverb: ReverbConfig,
-    /// Non-zero if output brickwall limiter is active.
-    pub limiter_enabled: i32,
-}
-
 
 /// Strips `file://` or `file://localhost/` URI schemes from filesystem paths.
 pub fn strip_file_prefix(source: &str) -> String {
@@ -1523,7 +1439,7 @@ unsafe impl Send for StreamingDeck {}
 unsafe impl Sync for StreamingDeck {}
 
 impl StreamingDeck {
-    pub fn new(
+    pub fn new_deck(
         target_sample_rate: u32,
         target_channels: u32,
         period_size: u32,
@@ -1534,14 +1450,6 @@ impl StreamingDeck {
             period_size,
             true,
         )
-    }
-
-    pub fn new_deck(
-        target_sample_rate: u32,
-        target_channels: u32,
-        period_size: u32,
-    ) -> Result<Box<Self>, i32> {
-        Self::new(target_sample_rate, target_channels, period_size)
     }
 
     /// Creates a headless deck without hardware audio output and without the real-time decoder loop,
@@ -1717,9 +1625,6 @@ impl StreamingDeck {
             sonic_in_buf: vec![0.0f32; 16384],
             visualizer_seqlock: visualizer_seqlock.clone(),
             visualizer_enabled: visualizer_enabled.clone(),
-            spatial: crate::dsp::spatial::SpatialProcessor::default(),
-            listener: crate::dsp::spatial::SpatialListener::default(),
-            emitter: crate::dsp::spatial::SpatialEmitter::default(),
             notification_callback: Some(notif_cb),
         };
         let renderer = Some(Box::new(renderer));
@@ -1808,31 +1713,6 @@ impl StreamingDeck {
                 let _ = prod.push(cmd);
             }
         }
-    }
-
-    /// Enables or disables 3D spatial audio processing on this deck.
-    pub fn set_spatial_enabled(&mut self, enabled: bool) {
-        self.send_dsp_command(DspCommand::SetSpatialEnabled(enabled));
-    }
-
-    /// Updates the 3D spatial listener position and orientation on this deck.
-    pub fn set_spatial_listener(&mut self, listener: crate::dsp::spatial::SpatialListener) {
-        self.send_dsp_command(DspCommand::SetSpatialListener(listener));
-    }
-
-    /// Updates the 3D spatial emitter parameters on this deck.
-    pub fn set_spatial_emitter(&mut self, emitter: crate::dsp::spatial::SpatialEmitter) {
-        self.send_dsp_command(DspCommand::SetSpatialEmitter(emitter));
-    }
-
-    /// Sets the Doppler effect intensity factor on this deck.
-    pub fn set_spatial_doppler_factor(&mut self, factor: f32) {
-        self.send_dsp_command(DspCommand::SetSpatialDopplerFactor(factor));
-    }
-
-    /// Sets the speed of sound medium velocity in meters per second.
-    pub fn set_spatial_speed_of_sound(&mut self, speed: f32) {
-        self.send_dsp_command(DspCommand::SetSpatialSpeedOfSound(speed));
     }
 
     fn start_decoder_loop(&mut self) {
@@ -1951,14 +1831,6 @@ impl StreamingDeck {
             *cf = String::from("Unknown");
         }
         MAP_SUCCESS
-    }
-
-    pub fn open_source(
-        &mut self,
-        source: &str,
-        headers: Option<&[crate::api::types::RustHttpHeader]>,
-    ) -> i32 {
-        self.open_source_with_cancel(source, headers, None)
     }
 
     pub fn open_source_with_cancel(
@@ -2120,15 +1992,6 @@ impl StreamingDeck {
                 .post_event(EventType::Duration, MapEventData { duration_ms: dur_ms });
         }
         res_code
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn open_network(
-        &mut self,
-        url: &str,
-        headers: Option<&[crate::api::types::RustHttpHeader]>,
-    ) -> i32 {
-        self.open_network_with_cancel(url, headers, None)
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2346,15 +2209,6 @@ impl StreamingDeck {
         }
 
         MAP_SUCCESS
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn open_network(
-        &mut self,
-        url: &str,
-        headers: Option<&[crate::api::types::RustHttpHeader]>,
-    ) -> i32 {
-        self.open_network_with_cancel(url, headers, None)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2779,7 +2633,7 @@ impl StreamingDeck {
                 }
             };
 
-            let file_size = source.size();
+            let file_size = symphonia::core::io::MediaSource::byte_len(&source).unwrap_or(0);
             let ext = std::path::Path::new(path)
                 .extension()
                 .and_then(|e| e.to_str());
@@ -2820,10 +2674,6 @@ impl StreamingDeck {
             crate::map_log!(3, "open_file successfully opened: {}", path);
             MAP_SUCCESS
         }
-    }
-
-    pub fn open_memory(&mut self, data: &[u8], _take_ownership: bool) -> i32 {
-        self.open_memory_with_hint(data, None)
     }
 
     pub fn open_memory_with_hint(&mut self, data: &[u8], hint_ext: Option<&str>) -> i32 {
@@ -2958,16 +2808,6 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn open_custom_source(
-        &mut self,
-        source: CustomDartByteSource,
-        handle: CustomByteSourceHandle,
-        total_size: Option<u64>,
-        is_seekable: bool,
-    ) -> i32 {
-        self.open_custom_source_with_cancel(source, handle, total_size, is_seekable, None)
-    }
-
     pub fn open_custom_source_with_cancel(
         &mut self,
         source: CustomDartByteSource,
@@ -3018,35 +2858,6 @@ impl StreamingDeck {
         self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), &[]);
         crate::map_log!(3, "open_custom_source successfully opened");
         MAP_SUCCESS
-    }
-
-    pub fn supply_custom_bytes(
-        &self,
-        _stream_id: u32,
-        request_id: u64,
-        data: Vec<u8>,
-        is_eof: bool,
-    ) -> i32 {
-        if let Some(ref handle) = *read_unpoisoned(&self.custom_source_handle) {
-            handle.supply_bytes(request_id, data, is_eof);
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
-    pub fn notify_custom_error(
-        &self,
-        _stream_id: u32,
-        request_id: u64,
-        error_message: String,
-    ) -> i32 {
-        if let Some(ref handle) = *read_unpoisoned(&self.custom_source_handle) {
-            handle.notify_error(request_id, error_message);
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
     }
 
     fn init_engine(
@@ -3268,40 +3079,6 @@ impl StreamingDeck {
         self.is_stream.load(Ordering::Acquire) && self.duration_ms.load(Ordering::Acquire) <= 0
     }
 
-    pub fn stream_feed(&mut self, data: &[u8]) -> i32 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            match session.feed_chunk(data) {
-                Ok(_) => {
-                    let (_, cvar) = &*self.decoder_wake;
-                    cvar.notify_all();
-                    MAP_SUCCESS
-                }
-                Err(crate::buffer::BufferError::Busy) => MAP_ERROR_BUSY,
-                Err(_) => MAP_ERROR_GENERIC,
-            }
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
-    pub fn stream_flush(&mut self, new_stream_offset: i64) -> i32 {
-        let session_opt = read_unpoisoned(&self.stream_session).clone();
-        if let Some(session) = session_opt {
-            session.flush(new_stream_offset as u64);
-            self.decoder_eof.store(false, Ordering::Relaxed);
-            self.flush_generation.fetch_add(1, Ordering::Release);
-            self.acknowledge_renderer_flush();
-            if session.is_live() {
-                self.stream_reinit_needed.store(true, Ordering::Release);
-            }
-            let (_, cvar) = &*self.decoder_wake;
-            cvar.notify_all();
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
     #[inline]
     fn enqueue_seek(&self, position_ms: i64) {
         let clamped = (position_ms.max(0) as u64) & 0xFF_FFFF_FFFF;
@@ -3371,60 +3148,6 @@ impl StreamingDeck {
         cvar.notify_all();
     }
 
-    pub fn stream_seek(&mut self, position_ms: i64, new_stream_offset: i64) -> i32 {
-        let (is_hit, is_contiguous) = {
-            if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-                session.try_seek_cached(new_stream_offset as u64)
-            } else {
-                return MAP_ERROR_INVALID_STATE;
-            }
-        };
-
-        let code = if is_hit {
-            if is_contiguous {
-                MAP_STREAM_SEEK_CACHE_HIT
-            } else {
-                MAP_STREAM_SEEK_CACHE_HIT_PREFETCH
-            }
-        } else {
-            let _ = self.stream_flush(new_stream_offset);
-            MAP_STREAM_SEEK_CACHE_MISS
-        };
-
-        self.dispatch_seek_to_decoder(position_ms);
-        code
-    }
-
-    pub fn stream_end(&mut self) -> i32 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.mark_eof();
-            let (_, cvar) = &*self.decoder_wake;
-            cvar.notify_all();
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
-    pub fn stream_get_status(&self, out_status: &mut MiniaudioStreamStatus) -> i32 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            let r = session.get_range();
-            let cap = session.ring_capacity();
-            out_status.buffer_capacity = cap;
-            out_status.buffer_fill = (r.end_byte.saturating_sub(r.start_byte)).max(0) as usize;
-            out_status.fill_percentage = r.fill_percentage * 100.0;
-            out_status.is_buffering =
-                self.is_buffering.load(Ordering::Relaxed) as i32;
-            out_status.is_eof = r.is_eof;
-            out_status.read_cursor_byte = r.read_cursor_byte;
-            out_status.range_start = r.start_byte;
-            out_status.range_end = r.end_byte;
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
     pub fn get_buffered_range(&self, out_range: &mut MiniaudioBufferedRange) -> i32 {
         let duration = self.duration_ms.load(Ordering::Relaxed);
         if self.is_stream.load(Ordering::Relaxed) {
@@ -3448,69 +3171,12 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn stream_get_seek_byte(&self, position_ms: i64) -> i64 {
-        let dur = self.duration_ms.load(Ordering::Relaxed);
-        if dur <= 0 {
-            return -1;
-        }
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            if let Some(tot) = session.total_size() {
-                let start = session.audio_start() as i64;
-                let audio_len = (tot as i64) - start;
-                let raw_byte = start + ((position_ms * audio_len) / dur);
-
-                let headroom = 8192;
-                let seek_byte = if position_ms > 0 {
-                    (raw_byte - headroom).max(start)
-                } else {
-                    start
-                };
-                return (seek_byte / 4) * 4;
-            }
-        }
-        -1
-    }
-
-    pub fn get_audio_data_offset(&self) -> i64 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.audio_start() as i64
-        } else {
-            0
-        }
-    }
-
-    pub fn stream_get_pinned_head_size(&self) -> i64 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.head_size() as i64
-        } else {
-            0
-        }
-    }
-
     pub fn get_meta_bytes_version(&self) -> u32 {
         if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
             session.meta_version()
         } else {
             0
         }
-    }
-
-    pub fn get_meta_bytes_size(&self) -> usize {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.get_meta_bytes().len()
-        } else {
-            0
-        }
-    }
-
-    pub fn get_meta_bytes(&self) -> Option<Vec<u8>> {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            let bytes = session.get_meta_bytes();
-            if !bytes.is_empty() {
-                return Some(bytes);
-            }
-        }
-        None
     }
 
     /// Returns a zero-cost snapshot of the current track's [`RustAudioInfo`].
@@ -3595,7 +3261,7 @@ impl StreamingDeck {
             .read()
             .ok()
             .and_then(|g| g.as_ref().map(|s| s.metadata.clone()))
-            .unwrap_or_else(|| StreamBuffer::new_sparse(0, 4096, None));
+            .unwrap_or_else(|| StreamBuffer::new_sparse(4096, None));
 
         let parsed = crate::metadata::UniversalMetadataExtractor::extract(
             &meta_buf,
@@ -3636,49 +3302,6 @@ impl StreamingDeck {
             || !m.tag_formats.is_empty()
             || m.icy.is_some()
     }
-
-    pub fn copy_meta_bytes(&self, out: &mut [u8]) -> usize {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.copy_meta_bytes(out)
-        } else {
-            0
-        }
-    }
-
-    pub fn set_icy_meta(&mut self, data: &[u8]) -> i32 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.set_icy_meta(data);
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
-    pub fn probe_tail(&mut self, tail_data: &[u8], tail_offset: i64) -> i32 {
-        if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-            session.set_tail(tail_data, Some(tail_offset as u64));
-            if self.duration_ms.load(Ordering::Relaxed) <= 0 {
-                let sr = self.sample_rate.load(Ordering::Relaxed);
-                if let Ok(b_guard) = self.boundary_info.read() {
-                    if let Some(boundary) = *b_guard {
-                        if let Some(dur) = StreamClassifier::extract_tail_duration_ms(
-                            boundary.container,
-                            sr,
-                            tail_data,
-                        ) {
-                            self.duration_ms.store(dur, Ordering::Relaxed);
-                            self.telemetry
-                                .post_event(EventType::Duration, MapEventData { duration_ms: dur });
-                        }
-                    }
-                }
-            }
-            MAP_SUCCESS
-        } else {
-            MAP_ERROR_INVALID_STATE
-        }
-    }
-
 
     pub fn play(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
@@ -3864,20 +3487,11 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn get_buffer_size(&self) -> u32 {
-        self.period_size_in_frames.load(Ordering::Relaxed)
-    }
-
-
     pub fn set_pause_on_device_change(&mut self, enabled: i32) -> i32 {
         crate::map_log!(4, "set_pause_on_device_change(enabled={})", enabled != 0);
         self.pause_on_device_change
             .store(enabled != 0, Ordering::Relaxed);
         MAP_SUCCESS
-    }
-
-    pub fn get_pause_on_device_change(&self) -> i32 {
-        self.pause_on_device_change.load(Ordering::Relaxed) as i32
     }
 
     pub fn set_equalizer(&mut self, params: &EqualizerParams) -> i32 {
@@ -3896,11 +3510,6 @@ impl StreamingDeck {
             band: band as usize,
             gain_db,
         });
-        MAP_SUCCESS
-    }
-
-    pub fn get_equalizer(&self, out: &mut EqualizerParams) -> i32 {
-        *out = self.eq_params;
         MAP_SUCCESS
     }
 
@@ -4091,15 +3700,6 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn get_silence_config(&self, out: &mut SilenceConfig) -> i32 {
-        *out = self.silence_config.read();
-        MAP_SUCCESS
-    }
-
-    pub fn get_silence_saved_ms(&self) -> i64 {
-        self.silence_saved_ms.load(Ordering::Relaxed)
-    }
-
     pub fn set_visualizer_enabled(&mut self, enabled: i32) -> i32 {
         let en = enabled != 0;
         crate::map_log!(4, "set_visualizer_enabled(enabled={})", en);
@@ -4124,10 +3724,6 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn is_visualizer_enabled(&self) -> i32 {
-        self.visualizer_enabled.load(Ordering::Relaxed) as i32
-    }
-
     pub fn get_visualizer_data(&self, out: &mut VisualizerData) -> i32 {
         *out = self.visualizer_seqlock.read();
         MAP_SUCCESS
@@ -4147,41 +3743,6 @@ impl StreamingDeck {
                 renderer.render_pcm(output_frames, frame_count);
             }
         }
-    }
-
-    pub fn get_status(&self, out: &mut MiniaudioPlayerStatus) -> i32 {
-        out.position_ms = self.position_ms.load(Ordering::Relaxed);
-        out.duration_ms = self.duration_ms.load(Ordering::Relaxed);
-        let st = self.state.load(Ordering::Relaxed);
-        out.state = st;
-        out.is_playing = (st == STATE_PLAYING) as i32;
-        out.is_buffering = self.is_buffering.load(Ordering::Relaxed) as i32;
-        out.volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
-        out.rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
-        out.pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed));
-        out.bitrate = self.bitrate.load(Ordering::Relaxed);
-        out.sample_rate = self.sample_rate.load(Ordering::Relaxed);
-        out.channels = self.channels.load(Ordering::Relaxed);
-
-        out.equalizer = self.eq_params;
-        out.preamp_db = f32::from_bits(self.preamp_db.load(Ordering::Relaxed));
-        out.replay_gain = self.replay_gain;
-        out.balance = f32::from_bits(self.balance.load(Ordering::Relaxed));
-        out.mono_enabled = self.mono_enabled.load(Ordering::Relaxed) as i32;
-        out.crossfeed = self.crossfeed_config;
-        out.spatializer_enabled = self.spatializer_enabled.load(Ordering::Relaxed) as i32;
-        out.spatializer_width = f32::from_bits(self.spatializer_width.load(Ordering::Relaxed));
-        out.reverb = self.reverb_config;
-        out.limiter_enabled = self.limiter_enabled.load(Ordering::Relaxed) as i32;
-        out.visualizer = self.visualizer_seqlock.read();
-
-        out.visualizer_enabled = self.visualizer_enabled.load(Ordering::Relaxed) as i32;
-        out.silence = self.silence_config.read();
-        out.silence_saved_ms = self.silence_saved_ms.load(Ordering::Relaxed);
-
-        out.device = MapDeviceInfo::default();
-
-        MAP_SUCCESS
     }
 
     pub fn destroy(&mut self) {
@@ -4444,8 +4005,6 @@ pub struct DualSource {
     pub standby_ready_source: Arc<RwLock<Option<String>>>,
     /// Logically committed queue cursor used for FIFO rapid-skip serialization.
     pub planned_index: Arc<AtomicI64>,
-    /// Whether queue mutators synchronously call `preload_standby_deck` (false under Tri-Plane actor).
-    pub auto_preload_standby: Arc<AtomicBool>,
     /// Default ReplayGain fallback/forced values `(gain_db, peak)`.
     pub default_replay_gain: (f32, f32),
     /// Global ReplayGain operating mode (`0 = Disabled`, `1 = Track`, `2 = Forced`).
@@ -4491,16 +4050,9 @@ impl DualSource {
             standby_ready_id: Arc::new(AtomicI64::new(-1)),
             standby_ready_source: Arc::new(RwLock::new(None)),
             planned_index: Arc::new(AtomicI64::new(-1)),
-            auto_preload_standby: Arc::new(AtomicBool::new(true)),
             default_replay_gain: (0.0, 1.0),
             replay_gain_mode: 1,
         })
-    }
-
-    /// Resolves effective ReplayGain configuration for `item` under the active global mode/default.
-    #[inline]
-    pub fn resolve_item_replay_gain(&self, item: Option<&AudioSourceCore>) -> ReplayGainConfig {
-        resolve_replay_gain(self.replay_gain_mode, self.default_replay_gain, item)
     }
 
     /// Resolves effective ReplayGain telemetry for the current foreground track
@@ -4572,24 +4124,6 @@ impl DualSource {
         }
     }
 
-    /// Returns an immutable reference to the standby background deck.
-    #[inline]
-    pub fn standby_deck_ref(&self) -> &StreamingDeck {
-        if self.active_deck.load(Ordering::Relaxed) == 0 {
-            &self.deck_b
-        } else {
-            &self.deck_a
-        }
-    }
-
-    pub fn open_deck_source(
-        deck: &mut StreamingDeck,
-        item: &AudioSourceCore,
-        custom_factory: Option<&CustomSourceFactory>,
-    ) -> i32 {
-        Self::open_deck_source_with_cancel(deck, item, custom_factory, None)
-    }
-
     pub fn open_deck_source_with_cancel(
         deck: &mut StreamingDeck,
         item: &AudioSourceCore,
@@ -4647,31 +4181,6 @@ impl DualSource {
         res
     }
 
-    /// Replaces the entire playback queue with `items` without starting playback.
-    ///
-    /// Resets `current_index` to `-1` (`null` in Dart), aborts any active crossfade,
-    /// and stops both decks.
-    pub fn set_queue(&mut self, items: Vec<AudioSourceCore>) {
-        self.crossfade.abort();
-        self.crossfade_target_id.store(-1, Ordering::Release);
-        self.crossfade_completed_flag.store(false, Ordering::Release);
-        self.standby_ready_id.store(-1, Ordering::Release);
-        *write_unpoisoned(&self.standby_ready_source) = None;
-        self.deck_a.stop();
-        self.deck_a.clear_queue_item_assignment();
-        self.deck_b.stop();
-        self.deck_b.clear_queue_item_assignment();
-
-        *write_unpoisoned(&self.canonical_queue) = items.clone();
-        *write_unpoisoned(&self.original_indices) = (0..items.len()).collect();
-        *write_unpoisoned(&self.queue) = items;
-
-        self.current_index.store(-1, Ordering::Release);
-        self.planned_index.store(-1, Ordering::Release);
-        self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
-        self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
-    }
-
     /// Resolves the expected upcoming track ID based on the current active queue and loop mode.
     pub fn expected_next_track_id(&self) -> Option<i64> {
         let q = read_unpoisoned(&self.queue);
@@ -4722,69 +4231,6 @@ impl DualSource {
         }
     }
 
-    pub fn preload_standby_deck(&mut self) {
-        if !self.auto_preload_standby.load(Ordering::Relaxed) {
-            return;
-        }
-        if self.crossfade.is_active() {
-            return;
-        }
-        let q = read_unpoisoned(&self.queue);
-        if q.is_empty() {
-            return;
-        }
-
-        let cur = self.current_index.load(Ordering::Relaxed);
-        if cur < 0 {
-            return;
-        }
-
-        let cur_u = cur as usize;
-        let next_idx = cur_u + 1;
-        let loop_mode = self.loop_mode.load(Ordering::Relaxed);
-
-        let target_item = if next_idx < q.len() {
-            Some(q[next_idx].clone())
-        } else if loop_mode == 2 && !q.is_empty() {
-            // LoopMode.all wraps to index 0
-            Some(q[0].clone())
-        } else {
-            None
-        };
-        drop(q);
-
-        let active_deck = self.active_deck.load(Ordering::Relaxed);
-        let custom_factory = self.custom_source_factory.clone();
-        let standby_ready_id = self.standby_ready_id.clone();
-        let standby_ready_source = self.standby_ready_source.clone();
-        let rg_mode = self.replay_gain_mode;
-        let def_rg = self.default_replay_gain;
-        let standby_deck = if active_deck == 0 {
-            &mut self.deck_b
-        } else {
-            &mut self.deck_a
-        };
-
-        if let Some(item) = target_item {
-            let res = Self::open_deck_source(standby_deck, &item, custom_factory.as_ref());
-            if res == 0 {
-                let rg = resolve_replay_gain(rg_mode, def_rg, Some(&item));
-                standby_deck.apply_replay_gain_config_silent(rg);
-                standby_deck.pause();
-                standby_ready_id.store(item.id, Ordering::Release);
-                *write_unpoisoned(&standby_ready_source) = Some(item.source);
-            } else {
-                standby_ready_id.store(-1, Ordering::Release);
-                *write_unpoisoned(&standby_ready_source) = None;
-            }
-        } else {
-            standby_deck.stop();
-            standby_deck.clear_queue_item_assignment();
-            standby_ready_id.store(-1, Ordering::Release);
-            *write_unpoisoned(&standby_ready_source) = None;
-        }
-    }
-
     pub fn append_items(&mut self, items: Vec<AudioSourceCore>) {
         let mut can = write_unpoisoned(&self.canonical_queue);
         let start = can.len();
@@ -4797,7 +4243,6 @@ impl DualSource {
         drop(orig_idx);
         drop(can);
         self.verify_or_abort_crossfade();
-        self.preload_standby_deck();
     }
 
     pub fn insert_next_item(&mut self, item: AudioSourceCore) {
@@ -4813,7 +4258,6 @@ impl DualSource {
         q.insert(insert_idx, item);
         drop(q);
         self.verify_or_abort_crossfade();
-        self.preload_standby_deck();
     }
 
     pub fn remove_item_at(&mut self, index: usize) -> Option<AudioSourceCore> {
@@ -4851,33 +4295,20 @@ impl DualSource {
                     };
                     self.current_index.store(new_idx, Ordering::Release);
                     self.planned_index.store(new_idx, Ordering::Release);
-                    let next_item = q[new_idx as usize].clone();
                     drop(q);
                     self.abort_active_crossfade();
                     self.standby_ready_id.store(-1, Ordering::Release);
                     *write_unpoisoned(&self.standby_ready_source) = None;
-                    if !self.auto_preload_standby.load(Ordering::Relaxed) {
-                        self.deck_a.stop();
-                        self.deck_a.clear_queue_item_assignment();
-                        self.deck_b.stop();
-                        self.deck_b.clear_queue_item_assignment();
-                        return Some(removed);
-                    }
-                    let factory = self.custom_source_factory.clone();
-                    let next_rg = self.resolve_item_replay_gain(Some(&next_item));
-                    let active = self.active_deck_mut();
-                    if Self::open_deck_source(active, &next_item, factory.as_ref()) == 0 {
-                        active.apply_replay_gain_config_silent(next_rg);
-                    }
-                    active.play();
-                    self.preload_standby_deck();
+                    self.deck_a.stop();
+                    self.deck_a.clear_queue_item_assignment();
+                    self.deck_b.stop();
+                    self.deck_b.clear_queue_item_assignment();
                     return Some(removed);
                 }
             }
         }
         drop(q);
         self.verify_or_abort_crossfade();
-        self.preload_standby_deck();
         Some(removed)
     }
 
@@ -4901,7 +4332,6 @@ impl DualSource {
         }
         drop(q);
         self.verify_or_abort_crossfade();
-        self.preload_standby_deck();
         true
     }
 
@@ -4934,7 +4364,6 @@ impl DualSource {
         }
         drop(q);
         self.verify_or_abort_crossfade();
-        self.preload_standby_deck();
         true
     }
 
@@ -4953,7 +4382,6 @@ impl DualSource {
             self.current_index.store(0, Ordering::Release);
             drop(q);
             self.verify_or_abort_crossfade();
-            self.preload_standby_deck();
         } else {
             q.clear();
             drop(q);
@@ -4965,186 +4393,9 @@ impl DualSource {
         }
     }
 
-    pub fn next(&mut self, manual_crossfade_ms: Option<u64>) -> Result<(), String> {
-        let trans = self.crossfade.transition();
-        if trans == QueueTransition::AutoCrossfade {
-            let target_id = self.crossfade_target_id.load(Ordering::Relaxed);
-            if target_id >= 0 {
-                if let Some(idx) = read_unpoisoned(&self.queue).iter().position(|it| it.id == target_id) {
-                    self.current_index.store(idx as i64, Ordering::Release);
-                }
-            }
-            let manual_ms = manual_crossfade_ms.unwrap_or_else(|| {
-                self.manual_crossfade_duration_ms.load(Ordering::Relaxed)
-            });
-            let sr = self.sample_rate.max(1);
-            let max_frames = (manual_ms * sr as u64) / 1000;
-            let cur_frame = self.crossfade.current_frame.load(Ordering::Relaxed);
-            let tot_frame = self.crossfade.total_frames.load(Ordering::Relaxed);
-            if tot_frame > cur_frame + max_frames {
-                self.crossfade.total_frames.store(cur_frame + max_frames, Ordering::Release);
-            }
-            self.crossfade.transition.store(QueueTransition::ManualCrossfade.as_i32(), Ordering::Release);
-            return Ok(());
-        }
-
-        let q = read_unpoisoned(&self.queue);
-        if q.is_empty() {
-            return Ok(());
-        }
-        let cur = self.current_index.load(Ordering::Relaxed);
-        let next_idx = cur + 1;
-        let loop_mode = self.loop_mode.load(Ordering::Relaxed);
-
-        let target_idx = if next_idx < q.len() as i64 {
-            next_idx
-        } else if loop_mode == 2 {
-            0
-        } else {
-            return Ok(());
-        };
-        drop(q);
-        self.transition_to_index(target_idx as usize, manual_crossfade_ms, None, false)
-    }
-
-    pub fn previous(&mut self) -> Result<(), String> {
-        let cur_deck = self.active_deck_ref();
-        let pos_ms = cur_deck.position_ms.load(Ordering::Relaxed);
-        let trans = self.crossfade.transition();
-        let is_live = cur_deck.is_live_stream();
-
-        if trans == QueueTransition::AutoCrossfade {
-            self.abort_active_crossfade();
-            if !is_live && pos_ms > 3000 {
-                self.active_deck_mut().seek(0);
-                return Ok(());
-            }
-        } else if !is_live && pos_ms > 3000 {
-            self.abort_active_crossfade();
-            self.active_deck_mut().seek(0);
-            return Ok(());
-        }
-
-        let q = read_unpoisoned(&self.queue);
-        if q.is_empty() {
-            return Ok(());
-        }
-        let cur = self.current_index.load(Ordering::Relaxed);
-        let target_idx = if cur > 0 {
-            cur - 1
-        } else {
-            0
-        };
-        drop(q);
-        self.transition_to_index(target_idx as usize, None, None, false)
-    }
-
-    /// Internal deck transition helper used by `play`, `next`, and `previous`.
-    pub fn transition_to_index(
-        &mut self,
-        index: usize,
-        manual_crossfade_ms: Option<u64>,
-        seek_ms: Option<i64>,
-        force_play: bool,
-    ) -> Result<(), String> {
-        if self.crossfade.is_active() {
-            self.abort_active_crossfade();
-        }
-        let q = read_unpoisoned(&self.queue);
-        if index >= q.len() {
-            return Err(format!("Index {} out of bounds (queue size {})", index, q.len()));
-        }
-        let item = q[index].clone();
-        drop(q);
-
-        self.crossfade_target_id.store(-1, Ordering::Release);
-        self.crossfade_completed_flag.store(false, Ordering::Release);
-
-        let active_deck = self.active_deck.load(Ordering::Relaxed);
-        let cur_playback = PlaybackState::from_i32(self.playback_state.load(Ordering::Relaxed));
-        let was_playing = cur_playback == PlaybackState::Playing;
-
-        let to_deck = if active_deck == 0 { 1 } else { 0 };
-        let to_rg = self.resolve_item_replay_gain(Some(&item));
-        let custom_factory = self.custom_source_factory.clone();
-        let to_slot = if to_deck == 0 {
-            &mut self.deck_a
-        } else {
-            &mut self.deck_b
-        };
-
-        let res = Self::open_deck_source(to_slot, &item, custom_factory.as_ref());
-        if res != 0 {
-            return Err(format!("Failed to open track: error {}", res));
-        }
-
-        to_slot.apply_replay_gain_config_silent(to_rg);
-
-        if let Some(ms) = seek_ms {
-            if ms > 0 {
-                to_slot.seek(ms);
-            }
-        }
-
-        if !was_playing {
-            let from_slot = if active_deck == 0 {
-                &mut self.deck_a
-            } else {
-                &mut self.deck_b
-            };
-            from_slot.stop();
-            self.active_deck.store(to_deck, Ordering::Release);
-            self.current_index.store(index as i64, Ordering::Release);
-            if force_play {
-                let to_slot = if to_deck == 0 {
-                    &mut self.deck_a
-                } else {
-                    &mut self.deck_b
-                };
-                to_slot.play();
-                self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
-            } else {
-                self.playback_state.store(PlaybackState::Paused.as_i32(), Ordering::Release);
-            }
-            self.preload_standby_deck();
-            return Ok(());
-        }
-
-        to_slot.play();
-
-        let xfade_ms = manual_crossfade_ms.unwrap_or_else(|| {
-            self.manual_crossfade_duration_ms.load(Ordering::Relaxed)
-        });
-
-        if xfade_ms > 0 {
-            let sr = self.sample_rate;
-            let total_frames = (xfade_ms as u64 * sr as u64) / 1000;
-            let curve = self.crossfade_curve.load(Ordering::Relaxed);
-            self.crossfade_target_id.store(item.id, Ordering::Release);
-            self.crossfade.begin(active_deck, to_deck, total_frames, curve, QueueTransition::ManualCrossfade);
-            self.active_deck.store(to_deck, Ordering::Release);
-            self.current_index.store(index as i64, Ordering::Release);
-            self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
-        } else {
-            self.active_deck.store(to_deck, Ordering::Release);
-            let from_slot = if active_deck == 0 {
-                &mut self.deck_a
-            } else {
-                &mut self.deck_b
-            };
-            from_slot.stop();
-            self.current_index.store(index as i64, Ordering::Release);
-            self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
-        }
-
-        self.preload_standby_deck();
-        Ok(())
-    }
-
     pub fn set_loop_mode(&mut self, mode: i32) {
         self.loop_mode.store(mode.clamp(0, 2), Ordering::Release);
         self.verify_or_abort_crossfade();
-        self.preload_standby_deck();
     }
 
     pub fn set_shuffle(&mut self, enabled: bool) {
@@ -5162,7 +4413,6 @@ impl DualSource {
                 self.restore_canonical_order(cur as usize);
             }
             self.verify_or_abort_crossfade();
-            self.preload_standby_deck();
         }
     }
 
@@ -5223,189 +4473,6 @@ impl DualSource {
             self.standby_deck_mut().clear_queue_item_assignment();
         } else {
             self.crossfade.abort();
-        }
-    }
-
-    /// Universal playback command supporting initial start, resumption, track selection
-    /// by ID or position, shuffle toggling, and immediate seeking.
-    pub fn play(
-        &mut self,
-        id: Option<i64>,
-        position: Option<usize>,
-        shuffled: Option<bool>,
-        seek_ms: Option<i64>,
-    ) -> Result<(), String> {
-        let cur = self.current_index.load(Ordering::Relaxed);
-
-        // Case 1: First Playback Execution (current_index < 0)
-        if cur < 0 {
-            let can = read_unpoisoned(&self.canonical_queue).clone();
-            if can.is_empty() {
-                if id.is_some() || position.is_some() {
-                    return Err("Cannot play specific track: queue is empty".to_string());
-                }
-                return Ok(());
-            }
-
-            let effective_shuffled = if let Some(shuf) = shuffled {
-                self.shuffle_enabled.store(shuf, Ordering::Release);
-                shuf
-            } else {
-                self.shuffle_enabled.load(Ordering::Relaxed)
-            };
-
-            let target_canon_idx: Option<usize> = if let Some(target_id) = id {
-                let idx = can
-                    .iter()
-                    .position(|it| it.id == target_id)
-                    .ok_or_else(|| format!("Track id {} not found in queue", target_id))?;
-                Some(idx)
-            } else if let Some(pos) = position {
-                if pos >= can.len() {
-                    return Err(format!(
-                        "Position {} out of bounds (queue size {})",
-                        pos,
-                        can.len()
-                    ));
-                }
-                Some(pos)
-            } else {
-                None
-            };
-
-            if effective_shuffled {
-                let mut q = can;
-                use rand::seq::SliceRandom;
-                let mut rng = rand::rng();
-                if let Some(canon_idx) = target_canon_idx {
-                    q.swap(0, canon_idx);
-                    if q.len() > 2 {
-                        q[1..].shuffle(&mut rng);
-                    }
-                } else {
-                    q.shuffle(&mut rng);
-                }
-                *write_unpoisoned(&self.queue) = q;
-                self.current_index.store(0, Ordering::Release);
-            } else {
-                *write_unpoisoned(&self.queue) = can;
-                let start_idx = target_canon_idx.unwrap_or(0);
-                self.current_index.store(start_idx as i64, Ordering::Release);
-            }
-
-            let start_idx = self.current_index.load(Ordering::Relaxed) as usize;
-            let start_item = read_unpoisoned(&self.queue)[start_idx].clone();
-
-            self.crossfade.abort();
-            self.crossfade_target_id.store(-1, Ordering::Release);
-            self.crossfade_completed_flag.store(false, Ordering::Release);
-
-            let active_deck = self.active_deck.load(Ordering::Relaxed);
-            let start_rg = self.resolve_item_replay_gain(Some(&start_item));
-            let custom_factory = self.custom_source_factory.clone();
-            let active_slot = if active_deck == 0 {
-                &mut self.deck_a
-            } else {
-                &mut self.deck_b
-            };
-
-            let res = Self::open_deck_source(
-                active_slot,
-                &start_item,
-                custom_factory.as_ref(),
-            );
-            if res != 0 {
-                return Err(format!("Failed to open track: error {}", res));
-            }
-
-            active_slot.apply_replay_gain_config_silent(start_rg);
-
-            if let Some(ms) = seek_ms {
-                if ms > 0 {
-                    active_slot.seek(ms);
-                }
-            }
-
-            let play_res = active_slot.play();
-            if play_res != 0 {
-                return Err(format!("Play failed: error {}", play_res));
-            }
-            self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
-            self.preload_standby_deck();
-            return Ok(());
-        }
-
-        // Case 2: Subsequent play() Calls (Queue Already Active, current_index >= 0)
-        if id.is_none() && position.is_none() {
-            if let Some(shuf) = shuffled {
-                self.set_shuffle(shuf);
-            }
-            let cur_playback = PlaybackState::from_i32(self.playback_state.load(Ordering::Relaxed));
-            if cur_playback == PlaybackState::Stopped {
-                let cur_idx = self.current_index.load(Ordering::Relaxed);
-                if cur_idx >= 0 {
-                    let seek_target = seek_ms.unwrap_or(0);
-                    return self.transition_to_index(cur_idx as usize, None, Some(seek_target), true);
-                }
-            }
-            if let Some(ms) = seek_ms {
-                self.seek(ms);
-            }
-            let res = self.active_deck_mut().play();
-            if res == 0 {
-                self.playback_state.store(PlaybackState::Playing.as_i32(), Ordering::Release);
-                Ok(())
-            } else {
-                Err(format!("Play failed: code {}", res))
-            }
-        } else {
-            // Target track specified by id (takes precedence) or position (in active queue)
-            let target_track_id = if let Some(target_id) = id {
-                let exists = read_unpoisoned(&self.queue)
-                    .iter()
-                    .any(|it| it.id == target_id);
-                if !exists {
-                    return Err(format!("Track id {} not found in queue", target_id));
-                }
-                target_id
-            } else if let Some(pos) = position {
-                let q = read_unpoisoned(&self.queue);
-                if pos >= q.len() {
-                    return Err(format!(
-                        "Position {} out of bounds (queue size {})",
-                        pos,
-                        q.len()
-                    ));
-                }
-                q[pos].id
-            } else {
-                unreachable!()
-            };
-
-            if let Some(shuf) = shuffled {
-                self.shuffle_enabled.store(shuf, Ordering::Release);
-                if shuf {
-                    let mut q = write_unpoisoned(&self.queue);
-                    if let Some(pos) = q.iter().position(|it| it.id == target_track_id) {
-                        q.swap(0, pos);
-                        if q.len() > 2 {
-                            use rand::seq::SliceRandom;
-                            let mut rng = rand::rng();
-                            q[1..].shuffle(&mut rng);
-                        }
-                    }
-                } else {
-                    let can = read_unpoisoned(&self.canonical_queue).clone();
-                    *write_unpoisoned(&self.queue) = can;
-                }
-            }
-
-            let target_idx = read_unpoisoned(&self.queue)
-                .iter()
-                .position(|it| it.id == target_track_id)
-                .ok_or_else(|| format!("Track id {} not found in queue", target_track_id))?;
-
-            self.transition_to_index(target_idx, None, seek_ms, true)
         }
     }
 

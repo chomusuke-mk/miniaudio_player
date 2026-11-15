@@ -79,13 +79,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double dco_decode_box_autoadd_f_32(dynamic raw);
 
   @protected
-  int dco_decode_box_autoadd_i_32(dynamic raw);
-
-  @protected
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
-
-  @protected
-  (int, int) dco_decode_box_autoadd_record_u_32_u_32(dynamic raw);
 
   @protected
   RustAnalysisConfig dco_decode_box_autoadd_rust_analysis_config(dynamic raw);
@@ -249,16 +243,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double? dco_decode_opt_box_autoadd_f_32(dynamic raw);
 
   @protected
-  int? dco_decode_opt_box_autoadd_i_32(dynamic raw);
-
-  @protected
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
-
-  @protected
-  (int, int)? dco_decode_opt_box_autoadd_record_u_32_u_32(dynamic raw);
-
-  @protected
-  RustAudioInfo? dco_decode_opt_box_autoadd_rust_audio_info(dynamic raw);
 
   @protected
   RustAudioMetadata? dco_decode_opt_box_autoadd_rust_audio_metadata(
@@ -294,10 +279,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustVector3? dco_decode_opt_box_autoadd_rust_vector_3(dynamic raw);
 
   @protected
-  RustVisualizerData? dco_decode_opt_box_autoadd_rust_visualizer_data(
-      dynamic raw);
-
-  @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
@@ -316,9 +297,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (List<RustAudioDevice>, List<RustAudioDevice>)
       dco_decode_record_list_rust_audio_device_list_rust_audio_device(
           dynamic raw);
-
-  @protected
-  (int, int) dco_decode_record_u_32_u_32(dynamic raw);
 
   @protected
   RustAnalysisConfig dco_decode_rust_analysis_config(dynamic raw);
@@ -420,9 +398,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustPlayerEvent dco_decode_rust_player_event(dynamic raw);
 
   @protected
-  RustPlayerStatus dco_decode_rust_player_status(dynamic raw);
-
-  @protected
   RustRecordingResult dco_decode_rust_recording_result(dynamic raw);
 
   @protected
@@ -433,9 +408,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustSilenceConfig dco_decode_rust_silence_config(dynamic raw);
-
-  @protected
-  RustSoundBufferInfo dco_decode_rust_sound_buffer_info(dynamic raw);
 
   @protected
   RustSpatialEmitter dco_decode_rust_spatial_emitter(dynamic raw);
@@ -454,9 +426,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustWavFormat dco_decode_rust_wav_format(dynamic raw);
-
-  @protected
-  TelemetryFilter dco_decode_telemetry_filter(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -523,14 +492,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double sse_decode_box_autoadd_f_32(SseDeserializer deserializer);
 
   @protected
-  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer);
-
-  @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
-
-  @protected
-  (int, int) sse_decode_box_autoadd_record_u_32_u_32(
-      SseDeserializer deserializer);
 
   @protected
   RustAnalysisConfig sse_decode_box_autoadd_rust_analysis_config(
@@ -725,18 +687,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer);
 
   @protected
-  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer);
-
-  @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
-
-  @protected
-  (int, int)? sse_decode_opt_box_autoadd_record_u_32_u_32(
-      SseDeserializer deserializer);
-
-  @protected
-  RustAudioInfo? sse_decode_opt_box_autoadd_rust_audio_info(
-      SseDeserializer deserializer);
 
   @protected
   RustAudioMetadata? sse_decode_opt_box_autoadd_rust_audio_metadata(
@@ -775,10 +726,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  RustVisualizerData? sse_decode_opt_box_autoadd_rust_visualizer_data(
-      SseDeserializer deserializer);
-
-  @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
@@ -798,9 +745,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (List<RustAudioDevice>, List<RustAudioDevice>)
       sse_decode_record_list_rust_audio_device_list_rust_audio_device(
           SseDeserializer deserializer);
-
-  @protected
-  (int, int) sse_decode_record_u_32_u_32(SseDeserializer deserializer);
 
   @protected
   RustAnalysisConfig sse_decode_rust_analysis_config(
@@ -917,9 +861,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustPlayerEvent sse_decode_rust_player_event(SseDeserializer deserializer);
 
   @protected
-  RustPlayerStatus sse_decode_rust_player_status(SseDeserializer deserializer);
-
-  @protected
   RustRecordingResult sse_decode_rust_recording_result(
       SseDeserializer deserializer);
 
@@ -932,10 +873,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustSilenceConfig sse_decode_rust_silence_config(
-      SseDeserializer deserializer);
-
-  @protected
-  RustSoundBufferInfo sse_decode_rust_sound_buffer_info(
       SseDeserializer deserializer);
 
   @protected
@@ -959,9 +896,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustWavFormat sse_decode_rust_wav_format(SseDeserializer deserializer);
-
-  @protected
-  TelemetryFilter sse_decode_telemetry_filter(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -1029,15 +963,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
-
-  @protected
   void sse_encode_box_autoadd_i_64(
       PlatformInt64 self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_box_autoadd_record_u_32_u_32(
-      (int, int) self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_analysis_config(
@@ -1237,19 +1164,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_f_32(double? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
-
-  @protected
   void sse_encode_opt_box_autoadd_i_64(
       PlatformInt64? self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_opt_box_autoadd_record_u_32_u_32(
-      (int, int)? self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_opt_box_autoadd_rust_audio_info(
-      RustAudioInfo? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_rust_audio_metadata(
@@ -1288,10 +1204,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustVector3? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_rust_visualizer_data(
-      RustVisualizerData? self, SseSerializer serializer);
-
-  @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
@@ -1312,9 +1224,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_record_list_rust_audio_device_list_rust_audio_device(
       (List<RustAudioDevice>, List<RustAudioDevice>) self,
       SseSerializer serializer);
-
-  @protected
-  void sse_encode_record_u_32_u_32((int, int) self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_analysis_config(
@@ -1445,10 +1354,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustPlayerEvent self, SseSerializer serializer);
 
   @protected
-  void sse_encode_rust_player_status(
-      RustPlayerStatus self, SseSerializer serializer);
-
-  @protected
   void sse_encode_rust_recording_result(
       RustRecordingResult self, SseSerializer serializer);
 
@@ -1463,10 +1368,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_silence_config(
       RustSilenceConfig self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_rust_sound_buffer_info(
-      RustSoundBufferInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_spatial_emitter(
@@ -1489,10 +1390,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_rust_wav_format(RustWavFormat self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_telemetry_filter(
-      TelemetryFilter self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

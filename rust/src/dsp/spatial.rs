@@ -205,58 +205,11 @@ pub struct SpatialEvaluation {
     pub distance: f32,
 }
 
-/// Real-time 3D spatial processor providing mathematical calculations and slew-rate smoothing.
-#[derive(Debug, Clone)]
-pub struct SpatialProcessor {
-    /// Speed of sound in medium (default: 343.3 m/s in dry air at 20°C).
-    pub speed_of_sound: f32,
-    current_doppler_ratio: f32,
-    current_gain: f32,
-    current_pan: f32,
-    enabled: bool,
-}
-
-impl Default for SpatialProcessor {
-    fn default() -> Self {
-        Self::new(343.3)
-    }
-}
+/// Stateless 3D spatial audio evaluator computing Doppler ratio, attenuation gain, and stereo pan.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SpatialProcessor;
 
 impl SpatialProcessor {
-    /// Creates a new `SpatialProcessor` with the specified speed of sound in units/s.
-    pub fn new(speed_of_sound: f32) -> Self {
-        Self {
-            speed_of_sound: if speed_of_sound > 1.0 {
-                speed_of_sound
-            } else {
-                343.3
-            },
-            current_doppler_ratio: 1.0,
-            current_gain: 1.0,
-            current_pan: 0.0,
-            enabled: false,
-        }
-    }
-
-    /// Returns whether 3D spatial audio processing is enabled.
-    #[inline]
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Enables or disables 3D spatial audio processing.
-    ///
-    /// When disabled, resets internal target parameters to unity gain and center pan.
-    #[inline]
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.current_doppler_ratio = 1.0;
-            self.current_gain = 1.0;
-            self.current_pan = 0.0;
-        }
-    }
-
     /// Evaluates exact instant 3D physical parameters without smoothing.
     pub fn evaluate(
         listener: &SpatialListener,
@@ -357,35 +310,5 @@ impl SpatialProcessor {
             pan,
             distance,
         }
-    }
-
-    /// Smooths current state toward target evaluation via first-order filter.
-    /// `dt_seconds` is typically buffer_frames / sample_rate (e.g. 512 / 48000 ≈ 0.0106s).
-    pub fn update_smoothed(&mut self, target: &SpatialEvaluation, dt_seconds: f32) {
-        // Time constant tau ≈ 20ms for smooth, click-free parameter transitions
-        let tau = 0.020;
-        let alpha = (1.0 - (-dt_seconds / tau).exp()).clamp(0.01, 1.0);
-
-        self.current_doppler_ratio += alpha * (target.doppler_ratio - self.current_doppler_ratio);
-        self.current_gain += alpha * (target.gain - self.current_gain);
-        self.current_pan += alpha * (target.pan - self.current_pan);
-    }
-
-    /// Returns the currently smoothed Doppler pitch ratio.
-    #[inline]
-    pub fn current_doppler_ratio(&self) -> f32 {
-        self.current_doppler_ratio
-    }
-
-    /// Returns the currently smoothed distance/cone gain multiplier.
-    #[inline]
-    pub fn current_gain(&self) -> f32 {
-        self.current_gain
-    }
-
-    /// Returns the currently smoothed stereo panning value `[-1.0, 1.0]`.
-    #[inline]
-    pub fn current_pan(&self) -> f32 {
-        self.current_pan
     }
 }

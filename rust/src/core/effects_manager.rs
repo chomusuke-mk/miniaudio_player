@@ -104,12 +104,6 @@ impl EffectsControl {
         Err("Effect buffer is not loaded".to_string())
     }
 
-    /// Re-evaluates LRU cache eviction when active voices complete.
-    pub fn on_voice_completed(&self) -> bool {
-        let (_, evicted) = self.drain_completed_and_evict();
-        evicted.is_some()
-    }
-
     /// Returns `true` when RT has posted voice completions needing cold reconciliation.
     #[inline]
     pub fn has_pending_completions(&self) -> bool {
@@ -327,11 +321,6 @@ impl EffectsManager {
         self.ctrl.play_effect(id, config)
     }
 
-    /// Re-evaluates LRU cache eviction when active voices complete.
-    #[inline]
-    pub fn on_voice_completed(&self) -> bool {
-        self.ctrl.on_voice_completed()
-    }
 
     /// Returns `true` when RT has posted voice completions needing cold reconciliation.
     #[inline]

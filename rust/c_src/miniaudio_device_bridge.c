@@ -62,8 +62,6 @@ struct map_device_context
     void *rust_user_data;
     uint32_t sample_rate;
     uint32_t channels;
-    uint32_t period_size_in_frames;
-    map_device_info_t current_device_info;
 };
 
 static void map_device_id_to_string(const ma_device_id *pID, char *out_str, size_t max_len)
@@ -158,10 +156,9 @@ map_device_context_t *map_device_create(
     ctx->rust_user_data = rust_user_data;
     ctx->sample_rate = sample_rate ? sample_rate : 44100;
     ctx->channels = channels ? channels : 2;
-    ctx->period_size_in_frames = period_size_in_frames;
 
     fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:CREATE:START] map_device_create starting for device '%s' (sr=%u, ch=%u, period=%u)...\n",
-            playback_device_id ? playback_device_id : "auto", ctx->sample_rate, ctx->channels, ctx->period_size_in_frames);
+            playback_device_id ? playback_device_id : "auto", ctx->sample_rate, ctx->channels, period_size_in_frames);
 
     ma_context_config ctx_cfg = ma_context_config_init();
     ma_result res = ma_context_init(NULL, 0, &ctx_cfg, &ctx->context);
@@ -251,23 +248,6 @@ map_device_context_t *map_device_create(
     ctx->sample_rate = ctx->device.sampleRate;
     ctx->channels = ctx->device.playback.channels;
 
-    /* Populate active device info */
-    if (playback_device_id && strlen(playback_device_id) > 0 && strcmp(playback_device_id, "auto") != 0)
-    {
-        strncpy(ctx->current_device_info.id, playback_device_id, sizeof(ctx->current_device_info.id) - 1);
-        ctx->current_device_info.is_auto = 0;
-        ctx->current_device_info.is_default = (ctx->current_device_info.is_auto ? 1 : 0);
-    }
-    else
-    {
-        strcpy(ctx->current_device_info.id, "auto");
-        ctx->current_device_info.is_auto = 1;
-        ctx->current_device_info.is_default = 1;
-    }
-    map_device_id_to_string(&ctx->device.playback.id, ctx->current_device_info.effective_id, sizeof(ctx->current_device_info.effective_id));
-    strncpy(ctx->current_device_info.name, ctx->device.playback.name, sizeof(ctx->current_device_info.name) - 1);
-    ctx->current_device_info.is_default = (ctx->current_device_info.is_auto ? 1 : 0);
-
     if (out_result)
         *out_result = 0;
     return ctx;
@@ -327,127 +307,6 @@ int32_t map_device_destroy(map_device_context_t *ctx)
     }
     free(ctx);
     fprintf(stderr, "[miniaudio_player][INFO] [C_BRIDGE:DESTROY:DONE] map_device_destroy completed successfully\n");
-    return 0;
-}
-
-uint32_t map_device_get_sample_rate(const map_device_context_t *ctx)
-{
-    return ctx ? ctx->sample_rate : 0;
-}
-
-uint32_t map_device_get_channels(const map_device_context_t *ctx)
-{
-    return ctx ? ctx->channels : 0;
-}
-
-int32_t map_device_get_current_device_info(const map_device_context_t *ctx, map_device_info_t *out_device)
-{
-    if (ctx == NULL || out_device == NULL)
-        return -2;
-    *out_device = ctx->current_device_info;
-    return 0;
-}
-
-int32_t map_device_set_device(map_device_context_t *ctx, const char *device_id)
-{
-    if (ctx == NULL)
-        return -2;
-
-    ma_bool32 was_started = (ctx->is_device_init && ma_device_is_started(&ctx->device));
-    if (ctx->is_device_init)
-    {
-        if (was_started)
-        {
-            ma_device_stop(&ctx->device);
-        }
-        if (ctx->device.pContext != NULL && ctx->device.pContext->callbacks.onDeviceDataLoopWakeup != NULL)
-        {
-            ctx->device.pContext->callbacks.onDeviceDataLoopWakeup(&ctx->device);
-        }
-        ma_device_uninit(&ctx->device);
-        ctx->is_device_init = MA_FALSE;
-    }
-
-    ma_device_config dev_cfg = ma_device_config_init(ma_device_type_playback);
-    dev_cfg.playback.format = ma_format_f32;
-    dev_cfg.playback.channels = ctx->channels;
-    dev_cfg.sampleRate = ctx->sample_rate;
-    dev_cfg.periodSizeInFrames = ctx->period_size_in_frames;
-    dev_cfg.dataCallback = map_device_data_callback;
-    dev_cfg.notificationCallback = map_device_notification_callback;
-    dev_cfg.pUserData = ctx;
-
-    ma_device_id custom_id;
-    ma_bool32 found = MA_FALSE;
-    if (device_id != NULL && strlen(device_id) > 0 && strcmp(device_id, "auto") != 0)
-    {
-        ma_device_info *pPlaybackInfos = NULL;
-        ma_uint32 playbackCount = 0;
-        if (ma_context_get_devices(&ctx->context, &pPlaybackInfos, &playbackCount, NULL, NULL) == MA_SUCCESS)
-        {
-            for (ma_uint32 i = 0; i < playbackCount; ++i)
-            {
-                char dev_hex[sizeof(ma_device_id) * 2 + 1];
-                map_device_id_to_string(&pPlaybackInfos[i].id, dev_hex, sizeof(dev_hex));
-                if (strcmp(pPlaybackInfos[i].name, device_id) == 0 ||
-                    strcmp(dev_hex, device_id) == 0)
-                {
-                    custom_id = pPlaybackInfos[i].id;
-                    dev_cfg.playback.pDeviceID = &custom_id;
-                    found = MA_TRUE;
-                    break;
-                }
-            }
-        }
-        if (!found)
-        {
-            if (map_string_to_device_id(device_id, &custom_id))
-            {
-                dev_cfg.playback.pDeviceID = &custom_id;
-                found = MA_TRUE;
-            }
-        }
-        if (!found)
-        {
-            dev_cfg.playback.pDeviceID = NULL;
-            device_id = "auto";
-        }
-    }
-
-    ma_result res = ma_device_init(&ctx->context, &dev_cfg, &ctx->device);
-    if (res != MA_SUCCESS && dev_cfg.playback.pDeviceID != NULL)
-    {
-        dev_cfg.playback.pDeviceID = NULL;
-        device_id = "auto";
-        res = ma_device_init(&ctx->context, &dev_cfg, &ctx->device);
-    }
-    if (res != MA_SUCCESS)
-    {
-        return -4;
-    }
-    ctx->is_device_init = MA_TRUE;
-    ctx->sample_rate = ctx->device.sampleRate;
-    ctx->channels = ctx->device.playback.channels;
-
-    if (device_id && strlen(device_id) > 0 && strcmp(device_id, "auto") != 0)
-    {
-        strncpy(ctx->current_device_info.id, device_id, sizeof(ctx->current_device_info.id) - 1);
-        ctx->current_device_info.is_auto = 0;
-        ctx->current_device_info.is_default = (ctx->current_device_info.is_auto ? 1 : 0);
-    }
-    else
-    {
-        strcpy(ctx->current_device_info.id, "auto");
-        ctx->current_device_info.is_auto = 1;
-        ctx->current_device_info.is_default = 1;
-    }
-    map_device_id_to_string(&ctx->device.playback.id, ctx->current_device_info.effective_id, sizeof(ctx->current_device_info.effective_id));
-    strncpy(ctx->current_device_info.name, ctx->device.playback.name, sizeof(ctx->current_device_info.name) - 1);
-
-    if (was_started)
-    {
-        ma_device_start(&ctx->device);
-    }
     return 0;
 }
 
@@ -570,7 +429,6 @@ map_device_context_t *map_capture_device_create(
     ctx->rust_user_data = rust_user_data;
     ctx->sample_rate = sample_rate ? sample_rate : 44100;
     ctx->channels = channels ? channels : 1;
-    ctx->period_size_in_frames = period_size_in_frames;
 
     ma_context_config ctx_cfg = ma_context_config_init();
     ma_result res = ma_context_init(NULL, 0, &ctx_cfg, &ctx->context);
@@ -641,8 +499,6 @@ map_device_context_t *map_capture_device_create(
     ctx->is_device_init = MA_TRUE;
     ctx->sample_rate = ctx->device.sampleRate;
     ctx->channels = ctx->device.capture.channels;
-    map_device_id_to_string(&ctx->device.capture.id, ctx->current_device_info.effective_id, sizeof(ctx->current_device_info.effective_id));
-    strncpy(ctx->current_device_info.name, ctx->device.capture.name, sizeof(ctx->current_device_info.name) - 1);
 
     if (out_result)
         *out_result = 0;

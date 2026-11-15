@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Configuration parameters for offline acoustic and metadata analysis.
 class RustAnalysisConfig {
@@ -1940,90 +1940,6 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   }) = RustPlayerEvent_Error;
 }
 
-/// Synchronous snapshot of playback telemetry metrics.
-class RustPlayerStatus {
-  /// Playback elapsed position in milliseconds.
-  final PlatformInt64 positionMs;
-
-  /// Total duration in milliseconds, or -1 if live or unbounded.
-  final PlatformInt64 durationMs;
-
-  /// Playback state integer code.
-  final int state;
-
-  /// Whether audio is actively rendering.
-  final bool isPlaying;
-
-  /// Whether the engine is buffering.
-  final bool isBuffering;
-
-  /// Master volume level.
-  final double volume;
-
-  /// Playback speed rate multiplier.
-  final double rate;
-
-  /// Pitch shift multiplier.
-  final double pitch;
-
-  /// Stream nominal bitrate in bits per second.
-  final int bitrate;
-
-  /// Stream sample rate in Hz.
-  final int sampleRate;
-
-  /// Number of output channels.
-  final int channels;
-
-  const RustPlayerStatus({
-    required this.positionMs,
-    required this.durationMs,
-    required this.state,
-    required this.isPlaying,
-    required this.isBuffering,
-    required this.volume,
-    required this.rate,
-    required this.pitch,
-    required this.bitrate,
-    required this.sampleRate,
-    required this.channels,
-  });
-
-  static Future<RustPlayerStatus> default_() =>
-      RustLib.instance.api.crateApiTypesRustPlayerStatusDefault();
-
-  @override
-  int get hashCode =>
-      positionMs.hashCode ^
-      durationMs.hashCode ^
-      state.hashCode ^
-      isPlaying.hashCode ^
-      isBuffering.hashCode ^
-      volume.hashCode ^
-      rate.hashCode ^
-      pitch.hashCode ^
-      bitrate.hashCode ^
-      sampleRate.hashCode ^
-      channels.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RustPlayerStatus &&
-          runtimeType == other.runtimeType &&
-          positionMs == other.positionMs &&
-          durationMs == other.durationMs &&
-          state == other.state &&
-          isPlaying == other.isPlaying &&
-          isBuffering == other.isBuffering &&
-          volume == other.volume &&
-          rate == other.rate &&
-          pitch == other.pitch &&
-          bitrate == other.bitrate &&
-          sampleRate == other.sampleRate &&
-          channels == other.channels;
-}
-
 /// Finalized summary metrics of a completed audio recording.
 class RustRecordingResult {
   /// File path where recorded audio was stored.
@@ -2197,54 +2113,6 @@ class RustSilenceConfig {
           minSilenceDurationMs == other.minSilenceDurationMs &&
           paddingMs == other.paddingMs &&
           enabled == other.enabled;
-}
-
-/// Metadata and specifications of a decoded audio sample held in memory.
-class RustSoundBufferInfo {
-  /// Unique integer buffer identifier.
-  final BigInt id;
-
-  /// Audio sample rate in Hz.
-  final int sampleRate;
-
-  /// Number of audio channels.
-  final int channels;
-
-  /// Duration of audio in milliseconds.
-  final PlatformInt64 durationMs;
-
-  /// Total audio frame count.
-  final BigInt frameCount;
-
-  const RustSoundBufferInfo({
-    required this.id,
-    required this.sampleRate,
-    required this.channels,
-    required this.durationMs,
-    required this.frameCount,
-  });
-
-  static Future<RustSoundBufferInfo> default_() =>
-      RustLib.instance.api.crateApiTypesRustSoundBufferInfoDefault();
-
-  @override
-  int get hashCode =>
-      id.hashCode ^
-      sampleRate.hashCode ^
-      channels.hashCode ^
-      durationMs.hashCode ^
-      frameCount.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RustSoundBufferInfo &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          sampleRate == other.sampleRate &&
-          channels == other.channels &&
-          durationMs == other.durationMs &&
-          frameCount == other.frameCount;
 }
 
 /// Emitter parameters for 3D positional audio sources.

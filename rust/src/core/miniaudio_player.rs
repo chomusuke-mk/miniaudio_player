@@ -238,11 +238,4 @@ impl MiniaudioPlayer {
     pub fn set_volume(&mut self, volume: f32) {
         self.music_dsp.set_volume(volume);
     }
-
-    /// Stops music playback and all polyphonic sound effects with optional fadeout.
-    #[inline]
-    pub fn stop_all(&mut self, fade_out_samples: usize) {
-        self.music_manager.stop();
-        self.effects_manager.stop_all_effects(fade_out_samples);
-    }
 }

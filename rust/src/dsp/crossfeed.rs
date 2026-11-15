@@ -25,25 +25,11 @@ impl Default for CrossfeedConfig {
 }
 
 impl CrossfeedConfig {
-    /// Completely disabled/bypassed crossfeed effect.
-    pub const OFF: Self = Self {
-        enabled: false,
-        cutoff_hz: 700.0,
-        feed_db: 4.5,
-    };
-
     /// Moffat-Bauer standard curve (700 Hz cutoff, 4.5 dB crossfeed).
     pub const MOFFAT_BAUER: Self = Self {
         enabled: true,
         cutoff_hz: 700.0,
         feed_db: 4.5,
-    };
-
-    /// Chu Moy classic headphone crossfeed curve (700 Hz cutoff, 6.0 dB crossfeed).
-    pub const CHU_MOY: Self = Self {
-        enabled: true,
-        cutoff_hz: 700.0,
-        feed_db: 6.0,
     };
 }
 
@@ -93,11 +79,6 @@ impl Bs2bCrossfeed {
         }
     }
 
-    /// Returns the active crossfeed configuration.
-    pub fn config(&self) -> CrossfeedConfig {
-        self.config
-    }
-
     /// Updates the sample rate and recalculates filter coefficients.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         let sr = sample_rate.clamp(2000, 384000);
@@ -105,13 +86,6 @@ impl Bs2bCrossfeed {
             self.sample_rate = sr;
             self.recalculate();
         }
-    }
-
-    /// Resets internal IIR delay line history buffers to zero.
-    pub fn reset_state(&mut self) {
-        self.asis = [0.0; 2];
-        self.lo = [0.0; 2];
-        self.hi = [0.0; 2];
     }
 
     /// Processes interleaved stereo samples in-place, applying binaural crossfeed mixing.

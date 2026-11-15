@@ -1,4 +1,4 @@
-//! HLS Playlist Parsing, AES-128-CBC Segment Decryption, and MPEG-2 TS Demuxing Tests.
+//! HLS Playlist Parsing and MPEG-2 TS Demuxing Tests.
 
 mod common;
 
@@ -7,9 +7,7 @@ use std::io::Read;
 
 use common::FixtureResolver;
 use miniaudio_player::decoder::SymphoniaEngine;
-use miniaudio_player::hls::{
-    Aes128SegmentDecryptor, M3u8Parser, MpegTsDemuxer, ParsedHlsPlaylist, TsAudioCodec,
-};
+use miniaudio_player::hls::{M3u8Parser, MpegTsDemuxer, ParsedHlsPlaylist, TsAudioCodec};
 
 #[test]
 fn test_m3u8_master_playlist_parsing() {
@@ -86,50 +84,6 @@ segment101.ts\n\
         }
         _ => panic!("Expected Media playlist"),
     }
-}
-
-#[test]
-fn test_aes128_cbc_pkcs7_and_no_padding_decryption() {
-    use aes::Aes128;
-    use cbc::cipher::block_padding::{NoPadding, Pkcs7};
-    use cbc::cipher::{BlockModeEncrypt, KeyIvInit};
-    type Aes128CbcEnc = cbc::Encryptor<Aes128>;
-
-    let key = [0x42u8; 16];
-    let iv = Aes128SegmentDecryptor::iv_from_sequence(1);
-    assert_eq!(iv[15], 1);
-    assert_eq!(iv[0], 0);
-
-    let hex_iv = Aes128SegmentDecryptor::parse_iv_hex("0x00000000000000000000000000000001")
-        .expect("Hex IV should parse");
-    assert_eq!(hex_iv, iv);
-
-    // 1. PKCS#7 padded encryption & decryption
-    let plaintext = b"Hello, HLS encrypted streaming audio data in Rust!";
-    let mut encrypted_buf = vec![0u8; plaintext.len() + 16];
-    let encryptor = Aes128CbcEnc::new((&key).into(), (&hex_iv).into());
-    let enc_len = encryptor
-        .encrypt_padded_b2b::<Pkcs7>(plaintext, &mut encrypted_buf)
-        .expect("Encryption should succeed")
-        .len();
-    encrypted_buf.truncate(enc_len);
-
-    let decrypted = Aes128SegmentDecryptor::decrypt_segment(&encrypted_buf, &key, &hex_iv)
-        .expect("PKCS#7 decryption should succeed");
-    assert_eq!(&decrypted[..], plaintext);
-
-    // 2. Multi-block unpadded CBC encryption & decryption (verifying true CBC chaining across blocks)
-    let raw_blocks = [0xAAu8; 64]; // 4 blocks of 16 bytes
-    let mut enc_blocks = [0u8; 64];
-    let enc_no_pad = Aes128CbcEnc::new((&key).into(), (&hex_iv).into());
-    enc_no_pad
-        .encrypt_padded_b2b::<NoPadding>(&raw_blocks, &mut enc_blocks)
-        .unwrap();
-
-    let dec_no_pad =
-        Aes128SegmentDecryptor::decrypt_segment_no_padding(&enc_blocks, &key, &hex_iv)
-            .expect("NoPadding CBC decryption should succeed");
-    assert_eq!(&dec_no_pad[..], &raw_blocks[..]);
 }
 
 #[test]

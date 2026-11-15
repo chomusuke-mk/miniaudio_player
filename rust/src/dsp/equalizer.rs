@@ -256,24 +256,6 @@ impl Iso10BandStage {
         self.recalculate_all_bands();
     }
 
-    /// Returns the current 10-band equalizer settings.
-    #[inline]
-    pub fn params(&self) -> EqualizerParams {
-        EqualizerParams {
-            enabled: self.enabled,
-            hz31: self.band_gains[0],
-            hz63: self.band_gains[1],
-            hz125: self.band_gains[2],
-            hz250: self.band_gains[3],
-            hz500: self.band_gains[4],
-            hz1k: self.band_gains[5],
-            hz2k: self.band_gains[6],
-            hz4k: self.band_gains[7],
-            hz8k: self.band_gains[8],
-            hz16k: self.band_gains[9],
-        }
-    }
-
     fn update_band(&mut self, band_idx: usize) {
         let fs = self.sample_rate as f64;
         let f0 = EQ_FREQUENCIES[band_idx];
@@ -371,18 +353,6 @@ impl StereoImagingStage {
     pub fn set_spatializer(&mut self, enabled: bool, width: f32) {
         self.spatializer_enabled = enabled;
         self.spatializer_width = width.clamp(0.0, 2.0);
-    }
-
-    /// Returns the current balance pan value (-1.0 to 1.0).
-    #[inline]
-    pub fn balance(&self) -> f32 {
-        self.balance
-    }
-
-    /// Returns whether mono downmix is active.
-    #[inline]
-    pub fn mono(&self) -> bool {
-        self.mono_enabled
     }
 
     /// Returns whether the 3D stereo widening spatializer is enabled.
@@ -503,12 +473,6 @@ impl Equalizer {
         self.stereo.set_spatializer(enabled, width);
     }
 
-    /// Returns the current 10-band equalizer gain parameters.
-    #[inline]
-    pub fn params(&self) -> EqualizerParams {
-        self.bands.params()
-    }
-
     /// Returns the active pre-amplification gain in dB.
     #[inline]
     pub fn preamp_db(&self) -> f32 {
@@ -519,18 +483,6 @@ impl Equalizer {
     #[inline]
     pub fn replay_gain(&self) -> ReplayGainConfig {
         self.preamp.replay_gain()
-    }
-
-    /// Returns the current stereo balance pan level.
-    #[inline]
-    pub fn balance(&self) -> f32 {
-        self.stereo.balance()
-    }
-
-    /// Returns whether mono downmix is active.
-    #[inline]
-    pub fn mono(&self) -> bool {
-        self.stereo.mono()
     }
 
     /// Returns whether the 3D stereo widening spatializer is enabled.

@@ -1,13 +1,11 @@
 //! HTTP Live Streaming (HLS) protocol support.
 //!
-//! Includes M3U8 manifest parsing (master playlists and media playlists),
-//! AES-128 segment decryption, and MPEG-TS container demuxing.
+//! Includes M3U8 manifest parsing (master playlists and media playlists)
+//! and MPEG-TS container demuxing.
 
-pub mod crypto;
 pub mod m3u8_parser;
 pub mod mpegts;
 
-pub use crypto::Aes128SegmentDecryptor;
 pub use m3u8_parser::{
     EncryptionKeyInfo, M3u8Parser, ParsedHlsPlaylist, SegmentInfo, VariantStreamInfo,
 };

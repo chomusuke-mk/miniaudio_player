@@ -3,8 +3,9 @@
 //! Feeds captured microphone audio into a lock-free SPSC queue for auto-ducking sidechain
 //! evaluation and composite master mixing.
 
-use std::os::raw::{c_char, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::ffi::CStr;
+use std::os::raw::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::bridge::ffi::{
@@ -28,31 +29,40 @@ pub struct CaptureReceiver {
 unsafe impl Send for CaptureReceiver {}
 
 /// C trampoline forwarding captured PCM frames to [`CaptureReceiver::on_captured_pcm`].
+///
+/// # Safety
+/// `ptr` must point to a valid [`CaptureReceiver`] and `input` must point to at least
+/// `count * (*ptr).channels` readable `f32` samples.
 pub unsafe extern "C" fn capture_receiver_capture_trampoline(
     ptr: *mut c_void,
     input: *const f32,
     count: usize,
 ) {
+    if ptr.is_null() || input.is_null() || count == 0 {
+        return;
+    }
     let r = &mut *(ptr as *mut CaptureReceiver);
-    r.on_captured_pcm(input, count);
+    let total_samples = count * r.channels;
+    let in_slice = std::slice::from_raw_parts(input, total_samples);
+    r.on_captured_pcm(in_slice);
 }
 
 /// C trampoline for capture notifications (no-op).
+///
+/// # Safety
+/// Invoked by C audio device notification callbacks; parameters are unused.
 pub unsafe extern "C" fn capture_receiver_notif_trampoline(_ptr: *mut c_void, _notif: i32) {}
 
 impl CaptureReceiver {
     /// Processes incoming captured PCM frames and enqueues them into the SPSC buffer.
     #[inline]
-    pub fn on_captured_pcm(&mut self, input_frames: *const f32, frame_count: usize) {
-        if input_frames.is_null() || frame_count == 0 || !self.is_active.load(Ordering::Relaxed) {
+    pub fn on_captured_pcm(&mut self, in_slice: &[f32]) {
+        if in_slice.is_empty() || !self.is_active.load(Ordering::Relaxed) {
             return;
         }
 
-        let total_samples = frame_count * self.channels;
-        let in_slice = unsafe { std::slice::from_raw_parts(input_frames, total_samples) };
-
         let slots = self.producer.slots();
-        let to_write = slots.min(total_samples);
+        let to_write = slots.min(in_slice.len());
         if to_write > 0 {
             if let Ok(mut chunk) = self.producer.write_chunk(to_write) {
                 let (s1, s2) = chunk.as_mut_slices();
@@ -67,7 +77,7 @@ impl CaptureReceiver {
     }
 }
 
-/// Hardware capture node encapsulating device creation, start, stop, and volume controls.
+/// Hardware capture node encapsulating device creation, start, stop, and lifecycle.
 pub struct DeviceCaptureNode {
     /// Raw pointer to the native miniaudio device context.
     pub device_ctx: *mut MapDeviceContext,
@@ -75,12 +85,6 @@ pub struct DeviceCaptureNode {
     pub receiver_ptr: *mut CaptureReceiver,
     /// Flag indicating if capture is running.
     pub is_active: Arc<AtomicBool>,
-    /// Input capture volume.
-    pub mic_volume: Arc<AtomicU32>,
-    /// Whether direct monitor pass-through is active.
-    pub monitor_direct: Arc<AtomicBool>,
-    /// Direct monitor volume.
-    pub monitor_volume: Arc<AtomicU32>,
     /// Audio sample rate in Hz.
     pub sample_rate: u32,
     /// Audio channel count.
@@ -116,7 +120,7 @@ impl DeviceCaptureNode {
         sample_rate: u32,
         channels: u32,
         period_size: u32,
-        capture_device_id: *const c_char,
+        capture_device_id: Option<&CStr>,
     ) -> Result<(Box<Self>, rtrb::Consumer<f32>), i32> {
         let sr = if sample_rate > 0 { sample_rate } else { 44100 };
         let ch = if channels > 0 { channels } else { 1 };
@@ -136,6 +140,9 @@ impl DeviceCaptureNode {
         };
 
         let receiver_ptr = Box::into_raw(Box::new(receiver));
+        let capture_device_ptr = capture_device_id
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null());
 
         let mut dev_res = 0;
         let device_ctx = unsafe {
@@ -143,7 +150,7 @@ impl DeviceCaptureNode {
                 sr,
                 ch,
                 period,
-                capture_device_id,
+                capture_device_ptr,
                 receiver_ptr as *mut c_void,
                 &mut dev_res,
             )
@@ -160,9 +167,6 @@ impl DeviceCaptureNode {
             device_ctx,
             receiver_ptr,
             is_active,
-            mic_volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            monitor_direct: Arc::new(AtomicBool::new(false)),
-            monitor_volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             sample_rate: sr,
             channels: ch,
         });
@@ -189,48 +193,6 @@ impl DeviceCaptureNode {
         if !self.device_ctx.is_null() {
             unsafe {
                 let _ = map_device_stop(self.device_ctx);
-            }
-        }
-    }
-
-    /// Returns whether the capture node is actively receiving frames.
-    pub fn is_capturing(&self) -> bool {
-        self.is_active.load(Ordering::Acquire)
-    }
-
-    /// Sets microphone input capture volume multiplier `[0.0, 2.0]`.
-    pub fn set_mic_volume(&self, volume: f32) {
-        let clamped = volume.clamp(0.0, 2.0);
-        self.mic_volume.store(clamped.to_bits(), Ordering::Relaxed);
-    }
-
-    /// Returns current microphone capture volume multiplier.
-    pub fn mic_volume(&self) -> f32 {
-        f32::from_bits(self.mic_volume.load(Ordering::Relaxed))
-    }
-
-    /// Configures direct zero-latency monitor pass-through to output speakers.
-    pub fn set_direct_monitoring(&self, enabled: bool, volume: f32) {
-        self.monitor_direct.store(enabled, Ordering::Release);
-        self.monitor_volume.store(volume.clamp(0.0, 2.0).to_bits(), Ordering::Release);
-    }
-
-    /// Returns whether direct monitoring is active.
-    pub fn is_direct_monitoring(&self) -> bool {
-        self.monitor_direct.load(Ordering::Acquire)
-    }
-
-    /// Returns direct monitoring volume level.
-    pub fn monitor_volume(&self) -> f32 {
-        f32::from_bits(self.monitor_volume.load(Ordering::Relaxed))
-    }
-
-    /// Feeds simulated PCM frames for testing in headless / CI environments without audio inputs.
-    pub fn supply_mock_input(&self, frames: &[f32]) {
-        if !self.receiver_ptr.is_null() {
-            unsafe {
-                let r = &mut *self.receiver_ptr;
-                r.on_captured_pcm(frames.as_ptr(), frames.len() / r.channels.max(1));
             }
         }
     }

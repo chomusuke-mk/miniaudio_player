@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::core::voice_pool::{SoundBuffer, SoundBufferReaperFn};
-use crate::dsp::voice_pool::SoundBuffer as DspSoundBuffer;
 use crate::sync::thread::{self, JoinHandle};
 
 const REAPER_QUEUE_CAPACITY: usize = 1024;
@@ -16,9 +15,9 @@ const REAPER_QUEUE_CAPACITY: usize = 1024;
 /// Retired heavy resources queued for destruction by `map-reaper`.
 pub enum ReaperTrash {
     /// Single retired PCM sound effect buffer pushed from real-time slots.
-    SoundBuffer(DspSoundBuffer),
+    SoundBuffer(SoundBuffer),
     /// Batch of retired PCM sound effect buffers displaced by catalog reloads or LRU eviction.
-    SoundBuffers(Vec<DspSoundBuffer>),
+    SoundBuffers(Vec<SoundBuffer>),
     /// Generic deferred destructor closure (devices, renderers, decoder threads, recorders).
     Deferred(Box<dyn FnOnce() + Send>),
     /// Internal sentinel signalling `map-reaper` to exit cleanly after draining queued items.
@@ -100,12 +99,6 @@ impl ReaperHandle {
             }
         }
         drop(value);
-    }
-
-    /// Submits an already heap-boxed heavy object for off-thread destruction.
-    #[inline]
-    pub fn reap_boxed<T: Send + 'static>(&self, value: T) {
-        self.reap_value(value);
     }
 
     /// Submits displaced PCM sound effect buffers for off-thread destruction.

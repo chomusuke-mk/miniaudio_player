@@ -85,26 +85,6 @@ extern "C"
     int32_t map_device_destroy(map_device_context_t *ctx);
 
     /**
-     * Returns the active hardware sample rate of the device context.
-     */
-    uint32_t map_device_get_sample_rate(const map_device_context_t *ctx);
-
-    /**
-     * Returns the active channel count of the device context.
-     */
-    uint32_t map_device_get_channels(const map_device_context_t *ctx);
-
-    /**
-     * Reconfigures the device context to route to a new target hardware device ID.
-     */
-    int32_t map_device_set_device(map_device_context_t *ctx, const char *device_id);
-
-    /**
-     * Copies current hardware device information into out_device.
-     */
-    int32_t map_device_get_current_device_info(const map_device_context_t *ctx, map_device_info_t *out_device);
-
-    /**
      * Enumerates all physical audio playback devices available on the host system.
      */
     int32_t map_device_enumerate_devices(map_device_info_t **out_devices, uint32_t *out_count);

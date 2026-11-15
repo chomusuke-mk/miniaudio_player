@@ -300,7 +300,7 @@ pub fn analyze_audio_source(
     let mut deck = StreamingDeck::new_analysis_deck(44100, 2)
         .map_err(|e| format!("Failed to create analysis deck: {}", e))?;
 
-    let res = DualSource::open_deck_source(&mut deck, &source, None);
+    let res = DualSource::open_deck_source_with_cancel(&mut deck, &source, None, None);
     if res != 0 {
         return Err(format!("Failed to open audio source (code: {})", res));
     }

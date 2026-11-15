@@ -11,9 +11,8 @@ use std::time::Duration;
 
 use common::FixtureResolver;
 use miniaudio_player::buffer::{
-    BlockFetchPhase, BufferError, ByteSource, ByteSourceStream, CustomDartByteSource,
-    DartReadRequest, DemuxedStreamReader, FileByteSource, MemoryByteSource, MetadataStreamReader,
-    SlidingWindowConfig, SourceKind, StreamBuffer, StreamByteSource, StreamSession,
+    BlockFetchPhase, BufferError, CustomDartByteSource, DartReadRequest, DemuxedStreamReader,
+    FileByteSource, MetadataStreamReader, SlidingWindowConfig, StreamBuffer, StreamSession,
 };
 use miniaudio_player::decoder::classifier::{BoundaryStatus, ContainerFormat, StreamClassifier};
 use miniaudio_player::decoder::symphonia_engine::SymphoniaEngine;
@@ -23,7 +22,7 @@ use symphonia::core::io::MediaSource;
 fn test_pinned_head_read() {
     let buffer = StreamSession::new(1024 * 1024, Some(5000), false);
     let head = b"ID3\x03\x00\x00\x00\x00\x00\x0aHEADERDATA";
-    buffer.set_head(head);
+    buffer.head.set_linear_bytes(head);
     buffer.set_audio_start(head.len() as u64);
 
     let mut out = [0u8; 10];
@@ -77,7 +76,7 @@ fn test_deterministic_write_at_offset_zero_and_arbitrary() {
 fn test_contiguous_spanning_read_head_into_ring() {
     let buffer = StreamSession::new(1024, Some(10000), false);
     let head = b"HEAD";
-    buffer.set_head(head);
+    buffer.head.set_linear_bytes(head);
     buffer.set_audio_start(4);
 
     let audio = b"AUDIO_DATA";
@@ -123,7 +122,7 @@ fn test_demuxed_stream_reader_preserves_eof_on_read() {
     let n = reader.read(&mut out).unwrap();
     assert_eq!(n, 10);
     assert_eq!(&out, b"0123456789");
-    assert_eq!(reader.cursor(), 10);
+    assert_eq!(reader.stream_position().unwrap(), 10);
 
     // Remaining 6 bytes should read and then return clean 0-byte EOF without blocking
     let mut rest = [0u8; 10];
@@ -135,14 +134,14 @@ fn test_demuxed_stream_reader_preserves_eof_on_read() {
     assert_eq!(n_eof, 0, "Reader must preserve EOF state across reads");
 
     reader.seek(SeekFrom::Start(4)).unwrap();
-    assert_eq!(reader.cursor(), 4);
+    assert_eq!(reader.stream_position().unwrap(), 4);
 
     let mut out2 = [0u8; 4];
     reader.read_exact(&mut out2).unwrap();
     assert_eq!(&out2, b"4567");
 
     reader.seek(SeekFrom::Current(2)).unwrap();
-    assert_eq!(reader.cursor(), 10);
+    assert_eq!(reader.stream_position().unwrap(), 10);
 }
 
 #[test]
@@ -205,7 +204,7 @@ fn test_stream_buffer_linear_sparse_and_circular_real_bytes() {
     assert_eq!(&l_out, b"GHIJKL");
 
     // 2. Sparse StreamBuffer (metadata) with chunk coalescing and null/WouldBlock on unbuffered seek
-    let meta_buf = StreamBuffer::new_sparse(64, 64, Some(1000));
+    let meta_buf = StreamBuffer::new_sparse(64, Some(1000));
     meta_buf.commit_chunk(0, b"HEAD_META_").unwrap();
     meta_buf.commit_chunk(10, b"CONTIGUOUS").unwrap();
     meta_buf.commit_chunk(900, b"TAIL_TAG").unwrap();
@@ -268,7 +267,7 @@ fn test_sliding_window_progressive_block_coalescing_and_eof() {
     };
     let session = StreamSession::with_config(64_000, Some(57_000), false, cfg, None);
     session.set_audio_start(0);
-    session.configure_sliding_window(cfg, 1000, 1.0);
+    session.body.configure_sliding_window(cfg, 1000, 1.0);
 
     // Phase 1 (UrgentBootstrap): ahead = 0 -> requests 1 window (5_000 B = 5s)
     let order1 = session.next_block_request().expect("Phase 1 order expected");
@@ -300,7 +299,7 @@ fn test_sliding_window_progressive_block_coalescing_and_eof() {
     session.feed_chunk(&vec![0x44; order4.length]).unwrap();
 
     // Forward window is now full (ahead = 30_000 B = 30s). If paused or at 0s, zero requests are made.
-    assert_eq!(session.ahead_bytes(), 30_000);
+    assert_eq!(session.body.ahead_bytes(), 30_000);
     assert!(session.next_block_request().is_none());
 
     // Advance playback from 1s to 14s: ahead drops from 29_000 to 16_000 -> hysteresis holds (no tiny requests)
@@ -310,13 +309,14 @@ fn test_sliding_window_progressive_block_coalescing_and_eof() {
             session.next_block_request().is_none(),
             "Must not request miniature blocks at {}s (ahead={} B)",
             sec,
-            session.ahead_bytes()
+            session.body.ahead_bytes()
         );
     }
 
     // At 15s (cursor = 15_000 B), ahead is 15_000 B (deficit = 15_000 B == 3 windows) -> triggers 15s super-block
     session.advance_read_cursor(15_000);
-    assert_eq!(session.back_buffered_bytes(), 15_000);
+    let range_at_15s = session.get_range();
+    assert_eq!(range_at_15s.read_cursor_byte - range_at_15s.start_byte, 15_000);
     let order5 = session
         .next_block_request()
         .expect("Phase 3 refill expected at 15s");
@@ -325,7 +325,7 @@ fn test_sliding_window_progressive_block_coalescing_and_eof() {
     assert_eq!(order5.length, 15_000);
     assert!(!order5.reaches_eof);
     session.feed_chunk(&vec![0x55; order5.length]).unwrap();
-    assert_eq!(session.ahead_bytes(), 30_000);
+    assert_eq!(session.body.ahead_bytes(), 30_000);
 
     // Advance cursor to 25_000 B: back retention protects [15_000 .. 25_000] (10s behind cursor)
     session.advance_read_cursor(25_000);
@@ -353,7 +353,7 @@ fn test_sliding_window_rate_scaling_and_live_edge() {
     let cfg = SlidingWindowConfig::default();
     let live_session = StreamSession::with_config(512_000, None, true, cfg, None);
     live_session.set_audio_start(0);
-    live_session.configure_sliding_window(cfg, 1000, 1.0);
+    live_session.body.configure_sliding_window(cfg, 1000, 1.0);
 
     let state_1x = live_session.body.sliding_window_state().unwrap();
     assert_eq!(state_1x.back_retention_bytes, 10_000);
@@ -382,30 +382,7 @@ fn test_sliding_window_rate_scaling_and_live_edge() {
 }
 
 #[test]
-fn test_memory_and_file_byte_sources() {
-    let data = b"Hello, World! Symphonia ByteSource Test.".to_vec();
-    let mut source = MemoryByteSource::new(data.clone());
-
-    assert_eq!(source.total_bytes(), Some(data.len() as u64));
-    assert!(ByteSource::is_seekable(&source));
-    assert_eq!(source.source_kind(), SourceKind::Memory);
-
-    let mut buf = [0u8; 5];
-    assert_eq!(source.read(&mut buf).unwrap(), 5);
-    assert_eq!(&buf, b"Hello");
-
-    source.seek(SeekFrom::Start(7)).unwrap();
-    let mut buf2 = [0u8; 5];
-    assert_eq!(source.read(&mut buf2).unwrap(), 5);
-    assert_eq!(&buf2, b"World");
-
-    let tail = source.probe_tail((data.len() - 5) as u64, 5).unwrap();
-    assert_eq!(&tail, b"Test.");
-
-    let mut buf3 = [0u8; 1];
-    assert_eq!(source.read(&mut buf3).unwrap(), 1);
-    assert_eq!(&buf3, b"!");
-
+fn test_file_byte_source() {
     // FileByteSource using project-relative scratch directory
     let file_path = FixtureResolver::scratch_file_path("test_file_source.bin");
     let content = vec![0x42u8; 4096];
@@ -415,9 +392,8 @@ fn test_memory_and_file_byte_sources() {
     }
 
     let mut f_source = FileByteSource::open(&file_path).unwrap();
-    assert_eq!(f_source.total_bytes(), Some(4096));
-    assert!(ByteSource::is_seekable(&f_source));
-    assert_eq!(f_source.source_kind(), SourceKind::File);
+    assert_eq!(f_source.byte_len(), Some(4096));
+    assert!(MediaSource::is_seekable(&f_source));
 
     let mut f_buf = [0u8; 100];
     assert_eq!(f_source.read(&mut f_buf).unwrap(), 100);
@@ -430,36 +406,19 @@ fn test_memory_and_file_byte_sources() {
 }
 
 #[test]
-fn test_stream_and_custom_dart_byte_sources() {
-    let session = StreamSession::new(4096, Some(8192), false);
-    session.set_head(b"HEADER_PREFIX");
-    session.set_audio_start(13);
-    session.feed_chunk(b"_AUDIO_PAYLOAD_CHUNK").unwrap();
-
-    let mut source = StreamByteSource::new(session);
-    assert_eq!(source.total_bytes(), Some(8192));
-    assert!(ByteSource::is_seekable(&source));
-    assert_eq!(source.source_kind(), SourceKind::HttpVod);
-
-    let mut buf = [0u8; 13];
-    assert_eq!(source.read(&mut buf).unwrap(), 13);
-    assert_eq!(&buf, b"HEADER_PREFIX");
-
-    let mut buf2 = [0u8; 20];
-    assert_eq!(source.read(&mut buf2).unwrap(), 20);
-    assert_eq!(&buf2, b"_AUDIO_PAYLOAD_CHUNK");
-
+fn test_custom_dart_byte_source() {
     // CustomDartByteSource pull, seek, and error propagation
     let (tx, rx) = channel::<DartReadRequest>();
     let request_sender = std::sync::Arc::new(move |req: DartReadRequest| {
         tx.send(req).unwrap();
     });
 
-    let (mut custom_src, handle) = CustomDartByteSource::new(
+    let (mut custom_src, handle) = CustomDartByteSource::with_registry(
         42,
         Some(1000),
         true,
         request_sender,
+        None,
     );
 
     let handle_clone = handle.clone();
@@ -490,14 +449,6 @@ fn test_stream_and_custom_dart_byte_sources() {
     assert_eq!(custom_src.read(&mut seek_out).unwrap(), 9);
     assert_eq!(&seek_out, b"SEEK_DATA");
     dart_thread.join().unwrap();
-
-    let memory = MemoryByteSource::new(b"STREAM_ADAPTER_TEST".to_vec());
-    let mut adapter = ByteSourceStream(memory);
-    assert!(adapter.is_seekable());
-    assert_eq!(adapter.byte_len(), Some(19));
-    let mut abuf = [0u8; 6];
-    assert_eq!(adapter.read(&mut abuf).unwrap(), 6);
-    assert_eq!(&abuf, b"STREAM");
 }
 
 #[test]

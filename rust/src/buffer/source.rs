@@ -1,92 +1,18 @@
 //! Rust-Native Byte Provider Subsystem & Dart Custom Source Bridge.
 //!
-//! Provides a unified `ByteSource` trait hierarchy across:
+//! Provides `MediaSource` implementations across:
 //! - `FileByteSource`: Buffered local filesystem access.
-//! - `MemoryByteSource`: In-memory cursor access.
-//! - `StreamByteSource`: Progressive HTTP streaming over `StreamSession` (`Head` + `Body`).
 //! - `CustomDartByteSource`: Asynchronous Pull-with-Prefetch bridge for Dart DRM/decryption.
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{
-    BufReader, Cursor, Error as IoError, ErrorKind, Read, Result as IoResult, Seek, SeekFrom,
-};
+use std::io::{BufReader, Error as IoError, ErrorKind, Read, Result as IoResult, Seek, SeekFrom};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 use symphonia::core::io::MediaSource;
 
 use crate::sync::MonotonicInstant;
-
-use super::demux_reader::DemuxedStreamReader;
-use super::stream_buffer::StreamSession;
-
-/// Discriminator for source kinds for telemetry, logging, and metrics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceKind {
-    File,
-    Memory,
-    HttpVod,
-    HttpLive,
-    CustomDart,
-}
-
-/// Unified black-box abstraction for all byte streams consumed by the decoding engine.
-pub trait ByteSource: Read + Seek + Send + Sync + 'static {
-    /// Total stream length in bytes, or `None` for live/indeterminate streams.
-    fn total_bytes(&self) -> Option<u64>;
-
-    /// Whether random-access seeking is supported.
-    fn is_seekable(&self) -> bool;
-
-    /// Source kind for diagnostics and telemetry.
-    fn source_kind(&self) -> SourceKind;
-
-    /// Non-destructive probe of trailing bytes (ID3v1, MP4 moov atoms).
-    fn probe_tail(&mut self, tail_offset: u64, len: usize) -> IoResult<Vec<u8>> {
-        let saved_pos = self.stream_position()?;
-        self.seek(SeekFrom::Start(tail_offset))?;
-        let mut buf = vec![0u8; len];
-        let bytes_read = self.read(&mut buf)?;
-        buf.truncate(bytes_read);
-        self.seek(SeekFrom::Start(saved_pos))?;
-        Ok(buf)
-    }
-
-    /// Abort active downloads or connections.
-    fn abort(&mut self) -> IoResult<()> {
-        Ok(())
-    }
-}
-
-/// Adapts any `ByteSource` into a Symphonia `MediaSource`.
-pub struct ByteSourceStream<S: ByteSource>(pub S);
-
-impl<S: ByteSource> Read for ByteSourceStream<S> {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl<S: ByteSource> Seek for ByteSourceStream<S> {
-    #[inline]
-    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
-        self.0.seek(pos)
-    }
-}
-
-impl<S: ByteSource> MediaSource for ByteSourceStream<S> {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        self.0.is_seekable()
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        self.0.total_bytes()
-    }
-}
 
 // ----------------------------------------------------------------------------
 // 1. FileByteSource
@@ -116,12 +42,6 @@ impl FileByteSource {
         let file = File::open(path)?;
         Self::new(file)
     }
-
-    /// Returns the total size of the file in bytes.
-    #[inline]
-    pub fn size(&self) -> u64 {
-        self.size
-    }
 }
 
 impl Read for FileByteSource {
@@ -138,20 +58,6 @@ impl Seek for FileByteSource {
     }
 }
 
-impl ByteSource for FileByteSource {
-    fn total_bytes(&self) -> Option<u64> {
-        Some(self.size)
-    }
-
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    fn source_kind(&self) -> SourceKind {
-        SourceKind::File
-    }
-}
-
 impl MediaSource for FileByteSource {
     #[inline]
     fn is_seekable(&self) -> bool {
@@ -165,141 +71,7 @@ impl MediaSource for FileByteSource {
 }
 
 // ----------------------------------------------------------------------------
-// 2. MemoryByteSource
-// ----------------------------------------------------------------------------
-
-/// Byte source reading from an in-memory byte buffer via `Cursor`.
-pub struct MemoryByteSource {
-    cursor: Cursor<Vec<u8>>,
-    size: u64,
-}
-
-impl MemoryByteSource {
-    /// Creates a new `MemoryByteSource` wrapping raw byte data.
-    pub fn new(data: Vec<u8>) -> Self {
-        let size = data.len() as u64;
-        Self {
-            cursor: Cursor::new(data),
-            size,
-        }
-    }
-}
-
-impl Read for MemoryByteSource {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.cursor.read(buf)
-    }
-}
-
-impl Seek for MemoryByteSource {
-    #[inline]
-    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
-        self.cursor.seek(pos)
-    }
-}
-
-impl ByteSource for MemoryByteSource {
-    fn total_bytes(&self) -> Option<u64> {
-        Some(self.size)
-    }
-
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    fn source_kind(&self) -> SourceKind {
-        SourceKind::Memory
-    }
-}
-
-impl MediaSource for MemoryByteSource {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        Some(self.size)
-    }
-}
-
-// ----------------------------------------------------------------------------
-// 3. StreamByteSource (Progressive HTTP & Sliding Buffer)
-// ----------------------------------------------------------------------------
-
-/// Byte source reading progressively downloaded stream data from a `StreamSession`.
-pub struct StreamByteSource {
-    reader: DemuxedStreamReader,
-}
-
-impl StreamByteSource {
-    /// Creates a new `StreamByteSource` wrapping the `StreamSession`.
-    pub fn new(session: StreamSession) -> Self {
-        Self {
-            reader: DemuxedStreamReader::new(session),
-        }
-    }
-
-    /// Returns a reference to the underlying `StreamSession`.
-    #[inline]
-    pub fn session(&self) -> &StreamSession {
-        self.reader.session()
-    }
-}
-
-impl Read for StreamByteSource {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.reader.read(buf)
-    }
-}
-
-impl Seek for StreamByteSource {
-    #[inline]
-    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
-        self.reader.seek(pos)
-    }
-}
-
-impl ByteSource for StreamByteSource {
-    fn total_bytes(&self) -> Option<u64> {
-        self.reader.session().total_size()
-    }
-
-    fn is_seekable(&self) -> bool {
-        !self.reader.session().is_live()
-    }
-
-    fn source_kind(&self) -> SourceKind {
-        if self.reader.session().is_live() {
-            SourceKind::HttpLive
-        } else {
-            SourceKind::HttpVod
-        }
-    }
-
-    fn abort(&mut self) -> IoResult<()> {
-        self.reader.session().abort();
-        Ok(())
-    }
-}
-
-impl MediaSource for StreamByteSource {
-    #[inline]
-    fn is_seekable(&self) -> bool {
-        !self.reader.session().is_live()
-    }
-
-    #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        self.reader.session().total_size()
-    }
-}
-
-// ----------------------------------------------------------------------------
-// 4. CustomDartByteSource (Asynchronous Pull-with-Prefetch Bridge)
+// 2. CustomDartByteSource (Asynchronous Pull-with-Prefetch Bridge)
 // ----------------------------------------------------------------------------
 
 /// Read request dispatched from Rust to Dart over the FRB event stream.
@@ -317,7 +89,7 @@ pub struct DartReadRequest {
 
 struct CustomSharedState {
     pending_request_id: u64,
-    received_data: Option<Result<Vec<u8>, String>>,
+    received_data: Option<Vec<u8>>,
     is_eof: bool,
     aborted: bool,
 }
@@ -332,26 +104,20 @@ impl CustomSharedState {
         if self.aborted {
             return Some(Err(custom_aborted_error()));
         }
-        let res = self.received_data.as_mut()?;
-        match res {
-            Ok(data) if !data.is_empty() => {
-                let to_copy = data.len().min(out.len());
-                out[..to_copy].copy_from_slice(&data[..to_copy]);
-                data.drain(..to_copy);
-                if data.is_empty() && !self.is_eof {
-                    self.received_data = None;
-                }
-                Some(Ok(to_copy))
+        let data = self.received_data.as_mut()?;
+        if !data.is_empty() {
+            let to_copy = data.len().min(out.len());
+            out[..to_copy].copy_from_slice(&data[..to_copy]);
+            data.drain(..to_copy);
+            if data.is_empty() && !self.is_eof {
+                self.received_data = None;
             }
-            Ok(_) => {
-                if self.is_eof {
-                    Some(Ok(0))
-                } else {
-                    self.received_data = None;
-                    None
-                }
-            }
-            Err(err) => Some(Err(IoError::new(ErrorKind::Other, err.clone()))),
+            Some(Ok(to_copy))
+        } else if self.is_eof {
+            Some(Ok(0))
+        } else {
+            self.received_data = None;
+            None
         }
     }
 }
@@ -412,20 +178,6 @@ impl CustomSourceRegistry {
         }
     }
 
-    /// Delivers an error payload to the handle awaiting `request_id`, removing the entry.
-    pub fn fail_request(&self, request_id: u64, err_msg: String) -> bool {
-        let handle = {
-            let mut guard = lock_unpoisoned(&self.inner);
-            guard.by_request.remove(&request_id)
-        };
-        if let Some(h) = handle {
-            h.notify_error(request_id, err_msg);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Removes an expired, timed-out, or aborted `request_id` mapping.
     pub fn unregister_request(&self, request_id: u64) {
         let mut guard = lock_unpoisoned(&self.inner);
@@ -453,7 +205,7 @@ impl CustomSourceRegistry {
     }
 }
 
-/// Thread-safe controller handle for supplying bytes or error notifications to a `CustomDartByteSource`.
+/// Thread-safe controller handle for supplying bytes or abort notifications to a `CustomDartByteSource`.
 #[derive(Clone)]
 pub struct CustomByteSourceHandle {
     shared: Arc<(Mutex<CustomSharedState>, Condvar)>,
@@ -465,18 +217,8 @@ impl CustomByteSourceHandle {
         let (lock, cvar) = &*self.shared;
         let mut guard = lock_unpoisoned(lock);
         if guard.pending_request_id == request_id || guard.pending_request_id == 0 {
-            guard.received_data = Some(Ok(data));
+            guard.received_data = Some(data);
             guard.is_eof = is_eof;
-            cvar.notify_all();
-        }
-    }
-
-    /// Notifies the awaiting reader thread that a custom stream read operation failed.
-    pub fn notify_error(&self, request_id: u64, err_msg: String) {
-        let (lock, cvar) = &*self.shared;
-        let mut guard = lock_unpoisoned(lock);
-        if guard.pending_request_id == request_id || guard.pending_request_id == 0 {
-            guard.received_data = Some(Err(err_msg));
             cvar.notify_all();
         }
     }
@@ -486,7 +228,6 @@ impl CustomByteSourceHandle {
         let (lock, cvar) = &*self.shared;
         let mut guard = lock_unpoisoned(lock);
         guard.aborted = true;
-        guard.received_data = Some(Err("Aborted".to_string()));
         cvar.notify_all();
     }
 }
@@ -508,16 +249,6 @@ impl CustomDartByteSource {
     pub const MIN_PREFETCH_BYTES: usize = 32 * 1024;
     /// Maximum duration to wait for a Dart read response before timing out (10s).
     pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-
-    /// Creates a new `CustomDartByteSource` and its accompanying response controller handle.
-    pub fn new(
-        stream_id: u32,
-        total_size: Option<u64>,
-        seekable: bool,
-        request_sender: Arc<dyn Fn(DartReadRequest) + Send + Sync>,
-    ) -> (Self, CustomByteSourceHandle) {
-        Self::with_registry(stream_id, total_size, seekable, request_sender, None)
-    }
 
     /// Creates a new `CustomDartByteSource` registered against an optional [`CustomSourceRegistry`].
     pub fn with_registry(
@@ -713,34 +444,6 @@ impl Seek for CustomDartByteSource {
             self.cursor = new_cursor;
         }
         Ok(self.cursor)
-    }
-}
-
-impl ByteSource for CustomDartByteSource {
-    fn total_bytes(&self) -> Option<u64> {
-        self.total_size
-    }
-
-    fn is_seekable(&self) -> bool {
-        self.seekable
-    }
-
-    fn source_kind(&self) -> SourceKind {
-        SourceKind::CustomDart
-    }
-
-    fn abort(&mut self) -> IoResult<()> {
-        if let Some(ref reg) = self.registry {
-            if self.last_request_id != 0 {
-                reg.unregister_request(self.last_request_id);
-            }
-        }
-        let (lock, cvar) = &*self.shared;
-        let mut guard = lock_unpoisoned(lock);
-        guard.aborted = true;
-        guard.received_data = Some(Err("Aborted".to_string()));
-        cvar.notify_all();
-        Ok(())
     }
 }
 

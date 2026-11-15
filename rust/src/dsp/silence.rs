@@ -191,16 +191,6 @@ impl SilenceDetector {
         self.state
     }
 
-    /// Returns whether the detector is currently buffering potential silence in its hold queue.
-    pub fn is_holding(&self) -> bool {
-        self.state == SilenceState::Holding
-    }
-
-    /// Returns whether the detector is actively skipping audio frames.
-    pub fn is_skipping(&self) -> bool {
-        self.state == SilenceState::Skipping
-    }
-
     /// Process input PCM frames from `input` and writes non-silent audio frames to `output`.
     /// Returns `(frames_written_to_output, input_frames_consumed)`.
     pub fn process_frames(&mut self, input: &[f32], output: &mut [f32]) -> (usize, usize) {

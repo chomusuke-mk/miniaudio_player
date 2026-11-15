@@ -16,23 +16,6 @@ use std::time::Duration;
 
 use crate::sync::{lock_unpoisoned, wait_timeout_unpoisoned, MonotonicInstant};
 
-/// Operational states for a [`StreamBuffer`] or [`StreamSession`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BufferState {
-    /// Buffer has not yet been initialized.
-    Uninitialized = 0,
-    /// Header segment is being probed for container and codec configuration.
-    ProbingHead = 1,
-    /// Buffer contains playable data.
-    Ready = 2,
-    /// Buffer is stalled awaiting asynchronous byte delivery.
-    Buffering = 3,
-    /// End of stream reached.
-    Eof = 4,
-    /// Stream operation was aborted.
-    Aborted = 5,
-}
-
 /// Contiguous byte range and fullness telemetry snapshot.
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
@@ -345,12 +328,7 @@ impl StreamBuffer {
     }
 
     /// Creates a non-circular sparse `StreamBuffer` (used for `Metadata`).
-    pub fn new_sparse(
-        initial_size: usize,
-        min_growth: usize,
-        virtual_size: Option<u64>,
-    ) -> Arc<Self> {
-        let _ = initial_size;
+    pub fn new_sparse(min_growth: usize, virtual_size: Option<u64>) -> Arc<Self> {
         Arc::new(Self {
             backend: Mutex::new(BufferBackend::Sparse {
                 chunks: BTreeMap::new(),
@@ -571,37 +549,6 @@ impl StreamBuffer {
         self.data_signal.notify_all();
     }
 
-    /// Updates the stream byte rate (bytes/sec) and recalculates sliding-window byte dimensions.
-    pub fn set_stream_byte_rate(&self, byte_rate_per_sec: u64) {
-        if byte_rate_per_sec == 0 {
-            return;
-        }
-        {
-            let mut guard = lock_unpoisoned(&self.backend);
-            if let BufferBackend::Circular {
-                capacity,
-                anchor_offset,
-                range_start,
-                range_end,
-                audio_end,
-                ref mut window,
-                ..
-            } = *guard
-            {
-                window.byte_rate_per_sec = byte_rate_per_sec;
-                window.recalculate(capacity);
-                self.refresh_circular_window_fill_locked(
-                    anchor_offset,
-                    range_start,
-                    range_end,
-                    audio_end,
-                    window,
-                );
-            }
-        }
-        self.data_signal.notify_all();
-    }
-
     /// Updates the playback speed multiplier and dynamically scales forward prefetch/window sizes.
     pub fn set_playback_rate(&self, playback_rate: f32) {
         if !playback_rate.is_finite() || playback_rate <= 0.0 {
@@ -750,32 +697,6 @@ impl StreamBuffer {
         }
     }
 
-    /// Returns the number of retained backward bytes (`Back`) currently buffered behind `read_cursor`.
-    pub fn back_buffered_bytes(&self) -> u64 {
-        let guard = lock_unpoisoned(&self.backend);
-        if let BufferBackend::Circular {
-            anchor_offset,
-            range_start,
-            range_end,
-            ..
-        } = *guard
-        {
-            let cursor = self
-                .read_cursor
-                .load(Ordering::Acquire)
-                .clamp(anchor_offset, range_end);
-            cursor.saturating_sub(range_start)
-        } else {
-            0
-        }
-    }
-
-    /// Whether this buffer operates as a circular ring buffer.
-    #[inline]
-    pub fn is_circular(&self) -> bool {
-        self.is_circular
-    }
-
     /// Current read cursor offset.
     #[inline]
     pub fn cursor(&self) -> u64 {
@@ -884,17 +805,6 @@ impl StreamBuffer {
         self.should_abort.store(false, Ordering::Release);
     }
 
-    /// Attaches or updates the on-demand `ByteFetchTask` (`getRealBytes`).
-    pub fn set_fetcher(&self, fetcher: Option<ByteFetchTask>) {
-        let mut guard = lock_unpoisoned(&self.backend);
-        if let BufferBackend::Circular {
-            fetcher: ref mut f, ..
-        } = *guard
-        {
-            *f = fetcher;
-        }
-    }
-
     /// Configures whether a background push streamer thread is actively feeding this circular buffer.
     pub fn set_push_streaming(&self, active: bool) {
         let mut guard = lock_unpoisoned(&self.backend);
@@ -950,18 +860,6 @@ impl StreamBuffer {
         }
         self.version.fetch_add(1, Ordering::Release);
         self.data_signal.notify_all();
-    }
-
-    /// Sets the virtual stream size for a `Sparse` buffer.
-    pub fn set_virtual_size(&self, size: Option<u64>) {
-        let mut guard = lock_unpoisoned(&self.backend);
-        if let BufferBackend::Sparse {
-            ref mut virtual_size,
-            ..
-        } = *guard
-        {
-            *virtual_size = size;
-        }
     }
 
     /// Returns the virtual size for a `Sparse` buffer, or the current length for `Linear`.
@@ -1602,22 +1500,6 @@ impl StreamSession {
         )
     }
 
-    /// Creates a new three-buffer `StreamSession` with an on-demand `ByteFetchTask` (`getRealBytes`).
-    pub fn with_fetcher(
-        capacity_bytes: usize,
-        total_size: Option<u64>,
-        is_live: bool,
-        fetcher: Option<ByteFetchTask>,
-    ) -> Self {
-        Self::with_config(
-            capacity_bytes,
-            total_size,
-            is_live,
-            SlidingWindowConfig::default(),
-            fetcher,
-        )
-    }
-
     /// Creates a new three-buffer `StreamSession` with custom [`SlidingWindowConfig`] and optional `ByteFetchTask`.
     pub fn with_config(
         capacity_bytes: usize,
@@ -1631,11 +1513,7 @@ impl StreamSession {
             StreamBuffer::DEFAULT_MIN_GROWTH,
         );
         let body = StreamBuffer::new_circular(capacity_bytes, config, fetcher);
-        let metadata = StreamBuffer::new_sparse(
-            StreamBuffer::DEFAULT_HEAD_INITIAL_SIZE,
-            StreamBuffer::DEFAULT_MIN_GROWTH,
-            total_size,
-        );
+        let metadata = StreamBuffer::new_sparse(StreamBuffer::DEFAULT_MIN_GROWTH, total_size);
 
         let session = Self {
             head,
@@ -1651,17 +1529,6 @@ impl StreamSession {
             session.body.set_audio_end(Some(tot));
         }
         session
-    }
-
-    /// Configures the temporal sliding-window parameters, stream byte rate, and playback rate on `Body`.
-    pub fn configure_sliding_window(
-        &self,
-        config: SlidingWindowConfig,
-        byte_rate_per_sec: u64,
-        playback_rate: f32,
-    ) {
-        self.body
-            .configure_sliding_window(config, byte_rate_per_sec, playback_rate);
     }
 
     /// Computes exact stream byte rate from `bitrate_bps` (or `audio_payload_bytes / duration_ms`)
@@ -1704,16 +1571,6 @@ impl StreamSession {
     /// Suspends the producer thread until `Body` requires the next [`BlockFetchOrder`] or `timeout` elapses.
     pub fn wait_for_next_block(&self, timeout: Duration) -> Option<BlockFetchOrder> {
         self.body.wait_for_next_block(timeout)
-    }
-
-    /// Unread forward bytes (`Ahead`) currently buffered ahead of `read_cursor` in `Body`.
-    pub fn ahead_bytes(&self) -> u64 {
-        self.body.ahead_bytes()
-    }
-
-    /// Retained backward bytes (`Back`) currently buffered behind `read_cursor` in `Body`.
-    pub fn back_buffered_bytes(&self) -> u64 {
-        self.body.back_buffered_bytes()
     }
 
     /// Returns `true` when this is a live stream and the accumulated `Ahead` time-shift buffer
@@ -1795,12 +1652,6 @@ impl StreamSession {
         }
 
         boundary
-    }
-
-    /// Populates the `Head` linear buffer and mirrors header metadata into the `Metadata` sparse buffer.
-    pub fn set_head(&self, head_bytes: &[u8]) {
-        self.head.set_linear_bytes(head_bytes);
-        let _ = self.metadata.commit_chunk(0, head_bytes);
     }
 
     /// Populates trailing metadata at `tail_offset` in the `Metadata` sparse buffer
@@ -2123,37 +1974,9 @@ impl StreamSession {
         self.metadata.version()
     }
 
-    /// Synthesizes a contiguous metadata byte vector from `Metadata` (or initial probe bytes).
-    pub fn get_meta_bytes(&self) -> Vec<u8> {
-        let bytes = self.metadata.synthesize_meta_bytes();
-        if !bytes.is_empty() {
-            return bytes;
-        }
-        let mut probe = [0u8; 64];
-        let start = self.audio_start.load(Ordering::Acquire);
-        if let Ok(n) = self.body.read_at(start, &mut probe) {
-            return probe[..n].to_vec();
-        }
-        Vec::new()
-    }
-
-    /// Copies synthesized metadata bytes into `out`.
-    pub fn copy_meta_bytes(&self, out: &mut [u8]) -> usize {
-        let bytes = self.get_meta_bytes();
-        let to_copy = out.len().min(bytes.len());
-        out[..to_copy].copy_from_slice(&bytes[..to_copy]);
-        to_copy
-    }
-
     /// Updates dynamic ICY stream metadata in `Metadata`.
     pub fn set_icy_meta(&self, data: &[u8]) {
         self.metadata.set_icy_meta(data);
-    }
-
-    /// Audio start offset in bytes.
-    #[inline]
-    pub fn audio_start(&self) -> u64 {
-        self.audio_start.load(Ordering::Acquire)
     }
 
     /// Whether this session is a live stream.
@@ -2174,12 +1997,6 @@ impl StreamSession {
         self.head.linear_len()
     }
 
-    /// Circular audio body capacity in bytes.
-    #[inline]
-    pub fn ring_capacity(&self) -> usize {
-        self.body.circular_metrics().2
-    }
-
     /// Current cached audio window start byte offset.
     #[inline]
     pub fn range_start(&self) -> u64 {
@@ -2196,12 +2013,6 @@ impl StreamSession {
     #[inline]
     pub fn is_eof(&self) -> bool {
         self.body.is_eof()
-    }
-
-    /// Whether `audio_end` boundary has been locked.
-    #[inline]
-    pub fn is_tail_locked(&self) -> bool {
-        self.audio_end.load(Ordering::Acquire) != u64::MAX
     }
 
     /// Whether the entire stream has been buffered from `audio_start` to `total_size`.
