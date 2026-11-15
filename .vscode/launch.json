@@ -8,6 +8,7 @@
       "name": "example",
       "cwd": "example",
       "request": "launch",
+      "args": ["--web-header=Cross-Origin-Opener-Policy=same-origin", "--web-header=Cross-Origin-Embedder-Policy=require-corp"],
       "type": "dart"
     },
     {

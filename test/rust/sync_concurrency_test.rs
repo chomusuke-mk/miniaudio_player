@@ -285,3 +285,47 @@ fn test_stream_session_concurrent_feed_and_read() {
     writer.join().unwrap();
     reader.join().unwrap();
 }
+
+#[test]
+fn test_wasm_net_protocol_ring_math_control_block_and_header_wire() {
+    use miniaudio_player::net::wasm_ureq_protocol::*;
+
+    assert_eq!(ring_available(0, 0), 0);
+    assert_eq!(ring_available(1024, 0), 1024);
+
+    let near_end = RING_MOD - 512;
+    let wrapped_w = advance_ring_pos(near_end, 1536);
+    assert_eq!(wrapped_w, 1024);
+    assert_eq!(ring_available(wrapped_w, near_end), 1536);
+
+    let full_w = advance_ring_pos(1234, RING_CAP);
+    assert_eq!(ring_available(full_w, 1234), RING_CAP);
+
+    let shared = WasmStreamShared::new(7);
+    assert_eq!(shared.id, 7);
+    assert_ne!(shared.ctrl_ptr(), 0);
+    assert_ne!(shared.ring_ptr(), 0);
+    assert_ne!(shared.hdr_ptr(), 0);
+    assert_eq!(shared.ctrl[CTRL_STATE].load(Ordering::Relaxed), STATE_CONNECTING);
+    assert_eq!(shared.ctrl[CTRL_STATUS].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_WRITE_POS].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_READ_POS].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_WAKE_RUST].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_WAKE_JS].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_ABORTED].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_HDR_LEN].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_JS_EXITED].load(Ordering::Relaxed), 0);
+    assert_eq!(shared.ctrl[CTRL_JS_WAIT_FALLBACK].load(Ordering::Relaxed), 0);
+    assert_ne!(STATE_HEADERS_READY, STATE_EOF);
+    assert_ne!(STATE_EOF, STATE_ERROR);
+
+    let wire = b"Content-Type\0audio/mpeg\nICY-MetaInt\0 16000 \n\nbadline\n\0emptykey\n";
+    let headers = decode_header_wire_bytes(wire);
+    assert_eq!(
+        headers,
+        vec![
+            ("content-type".to_string(), "audio/mpeg".to_string()),
+            ("icy-metaint".to_string(), "16000".to_string()),
+        ]
+    );
+}

@@ -67,6 +67,7 @@ pub fn init_wasm_thread_spawner() {
     #[cfg(target_arch = "wasm32")]
     {
         thread::ensure_main_thread_spawner();
+        crate::net::ureq::ensure_network_worker();
     }
 }
 

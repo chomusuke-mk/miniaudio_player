@@ -10,6 +10,7 @@ use crate::core::dual_source::AudioSourceCore;
 use crate::core::dual_source::{resolve_local_source_path, strip_file_prefix};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 pub use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoiceStealingPolicy};
+use crate::net::ureq;
 
 /// Classifies an [`AudioSourceCore`] into its cache retention [`EffectSourceType`].
 #[inline]
@@ -283,6 +284,36 @@ pub fn apply_jitter(base: f32, jitter_amount: f32, seed: u32, salt: u32) -> f32 
     }
 }
 
+fn fetch_effect_bytes_via_ureq(
+    id: &str,
+    url: &str,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+) -> Result<Vec<u8>, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(std::time::Duration::from_secs(5)))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(10)))
+        .timeout_per_read(Some(std::time::Duration::from_secs(10)))
+        .max_idle_connections(0)
+        .build()
+        .into();
+    let mut req = agent.get(url);
+    if let Some(hdrs) = headers {
+        for h in hdrs {
+            req = req.header(&h.key, &h.value);
+        }
+    }
+    let resp = req
+        .call()
+        .map_err(|e| format!("Failed to fetch network effect '{}' ({}): {}", id, url, e))?;
+    let mut bytes = Vec::new();
+    use std::io::Read;
+    resp.into_body()
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read network effect '{}' bytes: {}", id, e))?;
+    Ok(bytes)
+}
+
 /// Decodes an [`AudioSourceCore`] into a PCM [`SoundBuffer`].
 pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundBuffer, String> {
     if let Some(ref bytes) = source.data_bytes {
@@ -295,37 +326,15 @@ pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundB
     let trimmed = source.source.trim();
     #[cfg(target_arch = "wasm32")]
     {
-        let bytes = crate::bridge::ffi::wasm_fetch_source_bytes(trimmed, source.headers.as_deref())
-            .map_err(|e| format!("Failed to fetch effect '{}' ({}): code {}", id, trimmed, e))?;
-        return SoundBuffer::decode_from_bytes(&bytes)
-            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e));
+        let bytes = fetch_effect_bytes_via_ureq(id, trimmed, source.headers.as_deref())?;
+        SoundBuffer::decode_from_bytes(&bytes)
+            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            let agent: ureq::Agent = ureq::Agent::config_builder()
-                .timeout_connect(Some(std::time::Duration::from_secs(5)))
-                .timeout_recv_response(Some(std::time::Duration::from_secs(10)))
-                .timeout_per_read(Some(std::time::Duration::from_secs(10)))
-                .max_idle_connections(0)
-                .build()
-                .into();
-            let mut req = agent.get(trimmed);
-            if let Some(ref hdrs) = source.headers {
-                for h in hdrs {
-                    req = req.header(&h.key, &h.value);
-                }
-            }
-            let resp = req
-                .call()
-                .map_err(|e| format!("Failed to fetch network effect '{}' ({}): {}", id, trimmed, e))?;
-            let mut bytes = Vec::new();
-            use std::io::Read;
-            resp.into_body()
-                .into_reader()
-                .read_to_end(&mut bytes)
-                .map_err(|e| format!("Failed to read network effect '{}' bytes: {}", id, e))?;
+            let bytes = fetch_effect_bytes_via_ureq(id, trimmed, source.headers.as_deref())?;
             return SoundBuffer::decode_from_bytes(&bytes)
                 .map_err(|e| format!("Decoding network effect '{}' failed: {}", id, e));
         }

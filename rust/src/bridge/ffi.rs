@@ -121,12 +121,9 @@ extern "C" {
 #[cfg(target_arch = "wasm32")]
 mod wasm_device_bridge {
     use super::*;
-    use flutter_rust_bridge::for_generated::js_sys::{
-        Array, Float32Array, Function, Uint8Array,
-    };
+    use flutter_rust_bridge::for_generated::js_sys::Float32Array;
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::wasm_bindgen::JsCast;
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -161,7 +158,6 @@ mod wasm_device_bridge {
         static RENDER_BUFFERS: RefCell<(Vec<f32>, Vec<f32>)> = const {
             RefCell::new((Vec::new(), Vec::new()))
         };
-        static SYNC_FETCH_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
     }
 
     #[wasm_bindgen]
@@ -236,197 +232,6 @@ mod wasm_device_bridge {
 
             Float32Array::from(mix_buf.as_slice())
         })
-    }
-
-    /// Synchronously fetches an asset or HTTP audio source inside a Web Worker.
-    pub fn wasm_fetch_source_bytes(
-        source: &str,
-        headers: Option<&[crate::api::types::RustHttpHeader]>,
-    ) -> Result<Vec<u8>, i32> {
-        wasm_fetch_source_bytes_range(source, headers, None)
-    }
-
-    /// Synchronously fetches an asset or HTTP audio source (with optional byte range) inside a Web Worker.
-    pub fn wasm_fetch_source_bytes_range(
-        source: &str,
-        headers: Option<&[crate::api::types::RustHttpHeader]>,
-        byte_range: Option<(u64, u64)>,
-    ) -> Result<Vec<u8>, i32> {
-        let range_hdr = if let Some((length, offset)) = byte_range {
-            if length == 0 {
-                return Err(MAP_ERROR_DECODE_FAILED);
-            }
-            Some(format!(
-                "bytes={}-{}",
-                offset,
-                offset.saturating_add(length - 1)
-            ))
-        } else {
-            None
-        };
-
-        let func = SYNC_FETCH_FN.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.is_none() {
-                let code = r#"
-                    var raw = String(src || '').trim();
-                    if (!raw) return -2;
-                    if (raw.indexOf('data:') === 0) {
-                        try {
-                            var comma = raw.indexOf(',');
-                            if (comma < 0) return -6;
-                            var meta = raw.substring(0, comma);
-                            var payload = raw.substring(comma + 1);
-                            if (meta.indexOf(';base64') >= 0) {
-                                var bin = atob(payload);
-                                var out = new Uint8Array(bin.length);
-                                for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-                                return [200, out];
-                            }
-                            return [200, new TextEncoder().encode(decodeURIComponent(payload))];
-                        } catch (_) {
-                            return -6;
-                        }
-                    }
-                    var origin = (self.location && self.location.origin && self.location.origin !== 'null')
-                        ? self.location.origin
-                        : '';
-                    var resolveAssetUrl = function(rel) {
-                        var clean = rel.replace(/^\/+/, '');
-                        var encoded = clean.split('/').map(function(seg) {
-                            return seg.replace(/#/g, '%23');
-                        }).join('/');
-                        return origin ? (origin + '/' + encoded) : encoded;
-                    };
-                    var candidates = [];
-                    if (raw.indexOf('icy://') === 0) {
-                        candidates.push('http://' + raw.substring(6));
-                    } else if (raw.indexOf('http://') === 0 || raw.indexOf('https://') === 0 || raw.indexOf('blob:') === 0) {
-                        candidates.push(raw);
-                    } else {
-                        var stripped = raw;
-                        if (stripped.indexOf('asset:///') === 0) stripped = stripped.substring(9);
-                        else if (stripped.indexOf('asset://') === 0) stripped = stripped.substring(8);
-                        else if (stripped.indexOf('file:///') === 0) stripped = stripped.substring(8);
-                        else if (stripped.indexOf('file://') === 0) stripped = stripped.substring(7);
-                        stripped = stripped.replace(/^\/+/, '');
-                        if (stripped.indexOf('assets/') === 0) {
-                            candidates.push(resolveAssetUrl('assets/' + stripped));
-                            candidates.push(resolveAssetUrl(stripped));
-                        } else {
-                            candidates.push(resolveAssetUrl(stripped));
-                            candidates.push(resolveAssetUrl('assets/' + stripped));
-                        }
-                    }
-                    var doFetch = function(targetUrl, useRange) {
-                        var xhr = new XMLHttpRequest();
-                        xhr.open('GET', targetUrl, false);
-                        xhr.responseType = 'arraybuffer';
-                        var sentRange = false;
-                        if (hdrs && hdrs.length) {
-                            for (var h = 0; h < hdrs.length; h++) {
-                                var kv = hdrs[h];
-                                if (kv && kv.length >= 2) {
-                                    var k = String(kv[0] || '');
-                                    var lower = k.toLowerCase();
-                                    if (lower === 'icy-metadata') continue;
-                                    if (lower === 'range') sentRange = true;
-                                    try { xhr.setRequestHeader(k, String(kv[1] || '')); } catch (_) {}
-                                }
-                            }
-                        }
-                        if (useRange && !sentRange && rangeHdr) {
-                            try { xhr.setRequestHeader('Range', String(rangeHdr)); } catch (_) {}
-                        }
-                        xhr.send(null);
-                        if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
-                            var u8 = new Uint8Array(xhr.response);
-                            if (u8.byteLength > 0) return [xhr.status, u8];
-                        }
-                        return null;
-                    };
-                    for (var c = 0; c < candidates.length; c++) {
-                        try {
-                            var first = doFetch(candidates[c], !!rangeHdr && candidates[c].indexOf('blob:') !== 0);
-                            if (first) return first;
-                        } catch (_) {}
-                        if (rangeHdr && candidates[c].indexOf('blob:') !== 0) {
-                            try {
-                                var fallback = doFetch(candidates[c], false);
-                                if (fallback) return fallback;
-                            } catch (_) {}
-                        }
-                    }
-                    return -5;
-                "#;
-                *slot = Some(Function::new_with_args("src, hdrs, rangeHdr", code));
-            }
-            slot.clone().unwrap()
-        });
-
-        let headers_arr = Array::new();
-        if let Some(hdrs) = headers {
-            for h in hdrs {
-                let pair = Array::new();
-                pair.push(&JsValue::from_str(&h.key));
-                pair.push(&JsValue::from_str(&h.value));
-                headers_arr.push(&pair);
-            }
-        }
-
-        let range_arg = range_hdr
-            .as_deref()
-            .map(JsValue::from_str)
-            .unwrap_or(JsValue::NULL);
-
-        let res = func
-            .call3(
-                &JsValue::NULL,
-                &JsValue::from_str(source),
-                &headers_arr.into(),
-                &range_arg,
-            )
-            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
-
-        if let Some(err_code) = res.as_f64() {
-            let code = err_code as i32;
-            return Err(if code < 0 {
-                code
-            } else {
-                MAP_ERROR_FILE_NOT_FOUND
-            });
-        }
-
-        let pair = res
-            .dyn_into::<Array>()
-            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
-        if pair.length() < 2 {
-            return Err(MAP_ERROR_FILE_NOT_FOUND);
-        }
-        let status = pair.get(0).as_f64().unwrap_or(200.0) as u16;
-        let u8_arr = pair
-            .get(1)
-            .dyn_into::<Uint8Array>()
-            .map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
-        let mut vec = u8_arr.to_vec();
-        if vec.is_empty() {
-            return Err(MAP_ERROR_FILE_NOT_FOUND);
-        }
-
-        if let Some((length, offset)) = byte_range {
-            if status == 206 {
-                if let Ok(len_usize) = usize::try_from(length) {
-                    if vec.len() > len_usize {
-                        vec.truncate(len_usize);
-                    }
-                }
-            } else {
-                vec = crate::hls::slice_byte_range(&vec, length, offset)
-                    .ok_or(MAP_ERROR_DECODE_FAILED)?;
-            }
-        }
-
-        Ok(vec)
     }
 
     pub unsafe fn map_device_create(

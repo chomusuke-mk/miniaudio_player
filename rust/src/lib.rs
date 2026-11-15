@@ -15,6 +15,7 @@ pub mod dsp;
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 pub mod hls;
 pub mod metadata;
+pub mod net;
 pub mod sync;
 
 pub use bridge::ffi::*;

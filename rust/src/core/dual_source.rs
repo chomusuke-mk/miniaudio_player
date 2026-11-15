@@ -2,9 +2,9 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
-use std::io::Cursor;
 #[cfg(not(target_arch = "wasm32"))]
-use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
+use std::io::{Cursor, ErrorKind, Read};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use crate::sync::thread::{self, JoinHandle};
@@ -13,9 +13,8 @@ use std::time::Duration;
 use crate::bridge::ffi::*;
 use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, StreamBuffer, StreamSession};
 use crate::core::renderer::{AudioRenderer, DspCommand};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::decoder::BoundaryStatus;
-use crate::decoder::{BoundaryInfo, StreamClassifier, SymphoniaEngine};
+use crate::decoder::{BoundaryInfo, BoundaryStatus, StreamClassifier, SymphoniaEngine};
+use crate::net::ureq;
 use crate::dsp::channel_matrix::ChannelMatrix;
 use crate::dsp::crossfeed::CrossfeedConfig;
 use crate::dsp::equalizer::{EqualizerParams, ReplayGainConfig};
@@ -133,7 +132,6 @@ fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn build_network_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
@@ -146,7 +144,6 @@ fn build_network_agent() -> ureq::Agent {
 }
 
 /// Bounded HTTP probe agent used during cancellable initial stream open/header sniff.
-#[cfg(not(target_arch = "wasm32"))]
 fn build_network_probe_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
@@ -158,7 +155,6 @@ fn build_network_probe_agent() -> ureq::Agent {
         .into()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn apply_http_headers(
     mut req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
     headers: Option<&[crate::api::types::RustHttpHeader]>,
@@ -171,7 +167,6 @@ fn apply_http_headers(
     req
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn response_header_str<'a>(
     res: &'a ureq::http::Response<ureq::Body>,
     name: &str,
@@ -179,7 +174,6 @@ fn response_header_str<'a>(
     res.headers().get(name).and_then(|v| v.to_str().ok())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn synthesize_icy_id3_container(raw_icy: &[u8]) -> Option<Vec<u8>> {
     let text = String::from_utf8_lossy(raw_icy);
     let trimmed = text.trim_end_matches('\0').trim();
@@ -232,7 +226,6 @@ fn synthesize_icy_id3_container(raw_icy: &[u8]) -> Option<Vec<u8>> {
     Some(id3)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 struct IcyDemuxReader {
     inner: Box<dyn Read + Send>,
     metaint: usize,
@@ -242,7 +235,6 @@ struct IcyDemuxReader {
     icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl IcyDemuxReader {
     fn new(
         inner: Box<dyn Read + Send>,
@@ -266,7 +258,7 @@ impl IcyDemuxReader {
             match self.inner.read(buf) {
                 Ok(0) => return Ok(false),
                 Ok(n) => buf = &mut buf[n..],
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e),
             }
         }
@@ -274,7 +266,6 @@ impl IcyDemuxReader {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Read for IcyDemuxReader {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         if self.metaint == 0 {
@@ -326,11 +317,6 @@ impl Read for IcyDemuxReader {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn slice_byte_range(bytes: &[u8], length: u64, offset: u64) -> Option<Vec<u8>> {
-    crate::hls::slice_byte_range(bytes, length, offset)
-}
-
 fn demux_or_wrap_hls_segment(
     seg_url: &str,
     content_type: Option<&str>,
@@ -377,7 +363,6 @@ fn read_local_segment_bytes(path: &str, byte_range: Option<(u64, u64)>) -> Optio
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn fetch_hls_segment_audio(
     agent: &ureq::Agent,
     seg_url: &str,
@@ -412,7 +397,7 @@ fn fetch_hls_segment_audio(
                 .take(max_read)
                 .read_to_end(&mut buf)
                 .ok()?;
-            slice_byte_range(&buf, length, offset)?
+            crate::hls::slice_byte_range(&buf, length, offset)?
         }
     } else {
         let mut buf = Vec::new();
@@ -424,46 +409,36 @@ fn fetch_hls_segment_audio(
 
 #[derive(Clone)]
 enum HlsFetchBackend {
-    #[cfg(not(target_arch = "wasm32"))]
     Network {
         agent: Arc<ureq::Agent>,
         headers: Option<Vec<crate::api::types::RustHttpHeader>>,
     },
     #[cfg(not(target_arch = "wasm32"))]
     LocalFile,
-    #[cfg(target_arch = "wasm32")]
-    Wasm {
-        headers: Option<Vec<crate::api::types::RustHttpHeader>>,
-        is_network: bool,
-    },
 }
 
 impl HlsFetchBackend {
-    fn into_streaming_backend(&self) -> Self {
+    fn to_streaming_backend(&self) -> Self {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Network { headers, .. } => Self::Network {
                 agent: Arc::new(build_network_agent()),
                 headers: headers.clone(),
             },
-            _ => self.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::LocalFile => Self::LocalFile,
         }
     }
 
     fn is_remote_http(&self) -> bool {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Network { .. } => true,
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => false,
-            #[cfg(target_arch = "wasm32")]
-            Self::Wasm { is_network, .. } => *is_network,
         }
     }
 
     fn fetch_playlist(&self, url: &str) -> Result<Vec<u8>, i32> {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Network { agent, headers } => {
                 let req = apply_http_headers(agent.get(url), headers.as_deref());
                 match req.call() {
@@ -494,10 +469,6 @@ impl HlsFetchBackend {
                 let resolved = resolve_local_source_path(url);
                 std::fs::read(&resolved).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)
             }
-            #[cfg(target_arch = "wasm32")]
-            Self::Wasm { headers, .. } => {
-                crate::bridge::ffi::wasm_fetch_source_bytes_range(url, headers.as_deref(), None)
-            }
         }
     }
 
@@ -507,7 +478,6 @@ impl HlsFetchBackend {
         byte_range: Option<(u64, u64)>,
     ) -> Option<(Vec<u8>, i32)> {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Network { agent, headers } => {
                 fetch_hls_segment_audio(agent, seg_url, headers.as_deref(), byte_range)
             }
@@ -516,24 +486,6 @@ impl HlsFetchBackend {
                 let resolved = resolve_local_source_path(seg_url);
                 let raw_bytes = read_local_segment_bytes(&resolved, byte_range)?;
                 demux_or_wrap_hls_segment(&resolved, None, raw_bytes)
-            }
-            #[cfg(target_arch = "wasm32")]
-            Self::Wasm {
-                headers,
-                is_network,
-            } => {
-                let target = if *is_network {
-                    seg_url.to_string()
-                } else {
-                    resolve_local_source_path(seg_url)
-                };
-                let raw_bytes = crate::bridge::ffi::wasm_fetch_source_bytes_range(
-                    &target,
-                    headers.as_deref(),
-                    byte_range,
-                )
-                .ok()?;
-                demux_or_wrap_hls_segment(&target, None, raw_bytes)
             }
         }
     }
@@ -693,7 +645,6 @@ fn spawn_hls_streamer_thread(
         });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn fetch_range_bytes(
     agent: &ureq::Agent,
     url: &str,
@@ -724,24 +675,27 @@ fn fetch_range_bytes(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn prefetch_initial_stream_bytes_cancellable(
     reader: &mut impl Read,
     content_length: i64,
     cancel: Option<&CancelToken>,
-) -> (Vec<u8>, bool) {
+) -> (Vec<u8>, bool, bool) {
     let mut initial_data = Vec::with_capacity(131072);
     let mut read_buf = [0u8; 32768];
+    let mut reached_eof = false;
 
     loop {
         if cancel.is_some_and(|c| c.is_cancelled()) {
-            return (Vec::new(), true);
+            return (Vec::new(), true, false);
         }
         match reader.read(&mut read_buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                reached_eof = true;
+                break;
+            }
             Ok(n) => {
                 if cancel.is_some_and(|c| c.is_cancelled()) {
-                    return (Vec::new(), true);
+                    return (Vec::new(), true, false);
                 }
                 initial_data.extend_from_slice(&read_buf[..n]);
                 if crate::hls::M3u8Parser::is_m3u8(&initial_data) {
@@ -750,7 +704,7 @@ fn prefetch_initial_stream_bytes_cancellable(
                 if initial_data.len() >= 65536 {
                     let (status, boundary) =
                         StreamClassifier::detect_head_boundary(&initial_data, content_length);
-                    if status != crate::decoder::classifier::BoundaryStatus::NeedMore {
+                    if status != BoundaryStatus::NeedMore {
                         let min_required = (boundary.audio_start.max(0) as usize)
                             .saturating_add(32768)
                             .min(if content_length > 0 {
@@ -767,7 +721,7 @@ fn prefetch_initial_stream_bytes_cancellable(
                     }
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
@@ -776,13 +730,13 @@ fn prefetch_initial_stream_bytes_cancellable(
         && content_length > 0
         && initial_data.len() < (content_length as usize).min(65536)
     {
-        return (Vec::new(), cancel.is_some_and(|c| c.is_cancelled()));
+        return (Vec::new(), cancel.is_some_and(|c| c.is_cancelled()), false);
     }
 
-    (initial_data, false)
+    (initial_data, false, reached_eof)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 fn spawn_network_streamer_thread(
     mut reader: Box<dyn Read + Send>,
     session: StreamSession,
@@ -794,12 +748,13 @@ fn spawn_network_streamer_thread(
     is_live: bool,
 ) {
     crate::map_log!(3, "Network streamer thread started");
-    let _ = std::thread::Builder::new()
+    let _ = thread::Builder::new()
         .name("miniaudio-net-streamer".to_string())
         .spawn(move || {
             session.body.set_push_streaming(true);
             let mut chunk = vec![0u8; 32768];
             let mut range_retries = 0u32;
+            let mut range_seek_failures = 0u32;
             let mut stream_pos = session.range_end();
 
             while !abort_stream.load(Ordering::Relaxed) && decoder_running.load(Ordering::Relaxed) {
@@ -843,7 +798,7 @@ fn spawn_network_streamer_thread(
                                     skip_rem -= n;
                                     stream_pos += n as u64;
                                 }
-                                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                                 Err(_) => {
                                     skipped_in_place = false;
                                     break;
@@ -861,9 +816,16 @@ fn spawn_network_streamer_thread(
                             Ok(res) if res.status().as_u16() == 206 => {
                                 reader = Box::new(res.into_body().into_reader());
                                 stream_pos = order.offset;
+                                range_seek_failures = 0;
                             }
                             _ => {
-                                std::thread::sleep(Duration::from_millis(50));
+                                range_seek_failures += 1;
+                                if range_seek_failures >= 5 {
+                                    session.mark_eof();
+                                    session.body.set_push_streaming(false);
+                                    break;
+                                }
+                                thread::sleep(Duration::from_millis(50));
                                 continue;
                             }
                         }
@@ -960,7 +922,7 @@ fn spawn_network_streamer_thread(
                                 break;
                             }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                         Err(e) => {
                             let current_end = session.range_end();
                             let target_end = session.audio_end_offset().unwrap_or(
@@ -2163,20 +2125,14 @@ impl StreamingDeck {
             || trimmed.starts_with("https://")
             || trimmed.starts_with("icy://")
             || trimmed.starts_with("blob:")
+            || trimmed.starts_with("data:")
         {
-            #[cfg(target_arch = "wasm32")]
-            {
-                return self.open_network_with_cancel(trimmed, headers, cancel);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let url = if let Some(stripped) = trimmed.strip_prefix("icy://") {
-                    format!("http://{}", stripped)
-                } else {
-                    trimmed.to_string()
-                };
-                return self.open_network_with_cancel(&url, headers, cancel);
-            }
+            let url = if let Some(stripped) = trimmed.strip_prefix("icy://") {
+                format!("http://{}", stripped)
+            } else {
+                trimmed.to_string()
+            };
+            self.open_network_with_cancel(&url, headers, cancel)
         } else {
             let resolved = resolve_local_source_path(trimmed);
             let res = self.open_file(&resolved);
@@ -2370,7 +2326,7 @@ impl StreamingDeck {
                 session,
                 new_abort,
                 self.decoder_running.clone(),
-                backend.into_streaming_backend(),
+                backend.to_streaming_backend(),
                 tracker,
                 pending_targets,
             );
@@ -2379,51 +2335,6 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn open_network_with_cancel(
-        &mut self,
-        url: &str,
-        headers: Option<&[crate::api::types::RustHttpHeader]>,
-        cancel: Option<&CancelToken>,
-    ) -> i32 {
-        if cancel.is_some_and(|c| c.is_cancelled()) {
-            return self.mark_open_error(MAP_ERROR_ABORTED);
-        }
-        let _ = self.begin_open();
-        self.open_generation.fetch_add(1, Ordering::AcqRel);
-
-        let bytes = match crate::bridge::ffi::wasm_fetch_source_bytes(url, headers) {
-            Ok(b) => b,
-            Err(code) => return self.mark_open_error(code),
-        };
-        if cancel.is_some_and(|c| c.is_cancelled()) {
-            return self.mark_open_error(MAP_ERROR_ABORTED);
-        }
-
-        if crate::hls::M3u8Parser::is_m3u8(&bytes) {
-            let backend = HlsFetchBackend::Wasm {
-                headers: headers.map(|h| h.to_vec()),
-                is_network: true,
-            };
-            return self.open_hls_playlist_bytes(url, &bytes, cancel, &backend, true);
-        }
-
-        if url.starts_with("icy://") {
-            let fmt = infer_network_encoding_format(url, None);
-            let res_code = self.open_stream_ex(&bytes, None, -1, true, 4 * 1024 * 1024, fmt);
-            if res_code == MAP_SUCCESS {
-                if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
-                    session.mark_eof();
-                }
-            }
-            return res_code;
-        }
-
-        let ext = StreamClassifier::extract_extension_hint(url);
-        self.open_memory_with_hint(&bytes, ext)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn open_hls_network_with_cancel(
         &mut self,
         agent: ureq::Agent,
@@ -2447,7 +2358,6 @@ impl StreamingDeck {
         self.open_hls_playlist_bytes(url, &m3u8_bytes, cancel, &backend, false)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_network_with_cancel(
         &mut self,
         url: &str,
@@ -2553,7 +2463,7 @@ impl StreamingDeck {
             Box::new(res.into_body().into_reader())
         };
 
-        let (initial_data, was_aborted) =
+        let (initial_data, was_aborted, reached_eof) =
             prefetch_initial_stream_bytes_cancellable(&mut reader, content_length, cancel);
         if was_aborted {
             return self.mark_open_error(MAP_ERROR_ABORTED);
@@ -2574,41 +2484,63 @@ impl StreamingDeck {
             );
         }
 
+        let effective_content_length = if content_length > 0 {
+            content_length
+        } else if reached_eof {
+            initial_data.len() as i64
+        } else {
+            -1
+        };
+
         let mut tail_data: Option<Vec<u8>> = None;
         let mut forced_audio_end: Option<u64> = None;
 
-        if content_length > 0 && (initial_data.len() as i64) < content_length {
+        if !reached_eof
+            && effective_content_length > 0
+            && (initial_data.len() as i64) < effective_content_length
+        {
             if cancel.is_some_and(|c| c.is_cancelled()) {
                 return self.mark_open_error(MAP_ERROR_ABORTED);
             }
             let (_status, boundary) =
-                StreamClassifier::detect_head_boundary(&initial_data, content_length);
+                StreamClassifier::detect_head_boundary(&initial_data, effective_content_length);
             if boundary.audio_end > 0
-                && boundary.audio_end < content_length
-                && (content_length - boundary.audio_end) <= 4 * 1024 * 1024
+                && boundary.audio_end < effective_content_length
+                && (effective_content_length - boundary.audio_end) <= 4 * 1024 * 1024
             {
-                if let Some(tail) =
-                    fetch_range_bytes(&agent, url, headers, boundary.audio_end, content_length - 1)
-                {
+                if let Some(tail) = fetch_range_bytes(
+                    &agent,
+                    url,
+                    headers,
+                    boundary.audio_end,
+                    effective_content_length - 1,
+                ) {
                     tail_data = Some(tail);
                     forced_audio_end = Some(boundary.audio_end as u64);
                 }
             } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
                 let floor = boundary.audio_start.max(0);
-                let probe_len = 65536i64.min(content_length - floor);
+                let probe_len = 65536i64.min(effective_content_length - floor);
                 if probe_len > 0 {
-                    let tail_offset = content_length - probe_len;
-                    if let Some(probed) =
-                        fetch_range_bytes(&agent, url, headers, tail_offset, content_length - 1)
-                    {
+                    let tail_offset = effective_content_length - probe_len;
+                    if let Some(probed) = fetch_range_bytes(
+                        &agent,
+                        url,
+                        headers,
+                        tail_offset,
+                        effective_content_length - 1,
+                    ) {
                         let (_t_status, audio_end) = StreamClassifier::detect_tail_boundary(
                             boundary.container,
                             &probed,
                             tail_offset,
-                            content_length,
+                            effective_content_length,
                             boundary.audio_start,
                         );
-                        if audio_end > 0 && audio_end <= content_length && audio_end >= tail_offset {
+                        if audio_end > 0
+                            && audio_end <= effective_content_length
+                            && audio_end >= tail_offset
+                        {
                             let rel_start = (audio_end - tail_offset) as usize;
                             if rel_start < probed.len() {
                                 tail_data = Some(probed[rel_start..].to_vec());
@@ -2623,14 +2555,47 @@ impl StreamingDeck {
             if cancel.is_some_and(|c| c.is_cancelled()) {
                 return self.mark_open_error(MAP_ERROR_ABORTED);
             }
+        } else if reached_eof && effective_content_length > 0 {
+            let (_status, boundary) =
+                StreamClassifier::detect_head_boundary(&initial_data, effective_content_length);
+            if boundary.audio_end > 0
+                && boundary.audio_end < effective_content_length
+                && (effective_content_length - boundary.audio_end) <= 4 * 1024 * 1024
+            {
+                let off = boundary.audio_end as usize;
+                tail_data = Some(initial_data[off..].to_vec());
+                forced_audio_end = Some(boundary.audio_end as u64);
+            } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
+                let floor = boundary.audio_start.max(0);
+                let probe_len = 65536i64.min(effective_content_length - floor);
+                if probe_len > 0 {
+                    let tail_offset = effective_content_length - probe_len;
+                    let probed = &initial_data[tail_offset as usize..];
+                    let (_t_status, audio_end) = StreamClassifier::detect_tail_boundary(
+                        boundary.container,
+                        probed,
+                        tail_offset,
+                        effective_content_length,
+                        boundary.audio_start,
+                    );
+                    if audio_end > 0
+                        && audio_end <= effective_content_length
+                        && audio_end >= tail_offset
+                    {
+                        let rel_start = (audio_end - tail_offset) as usize;
+                        tail_data = Some(probed[rel_start..].to_vec());
+                        forced_audio_end = Some(audio_end as u64);
+                    }
+                }
+            }
         }
 
         let preserved_icy = self.icy_metadata.read().ok().and_then(|g| g.clone());
-        let is_live = content_length <= 0;
+        let is_live = effective_content_length <= 0;
         let res_code = self.open_stream_ex(
             &initial_data,
             tail_data.as_deref(),
-            content_length,
+            effective_content_length,
             is_live,
             4 * 1024 * 1024,
             encoding_format,
@@ -2648,10 +2613,10 @@ impl StreamingDeck {
             if let Some(ae) = forced_audio_end {
                 session.set_audio_end(ae);
                 if let Some(ref td) = tail_data {
-                    let td_off = if ae < content_length as u64 {
+                    let td_off = if ae < effective_content_length as u64 {
                         ae
                     } else {
-                        (content_length - td.len() as i64).max(0) as u64
+                        (effective_content_length - td.len() as i64).max(0) as u64
                     };
                     session.set_tail(td, Some(td_off));
                 }
@@ -2668,6 +2633,11 @@ impl StreamingDeck {
             }
             if let Ok(mut slot) = session_slot.lock() {
                 *slot = Some(session.clone());
+            }
+
+            if reached_eof && (initial_data.len() as i64) >= effective_content_length {
+                session.mark_eof();
+                return MAP_SUCCESS;
             }
 
             if is_live && self.is_analysis {
@@ -2690,7 +2660,7 @@ impl StreamingDeck {
                 self.decoder_running.clone(),
                 url.to_string(),
                 headers.map(|h| h.to_vec()),
-                content_length,
+                effective_content_length,
                 is_live,
             );
         }
@@ -2699,7 +2669,7 @@ impl StreamingDeck {
             3,
             "Network stream opened: {} (content_length={}, is_live={})",
             url,
-            content_length,
+            effective_content_length,
             is_live
         );
 
@@ -2831,22 +2801,7 @@ impl StreamingDeck {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let bytes = match crate::bridge::ffi::wasm_fetch_source_bytes(path, None) {
-                Ok(b) => b,
-                Err(code) => {
-                    crate::map_log!(1, "open_file (wasm) failed for {}: code {}", path, code);
-                    return self.mark_open_error(code);
-                }
-            };
-            if crate::hls::M3u8Parser::is_m3u8(&bytes) {
-                let backend = HlsFetchBackend::Wasm {
-                    headers: None,
-                    is_network: false,
-                };
-                return self.open_hls_playlist_bytes(path, &bytes, None, &backend, true);
-            }
-            let ext = StreamClassifier::extract_extension_hint(path);
-            return self.open_memory_with_hint(&bytes, ext);
+            self.open_network_with_cancel(path, None, None)
         }
 
         #[cfg(not(target_arch = "wasm32"))]
