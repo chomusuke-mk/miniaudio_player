@@ -57,12 +57,16 @@ void main(List<String> args) {
       '};';
 
   final content = hookFile.readAsStringSync();
-  final updated = content.replaceFirst(
-    RegExp(
-      r'const Map<String, String> _embeddedReleaseHashes = <String, String>\{[\s\S]*?\};',
-    ),
-    replacement,
+  final pattern = RegExp(
+    r'const Map<String, String> _embeddedReleaseHashes = <String, String>\{[\s\S]*?\};',
   );
+  if (!pattern.hasMatch(content)) {
+    stderr.writeln(
+      'Error: Could not find _embeddedReleaseHashes declaration in hook/build.dart.',
+    );
+    exit(65);
+  }
+  final updated = content.replaceFirst(pattern, replacement);
 
   hookFile.writeAsStringSync(updated);
   stdout.writeln(

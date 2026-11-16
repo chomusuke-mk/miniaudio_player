@@ -333,7 +333,7 @@ class HardwareRoutingCard extends StatelessWidget {
                         inputsSnap.data ?? controller.engine.state.inputs;
 
                     return ListenableBuilder(
-                      listenable: controller,
+                      listenable: controller.routingListenable,
                       builder: (context, _) {
                         return StudioCard(
                           icon: Icons.alt_route,

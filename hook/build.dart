@@ -6,31 +6,40 @@ import 'package:crypto/crypto.dart';
 import 'package:hooks/hooks.dart';
 import 'package:path/path.dart' as p;
 
+import 'src/binary_validator.dart';
+import 'src/cargo_env.dart';
+import 'src/depfile_parser.dart';
+import 'src/gzip_extractor.dart';
+import 'src/target_triple.dart';
+
 const _packageName = 'miniaudio_player';
-const _defaultVersion = '3.0.2';
+const _defaultVersion = '4.0.0';
 const _githubRepo = 'chomusuke-mk/miniaudio_player';
 const _cacheCompleteMarker = '.download-complete';
 const _crateHashMarker = '.crate-hash';
 
-/// Embedded SHA-256 checksums for official GitHub Release archives.
+/// Embedded SHA-256 checksums for official `.gz` GitHub Release binaries.
 ///
 /// Populated automatically by `tool/update_release_hashes.dart` during the CI
 /// release workflow before `dart pub publish`. When an entry is present here,
-/// the hook verifies the downloaded archive against this immutable compile-time
+/// the hook verifies the downloaded `.gz` against this immutable compile-time
 /// hash; otherwise it fetches and verifies `checksums.sha256` from the release.
 const Map<String, String> _embeddedReleaseHashes = <String, String>{
-  // 'miniaudio_player-v3.0.2-aarch64-linux-android.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-armv7-linux-androideabi.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-x86_64-linux-android.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-aarch64-apple-ios.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-aarch64-apple-ios-sim.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-x86_64-apple-ios.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-aarch64-apple-darwin.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-x86_64-apple-darwin.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-x86_64-unknown-linux-gnu.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-aarch64-unknown-linux-gnu.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-x86_64-pc-windows-msvc.tar.gz': '<sha256>',
-  // 'miniaudio_player-v3.0.2-aarch64-pc-windows-msvc.tar.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-aarch64-linux-android.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-armv7-linux-androideabi.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-x86_64-linux-android.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-i686-linux-android.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-aarch64-apple-ios.dylib.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-aarch64-apple-ios-sim.dylib.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-x86_64-apple-ios.dylib.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-aarch64-apple-darwin.dylib.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-x86_64-apple-darwin.dylib.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-x86_64-unknown-linux-gnu.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-aarch64-unknown-linux-gnu.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-i686-unknown-linux-gnu.so.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-x86_64-pc-windows-msvc.dll.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-aarch64-pc-windows-msvc.dll.gz': '<sha256>',
+  // 'miniaudio_player-v4.0.0-i686-pc-windows-msvc.dll.gz': '<sha256>',
 };
 
 const _retryDelays = <Duration>[
@@ -42,12 +51,9 @@ const _retryDelays = <Duration>[
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
-    // Always track hook/build.dart and pubspec.yaml as baseline dependencies.
+    // Track hook files as baseline dependencies.
     output.dependencies.add(input.packageRoot.resolve('hook/build.dart'));
     output.dependencies.add(input.packageRoot.resolve('pubspec.yaml'));
-
-    // Provision web/pkg/ for web consumers if a `web/` directory exists in the workspace.
-    _provisionWebAssetsIfNeeded(input);
 
     if (!input.config.buildCodeAssets) {
       return;
@@ -59,7 +65,7 @@ void main(List<String> args) async {
     final targetArch = codeConfig.targetArchitecture;
     final iosSdk = targetOS == OS.iOS ? codeConfig.iOS.targetSdk : null;
 
-    final rustTriple = _resolveRustTriple(targetOS, targetArch, iosSdk);
+    final rustTriple = resolveRustTriple(targetOS, targetArch, iosSdk);
     final libFileName = targetOS.dylibFileName(_packageName);
     final finalOutFile = File.fromUri(
       input.outputDirectory.resolve(libFileName),
@@ -78,6 +84,12 @@ void main(List<String> args) async {
               'Custom native library specified at "$customPath" does not exist.',
         );
       }
+      validateBinaryArchitectureOrThrow(
+        file: sourceFile,
+        targetOS: targetOS,
+        targetArch: targetArch,
+        sourceDescription: 'MINIAUDIO_PLAYER_LIB_PATH / user_defines.path',
+      );
       await sourceFile.copy(finalOutFile.path);
       output.dependencies.add(sourceFile.uri);
       _registerCodeAsset(input, output, finalOutFile.uri);
@@ -103,7 +115,7 @@ void main(List<String> args) async {
     }
 
     // -------------------------------------------------------------------------
-    // Priority 4: Prebuilt Binary Download from GitHub Releases (Default)
+    // Priority 4: Prebuilt `.gz` Binary Download from GitHub Releases (Default)
     // -------------------------------------------------------------------------
     try {
       await _acquirePrebuiltBinary(
@@ -116,14 +128,14 @@ void main(List<String> args) async {
       _registerCodeAsset(input, output, finalOutFile.uri);
       return;
     } on BuildError {
-      // Security / checksum mismatch errors must NEVER fall back silently.
+      // Security / checksum / binary architecture mismatch must NEVER fall back silently.
       rethrow;
     } catch (downloadErr) {
       // -----------------------------------------------------------------------
       // Priority 5: Automatic Fallback to Local Cargo Build if Rust is present
       // -----------------------------------------------------------------------
       final rustDir = Directory.fromUri(input.packageRoot.resolve('rust/'));
-      final cargoExe = _findExecutable('cargo');
+      final cargoExe = findExecutable('cargo');
       if (rustDir.existsSync() && cargoExe != null) {
         stderr.writeln(
           '[miniaudio_player] Prebuilt binary download unavailable ($downloadErr). '
@@ -148,8 +160,8 @@ void main(List<String> args) async {
             'Cause: $downloadErr\n'
             'To fix:\n'
             '  1. Check internet connectivity to github.com/$_githubRepo/releases, OR\n'
-            '  2. Provide a local binary via MINIAUDIO_PLAYER_LIB_PATH=/path/to/$libFileName, OR\n'
-            '  3. Install Rust (https://rustup.rs) and set MINIAUDIO_PLAYER_BUILD_FROM_SOURCE=1.',
+            '  2. Provide a local binary via hooks.user_defines.miniaudio_player.path in pubspec.yaml, OR\n'
+            '  3. Install Rust (https://rustup.rs) and set hooks.user_defines.miniaudio_player.use_source_build: true.',
       );
     }
   });
@@ -240,8 +252,25 @@ String _resolveDownloadBaseUrl(BuildInput input, String version) {
   return 'https://github.com/$_githubRepo/releases/download/v$version';
 }
 
+Future<T> _withExclusiveLock<T>(
+  File lockFile,
+  Future<T> Function() action,
+) async {
+  await lockFile.parent.create(recursive: true);
+  final raf = await lockFile.open(mode: FileMode.write);
+  try {
+    await raf.lock(FileLock.exclusive);
+    return await action();
+  } finally {
+    try {
+      await raf.unlock();
+    } catch (_) {}
+    await raf.close();
+  }
+}
+
 // =============================================================================
-// Prebuilt Binary Download, Atomic Caching & SHA-256 Verification
+// Prebuilt Binary Download (.gz), Atomic Caching, SHA-256 & Header Verification
 // =============================================================================
 
 Future<void> _acquirePrebuiltBinary({
@@ -251,64 +280,100 @@ Future<void> _acquirePrebuiltBinary({
   required String libFileName,
   required File destination,
 }) async {
-  final archiveName = '$_packageName-v$version-$rustTriple.tar.gz';
+  final codeConfig = input.config.code;
+  final archiveName = prebuiltArchiveName(
+    packageName: _packageName,
+    version: version,
+    rustTriple: rustTriple,
+    libFileName: libFileName,
+  );
   final baseUrl = _resolveDownloadBaseUrl(input, version);
   final downloadUrl = '$baseUrl/$archiveName';
 
   final cacheDir = Directory.fromUri(
     input.outputDirectoryShared.resolve('prebuilt-v$version-$rustTriple/'),
   );
+  final lockFile = File.fromUri(
+    input.outputDirectoryShared.resolve('.lock_prebuilt_$rustTriple'),
+  );
   final cachedLib = File(p.join(cacheDir.path, libFileName));
   final completeMarker = File(p.join(cacheDir.path, _cacheCompleteMarker));
 
-  // Fast path: reuse verified shared cache entry.
-  if (completeMarker.existsSync() && cachedLib.existsSync()) {
-    await cachedLib.copy(destination.path);
-    return;
-  }
+  await _withExclusiveLock(lockFile, () async {
+    // Fast path: reuse verified shared cache entry if base URL, embedded hash & header match.
+    if (completeMarker.existsSync() && cachedLib.existsSync()) {
+      final markerLines = completeMarker.readAsLinesSync();
+      final markerHash =
+          markerLines.isNotEmpty ? markerLines[0].trim().toLowerCase() : '';
+      final markerUrl = markerLines.length > 1 ? markerLines[1].trim() : '';
+      final embedded = _embeddedReleaseHashes[archiveName];
+      final embeddedMatches =
+          embedded == null || markerHash == embedded.toLowerCase();
 
-  await cacheDir.create(recursive: true);
-  final expectedSha256 = await _resolveExpectedSha256(
-    baseUrl,
-    archiveName,
-    version,
-  );
-
-  final tmpArchive = File(p.join(cacheDir.path, '$archiveName.tmp.$pid'));
-  try {
-    await _downloadWithRetry(Uri.parse(downloadUrl), tmpArchive);
-    await _verifyFileSha256(tmpArchive, expectedSha256, archiveName);
-
-    // Extract tar.gz into cacheDir
-    final extractRes = await Process.run('tar', [
-      '-xzf',
-      tmpArchive.path,
-      '-C',
-      cacheDir.path,
-    ]);
-    if (extractRes.exitCode != 0) {
-      throw InfraError(
-        message: 'Failed to extract $archiveName: ${extractRes.stderr}',
-      );
-    }
-
-    if (!cachedLib.existsSync()) {
-      throw BuildError(
-        message:
-            'Archive $archiveName did not contain expected binary $libFileName.',
-      );
-    }
-
-    // Mark cache entry complete only after verified extraction.
-    completeMarker.writeAsStringSync('$expectedSha256\n');
-    await cachedLib.copy(destination.path);
-  } finally {
-    if (tmpArchive.existsSync()) {
+      if (embeddedMatches && markerUrl == baseUrl) {
+        try {
+          validateBinaryArchitectureOrThrow(
+            file: cachedLib,
+            targetOS: codeConfig.targetOS,
+            targetArch: codeConfig.targetArchitecture,
+            sourceDescription: 'cached prebuilt $libFileName',
+          );
+          await cachedLib.copy(destination.path);
+          return;
+        } catch (_) {
+          // Invalid/corrupted cache entry — wipe and re-download below.
+        }
+      }
       try {
-        tmpArchive.deleteSync();
+        completeMarker.deleteSync();
+      } catch (_) {}
+      try {
+        cachedLib.deleteSync();
       } catch (_) {}
     }
-  }
+
+    await cacheDir.create(recursive: true);
+    final expectedSha256 = await _resolveExpectedSha256(
+      baseUrl,
+      archiveName,
+      version,
+    );
+
+    final tmpArchive = File(p.join(cacheDir.path, '$archiveName.tmp.$pid'));
+    final tmpUnpacked = File(p.join(cacheDir.path, '$libFileName.tmp.$pid'));
+    try {
+      await _downloadWithRetry(Uri.parse(downloadUrl), tmpArchive);
+      await _verifyFileSha256(tmpArchive, expectedSha256, archiveName);
+
+      // Decompress single-file `.gz` natively using `dart:io` `gzip` codec.
+      await decompressGzipFile(tmpArchive, tmpUnpacked);
+
+      // Verify binary ELF / PE / Mach-O architecture before committing to cache.
+      validateBinaryArchitectureOrThrow(
+        file: tmpUnpacked,
+        targetOS: codeConfig.targetOS,
+        targetArch: codeConfig.targetArchitecture,
+        sourceDescription: 'downloaded prebuilt $archiveName',
+      );
+
+      if (cachedLib.existsSync()) {
+        cachedLib.deleteSync();
+      }
+      await tmpUnpacked.rename(cachedLib.path);
+
+      // Mark cache entry complete only after SHA-256 + binary header checks pass.
+      completeMarker.writeAsStringSync('$expectedSha256\n$baseUrl\n');
+      await cachedLib.copy(destination.path);
+    } finally {
+      for (final tmp in [tmpArchive, tmpUnpacked]) {
+        if (tmp.existsSync()) {
+          try {
+            tmp.deleteSync();
+          } catch (_) {}
+        }
+      }
+    }
+  });
 }
 
 Future<String> _resolveExpectedSha256(
@@ -340,7 +405,8 @@ Future<String> _resolveExpectedSha256(
         return match.group(1)!.toLowerCase();
       }
     }
-    throw BuildError(
+    // Missing entry in remote checksums falls back cleanly to local build via InfraError.
+    throw InfraError(
       message:
           'checksums.sha256 at $checksumsUri has no entry for $archiveName.',
     );
@@ -384,8 +450,10 @@ Future<void> _downloadWithRetry(Uri url, File destination) async {
         }
         if (response.statusCode >= 500 ||
             response.statusCode == HttpStatus.tooManyRequests) {
-          throw HttpException('Transient HTTP ${response.statusCode}',
-              uri: url);
+          throw HttpException(
+            'Transient HTTP ${response.statusCode}',
+            uri: url,
+          );
         }
         throw InfraError(
           message: 'Unexpected HTTP ${response.statusCode} from $url.',
@@ -404,8 +472,7 @@ Future<void> _downloadWithRetry(Uri url, File destination) async {
   }
 
   throw InfraError(
-    message:
-        'Failed to download $url after $totalAttempts attempts: $lastError',
+    message: 'Failed to download $url after $totalAttempts attempts: $lastError',
   );
 }
 
@@ -430,7 +497,7 @@ Future<void> _verifyFileSha256(
 }
 
 // =============================================================================
-// Local Rust + C99 Source Compilation (`cargo build`)
+// Local Rust + C11 Source Compilation (`cargo build`)
 // =============================================================================
 
 Future<void> _buildFromRustSource({
@@ -440,6 +507,7 @@ Future<void> _buildFromRustSource({
   required String libFileName,
   required File destination,
 }) async {
+  final codeConfig = input.config.code;
   final rustRoot = input.packageRoot.resolve('rust/');
   final manifestFile = File.fromUri(rustRoot.resolve('Cargo.toml'));
   if (!manifestFile.existsSync()) {
@@ -448,202 +516,159 @@ Future<void> _buildFromRustSource({
     );
   }
 
-  // Compute deterministic CrateHash over Cargo.toml, Cargo.lock, build.rs,
-  // rust/src/**/*.rs, and rust/c_src/**/*.{c,h}.
-  final crateHash = _computeCrateHash(rustRoot);
-
-  // On Windows, deep paths under .dart_tool/hooks_runner/shared/... exceed the
-  // 260-character MAX_PATH limit inside cc/audiopus_sys build directories.
-  // Use a short deterministic directory in systemTemp on Windows.
-  final Directory cargoTargetDir;
-  if (Platform.isWindows) {
-    final rootHash = sha256
-        .convert(utf8.encode(rustRoot.toFilePath()))
-        .toString()
-        .substring(0, 10);
-    cargoTargetDir = Directory(
-      p.join(Directory.systemTemp.path, 'map_cargo_$rootHash'),
-    );
-  } else {
-    cargoTargetDir = Directory.fromUri(
-      input.outputDirectoryShared.resolve('cargo_target/'),
-    );
-  }
+  final cargoTargetDir = _resolveCargoTargetDirectory(input, rustRoot);
   await cargoTargetDir.create(recursive: true);
 
-  final builtLibPath = p.join(
-    cargoTargetDir.path,
-    rustTriple,
-    'release',
-    libFileName,
-  );
-  final builtLibFile = File(builtLibPath);
-  final stampFile = File(
-    p.join(cargoTargetDir.path, rustTriple, 'release', _crateHashMarker),
+  final lockFile = File.fromUri(
+    input.outputDirectoryShared.resolve('.lock_cargo_$rustTriple'),
   );
 
-  // Fast path: if the binary already exists for this exact CrateHash, skip invoking cargo!
-  if (builtLibFile.existsSync() &&
-      stampFile.existsSync() &&
-      stampFile.readAsStringSync().trim() == crateHash) {
+  await _withExclusiveLock(lockFile, () async {
+    final crateHash = _computeCrateHash(
+      rustRoot: rustRoot,
+      rustTriple: rustTriple,
+      codeConfig: codeConfig,
+      inputJson: input.json,
+    );
+
+    final builtLibPath = p.join(
+      cargoTargetDir.path,
+      rustTriple,
+      'release',
+      libFileName,
+    );
+    final builtLibFile = File(builtLibPath);
+    final stampFile = File(
+      p.join(cargoTargetDir.path, rustTriple, 'release', _crateHashMarker),
+    );
+
+    // Fast path: reuse compiled binary if CrateHash and binary architecture match.
+    if (builtLibFile.existsSync() &&
+        stampFile.existsSync() &&
+        stampFile.readAsStringSync().trim() == crateHash) {
+      try {
+        validateBinaryArchitectureOrThrow(
+          file: builtLibFile,
+          targetOS: codeConfig.targetOS,
+          targetArch: codeConfig.targetArchitecture,
+          sourceDescription: 'cached Cargo output ($rustTriple)',
+        );
+        await builtLibFile.copy(destination.path);
+        registerSourceDependencies(
+          rustRoot: rustRoot,
+          cargoTargetDir: cargoTargetDir.path,
+          builtLibPath: builtLibPath,
+          output: output,
+        );
+        return;
+      } catch (_) {
+        try {
+          stampFile.deleteSync();
+        } catch (_) {}
+      }
+    }
+
+    final cargoExe = findExecutable('cargo');
+    if (cargoExe == null) {
+      throw BuildError(
+        message: 'Rust compiler (`cargo`) not found in PATH or ~/.cargo/bin. '
+            'Install Rust via https://rustup.rs to build from source.',
+      );
+    }
+
+    await ensureRustTargetInstalled(rustTriple);
+
+    final env = buildCargoEnvironment(
+      codeConfig: codeConfig,
+      inputJson: input.json,
+      rustTriple: rustTriple,
+      cargoExe: cargoExe,
+      cargoTargetDir: cargoTargetDir.path,
+    );
+
+    final result = await Process.run(
+      cargoExe,
+      [
+        'build',
+        '--manifest-path',
+        manifestFile.path,
+        '--release',
+        '--target',
+        rustTriple,
+        '--target-dir',
+        cargoTargetDir.path,
+      ],
+      workingDirectory: Directory.fromUri(rustRoot).path,
+      environment: env,
+    );
+
+    if (result.exitCode != 0) {
+      throw BuildError(
+        message:
+            'Cargo build failed for target $rustTriple (exit ${result.exitCode}):\n'
+            '${result.stderr}\n${result.stdout}',
+      );
+    }
+
+    if (!builtLibFile.existsSync()) {
+      throw BuildError(
+        message:
+            'Cargo succeeded, but expected output was not found at $builtLibPath',
+      );
+    }
+
+    validateBinaryArchitectureOrThrow(
+      file: builtLibFile,
+      targetOS: codeConfig.targetOS,
+      targetArch: codeConfig.targetArchitecture,
+      sourceDescription: 'Cargo release build ($rustTriple)',
+    );
+
+    stampFile.writeAsStringSync('$crateHash\n');
     await builtLibFile.copy(destination.path);
-    _registerSourceDependencies(
+
+    registerSourceDependencies(
       rustRoot: rustRoot,
       cargoTargetDir: cargoTargetDir.path,
       builtLibPath: builtLibPath,
       output: output,
     );
-    return;
-  }
+  });
+}
 
-  final cargoExe = _findExecutable('cargo');
-  if (cargoExe == null) {
-    throw BuildError(
-      message: 'Rust compiler (`cargo`) not found in PATH or ~/.cargo/bin. '
-          'Install Rust via https://rustup.rs to build from source.',
+Directory _resolveCargoTargetDirectory(BuildInput input, Uri rustRoot) {
+  final userTargetDir = Platform.environment['CARGO_TARGET_DIR'];
+  if (userTargetDir != null && userTargetDir.trim().isNotEmpty) {
+    return Directory(p.absolute(userTargetDir.trim()));
+  }
+  if (Platform.isWindows) {
+    // Keep paths under Windows 260-char MAX_PATH limit in cc / CMake scratch dirs.
+    final rootHash = sha256
+        .convert(utf8.encode(rustRoot.toFilePath()))
+        .toString()
+        .substring(0, 10);
+    return Directory(
+      p.join(Directory.systemTemp.path, 'map_cargo_$rootHash'),
     );
   }
-
-  await _ensureRustTargetInstalled(rustTriple);
-
-  final env = _buildCargoEnvironment(
-    input: input,
-    rustTriple: rustTriple,
-    cargoExe: cargoExe,
-    cargoTargetDir: cargoTargetDir.path,
-  );
-
-  final result = await Process.run(
-    cargoExe,
-    [
-      'build',
-      '--manifest-path',
-      manifestFile.path,
-      '--release',
-      '--target',
-      rustTriple,
-      '--target-dir',
-      cargoTargetDir.path,
-    ],
-    workingDirectory: Directory.fromUri(rustRoot).path,
-    environment: env,
-  );
-
-  if (result.exitCode != 0) {
-    throw BuildError(
-      message:
-          'Cargo build failed for target $rustTriple (exit ${result.exitCode}):\n'
-          '${result.stderr}\n${result.stdout}',
-    );
-  }
-
-  if (!builtLibFile.existsSync()) {
-    throw BuildError(
-      message:
-          'Cargo succeeded, but expected output was not found at $builtLibPath',
-    );
-  }
-
-  stampFile.writeAsStringSync('$crateHash\n');
-  await builtLibFile.copy(destination.path);
-
-  _registerSourceDependencies(
-    rustRoot: rustRoot,
-    cargoTargetDir: cargoTargetDir.path,
-    builtLibPath: builtLibPath,
-    output: output,
+  return Directory.fromUri(
+    input.outputDirectoryShared.resolve('cargo_target/'),
   );
 }
 
-/// Parses Cargo's `.d` dep-info file and registers source dependencies
-/// without triggering `hooks_runner` self-invalidation.
-void _registerSourceDependencies({
+String _computeCrateHash({
   required Uri rustRoot,
-  required String cargoTargetDir,
-  required String builtLibPath,
-  required BuildOutputBuilder output,
+  required String rustTriple,
+  required CodeConfig codeConfig,
+  required Map<String, Object?> inputJson,
 }) {
-  final normalizedTargetDir = p.normalize(cargoTargetDir);
-  final depFile = File(p.setExtension(builtLibPath, '.d'));
-
-  var parsedDepFile = false;
-  if (depFile.existsSync()) {
-    for (final line in depFile.readAsLinesSync()) {
-      // Split on the FIRST ": " (with space) to preserve Windows C:\ drive letters.
-      final sepIdx = line.indexOf(': ');
-      if (sepIdx == -1) continue;
-      final target = line.substring(0, sepIdx).trim();
-      if (p.normalize(target) != p.normalize(builtLibPath)) continue;
-
-      final depsRaw = line.substring(sepIdx + 2).trim();
-      for (final depPath in _splitMakeDeps(depsRaw)) {
-        final norm = p.normalize(depPath);
-        // Never add `.d` files or files inside cargoTargetDir (prevents infinite rebuild loop).
-        if (p.extension(norm) == '.d' ||
-            p.isWithin(normalizedTargetDir, norm)) {
-          continue;
-        }
-        final file = File(norm);
-        if (file.existsSync()) {
-          output.dependencies.add(file.uri);
-          parsedDepFile = true;
-        }
-      }
-    }
-  }
-
-  // Always explicitly register Cargo.toml, build.rs, and c_src/*.{c,h}.
+  final filesToHash = <File>[];
   for (final rel in [
     'Cargo.toml',
+    'Cargo.lock',
     'build.rs',
-    'c_src/miniaudio.h',
-    'c_src/miniaudio_device_bridge.h',
-    'c_src/miniaudio_device_bridge.c',
+    '.cargo/config.toml',
   ]) {
-    final f = File.fromUri(rustRoot.resolve(rel));
-    if (f.existsSync()) {
-      output.dependencies.add(f.uri);
-    }
-  }
-
-  // Fallback if .d file wasn't found: scan rust/src/**/*.rs
-  if (!parsedDepFile) {
-    final srcDir = Directory.fromUri(rustRoot.resolve('src/'));
-    if (srcDir.existsSync()) {
-      for (final entity in srcDir.listSync(recursive: true)) {
-        if (entity is File && p.extension(entity.path) == '.rs') {
-          output.dependencies.add(entity.uri);
-        }
-      }
-    }
-  }
-}
-
-List<String> _splitMakeDeps(String raw) {
-  final results = <String>[];
-  final current = StringBuffer();
-  for (var i = 0; i < raw.length; i++) {
-    if (raw[i] == r'\' && i + 1 < raw.length && raw[i + 1] == ' ') {
-      current.write(' ');
-      i++;
-    } else if (raw[i] == ' ' || raw[i] == '\t') {
-      if (current.isNotEmpty) {
-        results.add(current.toString());
-        current.clear();
-      }
-    } else {
-      current.write(raw[i]);
-    }
-  }
-  if (current.isNotEmpty) {
-    results.add(current.toString());
-  }
-  return results;
-}
-
-String _computeCrateHash(Uri rustRoot) {
-  final filesToHash = <File>[];
-  for (final rel in ['Cargo.toml', 'Cargo.lock', 'build.rs']) {
     final f = File.fromUri(rustRoot.resolve(rel));
     if (f.existsSync()) filesToHash.add(f);
   }
@@ -660,7 +685,25 @@ String _computeCrateHash(Uri rustRoot) {
     }
   }
 
-  final digests = <int>[];
+  final dimensionKey = StringBuffer()
+    ..write('triple=$rustTriple;')
+    ..write('cc=${codeConfig.cCompiler?.compiler.toFilePath() ?? ''};');
+  if (codeConfig.targetOS == OS.android) {
+    dimensionKey.write('ndkApi=${codeConfig.android.targetNdkApi};');
+  } else if (codeConfig.targetOS == OS.iOS) {
+    final iosSdkLabel = codeConfig.iOS.targetSdk == IOSSdk.iPhoneSimulator
+        ? 'iphonesimulator'
+        : 'iphoneos';
+    dimensionKey
+      ..write('iosSdk=$iosSdkLabel;')
+      ..write('iosVer=${resolveAppleDeploymentTarget(inputJson, OS.iOS)};');
+  } else if (codeConfig.targetOS == OS.macOS) {
+    dimensionKey.write(
+      'macVer=${resolveAppleDeploymentTarget(inputJson, OS.macOS)};',
+    );
+  }
+
+  final digests = <int>[...utf8.encode(dimensionKey.toString())];
   final rootPath = rustRoot.toFilePath();
   for (final file in filesToHash) {
     final relPosix = p.posix.joinAll(
@@ -670,231 +713,4 @@ String _computeCrateHash(Uri rustRoot) {
     digests.addAll(sha256.convert(file.readAsBytesSync()).bytes);
   }
   return sha256.convert(digests).toString();
-}
-
-// =============================================================================
-// Toolchain Discovery & Cross-Compilation Environment Construction
-// =============================================================================
-
-String? _findExecutable(String name) {
-  final exeName = Platform.isWindows ? '$name.exe' : name;
-  final pathSep = Platform.isWindows ? ';' : ':';
-  final pathEnv = Platform.environment['PATH'] ?? '';
-
-  final home =
-      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
-
-  final searchDirs = <String>[
-    ...pathEnv.split(pathSep).where((s) => s.isNotEmpty),
-    if (home.isNotEmpty) p.join(home, '.cargo', 'bin'),
-    if (!Platform.isWindows) ...['/opt/homebrew/bin', '/usr/local/bin'],
-  ];
-
-  for (final dir in searchDirs) {
-    final candidate = File(p.join(dir, exeName));
-    if (candidate.existsSync()) {
-      return candidate.path;
-    }
-  }
-  return null;
-}
-
-Future<void> _ensureRustTargetInstalled(String rustTriple) async {
-  final rustupExe = _findExecutable('rustup');
-  if (rustupExe == null) return;
-
-  final listRes = await Process.run(
-    rustupExe,
-    ['target', 'list', '--installed'],
-  );
-  if (listRes.exitCode == 0) {
-    final installed =
-        (listRes.stdout as String).split('\n').map((s) => s.trim()).toSet();
-    if (!installed.contains(rustTriple)) {
-      await Process.run(rustupExe, ['target', 'add', rustTriple]);
-    }
-  }
-}
-
-Map<String, String> _buildCargoEnvironment({
-  required BuildInput input,
-  required String rustTriple,
-  required String cargoExe,
-  required String cargoTargetDir,
-}) {
-  final env = Map<String, String>.from(Platform.environment);
-  final codeConfig = input.config.code;
-  final targetOS = codeConfig.targetOS;
-  final pathSep = Platform.isWindows ? ';' : ':';
-
-  // Ensure cargo's bin directory is on PATH so rustc/rustup shims resolve.
-  final cargoBinDir = p.dirname(cargoExe);
-  var currentPath = env['PATH'] ?? '';
-  if (!currentPath.split(pathSep).contains(cargoBinDir)) {
-    currentPath = '$cargoBinDir$pathSep$currentPath';
-  }
-
-  // On macOS, Xcode build phases inject Contents/Developer/... into PATH, which
-  // breaks Cargo host build.rs compilation when targeting iOS.
-  if (Platform.isMacOS && targetOS == OS.iOS) {
-    currentPath = currentPath
-        .split(':')
-        .where((e) => !p.split(e).contains('Developer'))
-        .join(':');
-  }
-  env['PATH'] = currentPath;
-
-  if (targetOS == OS.iOS) {
-    // ignore: deprecated_member_use
-    env['IPHONEOS_DEPLOYMENT_TARGET'] = '${codeConfig.iOS.targetVersion}';
-  } else if (targetOS == OS.macOS) {
-    // ignore: deprecated_member_use
-    env['MACOSX_DEPLOYMENT_TARGET'] = '${codeConfig.macOS.targetVersion}';
-  } else if (targetOS == OS.android) {
-    _configureAndroidNdkEnv(
-      env: env,
-      codeConfig: codeConfig,
-      rustTriple: rustTriple,
-      cargoTargetDir: cargoTargetDir,
-    );
-  }
-
-  return env;
-}
-
-void _configureAndroidNdkEnv({
-  required Map<String, String> env,
-  required CodeConfig codeConfig,
-  required String rustTriple,
-  required String cargoTargetDir,
-}) {
-  final cCompiler = codeConfig.cCompiler;
-  if (cCompiler == null) return;
-
-  final clangPath = cCompiler.compiler.toFilePath();
-  final arPath = cCompiler.archiver.toFilePath();
-  final binDir = p.dirname(clangPath);
-  final sysrootDir = p.normalize(p.join(binDir, '..', 'sysroot'));
-  final api = codeConfig.android.targetNdkApi;
-
-  // For 32-bit ARM, Rust's triple is armv7-linux-androideabi, but Clang's
-  // target flag requires armv7a-linux-androideabi<api>.
-  final ndkClangTriple = rustTriple == 'armv7-linux-androideabi'
-      ? 'armv7a-linux-androideabi'
-      : rustTriple;
-  final targetFlag = '--target=$ndkClangTriple$api';
-
-  final tripleUnder = rustTriple.replaceAll('-', '_');
-  final tripleUpper = tripleUnder.toUpperCase();
-
-  // Configure `cc` crate (for miniaudio_device_bridge.c and audiopus_sys)
-  env['CC_$tripleUnder'] = clangPath;
-  env['AR_$tripleUnder'] = arPath;
-  env['CFLAGS_$tripleUnder'] =
-      '$targetFlag --sysroot=$sysrootDir -D__ANDROID_API__=$api -fPIC';
-
-  final ranlibName = Platform.isWindows ? 'llvm-ranlib.exe' : 'llvm-ranlib';
-  final ranlibFile = File(p.join(binDir, ranlibName));
-  if (ranlibFile.existsSync()) {
-    env['RANLIB_$tripleUnder'] = ranlibFile.path;
-  }
-
-  // Create NDK r23+ libgcc -> libunwind compatibility linker script
-  final libgccDir = Directory(p.join(cargoTargetDir, 'ndk_libgcc_stub'));
-  libgccDir.createSync(recursive: true);
-  File(
-    p.join(libgccDir.path, 'libgcc.a'),
-  ).writeAsStringSync('INPUT(-lunwind)\n');
-
-  // Invoke clang(.exe) directly as the Rust linker (bypassing Windows .cmd
-  // batch wrapper escaping bugs in android/ndk#1856) and pass --target + 16KB page size.
-  env['CARGO_TARGET_${tripleUpper}_LINKER'] = clangPath;
-  env['CARGO_TARGET_${tripleUpper}_RUSTFLAGS'] = [
-    '-C',
-    'link-arg=$targetFlag',
-    '-C',
-    'link-arg=--sysroot=$sysrootDir',
-    '-C',
-    'link-arg=-Wl,-z,max-page-size=16384',
-    '-L',
-    libgccDir.path,
-  ].join(' ');
-}
-
-String _resolveRustTriple(OS os, Architecture arch, IOSSdk? iosSdk) {
-  switch (os) {
-    case OS.android:
-      if (arch == Architecture.arm64) return 'aarch64-linux-android';
-      if (arch == Architecture.arm) return 'armv7-linux-androideabi';
-      if (arch == Architecture.x64) return 'x86_64-linux-android';
-      break;
-    case OS.iOS:
-      if (arch == Architecture.arm64) {
-        return iosSdk == IOSSdk.iPhoneSimulator
-            ? 'aarch64-apple-ios-sim'
-            : 'aarch64-apple-ios';
-      }
-      if (arch == Architecture.x64) return 'x86_64-apple-ios';
-      break;
-    case OS.macOS:
-      if (arch == Architecture.arm64) return 'aarch64-apple-darwin';
-      if (arch == Architecture.x64) return 'x86_64-apple-darwin';
-      break;
-    case OS.linux:
-      if (arch == Architecture.x64) return 'x86_64-unknown-linux-gnu';
-      if (arch == Architecture.arm64) return 'aarch64-unknown-linux-gnu';
-      break;
-    case OS.windows:
-      if (arch == Architecture.x64) return 'x86_64-pc-windows-msvc';
-      if (arch == Architecture.arm64) return 'aarch64-pc-windows-msvc';
-      break;
-  }
-  throw BuildError(message: 'Unsupported platform/architecture: $os / $arch');
-}
-
-// =============================================================================
-// Web WASM Asset Provisioning
-// =============================================================================
-
-void _provisionWebAssetsIfNeeded(BuildInput input) {
-  try {
-    final pkgWebDir = Directory.fromUri(input.packageRoot.resolve('web/pkg/'));
-    if (!pkgWebDir.existsSync()) return;
-
-    // Locate the consuming app's root from input.outputDirectory
-    // (<appRoot>/.dart_tool/hooks_runner/...)
-    var dir = Directory.fromUri(input.outputDirectory);
-    Directory? appRoot;
-    while (dir.parent.path != dir.path) {
-      if (p.basename(dir.path) == '.dart_tool') {
-        appRoot = dir.parent;
-        break;
-      }
-      dir = dir.parent;
-    }
-    if (appRoot == null) return;
-
-    final consumerWebDir = Directory(p.join(appRoot.path, 'web'));
-    if (!consumerWebDir.existsSync()) return;
-
-    final destPkgDir = Directory(p.join(consumerWebDir.path, 'pkg'));
-    destPkgDir.createSync(recursive: true);
-
-    for (final fileName in [
-      'miniaudio_player.js',
-      'miniaudio_player_bg.wasm',
-    ]) {
-      final src = File(p.join(pkgWebDir.path, fileName));
-      final dst = File(p.join(destPkgDir.path, fileName));
-      if (src.existsSync()) {
-        if (!dst.existsSync() ||
-            src.lengthSync() != dst.lengthSync() ||
-            src.lastModifiedSync().isAfter(dst.lastModifiedSync())) {
-          src.copySync(dst.path);
-        }
-      }
-    }
-  } catch (_) {
-    // Best-effort provisioning; Flutter Web also serves via `flutter: assets:`.
-  }
 }

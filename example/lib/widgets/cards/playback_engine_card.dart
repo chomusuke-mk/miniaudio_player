@@ -39,16 +39,15 @@ class PlaybackEngineCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final engine = controller.engine;
 
-    return ListenableBuilder(
-      listenable: Listenable.merge([controller, ?analyzerController]),
-      builder: (context, _) {
-        final track = controller.selectedTrack;
-
-        return StudioCard(
-          icon: Icons.graphic_eq,
-          title: 'HIGH-RES AUDIO PLAYBACK ENGINE',
-          subtitle: 'Dual-Deck Hardware Threads • Sonic DSP Varispeed',
-          trailing: StreamBuilder<AudioSource<AudioTrack>?>(
+    return StudioCard(
+      icon: Icons.graphic_eq,
+      title: 'HIGH-RES AUDIO PLAYBACK ENGINE',
+      subtitle: 'Dual-Deck Hardware Threads • Sonic DSP Varispeed',
+      trailing: ListenableBuilder(
+        listenable: controller.trackSelectionListenable,
+        builder: (context, _) {
+          final track = controller.selectedTrack;
+          return StreamBuilder<AudioSource<AudioTrack>?>(
             stream: engine.stream.currentItem,
             initialData: engine.state.currentItem,
             builder: (context, currentSnap) {
@@ -67,12 +66,21 @@ class PlaybackEngineCard extends StatelessWidget {
                 },
               );
             },
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 1. Current Track Display (No dropdown, clean active track banner with reactive thumbnail & metadata inspector)
-              StreamBuilder<AudioSource<AudioTrack>?>(
+          );
+        },
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 1. Current Track Display (No dropdown, clean active track banner with reactive thumbnail & metadata inspector)
+          ListenableBuilder(
+            listenable: Listenable.merge([
+              controller.trackSelectionListenable,
+              ?analyzerController,
+            ]),
+            builder: (context, _) {
+              final track = controller.selectedTrack;
+              return StreamBuilder<AudioSource<AudioTrack>?>(
                 stream: engine.stream.currentItem,
                 initialData: engine.state.currentItem,
                 builder: (context, currentSnap) {
@@ -316,11 +324,17 @@ class PlaybackEngineCard extends StatelessWidget {
                     },
                   );
                 },
-              ),
-              const SizedBox(height: 10),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
 
-              // 2. Waveform Progress Bar & Seek
-              StreamBuilder<Duration?>(
+          // 2. Waveform Progress Bar & Seek
+          ListenableBuilder(
+            listenable: controller.trackSelectionListenable,
+            builder: (context, _) {
+              final track = controller.selectedTrack;
+              return StreamBuilder<Duration?>(
                 stream: engine.stream.duration,
                 initialData: engine.state.duration,
                 builder: (context, durSnap) {
@@ -397,21 +411,28 @@ class PlaybackEngineCard extends StatelessWidget {
                                       child: ClipRRect(
                                         borderRadius: BorderRadius.circular(5),
                                         child: RepaintBoundary(
-                                          child: CustomPaint(
-                                            size: Size(
-                                              constraints.maxWidth,
-                                              44,
-                                            ),
-                                            painter: WaveformPainter(
-                                              points: controller.waveformPoints,
-                                              progress: progress,
-                                              bufferedProgress:
-                                                  bufferedProgress,
-                                              playedColor:
-                                                  StudioColors.accentCyan,
-                                              unplayedColor: StudioColors
-                                                  .cardBorderFocused,
-                                            ),
+                                          child: ListenableBuilder(
+                                            listenable:
+                                                controller.waveformListenable,
+                                            builder: (context, _) {
+                                              return CustomPaint(
+                                                size: Size(
+                                                  constraints.maxWidth,
+                                                  44,
+                                                ),
+                                                painter: WaveformPainter(
+                                                  points:
+                                                      controller.waveformPoints,
+                                                  progress: progress,
+                                                  bufferedProgress:
+                                                      bufferedProgress,
+                                                  playedColor:
+                                                      StudioColors.accentCyan,
+                                                  unplayedColor: StudioColors
+                                                      .cardBorderFocused,
+                                                ),
+                                              );
+                                            },
                                           ),
                                         ),
                                       ),
@@ -461,8 +482,10 @@ class PlaybackEngineCard extends StatelessWidget {
                     },
                   );
                 },
-              ),
-              const SizedBox(height: 8),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
 
               // 3. Playback Controls Row: Left (Transport) & Right (Vol, Speed, Pitch Overlays)
               LayoutBuilder(
@@ -599,48 +622,54 @@ class PlaybackEngineCard extends StatelessWidget {
                   );
 
                   // Right Controls: Elegant Compact Floating Slider Overlays (Vol, Speed, Pitch)
-                  final rightControls = Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      // Volume Overlay Control
-                      CompactSliderControl(
-                        icon: Icons.volume_up,
-                        label: 'Vol: ${(controller.volume * 100).round()}%',
-                        value: controller.volume.clamp(0.0, 2.0),
-                        defaultValue: 1.0,
-                        min: 0.0,
-                        max: 2.0,
-                        activeColor: StudioColors.accentEmerald,
-                        valueFormatter: (v) => '${(v * 100).round()}%',
-                        onChanged: controller.setVolume,
-                      ),
-                      // Speed Overlay Control
-                      CompactSliderControl(
-                        icon: Icons.speed,
-                        label: '${controller.rate.toStringAsFixed(2)}x',
-                        value: controller.rate,
-                        defaultValue: 1.0,
-                        min: 0.25,
-                        max: 4.0,
-                        activeColor: StudioColors.accentCyan,
-                        valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
-                        onChanged: controller.setRate,
-                      ),
-                      // Pitch Overlay Control
-                      CompactSliderControl(
-                        icon: Icons.tune,
-                        label: 'Pitch: ${controller.pitch.toStringAsFixed(2)}x',
-                        value: controller.pitch,
-                        defaultValue: 1.0,
-                        min: 0.5,
-                        max: 2.0,
-                        activeColor: StudioColors.accentPurple,
-                        valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
-                        onChanged: controller.setPitch,
-                      ),
-                    ],
+                  final rightControls = ListenableBuilder(
+                    listenable: controller.transportControlsListenable,
+                    builder: (context, _) {
+                      return Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          // Volume Overlay Control
+                          CompactSliderControl(
+                            icon: Icons.volume_up,
+                            label: 'Vol: ${(controller.volume * 100).round()}%',
+                            value: controller.volume.clamp(0.0, 2.0),
+                            defaultValue: 1.0,
+                            min: 0.0,
+                            max: 2.0,
+                            activeColor: StudioColors.accentEmerald,
+                            valueFormatter: (v) => '${(v * 100).round()}%',
+                            onChanged: controller.setVolume,
+                          ),
+                          // Speed Overlay Control
+                          CompactSliderControl(
+                            icon: Icons.speed,
+                            label: '${controller.rate.toStringAsFixed(2)}x',
+                            value: controller.rate,
+                            defaultValue: 1.0,
+                            min: 0.25,
+                            max: 4.0,
+                            activeColor: StudioColors.accentCyan,
+                            valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
+                            onChanged: controller.setRate,
+                          ),
+                          // Pitch Overlay Control
+                          CompactSliderControl(
+                            icon: Icons.tune,
+                            label:
+                                'Pitch: ${controller.pitch.toStringAsFixed(2)}x',
+                            value: controller.pitch,
+                            defaultValue: 1.0,
+                            min: 0.5,
+                            max: 2.0,
+                            activeColor: StudioColors.accentPurple,
+                            valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
+                            onChanged: controller.setPitch,
+                          ),
+                        ],
+                      );
+                    },
                   );
 
                   if (isNarrow) {
@@ -676,16 +705,17 @@ class PlaybackEngineCard extends StatelessWidget {
             ],
           ),
         );
-      },
-    );
   }
 
   /// Small recording control bar directly below transport controls
   Widget _buildRecordingMenu(BuildContext context) {
-    final isRec = controller.isRecording;
-    final dur = controller.recordedDuration;
+    return ListenableBuilder(
+      listenable: controller.recordingListenable,
+      builder: (context, _) {
+        final isRec = controller.isRecording;
+        final dur = controller.recordedDuration;
 
-    return Container(
+        return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF0C101C),
@@ -944,5 +974,7 @@ class PlaybackEngineCard extends StatelessWidget {
         ],
       ),
     );
+  },
+);
   }
 }

@@ -1,61 +1,129 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:miniaudio_player/miniaudio_player.dart';
 
 import '../../theme/studio_colors.dart';
 
 class VuMeterPainter extends CustomPainter {
-  final double leftLevel;
-  final double rightLevel;
+  final ValueListenable<VisualizerData> dataListenable;
   final bool isActive;
 
-  const VuMeterPainter({
-    required this.leftLevel,
-    required this.rightLevel,
-    this.isActive = true,
-  });
+  static final Paint _bgPaint = Paint()..color = const Color(0xFF0A0F1D);
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = const Color(0xFF0A0F1D);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(8)),
-      bgPaint,
-    );
+  static const _ticks = [
+    ('0dB', 0.20, StudioColors.accentRose),
+    ('-6dB', 0.40, StudioColors.accentAmber),
+    ('-18dB', 0.65, StudioColors.accentCyan),
+    ('-36dB', 0.85, StudioColors.accentEmerald),
+  ];
 
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+  static TextPainter _layoutLabel(String text, TextStyle style) {
+    return TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
 
-    // Header label
-    textPainter.text = const TextSpan(
-      text: 'STEREO PEAK / RMS',
-      style: TextStyle(
-        color: StudioColors.textPrimary,
-        fontSize: 9.0,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.5,
-      ),
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, Offset((size.width - textPainter.width) / 2, 6));
+  static final TextPainter _headerPainter = _layoutLabel(
+    'STEREO PEAK / RMS',
+    const TextStyle(
+      color: StudioColors.textPrimary,
+      fontSize: 9.0,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.5,
+    ),
+  );
 
-    // dB ticks on the left: 0dB, -6dB, -18dB, -36dB
-    const ticks = [
-      ('0dB', 0.20, StudioColors.accentRose),
-      ('-6dB', 0.40, StudioColors.accentAmber),
-      ('-18dB', 0.65, StudioColors.accentCyan),
-      ('-36dB', 0.85, StudioColors.accentEmerald),
-    ];
-
-    for (final tick in ticks) {
-      final y = size.height * tick.$2;
-      textPainter.text = TextSpan(
-        text: tick.$1,
-        style: TextStyle(
+  static final List<TextPainter> _tickPainters = [
+    for (final tick in _ticks)
+      _layoutLabel(
+        tick.$1,
+        TextStyle(
           color: tick.$3.withValues(alpha: 0.7),
           fontSize: 7.5,
           fontWeight: FontWeight.w600,
         ),
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(8, y - 5));
+      ),
+  ];
+
+  static final TextPainter _leftChannelPainter = _layoutLabel(
+    'L',
+    const TextStyle(
+      color: StudioColors.accentCyan,
+      fontSize: 9.0,
+      fontWeight: FontWeight.bold,
+    ),
+  );
+
+  static final TextPainter _rightChannelPainter = _layoutLabel(
+    'R',
+    const TextStyle(
+      color: StudioColors.accentCyan,
+      fontSize: 9.0,
+      fontWeight: FontWeight.bold,
+    ),
+  );
+
+  static final List<Paint> _litBandPaints = [
+    Paint()
+      ..color = StudioColors.accentRose
+      ..style = PaintingStyle.fill,
+    Paint()
+      ..color = StudioColors.accentAmber
+      ..style = PaintingStyle.fill,
+    Paint()
+      ..color = StudioColors.accentCyan
+      ..style = PaintingStyle.fill,
+    Paint()
+      ..color = StudioColors.accentEmerald
+      ..style = PaintingStyle.fill,
+  ];
+
+  static final List<Paint> _dimBandPaints = [
+    Paint()
+      ..color = StudioColors.accentRose.withValues(alpha: 0.15)
+      ..style = PaintingStyle.fill,
+    Paint()
+      ..color = StudioColors.accentAmber.withValues(alpha: 0.15)
+      ..style = PaintingStyle.fill,
+    Paint()
+      ..color = StudioColors.accentCyan.withValues(alpha: 0.15)
+      ..style = PaintingStyle.fill,
+    Paint()
+      ..color = StudioColors.accentEmerald.withValues(alpha: 0.15)
+      ..style = PaintingStyle.fill,
+  ];
+
+  static Paint _segmentPaint(double segFraction, bool isLit) {
+    final int bandIdx;
+    if (segFraction >= 0.85) {
+      bandIdx = 0;
+    } else if (segFraction >= 0.65) {
+      bandIdx = 1;
+    } else if (segFraction >= 0.35) {
+      bandIdx = 2;
+    } else {
+      bandIdx = 3;
+    }
+    return isLit ? _litBandPaints[bandIdx] : _dimBandPaints[bandIdx];
+  }
+
+  VuMeterPainter({required this.dataListenable, this.isActive = true})
+    : super(repaint: dataListenable);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(8)),
+      _bgPaint,
+    );
+
+    _headerPainter.paint(canvas, Offset((size.width - _headerPainter.width) / 2, 6));
+
+    // dB ticks on the left: 0dB, -6dB, -18dB, -36dB
+    for (int i = 0; i < _ticks.length; i++) {
+      final y = size.height * _ticks[i].$2;
+      _tickPainters[i].paint(canvas, Offset(8, y - 5));
     }
 
     final barTop = size.height * 0.18;
@@ -65,6 +133,7 @@ class VuMeterPainter extends CustomPainter {
 
     final leftBarX = size.width * 0.45;
     final rightBarX = size.width * 0.72;
+    final data = dataListenable.value;
 
     _drawMeterChannel(
       canvas,
@@ -72,8 +141,8 @@ class VuMeterPainter extends CustomPainter {
       barTop,
       barWidth,
       totalBarHeight,
-      isActive ? leftLevel : 0.0,
-      'L',
+      isActive ? data.left : 0.0,
+      _leftChannelPainter,
     );
 
     _drawMeterChannel(
@@ -82,8 +151,8 @@ class VuMeterPainter extends CustomPainter {
       barTop,
       barWidth,
       totalBarHeight,
-      isActive ? rightLevel : 0.0,
-      'R',
+      isActive ? data.right : 0.0,
+      _rightChannelPainter,
     );
   }
 
@@ -94,7 +163,7 @@ class VuMeterPainter extends CustomPainter {
     double width,
     double height,
     double level,
-    String label,
+    TextPainter labelPainter,
   ) {
     const segmentCount = 20;
     final segmentHeight = (height - (segmentCount * 1.5)) / segmentCount;
@@ -104,53 +173,24 @@ class VuMeterPainter extends CustomPainter {
       final segY = top + i * (segmentHeight + 1.5);
       final isLit = level >= segFraction;
 
-      Color color;
-      if (segFraction >= 0.85) {
-        color = StudioColors.accentRose;
-      } else if (segFraction >= 0.65) {
-        color = StudioColors.accentAmber;
-      } else if (segFraction >= 0.35) {
-        color = StudioColors.accentCyan;
-      } else {
-        color = StudioColors.accentEmerald;
-      }
-
-      final paint = Paint()
-        ..color = isLit ? color : color.withValues(alpha: 0.15)
-        ..style = PaintingStyle.fill;
-
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x, segY, width, segmentHeight),
           const Radius.circular(2),
         ),
-        paint,
+        _segmentPaint(segFraction, isLit),
       );
     }
 
-    // Channel label below
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: const TextStyle(
-          color: StudioColors.accentCyan,
-          fontSize: 9.0,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    textPainter.paint(
+    labelPainter.paint(
       canvas,
-      Offset(x + (width - textPainter.width) / 2, top + height + 3),
+      Offset(x + (width - labelPainter.width) / 2, top + height + 3),
     );
   }
 
   @override
   bool shouldRepaint(covariant VuMeterPainter oldDelegate) {
-    return oldDelegate.leftLevel != leftLevel ||
-        oldDelegate.rightLevel != rightLevel ||
-        oldDelegate.isActive != isActive;
+    return oldDelegate.isActive != isActive ||
+        oldDelegate.dataListenable != dataListenable;
   }
 }

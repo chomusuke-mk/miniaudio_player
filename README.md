@@ -161,7 +161,7 @@ _(Alternatively, `Cross-Origin-Embedder-Policy: credentialless` is supported by 
 - **Rebuilding the WebAssembly Bundle**:
 
   ```bash
-  flutter_rust_bridge_codegen build-web --release
+  dart run tool/build_web_wasm.dart
   ```
 
 ---

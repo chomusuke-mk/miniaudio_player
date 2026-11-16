@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v3.0.2)'
+        description: 'Release tag (e.g. v4.0.0)'
         required: true
         type: string
 
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   # ===========================================================================
-  # 1. Linux (x86_64 & aarch64) — Built with cargo-zigbuild targeting glibc 2.17
+  # 1. Linux (x86_64, aarch64, i686) — Built with cargo-zigbuild targeting glibc 2.17
   # ===========================================================================
   build-linux:
     strategy:
@@ -25,14 +25,23 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             zig_target: x86_64-unknown-linux-gnu.2.17
+            elf_machine: 'Advanced Micro Devices X86-64'
           - target: aarch64-unknown-linux-gnu
             zig_target: aarch64-unknown-linux-gnu.2.17
+            elf_machine: 'AArch64'
+          - target: i686-unknown-linux-gnu
+            zig_target: i686-unknown-linux-gnu.2.17
+            elf_machine: 'Intel 80386'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          prefix-key: linux-${{ matrix.target }}
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.13.0
@@ -41,16 +50,19 @@ jobs:
       - name: Build ${{ matrix.target }} (glibc >= 2.17)
         run: |
           cargo zigbuild --manifest-path rust/Cargo.toml --release --target ${{ matrix.zig_target }}
+          SO_PATH="rust/target/${{ matrix.target }}/release/libminiaudio_player.so"
+          readelf -h "$SO_PATH" | grep -F "Machine:" | grep -F "${{ matrix.elf_machine }}"
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" libminiaudio_player.so
+          OUT_GZ="miniaudio_player-${TAG}-${{ matrix.target }}.so.gz"
+          gzip -9 -c "$SO_PATH" > "$OUT_GZ"
+          ls -lh "$SO_PATH" "$OUT_GZ"
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: miniaudio_player-*.tar.gz
+          path: miniaudio_player-*.so.gz
 
   # ===========================================================================
-  # 2. Android (arm64-v8a, armeabi-v7a, x86_64) — NDK r28 + 16 KB Page Alignment
+  # 2. Android (arm64-v8a, armeabi-v7a, x86_64, x86) — NDK r28 + 16 KB Page Alignment
   # ===========================================================================
   build-android:
     strategy:
@@ -59,34 +71,50 @@ jobs:
         include:
           - target: aarch64-linux-android
             abi: arm64-v8a
+            elf_machine: 'AArch64'
+            require_16k: true
           - target: armv7-linux-androideabi
             abi: armeabi-v7a
+            elf_machine: 'ARM'
+            require_16k: false
           - target: x86_64-linux-android
             abi: x86_64
+            elf_machine: 'Advanced Micro Devices X86-64'
+            require_16k: true
+          - target: i686-linux-android
+            abi: x86
+            elf_machine: 'Intel 80386'
+            require_16k: false
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          prefix-key: android-${{ matrix.target }}
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        run: cargo install --locked cargo-ndk
       - name: Build ${{ matrix.target }}
         env:
           CARGO_ENCODED_RUSTFLAGS: "-Clink-arg=-Wl,-z,max-page-size=16384"
         run: |
           cargo ndk -t ${{ matrix.abi }} --platform 24 build --manifest-path rust/Cargo.toml --release
-          # Verify 16 KB ELF segment alignment on 64-bit Android targets
-          if [ "${{ matrix.abi }}" != "armeabi-v7a" ]; then
-            readelf -l "rust/target/${{ matrix.target }}/release/libminiaudio_player.so" | grep -E "LOAD.*0x0+4000"
+          SO_PATH="rust/target/${{ matrix.target }}/release/libminiaudio_player.so"
+          readelf -h "$SO_PATH" | grep -F "Machine:" | grep -F "${{ matrix.elf_machine }}"
+          if [ "${{ matrix.require_16k }}" = "true" ]; then
+            readelf -l "$SO_PATH" | grep -E "LOAD.*0x0+4000"
           fi
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" libminiaudio_player.so
+          OUT_GZ="miniaudio_player-${TAG}-${{ matrix.target }}.so.gz"
+          gzip -9 -c "$SO_PATH" > "$OUT_GZ"
+          ls -lh "$SO_PATH" "$OUT_GZ"
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: miniaudio_player-*.tar.gz
+          path: miniaudio_player-*.so.gz
 
   # ===========================================================================
   # 3. Apple (macOS & iOS — arm64, x86_64, Simulator)
@@ -95,86 +123,169 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-apple-darwin
-          - x86_64-apple-darwin
-          - aarch64-apple-ios
-          - aarch64-apple-ios-sim
-          - x86_64-apple-ios
+        include:
+          - target: aarch64-apple-darwin
+            lipo_arch: arm64
+          - target: x86_64-apple-darwin
+            lipo_arch: x86_64
+          - target: aarch64-apple-ios
+            lipo_arch: arm64
+          - target: aarch64-apple-ios-sim
+            lipo_arch: arm64
+          - target: x86_64-apple-ios
+            lipo_arch: x86_64
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          prefix-key: apple-${{ matrix.target }}
       - name: Build ${{ matrix.target }}
         env:
-          MACOSX_DEPLOYMENT_TARGET: "10.15"
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
           IPHONEOS_DEPLOYMENT_TARGET: "12.0"
         run: |
           cargo build --manifest-path rust/Cargo.toml --release --target ${{ matrix.target }}
+          DYLIB_PATH="rust/target/${{ matrix.target }}/release/libminiaudio_player.dylib"
+          lipo -info "$DYLIB_PATH" | grep -F "${{ matrix.lipo_arch }}"
+          otool -D "$DYLIB_PATH" | grep -F "@rpath/libminiaudio_player.dylib"
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" libminiaudio_player.dylib
+          OUT_GZ="miniaudio_player-${TAG}-${{ matrix.target }}.dylib.gz"
+          gzip -9 -c "$DYLIB_PATH" > "$OUT_GZ"
+          ls -lh "$DYLIB_PATH" "$OUT_GZ"
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: miniaudio_player-*.tar.gz
+          path: miniaudio_player-*.dylib.gz
 
   # ===========================================================================
-  # 4. Windows (x86_64 & aarch64 MSVC)
+  # 4. Windows (x86_64, aarch64, i686 MSVC)
   # ===========================================================================
   build-windows:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-pc-windows-msvc
-          - aarch64-pc-windows-msvc
-    runs-on: windows-latest
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            msvc_arch: x64
+            pe_machine: '0x8664'
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            msvc_arch: arm64
+            pe_machine: '0xAA64'
+          - target: i686-pc-windows-msvc
+            runner: windows-latest
+            msvc_arch: x86
+            pe_machine: '0x014C'
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          prefix-key: windows-${{ matrix.target }}
       - name: Build ${{ matrix.target }}
-        shell: bash
+        shell: pwsh
         run: |
-          cargo build --manifest-path rust/Cargo.toml --release --target ${{ matrix.target }}
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          ARCHIVE="miniaudio_player-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "$ARCHIVE" -C "rust/target/${{ matrix.target }}/release" miniaudio_player.dll
+          cargo build --manifest-path rust/Cargo.toml --release --target "${{ matrix.target }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $dllPath = "rust/target/${{ matrix.target }}/release/miniaudio_player.dll"
+          $bytes = [System.IO.File]::ReadAllBytes($dllPath)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw "Invalid DOS header in $dllPath"
+          }
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $peSig = [BitConverter]::ToUInt32($bytes, $peOffset)
+          if ($peSig -ne 0x00004550) {
+            throw "Invalid PE signature in $dllPath"
+          }
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = [Convert]::ToUInt16("${{ matrix.pe_machine }}", 16)
+          if ($machine -ne $expected) {
+            throw ("PE Machine mismatch: expected 0x{0:X4}, got 0x{1:X4}" -f $expected, $machine)
+          }
+
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $outGz = "miniaudio_player-$tag-${{ matrix.target }}.dll.gz"
+          $inStream = [System.IO.File]::OpenRead($dllPath)
+          $outStream = [System.IO.File]::Create($outGz)
+          try {
+            $gzip = [System.IO.Compression.GZipStream]::new(
+              $outStream,
+              [System.IO.Compression.CompressionLevel]::SmallestSize
+            )
+            try {
+              $inStream.CopyTo($gzip)
+            } finally {
+              $gzip.Dispose()
+            }
+          } finally {
+            $outStream.Dispose()
+            $inStream.Dispose()
+          }
+          Get-Item $dllPath, $outGz | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: miniaudio_player-*.tar.gz
+          path: miniaudio_player-*.dll.gz
 
   # ===========================================================================
-  # 5. WebAssembly (wasm32-unknown-unknown)
+  # 5. WebAssembly (wasm32 multi-thread with atomics + SharedArrayBuffer)
   # ===========================================================================
   build-web:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-unknown-unknown
-      - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli --version 0.2.100
-      - name: Build Web WASM
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          prefix-key: web-wasm
+      - name: Install wasm-bindgen-cli & wasm-pack
         run: |
-          cargo build --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown --release
-          wasm-bindgen rust/target/wasm32-unknown-unknown/release/miniaudio_player.wasm \
-            --out-dir web/pkg \
-            --target no-modules \
-            --no-typescript
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          ARCHIVE="miniaudio_player-${TAG}-wasm32-unknown-unknown.tar.gz"
-          tar -czf "$ARCHIVE" -C web/pkg miniaudio_player.js miniaudio_player_bg.wasm
+          cargo install --locked wasm-bindgen-cli --version 0.2.130
+          cargo install --locked wasm-pack
+      - name: Build multi-threaded Web WASM
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+          RUSTFLAGS: >-
+            -C target-feature=+atomics,+bulk-memory,+mutable-globals
+            -C link-args=--shared-memory
+            -C link-args=--max-memory=1073741824
+            -C link-args=--import-memory
+            -C link-args=--export=__heap_base
+            -C link-args=--export=__wasm_init_tls
+            -C link-args=--export=__tls_size
+            -C link-args=--export=__tls_align
+            -C link-args=--export=__tls_base
+        run: |
+          mkdir -p build/web_wasm/pkg dist_web
+          wasm-pack build -t no-modules -d "$PWD/build/web_wasm/pkg" --no-typescript --out-name miniaudio_player rust -- -Z build-std=std,panic_abort
+          grep -F "SharedArrayBuffer" build/web_wasm/pkg/miniaudio_player.js || grep -F "shared:true" build/web_wasm/pkg/miniaudio_player.js
+          cp build/web_wasm/pkg/miniaudio_player.js dist_web/miniaudio_player.js
+          cp build/web_wasm/pkg/miniaudio_player_bg.wasm dist_web/miniaudio_player_bg.wasm
+          sha256sum dist_web/miniaudio_player.js dist_web/miniaudio_player_bg.wasm assets/web/miniaudio_player.js assets/web/miniaudio_player_bg.wasm
       - uses: actions/upload-artifact@v4
         with:
           name: binary-wasm32-unknown-unknown
-          path: miniaudio_player-*.tar.gz
+          path: |
+            dist_web/miniaudio_player.js
+            dist_web/miniaudio_player_bg.wasm
 
   # ===========================================================================
   # 6. Checksum Generation & GitHub Release Publication
@@ -187,16 +298,43 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Generate checksums.sha256
+      - name: Verify artifact completeness & generate checksums.sha256
         run: |
           cd dist
-          sha256sum miniaudio_player-*.tar.gz > checksums.sha256
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          for expected in \
+            "miniaudio_player-${TAG}-aarch64-linux-android.so.gz" \
+            "miniaudio_player-${TAG}-armv7-linux-androideabi.so.gz" \
+            "miniaudio_player-${TAG}-x86_64-linux-android.so.gz" \
+            "miniaudio_player-${TAG}-i686-linux-android.so.gz" \
+            "miniaudio_player-${TAG}-aarch64-apple-darwin.dylib.gz" \
+            "miniaudio_player-${TAG}-x86_64-apple-darwin.dylib.gz" \
+            "miniaudio_player-${TAG}-aarch64-apple-ios.dylib.gz" \
+            "miniaudio_player-${TAG}-aarch64-apple-ios-sim.dylib.gz" \
+            "miniaudio_player-${TAG}-x86_64-apple-ios.dylib.gz" \
+            "miniaudio_player-${TAG}-x86_64-unknown-linux-gnu.so.gz" \
+            "miniaudio_player-${TAG}-aarch64-unknown-linux-gnu.so.gz" \
+            "miniaudio_player-${TAG}-i686-unknown-linux-gnu.so.gz" \
+            "miniaudio_player-${TAG}-x86_64-pc-windows-msvc.dll.gz" \
+            "miniaudio_player-${TAG}-aarch64-pc-windows-msvc.dll.gz" \
+            "miniaudio_player-${TAG}-i686-pc-windows-msvc.dll.gz" \
+            "miniaudio_player.js" \
+            "miniaudio_player_bg.wasm"
+          do
+            if [ ! -s "$expected" ]; then
+              echo "Missing or empty release artifact: $expected"
+              exit 1
+            fi
+          done
+          sha256sum miniaudio_player-*.gz miniaudio_player.js miniaudio_player_bg.wasm > checksums.sha256
           cat checksums.sha256
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
-            dist/miniaudio_player-*.tar.gz
+            dist/miniaudio_player-*.gz
+            dist/miniaudio_player.js
+            dist/miniaudio_player_bg.wasm
             dist/checksums.sha256
           generate_release_notes: true

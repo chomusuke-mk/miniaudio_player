@@ -16,12 +16,14 @@ words:
   - alxprd
   - ambisonics
   - AMDF
+  - androideabi
   - androidx
   - Antho
   - APETAGEX
   - APIC
   - ARCHMASK
   - armeabi
+  - armv
   - arraybuffer
   - ascii
   - asintóticamente
@@ -127,6 +129,7 @@ words:
   - cvar
   - CVBR
   - Dartminiaudio
+  - darwin
   - DDART
   - dealloca
   - declspec
@@ -183,6 +186,7 @@ words:
   - dsound
   - DSOUND
   - DTFT
+  - dtolnay
   - Durbin
   - DVAR
   - EARC
@@ -302,6 +306,7 @@ words:
   - Idempotencia
   - Idempotente
   - ifndef
+  - ilammy
   - ilst
   - imdct
   - imid
@@ -319,6 +324,7 @@ words:
   - interprocedural
   - iovecin
   - ipart
+  - IPHONEOS
   - ISHLD
   - isqrt
   - isrc
@@ -332,6 +338,7 @@ words:
   - Keylock
   - Koen
   - kotlin
+  - LASTEXITCODE
   - LATM
   - latomic
   - LBCF
@@ -355,6 +362,7 @@ words:
   - libvorbisfile
   - lieff
   - Lifetimeable
+  - lipo
   - livestream
   - livestreams
   - LKFS
@@ -419,6 +427,7 @@ words:
   - mrelaxed
   - msimd
   - msse
+  - msvc
   - MSVC
   - MSVCRT
   - Muchachita
@@ -466,6 +475,7 @@ words:
   - ordery
   - organise
   - OSCE
+  - otool
   - outofmem
   - overspans
   - ovflw
@@ -511,6 +521,7 @@ words:
   - radiofrance
   - Raphson
   - Ravier
+  - readelf
   - recálculo
   - recepient
   - reconexión
@@ -560,10 +571,12 @@ words:
   - Rohit
   - rolloff
   - routeable
+  - rpath
   - rsplit
   - rtrb
   - rustfft
   - rustflags
+  - RUSTUP
   - safelisted
   - Sandboxed
   - saturator
@@ -599,6 +612,7 @@ words:
   - sobredimensionada
   - Sobredimensionamiento
   - softfp
+  - softprops
   - sonification
   - soundcards
   - Soundcloud
@@ -639,6 +653,8 @@ words:
   - Superwideband
   - SUPERWIDEBAND
   - Suttle
+  - Swatinem
+  - swiftpm
   - Symbian
   - synchsafe
   - syncwords
@@ -696,6 +712,7 @@ words:
   - upmix
   - upmixing
   - ureq
+  - USERPROFILE
   - usize
   - uuid
   - Vacia
@@ -757,4 +774,5 @@ words:
   - XSTRINGIFY
   - yourapp
   - YTYPE
+  - zigbuild
   - zlog

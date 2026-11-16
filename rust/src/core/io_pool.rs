@@ -662,6 +662,7 @@ impl IoWorkerPool {
                     &job.template,
                     &job.cancel,
                     &self.shutdown_token,
+                    true,
                 );
                 self.finish_inflight(lane, true, epoch);
 
@@ -688,6 +689,7 @@ impl IoWorkerPool {
                     &job.template,
                     &job.cancel,
                     &self.shutdown_token,
+                    false,
                 );
                 self.finish_inflight(lane, false, epoch);
 
@@ -712,6 +714,7 @@ impl IoWorkerPool {
         template: &DeckDspTemplate,
         cancel: &CancelToken,
         shutdown_token: &CancelToken,
+        prebuffer_pcm: bool,
     ) -> IoOpenOutcome {
         if cancel.is_cancelled() || shutdown_token.is_cancelled() {
             return IoOpenOutcome::Aborted;
@@ -740,6 +743,14 @@ impl IoWorkerPool {
         if res != MAP_SUCCESS {
             drop(deck);
             return IoOpenOutcome::Failed(res);
+        }
+        if prebuffer_pcm {
+            // Ensure an initial PCM cushion (~93 ms at 44.1 kHz) is decoded before playback starts.
+            deck.wait_for_initial_pcm(4096, Duration::from_millis(180), Some(cancel));
+            if cancel.is_cancelled() || shutdown_token.is_cancelled() {
+                drop(deck);
+                return IoOpenOutcome::Aborted;
+            }
         }
         IoOpenOutcome::Opened(deck)
     }

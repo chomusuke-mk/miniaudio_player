@@ -64,7 +64,10 @@ class PlaylistQueueCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([controller, ?analyzerController]),
+      listenable: Listenable.merge([
+        controller.queueListenable,
+        ?analyzerController,
+      ]),
       builder: (context, _) {
         final tracks = controller.availableTracks;
         final xfade = controller.crossfadeConfig;

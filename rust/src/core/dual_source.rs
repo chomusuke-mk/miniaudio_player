@@ -3932,6 +3932,39 @@ impl StreamingDeck {
         }
     }
 
+    /// Returns the number of decoded PCM frames currently buffered in `AudioRenderer`.
+    #[inline]
+    pub fn buffered_audio_frames(&self) -> usize {
+        let ch = (self.device_channels.load(Ordering::Relaxed) as usize).clamp(1, 8);
+        let samples = self
+            .renderer
+            .as_ref()
+            .map(|r| r.consumer.samples_available())
+            .unwrap_or(0);
+        samples / ch
+    }
+
+    /// Waits briefly until the background `DecoderWorker` populates an initial PCM cushion
+    /// (or reaches EOF, cancellation, or timeout), avoiding cold-start dropouts when `play()` commits.
+    pub fn wait_for_initial_pcm(
+        &self,
+        min_frames: usize,
+        max_wait: std::time::Duration,
+        cancel: Option<&CancelToken>,
+    ) {
+        let deadline = MonotonicInstant::now() + max_wait;
+        while self.buffered_audio_frames() < min_frames {
+            if self.decoder_eof.load(Ordering::Acquire)
+                || self.track_exhausted.load(Ordering::Acquire)
+                || cancel.is_some_and(|c| c.is_cancelled())
+                || MonotonicInstant::now() >= deadline
+            {
+                break;
+            }
+            crate::sync::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
     #[inline]
     pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
         if !output_frames.is_null() && frame_count > 0 {

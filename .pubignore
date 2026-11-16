@@ -29,6 +29,8 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /rust/target/
+/web/pkg/
+/example/web/pkg/
 /example/build/
 /example/.dart_tool/
 /coverage/

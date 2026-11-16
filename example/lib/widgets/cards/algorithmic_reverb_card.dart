@@ -72,7 +72,7 @@ class ReverbSubCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: controller.reverbListenable,
       builder: (context, _) {
         final enabled = controller.reverbEnabled;
         final rawPreset = controller.selectedReverbPreset;

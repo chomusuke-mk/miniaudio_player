@@ -257,7 +257,11 @@ class AudioAnalyzerView extends StatelessWidget {
       children: [
         // 1. Live Session Telemetry & Track Inspector Switcher
         ListenableBuilder(
-          listenable: Listenable.merge([playerController, analyzerController]),
+          listenable: Listenable.merge([
+            playerController.trackSelectionListenable,
+            playerController.queueListenable,
+            analyzerController,
+          ]),
           builder: (context, _) {
             final tracks = playerController.availableTracks;
             final playingTrack = playerController.selectedTrack;

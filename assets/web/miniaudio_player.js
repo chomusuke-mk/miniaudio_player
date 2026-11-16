@@ -224,6 +224,59 @@ let wasm_bindgen = (function(exports) {
     exports.rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer = rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer;
 
     /**
+     * Returns the preferred output sample rate for initializing the Web `AudioContext`.
+     * @returns {number}
+     */
+    function wasm_get_sample_rate() {
+        const ret = wasm.wasm_get_sample_rate();
+        return ret >>> 0;
+    }
+    exports.wasm_get_sample_rate = wasm_get_sample_rate;
+
+    /**
+     * Returns the monotonic render-quantum heartbeat incremented by the Web Audio consumer.
+     * @returns {number}
+     */
+    function wasm_get_web_audio_frames_consumed() {
+        const ret = wasm.wasm_get_web_audio_frames_consumed();
+        return ret >>> 0;
+    }
+    exports.wasm_get_web_audio_frames_consumed = wasm_get_web_audio_frames_consumed;
+
+    /**
+     * Returns the number of stereo frames currently queued for Web Audio output.
+     * @returns {number}
+     */
+    function wasm_get_web_audio_queued_frames() {
+        const ret = wasm.wasm_get_web_audio_queued_frames();
+        return ret >>> 0;
+    }
+    exports.wasm_get_web_audio_queued_frames = wasm_get_web_audio_queued_frames;
+
+    /**
+     * Returns the descriptor object allowing `AudioWorklet` to read `WasmWebAudioRing` directly
+     * from shared WASM linear memory without involving the browser main UI thread.
+     * @returns {any}
+     */
+    function wasm_get_web_audio_ring_descriptor() {
+        const ret = wasm.wasm_get_web_audio_ring_descriptor();
+        return ret;
+    }
+    exports.wasm_get_web_audio_ring_descriptor = wasm_get_web_audio_ring_descriptor;
+
+    /**
+     * Returns the cumulative number of Web Audio consumer underrun callbacks during playback.
+     * @returns {number}
+     */
+    function wasm_get_web_audio_underruns() {
+        const ret = wasm.wasm_get_web_audio_underruns();
+        return ret >>> 0;
+    }
+    exports.wasm_get_web_audio_underruns = wasm_get_web_audio_underruns;
+
+    /**
+     * Legacy `ScriptProcessorNode` fallback consumer reading from `WasmWebAudioRing` without
+     * throwing away buffered audio via prebuffering snap-backs.
      * @param {number} frames
      * @returns {Float32Array}
      */
@@ -232,6 +285,15 @@ let wasm_bindgen = (function(exports) {
         return ret;
     }
     exports.wasm_render_web_audio = wasm_render_web_audio;
+
+    /**
+     * Records the actual browser `AudioContext.sampleRate` so Web pumping matches it cleanly.
+     * @param {number} sample_rate
+     */
+    function wasm_set_web_audio_sample_rate(sample_rate) {
+        wasm.wasm_set_web_audio_sample_rate(sample_rate);
+    }
+    exports.wasm_set_web_audio_sample_rate = wasm_set_web_audio_sample_rate;
 
     function wasm_start_callback() {
         wasm.wasm_start_callback();
@@ -467,10 +529,6 @@ let wasm_bindgen = (function(exports) {
                 const ret = new Uint8Array(arg0 >>> 0);
                 return ret;
             },
-            __wbg_new_with_length_5c0c9043ebd9ec32: function(arg0) {
-                const ret = new Float32Array(arg0 >>> 0);
-                return ret;
-            },
             __wbg_now_e7c6795a7f81e10f: function(arg0) {
                 const ret = arg0.now();
                 return ret;
@@ -555,18 +613,18 @@ let wasm_bindgen = (function(exports) {
                 return ret;
             },
             __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2134, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_37ac40979d49a010___convert__closures_____invoke___web_sys_9cd7957b7be34144___features__gen_MessageEvent__MessageEvent______true_);
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2135, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true_);
                 return ret;
             },
             __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2134, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_37ac40979d49a010___convert__closures_____invoke___web_sys_9cd7957b7be34144___features__gen_MessageEvent__MessageEvent______true__18);
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2135, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__24);
                 return ret;
             },
             __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2133, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_37ac40979d49a010___convert__closures_____invoke_______true_);
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2134, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke_______true_);
                 return ret;
             },
             __wbindgen_generic_0000000000000004: function(arg0) {
@@ -595,16 +653,16 @@ let wasm_bindgen = (function(exports) {
         };
     }
 
-    function wasm_bindgen_37ac40979d49a010___convert__closures_____invoke_______true_(arg0, arg1) {
-        wasm.wasm_bindgen_37ac40979d49a010___convert__closures_____invoke_______true_(arg0, arg1);
+    function wasm_bindgen_c38f84564b507559___convert__closures_____invoke_______true_(arg0, arg1) {
+        wasm.wasm_bindgen_c38f84564b507559___convert__closures_____invoke_______true_(arg0, arg1);
     }
 
-    function wasm_bindgen_37ac40979d49a010___convert__closures_____invoke___web_sys_9cd7957b7be34144___features__gen_MessageEvent__MessageEvent______true_(arg0, arg1, arg2) {
-        wasm.wasm_bindgen_37ac40979d49a010___convert__closures_____invoke___web_sys_9cd7957b7be34144___features__gen_MessageEvent__MessageEvent______true_(arg0, arg1, arg2);
+    function wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true_(arg0, arg1, arg2) {
+        wasm.wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true_(arg0, arg1, arg2);
     }
 
-    function wasm_bindgen_37ac40979d49a010___convert__closures_____invoke___web_sys_9cd7957b7be34144___features__gen_MessageEvent__MessageEvent______true__18(arg0, arg1, arg2) {
-        wasm.wasm_bindgen_37ac40979d49a010___convert__closures_____invoke___web_sys_9cd7957b7be34144___features__gen_MessageEvent__MessageEvent______true__18(arg0, arg1, arg2);
+    function wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__24(arg0, arg1, arg2) {
+        wasm.wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__24(arg0, arg1, arg2);
     }
 
     const WorkerPoolFinalization = (typeof FinalizationRegistry === 'undefined')

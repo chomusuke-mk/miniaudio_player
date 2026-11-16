@@ -36,6 +36,108 @@ pub fn wait_timeout_unpoisoned<'a, T>(
     cvar.wait_timeout(guard, dur).unwrap_or_else(|e| e.into_inner())
 }
 
+/// Outcome of waiting with a timeout on a [`WakeQueue`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeRecvError {
+    Timeout,
+    Disconnected,
+}
+
+struct WakeQueueInner<T> {
+    items: std::collections::VecDeque<T>,
+    closed: bool,
+}
+
+/// Cross-platform MPSC wakeup queue using `Condvar::wait_timeout` instead of
+/// `crossbeam_channel::Receiver::recv_timeout` (whose deadline math calls
+/// `std::time::Instant::now()` and panics on `wasm32`).
+pub struct WakeQueue<T> {
+    lock: Mutex<WakeQueueInner<T>>,
+    cvar: std::sync::Condvar,
+}
+
+impl<T> WakeQueue<T> {
+    /// Creates an open empty [`WakeQueue`].
+    pub fn new() -> Self {
+        Self {
+            lock: Mutex::new(WakeQueueInner {
+                items: std::collections::VecDeque::new(),
+                closed: false,
+            }),
+            cvar: std::sync::Condvar::new(),
+        }
+    }
+
+    /// Pushes an item and wakes one waiting consumer. Returns `false` if closed.
+    pub fn send(&self, item: T) -> bool {
+        let mut guard = lock_unpoisoned(&self.lock);
+        if guard.closed {
+            return false;
+        }
+        guard.items.push_back(item);
+        drop(guard);
+        self.cvar.notify_one();
+        true
+    }
+
+    /// Closes the queue and wakes all waiting consumers.
+    pub fn close(&self) {
+        let mut guard = lock_unpoisoned(&self.lock);
+        guard.closed = true;
+        drop(guard);
+        self.cvar.notify_all();
+    }
+
+    /// Attempts to pop the next item without blocking.
+    pub fn try_pop(&self) -> Option<T> {
+        lock_unpoisoned(&self.lock).items.pop_front()
+    }
+
+    /// Waits up to `timeout` for an item, avoiding `std::time::Instant::now()`.
+    pub fn wait_pop_timeout(&self, timeout: std::time::Duration) -> Result<T, WakeRecvError> {
+        let mut guard = lock_unpoisoned(&self.lock);
+        if let Some(item) = guard.items.pop_front() {
+            return Ok(item);
+        }
+        if guard.closed {
+            return Err(WakeRecvError::Disconnected);
+        }
+        if timeout.is_zero() || !can_block_current_thread() {
+            return Err(WakeRecvError::Timeout);
+        }
+        let (mut guard, _) = wait_timeout_unpoisoned(&self.cvar, guard, timeout);
+        if let Some(item) = guard.items.pop_front() {
+            Ok(item)
+        } else if guard.closed {
+            Err(WakeRecvError::Disconnected)
+        } else {
+            Err(WakeRecvError::Timeout)
+        }
+    }
+
+    /// Waits up to `timeout` when empty, then drains all available items into `out`.
+    /// Returns `false` once the queue is closed and completely empty.
+    pub fn wait_drain_timeout(&self, timeout: std::time::Duration, out: &mut Vec<T>) -> bool {
+        let mut guard = lock_unpoisoned(&self.lock);
+        if guard.items.is_empty()
+            && !guard.closed
+            && !timeout.is_zero()
+            && can_block_current_thread()
+        {
+            let (g, _) = wait_timeout_unpoisoned(&self.cvar, guard, timeout);
+            guard = g;
+        }
+        out.extend(guard.items.drain(..));
+        !(guard.closed && out.is_empty())
+    }
+}
+
+impl<T> Default for WakeQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Acquires a read lock on an `RwLock`, recovering gracefully from poisoning.
 #[inline]
 pub fn read_unpoisoned<T>(rw: &RwLock<T>) -> RwLockReadGuard<'_, T> {
@@ -109,9 +211,13 @@ pub mod thread {
 
     #[inline]
     pub fn sleep(dur: Duration) {
-        if !is_web_main_thread() {
-            std::thread::sleep(dur);
+        if dur.is_zero() || is_web_main_thread() {
+            return;
         }
+        let lock = Mutex::new(());
+        let cvar = Condvar::new();
+        let guard = super::lock_unpoisoned(&lock);
+        let _ = super::wait_timeout_unpoisoned(&cvar, guard, dur);
     }
 
     fn resolve_script_src() -> String {
@@ -133,10 +239,18 @@ pub mod thread {
                             const m = e.stack && e.stack.match(/(?:\(|@)(https?:\/\/[^\s:)"]+\.js):\d+:\d+/);
                             if (m) return m[1];
                         }
-                        if (typeof location !== 'undefined' && location.origin) {
-                            return location.origin + '/pkg/miniaudio_player.js';
+                        const rel = 'assets/packages/miniaudio_player/assets/web/miniaudio_player.js';
+                        if (typeof URL !== 'undefined') {
+                            const base = (typeof document !== 'undefined' && document.baseURI)
+                                || (typeof location !== 'undefined' ? location.href : '');
+                            if (base) {
+                                return new URL(rel, base).href;
+                            }
                         }
-                        return 'pkg/miniaudio_player.js';
+                        if (typeof location !== 'undefined' && location.origin) {
+                            return location.origin + '/' + rel;
+                        }
+                        return rel;
                     })()"#,
                 ) {
                     if let Some(s) = val.as_string() {
@@ -145,7 +259,7 @@ pub mod thread {
                         }
                     }
                 }
-                "pkg/miniaudio_player.js".to_string()
+                "assets/packages/miniaudio_player/assets/web/miniaudio_player.js".to_string()
             })
             .clone()
     }

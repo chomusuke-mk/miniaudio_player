@@ -50,13 +50,42 @@ List<String> _nativeAssetCandidatePaths(String libName) {
         exeName == 'flutter_tester' || exeName == 'flutter_tester.exe';
     final isDartVm = exeName == 'dart' || exeName == 'dart.exe';
     if (!isFlutterTester && !isDartVm) {
-      final exeDir = resolvedExe.parent.path;
-      // Flutter Linux bundle (`<bundle>/lib/libminiaudio_player.so`)
-      paths.add(p.join(exeDir, 'lib', libName));
-      // `dart build cli` AOT bundle (`<bundle>/bin/../lib/...`)
-      paths.add(p.normalize(p.join(exeDir, '..', 'lib', libName)));
-      // Flutter Windows bundle (DLL sits directly beside the `.exe`)
-      paths.add(p.join(exeDir, libName));
+      if (!Platform.isAndroid) {
+        final exeDir = resolvedExe.parent.path;
+        if (Platform.isMacOS || Platform.isIOS) {
+          // Flutter macOS framework (`<app>.app/Contents/Frameworks/miniaudio_player.framework/miniaudio_player`)
+          paths.add(
+            p.normalize(
+              p.join(
+                exeDir,
+                '..',
+                'Frameworks',
+                'miniaudio_player.framework',
+                'miniaudio_player',
+              ),
+            ),
+          );
+          // Flutter iOS framework (`Runner.app/Frameworks/miniaudio_player.framework/miniaudio_player`)
+          paths.add(
+            p.join(
+              exeDir,
+              'Frameworks',
+              'miniaudio_player.framework',
+              'miniaudio_player',
+            ),
+          );
+        }
+        // Flutter Linux bundle (`<bundle>/lib/libminiaudio_player.so`)
+        paths.add(p.join(exeDir, 'lib', libName));
+        // `dart build cli` AOT bundle (`<bundle>/bin/../lib/...`)
+        paths.add(p.normalize(p.join(exeDir, '..', 'lib', libName)));
+        // Flutter Windows bundle (DLL sits directly beside the `.exe`)
+        paths.add(p.join(exeDir, libName));
+      }
+      // Never probe workspace-relative CWD paths (`rust/target/`, `.dart_tool/`)
+      // when running inside a compiled app bundle; let `loadExternalLibrary`
+      // resolve `@rpath` / APK `jniLibs` / system search paths next.
+      return paths;
     }
   } catch (_) {}
 

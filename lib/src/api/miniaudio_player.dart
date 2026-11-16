@@ -702,7 +702,7 @@ class MiniaudioPlayer<T> {
         stream._visualizerSourceController.add(src);
       case rust_types.RustPlayerEvent_Visualizer(:final field0):
         final vis = VisualizerData(
-          bands: field0.bands.toList(),
+          bands: field0.bands,
           rms: field0.rms,
           peak: field0.peak,
           left: field0.left,

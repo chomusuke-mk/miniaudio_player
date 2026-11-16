@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
@@ -17,7 +19,7 @@ class SpectrumVisualizerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: ListenableBuilder(
-        listenable: controller,
+        listenable: controller.visualizerControlsListenable,
         builder: (context, _) {
           final isEnabled = controller.visualizerEnabled;
 
@@ -139,64 +141,107 @@ class SpectrumVisualizerCard extends StatelessWidget {
               duration: const Duration(milliseconds: 250),
               child: IgnorePointer(
                 ignoring: !isEnabled,
-                child: StreamBuilder<VisualizerData>(
-                  stream: controller.engine.stream.visualizer,
-                  initialData: controller.engine.state.visualizer,
-                  builder: (context, snapshot) {
-                    final data = snapshot.data;
-                    final bands = data?.bands ?? List.filled(10, 0.0);
-                    final left = data?.left ?? 0.0;
-                    final right = data?.right ?? 0.0;
-
-                    return LayoutBuilder(
-                      builder: (context, constraints) {
-                        final height = constraints.maxWidth < 400
-                            ? 150.0
-                            : 170.0;
-
-                        return SizedBox(
-                          height: height,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              // 10-Band Spectrum Analyzer
-                              Expanded(
-                                flex: 7,
-                                child: RepaintBoundary(
-                                  child: CustomPaint(
-                                    painter: SpectrumPainter(
-                                      magnitudes: bands,
-                                      isActive: isEnabled,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              // Stereo VU meters (L / R)
-                              Expanded(
-                                flex: 3,
-                                child: RepaintBoundary(
-                                  child: CustomPaint(
-                                    painter: VuMeterPainter(
-                                      leftLevel: left,
-                                      rightLevel: right,
-                                      isActive: isEnabled,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
+                child: _ReactiveVisualizerCanvases(
+                  engine: controller.engine,
+                  isActive: isEnabled,
                 ),
               ),
             ),
           );
         },
       ),
+    );
+  }
+}
+
+class _ReactiveVisualizerCanvases extends StatefulWidget {
+  final MiniaudioPlayer<dynamic> engine;
+  final bool isActive;
+
+  const _ReactiveVisualizerCanvases({
+    required this.engine,
+    required this.isActive,
+  });
+
+  @override
+  State<_ReactiveVisualizerCanvases> createState() =>
+      _ReactiveVisualizerCanvasesState();
+}
+
+class _ReactiveVisualizerCanvasesState
+    extends State<_ReactiveVisualizerCanvases> {
+  late final ValueNotifier<VisualizerData> _visNotifier = ValueNotifier(
+    widget.engine.state.visualizer,
+  );
+  StreamSubscription<VisualizerData>? _visSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _visSub = widget.engine.stream.visualizer.listen((data) {
+      _visNotifier.value = data;
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReactiveVisualizerCanvases oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.engine != widget.engine) {
+      _visSub?.cancel();
+      _visNotifier.value = widget.engine.state.visualizer;
+      _visSub = widget.engine.stream.visualizer.listen((data) {
+        _visNotifier.value = data;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _visSub?.cancel();
+    _visNotifier.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = constraints.maxWidth < 400 ? 150.0 : 170.0;
+
+        return SizedBox(
+          height: height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 10-Band Spectrum Analyzer
+              Expanded(
+                flex: 7,
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: SpectrumPainter(
+                      dataListenable: _visNotifier,
+                      isActive: widget.isActive,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Stereo VU meters (L / R)
+              Expanded(
+                flex: 3,
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: VuMeterPainter(
+                      dataListenable: _visNotifier,
+                      isActive: widget.isActive,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

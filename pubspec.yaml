@@ -1,6 +1,6 @@
 name: miniaudio_player
 description: "Ultra-low-resource cross-platform audio player and DSP engine using miniaudio. Features dual-deck crossfade queue, equalizer, reverb, limiter, crossfeed, pitch, rate & visualizer."
-version: 3.0.2
+version: 4.0.0
 repository: https://github.com/chomusuke-mk/miniaudio_player
 issue_tracker: https://github.com/chomusuke-mk/miniaudio_player/issues
 funding:
@@ -22,6 +22,7 @@ screenshots:
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.41.0"
 
 dependencies:
   code_assets: ">=1.0.0 <3.0.0"
@@ -40,5 +41,9 @@ dev_dependencies:
 
 flutter:
   assets:
-    - web/pkg/miniaudio_player.js
-    - web/pkg/miniaudio_player_bg.wasm
+    - path: assets/web/miniaudio_player.js
+      platforms:
+        - web
+    - path: assets/web/miniaudio_player_bg.wasm
+      platforms:
+        - web

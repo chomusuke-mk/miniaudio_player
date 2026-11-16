@@ -33,120 +33,131 @@ class DspEffectsCard extends StatelessWidget {
   }
 
   Widget _buildSmartSilenceSubCard() {
-    return DspSubCard(
-      icon: Icons.hourglass_empty,
-      title: 'Smart Silence Skipping',
-      subtitle: controller.silenceEnabled
-          ? 'Skipped: ${_formatDuration(controller.silenceSavedDuration)} saved'
-          : 'Inactive: plays full timeline without skipping',
-      enabled: controller.silenceEnabled,
-      accentColor: StudioColors.accentPurple,
-      onToggle: controller.setSilenceSkipEnabled,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DropdownButtonFormField<SilenceSkipMode>(
-            initialValue: controller.silenceMode,
-            isExpanded: true,
-            dropdownColor: const Color(0xFF0E1424),
-            decoration: const InputDecoration(
-              labelText: 'Silence Skip Mode',
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 4,
-              ),
-            ),
-            items: const [
-              DropdownMenuItem(
-                value: SilenceSkipMode.all,
-                child: Text(
-                  'All (Edges + In-Between Pauses)',
-                  style: TextStyle(fontSize: 10),
-                  overflow: TextOverflow.ellipsis,
+    return ListenableBuilder(
+      listenable: controller.silenceListenable,
+      builder: (context, _) {
+        return DspSubCard(
+          icon: Icons.hourglass_empty,
+          title: 'Smart Silence Skipping',
+          subtitle: controller.silenceEnabled
+              ? 'Skipped: ${_formatDuration(controller.silenceSavedDuration)} saved'
+              : 'Inactive: plays full timeline without skipping',
+          enabled: controller.silenceEnabled,
+          accentColor: StudioColors.accentPurple,
+          onToggle: controller.setSilenceSkipEnabled,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DropdownButtonFormField<SilenceSkipMode>(
+                initialValue: controller.silenceMode,
+                isExpanded: true,
+                dropdownColor: const Color(0xFF0E1424),
+                decoration: const InputDecoration(
+                  labelText: 'Silence Skip Mode',
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                 ),
+                items: const [
+                  DropdownMenuItem(
+                    value: SilenceSkipMode.all,
+                    child: Text(
+                      'All (Edges + In-Between Pauses)',
+                      style: TextStyle(fontSize: 10),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: SilenceSkipMode.trimEdges,
+                    child: Text(
+                      'Trim Edges (Intro & Outro)',
+                      style: TextStyle(fontSize: 10),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: SilenceSkipMode.continuous,
+                    child: Text(
+                      'Continuous Pauses (Middle Only)',
+                      style: TextStyle(fontSize: 10),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+                onChanged: controller.silenceEnabled
+                    ? (m) {
+                        if (m != null) {
+                          controller.setSilenceMode(m);
+                        }
+                      }
+                    : null,
               ),
-              DropdownMenuItem(
-                value: SilenceSkipMode.trimEdges,
-                child: Text(
-                  'Trim Edges (Intro & Outro)',
-                  style: TextStyle(fontSize: 10),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              DropdownMenuItem(
-                value: SilenceSkipMode.continuous,
-                child: Text(
-                  'Continuous Pauses (Middle Only)',
-                  style: TextStyle(fontSize: 10),
-                  overflow: TextOverflow.ellipsis,
-                ),
+              const SizedBox(height: 8),
+              Wrap(
+                alignment: WrapAlignment.start,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  CompactSliderControl(
+                    icon: Icons.graphic_eq,
+                    label:
+                        'Threshold: ${controller.silenceThresholdDb.toStringAsFixed(1)} dB',
+                    value: controller.silenceThresholdDb.clamp(-90.0, -20.0),
+                    defaultValue: -45.0,
+                    min: -90.0,
+                    max: -20.0,
+                    activeColor: StudioColors.accentPurple,
+                    disabled: !controller.silenceEnabled,
+                    valueFormatter: (v) => '${v.toStringAsFixed(1)} dB',
+                    onChanged: controller.setSilenceThresholdDb,
+                  ),
+                ],
               ),
             ],
-            onChanged: controller.silenceEnabled
-                ? (m) {
-                    if (m != null) {
-                      controller.setSilenceMode(m);
-                    }
-                  }
-                : null,
           ),
-          const SizedBox(height: 8),
-          Wrap(
+        );
+      },
+    );
+  }
+
+  Widget _buildStereoWidenerSubCard() {
+    return ListenableBuilder(
+      listenable: controller.spatializerListenable,
+      builder: (context, _) {
+        return DspSubCard(
+          icon: Icons.surround_sound,
+          title: 'Stereo Widener',
+          subtitle: controller.spatializerEnabled
+              ? 'Active: ${controller.spatializerWidth.toStringAsFixed(2)}x Mid/Side spatializer'
+              : 'Inactive: standard Mid/Side spatializer field',
+          enabled: controller.spatializerEnabled,
+          accentColor: StudioColors.accentCyan,
+          onToggle: controller.setSpatializerEnabled,
+          child: Wrap(
             alignment: WrapAlignment.start,
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 6,
             runSpacing: 6,
             children: [
               CompactSliderControl(
-                icon: Icons.graphic_eq,
+                icon: Icons.swap_horiz,
                 label:
-                    'Threshold: ${controller.silenceThresholdDb.toStringAsFixed(1)} dB',
-                value: controller.silenceThresholdDb.clamp(-90.0, -20.0),
-                defaultValue: -45.0,
-                min: -90.0,
-                max: -20.0,
-                activeColor: StudioColors.accentPurple,
-                disabled: !controller.silenceEnabled,
-                valueFormatter: (v) => '${v.toStringAsFixed(1)} dB',
-                onChanged: controller.setSilenceThresholdDb,
+                    'Width: ${controller.spatializerWidth.toStringAsFixed(2)}x',
+                value: controller.spatializerWidth.clamp(0.0, 2.0),
+                defaultValue: 1.0,
+                min: 0.0,
+                max: 2.0,
+                activeColor: StudioColors.accentCyan,
+                disabled: !controller.spatializerEnabled,
+                valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
+                onChanged: controller.setSpatializerWidth,
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStereoWidenerSubCard() {
-    return DspSubCard(
-      icon: Icons.surround_sound,
-      title: 'Stereo Widener',
-      subtitle: controller.spatializerEnabled
-          ? 'Active: ${controller.spatializerWidth.toStringAsFixed(2)}x Mid/Side spatializer'
-          : 'Inactive: standard Mid/Side spatializer field',
-      enabled: controller.spatializerEnabled,
-      accentColor: StudioColors.accentCyan,
-      onToggle: controller.setSpatializerEnabled,
-      child: Wrap(
-        alignment: WrapAlignment.start,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 6,
-        runSpacing: 6,
-        children: [
-          CompactSliderControl(
-            icon: Icons.swap_horiz,
-            label: 'Width: ${controller.spatializerWidth.toStringAsFixed(2)}x',
-            value: controller.spatializerWidth.clamp(0.0, 2.0),
-            defaultValue: 1.0,
-            min: 0.0,
-            max: 2.0,
-            activeColor: StudioColors.accentCyan,
-            disabled: !controller.spatializerEnabled,
-            valueFormatter: (v) => '${v.toStringAsFixed(2)}x',
-            onChanged: controller.setSpatializerWidth,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -378,139 +389,155 @@ class DspEffectsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
-        return StudioCard(
-          icon: Icons.tune,
-          title: 'DYNAMIC DSP & SPATIAL MASTERING',
-          subtitle:
-              'True-Peak Limiter • Silence Skipper • BS2B Crossfeed • Stereo Widener • Freeverb Reverb • Preamp • ReplayGain',
-          trailing: const StudioBadge(
-            label: 'Mastering Chain',
-            color: StudioColors.accentCyan,
+    return StudioCard(
+      icon: Icons.tune,
+      title: 'DYNAMIC DSP & SPATIAL MASTERING',
+      subtitle:
+          'True-Peak Limiter • Silence Skipper • BS2B Crossfeed • Stereo Widener • Freeverb Reverb • Preamp • ReplayGain',
+      trailing: const StudioBadge(
+        label: 'Mastering Chain',
+        color: StudioColors.accentCyan,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // =============================================================
+          // 1. ReplayGain, Limiter, Mono Downmix, Preamp, Stereo Balance,
+          //    Pause on Device Change & Dynamic Metadata Event Stream
+          // =============================================================
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final replayGainWidget = ListenableBuilder(
+                listenable: controller.replayGainListenable,
+                builder: (context, _) => _buildReplayGainTile(),
+              );
+
+              final limiterWidget = ListenableBuilder(
+                listenable: controller.limiterListenable,
+                builder: (context, _) => _buildCompactToggleTile(
+                  icon: Icons.shield_outlined,
+                  title: 'True-Peak Limiter',
+                  subtitle: controller.limiterEnabled
+                      ? 'Active: 0.0 dBFS ceiling'
+                      : 'Disabled / Bypass',
+                  value: controller.limiterEnabled,
+                  activeColor: StudioColors.accentEmerald,
+                  onChanged: controller.setLimiterEnabled,
+                ),
+              );
+
+              final monoWidget = ListenableBuilder(
+                listenable: controller.monoListenable,
+                builder: (context, _) => _buildCompactToggleTile(
+                  icon: Icons.call_merge,
+                  title: 'Mono Downmix',
+                  subtitle: controller.monoDownmix
+                      ? 'L+R downmixed'
+                      : 'Stereo discrete',
+                  value: controller.monoDownmix,
+                  activeColor: StudioColors.accentAmber,
+                  onChanged: controller.setMonoDownmix,
+                ),
+              );
+
+              final preampWidget = ListenableBuilder(
+                listenable: controller.preampListenable,
+                builder: (context, _) => _buildCompactPillTile(
+                  icon: Icons.tune,
+                  iconColor: controller.preampDb != 0.0
+                      ? StudioColors.accentEmerald
+                      : StudioColors.textMuted,
+                  title: 'Preamp Gain',
+                  subtitle: 'Master stage gain',
+                  valueText: _formatPreamp(controller.preampDb),
+                  value: controller.preampDb.clamp(-12.0, 12.0),
+                  defaultValue: 0.0,
+                  min: -12.0,
+                  max: 12.0,
+                  activeColor: StudioColors.accentEmerald,
+                  valueFormatter: _formatPreamp,
+                  onChanged: controller.setPreamp,
+                ),
+              );
+
+              final balanceWidget = ListenableBuilder(
+                listenable: controller.balanceListenable,
+                builder: (context, _) => _buildCompactPillTile(
+                  icon: Icons.compare_arrows,
+                  iconColor: controller.stereoBalance.abs() >= 0.005
+                      ? StudioColors.accentCyan
+                      : StudioColors.textMuted,
+                  title: 'Stereo Balance',
+                  subtitle: 'L/R pan field',
+                  valueText: _formatBalance(controller.stereoBalance),
+                  value: controller.stereoBalance.clamp(-1.0, 1.0),
+                  defaultValue: 0.0,
+                  min: -1.0,
+                  max: 1.0,
+                  activeColor: StudioColors.accentCyan,
+                  valueFormatter: _formatBalance,
+                  onChanged: controller.setStereoBalance,
+                ),
+              );
+
+              final pauseOnDeviceWidget = ListenableBuilder(
+                listenable: controller.pauseOnDeviceChangeListenable,
+                builder: (context, _) => _buildCompactToggleTile(
+                  icon: Icons.pause_circle_outline,
+                  title: 'Pause on Device Change',
+                  subtitle: controller.pauseOnDeviceChange
+                      ? 'Immediate native pause (0ms leak) if physical endpoint changes'
+                      : 'Inactive: audio switches to new endpoint without pausing',
+                  value: controller.pauseOnDeviceChange,
+                  activeColor: StudioColors.accentCyan,
+                  onChanged: controller.setPauseOnDeviceChange,
+                ),
+              );
+
+              final metadataStreamWidget = ListenableBuilder(
+                listenable: controller.metadataEnabledListenable,
+                builder: (context, _) => _buildCompactToggleTile(
+                  icon: Icons.tag,
+                  title: 'Dynamic Metadata Event Stream',
+                  subtitle: controller.metadataEnabled
+                      ? 'Active: Rust streams live ID3v2/FLAC/Vorbis metadata events'
+                      : 'Disabled: zero channel bus saturation until activated',
+                  value: controller.metadataEnabled,
+                  activeColor: StudioColors.accentAmber,
+                  onChanged: controller.setMetadataEnabled,
+                ),
+              );
+
+              return _buildResponsiveSubCardGrid(
+                [
+                  replayGainWidget,
+                  limiterWidget,
+                  monoWidget,
+                  preampWidget,
+                  balanceWidget,
+                  pauseOnDeviceWidget,
+                  metadataStreamWidget,
+                ],
+                constraints.maxWidth,
+                maxColumns: 7,
+                minItemWidth: 215.0,
+                spacing: 8,
+              );
+            },
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // =============================================================
-              // 1. ReplayGain, Limiter, Mono Downmix, Preamp, Stereo Balance,
-              //    Pause on Device Change & Dynamic Metadata Event Stream
-              // =============================================================
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final replayGainWidget = _buildReplayGainTile();
+          const SizedBox(height: 10),
 
-                  final limiterWidget = _buildCompactToggleTile(
-                    icon: Icons.shield_outlined,
-                    title: 'True-Peak Limiter',
-                    subtitle: controller.limiterEnabled
-                        ? 'Active: 0.0 dBFS ceiling'
-                        : 'Disabled / Bypass',
-                    value: controller.limiterEnabled,
-                    activeColor: StudioColors.accentEmerald,
-                    onChanged: controller.setLimiterEnabled,
-                  );
-
-                  final monoWidget = _buildCompactToggleTile(
-                    icon: Icons.call_merge,
-                    title: 'Mono Downmix',
-                    subtitle: controller.monoDownmix
-                        ? 'L+R downmixed'
-                        : 'Stereo discrete',
-                    value: controller.monoDownmix,
-                    activeColor: StudioColors.accentAmber,
-                    onChanged: controller.setMonoDownmix,
-                  );
-
-                  final preampWidget = _buildCompactPillTile(
-                    icon: Icons.tune,
-                    iconColor: controller.preampDb != 0.0
-                        ? StudioColors.accentEmerald
-                        : StudioColors.textMuted,
-                    title: 'Preamp Gain',
-                    subtitle: 'Master stage gain',
-                    valueText: _formatPreamp(controller.preampDb),
-                    value: controller.preampDb.clamp(-12.0, 12.0),
-                    defaultValue: 0.0,
-                    min: -12.0,
-                    max: 12.0,
-                    activeColor: StudioColors.accentEmerald,
-                    valueFormatter: _formatPreamp,
-                    onChanged: controller.setPreamp,
-                  );
-
-                  final balanceWidget = _buildCompactPillTile(
-                    icon: Icons.compare_arrows,
-                    iconColor: controller.stereoBalance.abs() >= 0.005
-                        ? StudioColors.accentCyan
-                        : StudioColors.textMuted,
-                    title: 'Stereo Balance',
-                    subtitle: 'L/R pan field',
-                    valueText: _formatBalance(controller.stereoBalance),
-                    value: controller.stereoBalance.clamp(-1.0, 1.0),
-                    defaultValue: 0.0,
-                    min: -1.0,
-                    max: 1.0,
-                    activeColor: StudioColors.accentCyan,
-                    valueFormatter: _formatBalance,
-                    onChanged: controller.setStereoBalance,
-                  );
-
-                  final pauseOnDeviceWidget = _buildCompactToggleTile(
-                    icon: Icons.pause_circle_outline,
-                    title: 'Pause on Device Change',
-                    subtitle: controller.pauseOnDeviceChange
-                        ? 'Immediate native pause (0ms leak) if physical endpoint changes'
-                        : 'Inactive: audio switches to new endpoint without pausing',
-                    value: controller.pauseOnDeviceChange,
-                    activeColor: StudioColors.accentCyan,
-                    onChanged: controller.setPauseOnDeviceChange,
-                  );
-
-                  final metadataStreamWidget = _buildCompactToggleTile(
-                    icon: Icons.tag,
-                    title: 'Dynamic Metadata Event Stream',
-                    subtitle: controller.metadataEnabled
-                        ? 'Active: Rust streams live ID3v2/FLAC/Vorbis metadata events'
-                        : 'Disabled: zero channel bus saturation until activated',
-                    value: controller.metadataEnabled,
-                    activeColor: StudioColors.accentAmber,
-                    onChanged: controller.setMetadataEnabled,
-                  );
-
-                  return _buildResponsiveSubCardGrid(
-                    [
-                      replayGainWidget,
-                      limiterWidget,
-                      monoWidget,
-                      preampWidget,
-                      balanceWidget,
-                      pauseOnDeviceWidget,
-                      metadataStreamWidget,
-                    ],
-                    constraints.maxWidth,
-                    maxColumns: 7,
-                    minItemWidth: 215.0,
-                    spacing: 8,
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-
-              // =============================================================
-              // 2. Intelligent Silence Skipping, BS2B Crossfeed, Stereo Widener,
-              //    Algorithmic Reverb & 10-Band Equalizer
-              // =============================================================
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  return _buildSubCardMasteringSection(constraints.maxWidth);
-                },
-              ),
-            ],
+          // =============================================================
+          // 2. Intelligent Silence Skipping, BS2B Crossfeed, Stereo Widener,
+          //    Algorithmic Reverb & 10-Band Equalizer
+          // =============================================================
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return _buildSubCardMasteringSection(constraints.maxWidth);
+            },
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 

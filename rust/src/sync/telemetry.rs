@@ -330,7 +330,7 @@ impl CallbackRegistry {
 pub struct TelemetryDispatcher {
     is_running: Arc<AtomicBool>,
     callbacks: Arc<CallbackRegistry>,
-    tx: crossbeam_channel::Sender<TelemetryEvent>,
+    queue: Arc<crate::sync::WakeQueue<TelemetryEvent>>,
     worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
@@ -345,14 +345,15 @@ impl TelemetryDispatcher {
     pub fn new() -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let callbacks = Arc::new(CallbackRegistry::default());
-        let (tx, rx) = crossbeam_channel::unbounded::<TelemetryEvent>();
+        let queue = Arc::new(crate::sync::WakeQueue::new());
 
-        let worker_handle = Self::spawn_worker(is_running.clone(), callbacks.clone(), rx);
+        let worker_handle =
+            Self::spawn_worker(is_running.clone(), callbacks.clone(), queue.clone());
 
         Self {
             is_running,
             callbacks,
-            tx,
+            queue,
             worker_handle: Mutex::new(worker_handle),
         }
     }
@@ -360,23 +361,21 @@ impl TelemetryDispatcher {
     fn spawn_worker(
         is_running: Arc<AtomicBool>,
         callbacks: Arc<CallbackRegistry>,
-        rx: crossbeam_channel::Receiver<TelemetryEvent>,
+        queue: Arc<crate::sync::WakeQueue<TelemetryEvent>>,
     ) -> Option<thread::JoinHandle<()>> {
         thread::Builder::new()
             .name("map-telemetry".to_string())
             .spawn(move || {
                 let mut last_position: i64 = -1;
+                let mut batch: Vec<TelemetryEvent> = Vec::with_capacity(16);
                 while is_running.load(Ordering::Relaxed) {
-                    match rx.recv_timeout(Duration::from_millis(25)) {
-                        Ok(first_event) => {
-                            let mut batch = vec![first_event];
-                            while let Ok(ev) = rx.try_recv() {
-                                batch.push(ev);
-                            }
-                            callbacks.notify_typed_batch(&batch, &mut last_position);
-                        }
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    batch.clear();
+                    let keep_going = queue.wait_drain_timeout(Duration::from_millis(25), &mut batch);
+                    if !batch.is_empty() {
+                        callbacks.notify_typed_batch(&batch, &mut last_position);
+                    }
+                    if !keep_going {
+                        break;
                     }
                 }
             })
@@ -393,7 +392,7 @@ impl TelemetryDispatcher {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
         }
-        let _ = self.tx.send(event);
+        let _ = self.queue.send(event);
     }
 
     /// Posts an untyped event by converting `(event_type, data)` into a [`TelemetryEvent`].
@@ -405,6 +404,7 @@ impl TelemetryDispatcher {
     /// Signals the dispatcher to stop all threads and release callbacks.
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
+        self.queue.close();
         self.callbacks.set_typed(None);
         if let Ok(mut handle_guard) = self.worker_handle.lock() {
             if let Some(handle) = handle_guard.take() {

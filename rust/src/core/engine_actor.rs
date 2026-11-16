@@ -11,8 +11,6 @@ use std::time::Duration;
 use crate::sync::thread::{self, JoinHandle};
 use crate::sync::MonotonicInstant as Instant;
 
-use crossbeam_channel::RecvTimeoutError;
-
 use crate::api::types::{RustAudioInfo, RustAudioInput, RustAudioMetadata, RustAudioOutput};
 use crate::core::dual_source::AudioSourceCore;
 use crate::core::dual_source_control::TransitionCommitMode;
@@ -20,7 +18,10 @@ use crate::core::effects_manager::EffectsControl;
 use crate::core::miniaudio_player::MiniaudioPlayer;
 use crate::core::types::{PlaybackState, QueueTransition};
 use crate::dsp::visualizer::VisualizerData;
-use crate::sync::{read_unpoisoned, write_unpoisoned, CachePaddedSeqlock, ReaperHandle};
+use crate::sync::{
+    lock_unpoisoned, read_unpoisoned, wait_timeout_unpoisoned, write_unpoisoned, CachePaddedSeqlock,
+    ReaperHandle, WakeQueue, WakeRecvError,
+};
 
 const RT_NOTIFY_CAP: usize = 256;
 const RT_HINT_CAP: usize = 64;
@@ -392,7 +393,7 @@ type PostPublishHook = Option<Box<dyn FnOnce() + Send>>;
 
 enum RtActorMsg {
     Call(Box<dyn FnOnce(&mut MiniaudioPlayer) -> PostPublishHook + Send>),
-    Shutdown(crossbeam_channel::Sender<()>),
+    Shutdown(Arc<(Mutex<bool>, Condvar)>),
 }
 
 struct SnapshotPublishCache {
@@ -795,7 +796,7 @@ fn tick_music_lifecycle(
 /// Handle to the single-owner `map-engine-clock` audio actor, SFX controller, and wait-free snapshots.
 #[derive(Clone)]
 pub struct EngineActorHandle {
-    cmd_tx: crossbeam_channel::Sender<RtActorMsg>,
+    cmd_queue: Arc<WakeQueue<RtActorMsg>>,
     snapshots: Arc<EngineUiSnapshots>,
     effects: EffectsControl,
     reaper: ReaperHandle,
@@ -844,7 +845,8 @@ impl EngineActorHandle {
 
         let effects = player.effects_manager.control();
         let snapshots = Arc::new(EngineUiSnapshots::from_player(&player));
-        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<RtActorMsg>();
+        let cmd_queue = Arc::new(WakeQueue::<RtActorMsg>::new());
+        let cmd_queue_worker = cmd_queue.clone();
         let (notify_tx, notify_rx) = crossbeam_channel::bounded::<RtEngineNotice>(RT_NOTIFY_CAP);
         let (hint_tx, hint_rx) = crossbeam_channel::bounded::<RtControlHint>(RT_HINT_CAP);
 
@@ -865,64 +867,178 @@ impl EngineActorHandle {
                     let mut pending_notices: Vec<RtEngineNotice> = Vec::with_capacity(8);
                     publish_snapshots(&player, &snap_clone, &mut pub_cache);
 
+                    #[cfg(target_arch = "wasm32")]
+                    let web_chunk_frames = period_frames.clamp(256, 512);
+                    #[cfg(target_arch = "wasm32")]
+                    let mut last_consumer_seq = crate::bridge::ffi::wasm_web_audio_frames_consumed();
+                    #[cfg(target_arch = "wasm32")]
+                    let mut last_consumer_seen: Option<Instant> = None;
+
+                    let handle_msg = |msg: RtActorMsg,
+                                      ply: &mut MiniaudioPlayer,
+                                      cache: &mut SnapshotPublishCache|
+                     -> bool {
+                        match msg {
+                            RtActorMsg::Call(task) => {
+                                let post = task(ply);
+                                publish_snapshots(ply, &snap_clone, cache);
+                                if let Some(cb) = post {
+                                    cb();
+                                }
+                                true
+                            }
+                            RtActorMsg::Shutdown(ack) => {
+                                ply.dispose();
+                                let (lock, cvar) = &*ack;
+                                *lock_unpoisoned(lock) = true;
+                                cvar.notify_all();
+                                false
+                            }
+                        }
+                    };
+
                     loop {
-                        while let Ok(msg) = cmd_rx.try_recv() {
-                            match msg {
-                                RtActorMsg::Call(task) => {
-                                    let post = task(&mut player);
+                        while let Some(msg) = cmd_queue_worker.try_pop() {
+                            if !handle_msg(msg, &mut player, &mut pub_cache) {
+                                return;
+                            }
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            let now = Instant::now();
+                            let seq = crate::bridge::ffi::wasm_web_audio_frames_consumed();
+                            if seq != last_consumer_seq {
+                                last_consumer_seq = seq;
+                                last_consumer_seen = Some(now);
+                            }
+                            let consumer_active = last_consumer_seen
+                                .map(|t| now.saturating_duration_since(t) <= Duration::from_millis(250))
+                                .unwrap_or(false);
+
+                            let wait_dur = if consumer_active
+                                && crate::bridge::ffi::wasm_has_active_output_devices()
+                            {
+                                let target_cushion =
+                                    crate::bridge::ffi::wasm_web_audio_target_cushion_frames();
+                                crate::bridge::ffi::wasm_pump_web_audio_ring(true);
+                                let mut rendered_any = false;
+                                let mut burst = 0usize;
+                                while crate::bridge::ffi::wasm_web_audio_queued_frames()
+                                    < target_cushion
+                                    && burst < 6
+                                {
+                                    while let Some(msg) = cmd_queue_worker.try_pop() {
+                                        if !handle_msg(msg, &mut player, &mut pub_cache) {
+                                            return;
+                                        }
+                                    }
+                                    player.render_pcm(web_chunk_frames);
+                                    tick_music_lifecycle(
+                                        &mut player,
+                                        &mut pending_notices,
+                                        &hint_tx,
+                                        &mut hint_state,
+                                    );
+                                    crate::bridge::ffi::wasm_pump_web_audio_ring(true);
+                                    rendered_any = true;
+                                    burst += 1;
+                                }
+                                if rendered_any {
                                     publish_snapshots(&player, &snap_clone, &mut pub_cache);
-                                    if let Some(cb) = post {
-                                        cb();
+                                    for notice in pending_notices.drain(..) {
+                                        let _ = notify_tx.try_send(notice);
                                     }
                                 }
-                                RtActorMsg::Shutdown(ack) => {
-                                    player.dispose();
-                                    drop(player);
-                                    let _ = ack.send(());
-                                    return;
+                                next_tick = Instant::now() + period_duration;
+
+                                let queued = crate::bridge::ffi::wasm_web_audio_queued_frames();
+                                if queued < target_cushion {
+                                    Duration::from_millis(2)
+                                } else {
+                                    let low_water =
+                                        target_cushion.saturating_sub(web_chunk_frames as u32);
+                                    let headroom = queued.saturating_sub(low_water);
+                                    let host_sr =
+                                        crate::bridge::ffi::wasm_get_web_audio_host_sample_rate()
+                                            .max(8000);
+                                    let wait_ms = ((headroom as u64 * 1000) / host_sr as u64)
+                                        .clamp(2, 12);
+                                    Duration::from_millis(wait_ms)
+                                }
+                            } else {
+                                if now >= next_tick {
+                                    player.render_pcm(period_frames);
+                                    tick_music_lifecycle(
+                                        &mut player,
+                                        &mut pending_notices,
+                                        &hint_tx,
+                                        &mut hint_state,
+                                    );
+                                    crate::bridge::ffi::wasm_pump_web_audio_ring(consumer_active);
+                                    publish_snapshots(&player, &snap_clone, &mut pub_cache);
+                                    for notice in pending_notices.drain(..) {
+                                        let _ = notify_tx.try_send(notice);
+                                    }
+                                    next_tick += period_duration;
+                                    let after = Instant::now();
+                                    if next_tick + period_duration < after {
+                                        next_tick = after;
+                                    }
+                                }
+                                next_tick.saturating_duration_since(Instant::now())
+                            };
+
+                            if !wait_dur.is_zero() {
+                                match cmd_queue_worker.wait_pop_timeout(wait_dur) {
+                                    Ok(msg) => {
+                                        if !handle_msg(msg, &mut player, &mut pub_cache) {
+                                            return;
+                                        }
+                                    }
+                                    Err(WakeRecvError::Timeout) => {}
+                                    Err(WakeRecvError::Disconnected) => {
+                                        player.dispose();
+                                        return;
+                                    }
                                 }
                             }
                         }
 
-                        let now = Instant::now();
-                        if now >= next_tick {
-                            player.render_pcm(period_frames);
-                            tick_music_lifecycle(
-                                &mut player,
-                                &mut pending_notices,
-                                &hint_tx,
-                                &mut hint_state,
-                            );
-                            publish_snapshots(&player, &snap_clone, &mut pub_cache);
-                            // Dispatch edge notices only after snapshot publication so monitors reading
-                            // `EngineUiSnapshots` on wake never observe stale track index/metadata.
-                            for notice in pending_notices.drain(..) {
-                                let _ = notify_tx.try_send(notice);
-                            }
-                            next_tick += period_duration;
-                            let after = Instant::now();
-                            if next_tick + period_duration < after {
-                                next_tick = after;
-                            }
-                        } else {
-                            match cmd_rx.recv_timeout(next_tick - now) {
-                                Ok(RtActorMsg::Call(task)) => {
-                                    let post = task(&mut player);
-                                    publish_snapshots(&player, &snap_clone, &mut pub_cache);
-                                    if let Some(cb) = post {
-                                        cb();
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let now = Instant::now();
+                            if now >= next_tick {
+                                player.render_pcm(period_frames);
+                                tick_music_lifecycle(
+                                    &mut player,
+                                    &mut pending_notices,
+                                    &hint_tx,
+                                    &mut hint_state,
+                                );
+                                publish_snapshots(&player, &snap_clone, &mut pub_cache);
+                                // Dispatch edge notices only after snapshot publication so monitors reading
+                                // `EngineUiSnapshots` on wake never observe stale track index/metadata.
+                                for notice in pending_notices.drain(..) {
+                                    let _ = notify_tx.try_send(notice);
+                                }
+                                next_tick += period_duration;
+                                let after = Instant::now();
+                                if next_tick + period_duration < after {
+                                    next_tick = after;
+                                }
+                            } else {
+                                match cmd_queue_worker.wait_pop_timeout(next_tick - now) {
+                                    Ok(msg) => {
+                                        if !handle_msg(msg, &mut player, &mut pub_cache) {
+                                            return;
+                                        }
                                     }
-                                }
-                                Ok(RtActorMsg::Shutdown(ack)) => {
-                                    player.dispose();
-                                    drop(player);
-                                    let _ = ack.send(());
-                                    return;
-                                }
-                                Err(RecvTimeoutError::Timeout) => {}
-                                Err(RecvTimeoutError::Disconnected) => {
-                                    player.dispose();
-                                    return;
+                                    Err(WakeRecvError::Timeout) => {}
+                                    Err(WakeRecvError::Disconnected) => {
+                                        player.dispose();
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -934,7 +1050,7 @@ impl EngineActorHandle {
 
         Ok((
             Self {
-                cmd_tx,
+                cmd_queue,
                 snapshots,
                 effects,
                 reaper,
@@ -974,14 +1090,14 @@ impl EngineActorHandle {
             return Err("AudioEngineDisposed: engine has been disposed".to_string());
         }
         let (tx, rx) = crossbeam_channel::bounded::<R>(1);
-        self.cmd_tx
-            .send(RtActorMsg::Call(Box::new(move |ply| {
-                let res = f(ply);
-                Some(Box::new(move || {
-                    let _ = tx.send(res);
-                }))
-            })))
-            .map_err(|_| "AudioEngineDisposed: clock actor stopped".to_string())?;
+        if !self.cmd_queue.send(RtActorMsg::Call(Box::new(move |ply| {
+            let res = f(ply);
+            Some(Box::new(move || {
+                let _ = tx.send(res);
+            }))
+        }))) {
+            return Err("AudioEngineDisposed: clock actor stopped".to_string());
+        }
         if crate::sync::can_block_current_thread() {
             rx.recv()
                 .map_err(|_| "AudioEngineDisposed: clock actor dropped reply".to_string())
@@ -1006,7 +1122,7 @@ impl EngineActorHandle {
         if self.disposed.load(Ordering::Acquire) {
             return;
         }
-        let _ = self.cmd_tx.send(RtActorMsg::Call(Box::new(move |ply| {
+        let _ = self.cmd_queue.send(RtActorMsg::Call(Box::new(move |ply| {
             f(ply);
             None
         })));
@@ -1017,13 +1133,23 @@ impl EngineActorHandle {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded::<()>(1);
-        if self.cmd_tx.send(RtActorMsg::Shutdown(ack_tx)).is_ok()
+        let ack = Arc::new((Mutex::new(false), Condvar::new()));
+        if self.cmd_queue.send(RtActorMsg::Shutdown(ack.clone()))
             && crate::sync::can_block_current_thread()
         {
-            let _ = ack_rx.recv_timeout(Duration::from_secs(3));
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let (lock, cvar) = &*ack;
+            let mut done = lock_unpoisoned(lock);
+            while !*done {
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                done = wait_timeout_unpoisoned(cvar, done, deadline - now).0;
+            }
         }
-        if let Some(jh) = crate::sync::lock_unpoisoned(&self.clock_thread).take() {
+        self.cmd_queue.close();
+        if let Some(jh) = lock_unpoisoned(&self.clock_thread).take() {
             let _ = jh.join();
         }
         self.reaper.shutdown();

@@ -368,7 +368,7 @@ class _AudioAnalyzerCardState extends State<AudioAnalyzerCard> {
       listenables.add(widget.analyzerController!);
     }
     if (widget.playerController != null) {
-      listenables.add(widget.playerController!);
+      listenables.add(widget.playerController!.trackSelectionListenable);
     }
 
     if (listenables.isNotEmpty) {

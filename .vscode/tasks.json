@@ -49,12 +49,12 @@
     },
     {
       "label": "frb: build web wasm (release)",
-      "detail": "Compiles the Rust audio engine to multi-threaded WebAssembly (web/pkg/) via flutter_rust_bridge_codegen.",
+      "detail": "Compiles the Rust audio engine to multi-threaded WebAssembly into build/web_wasm/pkg and publishes clean distribution assets to assets/web/.",
       "type": "shell",
-      "command": "flutter_rust_bridge_codegen",
+      "command": "dart",
       "args": [
-        "build-web",
-        "--release"
+        "run",
+        "tool/build_web_wasm.dart"
       ],
       "group": "build",
       "problemMatcher": []

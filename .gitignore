@@ -36,6 +36,10 @@ migrate_working_dir/
 # Widget Preview related
 .widget_preview/
 
+# Generated WASM staging artifacts (clean distribution assets live in assets/web/)
+/web/pkg/
+/example/web/pkg/
+
 # Test audio fixtures (exclude binary audio files, track only MANIFEST.md)
 /test/fixtures/*
 !/test/fixtures/MANIFEST.md

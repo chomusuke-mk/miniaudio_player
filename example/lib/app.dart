@@ -42,7 +42,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void initState() {
     super.initState();
     _analyzerController.addListener(_onAnalyzerUpdate);
-    _playerController.addListener(_onPlayerUpdate);
+    _playerController.trackSelectionListenable.addListener(_onPlayerUpdate);
     _initApp();
   }
 
@@ -113,7 +113,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _analyzerController.removeListener(_onAnalyzerUpdate);
-    _playerController.removeListener(_onPlayerUpdate);
+    _playerController.trackSelectionListenable.removeListener(_onPlayerUpdate);
     _playerController.dispose();
     _analyzerController.dispose();
     super.dispose();

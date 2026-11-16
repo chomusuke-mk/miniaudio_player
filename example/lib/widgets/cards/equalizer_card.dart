@@ -108,7 +108,7 @@ class EqualizerSubCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: controller.equalizerListenable,
       builder: (context, _) {
         final eq = controller.currentEqualizer;
         final isEnabled = eq.enabled;

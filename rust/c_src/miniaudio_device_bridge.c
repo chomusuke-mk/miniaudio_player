@@ -175,8 +175,13 @@ map_device_context_t *map_device_create(
     /* Clean interception of AAudio hook without modifying miniaudio.h */
     if (ctx->context.backend == ma_backend_aaudio && ctx->context.aaudio.AAudioStream_waitForStateChange != NULL)
     {
-        g_orig_AAudioStream_waitForStateChange = ctx->context.aaudio.AAudioStream_waitForStateChange;
-        ctx->context.aaudio.AAudioStream_waitForStateChange = map_aaudio_waitForStateChange_hook;
+        if (g_orig_AAudioStream_waitForStateChange == NULL &&
+            ctx->context.aaudio.AAudioStream_waitForStateChange != (ma_proc)map_aaudio_waitForStateChange_hook)
+        {
+            g_orig_AAudioStream_waitForStateChange =
+                (MA_PFN_AAudioStream_waitForStateChange)ctx->context.aaudio.AAudioStream_waitForStateChange;
+        }
+        ctx->context.aaudio.AAudioStream_waitForStateChange = (ma_proc)map_aaudio_waitForStateChange_hook;
     }
 #endif
 

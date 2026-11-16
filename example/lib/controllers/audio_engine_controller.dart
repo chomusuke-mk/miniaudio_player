@@ -8,6 +8,10 @@ import 'package:miniaudio_player/miniaudio_player.dart';
 import '../models/audio_track.dart';
 import '../models/mock_data.dart';
 
+class _DomainNotifier extends ChangeNotifier {
+  void notify() => notifyListeners();
+}
+
 /// Studio Master Console Engine Controller powered directly by [MiniaudioPlayer].
 ///
 /// Manages dual-deck audio threads, automated crossfades, reorderable playlist queue,
@@ -23,6 +27,138 @@ class AudioEngineController extends ChangeNotifier {
       ),
     ),
   );
+
+  // Scoped domain notifiers so changing one control only rebuilds its owning UI widget.
+  final _DomainNotifier _trackSelectionNotifier = _DomainNotifier();
+  final _DomainNotifier _waveformNotifier = _DomainNotifier();
+  final _DomainNotifier _transportControlsNotifier = _DomainNotifier();
+  final _DomainNotifier _recordingNotifier = _DomainNotifier();
+  final _DomainNotifier _queueNotifier = _DomainNotifier();
+  final _DomainNotifier _routingNotifier = _DomainNotifier();
+  final _DomainNotifier _visualizerControlsNotifier = _DomainNotifier();
+  final _DomainNotifier _replayGainNotifier = _DomainNotifier();
+  final _DomainNotifier _limiterNotifier = _DomainNotifier();
+  final _DomainNotifier _monoNotifier = _DomainNotifier();
+  final _DomainNotifier _preampNotifier = _DomainNotifier();
+  final _DomainNotifier _balanceNotifier = _DomainNotifier();
+  final _DomainNotifier _pauseOnDeviceChangeNotifier = _DomainNotifier();
+  final _DomainNotifier _metadataEnabledNotifier = _DomainNotifier();
+  final _DomainNotifier _silenceNotifier = _DomainNotifier();
+  final _DomainNotifier _crossfeedNotifier = _DomainNotifier();
+  final _DomainNotifier _spatializerNotifier = _DomainNotifier();
+  final _DomainNotifier _reverbNotifier = _DomainNotifier();
+  final _DomainNotifier _equalizerNotifier = _DomainNotifier();
+
+  late final List<_DomainNotifier> _domainNotifiers = [
+    _trackSelectionNotifier,
+    _waveformNotifier,
+    _transportControlsNotifier,
+    _recordingNotifier,
+    _queueNotifier,
+    _routingNotifier,
+    _visualizerControlsNotifier,
+    _replayGainNotifier,
+    _limiterNotifier,
+    _monoNotifier,
+    _preampNotifier,
+    _balanceNotifier,
+    _pauseOnDeviceChangeNotifier,
+    _metadataEnabledNotifier,
+    _silenceNotifier,
+    _crossfeedNotifier,
+    _spatializerNotifier,
+    _reverbNotifier,
+    _equalizerNotifier,
+  ];
+
+  Listenable get trackSelectionListenable => _trackSelectionNotifier;
+  Listenable get waveformListenable => _waveformNotifier;
+  Listenable get transportControlsListenable => _transportControlsNotifier;
+  Listenable get recordingListenable => _recordingNotifier;
+  Listenable get queueListenable => _queueNotifier;
+  Listenable get routingListenable => _routingNotifier;
+  Listenable get visualizerControlsListenable => _visualizerControlsNotifier;
+  Listenable get replayGainListenable => _replayGainNotifier;
+  Listenable get limiterListenable => _limiterNotifier;
+  Listenable get monoListenable => _monoNotifier;
+  Listenable get preampListenable => _preampNotifier;
+  Listenable get balanceListenable => _balanceNotifier;
+  Listenable get pauseOnDeviceChangeListenable => _pauseOnDeviceChangeNotifier;
+  Listenable get metadataEnabledListenable => _metadataEnabledNotifier;
+  Listenable get silenceListenable => _silenceNotifier;
+  Listenable get crossfeedListenable => _crossfeedNotifier;
+  Listenable get spatializerListenable => _spatializerNotifier;
+  Listenable get reverbListenable => _reverbNotifier;
+  Listenable get equalizerListenable => _equalizerNotifier;
+
+  final Set<String> _inFlightRpcs = {};
+  final Map<String, Future<void> Function()> _pendingRpcs = {};
+
+  bool _isRpcActive(String key) =>
+      _inFlightRpcs.contains(key) || _pendingRpcs.containsKey(key);
+
+  void _notifyDomain([_DomainNotifier? domain]) {
+    if (_isDisposed) return;
+    domain?.notify();
+    if (hasListeners) {
+      super.notifyListeners();
+    }
+  }
+
+  /// Serializes high-frequency RPC updates per [key], dropping intermediate
+  /// superseded values while guaranteeing the latest value is dispatched.
+  Future<void> _coalesceRpc(
+    String key,
+    Future<void> Function() send, {
+    VoidCallback? onSettled,
+  }) async {
+    if (_inFlightRpcs.contains(key)) {
+      _pendingRpcs[key] = send;
+      return;
+    }
+    _inFlightRpcs.add(key);
+    var current = send;
+    try {
+      while (!_isDisposed) {
+        await current();
+        final next = _pendingRpcs.remove(key);
+        if (next == null) break;
+        current = next;
+      }
+    } finally {
+      _inFlightRpcs.remove(key);
+      _pendingRpcs.remove(key);
+      onSettled?.call();
+    }
+  }
+
+  Future<void> _setOptimisticScalar({
+    required String rpcKey,
+    required _DomainNotifier domain,
+    required void Function() applyOverride,
+    required Future<void> Function() send,
+    VoidCallback? onSettled,
+  }) async {
+    applyOverride();
+    _notifyDomain(domain);
+    await _coalesceRpc(rpcKey, send, onSettled: onSettled);
+  }
+
+  void _onStreamOverrideSync<T>({
+    required String rpcKey,
+    required _DomainNotifier domain,
+    required T Function() readDisplayed,
+    required void Function() clearOverride,
+  }) {
+    if (_isRpcActive(rpcKey)) return;
+    final before = readDisplayed();
+    clearOverride();
+    if (before != readDisplayed()) {
+      _notifyDomain(domain);
+    } else if (hasListeners) {
+      super.notifyListeners();
+    }
+  }
 
   bool _isDisposed = false;
   bool _isReady = false;
@@ -55,7 +191,7 @@ class AudioEngineController extends ChangeNotifier {
       if (trackId == null || trackId == selectedTrack?.id) {
         if (!listEquals(_waveformPoints, unmod)) {
           _waveformPoints = unmod;
-          notifyListeners();
+          _notifyDomain(_waveformNotifier);
         }
       }
     }
@@ -64,7 +200,7 @@ class AudioEngineController extends ChangeNotifier {
   void resetWaveformToSinusoidal() {
     if (_waveformPoints != null) {
       _waveformPoints = null;
-      notifyListeners();
+      _notifyDomain(_waveformNotifier);
     }
   }
 
@@ -77,11 +213,17 @@ class AudioEngineController extends ChangeNotifier {
   double? _preampOverride;
   double get preampDb => _preampOverride ?? engine.state.preamp;
 
-  Future<void> setPreamp(double db) async {
-    _preampOverride = db;
-    notifyListeners();
-    await engine.action.setPreamp(db);
-  }
+  Future<void> setPreamp(double db) => _setOptimisticScalar(
+    rpcKey: 'preamp',
+    domain: _preampNotifier,
+    applyOverride: () => _preampOverride = db,
+    send: () => engine.action.setPreamp(preampDb),
+    onSettled: () {
+      if (_preampOverride != null && engine.state.preamp == _preampOverride) {
+        _preampOverride = null;
+      }
+    },
+  );
 
   bool get replayGainEnabled => engine.state.volumeNormalization;
   ReplayGainMode? _replayGainModeOverride;
@@ -89,13 +231,22 @@ class AudioEngineController extends ChangeNotifier {
       _replayGainModeOverride ?? engine.state.replayGainMode;
   double get defaultReplayGain => engine.state.defaultReplayGain;
 
-  Future<void> setReplayGainMode(ReplayGainMode mode) async {
-    _replayGainModeOverride = mode;
-    notifyListeners();
+  Future<void> setReplayGainMode(ReplayGainMode mode) {
     MapLogger.info(
       '[REPLAY_GAIN:MODE] Operating mode changed to: ${mode.name.toUpperCase()}',
     );
-    await engine.action.setReplayGainMode(mode);
+    return _setOptimisticScalar(
+      rpcKey: 'replayGainMode',
+      domain: _replayGainNotifier,
+      applyOverride: () => _replayGainModeOverride = mode,
+      send: () => engine.action.setReplayGainMode(_replayGainModeOverride ?? mode),
+      onSettled: () {
+        if (_replayGainModeOverride != null &&
+            engine.state.replayGainMode == _replayGainModeOverride) {
+          _replayGainModeOverride = null;
+        }
+      },
+    );
   }
 
   Future<void> setDefaultReplayGain(double gainDb) async {
@@ -103,15 +254,13 @@ class AudioEngineController extends ChangeNotifier {
       '[REPLAY_GAIN:DEFAULT] Fallback target gain set to: $gainDb dB',
     );
     await engine.action.setDefaultReplayGain(gainDb);
-    notifyListeners();
+    _notifyDomain(_replayGainNotifier);
   }
 
   String _selectedPreset = 'flat';
   Equalizer? _equalizerOverride;
-  int _pendingEqualizerUpdates = 0;
   String _selectedReverbPreset = 'Studio';
   Reverb? _reverbOverride;
-  int _pendingReverbUpdates = 0;
   Reverb _lastActiveReverb = Reverb.studio;
 
   final List<StreamSubscription<dynamic>> _subscriptions = [];
@@ -120,6 +269,12 @@ class AudioEngineController extends ChangeNotifier {
   bool get isLoadingTrack => _isLoadingTrack;
 
   AudioTrack? _currentTrack;
+  String? _lastNotifiedTrackId;
+  List<String>? _lastNotifiedQueueIds;
+  bool _lastReplayGainEnabled = false;
+  bool _lastIsRecording = false;
+  bool _lastIsDuckingActive = false;
+  int _lastSilenceSavedTenths = -1;
 
   AudioTrack? get selectedTrack {
     if (_isLoadingTrack && _currentTrack != null) return _currentTrack;
@@ -138,7 +293,9 @@ class AudioEngineController extends ChangeNotifier {
     return _cachedTracks;
   }
 
-  CrossfadeConfig get crossfadeConfig => engine.state.crossfadeConfig;
+  CrossfadeConfig? _crossfadeOverride;
+  CrossfadeConfig get crossfadeConfig =>
+      _crossfadeOverride ?? engine.state.crossfadeConfig;
   bool get isShuffle => engine.state.isShuffled;
   bool get isLoop => engine.state.loopMode != LoopMode.off;
   LoopMode get loopMode => engine.state.loopMode;
@@ -166,7 +323,6 @@ class AudioEngineController extends ChangeNotifier {
   bool get reverbEnabled => currentReverb.enabled;
 
   Crossfeed? _crossfeedOverride;
-  int _pendingCrossfeedUpdates = 0;
   Crossfeed get crossfeed => _crossfeedOverride ?? engine.state.crossfeed;
   bool? _spatializerEnabledOverride;
   double? _spatializerWidthOverride;
@@ -185,22 +341,21 @@ class AudioEngineController extends ChangeNotifier {
   bool get limiterEnabled => _limiterOverride ?? engine.state.limiterEnabled;
 
   SilenceSkipMode _silenceMode = SilenceSkipMode.all;
-  bool? _silenceEnabledOverride;
-  double? _silenceThresholdDbOverride;
-  int _pendingSilenceThresholdUpdates = 0;
+  SilenceSkipConfig? _silenceConfigOverride;
 
+  SilenceSkipConfig get _effectiveSilenceConfig =>
+      _silenceConfigOverride ?? engine.state.silenceConfig;
   bool get silenceEnabled =>
-      _silenceEnabledOverride ??
-      (engine.state.silenceConfig.mode != SilenceSkipMode.disabled);
+      _effectiveSilenceConfig.mode != SilenceSkipMode.disabled;
   SilenceSkipMode get silenceMode =>
-      engine.state.silenceConfig.mode != SilenceSkipMode.disabled
-      ? engine.state.silenceConfig.mode
+      _effectiveSilenceConfig.mode != SilenceSkipMode.disabled
+      ? _effectiveSilenceConfig.mode
       : _silenceMode;
-  double get silenceThresholdDb =>
-      _silenceThresholdDbOverride ?? engine.state.silenceConfig.thresholdDb;
+  double get silenceThresholdDb => _effectiveSilenceConfig.thresholdDb;
   int get minSilenceDurationMs =>
-      engine.state.silenceConfig.minSilenceDuration.inMilliseconds;
-  int get silencePaddingMs => engine.state.silenceConfig.padding.inMilliseconds;
+      _effectiveSilenceConfig.minSilenceDuration.inMilliseconds;
+  int get silencePaddingMs =>
+      _effectiveSilenceConfig.padding.inMilliseconds;
   Duration get silenceSavedDuration => engine.state.silenceSavedDuration;
 
   bool? _visualizerEnabledOverride;
@@ -253,13 +408,15 @@ class AudioEngineController extends ChangeNotifier {
   RecordingResult? get lastRecordingResult => _lastRecordingResult;
 
   void setRecordingFormat(AudioFileFormat fmt) {
+    if (_recordingFormat == fmt) return;
     _recordingFormat = fmt;
-    notifyListeners();
+    _notifyDomain(_recordingNotifier);
   }
 
   void setRecordingSource(AudioOutputSource src) {
+    if (_recordingSource == src) return;
     _recordingSource = src;
-    notifyListeners();
+    _notifyDomain(_recordingNotifier);
   }
 
   Future<void> startRecording({String? customPath}) async {
@@ -272,13 +429,13 @@ class AudioEngineController extends ChangeNotifier {
       format: _recordingFormat,
       source: _recordingSource,
     );
-    notifyListeners();
+    _notifyDomain(_recordingNotifier);
   }
 
   Future<RecordingResult> stopRecording() async {
     final res = await engine.action.stopRecording();
     _lastRecordingResult = res;
-    notifyListeners();
+    _notifyDomain(_recordingNotifier);
     return res;
   }
 
@@ -286,10 +443,16 @@ class AudioEngineController extends ChangeNotifier {
     _cachedTracks = await MockData.loadTracks();
     if (_isDisposed) return;
 
+    _lastReplayGainEnabled = engine.state.volumeNormalization;
+    _lastIsRecording = engine.state.isRecording;
+    _lastIsDuckingActive = engine.state.isDuckingActive;
+    _lastSilenceSavedTenths =
+        engine.state.silenceSavedDuration.inMilliseconds ~/ 100;
     _bindSubscriptions();
 
     _isReady = true;
-    notifyListeners();
+    _notifyDomain(_trackSelectionNotifier);
+    _queueNotifier.notify();
 
     if (_cachedTracks.isNotEmpty) {
       final items = _cachedTracks
@@ -318,179 +481,322 @@ class AudioEngineController extends ChangeNotifier {
 
     // Load sample effects in the background so the console can mount immediately
     unawaited(loadSampleEffects());
-    notifyListeners();
+    _notifyDomain();
   }
+
+  static bool _crossfadeEquals(CrossfadeConfig a, CrossfadeConfig b) =>
+      a.curve == b.curve &&
+      a.autoDuration == b.autoDuration &&
+      a.manualDuration == b.manualDuration;
+
+  static bool _silenceConfigEquals(SilenceSkipConfig a, SilenceSkipConfig b) =>
+      a.enabled == b.enabled &&
+      a.mode == b.mode &&
+      a.thresholdDb == b.thresholdDb &&
+      a.minSilenceDuration == b.minSilenceDuration &&
+      a.padding == b.padding;
 
   void _bindSubscriptions() {
     _subscriptions.add(
       engine.stream.currentItem.listen((item) {
+        final prevWaveform = _waveformPoints;
         if (item?.data != null && item!.data is AudioTrack) {
           final track = item.data as AudioTrack;
           _currentTrack = track;
-          if (_waveformCache.containsKey(track.id)) {
-            _waveformPoints = _waveformCache[track.id];
-          } else {
-            _waveformPoints = null;
-          }
+          _waveformPoints = _waveformCache[track.id];
         }
-        notifyListeners();
+        final curTrackId = selectedTrack?.id;
+        if (curTrackId != _lastNotifiedTrackId) {
+          _lastNotifiedTrackId = curTrackId;
+          _notifyDomain(_trackSelectionNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
+        if (!listEquals(prevWaveform, _waveformPoints)) {
+          _notifyDomain(_waveformNotifier);
+        }
       }),
     );
     _subscriptions.add(
-      engine.stream.currentIndex.listen((_) => notifyListeners()),
-    );
-    _subscriptions.add(engine.stream.queue.listen((_) => notifyListeners()));
-    _subscriptions.add(
-      engine.stream.isShuffled.listen((_) => notifyListeners()),
-    );
-    _subscriptions.add(engine.stream.loopMode.listen((_) => notifyListeners()));
-    _subscriptions.add(
-      engine.stream.crossfadeConfig.listen((_) => notifyListeners()),
+      engine.stream.currentIndex.listen((_) => _notifyDomain()),
     );
     _subscriptions.add(
-      engine.stream.playbackState.listen((_) => notifyListeners()),
+      engine.stream.queue.listen((items) {
+        final ids = items
+            .map((i) => i.data?.id ?? i.id?.toString() ?? '')
+            .toList(growable: false);
+        if (!listEquals(_lastNotifiedQueueIds, ids)) {
+          _lastNotifiedQueueIds = ids;
+          _notifyDomain(_queueNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
+      }),
+    );
+    _subscriptions.add(
+      engine.stream.isShuffled.listen((_) => _notifyDomain()),
+    );
+    _subscriptions.add(engine.stream.loopMode.listen((_) => _notifyDomain()));
+    _subscriptions.add(
+      engine.stream.crossfadeConfig.listen((_) {
+        if (_isRpcActive('crossfade')) return;
+        final before = crossfadeConfig;
+        _crossfadeOverride = null;
+        if (!_crossfadeEquals(before, crossfadeConfig)) {
+          _notifyDomain(_queueNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
+      }),
+    );
+    _subscriptions.add(
+      engine.stream.playbackState.listen((_) => _notifyDomain()),
     );
     _subscriptions.add(
       engine.stream.spatializerWidth.listen((_) {
-        _spatializerWidthOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'spatializer',
+          domain: _spatializerNotifier,
+          readDisplayed: () => spatializerWidth,
+          clearOverride: () => _spatializerWidthOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.spatializerEnabled.listen((_) {
-        _spatializerEnabledOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'spatializer',
+          domain: _spatializerNotifier,
+          readDisplayed: () => spatializerEnabled,
+          clearOverride: () => _spatializerEnabledOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.visualizerEnabled.listen((_) {
-        _visualizerEnabledOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'visualizerEnabled',
+          domain: _visualizerControlsNotifier,
+          readDisplayed: () => visualizerEnabled,
+          clearOverride: () => _visualizerEnabledOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.visualizerSource.listen((_) {
-        _visualizerSourceOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'visualizerSource',
+          domain: _visualizerControlsNotifier,
+          readDisplayed: () => visualizerSource,
+          clearOverride: () => _visualizerSourceOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.metadataEnabled.listen((_) {
-        _metadataEnabledOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'metadataEnabled',
+          domain: _metadataEnabledNotifier,
+          readDisplayed: () => metadataEnabled,
+          clearOverride: () => _metadataEnabledOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.pauseOnDeviceChange.listen((_) {
-        _pauseOnDeviceChangeOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'pauseOnDeviceChange',
+          domain: _pauseOnDeviceChangeNotifier,
+          readDisplayed: () => pauseOnDeviceChange,
+          clearOverride: () => _pauseOnDeviceChangeOverride = null,
+        );
       }),
     );
     _subscriptions.add(
-      engine.stream.silenceConfig.listen((_) {
-        _silenceEnabledOverride = null;
-        if (_pendingSilenceThresholdUpdates == 0) {
-          _silenceThresholdDbOverride = null;
+      engine.stream.silenceConfig.listen((cfg) {
+        if (cfg.mode != SilenceSkipMode.disabled) {
+          _silenceMode = cfg.mode;
         }
-        notifyListeners();
+        if (_isRpcActive('silence')) return;
+        final prevEnabled = silenceEnabled;
+        final prevMode = silenceMode;
+        final prevThresh = silenceThresholdDb;
+        final prevMinMs = minSilenceDurationMs;
+        final prevPadMs = silencePaddingMs;
+        _silenceConfigOverride = null;
+        if (prevEnabled != silenceEnabled ||
+            prevMode != silenceMode ||
+            prevThresh != silenceThresholdDb ||
+            prevMinMs != minSilenceDurationMs ||
+            prevPadMs != silencePaddingMs) {
+          _notifyDomain(_silenceNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
       }),
     );
     _subscriptions.add(
       engine.stream.mono.listen((_) {
-        _monoOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'mono',
+          domain: _monoNotifier,
+          readDisplayed: () => monoDownmix,
+          clearOverride: () => _monoOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.limiterEnabled.listen((_) {
-        _limiterOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'limiter',
+          domain: _limiterNotifier,
+          readDisplayed: () => limiterEnabled,
+          clearOverride: () => _limiterOverride = null,
+        );
       }),
     );
-    _subscriptions.add(engine.stream.metadata.listen((_) => notifyListeners()));
+    _subscriptions.add(engine.stream.metadata.listen((_) => _notifyDomain()));
     _subscriptions.add(
       engine.stream.volume.listen((_) {
-        _volumeOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'volume',
+          domain: _transportControlsNotifier,
+          readDisplayed: () => volume,
+          clearOverride: () => _volumeOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.rate.listen((_) {
-        _rateOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'rate',
+          domain: _transportControlsNotifier,
+          readDisplayed: () => rate,
+          clearOverride: () => _rateOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.pitch.listen((_) {
-        _pitchOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'pitch',
+          domain: _transportControlsNotifier,
+          readDisplayed: () => pitch,
+          clearOverride: () => _pitchOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.equalizer.listen((eq) {
-        if (_pendingEqualizerUpdates > 0) return;
+        if (_isRpcActive('equalizer')) return;
+        final prevEq = currentEqualizer;
+        final prevPreset = _selectedPreset;
         _equalizerOverride = null;
         _selectedPreset = _detectPreset(eq) ?? 'custom';
-        notifyListeners();
+        if (prevEq != currentEqualizer || prevPreset != _selectedPreset) {
+          _notifyDomain(_equalizerNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
       }),
     );
     _subscriptions.add(
       engine.stream.reverb.listen((rev) {
-        if (_pendingReverbUpdates > 0) return;
+        if (_isRpcActive('reverb')) return;
+        final prevRev = currentReverb;
+        final prevPreset = _selectedReverbPreset;
         _reverbOverride = null;
         if (rev != Reverb.off) {
           _lastActiveReverb = rev.copyWith(enabled: true);
         }
         _selectedReverbPreset =
             _detectReverbPreset(_lastActiveReverb) ?? 'Custom';
-        notifyListeners();
+        if (prevRev != currentReverb || prevPreset != _selectedReverbPreset) {
+          _notifyDomain(_reverbNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
       }),
     );
     _subscriptions.add(
       engine.stream.preamp.listen((_) {
-        _preampOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'preamp',
+          domain: _preampNotifier,
+          readDisplayed: () => preampDb,
+          clearOverride: () => _preampOverride = null,
+        );
       }),
     );
     _subscriptions.add(
-      engine.stream.replayGain.listen((_) => notifyListeners()),
+      engine.stream.replayGain.listen((_) {
+        if (engine.state.volumeNormalization != _lastReplayGainEnabled) {
+          _lastReplayGainEnabled = engine.state.volumeNormalization;
+          _notifyDomain(_replayGainNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
+      }),
     );
     _subscriptions.add(
       engine.stream.replayGainMode.listen((_) {
-        _replayGainModeOverride = null;
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'replayGainMode',
+          domain: _replayGainNotifier,
+          readDisplayed: () => replayGainMode,
+          clearOverride: () => _replayGainModeOverride = null,
+        );
       }),
     );
     _subscriptions.add(
       engine.stream.crossfeed.listen((_) {
-        if (_pendingCrossfeedUpdates == 0) {
-          _crossfeedOverride = null;
-        }
-        notifyListeners();
+        _onStreamOverrideSync(
+          rpcKey: 'crossfeed',
+          domain: _crossfeedNotifier,
+          readDisplayed: () => crossfeed,
+          clearOverride: () => _crossfeedOverride = null,
+        );
       }),
     );
     _subscriptions.add(
-      engine.stream.silenceConfig.listen((_) => notifyListeners()),
+      engine.stream.silenceSavedDuration.listen((saved) {
+        final tenths = saved.inMilliseconds ~/ 100;
+        if (silenceEnabled && tenths != _lastSilenceSavedTenths) {
+          _lastSilenceSavedTenths = tenths;
+          _notifyDomain(_silenceNotifier);
+        } else {
+          _lastSilenceSavedTenths = tenths;
+          if (hasListeners) super.notifyListeners();
+        }
+      }),
+    );
+    _subscriptions.add(engine.stream.outputs.listen((_) => _notifyDomain()));
+    _subscriptions.add(engine.stream.inputs.listen((_) => _notifyDomain()));
+    _subscriptions.add(
+      engine.stream.isRecording.listen((rec) {
+        if (rec != _lastIsRecording) {
+          _lastIsRecording = rec;
+          _notifyDomain(_recordingNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
+      }),
     );
     _subscriptions.add(
-      engine.stream.silenceSavedDuration.listen((_) => notifyListeners()),
-    );
-    _subscriptions.add(engine.stream.outputs.listen((_) => notifyListeners()));
-    _subscriptions.add(engine.stream.inputs.listen((_) => notifyListeners()));
-    _subscriptions.add(
-      engine.stream.isRecording.listen((_) => notifyListeners()),
-    );
-    _subscriptions.add(
-      engine.stream.isDuckingActive.listen((_) => notifyListeners()),
-    );
-    _subscriptions.add(
-      engine.stream.pauseOnDeviceChange.listen((_) => notifyListeners()),
+      engine.stream.isDuckingActive.listen((ducking) {
+        if (ducking != _lastIsDuckingActive) {
+          _lastIsDuckingActive = ducking;
+          _notifyDomain(_routingNotifier);
+        } else if (hasListeners) {
+          super.notifyListeners();
+        }
+      }),
     );
     _subscriptions.add(
-      engine.stream.globalOutputDevices.listen((_) => notifyListeners()),
+      engine.stream.globalOutputDevices.listen((_) => _notifyDomain()),
     );
     _subscriptions.add(
-      engine.stream.globalInputDevices.listen((_) => notifyListeners()),
+      engine.stream.globalInputDevices.listen((_) => _notifyDomain()),
     );
   }
 
@@ -507,7 +813,7 @@ class AudioEngineController extends ChangeNotifier {
       curOutputs.add(AudioOutput(deviceId: device.id, source: source));
     }
     await engine.action.setOutputs(curOutputs);
-    notifyListeners();
+    _notifyDomain(_routingNotifier);
   }
 
   Future<void> setOutputSource(
@@ -521,7 +827,7 @@ class AudioEngineController extends ChangeNotifier {
       return o;
     }).toSet();
     await engine.action.setOutputs(curOutputs);
-    notifyListeners();
+    _notifyDomain(_routingNotifier);
   }
 
   // --- Multi-Capture Input Routing Management ---
@@ -535,7 +841,7 @@ class AudioEngineController extends ChangeNotifier {
       curInputs.add(AudioInput(deviceId: device.id, config: config));
     }
     await engine.action.setInputs(curInputs);
-    notifyListeners();
+    _notifyDomain(_routingNotifier);
   }
 
   Future<void> configureInputDevice(
@@ -546,7 +852,7 @@ class AudioEngineController extends ChangeNotifier {
     if (engine.state.inputs.any((i) => i.deviceId == deviceId)) {
       await engine.action.configureInput(config, deviceId: deviceId);
     }
-    notifyListeners();
+    _notifyDomain(_routingNotifier);
   }
 
   // --- Equalizer ---
@@ -561,21 +867,21 @@ class AudioEngineController extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _applyEqualizer(Equalizer target) async {
-    _pendingEqualizerUpdates++;
-    _equalizerOverride = target;
-    _selectedPreset = _detectPreset(target) ?? 'custom';
-    notifyListeners();
-    try {
-      await engine.action.setEqualizer(target);
-    } finally {
-      _pendingEqualizerUpdates--;
-      if (_pendingEqualizerUpdates == 0 && engine.state.equalizer == target) {
+  Future<void> _applyEqualizer(Equalizer target) => _setOptimisticScalar(
+    rpcKey: 'equalizer',
+    domain: _equalizerNotifier,
+    applyOverride: () {
+      _equalizerOverride = target;
+      _selectedPreset = _detectPreset(target) ?? 'custom';
+    },
+    send: () => engine.action.setEqualizer(_equalizerOverride ?? target),
+    onSettled: () {
+      if (_equalizerOverride != null &&
+          engine.state.equalizer == _equalizerOverride) {
         _equalizerOverride = null;
-        notifyListeners();
       }
-    }
-  }
+    },
+  );
 
   Future<void> setEqualizerEnabled(bool enabled) async {
     await _applyEqualizer(currentEqualizer.copyWith(enabled: enabled));
@@ -626,31 +932,36 @@ class AudioEngineController extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _applyReverb(Reverb target) async {
-    _pendingReverbUpdates++;
-    final activeView = target.enabled
-        ? target
-        : (target == Reverb.off
-              ? _lastActiveReverb
-              : target.copyWith(enabled: true));
-    if (target != Reverb.off) {
-      _lastActiveReverb = activeView;
-    }
-    _selectedReverbPreset = _detectReverbPreset(activeView) ?? 'Custom';
-    _reverbOverride = target.enabled
-        ? target
-        : activeView.copyWith(enabled: false);
-    notifyListeners();
-    try {
-      await engine.action.setReverb(target);
-    } finally {
-      _pendingReverbUpdates--;
-      if (_pendingReverbUpdates == 0 && engine.state.reverb == target) {
-        _reverbOverride = null;
-        notifyListeners();
+  Future<void> _applyReverb(Reverb target) => _setOptimisticScalar(
+    rpcKey: 'reverb',
+    domain: _reverbNotifier,
+    applyOverride: () {
+      final activeView = target.enabled
+          ? target
+          : (target == Reverb.off
+                ? _lastActiveReverb
+                : target.copyWith(enabled: true));
+      if (target != Reverb.off) {
+        _lastActiveReverb = activeView;
       }
-    }
-  }
+      _selectedReverbPreset = _detectReverbPreset(activeView) ?? 'Custom';
+      _reverbOverride = target.enabled
+          ? target
+          : activeView.copyWith(enabled: false);
+    },
+    send: () {
+      final rev = _reverbOverride ?? target;
+      return engine.action.setReverb(rev.enabled ? rev : Reverb.off);
+    },
+    onSettled: () {
+      final rev = _reverbOverride;
+      if (rev != null &&
+          (engine.state.reverb == rev ||
+              (!rev.enabled && engine.state.reverb == Reverb.off))) {
+        _reverbOverride = null;
+      }
+    },
+  );
 
   Future<void> toggleReverb(bool enabled) async {
     await _applyReverb(currentReverb.copyWith(enabled: enabled));
@@ -686,14 +997,15 @@ class AudioEngineController extends ChangeNotifier {
 
   Future<void> selectTrack(AudioTrack track, {bool autoPlay = false}) async {
     final currentEpoch = ++_trackSelectionEpoch;
+    final prevWaveform = _waveformPoints;
     _isLoadingTrack = true;
     _currentTrack = track;
-    if (_waveformCache.containsKey(track.id)) {
-      _waveformPoints = _waveformCache[track.id];
-    } else {
-      _waveformPoints = null;
+    _lastNotifiedTrackId = track.id;
+    _waveformPoints = _waveformCache[track.id];
+    _notifyDomain(_trackSelectionNotifier);
+    if (!listEquals(prevWaveform, _waveformPoints)) {
+      _notifyDomain(_waveformNotifier);
     }
-    notifyListeners();
 
     try {
       final queue = engine.state.queue;
@@ -718,7 +1030,7 @@ class AudioEngineController extends ChangeNotifier {
     } finally {
       if (currentEpoch == _trackSelectionEpoch) {
         _isLoadingTrack = false;
-        notifyListeners();
+        _notifyDomain(_trackSelectionNotifier);
       }
     }
   }
@@ -728,17 +1040,17 @@ class AudioEngineController extends ChangeNotifier {
     final item = track.source.withData<AudioTrack>(track);
     await engine.action.append([item]);
     await engine.action.play(position: engine.state.queue.length - 1);
-    notifyListeners();
+    _notifyDomain(_queueNotifier);
   }
 
   Future<void> reorderTrack(int oldIndex, int newIndex) async {
     await engine.action.reorder(oldIndex, newIndex);
-    notifyListeners();
+    _notifyDomain(_queueNotifier);
   }
 
   Future<void> toggleShuffle() async {
     await engine.action.setShuffle(!engine.state.isShuffled);
-    notifyListeners();
+    _notifyDomain();
   }
 
   Future<void> toggleLoop() async {
@@ -748,202 +1060,252 @@ class AudioEngineController extends ChangeNotifier {
         ? LoopMode.one
         : LoopMode.off;
     await engine.action.setLoopMode(nextMode);
-    notifyListeners();
+    _notifyDomain();
   }
 
   Future<void> nextTrack() async {
     _currentTrack = null;
     resetWaveformToSinusoidal();
     await engine.action.next();
-    notifyListeners();
+    _notifyDomain(_trackSelectionNotifier);
   }
 
   Future<void> previousTrack() async {
     _currentTrack = null;
     resetWaveformToSinusoidal();
     await engine.action.previous();
-    notifyListeners();
+    _notifyDomain(_trackSelectionNotifier);
   }
 
   // --- Crossfade Configuration ---
-  Future<void> setCrossfadeCurve(CrossfadeCurve curve) async {
-    await engine.action.setCrossfade(
-      engine.state.crossfadeConfig.copyWith(curve: curve),
-    );
-    notifyListeners();
-  }
+  Future<void> _applyCrossfade(CrossfadeConfig target) => _setOptimisticScalar(
+    rpcKey: 'crossfade',
+    domain: _queueNotifier,
+    applyOverride: () => _crossfadeOverride = target,
+    send: () => engine.action.setCrossfade(_crossfadeOverride ?? target),
+    onSettled: () {
+      if (_crossfadeOverride != null &&
+          _crossfadeEquals(engine.state.crossfadeConfig, _crossfadeOverride!)) {
+        _crossfadeOverride = null;
+      }
+    },
+  );
 
-  Future<void> setCrossfadeDuration(Duration duration) async {
-    await engine.action.setCrossfade(
-      engine.state.crossfadeConfig.copyWith(autoDuration: duration),
-    );
-    notifyListeners();
-  }
+  Future<void> setCrossfadeCurve(CrossfadeCurve curve) =>
+      _applyCrossfade(crossfadeConfig.copyWith(curve: curve));
 
-  Future<void> setManualCrossfadeDuration(Duration duration) async {
-    await engine.action.setCrossfade(
-      engine.state.crossfadeConfig.copyWith(manualDuration: duration),
-    );
-    notifyListeners();
-  }
+  Future<void> setCrossfadeDuration(Duration duration) =>
+      _applyCrossfade(crossfadeConfig.copyWith(autoDuration: duration));
+
+  Future<void> setManualCrossfadeDuration(Duration duration) =>
+      _applyCrossfade(crossfadeConfig.copyWith(manualDuration: duration));
 
   // --- Crossfeed Controls ---
-  Future<void> setCrossfeed(Crossfeed cf) async {
-    _pendingCrossfeedUpdates++;
-    _crossfeedOverride = cf;
-    notifyListeners();
-    try {
-      await engine.action.setCrossfeed(cf);
-    } finally {
-      _pendingCrossfeedUpdates--;
-      if (_pendingCrossfeedUpdates == 0 && engine.state.crossfeed == cf) {
+  Future<void> setCrossfeed(Crossfeed cf) => _setOptimisticScalar(
+    rpcKey: 'crossfeed',
+    domain: _crossfeedNotifier,
+    applyOverride: () => _crossfeedOverride = cf,
+    send: () => engine.action.setCrossfeed(_crossfeedOverride ?? cf),
+    onSettled: () {
+      if (_crossfeedOverride != null &&
+          engine.state.crossfeed == _crossfeedOverride) {
         _crossfeedOverride = null;
-        notifyListeners();
       }
-    }
-  }
+    },
+  );
 
-  Future<void> toggleCrossfeed(bool enabled) async {
-    await setCrossfeed(crossfeed.copyWith(enabled: enabled));
-  }
+  Future<void> toggleCrossfeed(bool enabled) =>
+      setCrossfeed(crossfeed.copyWith(enabled: enabled));
 
-  Future<void> setCrossfeedCutoff(double cutoffHz) async {
-    await setCrossfeed(crossfeed.copyWith(cutoffHz: cutoffHz));
-  }
+  Future<void> setCrossfeedCutoff(double cutoffHz) =>
+      setCrossfeed(crossfeed.copyWith(cutoffHz: cutoffHz));
 
-  Future<void> setCrossfeedFeed(double feedDb) async {
-    await setCrossfeed(crossfeed.copyWith(feedDb: feedDb));
-  }
+  Future<void> setCrossfeedFeed(double feedDb) =>
+      setCrossfeed(crossfeed.copyWith(feedDb: feedDb));
 
   // --- Spatializer, Balance, Mono, Limiter ---
-  Future<void> setSpatializerEnabled(bool enabled) async {
-    _spatializerEnabledOverride = enabled;
-    notifyListeners();
-    await engine.action.setSpatializer(
-      enabled: enabled,
-      width: spatializerWidth,
-    );
-  }
-
-  Future<void> setSpatializerWidth(double width) async {
-    _spatializerWidthOverride = width;
-    notifyListeners();
-    await engine.action.setSpatializer(
+  Future<void> setSpatializerEnabled(bool enabled) => _setOptimisticScalar(
+    rpcKey: 'spatializer',
+    domain: _spatializerNotifier,
+    applyOverride: () => _spatializerEnabledOverride = enabled,
+    send: () => engine.action.setSpatializer(
       enabled: spatializerEnabled,
-      width: width,
-    );
-  }
+      width: spatializerWidth,
+    ),
+    onSettled: () {
+      if (_spatializerEnabledOverride != null &&
+          engine.state.spatializerEnabled == _spatializerEnabledOverride) {
+        _spatializerEnabledOverride = null;
+      }
+    },
+  );
 
-  Future<void> setStereoBalance(double balance) async {
-    _stereoBalanceOverride = balance;
-    notifyListeners();
-    await engine.action.setBalance(balance);
-  }
+  Future<void> setSpatializerWidth(double width) => _setOptimisticScalar(
+    rpcKey: 'spatializer',
+    domain: _spatializerNotifier,
+    applyOverride: () => _spatializerWidthOverride = width,
+    send: () => engine.action.setSpatializer(
+      enabled: spatializerEnabled,
+      width: spatializerWidth,
+    ),
+    onSettled: () {
+      if (_spatializerWidthOverride != null &&
+          engine.state.spatializerWidth == _spatializerWidthOverride) {
+        _spatializerWidthOverride = null;
+      }
+    },
+  );
 
-  Future<void> setMonoDownmix(bool enabled) async {
-    _monoOverride = enabled;
-    notifyListeners();
-    await engine.action.setMono(enabled);
-  }
+  Future<void> setStereoBalance(double balance) => _setOptimisticScalar(
+    rpcKey: 'balance',
+    domain: _balanceNotifier,
+    applyOverride: () => _stereoBalanceOverride = balance,
+    send: () => engine.action.setBalance(stereoBalance),
+    onSettled: () {
+      if (_stereoBalanceOverride != null &&
+          engine.state.balance == _stereoBalanceOverride) {
+        _stereoBalanceOverride = null;
+      }
+    },
+  );
 
-  Future<void> setLimiterEnabled(bool enabled) async {
-    _limiterOverride = enabled;
-    notifyListeners();
-    await engine.action.setLimiter(enabled);
-  }
+  Future<void> setMonoDownmix(bool enabled) => _setOptimisticScalar(
+    rpcKey: 'mono',
+    domain: _monoNotifier,
+    applyOverride: () => _monoOverride = enabled,
+    send: () => engine.action.setMono(monoDownmix),
+    onSettled: () {
+      if (_monoOverride != null && engine.state.mono == _monoOverride) {
+        _monoOverride = null;
+      }
+    },
+  );
+
+  Future<void> setLimiterEnabled(bool enabled) => _setOptimisticScalar(
+    rpcKey: 'limiter',
+    domain: _limiterNotifier,
+    applyOverride: () => _limiterOverride = enabled,
+    send: () => engine.action.setLimiter(limiterEnabled),
+    onSettled: () {
+      if (_limiterOverride != null &&
+          engine.state.limiterEnabled == _limiterOverride) {
+        _limiterOverride = null;
+      }
+    },
+  );
 
   // --- Silence Skipping ---
-  Future<void> setSilenceSkipEnabled(bool enabled) async {
-    _silenceEnabledOverride = enabled;
-    notifyListeners();
-    final modeToApply = enabled ? _silenceMode : SilenceSkipMode.disabled;
-    await engine.action.setSilenceConfig(
-      engine.state.silenceConfig.copyWith(
-        enabled: enabled,
-        mode: modeToApply,
-        thresholdDb: silenceThresholdDb,
-      ),
-    );
-  }
-
-  Future<void> setSilenceMode(SilenceSkipMode mode) async {
-    _silenceMode = mode;
-    await engine.action.setSilenceConfig(
-      engine.state.silenceConfig.copyWith(
-        enabled: mode != SilenceSkipMode.disabled,
-        mode: mode,
-        thresholdDb: silenceThresholdDb,
-      ),
-    );
-    notifyListeners();
-  }
-
-  Future<void> setSilenceThresholdDb(double thresholdDb) async {
-    _pendingSilenceThresholdUpdates++;
-    _silenceThresholdDbOverride = thresholdDb;
-    notifyListeners();
-    try {
-      await engine.action.setSilenceConfig(
-        engine.state.silenceConfig.copyWith(
-          enabled: silenceEnabled,
-          mode: silenceEnabled ? _silenceMode : SilenceSkipMode.disabled,
-          thresholdDb: thresholdDb,
+  Future<void> _applySilenceConfig(SilenceSkipConfig target) =>
+      _setOptimisticScalar(
+        rpcKey: 'silence',
+        domain: _silenceNotifier,
+        applyOverride: () {
+          if (target.mode != SilenceSkipMode.disabled) {
+            _silenceMode = target.mode;
+          }
+          _silenceConfigOverride = target;
+        },
+        send: () => engine.action.setSilenceConfig(
+          _silenceConfigOverride ?? target,
         ),
+        onSettled: () {
+          if (_silenceConfigOverride != null &&
+              _silenceConfigEquals(
+                engine.state.silenceConfig,
+                _silenceConfigOverride!,
+              )) {
+            _silenceConfigOverride = null;
+          }
+        },
       );
-    } finally {
-      _pendingSilenceThresholdUpdates--;
-      if (_pendingSilenceThresholdUpdates == 0 &&
-          engine.state.silenceConfig.thresholdDb == thresholdDb) {
-        _silenceThresholdDbOverride = null;
-        notifyListeners();
-      }
-    }
-  }
 
-  Future<void> setMinSilenceDurationMs(int durationMs) async {
-    await engine.action.setSilenceConfig(
-      engine.state.silenceConfig.copyWith(
-        minSilenceDuration: Duration(milliseconds: durationMs),
-      ),
-    );
-    notifyListeners();
-  }
+  Future<void> setSilenceSkipEnabled(bool enabled) => _applySilenceConfig(
+    _effectiveSilenceConfig.copyWith(
+      enabled: enabled,
+      mode: enabled ? _silenceMode : SilenceSkipMode.disabled,
+      thresholdDb: silenceThresholdDb,
+    ),
+  );
 
-  Future<void> setSilencePaddingMs(int paddingMs) async {
-    await engine.action.setSilenceConfig(
-      engine.state.silenceConfig.copyWith(
-        padding: Duration(milliseconds: paddingMs),
-      ),
-    );
-    notifyListeners();
-  }
+  Future<void> setSilenceMode(SilenceSkipMode mode) => _applySilenceConfig(
+    _effectiveSilenceConfig.copyWith(
+      enabled: mode != SilenceSkipMode.disabled,
+      mode: mode,
+      thresholdDb: silenceThresholdDb,
+    ),
+  );
+
+  Future<void> setSilenceThresholdDb(double thresholdDb) => _applySilenceConfig(
+    _effectiveSilenceConfig.copyWith(
+      enabled: silenceEnabled,
+      mode: silenceEnabled ? _silenceMode : SilenceSkipMode.disabled,
+      thresholdDb: thresholdDb,
+    ),
+  );
+
+  Future<void> setMinSilenceDurationMs(int durationMs) => _applySilenceConfig(
+    _effectiveSilenceConfig.copyWith(
+      minSilenceDuration: Duration(milliseconds: durationMs),
+    ),
+  );
+
+  Future<void> setSilencePaddingMs(int paddingMs) => _applySilenceConfig(
+    _effectiveSilenceConfig.copyWith(padding: Duration(milliseconds: paddingMs)),
+  );
 
   // --- Visualizer & Metadata Event Stream Switches ---
-  Future<void> setVisualizerEnabled(bool enabled) async {
-    _visualizerEnabledOverride = enabled;
-    notifyListeners();
+  Future<void> setVisualizerEnabled(bool enabled) {
     MapLogger.debug(
       '[VISUALIZER:STATE] Real-time 10-band FFT visualizer: ${enabled ? "ENABLED" : "DISABLED"}',
     );
-    await engine.action.setVisualizerEnabled(enabled);
+    return _setOptimisticScalar(
+      rpcKey: 'visualizerEnabled',
+      domain: _visualizerControlsNotifier,
+      applyOverride: () => _visualizerEnabledOverride = enabled,
+      send: () => engine.action.setVisualizerEnabled(visualizerEnabled),
+      onSettled: () {
+        if (_visualizerEnabledOverride != null &&
+            engine.state.visualizerEnabled == _visualizerEnabledOverride) {
+          _visualizerEnabledOverride = null;
+        }
+      },
+    );
   }
 
-  Future<void> setVisualizerSource(AudioOutputSource source) async {
-    _visualizerSourceOverride = source;
-    notifyListeners();
+  Future<void> setVisualizerSource(AudioOutputSource source) {
     MapLogger.info(
       '[VISUALIZER:SOURCE] Routing FFT audio analysis feed to: ${source.name.toUpperCase()}',
     );
-    await engine.action.setVisualizerSource(source);
+    return _setOptimisticScalar(
+      rpcKey: 'visualizerSource',
+      domain: _visualizerControlsNotifier,
+      applyOverride: () => _visualizerSourceOverride = source,
+      send: () => engine.action.setVisualizerSource(visualizerSource),
+      onSettled: () {
+        if (_visualizerSourceOverride != null &&
+            engine.state.visualizerSource == _visualizerSourceOverride) {
+          _visualizerSourceOverride = null;
+        }
+      },
+    );
   }
 
-  Future<void> setMetadataEnabled(bool enabled) async {
-    _metadataEnabledOverride = enabled;
-    notifyListeners();
+  Future<void> setMetadataEnabled(bool enabled) {
     MapLogger.info(
       '[METADATA:STREAM] Real-time live stream metadata parser: ${enabled ? "ENABLED" : "SUSPENDED"}',
     );
-    await engine.action.setMetadataEnabled(enabled);
+    return _setOptimisticScalar(
+      rpcKey: 'metadataEnabled',
+      domain: _metadataEnabledNotifier,
+      applyOverride: () => _metadataEnabledOverride = enabled,
+      send: () => engine.action.setMetadataEnabled(metadataEnabled),
+      onSettled: () {
+        if (_metadataEnabledOverride != null &&
+            engine.state.metadataEnabled == _metadataEnabledOverride) {
+          _metadataEnabledOverride = null;
+        }
+      },
+    );
   }
 
   // --- Native RAM Sound Effects (Voices & Memory HUD) ---
@@ -981,7 +1343,7 @@ class AudioEngineController extends ChangeNotifier {
           maxPolyphony: 8,
         ),
       ]);
-      notifyListeners();
+      _notifyDomain();
     } catch (e) {
       if (!_isDisposed) {
         debugPrint('Failed to load sample sound effects: $e');
@@ -1002,13 +1364,13 @@ class AudioEngineController extends ChangeNotifier {
 
   Future<void> unloadAllEffects() async {
     await engine.action.setEffects([]);
-    notifyListeners();
+    _notifyDomain();
   }
 
   // --- Monotonic ID Queue Operations ---
   Future<void> reorderQueueByIds(List<int> ids) async {
     await engine.action.reorderByIds(ids);
-    notifyListeners();
+    _notifyDomain(_queueNotifier);
   }
 
   Future<void> reverseQueueByIds() async {
@@ -1020,34 +1382,59 @@ class AudioEngineController extends ChangeNotifier {
         .toList();
     if (ids.isNotEmpty) {
       await engine.action.reorderByIds(ids);
-      notifyListeners();
+      _notifyDomain(_queueNotifier);
     }
   }
 
   // --- Transport ---
-  Future<void> setVolume(double val) async {
-    _volumeOverride = val;
-    notifyListeners();
-    await engine.action.setVolume(val);
-  }
+  Future<void> setVolume(double val) => _setOptimisticScalar(
+    rpcKey: 'volume',
+    domain: _transportControlsNotifier,
+    applyOverride: () => _volumeOverride = val,
+    send: () => engine.action.setVolume(volume),
+    onSettled: () {
+      if (_volumeOverride != null && engine.state.volume == _volumeOverride) {
+        _volumeOverride = null;
+      }
+    },
+  );
 
-  Future<void> setRate(double val) async {
-    _rateOverride = val;
-    notifyListeners();
-    await engine.action.setRate(val);
-  }
+  Future<void> setRate(double val) => _setOptimisticScalar(
+    rpcKey: 'rate',
+    domain: _transportControlsNotifier,
+    applyOverride: () => _rateOverride = val,
+    send: () => engine.action.setRate(rate),
+    onSettled: () {
+      if (_rateOverride != null && engine.state.rate == _rateOverride) {
+        _rateOverride = null;
+      }
+    },
+  );
 
-  Future<void> setPitch(double val) async {
-    _pitchOverride = val;
-    notifyListeners();
-    await engine.action.setPitch(val);
-  }
+  Future<void> setPitch(double val) => _setOptimisticScalar(
+    rpcKey: 'pitch',
+    domain: _transportControlsNotifier,
+    applyOverride: () => _pitchOverride = val,
+    send: () => engine.action.setPitch(pitch),
+    onSettled: () {
+      if (_pitchOverride != null && engine.state.pitch == _pitchOverride) {
+        _pitchOverride = null;
+      }
+    },
+  );
 
-  Future<void> setPauseOnDeviceChange(bool enabled) async {
-    _pauseOnDeviceChangeOverride = enabled;
-    notifyListeners();
-    await engine.action.setPauseOnDeviceChange(enabled);
-  }
+  Future<void> setPauseOnDeviceChange(bool enabled) => _setOptimisticScalar(
+    rpcKey: 'pauseOnDeviceChange',
+    domain: _pauseOnDeviceChangeNotifier,
+    applyOverride: () => _pauseOnDeviceChangeOverride = enabled,
+    send: () => engine.action.setPauseOnDeviceChange(pauseOnDeviceChange),
+    onSettled: () {
+      if (_pauseOnDeviceChangeOverride != null &&
+          engine.state.pauseOnDeviceChange == _pauseOnDeviceChangeOverride) {
+        _pauseOnDeviceChangeOverride = null;
+      }
+    },
+  );
 
   @override
   void notifyListeners() {
@@ -1059,10 +1446,15 @@ class AudioEngineController extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    _pendingRpcs.clear();
+    _inFlightRpcs.clear();
     for (final s in _subscriptions) {
       s.cancel();
     }
     _subscriptions.clear();
+    for (final notifier in _domainNotifiers) {
+      notifier.dispose();
+    }
     engine.dispose();
     super.dispose();
   }

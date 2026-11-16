@@ -88,7 +88,7 @@ class BauerCrossfeedSubCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: controller.crossfeedListenable,
       builder: (context, _) {
         final cf = controller.crossfeed;
         final currentPreset = _detectPreset(cf);
