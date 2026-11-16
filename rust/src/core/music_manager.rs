@@ -55,6 +55,12 @@ impl MusicManager {
         self.inner.custom_source_factory = Some(factory);
     }
 
+    /// Sets the unified asynchronous Dart source resolver bridge.
+    #[inline]
+    pub fn set_dart_resolver(&mut self, resolver: std::sync::Arc<crate::buffer::DartResolveRegistry>) {
+        self.inner.dart_resolver = Some(resolver);
+    }
+
     /// Appends audio sources to the end of the playlist queue.
     #[inline]
     pub fn append(&mut self, sources: Vec<AudioSourceCore>) {

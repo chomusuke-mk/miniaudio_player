@@ -2,10 +2,14 @@
 //! and Byte Source Abstraction.
 
 pub mod demux_reader;
+pub mod resolve;
 pub mod source;
 pub mod stream_buffer;
 
 pub use demux_reader::{DemuxedStreamReader, MetadataStreamReader};
+pub use resolve::{
+    DartResolveRegistry, DartResolveRequest, FdOpenOutcome, ResolveFailure, ResolvedCoreSource,
+};
 pub use source::{
     CustomByteSourceHandle, CustomDartByteSource, CustomSourceRegistry, DartReadRequest,
     FileByteSource,

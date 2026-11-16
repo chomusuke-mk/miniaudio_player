@@ -33,19 +33,35 @@ impl SoundBuffer {
 
     /// Decodes an audio file in memory (MP3, WAV, FLAC, OGG, AAC) into a `SoundBuffer`.
     pub fn decode_from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode_from_owned_bytes(bytes.to_vec(), None)
+    }
+
+    /// Zero-copy overload taking ownership of `bytes` directly with an optional extension hint.
+    pub fn decode_from_owned_bytes(
+        bytes: Vec<u8>,
+        hint_ext: Option<&str>,
+    ) -> Result<Self, String> {
         use crate::decoder::classifier::StreamClassifier;
-        use crate::decoder::symphonia_engine::SymphoniaEngine;
         use std::io::Cursor;
 
         if bytes.is_empty() {
             return Err("Cannot decode sound buffer from empty byte slice".to_string());
         }
 
-        let (_status, boundary) = StreamClassifier::detect_head_boundary(bytes, bytes.len() as i64);
-        let hint = boundary.container.hint_extension();
+        let (_status, boundary) = StreamClassifier::detect_head_boundary(&bytes, bytes.len() as i64);
+        let hint = boundary.container.hint_extension().or(hint_ext);
+        let cursor = Cursor::new(bytes);
+        Self::decode_from_media_source(cursor, hint)
+    }
 
-        let cursor = Cursor::new(bytes.to_vec());
-        let mut engine = SymphoniaEngine::new(cursor, hint)
+    /// Decodes any seekable `MediaSource` (memory cursor, disk file, or Android FD slice).
+    pub fn decode_from_media_source<M: symphonia::core::io::MediaSource + 'static>(
+        source: M,
+        hint: Option<&str>,
+    ) -> Result<Self, String> {
+        use crate::decoder::symphonia_engine::SymphoniaEngine;
+
+        let mut engine = SymphoniaEngine::new(source, hint)
             .map_err(|e| format!("Failed to probe audio format: {:?}", e))?;
 
         let sr = engine.sample_rate();

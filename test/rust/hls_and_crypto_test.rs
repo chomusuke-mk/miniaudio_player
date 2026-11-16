@@ -706,3 +706,81 @@ fn test_hls_byterange_local_file_open_file() {
     let _ = std::fs::remove_file(&m3u8_path);
     let _ = std::fs::remove_file(&pack_path);
 }
+
+#[test]
+fn test_hls_dart_resolved_m3u8_asset_segments() {
+    use miniaudio_player::api::types::RustResolvedSource;
+    use miniaudio_player::buffer::DartResolveRegistry;
+    use miniaudio_player::core::dual_source::{AudioSourceCore, DualSource};
+
+    let requested_uris = Arc::new(Mutex::new(Vec::<String>::new()));
+    let (tx, rx) = std::sync::mpsc::channel::<miniaudio_player::buffer::DartResolveRequest>();
+    let requested_clone = requested_uris.clone();
+
+    let registry = Arc::new(DartResolveRegistry::new(Arc::new(move |req| {
+        requested_clone.lock().unwrap().push(req.source.clone());
+        let _ = tx.send(req);
+    })));
+
+    let responder_reg = registry.clone();
+    let responder_thread = std::thread::spawn(move || {
+        while let Ok(req) = rx.recv() {
+            let file_name = req.source.rsplit('/').next().unwrap_or("");
+            let path = FixtureResolver::resolve(file_name);
+            let bytes = std::fs::read(&path).unwrap_or_default();
+            let ext = file_name.rsplit('.').next().map(|s| s.to_string());
+            let _ = responder_reg.resolve_request(
+                req.request_id,
+                RustResolvedSource::Bytes {
+                    data: bytes,
+                    hint_ext: ext,
+                },
+            );
+        }
+    });
+
+    let item = AudioSourceCore {
+        id: 77,
+        source: "asset://assets/music/salida.m3u8".to_string(),
+        headers: None,
+        data_bytes: None,
+        replay_gain_db: None,
+        replay_peak: None,
+        resolve_in_dart: true,
+    };
+
+    let mut deck = StreamingDeck::new_analysis_deck(48000, 2).expect("Failed to create deck");
+    let res = DualSource::open_deck_with_pre_resolved(
+        &mut deck,
+        &item,
+        None,
+        None,
+        Some(&registry),
+        None,
+    );
+    assert_eq!(res, 0, "DartResolved HLS m3u8 + TS segments should open cleanly");
+
+    let mut pcm = Vec::new();
+    let has_audio = deck
+        .decode_next_analysis_frame(&mut pcm)
+        .expect("Decoding DartResolved HLS playlist must succeed");
+    assert!(has_audio && !pcm.is_empty());
+
+    let seen = requested_uris.lock().unwrap().clone();
+    assert!(
+        seen.iter().any(|u| u == "asset://assets/music/salida.m3u8"),
+        "Resolver should request m3u8 manifest, got: {:?}",
+        seen
+    );
+    assert!(
+        seen.iter().any(|u| u == "asset://assets/music/salida_0.ts"),
+        "Resolver should request salida_0.ts segment, got: {:?}",
+        seen
+    );
+
+    let _ = deck.stop();
+    drop(deck);
+    drop(registry);
+    // Drop item/closure channel cleanly by clearing registry
+    drop(responder_thread);
+}

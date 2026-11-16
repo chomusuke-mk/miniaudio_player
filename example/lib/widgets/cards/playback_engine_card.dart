@@ -28,11 +28,19 @@ class PlaybackEngineCard extends StatelessWidget {
     return '$minutes:$seconds.$ms';
   }
 
+  void _runTransportAction(Future<void> Function() action) {
+    action().catchError((Object e) {
+      debugPrint('[PlaybackEngineCard] Transport action failed: $e');
+    });
+  }
+
   void _seekToFraction(BuildContext context, double fraction, Duration dur) {
     if (dur.inMilliseconds <= 0) return;
     final clamped = fraction.clamp(0.0, 1.0);
     final targetMs = (clamped * dur.inMilliseconds).round();
-    controller.engine.action.seek(Duration(milliseconds: targetMs));
+    _runTransportAction(
+      () => controller.engine.action.seek(Duration(milliseconds: targetMs)),
+    );
   }
 
   @override
@@ -533,11 +541,11 @@ class PlaybackEngineCard extends StatelessWidget {
                               ),
                               tooltip: isPlaying ? 'Pause' : 'Play',
                               onPressed: () {
-                                if (isPlaying) {
-                                  engine.action.pause();
-                                } else {
-                                  engine.action.play();
-                                }
+                                _runTransportAction(
+                                  isPlaying
+                                      ? engine.action.pause
+                                      : engine.action.play,
+                                );
                               },
                             ),
                             IconButton(
@@ -562,7 +570,8 @@ class PlaybackEngineCard extends StatelessWidget {
                                 minHeight: 32,
                               ),
                               tooltip: 'Stop',
-                              onPressed: engine.action.stop,
+                              onPressed: () =>
+                                  _runTransportAction(engine.action.stop),
                             ),
                             StreamBuilder<bool>(
                               stream: engine.stream.isShuffled,

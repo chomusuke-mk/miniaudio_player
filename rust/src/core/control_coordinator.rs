@@ -6,7 +6,7 @@ use crate::sync::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::buffer::CustomSourceRegistry;
+use crate::buffer::{CustomSourceRegistry, DartResolveRegistry};
 use crate::core::dual_source::{AudioSourceCore, CustomSourceFactory, StreamingDeck};
 use crate::core::dual_source_control::{
     PlanOutcome, PlannedOpenSpec, TransitionCommitMode,
@@ -194,6 +194,13 @@ impl ControlCoordinator {
         } else {
             (0, 0)
         }
+    }
+
+    /// Attaches the shared Dart resolution bridge for subsequent track opens.
+    pub fn set_dart_resolver(&self, dart_resolver: Arc<DartResolveRegistry>) {
+        let _ = self.inner.engine.exec(move |ply| {
+            ply.music_manager.set_dart_resolver(dart_resolver);
+        });
     }
 
     /// Replaces the playback queue using fresh pre-built decks so `map-engine-clock` never joins threads.
@@ -668,6 +675,7 @@ impl CoordInner {
             epoch,
             item: spec.item,
             custom_factory: spec.custom_factory,
+            dart_resolver: spec.dart_resolver,
             template: spec.template,
             seek_ms: spec.seek_ms,
             kind: ActiveOpenKind::Manual {
@@ -698,11 +706,12 @@ impl CoordInner {
             }
             let tpl = ply.music_manager.inner.capture_dsp_template();
             let factory = ply.music_manager.inner.custom_source_factory.clone();
-            Some((item, tpl, factory))
+            let resolver = ply.music_manager.inner.dart_resolver.clone();
+            Some((item, tpl, factory, resolver))
         }) else {
             return;
         };
-        let Some((item, template, custom_factory)) = candidate else {
+        let Some((item, template, custom_factory, dart_resolver)) = candidate else {
             return;
         };
         if p_epoch != self.prewarm_epoch.load(Ordering::Acquire) {
@@ -726,6 +735,7 @@ impl CoordInner {
                 epoch: p_epoch,
                 item,
                 custom_factory,
+                dart_resolver,
                 template,
                 cancel: CancelToken::new(),
             });
@@ -758,7 +768,7 @@ impl CoordInner {
         if self.has_active_io() {
             return;
         }
-        let Ok(Some((tpl, factory, live_item))) = self.engine.exec(move |ply| {
+        let Ok(Some((tpl, factory, resolver, live_item))) = self.engine.exec(move |ply| {
             let cur_playback = PlaybackState::from_i32(
                 ply.music_manager
                     .inner
@@ -782,6 +792,7 @@ impl CoordInner {
             Some((
                 ply.music_manager.inner.capture_dsp_template(),
                 ply.music_manager.inner.custom_source_factory.clone(),
+                ply.music_manager.inner.dart_resolver.clone(),
                 item,
             ))
         }) else {
@@ -797,6 +808,7 @@ impl CoordInner {
             epoch,
             item: live_item,
             custom_factory: factory,
+            dart_resolver: resolver,
             template: tpl,
             seek_ms: None,
             kind: ActiveOpenKind::AutoAdvance {
@@ -859,7 +871,7 @@ impl CoordInner {
 
                 match outcome {
                     IoOpenOutcome::Aborted => resolve_ok_none(),
-                    IoOpenOutcome::Failed(code) => {
+                    IoOpenOutcome::Failed(code, detail_msg) => {
                         let is_auto_adv = matches!(job.kind, ActiveOpenKind::AutoAdvance { .. });
                         let coord = self.clone();
                         let expected_epoch = job.epoch;
@@ -879,7 +891,8 @@ impl CoordInner {
                             *lock_unpoisoned(&self.auto_advance_inflight) = None;
                         }
                         if let Some(ref w) = waiter {
-                            w.resolve(Err(format!("Failed to open track: error {}", code)));
+                            w.resolve(Err(detail_msg
+                                .unwrap_or_else(|| format!("Failed to open track: error {}", code))));
                         }
                     }
                     IoOpenOutcome::Opened(deck) => {

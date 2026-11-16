@@ -220,6 +220,7 @@ fn mem_source(id: i64, wav_bytes: Vec<u8>) -> AudioSourceCore {
         data_bytes: Some(wav_bytes),
         replay_gain_db: None,
         replay_peak: None,
+        resolve_in_dart: false,
     }
 }
 
@@ -231,6 +232,7 @@ fn url_source(id: i64, url: String) -> AudioSourceCore {
         data_bytes: None,
         replay_gain_db: None,
         replay_peak: None,
+        resolve_in_dart: false,
     }
 }
 
@@ -245,6 +247,7 @@ fn build_memory_sfx_catalog(count: usize, wav_bytes: &[u8]) -> Vec<EffectCatalog
                 data_bytes: Some(wav_bytes.to_vec()),
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             max_polyphony: MAX_VOICES,
             pinned: true,

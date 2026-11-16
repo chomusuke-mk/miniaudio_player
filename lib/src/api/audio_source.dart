@@ -59,6 +59,10 @@ class AudioSource<T> {
   final int _initialByteLength;
   final String _sourceKey;
   final bool _hasValidSource;
+  final String? _normalizedSource;
+  final bool _resolveInDart;
+  final int? _directErrorCode;
+  final String? _directErrorMessage;
 
   /// Whether this source originated from in-memory bytes.
   bool get isMemory => _isMemory;
@@ -66,15 +70,23 @@ class AudioSource<T> {
   /// Whether this source is backed by a [CustomByteProvider].
   bool get isCustom => customProvider != null;
 
-  /// Whether this source points to a remote HTTP/HTTPS network stream.
+  /// Whether this source points to a remote HTTP/HTTPS or WebSocket stream.
   bool get isNetwork {
     final u = uri?.trim().toLowerCase() ?? '';
-    return u.startsWith('http://') || u.startsWith('https://');
+    return u.startsWith('http://') ||
+        u.startsWith('https://') ||
+        u.startsWith('ws://') ||
+        u.startsWith('wss://');
   }
 
-  /// Whether this source points to a local file path.
+  /// Whether this source points directly to a local file path (including normalized `file://` URIs).
   bool get isFile =>
-      !_isMemory && !isCustom && !isNetwork && (uri != null && uri!.isNotEmpty);
+      !_isMemory &&
+      !isCustom &&
+      !isNetwork &&
+      !_resolveInDart &&
+      _directErrorCode == null &&
+      ((_normalizedSource ?? uri)?.isNotEmpty ?? false);
 
   AudioSource._internal({
     this.uri,
@@ -89,6 +101,10 @@ class AudioSource<T> {
     required int initialByteLength,
     required String sourceKey,
     required bool hasValidSource,
+    String? normalizedSource,
+    bool resolveInDart = false,
+    int? directErrorCode,
+    String? directErrorMessage,
   })  : _id = internalId,
         _replayGainDb = replayGainDb,
         _replayPeak = replayPeak,
@@ -96,7 +112,73 @@ class AudioSource<T> {
         _isMemory = isMemory,
         _initialByteLength = initialByteLength,
         _sourceKey = sourceKey,
-        _hasValidSource = hasValidSource;
+        _hasValidSource = hasValidSource,
+        _normalizedSource = normalizedSource,
+        _resolveInDart = resolveInDart,
+        _directErrorCode = directErrorCode,
+        _directErrorMessage = directErrorMessage;
+
+  static AudioSource<T> _fromUriString<T>(
+    String originalUri, {
+    Map<String, String>? headers,
+    T? data,
+    double? replayGainDb,
+    double? replayPeak,
+    int? id,
+  }) {
+    final norm = normalizePlatformAudioSourceUri(originalUri);
+    if (!norm.hasError &&
+        norm.normalizedSource.toLowerCase().startsWith('data:')) {
+      try {
+        final uriData = UriData.parse(norm.normalizedSource);
+        final decoded = uriData.contentAsBytes();
+        return AudioSource<T>._internal(
+          bytes: decoded,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+          internalId: id,
+          isMemory: true,
+          initialByteLength: decoded.lengthInBytes,
+          sourceKey: 'mem:${identityHashCode(decoded)}',
+          hasValidSource: decoded.isNotEmpty,
+        );
+      } catch (e) {
+        return AudioSource<T>._internal(
+          uri: originalUri,
+          headers: headers,
+          data: data,
+          replayGainDb: replayGainDb,
+          replayPeak: replayPeak,
+          internalId: id,
+          isMemory: false,
+          initialByteLength: 0,
+          sourceKey: 'uri:$originalUri',
+          hasValidSource: false,
+          normalizedSource: norm.normalizedSource,
+          resolveInDart: true,
+          directErrorCode: MapResult.errorInvalidArgs,
+          directErrorMessage: 'Malformed data URI "$originalUri": $e',
+        );
+      }
+    }
+    return AudioSource<T>._internal(
+      uri: originalUri,
+      headers: headers,
+      data: data,
+      replayGainDb: replayGainDb,
+      replayPeak: replayPeak,
+      internalId: id,
+      isMemory: false,
+      initialByteLength: 0,
+      sourceKey: 'uri:$originalUri',
+      hasValidSource: originalUri.trim().isNotEmpty && !norm.hasError,
+      normalizedSource: norm.normalizedSource,
+      resolveInDart: norm.resolveInDart,
+      directErrorCode: norm.directErrorCode,
+      directErrorMessage: norm.directErrorMessage,
+    );
+  }
 
   void _attachEngineId(int newId) {
     _id ??= newId;
@@ -148,63 +230,23 @@ class AudioSource<T> {
           hasValidSource: decoded.isNotEmpty,
         );
       }
-      final uriStr = source.toString();
-      return AudioSource<T>._internal(
-        uri: uriStr,
+      return AudioSource._fromUriString<T>(
+        source.toString(),
         headers: headers,
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
-        internalId: id,
-        isMemory: false,
-        initialByteLength: 0,
-        sourceKey: 'uri:$uriStr',
-        hasValidSource: uriStr.trim().isNotEmpty,
+        id: id,
       );
     }
     if (source is String) {
-      final str = source.trim();
-      if (str.toLowerCase().startsWith('data:')) {
-        try {
-          final uriData = UriData.parse(str);
-          final decoded = uriData.contentAsBytes();
-          return AudioSource<T>._internal(
-            bytes: decoded,
-            data: data,
-            replayGainDb: replayGainDb,
-            replayPeak: replayPeak,
-            internalId: id,
-            isMemory: true,
-            initialByteLength: decoded.lengthInBytes,
-            sourceKey: 'mem:${identityHashCode(decoded)}',
-            hasValidSource: decoded.isNotEmpty,
-          );
-        } catch (_) {
-          return AudioSource<T>._internal(
-            uri: str,
-            headers: headers,
-            data: data,
-            replayGainDb: replayGainDb,
-            replayPeak: replayPeak,
-            internalId: id,
-            isMemory: false,
-            initialByteLength: 0,
-            sourceKey: 'uri:$str',
-            hasValidSource: str.isNotEmpty,
-          );
-        }
-      }
-      return AudioSource<T>._internal(
-        uri: str,
+      return AudioSource._fromUriString<T>(
+        source.trim(),
         headers: headers,
         data: data,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
-        internalId: id,
-        isMemory: false,
-        initialByteLength: 0,
-        sourceKey: 'uri:$str',
-        hasValidSource: str.isNotEmpty,
+        id: id,
       );
     }
     if (source is Uint8List) {
@@ -262,6 +304,7 @@ class AudioSource<T> {
         source: url,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
+        resolveInDart: false,
       );
     }
     if (_isMemory) {
@@ -271,16 +314,18 @@ class AudioSource<T> {
         dataBytes: _bytes,
         replayGainDb: replayGainDb,
         replayPeak: replayPeak,
+        resolveInDart: false,
       );
     }
     return rust_types.RustAudioSource(
       id: rustId,
-      source: uri ?? '',
+      source: _normalizedSource ?? uri ?? '',
       headers: headers?.entries
           .map((e) => rust_types.RustHttpHeader(key: e.key, value: e.value))
           .toList(),
       replayGainDb: replayGainDb,
       replayPeak: replayPeak,
+      resolveInDart: _resolveInDart || _directErrorCode != null,
     );
   }
 
@@ -324,7 +369,17 @@ class AudioSource<T> {
         hasValidSource: _hasValidSource,
       );
     }
-    final nextUri = uri ?? this.uri ?? '';
+    if (uri != null) {
+      return AudioSource._fromUriString<T>(
+        uri,
+        headers: headers ?? this.headers,
+        data: data ?? this.data,
+        replayGainDb: replayGainDb ?? this.replayGainDb,
+        replayPeak: replayPeak ?? this.replayPeak,
+        id: id ?? _id,
+      );
+    }
+    final nextUri = this.uri ?? '';
     return AudioSource<T>._internal(
       uri: nextUri,
       headers: headers ?? this.headers,
@@ -335,7 +390,11 @@ class AudioSource<T> {
       isMemory: false,
       initialByteLength: 0,
       sourceKey: 'uri:$nextUri',
-      hasValidSource: nextUri.trim().isNotEmpty,
+      hasValidSource: _hasValidSource,
+      normalizedSource: _normalizedSource,
+      resolveInDart: _resolveInDart,
+      directErrorCode: _directErrorCode,
+      directErrorMessage: _directErrorMessage,
     );
   }
 
@@ -355,6 +414,10 @@ class AudioSource<T> {
       initialByteLength: _initialByteLength,
       sourceKey: _sourceKey,
       hasValidSource: _hasValidSource,
+      normalizedSource: _normalizedSource,
+      resolveInDart: _resolveInDart,
+      directErrorCode: _directErrorCode,
+      directErrorMessage: _directErrorMessage,
     );
   }
 

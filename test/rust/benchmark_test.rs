@@ -109,6 +109,7 @@ fn test_benchmark_extended_pcm_rf64_rifx_w64() {
             data_bytes: None,
             replay_gain_db: None,
             replay_peak: None,
+            resolve_in_dart: false,
         };
         let cfg = miniaudio_player::api::types::RustAnalysisConfig {
             waveform: true,

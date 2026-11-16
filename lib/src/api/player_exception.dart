@@ -12,6 +12,7 @@ class MiniaudioPlayerException implements Exception {
   /// Creates a [MiniaudioPlayerException] with a [message] and optional [errorCode] or [details].
   const MiniaudioPlayerException(this.message, {this.errorCode, this.details});
 
+  static final RegExp _explicitCodeTagRegex = RegExp(r'\(code:\s*(-?\d+)\)');
   static final RegExp _rustErrorCodeRegex = RegExp(r'(?:error|code:?)\s*(-?\d+)');
 
   /// Constructs a deterministic [MiniaudioPlayerException] from a raw Rust/FFI exception.
@@ -22,7 +23,8 @@ class MiniaudioPlayerException implements Exception {
   }) {
     if (error is MiniaudioPlayerException) return error;
     final raw = error.toString();
-    final match = _rustErrorCodeRegex.firstMatch(raw);
+    final explicitMatch = _explicitCodeTagRegex.allMatches(raw).lastOrNull;
+    final match = explicitMatch ?? _rustErrorCodeRegex.firstMatch(raw);
     final code = match != null ? int.parse(match.group(1)!) : defaultErrorCode;
     return MiniaudioPlayerException(
       '$prefix (code $code): $raw',

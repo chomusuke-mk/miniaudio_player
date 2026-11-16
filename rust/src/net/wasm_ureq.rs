@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use flutter_rust_bridge::for_generated::js_sys::{self, Array, Function, Object, Reflect};
+use flutter_rust_bridge::for_generated::js_sys::{Array, Function, Object, Reflect};
 use flutter_rust_bridge::for_generated::wasm_bindgen;
 use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
 
@@ -33,7 +33,6 @@ thread_local! {
     static POST_NET_CMD_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
     static ATOMICS_WAIT_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
     static ATOMICS_NOTIFY_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
-    static ORIGIN_STR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn streams_registry() -> &'static Mutex<HashMap<u32, Arc<WasmStreamShared>>> {
@@ -47,23 +46,6 @@ fn reap_exited_streams() {
                 || shared.ctrl[CTRL_JS_EXITED].load(Ordering::Acquire) == 0
         });
     }
-}
-
-fn get_base_origin() -> String {
-    ORIGIN_STR.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        if let Some(ref cached) = *slot {
-            return cached.clone();
-        }
-        let origin = js_sys::eval(
-            "(typeof self !== 'undefined' && self.location && self.location.origin && self.location.origin !== 'null') ? self.location.origin : ''",
-        )
-        .ok()
-        .and_then(|v| v.as_string())
-        .unwrap_or_default();
-        *slot = Some(origin.clone());
-        origin
-    })
 }
 
 fn post_net_command(cmd_obj: &Object) -> std::result::Result<(), JsValue> {
@@ -187,29 +169,6 @@ function wakeRust(ctrlPtr) {
     Atomics.add(c, CTRL_WAKE_RUST, 1);
     Atomics.notify(c, CTRL_WAKE_RUST);
 }
-function buildCandidates(raw, origin) {
-    var s = String(raw || '').trim();
-    if (!s) return [];
-    if (s.indexOf('icy://') === 0) return ['http://' + s.substring(6)];
-    if (/^(https?:|blob:|data:)/i.test(s)) return [s];
-    var stripped = s;
-    if (stripped.indexOf('asset:///') === 0) stripped = stripped.substring(9);
-    else if (stripped.indexOf('asset://') === 0) stripped = stripped.substring(8);
-    else if (stripped.indexOf('file:///') === 0) stripped = stripped.substring(8);
-    else if (stripped.indexOf('file://') === 0) stripped = stripped.substring(7);
-    stripped = stripped.replace(/^\/+/, '');
-    var resolveAsset = function(rel) {
-        var clean = rel.replace(/^\/+/, '');
-        var enc = clean.split('/').map(function(seg) {
-            return seg.replace(/#/g, '%23');
-        }).join('/');
-        return origin ? (origin + '/' + enc) : enc;
-    };
-    if (stripped.indexOf('assets/') === 0) {
-        return [resolveAsset('assets/' + stripped), resolveAsset(stripped)];
-    }
-    return [resolveAsset(stripped), resolveAsset('assets/' + stripped)];
-}
 function writeResponseHeaders(res, ctrlPtr, hdrPtr, hdrCap) {
     var enc = new TextEncoder();
     var buf = getBuf(hdrPtr, hdrCap);
@@ -238,7 +197,7 @@ function buildFetchHeaders(hdrPairs, includeRange) {
     }
     return h;
 }
-async function tryFetchCandidate(url, hdrPairs, ac, isAssetMulti) {
+async function fetchWithRangeFallback(url, hdrPairs, ac) {
     var hasRange = false;
     if (hdrPairs && hdrPairs.length) {
         for (var i = 0; i < hdrPairs.length; i++) {
@@ -258,14 +217,7 @@ async function tryFetchCandidate(url, hdrPairs, ac, isAssetMulti) {
                 headers: buildFetchHeaders(hdrPairs, useRangeAttempts[a]),
                 signal: ac.signal
             });
-            if (res.status === 0) return { ok: false, res: null };
-            if (isAssetMulti) {
-                var ct = (res.headers.get('content-type') || '').toLowerCase();
-                if (!res.ok || (res.status === 200 && ct.indexOf('text/html') !== -1)) {
-                    if (res.body) { try { res.body.cancel(); } catch (_) {} }
-                    return { ok: false, res: res, htmlFallback: (res.status === 200 && ct.indexOf('text/html') !== -1) };
-                }
-            }
+            if (res.status === 0) continue;
             return { ok: true, res: res };
         } catch (err) {
             if (ac.signal.aborted) throw err;
@@ -323,39 +275,20 @@ async function pumpStream(d) {
         if (Atomics.load(getCtrl(d.ctrlPtr), CTRL_ABORTED) !== 0) {
             return;
         }
-        var candidates = buildCandidates(d.url, d.origin || '');
-        if (!candidates.length) {
+        var url = d.url || '';
+        if (!url) {
             var cEmpty = getCtrl(d.ctrlPtr);
             Atomics.store(cEmpty, CTRL_STATUS, -2);
             Atomics.store(cEmpty, CTRL_STATE, STATE_ERROR);
             wakeRust(d.ctrlPtr);
             return;
         }
-        var isAssetMulti = candidates.length > 1;
-        var chosenRes = null;
-        var lastFailedRes = null;
-        var lastHtmlFallback = false;
-        for (var ci = 0; ci < candidates.length; ci++) {
-            var attempt = await tryFetchCandidate(candidates[ci], d.headers, ac, isAssetMulti);
-            if (attempt.ok) {
-                chosenRes = attempt.res;
-                break;
-            }
-            if (attempt.res) {
-                lastFailedRes = attempt.res;
-                lastHtmlFallback = !!attempt.htmlFallback;
-            }
-        }
+        var attempt = await fetchWithRangeFallback(url, d.headers, ac);
+        var chosenRes = attempt.ok ? attempt.res : null;
         if (!chosenRes) {
             var cFail = getCtrl(d.ctrlPtr);
-            if (lastFailedRes) {
-                var failStatus = lastHtmlFallback ? 404 : lastFailedRes.status;
-                Atomics.store(cFail, CTRL_STATUS, failStatus);
-                Atomics.store(cFail, CTRL_STATE, STATE_EOF);
-            } else {
-                Atomics.store(cFail, CTRL_STATUS, -5);
-                Atomics.store(cFail, CTRL_STATE, STATE_ERROR);
-            }
+            Atomics.store(cFail, CTRL_STATUS, -5);
+            Atomics.store(cFail, CTRL_STATE, STATE_ERROR);
             wakeRust(d.ctrlPtr);
             return;
         }
@@ -773,13 +706,11 @@ impl<S> RequestBuilder<S> {
         }
 
         let cmd = Object::new();
-        let origin = get_base_origin();
-        let fields: [(&str, JsValue); 10] = [
+        let fields: [(&str, JsValue); 9] = [
             ("cmd", JsValue::from_str("open")),
             ("id", JsValue::from_f64(id as f64)),
             ("url", JsValue::from_str(&self.url)),
             ("headers", headers_arr.into()),
-            ("origin", JsValue::from_str(&origin)),
             ("ctrlPtr", JsValue::from_f64(shared.ctrl_ptr() as f64)),
             ("ringPtr", JsValue::from_f64(shared.ring_ptr() as f64)),
             ("ringCap", JsValue::from_f64(RING_CAP as f64)),

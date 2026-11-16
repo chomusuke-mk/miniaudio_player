@@ -6,6 +6,8 @@
 /// and real-time spectrum visualizer.
 library;
 
+export 'package:flutter/services.dart' show RootIsolateToken;
+
 export 'src/api/audio_analysis_result.dart';
 export 'src/api/audio_device.dart';
 export 'src/api/audio_info.dart';

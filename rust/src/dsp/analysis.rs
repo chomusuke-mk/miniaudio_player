@@ -7,6 +7,7 @@
 use std::f64::consts::PI;
 
 use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult, RustChromaprintResult};
+use crate::buffer::ResolvedCoreSource;
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 
 use super::biquad::BiquadDf2t;
@@ -297,12 +298,30 @@ pub fn analyze_audio_source(
     source: AudioSourceCore,
     config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
+    analyze_audio_source_with_resolved(source, None, config)
+}
+
+/// Performs comprehensive, memory-bounded ($O(1)$ RAM) acoustic, loudness, waveform,
+/// and metadata analysis using an optional pre-resolved Dart source payload.
+pub fn analyze_audio_source_with_resolved(
+    source: AudioSourceCore,
+    pre_resolved: Option<ResolvedCoreSource>,
+    config: RustAnalysisConfig,
+) -> Result<RustAudioAnalysisResult, String> {
     let mut deck = StreamingDeck::new_analysis_deck(44100, 2)
         .map_err(|e| format!("Failed to create analysis deck: {}", e))?;
 
-    let res = DualSource::open_deck_source_with_cancel(&mut deck, &source, None, None);
+    let res = DualSource::open_deck_with_pre_resolved(
+        &mut deck,
+        &source,
+        pre_resolved,
+        None,
+        None,
+        None,
+    );
     if res != 0 {
-        return Err(format!("Failed to open audio source (code: {})", res));
+        let detail = deck.take_last_open_error_message();
+        return Err(detail.unwrap_or_else(|| format!("Failed to open audio source (code: {})", res)));
     }
 
     // Livestream fast-path: unbounded live broadcasts cannot and must not be analyzed for

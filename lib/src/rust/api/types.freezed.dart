@@ -103,6 +103,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
+    TResult Function(RustPlayerEvent_DartResolveRequest value)?
+        dartResolveRequest,
     TResult Function(RustPlayerEvent_NeedMoreTracks value)? needMoreTracks,
     TResult Function(RustPlayerEvent_Outputs value)? outputs,
     TResult Function(RustPlayerEvent_Error value)? error,
@@ -207,6 +209,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
+      case RustPlayerEvent_DartResolveRequest() when dartResolveRequest != null:
+        return dartResolveRequest(_that);
       case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
         return needMoreTracks(_that);
       case RustPlayerEvent_Outputs() when outputs != null:
@@ -299,6 +303,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(RustPlayerEvent_InputDevices value) inputDevices,
     required TResult Function(RustPlayerEvent_DartReadRequest value)
         dartReadRequest,
+    required TResult Function(RustPlayerEvent_DartResolveRequest value)
+        dartResolveRequest,
     required TResult Function(RustPlayerEvent_NeedMoreTracks value)
         needMoreTracks,
     required TResult Function(RustPlayerEvent_Outputs value) outputs,
@@ -402,6 +408,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that);
+      case RustPlayerEvent_DartResolveRequest():
+        return dartResolveRequest(_that);
       case RustPlayerEvent_NeedMoreTracks():
         return needMoreTracks(_that);
       case RustPlayerEvent_Outputs():
@@ -476,6 +484,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(RustPlayerEvent_OutputDevices value)? outputDevices,
     TResult? Function(RustPlayerEvent_InputDevices value)? inputDevices,
     TResult? Function(RustPlayerEvent_DartReadRequest value)? dartReadRequest,
+    TResult? Function(RustPlayerEvent_DartResolveRequest value)?
+        dartResolveRequest,
     TResult? Function(RustPlayerEvent_NeedMoreTracks value)? needMoreTracks,
     TResult? Function(RustPlayerEvent_Outputs value)? outputs,
     TResult? Function(RustPlayerEvent_Error value)? error,
@@ -579,6 +589,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that);
+      case RustPlayerEvent_DartResolveRequest() when dartResolveRequest != null:
+        return dartResolveRequest(_that);
       case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
         return needMoreTracks(_that);
       case RustPlayerEvent_Outputs() when outputs != null:
@@ -652,6 +664,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult Function(List<RustAudioDevice> field0)? outputDevices,
     TResult Function(List<RustAudioDevice> field0)? inputDevices,
     TResult Function(RustDartReadRequest field0)? dartReadRequest,
+    TResult Function(RustDartResolveRequest field0)? dartResolveRequest,
     TResult Function(PlatformInt64 currentTrackId, int remainingTracks)?
         needMoreTracks,
     TResult Function(List<RustAudioOutput> field0)? outputs,
@@ -757,6 +770,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_DartResolveRequest() when dartResolveRequest != null:
+        return dartResolveRequest(_that.field0);
       case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
         return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustPlayerEvent_Outputs() when outputs != null:
@@ -832,6 +847,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     required TResult Function(List<RustAudioDevice> field0) outputDevices,
     required TResult Function(List<RustAudioDevice> field0) inputDevices,
     required TResult Function(RustDartReadRequest field0) dartReadRequest,
+    required TResult Function(RustDartResolveRequest field0) dartResolveRequest,
     required TResult Function(PlatformInt64 currentTrackId, int remainingTracks)
         needMoreTracks,
     required TResult Function(List<RustAudioOutput> field0) outputs,
@@ -935,6 +951,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest():
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_DartResolveRequest():
+        return dartResolveRequest(_that.field0);
       case RustPlayerEvent_NeedMoreTracks():
         return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustPlayerEvent_Outputs():
@@ -1006,6 +1024,7 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
     TResult? Function(List<RustAudioDevice> field0)? outputDevices,
     TResult? Function(List<RustAudioDevice> field0)? inputDevices,
     TResult? Function(RustDartReadRequest field0)? dartReadRequest,
+    TResult? Function(RustDartResolveRequest field0)? dartResolveRequest,
     TResult? Function(PlatformInt64 currentTrackId, int remainingTracks)?
         needMoreTracks,
     TResult? Function(List<RustAudioOutput> field0)? outputs,
@@ -1110,6 +1129,8 @@ extension RustPlayerEventPatterns on RustPlayerEvent {
         return inputDevices(_that.field0);
       case RustPlayerEvent_DartReadRequest() when dartReadRequest != null:
         return dartReadRequest(_that.field0);
+      case RustPlayerEvent_DartResolveRequest() when dartResolveRequest != null:
+        return dartResolveRequest(_that.field0);
       case RustPlayerEvent_NeedMoreTracks() when needMoreTracks != null:
         return needMoreTracks(_that.currentTrackId, _that.remainingTracks);
       case RustPlayerEvent_Outputs() when outputs != null:
@@ -4456,6 +4477,75 @@ class _$RustPlayerEvent_DartReadRequestCopyWithImpl<$Res>
 
 /// @nodoc
 
+class RustPlayerEvent_DartResolveRequest extends RustPlayerEvent {
+  const RustPlayerEvent_DartResolveRequest(this.field0) : super._();
+
+  final RustDartResolveRequest field0;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustPlayerEvent_DartResolveRequestCopyWith<
+          RustPlayerEvent_DartResolveRequest>
+      get copyWith => _$RustPlayerEvent_DartResolveRequestCopyWithImpl<
+          RustPlayerEvent_DartResolveRequest>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustPlayerEvent_DartResolveRequest &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, field0);
+  }
+
+  @override
+  String toString() {
+    return 'RustPlayerEvent.dartResolveRequest(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustPlayerEvent_DartResolveRequestCopyWith<$Res>
+    implements $RustPlayerEventCopyWith<$Res> {
+  factory $RustPlayerEvent_DartResolveRequestCopyWith(
+          RustPlayerEvent_DartResolveRequest value,
+          $Res Function(RustPlayerEvent_DartResolveRequest) _then) =
+      _$RustPlayerEvent_DartResolveRequestCopyWithImpl;
+  @useResult
+  $Res call({RustDartResolveRequest field0});
+}
+
+/// @nodoc
+class _$RustPlayerEvent_DartResolveRequestCopyWithImpl<$Res>
+    implements $RustPlayerEvent_DartResolveRequestCopyWith<$Res> {
+  _$RustPlayerEvent_DartResolveRequestCopyWithImpl(this._self, this._then);
+
+  final RustPlayerEvent_DartResolveRequest _self;
+  final $Res Function(RustPlayerEvent_DartResolveRequest) _then;
+
+  /// Create a copy of RustPlayerEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(RustPlayerEvent_DartResolveRequest(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as RustDartResolveRequest,
+    ));
+  }
+}
+
+/// @nodoc
+
 class RustPlayerEvent_NeedMoreTracks extends RustPlayerEvent {
   const RustPlayerEvent_NeedMoreTracks(
       {required this.currentTrackId, required this.remainingTracks})
@@ -4685,6 +4775,741 @@ class _$RustPlayerEvent_ErrorCopyWithImpl<$Res>
           ? _self.code
           : code // ignore: cast_nullable_to_non_nullable
               as int,
+    ));
+  }
+}
+
+/// @nodoc
+mixin _$RustResolvedSource {
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is RustResolvedSource);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'RustResolvedSource()';
+  }
+}
+
+/// @nodoc
+class $RustResolvedSourceCopyWith<$Res> {
+  $RustResolvedSourceCopyWith(
+      RustResolvedSource _, $Res Function(RustResolvedSource) __);
+}
+
+/// Adds pattern-matching-related methods to [RustResolvedSource].
+extension RustResolvedSourcePatterns on RustResolvedSource {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(RustResolvedSource_Path value)? path,
+    TResult Function(RustResolvedSource_Url value)? url,
+    TResult Function(RustResolvedSource_Fd value)? fd,
+    TResult Function(RustResolvedSource_Bytes value)? bytes,
+    TResult Function(RustResolvedSource_CustomStream value)? customStream,
+    TResult Function(RustResolvedSource_Error value)? error,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case RustResolvedSource_Path() when path != null:
+        return path(_that);
+      case RustResolvedSource_Url() when url != null:
+        return url(_that);
+      case RustResolvedSource_Fd() when fd != null:
+        return fd(_that);
+      case RustResolvedSource_Bytes() when bytes != null:
+        return bytes(_that);
+      case RustResolvedSource_CustomStream() when customStream != null:
+        return customStream(_that);
+      case RustResolvedSource_Error() when error != null:
+        return error(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(RustResolvedSource_Path value) path,
+    required TResult Function(RustResolvedSource_Url value) url,
+    required TResult Function(RustResolvedSource_Fd value) fd,
+    required TResult Function(RustResolvedSource_Bytes value) bytes,
+    required TResult Function(RustResolvedSource_CustomStream value)
+        customStream,
+    required TResult Function(RustResolvedSource_Error value) error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case RustResolvedSource_Path():
+        return path(_that);
+      case RustResolvedSource_Url():
+        return url(_that);
+      case RustResolvedSource_Fd():
+        return fd(_that);
+      case RustResolvedSource_Bytes():
+        return bytes(_that);
+      case RustResolvedSource_CustomStream():
+        return customStream(_that);
+      case RustResolvedSource_Error():
+        return error(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(RustResolvedSource_Path value)? path,
+    TResult? Function(RustResolvedSource_Url value)? url,
+    TResult? Function(RustResolvedSource_Fd value)? fd,
+    TResult? Function(RustResolvedSource_Bytes value)? bytes,
+    TResult? Function(RustResolvedSource_CustomStream value)? customStream,
+    TResult? Function(RustResolvedSource_Error value)? error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case RustResolvedSource_Path() when path != null:
+        return path(_that);
+      case RustResolvedSource_Url() when url != null:
+        return url(_that);
+      case RustResolvedSource_Fd() when fd != null:
+        return fd(_that);
+      case RustResolvedSource_Bytes() when bytes != null:
+        return bytes(_that);
+      case RustResolvedSource_CustomStream() when customStream != null:
+        return customStream(_that);
+      case RustResolvedSource_Error() when error != null:
+        return error(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String path)? path,
+    TResult Function(String url)? url,
+    TResult Function(int fd, BigInt offset, BigInt? length, String? hintExt)?
+        fd,
+    TResult Function(Uint8List data, String? hintExt)? bytes,
+    TResult Function(int streamId, BigInt? totalBytes, String? hintExt)?
+        customStream,
+    TResult Function(int code, String message)? error,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case RustResolvedSource_Path() when path != null:
+        return path(_that.path);
+      case RustResolvedSource_Url() when url != null:
+        return url(_that.url);
+      case RustResolvedSource_Fd() when fd != null:
+        return fd(_that.fd, _that.offset, _that.length, _that.hintExt);
+      case RustResolvedSource_Bytes() when bytes != null:
+        return bytes(_that.data, _that.hintExt);
+      case RustResolvedSource_CustomStream() when customStream != null:
+        return customStream(_that.streamId, _that.totalBytes, _that.hintExt);
+      case RustResolvedSource_Error() when error != null:
+        return error(_that.code, _that.message);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(String path) path,
+    required TResult Function(String url) url,
+    required TResult Function(
+            int fd, BigInt offset, BigInt? length, String? hintExt)
+        fd,
+    required TResult Function(Uint8List data, String? hintExt) bytes,
+    required TResult Function(int streamId, BigInt? totalBytes, String? hintExt)
+        customStream,
+    required TResult Function(int code, String message) error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case RustResolvedSource_Path():
+        return path(_that.path);
+      case RustResolvedSource_Url():
+        return url(_that.url);
+      case RustResolvedSource_Fd():
+        return fd(_that.fd, _that.offset, _that.length, _that.hintExt);
+      case RustResolvedSource_Bytes():
+        return bytes(_that.data, _that.hintExt);
+      case RustResolvedSource_CustomStream():
+        return customStream(_that.streamId, _that.totalBytes, _that.hintExt);
+      case RustResolvedSource_Error():
+        return error(_that.code, _that.message);
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String path)? path,
+    TResult? Function(String url)? url,
+    TResult? Function(int fd, BigInt offset, BigInt? length, String? hintExt)?
+        fd,
+    TResult? Function(Uint8List data, String? hintExt)? bytes,
+    TResult? Function(int streamId, BigInt? totalBytes, String? hintExt)?
+        customStream,
+    TResult? Function(int code, String message)? error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case RustResolvedSource_Path() when path != null:
+        return path(_that.path);
+      case RustResolvedSource_Url() when url != null:
+        return url(_that.url);
+      case RustResolvedSource_Fd() when fd != null:
+        return fd(_that.fd, _that.offset, _that.length, _that.hintExt);
+      case RustResolvedSource_Bytes() when bytes != null:
+        return bytes(_that.data, _that.hintExt);
+      case RustResolvedSource_CustomStream() when customStream != null:
+        return customStream(_that.streamId, _that.totalBytes, _that.hintExt);
+      case RustResolvedSource_Error() when error != null:
+        return error(_that.code, _that.message);
+      case _:
+        return null;
+    }
+  }
+}
+
+/// @nodoc
+
+class RustResolvedSource_Path extends RustResolvedSource {
+  const RustResolvedSource_Path({required this.path}) : super._();
+
+  final String path;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustResolvedSource_PathCopyWith<RustResolvedSource_Path> get copyWith =>
+      _$RustResolvedSource_PathCopyWithImpl<RustResolvedSource_Path>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustResolvedSource_Path &&
+            (identical(other.path, path) || other.path == path));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, path);
+  }
+
+  @override
+  String toString() {
+    return 'RustResolvedSource.path(path: $path)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustResolvedSource_PathCopyWith<$Res>
+    implements $RustResolvedSourceCopyWith<$Res> {
+  factory $RustResolvedSource_PathCopyWith(RustResolvedSource_Path value,
+          $Res Function(RustResolvedSource_Path) _then) =
+      _$RustResolvedSource_PathCopyWithImpl;
+  @useResult
+  $Res call({String path});
+}
+
+/// @nodoc
+class _$RustResolvedSource_PathCopyWithImpl<$Res>
+    implements $RustResolvedSource_PathCopyWith<$Res> {
+  _$RustResolvedSource_PathCopyWithImpl(this._self, this._then);
+
+  final RustResolvedSource_Path _self;
+  final $Res Function(RustResolvedSource_Path) _then;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? path = null,
+  }) {
+    return _then(RustResolvedSource_Path(
+      path: null == path
+          ? _self.path
+          : path // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustResolvedSource_Url extends RustResolvedSource {
+  const RustResolvedSource_Url({required this.url}) : super._();
+
+  final String url;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustResolvedSource_UrlCopyWith<RustResolvedSource_Url> get copyWith =>
+      _$RustResolvedSource_UrlCopyWithImpl<RustResolvedSource_Url>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustResolvedSource_Url &&
+            (identical(other.url, url) || other.url == url));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, url);
+  }
+
+  @override
+  String toString() {
+    return 'RustResolvedSource.url(url: $url)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustResolvedSource_UrlCopyWith<$Res>
+    implements $RustResolvedSourceCopyWith<$Res> {
+  factory $RustResolvedSource_UrlCopyWith(RustResolvedSource_Url value,
+          $Res Function(RustResolvedSource_Url) _then) =
+      _$RustResolvedSource_UrlCopyWithImpl;
+  @useResult
+  $Res call({String url});
+}
+
+/// @nodoc
+class _$RustResolvedSource_UrlCopyWithImpl<$Res>
+    implements $RustResolvedSource_UrlCopyWith<$Res> {
+  _$RustResolvedSource_UrlCopyWithImpl(this._self, this._then);
+
+  final RustResolvedSource_Url _self;
+  final $Res Function(RustResolvedSource_Url) _then;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? url = null,
+  }) {
+    return _then(RustResolvedSource_Url(
+      url: null == url
+          ? _self.url
+          : url // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustResolvedSource_Fd extends RustResolvedSource {
+  const RustResolvedSource_Fd(
+      {required this.fd, required this.offset, this.length, this.hintExt})
+      : super._();
+
+  final int fd;
+  final BigInt offset;
+  final BigInt? length;
+  final String? hintExt;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustResolvedSource_FdCopyWith<RustResolvedSource_Fd> get copyWith =>
+      _$RustResolvedSource_FdCopyWithImpl<RustResolvedSource_Fd>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustResolvedSource_Fd &&
+            (identical(other.fd, fd) || other.fd == fd) &&
+            (identical(other.offset, offset) || other.offset == offset) &&
+            (identical(other.length, length) || other.length == length) &&
+            (identical(other.hintExt, hintExt) || other.hintExt == hintExt));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, fd, offset, length, hintExt);
+  }
+
+  @override
+  String toString() {
+    return 'RustResolvedSource.fd(fd: $fd, offset: $offset, length: $length, hintExt: $hintExt)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustResolvedSource_FdCopyWith<$Res>
+    implements $RustResolvedSourceCopyWith<$Res> {
+  factory $RustResolvedSource_FdCopyWith(RustResolvedSource_Fd value,
+          $Res Function(RustResolvedSource_Fd) _then) =
+      _$RustResolvedSource_FdCopyWithImpl;
+  @useResult
+  $Res call({int fd, BigInt offset, BigInt? length, String? hintExt});
+}
+
+/// @nodoc
+class _$RustResolvedSource_FdCopyWithImpl<$Res>
+    implements $RustResolvedSource_FdCopyWith<$Res> {
+  _$RustResolvedSource_FdCopyWithImpl(this._self, this._then);
+
+  final RustResolvedSource_Fd _self;
+  final $Res Function(RustResolvedSource_Fd) _then;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? fd = null,
+    Object? offset = null,
+    Object? length = freezed,
+    Object? hintExt = freezed,
+  }) {
+    return _then(RustResolvedSource_Fd(
+      fd: null == fd
+          ? _self.fd
+          : fd // ignore: cast_nullable_to_non_nullable
+              as int,
+      offset: null == offset
+          ? _self.offset
+          : offset // ignore: cast_nullable_to_non_nullable
+              as BigInt,
+      length: freezed == length
+          ? _self.length
+          : length // ignore: cast_nullable_to_non_nullable
+              as BigInt?,
+      hintExt: freezed == hintExt
+          ? _self.hintExt
+          : hintExt // ignore: cast_nullable_to_non_nullable
+              as String?,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustResolvedSource_Bytes extends RustResolvedSource {
+  const RustResolvedSource_Bytes({required this.data, this.hintExt})
+      : super._();
+
+  final Uint8List data;
+  final String? hintExt;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustResolvedSource_BytesCopyWith<RustResolvedSource_Bytes> get copyWith =>
+      _$RustResolvedSource_BytesCopyWithImpl<RustResolvedSource_Bytes>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustResolvedSource_Bytes &&
+            const DeepCollectionEquality().equals(other.data, data) &&
+            (identical(other.hintExt, hintExt) || other.hintExt == hintExt));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+        runtimeType, const DeepCollectionEquality().hash(data), hintExt);
+  }
+
+  @override
+  String toString() {
+    return 'RustResolvedSource.bytes(data: $data, hintExt: $hintExt)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustResolvedSource_BytesCopyWith<$Res>
+    implements $RustResolvedSourceCopyWith<$Res> {
+  factory $RustResolvedSource_BytesCopyWith(RustResolvedSource_Bytes value,
+          $Res Function(RustResolvedSource_Bytes) _then) =
+      _$RustResolvedSource_BytesCopyWithImpl;
+  @useResult
+  $Res call({Uint8List data, String? hintExt});
+}
+
+/// @nodoc
+class _$RustResolvedSource_BytesCopyWithImpl<$Res>
+    implements $RustResolvedSource_BytesCopyWith<$Res> {
+  _$RustResolvedSource_BytesCopyWithImpl(this._self, this._then);
+
+  final RustResolvedSource_Bytes _self;
+  final $Res Function(RustResolvedSource_Bytes) _then;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? data = null,
+    Object? hintExt = freezed,
+  }) {
+    return _then(RustResolvedSource_Bytes(
+      data: null == data
+          ? _self.data
+          : data // ignore: cast_nullable_to_non_nullable
+              as Uint8List,
+      hintExt: freezed == hintExt
+          ? _self.hintExt
+          : hintExt // ignore: cast_nullable_to_non_nullable
+              as String?,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustResolvedSource_CustomStream extends RustResolvedSource {
+  const RustResolvedSource_CustomStream(
+      {required this.streamId, this.totalBytes, this.hintExt})
+      : super._();
+
+  final int streamId;
+  final BigInt? totalBytes;
+  final String? hintExt;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustResolvedSource_CustomStreamCopyWith<RustResolvedSource_CustomStream>
+      get copyWith => _$RustResolvedSource_CustomStreamCopyWithImpl<
+          RustResolvedSource_CustomStream>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustResolvedSource_CustomStream &&
+            (identical(other.streamId, streamId) ||
+                other.streamId == streamId) &&
+            (identical(other.totalBytes, totalBytes) ||
+                other.totalBytes == totalBytes) &&
+            (identical(other.hintExt, hintExt) || other.hintExt == hintExt));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, streamId, totalBytes, hintExt);
+  }
+
+  @override
+  String toString() {
+    return 'RustResolvedSource.customStream(streamId: $streamId, totalBytes: $totalBytes, hintExt: $hintExt)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustResolvedSource_CustomStreamCopyWith<$Res>
+    implements $RustResolvedSourceCopyWith<$Res> {
+  factory $RustResolvedSource_CustomStreamCopyWith(
+          RustResolvedSource_CustomStream value,
+          $Res Function(RustResolvedSource_CustomStream) _then) =
+      _$RustResolvedSource_CustomStreamCopyWithImpl;
+  @useResult
+  $Res call({int streamId, BigInt? totalBytes, String? hintExt});
+}
+
+/// @nodoc
+class _$RustResolvedSource_CustomStreamCopyWithImpl<$Res>
+    implements $RustResolvedSource_CustomStreamCopyWith<$Res> {
+  _$RustResolvedSource_CustomStreamCopyWithImpl(this._self, this._then);
+
+  final RustResolvedSource_CustomStream _self;
+  final $Res Function(RustResolvedSource_CustomStream) _then;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? streamId = null,
+    Object? totalBytes = freezed,
+    Object? hintExt = freezed,
+  }) {
+    return _then(RustResolvedSource_CustomStream(
+      streamId: null == streamId
+          ? _self.streamId
+          : streamId // ignore: cast_nullable_to_non_nullable
+              as int,
+      totalBytes: freezed == totalBytes
+          ? _self.totalBytes
+          : totalBytes // ignore: cast_nullable_to_non_nullable
+              as BigInt?,
+      hintExt: freezed == hintExt
+          ? _self.hintExt
+          : hintExt // ignore: cast_nullable_to_non_nullable
+              as String?,
+    ));
+  }
+}
+
+/// @nodoc
+
+class RustResolvedSource_Error extends RustResolvedSource {
+  const RustResolvedSource_Error({required this.code, required this.message})
+      : super._();
+
+  final int code;
+  final String message;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RustResolvedSource_ErrorCopyWith<RustResolvedSource_Error> get copyWith =>
+      _$RustResolvedSource_ErrorCopyWithImpl<RustResolvedSource_Error>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RustResolvedSource_Error &&
+            (identical(other.code, code) || other.code == code) &&
+            (identical(other.message, message) || other.message == message));
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(runtimeType, code, message);
+  }
+
+  @override
+  String toString() {
+    return 'RustResolvedSource.error(code: $code, message: $message)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RustResolvedSource_ErrorCopyWith<$Res>
+    implements $RustResolvedSourceCopyWith<$Res> {
+  factory $RustResolvedSource_ErrorCopyWith(RustResolvedSource_Error value,
+          $Res Function(RustResolvedSource_Error) _then) =
+      _$RustResolvedSource_ErrorCopyWithImpl;
+  @useResult
+  $Res call({int code, String message});
+}
+
+/// @nodoc
+class _$RustResolvedSource_ErrorCopyWithImpl<$Res>
+    implements $RustResolvedSource_ErrorCopyWith<$Res> {
+  _$RustResolvedSource_ErrorCopyWithImpl(this._self, this._then);
+
+  final RustResolvedSource_Error _self;
+  final $Res Function(RustResolvedSource_Error) _then;
+
+  /// Create a copy of RustResolvedSource
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? code = null,
+    Object? message = null,
+  }) {
+    return _then(RustResolvedSource_Error(
+      code: null == code
+          ? _self.code
+          : code // ignore: cast_nullable_to_non_nullable
+              as int,
+      message: null == message
+          ? _self.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
     ));
   }
 }

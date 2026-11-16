@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Configuration parameters for offline acoustic and metadata analysis.
 class RustAnalysisConfig {
@@ -697,6 +697,9 @@ class RustAudioSource {
   /// Track-specific true peak amplitude.
   final double? replayPeak;
 
+  /// Whether Rust must request resolution from Dart before opening this source.
+  final bool resolveInDart;
+
   const RustAudioSource({
     required this.id,
     required this.source,
@@ -704,6 +707,7 @@ class RustAudioSource {
     this.dataBytes,
     this.replayGainDb,
     this.replayPeak,
+    required this.resolveInDart,
   });
 
   static Future<RustAudioSource> default_() =>
@@ -716,7 +720,8 @@ class RustAudioSource {
       headers.hashCode ^
       dataBytes.hashCode ^
       replayGainDb.hashCode ^
-      replayPeak.hashCode;
+      replayPeak.hashCode ^
+      resolveInDart.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -728,7 +733,8 @@ class RustAudioSource {
           headers == other.headers &&
           dataBytes == other.dataBytes &&
           replayGainDb == other.replayGainDb &&
-          replayPeak == other.replayPeak;
+          replayPeak == other.replayPeak &&
+          resolveInDart == other.resolveInDart;
 }
 
 /// Bitrate encoding mode of an audio stream.
@@ -984,6 +990,38 @@ class RustDartReadRequest {
           requestId == other.requestId &&
           offset == other.offset &&
           length == other.length;
+}
+
+/// Asynchronous source resolution request dispatched from Rust to Dart
+/// (used for `asset://`, `package:`, Android `content://`/`android.resource://`,
+/// `ws://`/`wss://`, and Web debug asset probing).
+class RustDartResolveRequest {
+  /// Unique monotonically increasing resolution sequence number.
+  final BigInt requestId;
+
+  /// Normalized source URI or key needing Dart-side resolution.
+  final String source;
+
+  /// Optional HTTP/WebSocket headers carried on the `AudioSource`.
+  final List<RustHttpHeader>? headers;
+
+  const RustDartResolveRequest({
+    required this.requestId,
+    required this.source,
+    this.headers,
+  });
+
+  @override
+  int get hashCode => requestId.hashCode ^ source.hashCode ^ headers.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustDartResolveRequest &&
+          runtimeType == other.runtimeType &&
+          requestId == other.requestId &&
+          source == other.source &&
+          headers == other.headers;
 }
 
 /// Distance attenuation model for 3D positional audio emitters.
@@ -1916,6 +1954,11 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
     RustDartReadRequest field0,
   ) = RustPlayerEvent_DartReadRequest;
 
+  /// Request for Dart to resolve a deferred source (`asset://`, `content://`, `ws://`, etc.).
+  const factory RustPlayerEvent.dartResolveRequest(
+    RustDartResolveRequest field0,
+  ) = RustPlayerEvent_DartResolveRequest;
+
   /// Request for Dart to replenish queue for infinite mix.
   const factory RustPlayerEvent.needMoreTracks({
     /// ID of the current playing track.
@@ -2005,6 +2048,48 @@ class RustReplayGainConfig {
           runtimeType == other.runtimeType &&
           gainDb == other.gainDb &&
           peak == other.peak;
+}
+
+@freezed
+sealed class RustResolvedSource with _$RustResolvedSource {
+  const RustResolvedSource._();
+
+  /// Resolved local filesystem path (e.g. desktop `flutter_assets` disk file).
+  const factory RustResolvedSource.path({
+    required String path,
+  }) = RustResolvedSource_Path;
+
+  /// Resolved HTTP(S) URL (e.g. Web debug probed asset URL).
+  const factory RustResolvedSource.url({
+    required String url,
+  }) = RustResolvedSource_Url;
+
+  /// Resolved detached POSIX file descriptor (`fd` ownership transfers to Rust).
+  const factory RustResolvedSource.fd({
+    required int fd,
+    required BigInt offset,
+    BigInt? length,
+    String? hintExt,
+  }) = RustResolvedSource_Fd;
+
+  /// Resolved full raw byte payload.
+  const factory RustResolvedSource.bytes({
+    required Uint8List data,
+    String? hintExt,
+  }) = RustResolvedSource_Bytes;
+
+  /// Resolved live `CustomByteProvider` stream registered under `stream_id`.
+  const factory RustResolvedSource.customStream({
+    required int streamId,
+    BigInt? totalBytes,
+    String? hintExt,
+  }) = RustResolvedSource_CustomStream;
+
+  /// Resolution failure carrying numeric `MapResult` code and descriptive message.
+  const factory RustResolvedSource.error({
+    required int code,
+    required String message,
+  }) = RustResolvedSource_Error;
 }
 
 /// Parameters configuring algorithmic studio reverberation.

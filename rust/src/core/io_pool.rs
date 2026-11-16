@@ -7,6 +7,7 @@ use crate::sync::thread::{self, JoinHandle};
 use crate::sync::MonotonicInstant as Instant;
 
 use crate::bridge::ffi::MAP_SUCCESS;
+use crate::buffer::DartResolveRegistry;
 use crate::core::dual_source::{
     AudioSourceCore, CustomSourceFactory, DualSource, StreamingDeck, MAP_ERROR_ABORTED,
 };
@@ -88,6 +89,7 @@ pub struct ActiveOpenJob {
     pub epoch: u64,
     pub item: AudioSourceCore,
     pub custom_factory: Option<CustomSourceFactory>,
+    pub dart_resolver: Option<Arc<DartResolveRegistry>>,
     pub template: DeckDspTemplate,
     pub seek_ms: Option<i64>,
     pub kind: ActiveOpenKind,
@@ -104,6 +106,7 @@ pub struct PrewarmJob {
     pub epoch: u64,
     pub item: AudioSourceCore,
     pub custom_factory: Option<CustomSourceFactory>,
+    pub dart_resolver: Option<Arc<DartResolveRegistry>>,
     pub template: DeckDspTemplate,
     pub cancel: CancelToken,
 }
@@ -112,7 +115,7 @@ pub struct PrewarmJob {
 pub enum IoOpenOutcome {
     Opened(Box<StreamingDeck>),
     Aborted,
-    Failed(i32),
+    Failed(i32, Option<String>),
 }
 
 /// Completed job delivered to [`ControlCoordinator`] handlers.
@@ -659,6 +662,7 @@ impl IoWorkerPool {
                 let outcome = Self::run_open(
                     &job.item,
                     job.custom_factory.as_ref(),
+                    job.dart_resolver.as_ref(),
                     &job.template,
                     &job.cancel,
                     &self.shutdown_token,
@@ -686,6 +690,7 @@ impl IoWorkerPool {
                 let outcome = Self::run_open(
                     &job.item,
                     job.custom_factory.as_ref(),
+                    job.dart_resolver.as_ref(),
                     &job.template,
                     &job.cancel,
                     &self.shutdown_token,
@@ -711,6 +716,7 @@ impl IoWorkerPool {
     fn run_open(
         item: &AudioSourceCore,
         custom_factory: Option<&CustomSourceFactory>,
+        dart_resolver: Option<&Arc<DartResolveRegistry>>,
         template: &DeckDspTemplate,
         cancel: &CancelToken,
         shutdown_token: &CancelToken,
@@ -726,14 +732,16 @@ impl IoWorkerPool {
             template.channels,
             template.period_size,
         ) else {
-            return IoOpenOutcome::Failed(-1);
+            return IoOpenOutcome::Failed(-1, None);
         };
         deck.apply_dsp_template_silent(template, Some(item));
 
-        let res = DualSource::open_deck_source_with_cancel(
+        let res = DualSource::open_deck_with_pre_resolved(
             &mut deck,
             item,
+            None,
             custom_factory,
+            dart_resolver,
             Some(cancel),
         );
         if res == MAP_ERROR_ABORTED || cancel.is_cancelled() || shutdown_token.is_cancelled() {
@@ -741,8 +749,9 @@ impl IoWorkerPool {
             return IoOpenOutcome::Aborted;
         }
         if res != MAP_SUCCESS {
+            let err_msg = deck.take_last_open_error_message();
             drop(deck);
-            return IoOpenOutcome::Failed(res);
+            return IoOpenOutcome::Failed(res, err_msg);
         }
         if prebuffer_pcm {
             // Ensure an initial PCM cushion (~93 ms at 44.1 kHz) is decoded before playback starts.

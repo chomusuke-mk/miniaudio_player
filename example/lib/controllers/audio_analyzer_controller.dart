@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:miniaudio_player/miniaudio_player.dart';
 
@@ -366,36 +364,6 @@ class AudioAnalyzerController extends ChangeNotifier {
 
     if (track.source.isMemory && track.source.bytes != null) {
       return await _analyzeTarget(track.source.bytes!);
-    }
-
-    final uri = track.source.uri;
-    if (uri != null) {
-      if (kIsWeb) {
-        return await _analyzeTarget(track.source);
-      }
-      if (uri.startsWith('asset://') ||
-          uri.startsWith('asset:') ||
-          uri.startsWith('assets/')) {
-        final assetPath = uri.startsWith('asset://')
-            ? uri.substring('asset://'.length)
-            : uri.startsWith('asset:')
-            ? uri.substring('asset:'.length)
-            : uri;
-        if (!kIsWeb && File(assetPath).existsSync()) {
-          return await _analyzeTarget(assetPath);
-        }
-        final byteData = await rootBundle.load(assetPath);
-        final bytes = byteData.buffer.asUint8List(
-          byteData.offsetInBytes,
-          byteData.lengthInBytes,
-        );
-        return await _analyzeTarget(bytes);
-      }
-
-      final filePath = (!kIsWeb && uri.startsWith('file://'))
-          ? Uri.parse(uri).toFilePath()
-          : uri;
-      return await _analyzeTarget(filePath);
     }
 
     return await _analyzeTarget(track.source);

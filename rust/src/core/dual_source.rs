@@ -11,7 +11,12 @@ use crate::sync::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::bridge::ffi::*;
-use crate::buffer::{CustomByteSourceHandle, CustomDartByteSource, StreamBuffer, StreamSession};
+#[cfg(unix)]
+use crate::buffer::FdOpenOutcome;
+use crate::buffer::{
+    CustomByteSourceHandle, CustomDartByteSource, DartResolveRegistry, FileByteSource,
+    ResolvedCoreSource, StreamBuffer, StreamSession,
+};
 use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{BoundaryInfo, BoundaryStatus, StreamClassifier, SymphoniaEngine};
 use crate::net::ureq;
@@ -43,48 +48,6 @@ pub const STATE_STOPPED: i32 = PlaybackState::Stopped.as_i32();
 pub const STATE_PLAYING: i32 = PlaybackState::Playing.as_i32();
 /// Deck playback state: playback is paused.
 pub const STATE_PAUSED: i32 = PlaybackState::Paused.as_i32();
-
-/// Strips `file://` or `file://localhost/` URI schemes from filesystem paths.
-pub fn strip_file_prefix(source: &str) -> String {
-    let s = source.trim();
-    if let Some(stripped) = s.strip_prefix("file://localhost/") {
-        format!("/{}", stripped.trim_start_matches('/'))
-    } else if let Some(stripped) = s.strip_prefix("file:///") {
-        let bytes = stripped.as_bytes();
-        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-            stripped.to_string()
-        } else {
-            format!("/{}", stripped.trim_start_matches('/'))
-        }
-    } else if let Some(stripped) = s.strip_prefix("file://") {
-        if let Some(path) = stripped.strip_prefix('/') {
-            format!("/{}", path)
-        } else {
-            format!("/{}", stripped)
-        }
-    } else {
-        s.to_string()
-    }
-}
-
-/// Normalizes local asset paths, stripping `asset://` prefixes and testing candidate locations.
-pub fn resolve_local_source_path(trimmed: &str) -> String {
-    let raw_path = if let Some(stripped) = trimmed.strip_prefix("asset://") {
-        stripped.strip_prefix('/').unwrap_or(stripped).to_string()
-    } else if let Some(stripped) = trimmed.strip_prefix("asset:") {
-        stripped.strip_prefix('/').unwrap_or(stripped).to_string()
-    } else {
-        strip_file_prefix(trimmed)
-    };
-
-    if !std::path::Path::new(&raw_path).exists() {
-        let candidate = format!("example/{}", raw_path);
-        if std::path::Path::new(&candidate).exists() {
-            return candidate;
-        }
-    }
-    raw_path
-}
 
 fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
     match encoding_format {
@@ -415,6 +378,10 @@ enum HlsFetchBackend {
     },
     #[cfg(not(target_arch = "wasm32"))]
     LocalFile,
+    DartResolved {
+        resolver: Arc<DartResolveRegistry>,
+        headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+    },
 }
 
 impl HlsFetchBackend {
@@ -426,6 +393,10 @@ impl HlsFetchBackend {
             },
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => Self::LocalFile,
+            Self::DartResolved { resolver, headers } => Self::DartResolved {
+                resolver: resolver.clone(),
+                headers: headers.clone(),
+            },
         }
     }
 
@@ -434,6 +405,7 @@ impl HlsFetchBackend {
             Self::Network { .. } => true,
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => false,
+            Self::DartResolved { .. } => false,
         }
     }
 
@@ -465,10 +437,51 @@ impl HlsFetchBackend {
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            Self::LocalFile => {
-                let resolved = resolve_local_source_path(url);
-                std::fs::read(&resolved).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)
+            Self::LocalFile => std::fs::read(url).map_err(|_| MAP_ERROR_FILE_NOT_FOUND),
+            Self::DartResolved { resolver, headers } => {
+                let resolved = resolver
+                    .resolve(url, headers.as_deref(), None)
+                    .map_err(|f| f.code)?;
+                Self::read_resolved_bytes(resolved)
             }
+        }
+    }
+
+    fn read_resolved_bytes(resolved: ResolvedCoreSource) -> Result<Vec<u8>, i32> {
+        match resolved {
+            ResolvedCoreSource::Bytes { data, .. } => Ok(data),
+            #[cfg(not(target_arch = "wasm32"))]
+            ResolvedCoreSource::Path(path) => {
+                std::fs::read(&path).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ResolvedCoreSource::Path(_path) => Err(MAP_ERROR_UNSUPPORTED),
+            ResolvedCoreSource::Url(url) => {
+                let agent = build_network_agent();
+                let res = agent.get(&url).call().map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+                let mut bytes = Vec::new();
+                res.into_body()
+                    .into_reader()
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| MAP_ERROR_DECODE_FAILED)?;
+                Ok(bytes)
+            }
+            #[cfg(unix)]
+            ResolvedCoreSource::Fd { file, offset, length, .. } => {
+                match ResolvedCoreSource::open_fd_slice(file, offset, length) {
+                    Ok(FdOpenOutcome::MemoryBytes(b)) => Ok(b),
+                    Ok(FdOpenOutcome::Seekable(mut src)) => {
+                        let mut b = Vec::new();
+                        src.read_to_end(&mut b).map_err(|_| MAP_ERROR_FILE_NOT_FOUND)?;
+                        Ok(b)
+                    }
+                    Err(_) => Err(MAP_ERROR_FILE_NOT_FOUND),
+                }
+            }
+            #[cfg(not(unix))]
+            ResolvedCoreSource::Fd { .. } => Err(MAP_ERROR_UNSUPPORTED),
+            ResolvedCoreSource::CustomStream { .. } => Err(MAP_ERROR_UNSUPPORTED),
+            ResolvedCoreSource::Error { code, .. } => Err(code),
         }
     }
 
@@ -483,9 +496,20 @@ impl HlsFetchBackend {
             }
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => {
-                let resolved = resolve_local_source_path(seg_url);
-                let raw_bytes = read_local_segment_bytes(&resolved, byte_range)?;
-                demux_or_wrap_hls_segment(&resolved, None, raw_bytes)
+                let raw_bytes = read_local_segment_bytes(seg_url, byte_range)?;
+                demux_or_wrap_hls_segment(seg_url, None, raw_bytes)
+            }
+            Self::DartResolved { resolver, headers } => {
+                let resolved = resolver.resolve(seg_url, headers.as_deref(), None).ok()?;
+                let all_bytes = Self::read_resolved_bytes(resolved).ok()?;
+                let sliced = if let Some((offset, len)) = byte_range {
+                    let start = (offset as usize).min(all_bytes.len());
+                    let end = start.saturating_add(len as usize).min(all_bytes.len());
+                    all_bytes[start..end].to_vec()
+                } else {
+                    all_bytes
+                };
+                demux_or_wrap_hls_segment(seg_url, None, sliced)
             }
         }
     }
@@ -1648,6 +1672,8 @@ pub struct StreamingDeck {
     pub icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
     /// Cached parsed `RustAudioMetadata` keyed by `(flush_generation, meta_version)`.
     pub cached_metadata: Arc<Mutex<Option<(u64, u32, crate::api::types::RustAudioMetadata)>>>,
+    /// Optional descriptive error captured during the last failed source open.
+    pub last_open_error_message: Arc<RwLock<Option<String>>>,
     /// Optional handle for custom Dart byte stream data injection.
     pub custom_source_handle: Arc<RwLock<Option<CustomByteSourceHandle>>>,
 
@@ -1804,6 +1830,7 @@ impl StreamingDeck {
         let symphonia_meta = Arc::new(RwLock::new(crate::metadata::SymphoniaExtractedMeta::default()));
         let icy_metadata = Arc::new(RwLock::new(None));
         let cached_metadata = Arc::new(Mutex::new(None));
+        let last_open_error_message = Arc::new(RwLock::new(None));
         let custom_source_handle = Arc::new(RwLock::new(None));
 
         let telemetry = Arc::new(TelemetryDispatcher::new());
@@ -1940,6 +1967,7 @@ impl StreamingDeck {
             symphonia_meta,
             icy_metadata,
             cached_metadata,
+            last_open_error_message,
             custom_source_handle,
             telemetry,
             silence_config,
@@ -2053,12 +2081,32 @@ impl StreamingDeck {
         err_code
     }
 
+    /// Records a descriptive human-readable error message alongside `err_code`.
+    pub fn mark_open_error_with_message(&self, err_code: i32, message: &str) -> i32 {
+        if let Ok(mut guard) = self.last_open_error_message.write() {
+            *guard = Some(format!("{} (code: {})", message, err_code));
+        }
+        crate::map_log!(1, "Source open error [{}]: {}", err_code, message);
+        self.mark_open_error(err_code)
+    }
+
+    /// Takes the last descriptive source-open failure message, if recorded.
+    pub fn take_last_open_error_message(&self) -> Option<String> {
+        self.last_open_error_message
+            .write()
+            .ok()
+            .and_then(|mut g| g.take())
+    }
+
     pub fn begin_open(&mut self) -> i32 {
         let _ = self.stop();
         self.open_generation.fetch_add(1, Ordering::AcqRel);
         self.clear_pending_seek();
         self.network_streamer_abort.store(true, Ordering::Release);
         self.is_stream.store(false, Ordering::Release);
+        if let Ok(mut guard) = self.last_open_error_message.write() {
+            *guard = None;
+        }
         if let Ok(mut guard) = self.stream_session.write() {
             if let Some(ref session) = *guard {
                 session.abort();
@@ -2134,8 +2182,7 @@ impl StreamingDeck {
             };
             self.open_network_with_cancel(&url, headers, cancel)
         } else {
-            let resolved = resolve_local_source_path(trimmed);
-            let res = self.open_file(&resolved);
+            let res = self.open_file(trimmed);
             if cancel.is_some_and(|c| c.is_cancelled()) {
                 return self.mark_open_error(MAP_ERROR_ABORTED);
             }
@@ -2823,27 +2870,51 @@ impl StreamingDeck {
 
             let source = match crate::buffer::FileByteSource::open(std::path::Path::new(path)) {
                 Ok(s) => s,
-                Err(_) => {
-                    crate::map_log!(1, "open_file failed: file not found: {}", path);
-                    return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
+                Err(e) => {
+                    let code = if e.kind() == ErrorKind::PermissionDenied {
+                        MAP_ERROR_ACCESS_DENIED
+                    } else {
+                        MAP_ERROR_FILE_NOT_FOUND
+                    };
+                    return self.mark_open_error_with_message(
+                        code,
+                        &format!("Failed to open audio file '{}': {}", path, e),
+                    );
                 }
             };
 
-            let file_size = symphonia::core::io::MediaSource::byte_len(&source).unwrap_or(0);
             let ext = std::path::Path::new(path)
                 .extension()
                 .and_then(|e| e.to_str());
+            self.open_seekable_file_byte_source(source, ext, path)
+        }
+    }
 
-            let (initial_buf, tail_data, boundary) = if let Ok(mut f) = File::open(path) {
-                Self::extract_seekable_head_and_tail(&mut f, file_size as i64)
-            } else {
-                (Vec::new(), None, BoundaryInfo::new())
-            };
+    /// Shared opener for any seekable [`FileByteSource`] (local files or Android
+    /// `content://`/`android.resource://` FDs) using $O(1)$ RAM and zero duplicate opens.
+    pub fn open_seekable_file_byte_source(
+        &mut self,
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))] mut source: FileByteSource,
+        ext_hint: Option<&str>,
+        label: &str,
+    ) -> i32 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (source, ext_hint, label);
+            self.mark_open_error(MAP_ERROR_UNSUPPORTED)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let file_size = symphonia::core::io::MediaSource::byte_len(&source).unwrap_or(0);
+            let (initial_buf, tail_data, boundary) =
+                Self::extract_seekable_head_and_tail(&mut source, file_size as i64);
+            let _ = source.seek(SeekFrom::Start(0));
 
-            let effective_hint = boundary.container.hint_extension().or(ext);
+            let effective_hint = boundary.container.hint_extension().or(ext_hint);
             crate::map_log!(
                 4,
-                "open_file sniffed: container={:?}, effective_hint={:?}, size={}",
+                "open_file sniffed: source={}, container={:?}, effective_hint={:?}, size={}",
+                label,
                 boundary.container,
                 effective_hint,
                 file_size
@@ -2852,8 +2923,10 @@ impl StreamingDeck {
             let eng = match SymphoniaEngine::new(source, effective_hint) {
                 Ok(e) => e,
                 Err(e) => {
-                    crate::map_log!(1, "open_file failed: decode error for {}: {:?}", path, e);
-                    return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+                    return self.mark_open_error_with_message(
+                        MAP_ERROR_DECODE_FAILED,
+                        &format!("Failed to decode '{}': {:?}", label, e),
+                    );
                 }
             };
 
@@ -2867,18 +2940,23 @@ impl StreamingDeck {
             *write_unpoisoned(&self.stream_session) = Some(session);
 
             self.init_engine(eng, false, file_size, &initial_buf);
-            crate::map_log!(3, "open_file successfully opened: {}", path);
+            crate::map_log!(3, "open_seekable_file_byte_source successfully opened: {}", label);
             MAP_SUCCESS
         }
     }
 
     pub fn open_memory_with_hint(&mut self, data: &[u8], hint_ext: Option<&str>) -> i32 {
+        self.open_memory_owned_with_hint(data.to_vec(), hint_ext)
+    }
+
+    /// Zero-copy memory decoder transferring ownership of `data` directly to `Cursor<Vec<u8>>`.
+    pub fn open_memory_owned_with_hint(&mut self, data: Vec<u8>, hint_ext: Option<&str>) -> i32 {
         let _ = self.begin_open();
         self.open_generation.fetch_add(1, Ordering::AcqRel);
-        crate::map_log!(3, "open_memory: size={}, hint={:?}", data.len(), hint_ext);
+        crate::map_log!(3, "open_memory_owned: size={}, hint={:?}", data.len(), hint_ext);
 
         let total_size = data.len() as i64;
-        let (_status, boundary) = StreamClassifier::detect_head_boundary(data, total_size);
+        let (_status, boundary) = StreamClassifier::detect_head_boundary(&data, total_size);
         let effective_hint = boundary.container.hint_extension().or(hint_ext);
         crate::map_log!(
             4,
@@ -2887,29 +2965,21 @@ impl StreamingDeck {
             effective_hint
         );
 
-        let mem_vec = data.to_vec();
-        let cursor = Cursor::new(mem_vec);
-        let eng = match SymphoniaEngine::new(cursor, effective_hint) {
-            Ok(e) => e,
-            Err(e) => {
-                crate::map_log!(1, "open_memory failed: decode error: {:?}", e);
-                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
-            }
-        };
-
         let head_keep = if boundary.audio_start > 0 {
             ((boundary.audio_start as usize) + 16384).min(data.len())
         } else {
             data.len().min(65536)
         };
-        let mut tail_slice: Option<(&[u8], Option<u64>)> = None;
+        let preview_buf = data[..head_keep].to_vec();
+
+        let mut tail_owned: Option<(Vec<u8>, Option<u64>)> = None;
         if total_size > 0 {
             if boundary.audio_end > 0
                 && boundary.audio_end < total_size
                 && (total_size - boundary.audio_end) <= 4 * 1024 * 1024
             {
                 let off = boundary.audio_end as usize;
-                tail_slice = Some((&data[off..], Some(off as u64)));
+                tail_owned = Some((data[off..].to_vec(), Some(off as u64)));
             } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
                 let floor = boundary.audio_start.max(0);
                 let probe_len = 65536i64.min(total_size - floor);
@@ -2925,9 +2995,11 @@ impl StreamingDeck {
                     if audio_end > 0 && audio_end <= total_size && audio_end >= tail_offset {
                         let rel = (audio_end - tail_offset) as usize;
                         if rel < data[tail_offset as usize..].len() {
-                            tail_slice = Some((&data[audio_end as usize..], Some(audio_end as u64)));
+                            tail_owned =
+                                Some((data[audio_end as usize..].to_vec(), Some(audio_end as u64)));
                         } else {
-                            tail_slice = Some((&data[tail_offset as usize..], Some(tail_offset as u64)));
+                            tail_owned =
+                                Some((data[tail_offset as usize..].to_vec(), Some(tail_offset as u64)));
                         }
                     }
                 }
@@ -2935,13 +3007,27 @@ impl StreamingDeck {
         }
 
         let session = StreamSession::new(65536, Some(data.len() as u64), false);
-        let classified_boundary = session.ingest_classified(&data[..head_keep], tail_slice);
+        let classified_boundary = session.ingest_classified(
+            &preview_buf,
+            tail_owned.as_ref().map(|(v, off)| (v.as_slice(), *off)),
+        );
         session.mark_eof();
+
+        let total_len = data.len() as u64;
+        let cursor = Cursor::new(data);
+        let eng = match SymphoniaEngine::new(cursor, effective_hint) {
+            Ok(e) => e,
+            Err(e) => {
+                crate::map_log!(1, "open_memory failed: decode error: {:?}", e);
+                return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
+            }
+        };
+
         *write_unpoisoned(&self.boundary_info) = Some(classified_boundary);
         *write_unpoisoned(&self.stream_session) = Some(session);
 
-        self.init_engine(eng, false, data.len() as u64, data);
-        crate::map_log!(3, "open_memory successfully opened: size={}", data.len());
+        self.init_engine(eng, false, total_len, &preview_buf);
+        crate::map_log!(3, "open_memory_owned successfully opened: size={}", total_len);
         MAP_SUCCESS
     }
 
@@ -3012,6 +3098,25 @@ impl StreamingDeck {
         is_seekable: bool,
         cancel: Option<&CancelToken>,
     ) -> i32 {
+        self.open_custom_source_with_hint_cancel(
+            source,
+            handle,
+            total_size,
+            is_seekable,
+            None,
+            cancel,
+        )
+    }
+
+    pub fn open_custom_source_with_hint_cancel(
+        &mut self,
+        source: CustomDartByteSource,
+        handle: CustomByteSourceHandle,
+        total_size: Option<u64>,
+        is_seekable: bool,
+        hint_ext: Option<&str>,
+        cancel: Option<&CancelToken>,
+    ) -> i32 {
         if cancel.is_some_and(|c| c.is_cancelled()) {
             handle.abort();
             return self.mark_open_error(MAP_ERROR_ABORTED);
@@ -3020,9 +3125,10 @@ impl StreamingDeck {
         self.open_generation.fetch_add(1, Ordering::AcqRel);
         crate::map_log!(
             3,
-            "open_custom_source: total_size={:?}, is_seekable={}",
+            "open_custom_source: total_size={:?}, is_seekable={}, hint={:?}",
             total_size,
-            is_seekable
+            is_seekable,
+            hint_ext
         );
 
         let abort_handle = handle.clone();
@@ -3032,7 +3138,7 @@ impl StreamingDeck {
             c.on_cancel(move || h.abort())
         });
 
-        let eng = match SymphoniaEngine::new(source, None) {
+        let eng = match SymphoniaEngine::new(source, hint_ext) {
             Ok(e) => e,
             Err(e) => {
                 drop(_cancel_guard);
@@ -4020,6 +4126,8 @@ pub struct AudioSourceCore {
     pub replay_gain_db: Option<f32>,
     /// Track-specific true peak amplitude.
     pub replay_peak: Option<f32>,
+    /// Whether Rust must request source resolution from Dart before opening.
+    pub resolve_in_dart: bool,
 }
 
 /// Resolves an effective [`ReplayGainConfig`] from global policy (`mode`, `default_gain`)
@@ -4228,6 +4336,7 @@ pub struct DualSource {
     pub channels: u32,
     pub period_size: u32,
     pub custom_source_factory: Option<CustomSourceFactory>,
+    pub dart_resolver: Option<Arc<DartResolveRegistry>>,
     /// Track ID currently decoded and paused in the standby deck (`-1` if none/invalidated).
     pub standby_ready_id: Arc<AtomicI64>,
     /// Normalized source URI matching `standby_ready_id` for source-reuse invalidation.
@@ -4276,6 +4385,7 @@ impl DualSource {
             channels: ch,
             period_size: period,
             custom_source_factory: None,
+            dart_resolver: None,
             standby_ready_id: Arc::new(AtomicI64::new(-1)),
             standby_ready_source: Arc::new(RwLock::new(None)),
             planned_index: Arc::new(AtomicI64::new(-1)),
@@ -4359,6 +4469,20 @@ impl DualSource {
         custom_factory: Option<&CustomSourceFactory>,
         cancel: Option<&CancelToken>,
     ) -> i32 {
+        Self::open_deck_with_pre_resolved(deck, item, None, custom_factory, None, cancel)
+    }
+
+    /// Opens an [`AudioSourceCore`] onto `deck`, using `pre_resolved` if supplied
+    /// (static analysis), querying `dart_resolver` when `item.resolve_in_dart`
+    /// is set, or opening directly via path/HTTP/`data:`/`custom:`.
+    pub fn open_deck_with_pre_resolved(
+        deck: &mut StreamingDeck,
+        item: &AudioSourceCore,
+        pre_resolved: Option<ResolvedCoreSource>,
+        custom_factory: Option<&CustomSourceFactory>,
+        dart_resolver: Option<&Arc<DartResolveRegistry>>,
+        cancel: Option<&CancelToken>,
+    ) -> i32 {
         if cancel.is_some_and(|c| c.is_cancelled()) {
             deck.clear_queue_item_assignment();
             return MAP_ERROR_ABORTED;
@@ -4399,6 +4523,45 @@ impl DualSource {
             } else {
                 open_res
             }
+        } else if let Some(resolved) = pre_resolved {
+            Self::open_resolved_core_source(
+                deck,
+                &item.source,
+                item.headers.as_deref(),
+                resolved,
+                custom_factory,
+                dart_resolver,
+                cancel,
+            )
+        } else if item.resolve_in_dart {
+            if let Some(resolver) = dart_resolver {
+                match resolver.resolve(&item.source, item.headers.as_deref(), cancel) {
+                    Ok(resolved) => Self::open_resolved_core_source(
+                        deck,
+                        &item.source,
+                        item.headers.as_deref(),
+                        resolved,
+                        custom_factory,
+                        dart_resolver,
+                        cancel,
+                    ),
+                    Err(failure) => {
+                        if failure.code == MAP_ERROR_ABORTED || cancel.is_some_and(|c| c.is_cancelled()) {
+                            deck.mark_open_error(MAP_ERROR_ABORTED)
+                        } else {
+                            deck.mark_open_error_with_message(failure.code, &failure.message)
+                        }
+                    }
+                }
+            } else {
+                deck.mark_open_error_with_message(
+                    MAP_ERROR_UNSUPPORTED,
+                    &format!(
+                        "Source '{}' requires asynchronous Dart resolution which is unavailable in synchronous/headless context",
+                        item.source
+                    ),
+                )
+            }
         } else {
             deck.open_source_with_cancel(&item.source, item.headers.as_deref(), cancel)
         };
@@ -4408,6 +4571,114 @@ impl DualSource {
             deck.clear_queue_item_assignment();
         }
         res
+    }
+
+    fn open_resolved_core_source(
+        deck: &mut StreamingDeck,
+        source_uri: &str,
+        headers: Option<&[crate::api::types::RustHttpHeader]>,
+        resolved: ResolvedCoreSource,
+        custom_factory: Option<&CustomSourceFactory>,
+        dart_resolver: Option<&Arc<DartResolveRegistry>>,
+        cancel: Option<&CancelToken>,
+    ) -> i32 {
+        match resolved {
+            ResolvedCoreSource::Path(path) => {
+                let res = deck.open_source_with_cancel(&path, headers, cancel);
+                if cancel.is_some_and(|c| c.is_cancelled()) {
+                    deck.mark_open_error(MAP_ERROR_ABORTED)
+                } else {
+                    res
+                }
+            }
+            ResolvedCoreSource::Url(url) => {
+                let res = deck.open_source_with_cancel(&url, headers, cancel);
+                if cancel.is_some_and(|c| c.is_cancelled()) {
+                    deck.mark_open_error(MAP_ERROR_ABORTED)
+                } else {
+                    res
+                }
+            }
+            #[cfg(unix)]
+            ResolvedCoreSource::Fd {
+                file,
+                offset,
+                length,
+                hint_ext,
+            } => match ResolvedCoreSource::open_fd_slice(file, offset, length) {
+                Ok(FdOpenOutcome::Seekable(byte_source)) => {
+                    let ext = hint_ext
+                        .as_deref()
+                        .or_else(|| StreamClassifier::extract_extension_hint(source_uri));
+                    deck.open_seekable_file_byte_source(byte_source, ext, source_uri)
+                }
+                Ok(FdOpenOutcome::MemoryBytes(bytes)) => {
+                    let ext = hint_ext
+                        .as_deref()
+                        .or_else(|| StreamClassifier::extract_extension_hint(source_uri));
+                    deck.open_memory_owned_with_hint(bytes, ext)
+                }
+                Err(msg) => deck.mark_open_error_with_message(MAP_ERROR_FILE_NOT_FOUND, &msg),
+            },
+            #[cfg(not(unix))]
+            ResolvedCoreSource::Fd { .. } => {
+                let f = ResolvedCoreSource::open_fd_slice_unsupported();
+                deck.mark_open_error_with_message(f.code, &f.message)
+            }
+            ResolvedCoreSource::Bytes { data, hint_ext } => {
+                let is_m3u8 = hint_ext.as_deref() == Some("m3u8")
+                    || source_uri.to_ascii_lowercase().ends_with(".m3u8");
+                if is_m3u8 && crate::hls::M3u8Parser::is_m3u8(&data) {
+                    if let Some(resolver) = dart_resolver {
+                        let backend = HlsFetchBackend::DartResolved {
+                            resolver: resolver.clone(),
+                            headers: headers.map(|h| h.to_vec()),
+                        };
+                        return deck.open_hls_playlist_bytes(
+                            source_uri,
+                            &data,
+                            cancel,
+                            &backend,
+                            true,
+                        );
+                    }
+                }
+                let ext = hint_ext
+                    .as_deref()
+                    .or_else(|| StreamClassifier::extract_extension_hint(source_uri));
+                deck.open_memory_owned_with_hint(data, ext)
+            }
+            ResolvedCoreSource::CustomStream {
+                stream_id,
+                total_bytes,
+                hint_ext,
+            } => {
+                if let Some(factory) = custom_factory {
+                    let is_seekable = total_bytes.is_some();
+                    let (mut src, handle) = factory(stream_id, total_bytes);
+                    src.set_seekable(is_seekable);
+                    let ext = hint_ext
+                        .as_deref()
+                        .or_else(|| StreamClassifier::extract_extension_hint(source_uri));
+                    deck.open_custom_source_with_hint_cancel(
+                        src,
+                        handle,
+                        total_bytes,
+                        is_seekable,
+                        ext,
+                        cancel,
+                    )
+                } else {
+                    deck.mark_open_error_with_message(
+                        MAP_ERROR_UNSUPPORTED,
+                        "Custom stream resolution requires an active MiniaudioPlayer CustomSourceFactory",
+                    )
+                }
+            }
+            ResolvedCoreSource::Error { code, message } => {
+                deck.mark_open_error_with_message(code, &message)
+            }
+        }
     }
 
     /// Resolves the expected upcoming track ID based on the current active queue and loop mode.

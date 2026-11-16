@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart' show RootIsolateToken;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Float32List, Int64List, PlatformInt64Util, Uint8List;
 
@@ -8,6 +9,7 @@ import '../equalizer.dart';
 import '../infinite_mix.dart';
 import '../loader/custom_byte_provider.dart';
 import '../loader/platform_loader.dart';
+import '../resolver/source_resolver.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
 import '../rust/api/types.dart' as rust_types;
@@ -90,6 +92,7 @@ const List<String> miniAudioPlayerSupportedExtensions = [
   'mkv',
   'mka',
   'caf',
+  'm3u8',
 ];
 
 /// Log verbosity levels for native miniaudio and sonic engine diagnostics.
@@ -260,7 +263,11 @@ class MiniaudioPlayer<T> {
   ///
   /// Optionally accepts an explicit [libraryPath] to override the automatic
   /// Native Assets / platform library resolution.
-  static Future<void> ensureInitialized({String? libraryPath}) async {
+  static Future<void> ensureInitialized({
+    String? libraryPath,
+    RootIsolateToken? rootIsolateToken,
+  }) async {
+    registerSourceResolverIsolateToken(rootIsolateToken);
     await ensureRustInitialized(libraryPath: libraryPath);
     setLogLevel(_globalConfig.logLevel);
   }
@@ -355,7 +362,37 @@ class MiniaudioPlayer<T> {
   }) async {
     await ensureRustInitialized();
     final audioSource = source is AudioSource ? source : AudioSource(source);
-    final rustSource = audioSource.toRustSource();
+    if (audioSource._directErrorCode != null) {
+      throw MiniaudioPlayerException(
+        audioSource._directErrorMessage ?? 'Unsupported or invalid audio source.',
+        errorCode: audioSource._directErrorCode,
+      );
+    }
+    var rustSource = audioSource.toRustSource();
+    rust_types.RustResolvedSource? preResolved;
+    if (audioSource._resolveInDart) {
+      final resolved = await resolveSourceAsync(
+        rustSource.source,
+        headers: audioSource.headers,
+        isStaticAnalysis: true,
+      );
+      switch (resolved) {
+        case DartResolvedPath(:final path):
+          rustSource = _withResolvedRustSource(rustSource, path);
+        case DartResolvedUrl(:final url):
+          rustSource = _withResolvedRustSource(rustSource, url);
+        case DartResolvedFd():
+        case DartResolvedBytes():
+          preResolved = _toRustResolvedSource(resolved);
+        case DartResolvedCustomStream():
+          throw const MiniaudioPlayerException(
+            'Live custom/WebSocket streams cannot be analyzed statically by analyzeAudio().',
+            errorCode: MapResult.errorUnsupported,
+          );
+        case DartResolvedError(:final code, :final message):
+          throw MiniaudioPlayerException(message, errorCode: code);
+      }
+    }
     final rustConfig = rust_types.RustAnalysisConfig(
       replayGain: replayGain,
       waveform: waveform,
@@ -370,6 +407,7 @@ class MiniaudioPlayer<T> {
     try {
       final res = await rust.analyzeAudioSource(
         source: rustSource,
+        preResolved: preResolved,
         config: rustConfig,
       );
       return _toAnalysisResult(res);
@@ -381,6 +419,58 @@ class MiniaudioPlayer<T> {
         defaultErrorCode: MapResult.errorGeneric,
       );
     }
+  }
+
+  static rust_types.RustAudioSource _withResolvedRustSource(
+    rust_types.RustAudioSource base,
+    String directSource,
+  ) {
+    return rust_types.RustAudioSource(
+      id: base.id,
+      source: directSource,
+      headers: base.headers,
+      dataBytes: base.dataBytes,
+      replayGainDb: base.replayGainDb,
+      replayPeak: base.replayPeak,
+      resolveInDart: false,
+    );
+  }
+
+  static rust_types.RustResolvedSource _toRustResolvedSource(
+    DartResolvedSourceResult resolved,
+  ) {
+    return switch (resolved) {
+      DartResolvedPath(:final path) => rust_types.RustResolvedSource.path(path: path),
+      DartResolvedUrl(:final url) => rust_types.RustResolvedSource.url(url: url),
+      DartResolvedFd(
+        :final fd,
+        :final offset,
+        :final length,
+        :final hintExt,
+      ) =>
+        rust_types.RustResolvedSource.fd(
+          fd: fd,
+          offset: BigInt.from(offset),
+          length: length != null ? BigInt.from(length) : null,
+          hintExt: hintExt,
+        ),
+      DartResolvedBytes(:final bytes, :final hintExt) =>
+        rust_types.RustResolvedSource.bytes(data: bytes, hintExt: hintExt),
+      DartResolvedCustomStream(
+        :final streamId,
+        :final provider,
+        :final hintExt,
+      ) =>
+        rust_types.RustResolvedSource.customStream(
+          streamId: streamId,
+          totalBytes: provider.totalBytes != null
+              ? BigInt.from(provider.totalBytes!)
+              : null,
+          hintExt: hintExt,
+        ),
+      DartResolvedError(:final code, :final message) =>
+        rust_types.RustResolvedSource.error(code: code, message: message),
+    };
   }
 
   /// Performs synchronous offline acoustic analysis of a local file or in-memory audio [source].
@@ -411,13 +501,39 @@ class MiniaudioPlayer<T> {
     Duration? maxAnalysisDuration,
   }) {
     final audioSource = source is AudioSource ? source : AudioSource(source);
-    if (!audioSource.isFile && !audioSource.isMemory) {
+    if (audioSource._directErrorCode != null) {
+      throw MiniaudioPlayerException(
+        audioSource._directErrorMessage ?? 'Unsupported or invalid audio source.',
+        errorCode: audioSource._directErrorCode,
+      );
+    }
+    var rustSource = audioSource.toRustSource();
+    if (audioSource._resolveInDart) {
+      final syncResolved = tryResolveSourceSync(rustSource.source);
+      if (syncResolved is DartResolvedPath) {
+        rustSource = _withResolvedRustSource(rustSource, syncResolved.path);
+      } else {
+        throw MiniaudioPlayerException(
+          'Source "${audioSource.uri}" requires asynchronous resolution and '
+          'cannot be analyzed synchronously in analyzeAudioSync(). Use await '
+          'MiniaudioPlayer.analyzeAudio() instead.',
+          errorCode: MapResult.errorUnsupported,
+        );
+      }
+    }
+    if (audioSource.isCustom || audioSource.isNetwork) {
       throw const MiniaudioPlayerException(
         'analyzeAudioSync only supports local file paths and in-memory byte sources. '
         'For network or streaming sources, use the asynchronous analyzeAudio method.',
+        errorCode: MapResult.errorUnsupported,
       );
     }
-    final rustSource = audioSource.toRustSource();
+    if (!audioSource.isMemory && rustSource.source.trim().isEmpty) {
+      throw const MiniaudioPlayerException(
+        'Audio source path cannot be empty.',
+        errorCode: MapResult.errorInvalidArgs,
+      );
+    }
     final rustConfig = rust_types.RustAnalysisConfig(
       replayGain: replayGain,
       waveform: waveform,
@@ -472,6 +588,23 @@ class MiniaudioPlayer<T> {
 
   /// The active [CustomByteProvider] instances keyed by stream ID.
   final Map<int, CustomByteProvider> _customProviders = {};
+
+  /// Stream IDs belonging to internally managed resolvers (e.g. WebSockets).
+  final Set<int> _managedProviderIds = {};
+
+  Future<void> _closeManagedProviders() async {
+    if (_managedProviderIds.isEmpty) return;
+    final ids = _managedProviderIds.toList(growable: false);
+    _managedProviderIds.clear();
+    for (final id in ids) {
+      final p = _customProviders.remove(id);
+      if (p != null) {
+        try {
+          await p.close();
+        } catch (_) {}
+      }
+    }
+  }
 
   /// The callback supplying more tracks when Infinite Mix triggers.
   InfiniteMixProvider<T>? _infiniteMixProvider;
@@ -921,6 +1054,8 @@ class MiniaudioPlayer<T> {
         stream._currentItemController.add(state.currentItem);
       case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
         _onDartReadRequest(field0);
+      case rust_types.RustPlayerEvent_DartResolveRequest(:final field0):
+        _onDartResolveRequest(field0);
       case rust_types.RustPlayerEvent_NeedMoreTracks(
           :final currentTrackId,
           :final remainingTracks,
@@ -955,6 +1090,72 @@ class MiniaudioPlayer<T> {
             isEof: true,
           );
         }
+      }
+    }
+  }
+
+  void _onDartResolveRequest(rust_types.RustDartResolveRequest req) async {
+    final norm = normalizePlatformAudioSourceUri(req.source);
+    if (norm.hasError) {
+      if (!_isDisposed) {
+        try {
+          _rustPlayer.respondDartResolveRequest(
+            requestId: req.requestId,
+            resolved: rust_types.RustResolvedSource.error(
+              code: norm.directErrorCode!,
+              message: norm.directErrorMessage!,
+            ),
+          );
+        } catch (_) {}
+      }
+      return;
+    }
+
+    Map<String, String>? headerMap;
+    if (req.headers != null && req.headers!.isNotEmpty) {
+      headerMap = <String, String>{
+        for (final h in req.headers!) h.key: h.value,
+      };
+    }
+
+    try {
+      final resolved = await resolveSourceAsync(
+        norm.normalizedSource,
+        headers: headerMap,
+      );
+
+      if (resolved is DartResolvedCustomStream) {
+        if (_isDisposed) {
+          try {
+            await resolved.provider.close();
+          } catch (_) {}
+          return;
+        }
+        _customProviders[resolved.streamId] = resolved.provider;
+        _managedProviderIds.add(resolved.streamId);
+      }
+
+      // Always hand detached file descriptors to Rust even if the player was
+      // disposed mid-flight so Rust's RAII wrapper closes the FD safely.
+      if (_isDisposed && resolved is! DartResolvedFd) {
+        return;
+      }
+
+      _rustPlayer.respondDartResolveRequest(
+        requestId: req.requestId,
+        resolved: _toRustResolvedSource(resolved),
+      );
+    } catch (e) {
+      if (!_isDisposed) {
+        try {
+          _rustPlayer.respondDartResolveRequest(
+            requestId: req.requestId,
+            resolved: rust_types.RustResolvedSource.error(
+              code: MapResult.errorGeneric,
+              message: 'Failed resolving audio source "${req.source}": $e',
+            ),
+          );
+        } catch (_) {}
       }
     }
   }
@@ -994,6 +1195,7 @@ class MiniaudioPlayer<T> {
     state._duration = null;
     _eventSub?.cancel();
     _eventSub = null;
+    await _closeManagedProviders();
     try {
       _rustPlayer.dispose();
     } catch (_) {}

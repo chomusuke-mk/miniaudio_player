@@ -329,3 +329,144 @@ fn test_wasm_net_protocol_ring_math_control_block_and_header_wire() {
         ]
     );
 }
+
+#[test]
+fn test_dart_resolve_registry_success_cancellation_and_bounded_fd_slice() {
+    use miniaudio_player::api::types::RustResolvedSource;
+    use miniaudio_player::buffer::{
+        DartResolveRegistry, FileByteSource, ResolvedCoreSource,
+    };
+    use miniaudio_player::core::dual_source::MAP_ERROR_ABORTED;
+    use miniaudio_player::sync::CancelToken;
+    use std::io::{Read, Seek, SeekFrom};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    let issued_reqs = Arc::new(Mutex::new(Vec::new()));
+    let issued_clone = issued_reqs.clone();
+    let registry = Arc::new(DartResolveRegistry::new(Arc::new(move |req| {
+        issued_clone.lock().unwrap().push(req);
+    })));
+
+    // 1. Happy-path async response wakes waiter cleanly.
+    let reg_worker = registry.clone();
+    let jh = thread::spawn(move || {
+        reg_worker.resolve("asset://assets/music/#song.opus", None, None)
+    });
+    let req_id = loop {
+        if let Some(req) = issued_reqs.lock().unwrap().pop() {
+            assert_eq!(req.source, "asset://assets/music/#song.opus");
+            break req.request_id;
+        }
+        thread::yield_now();
+    };
+    assert!(registry.resolve_request(
+        req_id,
+        RustResolvedSource::Bytes {
+            data: vec![1, 2, 3, 4],
+            hint_ext: Some("opus".to_string()),
+        },
+    ));
+    match jh.join().unwrap().unwrap() {
+        ResolvedCoreSource::Bytes { data, hint_ext } => {
+            assert_eq!(data, vec![1, 2, 3, 4]);
+            assert_eq!(hint_ext.as_deref(), Some("opus"));
+        }
+        other => panic!("Unexpected resolved variant: {:?}", other),
+    }
+
+    // 2. Bounded FileByteSource slicing prevents out-of-range reads (APK resource offsets).
+    let tmp = std::env::temp_dir().join(format!("map_fd_slice_test_{}.bin", std::process::id()));
+    let mut blob = Vec::new();
+    blob.extend_from_slice(b"PREFIX_GARBAGE_0000");
+    let slice_offset = blob.len() as u64;
+    let payload = b"SLICE_PAYLOAD_DATA";
+    blob.extend_from_slice(payload);
+    blob.extend_from_slice(b"SUFFIX_NEXT_ZIP_ENTRY");
+    std::fs::write(&tmp, &blob).unwrap();
+
+    let file = std::fs::File::open(&tmp).unwrap();
+    let mut sliced = FileByteSource::from_file_slice_with_len(
+        file,
+        slice_offset,
+        payload.len() as u64,
+    )
+    .unwrap();
+    let mut read_back = Vec::new();
+    sliced.read_to_end(&mut read_back).unwrap();
+    assert_eq!(read_back.as_slice(), payload);
+    assert_eq!(sliced.seek(SeekFrom::End(-4)).unwrap(), (payload.len() - 4) as u64);
+    let mut tail = [0u8; 16];
+    let n = sliced.read(&mut tail).unwrap();
+    assert_eq!(&tail[..n], b"DATA");
+
+    // 3. Unix: cancelling a pending resolve before Dart replies with `Fd` must close the late FD.
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::IntoRawFd;
+        let cancel = CancelToken::new();
+        let reg_cancel = registry.clone();
+        let cancel_clone = cancel.clone();
+        let wait_handle = thread::spawn(move || {
+            reg_cancel.resolve("content://media/external/audio/media/999", None, Some(&cancel_clone))
+        });
+
+        let late_req_id = loop {
+            if let Some(req) = issued_reqs.lock().unwrap().pop() {
+                break req.request_id;
+            }
+            thread::yield_now();
+        };
+        cancel.cancel();
+        let err = wait_handle.join().unwrap().unwrap_err();
+        assert_eq!(err.code, MAP_ERROR_ABORTED);
+
+        let fd = std::fs::File::open(&tmp).unwrap().into_raw_fd();
+        // Delivering a late FD after request cancellation returns false and closes `fd` via RAII.
+        let delivered = registry.resolve_request(
+            late_req_id,
+            RustResolvedSource::Fd {
+                fd,
+                offset: 0,
+                length: None,
+                hint_ext: None,
+            },
+        );
+        assert!(!delivered);
+
+        #[cfg(target_os = "linux")]
+        assert!(
+            !std::path::Path::new(&format!("/proc/self/fd/{}", fd)).exists(),
+            "Detached late FD {} leaked after cancelled resolve_request!",
+            fd
+        );
+    }
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_open_memory_owned_with_hint_decodes_seeks_and_releases_cleanly() {
+    use miniaudio_player::core::dual_source::StreamingDeck;
+    use std::path::PathBuf;
+
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("example/assets/music/cbr_noxing.mp3");
+    let owned_bytes = std::fs::read(&path).expect("cbr_noxing.mp3 fixture must exist");
+    assert!(!owned_bytes.is_empty());
+
+    let mut deck = StreamingDeck::new_analysis_deck(44100, 2).expect("analysis deck");
+    let res = deck.open_memory_owned_with_hint(owned_bytes, Some("mp3"));
+    assert_eq!(res, 0, "open_memory_owned_with_hint should open owned bytes");
+
+    let mut pcm = Vec::new();
+    let has_audio = deck
+        .decode_next_analysis_frame(&mut pcm)
+        .expect("decode_next_analysis_frame should succeed");
+    assert!(has_audio && !pcm.is_empty());
+
+    let _ = deck.stop();
+    drop(deck);
+}

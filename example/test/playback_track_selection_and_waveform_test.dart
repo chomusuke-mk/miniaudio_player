@@ -185,10 +185,23 @@ void main() {
         await tester.tap(secondTile);
         await tester.pump(const Duration(milliseconds: 100));
 
-        await tester.runAsync(() async {
-          await Future.delayed(const Duration(milliseconds: 400));
-        });
-        await tester.pump(const Duration(milliseconds: 100));
+        final updatedSecondTile = find
+            .descendant(
+              of: find.byType(PlaylistQueueCard),
+              matching: find.byType(ListTile),
+            )
+            .at(1);
+        for (var attempt = 0; attempt < 30; attempt++) {
+          await tester.runAsync(() async {
+            await Future.delayed(const Duration(milliseconds: 100));
+          });
+          await tester.pump(const Duration(milliseconds: 100));
+          final candidate =
+              tester.widget<ListTile>(updatedSecondTile).title as Text;
+          if (candidate.style?.color == StudioColors.accentCyan) {
+            break;
+          }
+        }
 
         // Verify metadata button is removed from PlaylistQueueCard while queue index 1 is highlighted active
         expect(
@@ -198,12 +211,6 @@ void main() {
           ),
           findsNothing,
         );
-        final updatedSecondTile = find
-            .descendant(
-              of: find.byType(PlaylistQueueCard),
-              matching: find.byType(ListTile),
-            )
-            .at(1);
         final secondTitleWidget =
             tester.widget<ListTile>(updatedSecondTile).title as Text;
         expect(secondTitleWidget.style?.color, equals(StudioColors.accentCyan));

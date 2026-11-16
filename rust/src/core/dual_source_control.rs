@@ -1,7 +1,9 @@
 //! Control-plane transition planning, prepared-deck DSP transfer, and RT swap helpers.
 
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
+use crate::buffer::DartResolveRegistry;
 use crate::core::dual_source::{
     resolve_replay_gain, AudioSourceCore, CustomSourceFactory, DualSource, StreamingDeck,
 };
@@ -66,6 +68,7 @@ pub struct PlannedOpenSpec {
     pub item: AudioSourceCore,
     pub template: DeckDspTemplate,
     pub custom_factory: Option<CustomSourceFactory>,
+    pub dart_resolver: Option<Arc<DartResolveRegistry>>,
     pub seek_ms: Option<i64>,
     pub manual_crossfade_ms: Option<u64>,
     pub force_play: bool,
@@ -387,6 +390,7 @@ impl DualSource {
                         item,
                         template: self.capture_dsp_template(),
                         custom_factory: self.custom_source_factory.clone(),
+                        dart_resolver: self.dart_resolver.clone(),
                         seek_ms: None,
                         manual_crossfade_ms: Some(0),
                         force_play: true,
@@ -477,6 +481,7 @@ impl DualSource {
                 item: start_item,
                 template: self.capture_dsp_template(),
                 custom_factory: self.custom_source_factory.clone(),
+                dart_resolver: self.dart_resolver.clone(),
                 seek_ms,
                 manual_crossfade_ms: Some(0),
                 force_play: true,
@@ -501,6 +506,7 @@ impl DualSource {
                             item,
                             template: self.capture_dsp_template(),
                             custom_factory: self.custom_source_factory.clone(),
+                            dart_resolver: self.dart_resolver.clone(),
                             seek_ms: Some(seek_ms.unwrap_or(0)),
                             manual_crossfade_ms: None,
                             force_play: true,
@@ -570,6 +576,7 @@ impl DualSource {
             item: target_item,
             template: self.capture_dsp_template(),
             custom_factory: self.custom_source_factory.clone(),
+            dart_resolver: self.dart_resolver.clone(),
             seek_ms,
             manual_crossfade_ms: None,
             force_play: true,
@@ -655,6 +662,7 @@ impl DualSource {
             item,
             template: self.capture_dsp_template(),
             custom_factory: self.custom_source_factory.clone(),
+            dart_resolver: self.dart_resolver.clone(),
             seek_ms: None,
             manual_crossfade_ms,
             force_play: false,
@@ -707,6 +715,7 @@ impl DualSource {
             item,
             template: self.capture_dsp_template(),
             custom_factory: self.custom_source_factory.clone(),
+            dart_resolver: self.dart_resolver.clone(),
             seek_ms: None,
             manual_crossfade_ms: None,
             force_play: false,

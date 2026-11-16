@@ -38,6 +38,59 @@ impl From<crate::buffer::DartReadRequest> for RustDartReadRequest {
     }
 }
 
+/// Asynchronous source resolution request dispatched from Rust to Dart
+/// (used for `asset://`, `package:`, Android `content://`/`android.resource://`,
+/// `ws://`/`wss://`, and Web debug asset probing).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustDartResolveRequest {
+    /// Unique monotonically increasing resolution sequence number.
+    pub request_id: u64,
+    /// Normalized source URI or key needing Dart-side resolution.
+    pub source: String,
+    /// Optional HTTP/WebSocket headers carried on the `AudioSource`.
+    pub headers: Option<Vec<RustHttpHeader>>,
+}
+
+impl From<crate::buffer::DartResolveRequest> for RustDartResolveRequest {
+    fn from(req: crate::buffer::DartResolveRequest) -> Self {
+        Self {
+            request_id: req.request_id,
+            source: req.source,
+            headers: req.headers,
+        }
+    }
+}
+
+/// Resolution result returned by Dart to `RustMiniaudioPlayer::respond_dart_resolve_request`
+/// or `analyze_audio_source`.
+#[derive(Debug, Clone)]
+pub enum RustResolvedSource {
+    /// Resolved local filesystem path (e.g. desktop `flutter_assets` disk file).
+    Path { path: String },
+    /// Resolved HTTP(S) URL (e.g. Web debug probed asset URL).
+    Url { url: String },
+    /// Resolved detached POSIX file descriptor (`fd` ownership transfers to Rust).
+    Fd {
+        fd: i32,
+        offset: u64,
+        length: Option<u64>,
+        hint_ext: Option<String>,
+    },
+    /// Resolved full raw byte payload.
+    Bytes {
+        data: Vec<u8>,
+        hint_ext: Option<String>,
+    },
+    /// Resolved live `CustomByteProvider` stream registered under `stream_id`.
+    CustomStream {
+        stream_id: u32,
+        total_bytes: Option<u64>,
+        hint_ext: Option<String>,
+    },
+    /// Resolution failure carrying numeric `MapResult` code and descriptive message.
+    Error { code: i32, message: String },
+}
+
 /// Hardware or virtual audio endpoint detected by the operating system.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RustAudioDevice {
@@ -732,6 +785,8 @@ pub struct RustAudioSource {
     pub replay_gain_db: Option<f32>,
     /// Track-specific true peak amplitude.
     pub replay_peak: Option<f32>,
+    /// Whether Rust must request resolution from Dart before opening this source.
+    pub resolve_in_dart: bool,
 }
 
 impl From<RustAudioSource> for crate::core::dual_source::AudioSourceCore {
@@ -743,6 +798,7 @@ impl From<RustAudioSource> for crate::core::dual_source::AudioSourceCore {
             data_bytes: it.data_bytes,
             replay_gain_db: it.replay_gain_db,
             replay_peak: it.replay_peak,
+            resolve_in_dart: it.resolve_in_dart,
         }
     }
 }
@@ -756,6 +812,7 @@ impl From<&crate::core::dual_source::AudioSourceCore> for RustAudioSource {
             data_bytes: None,
             replay_gain_db: it.replay_gain_db,
             replay_peak: it.replay_peak,
+            resolve_in_dart: it.resolve_in_dart,
         }
     }
 }
@@ -1184,6 +1241,7 @@ impl From<crate::core::dual_source::AudioSourceCore> for RustAudioSource {
             data_bytes: s.data_bytes,
             replay_gain_db: s.replay_gain_db,
             replay_peak: s.replay_peak,
+            resolve_in_dart: s.resolve_in_dart,
         }
     }
 }
@@ -1320,6 +1378,8 @@ pub enum RustPlayerEvent {
     InputDevices(Vec<RustAudioDevice>),
     /// Request for Dart to read custom stream bytes.
     DartReadRequest(RustDartReadRequest),
+    /// Request for Dart to resolve a deferred source (`asset://`, `content://`, `ws://`, etc.).
+    DartResolveRequest(RustDartResolveRequest),
     /// Request for Dart to replenish queue for infinite mix.
     NeedMoreTracks {
         /// ID of the current playing track.

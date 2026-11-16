@@ -27,6 +27,8 @@ environment:
 dependencies:
   code_assets: ">=1.0.0 <3.0.0"
   crypto: ^3.0.0
+  flutter:
+    sdk: flutter
   flutter_rust_bridge: ">=2.13.0 <2.13.1"
   freezed_annotation: ^3.1.0
   hooks: ">=1.0.0 <3.0.0"
@@ -40,6 +42,11 @@ dev_dependencies:
   freezed: ^4.0.3
 
 flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.chomusuke.miniaudio_player
+        pluginClass: MiniaudioPlayerPlugin
   assets:
     - path: assets/web/miniaudio_player.js
       platforms:

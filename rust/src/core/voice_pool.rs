@@ -3,11 +3,13 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use crate::sync::MonotonicInstant as Instant;
 
+#[cfg(unix)]
+use crate::buffer::FdOpenOutcome;
+use crate::buffer::{DartResolveRegistry, ResolvedCoreSource};
 use crate::core::dual_source::AudioSourceCore;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::core::dual_source::{resolve_local_source_path, strip_file_prefix};
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 pub use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoiceStealingPolicy};
 use crate::net::ureq;
@@ -314,8 +316,13 @@ fn fetch_effect_bytes_via_ureq(
     Ok(bytes)
 }
 
-/// Decodes an [`AudioSourceCore`] into a PCM [`SoundBuffer`].
-pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundBuffer, String> {
+/// Decodes an [`AudioSourceCore`] into a PCM [`SoundBuffer`], resolving `resolve_in_dart`
+/// sources via `dart_resolver` when needed.
+pub fn decode_effect_source(
+    id: &str,
+    source: &AudioSourceCore,
+    dart_resolver: Option<&Arc<DartResolveRegistry>>,
+) -> Result<SoundBuffer, String> {
     if let Some(ref bytes) = source.data_bytes {
         if !bytes.is_empty() {
             return SoundBuffer::decode_from_bytes(bytes)
@@ -323,27 +330,80 @@ pub fn decode_effect_source(id: &str, source: &AudioSourceCore) -> Result<SoundB
         }
     }
 
-    let trimmed = source.source.trim();
+    if source.resolve_in_dart {
+        let resolver = dart_resolver.ok_or_else(|| {
+            format!(
+                "Effect '{}' requires Dart resolution for '{}' which is unavailable",
+                id, source.source
+            )
+        })?;
+        let resolved = resolver
+            .resolve(&source.source, source.headers.as_deref(), None)
+            .map_err(|f| format!("Resolving effect '{}' failed: {} (code: {})", id, f.message, f.code))?;
+        return match resolved {
+            ResolvedCoreSource::Path(path) => decode_effect_uri_direct(id, &path, source.headers.as_deref()),
+            ResolvedCoreSource::Url(url) => decode_effect_uri_direct(id, &url, source.headers.as_deref()),
+            ResolvedCoreSource::Bytes { data, hint_ext } => {
+                SoundBuffer::decode_from_owned_bytes(data, hint_ext.as_deref())
+                    .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+            }
+            #[cfg(unix)]
+            ResolvedCoreSource::Fd {
+                file,
+                offset,
+                length,
+                hint_ext,
+            } => match ResolvedCoreSource::open_fd_slice(file, offset, length) {
+                Ok(FdOpenOutcome::Seekable(byte_src)) => {
+                    SoundBuffer::decode_from_media_source(byte_src, hint_ext.as_deref())
+                        .map_err(|e| format!("Decoding FD effect '{}' failed: {}", id, e))
+                }
+                Ok(FdOpenOutcome::MemoryBytes(bytes)) => {
+                    SoundBuffer::decode_from_owned_bytes(bytes, hint_ext.as_deref())
+                        .map_err(|e| format!("Decoding pipe FD effect '{}' failed: {}", id, e))
+                }
+                Err(e) => Err(format!("Opening FD effect '{}' failed: {}", id, e)),
+            },
+            #[cfg(not(unix))]
+            ResolvedCoreSource::Fd { .. } => {
+                Err("POSIX file descriptors are only supported on Unix targets (code: -10)".to_string())
+            }
+            ResolvedCoreSource::CustomStream { .. } => Err(format!(
+                "CustomStream/WebSocket sources are not supported as buffered RAM SFX for '{}' (code: -10)",
+                id
+            )),
+            ResolvedCoreSource::Error { code, message } => {
+                Err(format!("{} (code: {})", message, code))
+            }
+        };
+    }
+
+    decode_effect_uri_direct(id, source.source.trim(), source.headers.as_deref())
+}
+
+fn decode_effect_uri_direct(
+    id: &str,
+    trimmed: &str,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+) -> Result<SoundBuffer, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let bytes = fetch_effect_bytes_via_ureq(id, trimmed, source.headers.as_deref())?;
-        SoundBuffer::decode_from_bytes(&bytes)
+        let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
+        SoundBuffer::decode_from_owned_bytes(bytes, None)
             .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            let bytes = fetch_effect_bytes_via_ureq(id, trimmed, source.headers.as_deref())?;
-            return SoundBuffer::decode_from_bytes(&bytes)
+            let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
+            return SoundBuffer::decode_from_owned_bytes(bytes, None)
                 .map_err(|e| format!("Decoding network effect '{}' failed: {}", id, e));
         }
 
-        let stripped = strip_file_prefix(trimmed);
-        let path = resolve_local_source_path(&stripped);
-        let bytes = std::fs::read(&path)
-            .map_err(|e| format!("Failed to read effect file '{}' for '{}': {}", path, id, e))?;
-        SoundBuffer::decode_from_bytes(&bytes)
+        let bytes = std::fs::read(trimmed)
+            .map_err(|e| format!("Failed to read effect file '{}' for '{}': {}", trimmed, id, e))?;
+        SoundBuffer::decode_from_owned_bytes(bytes, None)
             .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
     }
 }
@@ -900,12 +960,13 @@ pub struct PreparedCatalogItem {
 /// Decodes memory-backed catalog entries outside any mutex.
 pub fn prepare_catalog_items(
     effects: Vec<EffectCatalogItem>,
+    dart_resolver: Option<&Arc<DartResolveRegistry>>,
 ) -> Result<Vec<PreparedCatalogItem>, String> {
     let mut prepared = Vec::with_capacity(effects.len());
     for mut item in effects {
         let source_type = classify_source_type(&item.source);
         let predecoded = if source_type == EffectSourceType::Memory {
-            let buf = decode_effect_source(&item.id, &item.source)?;
+            let buf = decode_effect_source(&item.id, &item.source, dart_resolver)?;
             item.source.data_bytes = None;
             Some(buf)
         } else {

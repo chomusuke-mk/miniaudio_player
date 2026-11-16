@@ -6,6 +6,7 @@
 
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::buffer::DartResolveRegistry;
 use crate::core::voice_pool::{
     decode_effect_source, prepare_catalog_items, EffectCatalog, EffectCatalogItem, EffectConfig,
     RtVoiceCmd, RtVoiceDone, SharedVoiceMetrics, SoundBuffer, VoicePoolRt,
@@ -24,9 +25,15 @@ pub struct EffectsControl {
     metrics: Arc<SharedVoiceMetrics>,
     loaded_ids_snapshot: Arc<RwLock<Vec<String>>>,
     reaper: Arc<RwLock<Option<ReaperHandle>>>,
+    dart_resolver: Arc<RwLock<Option<Arc<DartResolveRegistry>>>>,
 }
 
 impl EffectsControl {
+    /// Attaches the shared Dart resolution bridge used by deferred SFX sources.
+    pub fn attach_dart_resolver(&self, resolver: Arc<DartResolveRegistry>) {
+        *write_unpoisoned(&self.dart_resolver) = Some(resolver);
+    }
+
     #[inline]
     fn refresh_loaded_ids(&self, ids: Vec<String>) {
         *write_unpoisoned(&self.loaded_ids_snapshot) = ids;
@@ -50,7 +57,8 @@ impl EffectsControl {
     /// Memory-backed effects are decoded BEFORE acquiring the catalog mutex so heavy
     /// decoding never stalls live playback, telemetry getters, or active voices.
     pub fn set_effects(&self, effects: Vec<EffectCatalogItem>) -> Result<(), String> {
-        let prepared = prepare_catalog_items(effects)?;
+        let resolver = read_unpoisoned(&self.dart_resolver).clone();
+        let prepared = prepare_catalog_items(effects, resolver.as_ref())?;
         let (displaced, loaded_ids) = {
             let mut cat = lock_unpoisoned(&self.catalog);
             let displaced = cat.apply_prepared_effects(prepared);
@@ -80,7 +88,8 @@ impl EffectsControl {
             };
 
             let (expected_key, src) = decode_target;
-            let decoded = decode_effect_source(id, &src)?;
+            let resolver = read_unpoisoned(&self.dart_resolver).clone();
+            let decoded = decode_effect_source(id, &src, resolver.as_ref())?;
 
             let mut cat = lock_unpoisoned(&self.catalog);
             let (inserted, displaced) = cat.install_decoded_buffer(id, expected_key, decoded);
@@ -286,6 +295,7 @@ impl EffectsManager {
             metrics,
             loaded_ids_snapshot: Arc::new(RwLock::new(Vec::new())),
             reaper: Arc::new(RwLock::new(None)),
+            dart_resolver: Arc::new(RwLock::new(None)),
         };
 
         Self {

@@ -68,6 +68,7 @@ class PlayerAction<T> {
         dataBytes: null,
         replayGainDb: s.replayGainDb,
         replayPeak: s.replayPeak,
+        resolveInDart: false,
       );
     }
     final raw = s.toRustSource(id);
@@ -77,7 +78,8 @@ class PlayerAction<T> {
       headers: raw.headers,
       dataBytes: raw.dataBytes,
       replayGainDb: s.replayGainDb,
-      replayPeak: raw.replayPeak,
+      replayPeak: s.replayPeak,
+      resolveInDart: raw.resolveInDart,
     );
   }
 
@@ -228,6 +230,7 @@ class PlayerAction<T> {
       MapLogger.info('setQueue() requested with ${sources.length} items');
 
       _player._sourceRegistry.clear();
+      await _player._closeManagedProviders();
       _player._customProviders.clear();
 
       final normalized = <AudioSource<T>>[];
@@ -388,6 +391,7 @@ class PlayerAction<T> {
         _player.state._queue = const [];
         _player.state._currentIndex = null;
         _player._sourceRegistry.clear();
+        await _player._closeManagedProviders();
         _player._customProviders.clear();
       }
       await _rust.clearQueue(keepCurrent: keepCurrent);
@@ -716,6 +720,13 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     final rustEffects = <rust_types.RustAudioEffect>[];
     for (final effect in effects) {
+      if (effect.source._directErrorCode != null) {
+        throw MiniaudioPlayerException(
+          effect.source._directErrorMessage ??
+              'Invalid audio source for effect "${effect.id}".',
+          errorCode: effect.source._directErrorCode,
+        );
+      }
       final rustSource = _toRustSource(effect.source, 0);
       if (effect.source.isMemory) {
         effect.source._clearBytes();

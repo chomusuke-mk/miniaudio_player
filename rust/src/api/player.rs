@@ -9,9 +9,11 @@ use crate::sync::thread::{self, JoinHandle};
 use std::time::Duration;
 use crate::sync::MonotonicInstant as Instant;
 
-use crate::buffer::{CustomDartByteSource, CustomSourceRegistry};
+use crate::buffer::{
+    CustomDartByteSource, CustomSourceRegistry, DartResolveRegistry, ResolvedCoreSource,
+};
 use crate::core::control_coordinator::ControlCoordinator;
-use crate::core::dual_source::AudioSourceCore;
+use crate::core::dual_source::{AudioSourceCore, CustomSourceFactory};
 use crate::core::engine_actor::{
     snapshot_queue_ids, EngineActorHandle, EngineUiSnapshots, RtEngineNotice,
     TrackTransitionSnapshot,
@@ -316,6 +318,7 @@ pub struct RustMiniaudioPlayer {
     hw: HardwareDeviceSupervisor,
     reporter: EventReporter,
     custom_registry: CustomSourceRegistry,
+    resolve_registry: Arc<DartResolveRegistry>,
     monitor_running: Arc<AtomicBool>,
     monitor_thread: Mutex<Option<JoinHandle<()>>>,
     device_trigger: Arc<(Mutex<bool>, Condvar)>,
@@ -407,6 +410,25 @@ impl RustMiniaudioPlayer {
         reporter.emit(RustPlayerEvent::Outputs(initial_outputs));
         reporter.emit(RustPlayerEvent::VisualizerSource(config.visualizer_source));
         let custom_registry = CustomSourceRegistry::new();
+        let resolve_registry = Arc::new(DartResolveRegistry::new({
+            let rc = reporter.clone();
+            Arc::new(move |req| {
+                rc.emit(RustPlayerEvent::DartResolveRequest(req.into()));
+            })
+        }));
+        engine
+            .effects()
+            .attach_dart_resolver(resolve_registry.clone());
+        {
+            let factory_init = Self::build_custom_source_factory(&reporter, &custom_registry);
+            let resolver_init = resolve_registry.clone();
+            // Post via exec_async so RustMiniaudioPlayer::new never spins on the
+            // Web main thread before newly spawned Web Workers can enter the JS loop.
+            engine.exec_async(move |ply| {
+                ply.music_manager.set_custom_source_factory(factory_init);
+                ply.music_manager.set_dart_resolver(resolver_init);
+            });
+        }
         let monitor_running = Arc::new(AtomicBool::new(true));
         let metadata_enabled = Arc::new(AtomicBool::new(false));
         let coordinator = ControlCoordinator::spawn(
@@ -902,6 +924,7 @@ impl RustMiniaudioPlayer {
             hw,
             reporter,
             custom_registry,
+            resolve_registry,
             monitor_running,
             monitor_thread: Mutex::new(monitor_thread),
             device_trigger,
@@ -1064,28 +1087,36 @@ impl RustMiniaudioPlayer {
     // Queue Management Methods
     // =========================================================================
 
+    fn build_custom_source_factory(
+        reporter: &EventReporter,
+        custom_registry: &CustomSourceRegistry,
+    ) -> CustomSourceFactory {
+        let reporter_clone = reporter.clone();
+        let registry_clone = custom_registry.clone();
+        Arc::new(move |stream_id: u32, total_size: Option<u64>| {
+            let rc = reporter_clone.clone();
+            let req_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
+                rc.emit(RustPlayerEvent::DartReadRequest(req.into()));
+            });
+            CustomDartByteSource::with_registry(
+                stream_id,
+                total_size,
+                true,
+                req_sender,
+                Some(registry_clone.clone()),
+            )
+        })
+    }
+
     /// Replaces the entire playback queue with `queue` without starting playback.
     pub fn set_queue(&self, queue: Vec<RustAudioSource>) -> Result<(), String> {
         let core_queue: Vec<AudioSourceCore> = queue.into_iter().map(Into::into).collect();
         self.custom_registry.abort_all();
-        let reporter_clone = self.reporter.clone();
-        let registry_clone = self.custom_registry.clone();
-        let custom_factory = Arc::new(
-            move |stream_id: u32, total_size: Option<u64>| {
-                let rc = reporter_clone.clone();
-                let req_sender = Arc::new(move |req: crate::buffer::DartReadRequest| {
-                    rc.emit(RustPlayerEvent::DartReadRequest(req.into()));
-                });
-                CustomDartByteSource::with_registry(
-                    stream_id,
-                    total_size,
-                    true,
-                    req_sender,
-                    Some(registry_clone.clone()),
-                )
-            },
-        );
-        let (g, p) = self.coordinator.set_queue(core_queue, custom_factory)?;
+        let custom_factory =
+            Self::build_custom_source_factory(&self.reporter, &self.custom_registry);
+        let (g, p) = self
+            .coordinator
+            .set_queue(core_queue, custom_factory)?;
         let queue_evt = self
             .engine
             .exec(|ply| snapshot_queue_ids(ply))
@@ -1951,6 +1982,20 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
+    /// Responds to a pending unified source resolution request (`asset://`,
+    /// `package:`, `content://`, `android.resource://`, `ws://`, etc.) from Dart.
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn respond_dart_resolve_request(
+        &self,
+        request_id: u64,
+        resolved: RustResolvedSource,
+    ) -> Result<(), String> {
+        let _ = self
+            .resolve_registry
+            .resolve_request(request_id, resolved);
+        Ok(())
+    }
+
     // =========================================================================
     // Lifecycle Disposal
     // =========================================================================
@@ -1963,6 +2008,8 @@ impl RustMiniaudioPlayer {
         }
         self.monitor_running.store(false, Ordering::Release);
         self.notify_device_watcher();
+        self.custom_registry.abort_all();
+        self.resolve_registry.cancel_all();
         self.reporter.clear_sink();
         self.coordinator.shutdown();
         if let Some(jh) = lock_unpoisoned(&self.monitor_thread).take() {
@@ -1988,9 +2035,11 @@ pub fn set_log_level(level: i32) {
 /// Asynchronously analyzes acoustic, loudness, waveform, and metadata properties of any audio source.
 pub fn analyze_audio_source(
     source: RustAudioSource,
+    pre_resolved: Option<RustResolvedSource>,
     config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
-    crate::dsp::analysis::analyze_audio_source(source.into(), config)
+    let resolved = pre_resolved.map(ResolvedCoreSource::from_rust);
+    crate::dsp::analysis::analyze_audio_source_with_resolved(source.into(), resolved, config)
 }
 
 /// Synchronously analyzes acoustic, loudness, waveform, and metadata properties of a local audio source.

@@ -159,6 +159,7 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             AudioSourceCore {
                 id: 102,
@@ -167,6 +168,7 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             AudioSourceCore {
                 id: 103,
@@ -175,6 +177,7 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
         ];
 
@@ -239,6 +242,7 @@ fn test_music_only_output_excludes_sound_effects() {
             data_bytes: None,
             replay_gain_db: None,
             replay_peak: None,
+            resolve_in_dart: false,
         },
         max_polyphony: 4,
         pinned: true,
@@ -292,6 +296,7 @@ fn test_polyphonic_effects_inherit_reverb_and_tail_decay() {
             data_bytes: None,
             replay_gain_db: None,
             replay_peak: None,
+            resolve_in_dart: false,
         },
         max_polyphony: 16,
         pinned: true,
@@ -915,6 +920,7 @@ fn test_per_track_replay_gain_isolated_across_manual_and_auto_crossfade() {
         data_bytes: Some(bytes),
         replay_gain_db: rg_db,
         replay_peak: Some(1.0),
+        resolve_in_dart: false,
     };
 
     let wait_both_decks_pcm =
@@ -1223,6 +1229,7 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
             data_bytes: Some(wav_a.clone()),
             replay_gain_db: Some(-12.0),
             replay_peak: Some(0.9),
+            resolve_in_dart: false,
         };
         let item_502 = AudioSourceCore {
             id: 502,
@@ -1231,6 +1238,7 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
             data_bytes: Some(wav_b.clone()),
             replay_gain_db: Some(-3.0),
             replay_peak: Some(0.8),
+            resolve_in_dart: false,
         };
         player
             .music_manager
@@ -1366,6 +1374,7 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
                         data_bytes: Some(wav_a.clone()),
                         replay_gain_db: Some(-14.0),
                         replay_peak: Some(0.95),
+                        resolve_in_dart: false,
                     },
                     AudioSourceCore {
                         id: 802,
@@ -1374,6 +1383,7 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
                         data_bytes: Some(wav_b.clone()),
                         replay_gain_db: Some(-2.5),
                         replay_peak: Some(0.85),
+                        resolve_in_dart: false,
                     },
                 ],
                 custom_factory,
@@ -1436,6 +1446,7 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
                 data_bytes: Some(wav_a),
                 replay_gain_db: Some(-14.0),
                 replay_peak: Some(0.95),
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: 902,
@@ -1444,6 +1455,7 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
                 data_bytes: Some(wav_b),
                 replay_gain_db: Some(-2.5),
                 replay_peak: Some(0.85),
+                resolve_in_dart: false,
             },
         ])
         .unwrap();

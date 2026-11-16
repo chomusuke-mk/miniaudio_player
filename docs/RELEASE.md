@@ -279,11 +279,11 @@ Cómo puede ocurrir hoy que un sistema Linux o Windows descargue/cargue un binar
   - Eliminado `_provisionWebAssetsIfNeeded` de [`hook/build.dart`](../hook/build.dart) y removidos `web/pkg/` y `example/web/pkg/` de git.
 - [x] **1.5. Evaluación de `wasmBindgenName`:**
   - Evaluado y documentado: `wasm-pack build` no expone `--no-modules-global`, por lo que se mantiene `wasm_bindgen` alineado con `flutter_rust_bridge.yaml` y `frb_generated.dart`.
-- [ ] **1.6. Validación de Fase 1:**
+- [x] **1.6. Validación de Fase 1:**
   - [x] `flutter pub publish --dry-run`: incluye `assets/web/miniaudio_player.{js,wasm}` (3 MB total), cero `example/web/pkg/` ni advertencias de `.gitignore`.
   - [x] `flutter build linux --debug` y `flutter build apk --debug` (en `example/`): **cero** archivos `.wasm` o `.js` dentro de `flutter_assets/` ni `app-debug.apk`.
-  - [x] `flutter build web --release`: genera `example/build/web/assets/packages/miniaudio_player/assets/web/miniaudio_player.{js,wasm}` sin `build/web/pkg`.
-  - [ ] Prueba de reproducción en navegador sobre `example/build/web` post-refactor pendiente.
+  - [x] `flutter build web --release` y `--profile`: genera `example/build/web/assets/packages/miniaudio_player/assets/web/miniaudio_player.{js,wasm}` sin `build/web/pkg`.
+  - [x] Prueba de reproducción y análisis en navegador sobre `example/build/web` (`profile` y `release`) post-refactor: verificada reproducción sin errores ni 404s (incluyendo pistas con `#`, espacios y paréntesis en `asset://`).
 
 ---
 
@@ -325,4 +325,5 @@ Cómo puede ocurrir hoy que un sistema Linux o Windows descargue/cargue un binar
   - [ ] Ejecución de `MINIAUDIO_PLAYER_BUILD_FROM_SOURCE=1` nativa en runners macOS/iOS y Windows pendiente de CI/hosts respectivos.
 - [ ] **4.3. Validación de tamaño y runtime:**
   - [x] Confirmada ausencia de `.wasm`/`.js` en `example/build/linux` y `app-debug.apk`.
-  - [ ] Build nativo Windows y reproducción Web interactiva con `assets/web/` pendientes en hosts/navegador tras este refactor.
+  - [x] Reproducción Web interactiva con `assets/web/` validada en navegador (`profile` y `release`).
+  - [ ] Build nativo Windows pendiente en host/runner respectivo.

@@ -191,6 +191,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: Some(sfx_wav),
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             max_polyphony: 16,
             pinned: true,
@@ -207,6 +208,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: Some(valid_wav.clone()),
                 replay_gain_db: Some(-3.0),
                 replay_peak: Some(0.9),
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: (base_id + 1) as i64,
@@ -215,6 +217,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: (base_id + 2) as i64,
@@ -223,6 +226,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: (base_id + 3) as i64,
@@ -231,6 +235,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: (base_id + 4) as i64,
@@ -239,6 +244,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: (base_id + 5) as i64,
@@ -247,6 +253,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: (base_id + 6) as i64,
@@ -255,6 +262,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
         ]
     };
@@ -296,6 +304,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                                         data_bytes: None,
                                         replay_gain_db: None,
                                         replay_peak: None,
+                                        resolve_in_dart: false,
                                     },
                                     RustAudioSource {
                                         id: (base + 1) as i64,
@@ -304,6 +313,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                                         data_bytes: None,
                                         replay_gain_db: None,
                                         replay_peak: None,
+                                        resolve_in_dart: false,
                                     },
                                     RustAudioSource {
                                         id: (base + 2) as i64,
@@ -316,6 +326,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                                         data_bytes: None,
                                         replay_gain_db: None,
                                         replay_peak: None,
+                                        resolve_in_dart: false,
                                     },
                                 ]);
                             }
@@ -328,6 +339,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                                     data_bytes: Some(w.clone()),
                                     replay_gain_db: None,
                                     replay_peak: None,
+                                    resolve_in_dart: false,
                                 }]);
                             }
                             2 => {
@@ -339,6 +351,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
                                     data_bytes: None,
                                     replay_gain_db: None,
                                     replay_peak: None,
+                                    resolve_in_dart: false,
                                 });
                             }
                             3 => {
@@ -422,6 +435,7 @@ fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
             data_bytes: None,
             replay_gain_db: None,
             replay_peak: None,
+            resolve_in_dart: false,
         }])
         .expect("Post-chaos set_queue failed");
     player
@@ -460,6 +474,7 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
                 data_bytes: Some(SignalGenerator::pcm16_wav_bytes(24_000, 48_000, 2)),
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
             max_polyphony: 8,
             pinned: true,
@@ -481,6 +496,7 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
                 data_bytes: Some(wav_a),
                 replay_gain_db: Some(-4.0),
                 replay_peak: Some(0.95),
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: 2,
@@ -489,6 +505,7 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
                 data_bytes: Some(wav_b),
                 replay_gain_db: Some(-1.0),
                 replay_peak: Some(0.85),
+                resolve_in_dart: false,
             },
             RustAudioSource {
                 id: 3,
@@ -497,6 +514,7 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
                 data_bytes: None,
                 replay_gain_db: None,
                 replay_peak: None,
+                resolve_in_dart: false,
             },
         ])
         .expect("set_queue failed");
@@ -690,6 +708,7 @@ fn scenario_3_massive_sfx_polyphony_and_lru_eviction_storm() {
                     data_bytes: Some(if i < 2 { tiny_fx.clone() } else { big_fx.clone() }),
                     replay_gain_db: None,
                     replay_peak: None,
+                    resolve_in_dart: false,
                 },
                 max_polyphony: MAX_VOICES as u32,
                 pinned: i < 2,
@@ -937,6 +956,7 @@ fn scenario_4_adversarial_custom_source_stream_session_and_offline_analysis() {
                     source: path,
                     ..Default::default()
                 },
+                None,
                 RustAnalysisConfig {
                     replay_gain: true,
                     waveform: true,
@@ -958,6 +978,7 @@ fn scenario_4_adversarial_custom_source_stream_session_and_offline_analysis() {
                     data_bytes: Some(corrupt),
                     ..Default::default()
                 },
+                None,
                 RustAnalysisConfig::default(),
             );
             assert!(corrupt_res.is_err(), "Corrupt bytes must fail cleanly with Err");
@@ -1148,6 +1169,7 @@ fn scenario_5_hardware_routing_capture_ducking_and_mid_crossfade_recording() {
                     data_bytes: Some(wav_a),
                     replay_gain_db: None,
                     replay_peak: None,
+                    resolve_in_dart: false,
                 },
                 AudioSourceCore {
                     id: 2,
@@ -1156,6 +1178,7 @@ fn scenario_5_hardware_routing_capture_ducking_and_mid_crossfade_recording() {
                     data_bytes: Some(wav_b),
                     replay_gain_db: None,
                     replay_peak: None,
+                    resolve_in_dart: false,
                 },
             ],
             fac,
@@ -1225,6 +1248,7 @@ fn scenario_6_event_reporter_and_ui_snapshots_ordering_coherence() {
                     data_bytes: Some(wav_a),
                     replay_gain_db: None,
                     replay_peak: None,
+                    resolve_in_dart: false,
                 },
                 AudioSourceCore {
                     id: 2,
@@ -1233,6 +1257,7 @@ fn scenario_6_event_reporter_and_ui_snapshots_ordering_coherence() {
                     data_bytes: Some(wav_b),
                     replay_gain_db: None,
                     replay_peak: None,
+                    resolve_in_dart: false,
                 },
             ],
             fac,

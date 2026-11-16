@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
+// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AtomicTelemetryFilter`, `ComplexTelemetryCache`, `EventSinkState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `default`
@@ -20,9 +20,10 @@ void setLogLevel({required int level}) =>
 /// Asynchronously analyzes acoustic, loudness, waveform, and metadata properties of any audio source.
 Future<RustAudioAnalysisResult> analyzeAudioSource(
         {required RustAudioSource source,
+        RustResolvedSource? preResolved,
         required RustAnalysisConfig config}) =>
-    RustLib.instance.api
-        .crateApiPlayerAnalyzeAudioSource(source: source, config: config);
+    RustLib.instance.api.crateApiPlayerAnalyzeAudioSource(
+        source: source, preResolved: preResolved, config: config);
 
 /// Synchronously analyzes acoustic, loudness, waveform, and metadata properties of a local audio source.
 RustAudioAnalysisResult analyzeAudioSourceSync(
@@ -159,6 +160,11 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
       {required BigInt requestId,
       required List<int> bytes,
       required bool isEof});
+
+  /// Responds to a pending unified source resolution request (`asset://`,
+  /// `package:`, `content://`, `android.resource://`, `ws://`, etc.) from Dart.
+  void respondDartResolveRequest(
+      {required BigInt requestId, required RustResolvedSource resolved});
 
   /// Seeks to the specified position in milliseconds within the current track.
   Future<void> seek({required PlatformInt64 positionMs});

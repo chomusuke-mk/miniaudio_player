@@ -105,6 +105,7 @@ fn test_metadata_single_emission_guarantee() {
             data_bytes: None,
             replay_gain_db: None,
             replay_peak: None,
+            resolve_in_dart: false,
         }])
         .expect("set_queue failed");
 

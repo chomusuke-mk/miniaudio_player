@@ -18,10 +18,12 @@ use crate::sync::MonotonicInstant;
 // 1. FileByteSource
 // ----------------------------------------------------------------------------
 
-/// Buffered byte source for reading local audio files from the filesystem.
+/// Buffered byte source for reading local audio files or detached FD slices.
 pub struct FileByteSource {
     reader: BufReader<File>,
+    base_offset: u64,
     size: u64,
+    rel_pos: u64,
 }
 
 impl FileByteSource {
@@ -31,9 +33,22 @@ impl FileByteSource {
     /// Wraps an open `File` handle into a `FileByteSource`.
     pub fn new(file: File) -> IoResult<Self> {
         let size = file.metadata()?.len();
+        Self::from_file_slice_with_len(file, 0, size)
+    }
+
+    /// Wraps a seekable `File` starting at `base_offset` with a strict logical
+    /// length `size` (used for APK `android.resource://` and `content://` FDs).
+    pub fn from_file_slice_with_len(
+        mut file: File,
+        base_offset: u64,
+        size: u64,
+    ) -> IoResult<Self> {
+        file.seek(SeekFrom::Start(base_offset))?;
         Ok(Self {
             reader: BufReader::with_capacity(Self::BUFFER_CAPACITY, file),
+            base_offset,
             size,
+            rel_pos: 0,
         })
     }
 
@@ -47,14 +62,36 @@ impl FileByteSource {
 impl Read for FileByteSource {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.reader.read(buf)
+        let remaining = self.size.saturating_sub(self.rel_pos);
+        if remaining == 0 {
+            return Ok(0);
+        }
+        let max_read = buf.len().min(remaining as usize);
+        let n = self.reader.read(&mut buf[..max_read])?;
+        self.rel_pos += n as u64;
+        Ok(n)
     }
 }
 
 impl Seek for FileByteSource {
     #[inline]
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
-        self.reader.seek(pos)
+        let target_rel: i128 = match pos {
+            SeekFrom::Start(n) => n as i128,
+            SeekFrom::End(delta) => (self.size as i128).saturating_add(delta as i128),
+            SeekFrom::Current(delta) => (self.rel_pos as i128).saturating_add(delta as i128),
+        };
+        if target_rel < 0 {
+            return Err(IoError::new(
+                ErrorKind::InvalidInput,
+                "Invalid seek before start of bounded file slice",
+            ));
+        }
+        let target_u64 = target_rel as u64;
+        let abs_target = self.base_offset.saturating_add(target_u64);
+        self.reader.seek(SeekFrom::Start(abs_target))?;
+        self.rel_pos = target_u64;
+        Ok(target_u64)
     }
 }
 
@@ -466,5 +503,13 @@ impl MediaSource for CustomDartByteSource {
     #[inline]
     fn byte_len(&self) -> Option<u64> {
         self.total_size
+    }
+}
+
+impl CustomDartByteSource {
+    /// Overrides seekability (e.g. live unseekable WebSocket streams).
+    #[inline]
+    pub fn set_seekable(&mut self, seekable: bool) {
+        self.seekable = seekable;
     }
 }

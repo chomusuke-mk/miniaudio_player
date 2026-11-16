@@ -121,6 +121,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
+  RustDartResolveRequest dco_decode_box_autoadd_rust_dart_resolve_request(
+      dynamic raw);
+
+  @protected
   RustDuckingConfig dco_decode_box_autoadd_rust_ducking_config(dynamic raw);
 
   @protected
@@ -151,6 +155,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustReplayGainConfig dco_decode_box_autoadd_rust_replay_gain_config(
       dynamic raw);
+
+  @protected
+  RustResolvedSource dco_decode_box_autoadd_rust_resolved_source(dynamic raw);
 
   @protected
   RustReverbParams dco_decode_box_autoadd_rust_reverb_params(dynamic raw);
@@ -272,6 +279,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
+  RustResolvedSource? dco_decode_opt_box_autoadd_rust_resolved_source(
+      dynamic raw);
+
+  @protected
   RustSpatialEmitter? dco_decode_opt_box_autoadd_rust_spatial_emitter(
       dynamic raw);
 
@@ -359,6 +370,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustDartReadRequest dco_decode_rust_dart_read_request(dynamic raw);
 
   @protected
+  RustDartResolveRequest dco_decode_rust_dart_resolve_request(dynamic raw);
+
+  @protected
   RustDistanceModel dco_decode_rust_distance_model(dynamic raw);
 
   @protected
@@ -402,6 +416,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustReplayGainConfig dco_decode_rust_replay_gain_config(dynamic raw);
+
+  @protected
+  RustResolvedSource dco_decode_rust_resolved_source(dynamic raw);
 
   @protected
   RustReverbParams dco_decode_rust_reverb_params(dynamic raw);
@@ -542,6 +559,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustDartResolveRequest sse_decode_box_autoadd_rust_dart_resolve_request(
+      SseDeserializer deserializer);
+
+  @protected
   RustDuckingConfig sse_decode_box_autoadd_rust_ducking_config(
       SseDeserializer deserializer);
 
@@ -579,6 +600,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustReplayGainConfig sse_decode_box_autoadd_rust_replay_gain_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustResolvedSource sse_decode_box_autoadd_rust_resolved_source(
       SseDeserializer deserializer);
 
   @protected
@@ -718,6 +743,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustResolvedSource? sse_decode_opt_box_autoadd_rust_resolved_source(
+      SseDeserializer deserializer);
+
+  @protected
   RustSpatialEmitter? sse_decode_opt_box_autoadd_rust_spatial_emitter(
       SseDeserializer deserializer);
 
@@ -816,6 +845,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustDartResolveRequest sse_decode_rust_dart_resolve_request(
+      SseDeserializer deserializer);
+
+  @protected
   RustDistanceModel sse_decode_rust_distance_model(
       SseDeserializer deserializer);
 
@@ -866,6 +899,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustReplayGainConfig sse_decode_rust_replay_gain_config(
+      SseDeserializer deserializer);
+
+  @protected
+  RustResolvedSource sse_decode_rust_resolved_source(
       SseDeserializer deserializer);
 
   @protected
@@ -1015,6 +1052,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustDartReadRequest self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_rust_dart_resolve_request(
+      RustDartResolveRequest self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_rust_ducking_config(
       RustDuckingConfig self, SseSerializer serializer);
 
@@ -1053,6 +1094,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_rust_replay_gain_config(
       RustReplayGainConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_rust_resolved_source(
+      RustResolvedSource self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rust_reverb_params(
@@ -1196,6 +1241,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustReplayGainConfig? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_rust_resolved_source(
+      RustResolvedSource? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_rust_spatial_emitter(
       RustSpatialEmitter? self, SseSerializer serializer);
 
@@ -1303,6 +1352,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustDartReadRequest self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_dart_resolve_request(
+      RustDartResolveRequest self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_distance_model(
       RustDistanceModel self, SseSerializer serializer);
 
@@ -1360,6 +1413,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_replay_gain_config(
       RustReplayGainConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_resolved_source(
+      RustResolvedSource self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_reverb_params(

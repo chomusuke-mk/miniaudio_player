@@ -101,6 +101,9 @@ void main() {
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
+      // HLS .m3u8 playlists are external-segment manifests and cannot resolve
+      // relative `.ts` chunks from raw context-free in-memory bytes alone.
+      if (file.path.toLowerCase().endsWith('.m3u8')) continue;
       final fileName = file.uri.pathSegments.last;
       test('2.memory: $fileName', () async {
         final bytes = await file.readAsBytes();

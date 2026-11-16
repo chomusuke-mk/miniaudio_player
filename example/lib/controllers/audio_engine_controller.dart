@@ -1066,14 +1066,22 @@ class AudioEngineController extends ChangeNotifier {
   Future<void> nextTrack() async {
     _currentTrack = null;
     resetWaveformToSinusoidal();
-    await engine.action.next();
+    try {
+      await engine.action.next();
+    } catch (e) {
+      debugPrint('Error skipping to next track: $e');
+    }
     _notifyDomain(_trackSelectionNotifier);
   }
 
   Future<void> previousTrack() async {
     _currentTrack = null;
     resetWaveformToSinusoidal();
-    await engine.action.previous();
+    try {
+      await engine.action.previous();
+    } catch (e) {
+      debugPrint('Error skipping to previous track: $e');
+    }
     _notifyDomain(_trackSelectionNotifier);
   }
 
