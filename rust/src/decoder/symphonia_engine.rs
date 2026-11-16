@@ -418,6 +418,17 @@ impl SymphoniaEngine {
         source: M,
         hint_extension: Option<&str>,
     ) -> Result<Self, SymphoniaError> {
+        Self::new_with_options(source, hint_extension, true)
+    }
+
+    /// Probes and instantiates the appropriate format reader and decoder for `source`.
+    /// When `allow_full_stream_scan` is `false`, skips synchronous full-stream ADTS scans
+    /// that would stall or truncate over partially buffered network readers.
+    pub fn new_with_options<M: MediaSource + 'static>(
+        source: M,
+        hint_extension: Option<&str>,
+        allow_full_stream_scan: bool,
+    ) -> Result<Self, SymphoniaError> {
         let boxed_source: Box<dyn MediaSource> = Box::new(source);
 
         let boxed_source = match ExtendedPcmReader::try_new(boxed_source)? {
@@ -495,7 +506,7 @@ impl SymphoniaEngine {
             WavpackProbe::NotMatched(src) => src,
         };
 
-        let adts_info = if boxed_source.is_seekable() {
+        let adts_info = if allow_full_stream_scan && boxed_source.is_seekable() {
             crate::decoder::classifier::StreamClassifier::scan_adts_stream(&mut boxed_source)
         } else {
             None

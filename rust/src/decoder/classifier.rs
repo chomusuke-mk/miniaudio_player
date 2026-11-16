@@ -32,6 +32,8 @@ pub enum ContainerFormat {
     WavPack = 11,
     /// HTTP Live Streaming (HLS / M3U8).
     Hls = 12,
+    /// AIFF / AIFF-C (`FORM`).
+    Aiff = 13,
 }
 
 impl ContainerFormat {
@@ -50,6 +52,7 @@ impl ContainerFormat {
             Self::Ape => Some("ape"),
             Self::WavPack => Some("wv"),
             Self::Hls => Some("m3u8"),
+            Self::Aiff => Some("aiff"),
             Self::Unknown => None,
         }
     }
@@ -224,6 +227,9 @@ impl StreamClassifier {
         if data.starts_with(b"RIFX") && &data[8..12] == b"WAVE" {
             return (Self::detect_rifx(data, total_size, &mut info), info);
         }
+        if data.starts_with(b"FORM") && (&data[8..12] == b"AIFF" || &data[8..12] == b"AIFC") {
+            return (Self::detect_aiff(data, total_size, &mut info), info);
+        }
         if data.starts_with(&W64_RIFF_MAGIC) && avail >= 40 && data[24..40] == W64_WAVE_MAGIC {
             return (Self::detect_w64(data, total_size, &mut info), info);
         }
@@ -237,8 +243,7 @@ impl StreamClassifier {
             return (Self::detect_mp4(data, total_size, &mut info), info);
         }
         if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-            info.set_direct_container(ContainerFormat::Matroska, 0, total_size);
-            return (BoundaryStatus::Found, info);
+            return (Self::detect_mkv(data, total_size, &mut info), info);
         }
         if data.starts_with(b"#EXTM3U") || data.starts_with(b"#EXT-X-") {
             info.set_direct_container(ContainerFormat::Hls, 0, total_size);
@@ -1149,6 +1154,170 @@ impl StreamClassifier {
                 return BoundaryStatus::Unsupported;
             }
         }
+    }
+
+    fn detect_aiff(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
+        const AIFF_MAX_HEADER_SCAN: usize = 4 * 1024 * 1024;
+        // `AiffReader` requires reading from offset 0 (`FORM` -> `COMM` -> `SSND`).
+        let found_at_start = |out: &mut BoundaryInfo| {
+            out.set_direct_container(ContainerFormat::Aiff, 0, total);
+            BoundaryStatus::Found
+        };
+        let mut p: usize = 12;
+
+        loop {
+            if p + 8 > d.len() {
+                if p >= AIFF_MAX_HEADER_SCAN || (total > 0 && p as i64 >= total) {
+                    return found_at_start(out);
+                }
+                return Self::need_more(out, (p + 16) as i64, total, d.len());
+            }
+
+            let c = &d[p..];
+            let size = be32(&c[4..8]) as usize;
+
+            if c.starts_with(b"SSND") {
+                if p + 16 > d.len() && (total <= 0 || (p + 16) as i64 <= total) {
+                    return Self::need_more(out, (p + 16) as i64, total, d.len());
+                }
+                return found_at_start(out);
+            }
+
+            let Some(next_p) = 8usize
+                .checked_add(size)
+                .and_then(|n| n.checked_add(size & 1))
+                .and_then(|n| p.checked_add(n))
+            else {
+                return found_at_start(out);
+            };
+            p = next_p;
+            if p >= AIFF_MAX_HEADER_SCAN || (total > 0 && p as i64 >= total) {
+                return found_at_start(out);
+            }
+        }
+    }
+
+    fn read_ebml_vint(d: &[u8], pos: usize, mask_leading: bool) -> Option<(u64, usize, bool)> {
+        let &first = d.get(pos)?;
+        if first == 0 {
+            return None;
+        }
+        let width = (first.leading_zeros() as usize) + 1;
+        if width > 8 || pos + width > d.len() {
+            return None;
+        }
+        let marker = 0x80u8 >> (width - 1);
+        let value_mask = marker - 1;
+        let mut val = if mask_leading {
+            (first & value_mask) as u64
+        } else {
+            first as u64
+        };
+        let mut all_ones = mask_leading && (first & value_mask) == value_mask;
+        for &b in &d[pos + 1..pos + width] {
+            val = (val << 8) | (b as u64);
+            if b != 0xFF {
+                all_ones = false;
+            }
+        }
+        Some((val, width, all_ones))
+    }
+
+    fn detect_mkv(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
+        const MKV_MAX_HEADER_SCAN: usize = 8 * 1024 * 1024;
+        const MKV_SEGMENT_ID: u64 = 0x1853_8067;
+        const MKV_CLUSTER_ID: u64 = 0x1F43_B675;
+        let fallback = |out: &mut BoundaryInfo| {
+            out.set_direct_container(ContainerFormat::Matroska, 0, total);
+            BoundaryStatus::Found
+        };
+
+        let Some((_ebml_id, ebml_id_len, _)) = Self::read_ebml_vint(d, 0, false) else {
+            return fallback(out);
+        };
+        let Some((ebml_sz, ebml_sz_len, ebml_unk)) = Self::read_ebml_vint(d, ebml_id_len, true)
+        else {
+            if ebml_id_len + 8 > d.len() {
+                return Self::need_more(out, (ebml_id_len + 16) as i64, total, d.len());
+            }
+            return fallback(out);
+        };
+        if ebml_unk {
+            return fallback(out);
+        }
+        let Some(seg_off) = usize::try_from(ebml_sz)
+            .ok()
+            .and_then(|s| s.checked_add(ebml_id_len + ebml_sz_len))
+        else {
+            return fallback(out);
+        };
+        if seg_off + 12 > d.len() {
+            if seg_off >= MKV_MAX_HEADER_SCAN || (total > 0 && seg_off as i64 >= total) {
+                return fallback(out);
+            }
+            return Self::need_more(out, (seg_off + 32) as i64, total, d.len());
+        }
+
+        let Some((seg_id, seg_id_len, _)) = Self::read_ebml_vint(d, seg_off, false) else {
+            return fallback(out);
+        };
+        if seg_id != MKV_SEGMENT_ID {
+            return fallback(out);
+        }
+        let Some((_seg_sz, seg_sz_len, _)) = Self::read_ebml_vint(d, seg_off + seg_id_len, true)
+        else {
+            return fallback(out);
+        };
+
+        let mut pos = seg_off + seg_id_len + seg_sz_len;
+        for _ in 0..4096 {
+            if pos + 12 > d.len() {
+                if pos >= MKV_MAX_HEADER_SCAN || (total > 0 && pos as i64 >= total) {
+                    return fallback(out);
+                }
+                return Self::need_more(out, (pos + 4096) as i64, total, d.len());
+            }
+
+            let Some((eid, eid_len, _)) = Self::read_ebml_vint(d, pos, false) else {
+                return fallback(out);
+            };
+            if eid == MKV_CLUSTER_ID {
+                out.set_direct_container(ContainerFormat::Matroska, pos as i64, total);
+                return BoundaryStatus::Found;
+            }
+
+            let Some((esz, esz_len, is_unk)) = Self::read_ebml_vint(d, pos + eid_len, true) else {
+                if pos + eid_len + 8 > d.len() {
+                    return Self::need_more(out, (pos + eid_len + 32) as i64, total, d.len());
+                }
+                return fallback(out);
+            };
+            if is_unk {
+                return fallback(out);
+            }
+
+            let hdr_end = pos + eid_len + esz_len;
+            let Some(next_pos) = u64::try_from(hdr_end)
+                .ok()
+                .and_then(|n| n.checked_add(esz))
+                .and_then(|n| usize::try_from(n).ok())
+            else {
+                return fallback(out);
+            };
+
+            if next_pos <= pos
+                || next_pos >= MKV_MAX_HEADER_SCAN
+                || (total > 0 && next_pos as i64 >= total)
+            {
+                return fallback(out);
+            }
+            if next_pos + 12 > d.len() {
+                return Self::need_more(out, (next_pos + 4096) as i64, total, d.len());
+            }
+            pos = next_pos;
+        }
+
+        fallback(out)
     }
 
     fn detect_w64(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {

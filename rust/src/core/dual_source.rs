@@ -18,7 +18,9 @@ use crate::buffer::{
     ResolvedCoreSource, StreamBuffer, StreamSession,
 };
 use crate::core::renderer::{AudioRenderer, DspCommand};
-use crate::decoder::{BoundaryInfo, BoundaryStatus, StreamClassifier, SymphoniaEngine};
+use crate::decoder::{
+    BoundaryInfo, BoundaryStatus, ContainerFormat, StreamClassifier, SymphoniaEngine,
+};
 use crate::net::ureq;
 use crate::dsp::channel_matrix::ChannelMatrix;
 use crate::dsp::crossfeed::CrossfeedConfig;
@@ -57,39 +59,87 @@ fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
         4 => Some("ogg"),
         5 => Some("aac"),
         6 => Some("mp4"),
+        7 => Some("aiff"),
+        8 => Some("mkv"),
+        9 => Some("webm"),
+        10 => Some("dsf"),
+        11 => Some("ape"),
+        12 => Some("wv"),
+        13 => Some("caf"),
+        14 => Some("m3u8"),
         _ => None,
     }
 }
 
+fn extension_hint_to_encoding_format(hint: &str) -> i32 {
+    match hint {
+        "wav" => 1,
+        "flac" => 2,
+        "mp3" => 3,
+        "ogg" => 4,
+        "aac" => 5,
+        "mp4" => 6,
+        "aiff" => 7,
+        "mkv" => 8,
+        "webm" => 9,
+        "dsf" => 10,
+        "ape" => 11,
+        "wv" => 12,
+        "caf" => 13,
+        "m3u8" => 14,
+        _ => 0,
+    }
+}
+
+fn extract_tail_metadata_slice(
+    container: ContainerFormat,
+    tail_slice: &[u8],
+    tail_offset: i64,
+    audio_end: i64,
+) -> Option<(Vec<u8>, u64)> {
+    let rel = (audio_end - tail_offset) as usize;
+    if rel < tail_slice.len() {
+        Some((tail_slice[rel..].to_vec(), audio_end as u64))
+    } else if matches!(
+        container,
+        ContainerFormat::OggVorbis | ContainerFormat::OggOpus
+    ) {
+        Some((tail_slice.to_vec(), tail_offset as u64))
+    } else {
+        None
+    }
+}
+
 fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
-    let lower_url = url.to_lowercase();
+    if let Some(hint) = StreamClassifier::extract_extension_hint(url) {
+        let code = extension_hint_to_encoding_format(hint);
+        if code != 0 {
+            return code;
+        }
+    }
     let lower_ct = content_type.unwrap_or("").to_lowercase();
 
-    if lower_url.ends_with(".wav")
-        || lower_ct.contains("audio/wav")
-        || lower_ct.contains("audio/x-wav")
-    {
+    if lower_ct.contains("audio/wav") || lower_ct.contains("audio/x-wav") {
         1
-    } else if lower_url.ends_with(".flac") || lower_ct.contains("audio/flac") {
+    } else if lower_ct.contains("audio/flac") {
         2
-    } else if lower_url.ends_with(".mp3")
-        || lower_ct.contains("audio/mpeg")
-        || lower_ct.contains("audio/mp3")
-    {
+    } else if lower_ct.contains("audio/mpeg") || lower_ct.contains("audio/mp3") {
         3
-    } else if lower_url.ends_with(".ogg")
-        || lower_url.ends_with(".opus")
-        || lower_ct.contains("audio/ogg")
-        || lower_ct.contains("audio/opus")
-    {
+    } else if lower_ct.contains("audio/ogg") || lower_ct.contains("audio/opus") {
         4
-    } else if lower_url.ends_with(".aac") || lower_ct.contains("audio/aac") {
+    } else if lower_ct.contains("audio/aac") {
         5
-    } else if lower_url.ends_with(".m4a")
-        || lower_url.ends_with(".mp4")
-        || lower_ct.contains("audio/mp4")
-    {
+    } else if lower_ct.contains("audio/mp4") {
         6
+    } else if lower_ct.contains("audio/aiff")
+        || lower_ct.contains("audio/x-aiff")
+        || lower_ct.contains("sound/aiff")
+    {
+        7
+    } else if lower_ct.contains("matroska") {
+        8
+    } else if lower_ct.contains("webm") {
+        9
     } else {
         0
     }
@@ -1295,8 +1345,9 @@ impl DecoderWorker {
                             session.flush(0);
                         }
                         session.set_decoding_audio(false);
+                        let allow_scan = session.is_fully_buffered();
                         let reader = session.create_reader();
-                        if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
+                        if let Ok(new_eng) = SymphoniaEngine::new_with_options(reader, None, allow_scan) {
                             *eng_lock = Some(new_eng);
                             reinit = true;
                         }
@@ -1362,23 +1413,23 @@ impl DecoderWorker {
             return true;
         }
 
-        let maybe_reader = self.session_arc.read().ok().and_then(|guard| {
+        let maybe_init = self.session_arc.read().ok().and_then(|guard| {
             let session = guard.as_ref()?;
             let has_data = session.head_size() > 0
                 || session.range_end() > session.range_start()
                 || session.is_eof();
             if has_data {
-                Some(session.create_reader())
+                Some((session.create_reader(), session.is_fully_buffered()))
             } else {
                 None
             }
         });
 
-        let Some(reader) = maybe_reader else {
+        let Some((reader, allow_scan)) = maybe_init else {
             return false;
         };
 
-        if let Ok(new_eng) = SymphoniaEngine::new(reader, None) {
+        if let Ok(new_eng) = SymphoniaEngine::new_with_options(reader, None, allow_scan) {
             let new_sr = new_eng.sample_rate();
             let new_ch = new_eng.channels();
             if new_sr > 0 {
@@ -2588,11 +2639,13 @@ impl StreamingDeck {
                             && audio_end <= effective_content_length
                             && audio_end >= tail_offset
                         {
-                            let rel_start = (audio_end - tail_offset) as usize;
-                            if rel_start < probed.len() {
-                                tail_data = Some(probed[rel_start..].to_vec());
-                            } else {
-                                tail_data = Some(probed.to_vec());
+                            if let Some((bytes, _off)) = extract_tail_metadata_slice(
+                                boundary.container,
+                                &probed,
+                                tail_offset,
+                                audio_end,
+                            ) {
+                                tail_data = Some(bytes);
                             }
                             forced_audio_end = Some(audio_end as u64);
                         }
@@ -2629,8 +2682,14 @@ impl StreamingDeck {
                         && audio_end <= effective_content_length
                         && audio_end >= tail_offset
                     {
-                        let rel_start = (audio_end - tail_offset) as usize;
-                        tail_data = Some(probed[rel_start..].to_vec());
+                        if let Some((bytes, _off)) = extract_tail_metadata_slice(
+                            boundary.container,
+                            probed,
+                            tail_offset,
+                            audio_end,
+                        ) {
+                            tail_data = Some(bytes);
+                        }
                         forced_audio_end = Some(audio_end as u64);
                     }
                 }
@@ -2825,11 +2884,13 @@ impl StreamingDeck {
                             boundary.audio_start,
                         );
                         if audio_end > 0 && audio_end <= total_size && audio_end >= tail_offset {
-                            let rel = (audio_end - tail_offset) as usize;
-                            if rel < tbuf.len() {
-                                tail_out = Some((tbuf[rel..].to_vec(), Some(audio_end as u64)));
-                            } else {
-                                tail_out = Some((tbuf.clone(), Some(tail_offset as u64)));
+                            if let Some((bytes, off)) = extract_tail_metadata_slice(
+                                boundary.container,
+                                &tbuf,
+                                tail_offset,
+                                audio_end,
+                            ) {
+                                tail_out = Some((bytes, Some(off)));
                             }
                             boundary.audio_end = audio_end;
                         }
@@ -2993,13 +3054,13 @@ impl StreamingDeck {
                         boundary.audio_start,
                     );
                     if audio_end > 0 && audio_end <= total_size && audio_end >= tail_offset {
-                        let rel = (audio_end - tail_offset) as usize;
-                        if rel < data[tail_offset as usize..].len() {
-                            tail_owned =
-                                Some((data[audio_end as usize..].to_vec(), Some(audio_end as u64)));
-                        } else {
-                            tail_owned =
-                                Some((data[tail_offset as usize..].to_vec(), Some(tail_offset as u64)));
+                        if let Some((bytes, off)) = extract_tail_metadata_slice(
+                            boundary.container,
+                            &data[tail_offset as usize..],
+                            tail_offset,
+                            audio_end,
+                        ) {
+                            tail_owned = Some((bytes, Some(off)));
                         }
                     }
                 }
@@ -3073,8 +3134,9 @@ impl StreamingDeck {
             .hint_extension()
             .or_else(|| encoding_format_to_extension(encoding_format));
 
+        let allow_scan = session.is_fully_buffered();
         let reader = session.create_reader();
-        let eng = match SymphoniaEngine::new(reader, hint) {
+        let eng = match SymphoniaEngine::new_with_options(reader, hint, allow_scan) {
             Ok(e) => e,
             Err(e) => {
                 crate::map_log!(1, "open_stream_ex failed: SymphoniaEngine::new failed for hint={:?}: {:?}", hint, e);

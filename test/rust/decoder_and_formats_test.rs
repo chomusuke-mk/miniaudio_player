@@ -635,3 +635,261 @@ fn test_pure_rust_rusty_aac_2_0_2_lc_sbr_ps_and_multichannel() {
     assert_eq!(dec_51.codec_params().channels.as_ref().unwrap().count(), 6);
 }
 
+#[test]
+fn test_http_edge_formats_aiff_mkv_aac() {
+    use miniaudio_player::api::types::RustAnalysisConfig;
+    use miniaudio_player::core::dual_source::{AudioSourceCore, StreamingDeck};
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    struct ExpectSpec {
+        name: &'static str,
+        container: &'static str,
+        codec: &'static str,
+        min_open_dur_ms: i64,
+        max_open_dur_ms: i64,
+        min_analyze_dur_ms: i64,
+        max_analyze_dur_ms: i64,
+    }
+
+    let specs = [
+        ExpectSpec {
+            name: "salida.aif",
+            container: "AIFF",
+            codec: "PCM",
+            min_open_dur_ms: 68_000,
+            max_open_dur_ms: 69_500,
+            min_analyze_dur_ms: 68_000,
+            max_analyze_dur_ms: 69_500,
+        },
+        ExpectSpec {
+            name: "salida.aifc",
+            container: "AIFF",
+            codec: "PCM",
+            min_open_dur_ms: 68_000,
+            max_open_dur_ms: 69_500,
+            min_analyze_dur_ms: 68_000,
+            max_analyze_dur_ms: 69_500,
+        },
+        ExpectSpec {
+            name: "salida.aiff",
+            container: "AIFF",
+            codec: "PCM",
+            min_open_dur_ms: 68_000,
+            max_open_dur_ms: 69_500,
+            min_analyze_dur_ms: 68_000,
+            max_analyze_dur_ms: 69_500,
+        },
+        ExpectSpec {
+            name: "Ojitos Mentirosos - La Bella Luz_6_.mkv",
+            container: "Matroska",
+            codec: "Opus",
+            min_open_dur_ms: 205_000,
+            max_open_dur_ms: 215_000,
+            min_analyze_dur_ms: 209_000,
+            max_analyze_dur_ms: 212_000,
+        },
+        ExpectSpec {
+            name: "salida.mka",
+            container: "Matroska",
+            codec: "FLAC",
+            min_open_dur_ms: 68_000,
+            max_open_dur_ms: 69_500,
+            min_analyze_dur_ms: 68_000,
+            max_analyze_dur_ms: 69_500,
+        },
+        ExpectSpec {
+            name: "salida.aac",
+            container: "ADTS",
+            codec: "AAC",
+            min_open_dur_ms: 65_000,
+            max_open_dur_ms: 75_000,
+            min_analyze_dur_ms: 68_000,
+            max_analyze_dur_ms: 69_500,
+        },
+    ];
+
+    let music_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("example/assets/music");
+    let files: Arc<Vec<(String, Vec<u8>)>> = Arc::new(
+        specs
+            .iter()
+            .map(|s| {
+                (
+                    s.name.to_string(),
+                    std::fs::read(music_dir.join(s.name)).unwrap(),
+                )
+            })
+            .collect(),
+    );
+
+    for support_range in [true, false] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let files_srv = files.clone();
+
+        std::thread::spawn(move || {
+            for stream_res in listener.incoming() {
+                let Ok(mut stream) = stream_res else { break };
+                let files_req = files_srv.clone();
+                std::thread::spawn(move || {
+                    let mut br = BufReader::new(stream.try_clone().unwrap());
+                    let mut req_line = String::new();
+                    if br.read_line(&mut req_line).is_err() {
+                        return;
+                    }
+                    let raw_path = req_line.split_whitespace().nth(1).unwrap_or("/");
+                    let name = raw_path.trim_start_matches('/').replace("%20", " ");
+                    let mut range_hdr: Option<String> = None;
+                    loop {
+                        let mut h = String::new();
+                        if br.read_line(&mut h).is_err() || h.trim().is_empty() {
+                            break;
+                        }
+                        let low = h.to_ascii_lowercase();
+                        if let Some(rest) = low.strip_prefix("range:") {
+                            range_hdr = Some(rest.trim().to_string());
+                        }
+                    }
+                    let Some((_, data)) = files_req.iter().find(|(n, _)| *n == name) else {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    };
+                    if support_range {
+                        if let Some(r) =
+                            range_hdr.and_then(|s| s.strip_prefix("bytes=").map(str::to_string))
+                        {
+                            let (a, b) = r.split_once('-').unwrap_or(("0", ""));
+                            let start: usize = a.parse().unwrap_or(0);
+                            let end: usize = if b.is_empty() {
+                                data.len() - 1
+                            } else {
+                                b.parse().unwrap_or(data.len() - 1).min(data.len() - 1)
+                            };
+                            if start <= end && start < data.len() {
+                                let slice = &data[start..=end];
+                                let hdr = format!(
+                                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                                    slice.len(),
+                                    start,
+                                    end,
+                                    data.len()
+                                );
+                                let _ = stream.write_all(hdr.as_bytes());
+                                let _ = stream.write_all(slice);
+                                return;
+                            }
+                        }
+                    }
+                    let hdr = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        data.len()
+                    );
+                    let _ = stream.write_all(hdr.as_bytes());
+                    let _ = stream.write_all(data);
+                });
+            }
+        });
+
+        for spec in &specs {
+            let encoded = spec.name.replace(' ', "%20");
+            let url = format!("http://127.0.0.1:{}/{}", port, encoded);
+            let mut deck = StreamingDeck::new_analysis_deck(48000, 2).unwrap();
+            let code = deck.open_network_with_cancel(&url, None, None);
+            assert_eq!(
+                code, 0,
+                "open_network_with_cancel failed for {} (range={})",
+                spec.name, support_range
+            );
+            let info = deck.get_audio_info();
+            assert_eq!(
+                info.container_format, spec.container,
+                "unexpected container for {} (range={})",
+                spec.name, support_range
+            );
+            assert_eq!(
+                info.codec, spec.codec,
+                "unexpected codec for {} (range={})",
+                spec.name, support_range
+            );
+            let open_dur = info.duration_ms.unwrap_or_else(|| {
+                panic!("missing open duration for {} (range={})", spec.name, support_range)
+            });
+            assert!(
+                (spec.min_open_dur_ms..=spec.max_open_dur_ms).contains(&open_dur),
+                "unexpected open duration {}ms for {} (range={}, expected {}..={})",
+                open_dur,
+                spec.name,
+                support_range,
+                spec.min_open_dur_ms,
+                spec.max_open_dur_ms
+            );
+            drop(deck);
+
+            let cfg = RustAnalysisConfig {
+                replay_gain: true,
+                waveform: true,
+                metadata: true,
+                chromaprint: false,
+                target_lufs: -14.0,
+                waveform_points: 100,
+                max_duration_ms: None,
+            };
+            let src = AudioSourceCore {
+                source: url,
+                ..Default::default()
+            };
+            let res = miniaudio_player::dsp::analyze_audio_source(src, cfg).unwrap_or_else(|e| {
+                panic!(
+                    "analyze_audio_source failed for {} (range={}): {}",
+                    spec.name, support_range, e
+                )
+            });
+            let analyze_dur = res.audio_info.duration_ms.unwrap_or(0);
+            assert!(
+                (spec.min_analyze_dur_ms..=spec.max_analyze_dur_ms).contains(&analyze_dur),
+                "unexpected analyzed duration {}ms for {} (range={})",
+                analyze_dur,
+                spec.name,
+                support_range
+            );
+            assert!(res.has_replay_gain);
+            assert!(res.has_waveform);
+            assert_eq!(res.waveform_peaks.len(), 100);
+            assert!(res.integrated_lufs.is_finite());
+        }
+    }
+}
+
+#[test]
+fn test_classifier_aiff_and_mkv_precluster_boundary() {
+    let music_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("example/assets/music");
+
+    // AIFF and AIFC FORM detection
+    let aiff_bytes = std::fs::read(music_dir.join("salida.aif")).unwrap();
+    let (st_aif, b_aif) = StreamClassifier::detect_head_boundary(&aiff_bytes[..65536], aiff_bytes.len() as i64);
+    assert_eq!(st_aif, BoundaryStatus::Found);
+    assert_eq!(b_aif.container, ContainerFormat::Aiff);
+    assert_eq!(b_aif.audio_start, 0);
+
+    // Matroska with >64KB Attachments before first Cluster must request NeedMore until Cluster
+    let mkv_bytes = std::fs::read(music_dir.join("Ojitos Mentirosos - La Bella Luz_6_.mkv")).unwrap();
+    let (st_short, b_short) =
+        StreamClassifier::detect_head_boundary(&mkv_bytes[..65536], mkv_bytes.len() as i64);
+    assert_eq!(st_short, BoundaryStatus::NeedMore);
+    assert!(b_short.needed_bytes > 65536);
+
+    let (st_full, b_full) =
+        StreamClassifier::detect_head_boundary(&mkv_bytes[..262144], mkv_bytes.len() as i64);
+    assert_eq!(st_full, BoundaryStatus::Found);
+    assert_eq!(b_full.container, ContainerFormat::Matroska);
+    assert_eq!(b_full.audio_start, 206_682);
+}
+
