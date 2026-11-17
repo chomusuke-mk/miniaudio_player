@@ -196,4 +196,17 @@ impl DeviceCaptureNode {
             }
         }
     }
+
+    /// Returns whether an asynchronous capture session (e.g. Web `getUserMedia`) failed or was denied.
+    #[inline]
+    pub fn is_failed(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::bridge::ffi::wasm_is_capture_device_failed(self.device_ctx)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
+        }
+    }
 }

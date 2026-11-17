@@ -933,6 +933,7 @@ impl EngineActorHandle {
                                             return;
                                         }
                                     }
+                                    crate::bridge::ffi::wasm_pump_web_capture_rings();
                                     player.render_pcm(web_chunk_frames);
                                     tick_music_lifecycle(
                                         &mut player,
@@ -968,6 +969,7 @@ impl EngineActorHandle {
                                 }
                             } else {
                                 if now >= next_tick {
+                                    crate::bridge::ffi::wasm_pump_web_capture_rings();
                                     player.render_pcm(period_frames);
                                     tick_music_lifecycle(
                                         &mut player,

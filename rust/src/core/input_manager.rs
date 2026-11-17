@@ -277,9 +277,14 @@ impl InputManager {
         let mut new_nodes = Vec::new();
 
         for (inp, target_resolved_id) in effective_configs {
-            let already_open = existing_open
-                .iter()
-                .any(|(dev_id, res_id)| res_id == &target_resolved_id && dev_id == &inp.device_id);
+            let already_open = existing_open.iter().any(|(dev_id, res_id)| {
+                dev_id == &inp.device_id
+                    && (res_id == &target_resolved_id
+                        || (cfg!(target_arch = "wasm32")
+                            && dev_id == "AUTO"
+                            && res_id == "AUTO"
+                            && target_resolved_id == "default"))
+            });
             updates.push((
                 inp.device_id.clone(),
                 target_resolved_id.clone(),
@@ -309,11 +314,15 @@ impl InputManager {
         let mut evicted = Vec::new();
 
         for mut node in self.active_inputs.drain(..) {
-            if let Some((_, _, cfg)) = batch
-                .updates
-                .iter()
-                .find(|(dev_id, res_id, _)| *res_id == node.resolved_id && *dev_id == node.device_id)
-            {
+            if let Some((_, target_res_id, cfg)) = batch.updates.iter().find(|(dev_id, res_id, _)| {
+                *dev_id == node.device_id
+                    && (*res_id == node.resolved_id
+                        || (cfg!(target_arch = "wasm32")
+                            && *dev_id == "AUTO"
+                            && node.resolved_id == "AUTO"
+                            && *res_id == "default"))
+            }) {
+                node.resolved_id = target_res_id.clone();
                 node.config = cfg.clone();
                 Self::apply_ducker_params(&mut node.ducker, cfg);
                 kept.push(node);

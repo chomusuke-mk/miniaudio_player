@@ -272,9 +272,19 @@ impl HardwareDeviceSupervisor {
         let Ok((cur_inputs, cur_reconcile)) = self.engine.exec(move |ply| {
             let mut cur_inputs = ply.input_manager.current_inputs();
             let mut cur_mutated = false;
-            if let Some(ref prev_devs) = prev_devs_opt {
-                cur_inputs.retain(|inp| {
-                    if inp.device_id != "AUTO" {
+            cur_inputs.retain(|inp| {
+                let is_failed = ply
+                    .input_manager
+                    .active_inputs
+                    .iter()
+                    .find(|n| n.device_id == inp.device_id)
+                    .is_some_and(|n| n.capture_node.is_failed());
+                if is_failed {
+                    cur_mutated = true;
+                    return false;
+                }
+                if inp.device_id != "AUTO" {
+                    if let Some(ref prev_devs) = prev_devs_opt {
                         let was_in_prev = prev_devs
                             .iter()
                             .any(|d| device_id_matches(d, &inp.device_id));
@@ -286,9 +296,9 @@ impl HardwareDeviceSupervisor {
                             return false;
                         }
                     }
-                    true
-                });
-            }
+                }
+                true
+            });
             let cur_has_auto = cur_inputs.iter().any(|i| i.device_id == "AUTO");
             let cur_reconcile = cur_mutated
                 || (cur_has_auto && (default_in_changed || initial_or_dormant_attach_in));

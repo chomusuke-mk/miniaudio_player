@@ -1,8 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:file/file.dart';
+import 'package:file/local.dart';
+import 'package:file/memory.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
 import '../models/audio_track.dart';
@@ -239,7 +241,8 @@ class AudioEngineController extends ChangeNotifier {
       rpcKey: 'replayGainMode',
       domain: _replayGainNotifier,
       applyOverride: () => _replayGainModeOverride = mode,
-      send: () => engine.action.setReplayGainMode(_replayGainModeOverride ?? mode),
+      send: () =>
+          engine.action.setReplayGainMode(_replayGainModeOverride ?? mode),
       onSettled: () {
         if (_replayGainModeOverride != null &&
             engine.state.replayGainMode == _replayGainModeOverride) {
@@ -300,7 +303,8 @@ class AudioEngineController extends ChangeNotifier {
   bool get isLoop => engine.state.loopMode != LoopMode.off;
   LoopMode get loopMode => engine.state.loopMode;
 
-  Equalizer get currentEqualizer => _equalizerOverride ?? engine.state.equalizer;
+  Equalizer get currentEqualizer =>
+      _equalizerOverride ?? engine.state.equalizer;
   bool get equalizerEnabled => currentEqualizer.enabled;
   String get selectedPreset => _selectedPreset;
 
@@ -354,8 +358,7 @@ class AudioEngineController extends ChangeNotifier {
   double get silenceThresholdDb => _effectiveSilenceConfig.thresholdDb;
   int get minSilenceDurationMs =>
       _effectiveSilenceConfig.minSilenceDuration.inMilliseconds;
-  int get silencePaddingMs =>
-      _effectiveSilenceConfig.padding.inMilliseconds;
+  int get silencePaddingMs => _effectiveSilenceConfig.padding.inMilliseconds;
   Duration get silenceSavedDuration => engine.state.silenceSavedDuration;
 
   bool? _visualizerEnabledOverride;
@@ -420,12 +423,16 @@ class AudioEngineController extends ChangeNotifier {
   }
 
   Future<void> startRecording({String? customPath}) async {
-    final String tempDir = !kIsWeb ? Directory.systemTemp.path : '/tmp';
-    final String path =
-        customPath ??
-        '$tempDir/studio_recording_${DateTime.now().millisecondsSinceEpoch}.${_recordingFormat.name}';
+    final FileSystem fs = kIsWeb ? MemoryFileSystem() : const LocalFileSystem();
+    final Directory tempDir = await fs.systemTempDirectory.createTemp(
+      "miniaudio_player_example_",
+    );
+    final File archivo = tempDir.childFile(
+      'studio_recording_${DateTime.now().millisecondsSinceEpoch}.${_recordingFormat.name}',
+    );
+
     await engine.action.startRecording(
-      path,
+      archivo.path,
       format: _recordingFormat,
       source: _recordingSource,
     );
@@ -533,9 +540,7 @@ class AudioEngineController extends ChangeNotifier {
         }
       }),
     );
-    _subscriptions.add(
-      engine.stream.isShuffled.listen((_) => _notifyDomain()),
-    );
+    _subscriptions.add(engine.stream.isShuffled.listen((_) => _notifyDomain()));
     _subscriptions.add(engine.stream.loopMode.listen((_) => _notifyDomain()));
     _subscriptions.add(
       engine.stream.crossfadeConfig.listen((_) {
@@ -1213,9 +1218,8 @@ class AudioEngineController extends ChangeNotifier {
           }
           _silenceConfigOverride = target;
         },
-        send: () => engine.action.setSilenceConfig(
-          _silenceConfigOverride ?? target,
-        ),
+        send: () =>
+            engine.action.setSilenceConfig(_silenceConfigOverride ?? target),
         onSettled: () {
           if (_silenceConfigOverride != null &&
               _silenceConfigEquals(
@@ -1258,7 +1262,9 @@ class AudioEngineController extends ChangeNotifier {
   );
 
   Future<void> setSilencePaddingMs(int paddingMs) => _applySilenceConfig(
-    _effectiveSilenceConfig.copyWith(padding: Duration(milliseconds: paddingMs)),
+    _effectiveSilenceConfig.copyWith(
+      padding: Duration(milliseconds: paddingMs),
+    ),
   );
 
   // --- Visualizer & Metadata Event Stream Switches ---

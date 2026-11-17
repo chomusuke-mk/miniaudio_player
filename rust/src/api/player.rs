@@ -394,6 +394,8 @@ impl RustMiniaudioPlayer {
     ) -> Result<RustMiniaudioPlayer, String> {
         crate::sync::init_wasm_thread_spawner();
         let device_trigger = Arc::new((Mutex::new(true), Condvar::new()));
+        #[cfg(target_arch = "wasm32")]
+        crate::bridge::ffi::register_web_device_trigger(device_trigger.clone());
         let (engine, notify_rx, hint_rx) = EngineActorHandle::spawn(
             sample_rate,
             channels,
@@ -625,25 +627,48 @@ impl RustMiniaudioPlayer {
                     // =========================================================================
                     // 2. RECONCILIATION OF INPUTS (Deterministic Symmetry)
                     // =========================================================================
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        for msg in crate::bridge::ffi::wasm_take_failed_capture_messages() {
+                            watcher_reporter.emit(RustPlayerEvent::Error {
+                                code: crate::bridge::ffi::MAP_ERROR_ACCESS_DENIED,
+                                message: format!("Microphone capture unavailable: {}", msg),
+                            });
+                        }
+                    }
+
+                    let has_failed_web_capture = {
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            crate::bridge::ffi::wasm_has_failed_capture_devices()
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            false
+                        }
+                    };
+
                     let is_first_in_check = last_in_devices.is_none();
                     let in_devices_changed = last_in_devices.as_ref() != Some(&in_devs);
 
-                    if is_first_in_check || in_devices_changed {
+                    if is_first_in_check || in_devices_changed || has_failed_web_capture {
                         let prev_in_devices = last_in_devices.replace(in_devs.clone());
-                        map_log!(
-                            3,
-                            "[WATCHER:INPUTS] Input hardware list changed! (first_check={}, found={})",
-                            is_first_in_check,
-                            in_devs.len()
-                        );
-                        for (i, d) in in_devs.iter().enumerate() {
+                        if is_first_in_check || in_devices_changed {
                             map_log!(
                                 3,
-                                "  [WATCHER:IN #{}] id='{}', name='{}', effective_id='{}', is_default={}, is_auto={}",
-                                i, d.id, d.name, d.effective_id, d.is_default, d.is_auto
+                                "[WATCHER:INPUTS] Input hardware list changed! (first_check={}, found={})",
+                                is_first_in_check,
+                                in_devs.len()
                             );
+                            for (i, d) in in_devs.iter().enumerate() {
+                                map_log!(
+                                    3,
+                                    "  [WATCHER:IN #{}] id='{}', name='{}', effective_id='{}', is_default={}, is_auto={}",
+                                    i, d.id, d.name, d.effective_id, d.is_default, d.is_auto
+                                );
+                            }
+                            watcher_reporter.emit(RustPlayerEvent::InputDevices(in_devs.clone()));
                         }
-                        watcher_reporter.emit(RustPlayerEvent::InputDevices(in_devs.clone()));
 
                         let cur_in_def = in_devs.iter().find(|d| d.is_default && !d.is_auto);
                         let cur_in_def_id = cur_in_def.map(|d| d.effective_id.clone());
@@ -668,7 +693,7 @@ impl RustMiniaudioPlayer {
                         last_default_in_id = cur_in_def_id.clone();
 
                         let mut inputs = watcher_snapshots.inputs();
-                        let mut inputs_mutated = false;
+                        let mut inputs_mutated = has_failed_web_capture;
 
                         if let Some(ref prev_devs) = prev_in_devices {
                             inputs.retain(|inp| {

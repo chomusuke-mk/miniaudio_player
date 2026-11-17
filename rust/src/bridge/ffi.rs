@@ -118,15 +118,213 @@ extern "C" {
     pub fn map_device_free_all(all: *mut MapAllDevices);
 }
 
+/// Target-independent lock-free Web Audio capture ring & linear resampler primitives
+/// tested natively under `cargo test` and shared directly with `wasm32`.
+pub mod wasm_audio_protocol {
+    use std::cell::UnsafeCell;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    /// Mono capture ring buffer capacity in samples (~341 ms at 48 kHz).
+    pub const WEB_CAPTURE_CAP_SAMPLES: usize = 16384;
+    pub const WEB_CAPTURE_MASK: usize = WEB_CAPTURE_CAP_SAMPLES - 1;
+    pub const MAX_WEB_CAPTURE_SLOTS: usize = 8;
+
+    /// Interleaved multi-channel linear PCM resampler shared across Web playback and capture paths.
+    pub struct LinearPcmResampler<const CH: usize> {
+        last_ratio_num: u32,
+        last_ratio_den: u32,
+        phase: f64,
+        prev: [f32; CH],
+        initialized: bool,
+    }
+
+    impl<const CH: usize> LinearPcmResampler<CH> {
+        pub const fn new() -> Self {
+            Self {
+                last_ratio_num: 44100,
+                last_ratio_den: 44100,
+                phase: 0.0,
+                prev: [0.0; CH],
+                initialized: false,
+            }
+        }
+
+        pub fn process(&mut self, input: &[f32], in_sr: u32, out_sr: u32, out: &mut Vec<f32>) {
+            out.clear();
+            let in_frames = input.len() / CH;
+            if in_frames == 0 {
+                return;
+            }
+            if in_sr == out_sr || in_sr == 0 || out_sr == 0 {
+                out.extend_from_slice(&input[..in_frames * CH]);
+                let last_base = (in_frames - 1) * CH;
+                self.prev.copy_from_slice(&input[last_base..last_base + CH]);
+                self.phase = 0.0;
+                self.initialized = true;
+                return;
+            }
+            if self.last_ratio_num != in_sr || self.last_ratio_den != out_sr {
+                self.last_ratio_num = in_sr;
+                self.last_ratio_den = out_sr;
+                self.phase = 0.0;
+            }
+            if !self.initialized {
+                self.prev.copy_from_slice(&input[..CH]);
+                self.initialized = true;
+            }
+
+            let step = (in_sr as f64) / (out_sr as f64);
+            let est_out = ((in_frames as f64 / step).ceil() as usize + 4) * CH;
+            out.reserve(est_out);
+
+            let mut pos = self.phase;
+            let limit = in_frames as f64;
+            while pos < limit {
+                let idx = pos.floor() as isize;
+                let frac = (pos - (idx as f64)) as f32;
+                let cur_base = (idx.max(0) as usize).min(in_frames - 1) * CH;
+                let prev_base = if idx <= 0 {
+                    None
+                } else {
+                    Some(((idx - 1) as usize) * CH)
+                };
+                for c in 0..CH {
+                    let s0 = match prev_base {
+                        Some(b) => input[b + c],
+                        None => self.prev[c],
+                    };
+                    let s1 = input[cur_base + c];
+                    out.push(s0 + (s1 - s0) * frac);
+                }
+                pos += step;
+            }
+            self.phase = pos - limit;
+            let last_base = (in_frames - 1) * CH;
+            self.prev.copy_from_slice(&input[last_base..last_base + CH]);
+        }
+    }
+
+    #[repr(C, align(64))]
+    pub struct WasmWebCaptureControl {
+        pub write_pos: AtomicU32,        // [0] Written by JS AudioWorklet/ScriptProcessor
+        pub read_pos: AtomicU32,         // [1] Written by Rust capture pump
+        pub host_sample_rate: AtomicU32, // [2] Browser AudioContext.sampleRate
+        pub channels: AtomicU32,         // [3] 1 (mono)
+        pub cap_samples: AtomicU32,      // [4] WEB_CAPTURE_CAP_SAMPLES (power of 2)
+        pub active: AtomicU32,           // [5] 1 while actively capturing, 0 otherwise
+        pub generation: AtomicU32,       // [6] Monotonic slot generation fence
+        pub overruns: AtomicU32,         // [7] Ring overflow drops in JS worklet
+    }
+
+    #[repr(C, align(64))]
+    pub struct WasmWebCaptureSlot {
+        pub ctrl: WasmWebCaptureControl,
+        pub data: UnsafeCell<[f32; WEB_CAPTURE_CAP_SAMPLES]>,
+        pub in_use: AtomicBool,
+    }
+
+    unsafe impl Sync for WasmWebCaptureSlot {}
+    unsafe impl Send for WasmWebCaptureSlot {}
+
+    impl WasmWebCaptureSlot {
+        pub fn new_boxed(default_sr: u32) -> Box<Self> {
+            Box::new(Self {
+                ctrl: WasmWebCaptureControl {
+                    write_pos: AtomicU32::new(0),
+                    read_pos: AtomicU32::new(0),
+                    host_sample_rate: AtomicU32::new(default_sr.clamp(8000, 192000)),
+                    channels: AtomicU32::new(1),
+                    cap_samples: AtomicU32::new(WEB_CAPTURE_CAP_SAMPLES as u32),
+                    active: AtomicU32::new(0),
+                    generation: AtomicU32::new(0),
+                    overruns: AtomicU32::new(0),
+                },
+                data: UnsafeCell::new([0.0f32; WEB_CAPTURE_CAP_SAMPLES]),
+                in_use: AtomicBool::new(false),
+            })
+        }
+
+        pub fn reset_for_generation(&self, generation: u32, default_sr: u32) {
+            self.ctrl.active.store(0, Ordering::Release);
+            self.ctrl.generation.store(generation, Ordering::Release);
+            self.ctrl.write_pos.store(0, Ordering::Release);
+            self.ctrl.read_pos.store(0, Ordering::Release);
+            self.ctrl
+                .host_sample_rate
+                .store(default_sr.clamp(8000, 192000), Ordering::Release);
+            self.ctrl.overruns.store(0, Ordering::Release);
+        }
+
+        pub fn push_mono(&self, generation: u32, mono: &[f32]) {
+            if mono.is_empty()
+                || self.ctrl.active.load(Ordering::Acquire) == 0
+                || self.ctrl.generation.load(Ordering::Acquire) != generation
+            {
+                return;
+            }
+            let r = self.ctrl.read_pos.load(Ordering::Acquire);
+            let w = self.ctrl.write_pos.load(Ordering::Relaxed);
+            let used = (w.wrapping_sub(r) as usize).min(WEB_CAPTURE_CAP_SAMPLES);
+            let free = WEB_CAPTURE_CAP_SAMPLES - used;
+            let to_write = mono.len().min(free);
+            if to_write == 0 {
+                self.ctrl.overruns.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            let start = (w as usize) & WEB_CAPTURE_MASK;
+            let first = to_write.min(WEB_CAPTURE_CAP_SAMPLES - start);
+            let second = to_write - first;
+            unsafe {
+                let dst = (*self.data.get()).as_mut_ptr();
+                std::ptr::copy_nonoverlapping(mono.as_ptr(), dst.add(start), first);
+                if second > 0 {
+                    std::ptr::copy_nonoverlapping(mono.as_ptr().add(first), dst, second);
+                }
+            }
+            self.ctrl
+                .write_pos
+                .store(w.wrapping_add(to_write as u32), Ordering::Release);
+        }
+
+        pub fn pop_mono_all(&self, out: &mut Vec<f32>) {
+            out.clear();
+            let w = self.ctrl.write_pos.load(Ordering::Acquire);
+            let r = self.ctrl.read_pos.load(Ordering::Relaxed);
+            let avail = (w.wrapping_sub(r) as usize).min(WEB_CAPTURE_CAP_SAMPLES);
+            if avail == 0 {
+                return;
+            }
+            out.resize(avail, 0.0);
+            let start = (r as usize) & WEB_CAPTURE_MASK;
+            let first = avail.min(WEB_CAPTURE_CAP_SAMPLES - start);
+            let second = avail - first;
+            unsafe {
+                let src = (*self.data.get()).as_ptr();
+                std::ptr::copy_nonoverlapping(src.add(start), out.as_mut_ptr(), first);
+                if second > 0 {
+                    std::ptr::copy_nonoverlapping(src, out.as_mut_ptr().add(first), second);
+                }
+            }
+            self.ctrl
+                .read_pos
+                .store(r.wrapping_add(avail as u32), Ordering::Release);
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm_device_bridge {
+    use super::wasm_audio_protocol::*;
     use super::*;
-    use flutter_rust_bridge::for_generated::js_sys::{Float32Array, Object, Reflect};
+    use flutter_rust_bridge::for_generated::js_sys::{
+        self, Array, Float32Array, Function, Object, Reflect,
+    };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
     use std::cell::UnsafeCell;
+    use std::ffi::CStr;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
     /// Power-of-two ring capacity in stereo frames (~371 ms at 44.1 kHz).
     pub const WEB_RING_CAP_FRAMES: usize = 16384;
@@ -289,89 +487,12 @@ mod wasm_device_bridge {
         DEVICES.get_or_init(|| Mutex::new(Vec::new()))
     }
 
-    struct LinearStereoResampler {
-        last_ratio_num: u32,
-        last_ratio_den: u32,
-        phase: f64,
-        prev_l: f32,
-        prev_r: f32,
-        initialized: bool,
-    }
-
-    impl LinearStereoResampler {
-        const fn new() -> Self {
-            Self {
-                last_ratio_num: 44100,
-                last_ratio_den: 44100,
-                phase: 0.0,
-                prev_l: 0.0,
-                prev_r: 0.0,
-                initialized: false,
-            }
-        }
-
-        fn process(&mut self, input: &[f32], in_sr: u32, out_sr: u32, out: &mut Vec<f32>) {
-            out.clear();
-            let in_frames = input.len() / WEB_RING_CHANNELS;
-            if in_frames == 0 {
-                return;
-            }
-            if in_sr == out_sr || in_sr == 0 || out_sr == 0 {
-                out.extend_from_slice(&input[..in_frames * WEB_RING_CHANNELS]);
-                let last_base = (in_frames - 1) * WEB_RING_CHANNELS;
-                self.prev_l = input[last_base];
-                self.prev_r = input[last_base + 1];
-                self.phase = 0.0;
-                self.initialized = true;
-                return;
-            }
-            if self.last_ratio_num != in_sr || self.last_ratio_den != out_sr {
-                self.last_ratio_num = in_sr;
-                self.last_ratio_den = out_sr;
-                self.phase = 0.0;
-            }
-            if !self.initialized {
-                self.prev_l = input[0];
-                self.prev_r = input[1];
-                self.initialized = true;
-            }
-
-            let step = (in_sr as f64) / (out_sr as f64);
-            let est_out = ((in_frames as f64 / step).ceil() as usize + 4) * WEB_RING_CHANNELS;
-            out.reserve(est_out);
-
-            // Emit interpolated samples spanning [prev, input[0]] and input[i-1..i].
-            let mut pos = self.phase;
-            let limit = in_frames as f64;
-            while pos < limit {
-                let idx = pos.floor() as isize;
-                let frac = (pos - (idx as f64)) as f32;
-                let (l0, r0) = if idx <= 0 {
-                    (self.prev_l, self.prev_r)
-                } else {
-                    let base = ((idx - 1) as usize) * WEB_RING_CHANNELS;
-                    (input[base], input[base + 1])
-                };
-                let cur_idx = (idx.max(0) as usize).min(in_frames - 1);
-                let cur_base = cur_idx * WEB_RING_CHANNELS;
-                let (l1, r1) = (input[cur_base], input[cur_base + 1]);
-                out.push(l0 + (l1 - l0) * frac);
-                out.push(r0 + (r1 - r0) * frac);
-                pos += step;
-            }
-            self.phase = pos - limit;
-            let last_base = (in_frames - 1) * WEB_RING_CHANNELS;
-            self.prev_l = input[last_base];
-            self.prev_r = input[last_base + 1];
-        }
-    }
-
     struct PumpState {
         dev_scratch: Vec<f32>,
         mix_buf: Vec<f32>,
         resampled_buf: Vec<f32>,
         fallback_buf: Vec<f32>,
-        resampler: LinearStereoResampler,
+        resampler: LinearPcmResampler<WEB_RING_CHANNELS>,
         activity_hangover: u32,
     }
 
@@ -382,8 +503,454 @@ mod wasm_device_bridge {
                 mix_buf: Vec::new(),
                 resampled_buf: Vec::new(),
                 fallback_buf: Vec::new(),
-                resampler: LinearStereoResampler::new(),
+                resampler: LinearPcmResampler::new(),
                 activity_hangover: 0,
+            }
+        }
+    }
+
+    // =========================================================================
+    // Web Audio Capture Slot Registry & Device Cache (Shared WASM Linear Memory)
+    // =========================================================================
+
+    const WEB_CAPTURE_CHANNEL_NAME: &str = "__miniaudio_web_capture_v1__";
+
+    static CAPTURE_SLOTS: OnceLock<Mutex<Vec<Box<WasmWebCaptureSlot>>>> = OnceLock::new();
+    static NEXT_CAPTURE_GENERATION: AtomicU32 = AtomicU32::new(1);
+
+    fn with_capture_slot<R>(slot_idx: usize, f: impl FnOnce(&WasmWebCaptureSlot) -> R) -> Option<R> {
+        let slots = CAPTURE_SLOTS.get()?;
+        let guard = slots.lock().ok()?;
+        guard.get(slot_idx).map(|s| f(s))
+    }
+
+    fn acquire_capture_slot(default_sr: u32) -> Option<(usize, u32, u32, u32)> {
+        let slots_mtx = CAPTURE_SLOTS.get_or_init(|| Mutex::new(Vec::new()));
+        let mut slots = slots_mtx.lock().ok()?;
+        let gen = NEXT_CAPTURE_GENERATION.fetch_add(1, Ordering::AcqRel).max(1);
+
+        if let Some((idx, slot)) = slots
+            .iter()
+            .enumerate()
+            .find(|(_, s)| !s.in_use.swap(true, Ordering::AcqRel))
+        {
+            slot.reset_for_generation(gen, default_sr);
+            let ctrl_ptr = (&slot.ctrl as *const WasmWebCaptureControl) as usize as u32;
+            let data_ptr = slot.data.get() as usize as u32;
+            return Some((idx, gen, ctrl_ptr, data_ptr));
+        }
+
+        if slots.len() >= MAX_WEB_CAPTURE_SLOTS {
+            return None;
+        }
+
+        let slot = WasmWebCaptureSlot::new_boxed(default_sr);
+        slot.in_use.store(true, Ordering::Release);
+        slot.reset_for_generation(gen, default_sr);
+        let ctrl_ptr = (&slot.ctrl as *const WasmWebCaptureControl) as usize as u32;
+        let data_ptr = slot.data.get() as usize as u32;
+        let idx = slots.len();
+        slots.push(slot);
+        Some((idx, gen, ctrl_ptr, data_ptr))
+    }
+
+    struct WasmCapturePumpState {
+        resampler: LinearPcmResampler<1>,
+        scratch_in: Vec<f32>,
+        scratch_resampled: Vec<f32>,
+        scratch_interleaved: Vec<f32>,
+    }
+
+    impl WasmCapturePumpState {
+        fn new() -> Self {
+            Self {
+                resampler: LinearPcmResampler::new(),
+                scratch_in: Vec::new(),
+                scratch_resampled: Vec::new(),
+                scratch_interleaved: Vec::new(),
+            }
+        }
+    }
+
+    pub struct WasmCaptureState {
+        slot_idx: usize,
+        generation: u32,
+        ctrl_ptr: u32,
+        data_ptr: u32,
+        sample_rate: u32,
+        channels: u32,
+        requested_device_id: String,
+        user_data_addr: usize,
+        alive: AtomicBool,
+        active: AtomicBool,
+        failed: AtomicBool,
+        pump: Mutex<WasmCapturePumpState>,
+    }
+
+    impl WasmCaptureState {
+        #[inline]
+        fn is_alive(&self) -> bool {
+            self.alive.load(Ordering::Relaxed)
+        }
+
+        #[inline]
+        fn is_active(&self) -> bool {
+            self.alive.load(Ordering::Relaxed)
+                && self.active.load(Ordering::Relaxed)
+                && !self.failed.load(Ordering::Relaxed)
+        }
+    }
+
+    enum WasmDeviceHandle {
+        Output(Arc<WasmDeviceState>),
+        Capture(Arc<WasmCaptureState>),
+    }
+
+    static CAPTURE_DEVICES: OnceLock<Mutex<Vec<Arc<WasmCaptureState>>>> = OnceLock::new();
+
+    fn capture_devices_registry() -> &'static Mutex<Vec<Arc<WasmCaptureState>>> {
+        CAPTURE_DEVICES.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    #[derive(Clone, PartialEq, Eq)]
+    struct CachedWebDevice {
+        id: String,
+        name: String,
+        is_default: bool,
+    }
+
+    static WEB_CAPTURE_DEVICES: OnceLock<Mutex<Vec<CachedWebDevice>>> = OnceLock::new();
+    static WEB_DEVICE_TRIGGERS: OnceLock<Mutex<Vec<Weak<(Mutex<bool>, Condvar)>>>> = OnceLock::new();
+    static FAILED_CAPTURE_MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+    fn web_capture_devices_cache() -> &'static Mutex<Vec<CachedWebDevice>> {
+        WEB_CAPTURE_DEVICES.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    pub fn register_web_device_trigger(trigger: Arc<(Mutex<bool>, Condvar)>) {
+        let triggers = WEB_DEVICE_TRIGGERS.get_or_init(|| Mutex::new(Vec::new()));
+        if let Ok(mut guard) = triggers.lock() {
+            guard.retain(|w| w.strong_count() > 0);
+            guard.push(Arc::downgrade(&trigger));
+        }
+    }
+
+    fn wake_web_device_watchers() {
+        let Some(triggers) = WEB_DEVICE_TRIGGERS.get() else {
+            return;
+        };
+        if let Ok(mut guard) = triggers.lock() {
+            guard.retain(|w| {
+                if let Some(arc) = w.upgrade() {
+                    let (lock, cvar) = &*arc;
+                    if let Ok(mut triggered) = lock.lock() {
+                        *triggered = true;
+                        cvar.notify_all();
+                    }
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+    }
+
+    fn post_web_capture_cmd(obj: &Object) {
+        let global = js_sys::global();
+        if let Ok(val) = Reflect::get(&global, &JsValue::from_str("__miniaudioWebCaptureCmd")) {
+            if let Some(func) = val.dyn_ref::<Function>() {
+                let _ = func.call1(&JsValue::NULL, obj);
+                return;
+            }
+        }
+        // Background Web Worker path: forward command to window main thread via BroadcastChannel.
+        if let Ok(bc_ctor) = Reflect::get(&global, &JsValue::from_str("BroadcastChannel")) {
+            if bc_ctor.is_function() {
+                if let Ok(poster) = Function::new_with_args(
+                    "channelName, msg",
+                    "var ch = new BroadcastChannel(channelName); ch.postMessage(msg); ch.close();",
+                )
+                .call2(&JsValue::NULL, &JsValue::from_str(WEB_CAPTURE_CHANNEL_NAME), obj)
+                {
+                    let _ = poster;
+                }
+            }
+        }
+    }
+
+    fn dispatch_start_capture_cmd(state: &WasmCaptureState) {
+        let obj = Object::new();
+        let _ = Reflect::set(&obj, &JsValue::from_str("cmd"), &JsValue::from_str("startCapture"));
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("slotIdx"),
+            &JsValue::from_f64(state.slot_idx as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("generation"),
+            &JsValue::from_f64(state.generation as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("deviceId"),
+            &JsValue::from_str(&state.requested_device_id),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("sampleRate"),
+            &JsValue::from_f64(state.sample_rate as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("channels"),
+            &JsValue::from_f64(state.channels as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("ctrlPtr"),
+            &JsValue::from_f64(state.ctrl_ptr as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("dataPtr"),
+            &JsValue::from_f64(state.data_ptr as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("capSamples"),
+            &JsValue::from_f64(WEB_CAPTURE_CAP_SAMPLES as f64),
+        );
+        post_web_capture_cmd(&obj);
+    }
+
+    fn dispatch_stop_capture_cmd(slot_idx: usize, generation: u32) {
+        let obj = Object::new();
+        let _ = Reflect::set(&obj, &JsValue::from_str("cmd"), &JsValue::from_str("stopCapture"));
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("slotIdx"),
+            &JsValue::from_f64(slot_idx as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("generation"),
+            &JsValue::from_f64(generation as f64),
+        );
+        post_web_capture_cmd(&obj);
+    }
+
+    fn copy_str_to_fixed<const N: usize>(s: &str, dst: &mut [u8; N]) {
+        dst.fill(0);
+        let bytes = s.as_bytes();
+        let max_copy = bytes.len().min(N.saturating_sub(1));
+        dst[..max_copy].copy_from_slice(&bytes[..max_copy]);
+    }
+
+    pub fn cached_capture_device_infos() -> Vec<MapDeviceInfo> {
+        let Ok(guard) = web_capture_devices_cache().lock() else {
+            return Vec::new();
+        };
+        guard
+            .iter()
+            .map(|d| {
+                let mut info = MapDeviceInfo {
+                    id: [0; 516],
+                    effective_id: [0; 516],
+                    name: [0; 256],
+                    is_default: if d.is_default { 1 } else { 0 },
+                    is_auto: 0,
+                };
+                copy_str_to_fixed(&d.id, &mut info.id);
+                copy_str_to_fixed(&d.id, &mut info.effective_id);
+                copy_str_to_fixed(&d.name, &mut info.name);
+                info
+            })
+            .collect()
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_set_web_capture_devices(ids: JsValue, names: JsValue, defaults: JsValue) {
+        let ids_arr = Array::from(&ids);
+        let names_arr = Array::from(&names);
+        let defaults_arr = Array::from(&defaults);
+        let len = ids_arr.length().min(names_arr.length()).min(defaults_arr.length());
+
+        let mut next = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let id = ids_arr.get(i).as_string().unwrap_or_default();
+            if id.is_empty() {
+                continue;
+            }
+            let name = names_arr.get(i).as_string().unwrap_or_else(|| id.clone());
+            let is_default = defaults_arr.get(i).as_bool().unwrap_or(false);
+            next.push(CachedWebDevice {
+                id,
+                name,
+                is_default,
+            });
+        }
+
+        let changed = if let Ok(mut guard) = web_capture_devices_cache().lock() {
+            if *guard != next {
+                *guard = next;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if changed {
+            wake_web_device_watchers();
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_set_web_capture_sample_rate(slot_idx: u32, generation: u32, sample_rate: u32) {
+        let _ = with_capture_slot(slot_idx as usize, |slot| {
+            if slot.ctrl.generation.load(Ordering::Acquire) == generation {
+                slot.ctrl
+                    .host_sample_rate
+                    .store(sample_rate.clamp(8000, 192000), Ordering::Release);
+            }
+        });
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_push_web_capture_pcm(
+        slot_idx: u32,
+        generation: u32,
+        samples: &Float32Array,
+        sample_rate: u32,
+    ) {
+        let mut buf = vec![0.0f32; samples.length() as usize];
+        samples.copy_to(&mut buf);
+        let _ = with_capture_slot(slot_idx as usize, |slot| {
+            if slot.ctrl.generation.load(Ordering::Acquire) == generation {
+                if sample_rate >= 8000 {
+                    slot.ctrl
+                        .host_sample_rate
+                        .store(sample_rate.clamp(8000, 192000), Ordering::Release);
+                }
+                slot.push_mono(generation, &buf);
+            }
+        });
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_notify_web_capture_failed(slot_idx: u32, generation: u32, error_message: String) {
+        if let Ok(devs) = capture_devices_registry().lock() {
+            for dev in devs.iter() {
+                if dev.slot_idx == slot_idx as usize && dev.generation == generation {
+                    dev.failed.store(true, Ordering::Release);
+                    dev.active.store(false, Ordering::Release);
+                    let _ = with_capture_slot(dev.slot_idx, |slot| {
+                        if slot.ctrl.generation.load(Ordering::Acquire) == generation {
+                            slot.ctrl.active.store(0, Ordering::Release);
+                        }
+                    });
+                    break;
+                }
+            }
+        }
+        let msgs = FAILED_CAPTURE_MESSAGES.get_or_init(|| Mutex::new(Vec::new()));
+        if let Ok(mut guard) = msgs.lock() {
+            guard.push(error_message);
+        }
+        wake_web_device_watchers();
+    }
+
+    pub fn wasm_is_capture_device_failed(ctx: *mut MapDeviceContext) -> bool {
+        if ctx.is_null() {
+            return false;
+        }
+        unsafe {
+            match &*(ctx as *const WasmDeviceHandle) {
+                WasmDeviceHandle::Capture(cap) => cap.failed.load(Ordering::Acquire),
+                WasmDeviceHandle::Output(_) => false,
+            }
+        }
+    }
+
+    pub fn wasm_has_failed_capture_devices() -> bool {
+        let Ok(devs) = capture_devices_registry().try_lock() else {
+            return false;
+        };
+        devs.iter()
+            .any(|d| d.is_alive() && d.failed.load(Ordering::Acquire))
+    }
+
+    pub fn wasm_take_failed_capture_messages() -> Vec<String> {
+        let Some(msgs) = FAILED_CAPTURE_MESSAGES.get() else {
+            return Vec::new();
+        };
+        let Ok(mut guard) = msgs.lock() else {
+            return Vec::new();
+        };
+        std::mem::take(&mut *guard)
+    }
+
+    pub fn wasm_pump_web_capture_rings() {
+        let Ok(mut devs) = capture_devices_registry().try_lock() else {
+            return;
+        };
+        devs.retain(|d| d.is_alive());
+        for dev in devs.iter() {
+            if !dev.is_active() || dev.user_data_addr == 0 {
+                continue;
+            }
+            let Ok(mut pump) = dev.pump.try_lock() else {
+                continue;
+            };
+            let pump_state = &mut *pump;
+            let host_sr_opt = with_capture_slot(dev.slot_idx, |slot| {
+                if slot.ctrl.generation.load(Ordering::Acquire) != dev.generation {
+                    return 0;
+                }
+                slot.pop_mono_all(&mut pump_state.scratch_in);
+                slot.ctrl.host_sample_rate.load(Ordering::Acquire)
+            });
+            let Some(host_sr) = host_sr_opt else {
+                continue;
+            };
+            if host_sr == 0 || pump_state.scratch_in.is_empty() {
+                continue;
+            }
+
+            let target_sr = dev.sample_rate.max(8000);
+            let target_ch = dev.channels.clamp(1, 8) as usize;
+            pump_state.resampler.process(
+                &pump_state.scratch_in,
+                host_sr,
+                target_sr,
+                &mut pump_state.scratch_resampled,
+            );
+            let out_frames = pump_state.scratch_resampled.len();
+            if out_frames == 0 {
+                continue;
+            }
+
+            let deliver_ptr = if target_ch == 1 {
+                pump_state.scratch_resampled.as_ptr()
+            } else {
+                pump_state.scratch_interleaved.clear();
+                pump_state.scratch_interleaved.reserve(out_frames * target_ch);
+                for &s in &pump_state.scratch_resampled {
+                    for _ in 0..target_ch {
+                        pump_state.scratch_interleaved.push(s);
+                    }
+                }
+                pump_state.scratch_interleaved.as_ptr()
+            };
+
+            unsafe {
+                rust_capture_pcm_frames(
+                    dev.user_data_addr as *mut c_void,
+                    deliver_ptr,
+                    out_frames as u32,
+                );
             }
         }
     }
@@ -598,6 +1165,21 @@ mod wasm_device_bridge {
         wasm_web_audio_frames_consumed()
     }
 
+    /// Returns cumulative mono capture samples written across active Web microphone slots.
+    #[wasm_bindgen]
+    pub fn wasm_get_web_capture_samples_written() -> u32 {
+        let Some(slots) = CAPTURE_SLOTS.get() else {
+            return 0;
+        };
+        let Ok(guard) = slots.try_lock() else {
+            return 0;
+        };
+        guard
+            .iter()
+            .filter(|s| s.in_use.load(Ordering::Relaxed))
+            .fold(0u32, |acc, s| acc.wrapping_add(s.ctrl.write_pos.load(Ordering::Relaxed)))
+    }
+
     /// Returns the descriptor object allowing `AudioWorklet` to read `WasmWebAudioRing` directly
     /// from shared WASM linear memory without involving the browser main UI thread.
     #[wasm_bindgen]
@@ -684,91 +1266,135 @@ mod wasm_device_bridge {
             }
         }
 
-        Arc::into_raw(state) as *mut MapDeviceContext
+        Box::into_raw(Box::new(WasmDeviceHandle::Output(state))) as *mut MapDeviceContext
     }
 
     pub unsafe fn map_capture_device_create(
         sample_rate: u32,
         channels: u32,
         _period_size_in_frames: u32,
-        _capture_device_id: *const c_char,
-        _rust_user_data: *mut c_void,
+        capture_device_id: *const c_char,
+        rust_user_data: *mut c_void,
         out_result: *mut i32,
     ) -> *mut MapDeviceContext {
+        let host_sr = HOST_AUDIO_SAMPLE_RATE.load(Ordering::Relaxed).max(8000);
+        let Some((slot_idx, generation, ctrl_ptr, data_ptr)) = acquire_capture_slot(host_sr) else {
+            if !out_result.is_null() {
+                *out_result = MAP_ERROR_UNSUPPORTED;
+            }
+            return std::ptr::null_mut();
+        };
+
+        let req_id = if capture_device_id.is_null() {
+            "AUTO".to_string()
+        } else {
+            CStr::from_ptr(capture_device_id)
+                .to_str()
+                .unwrap_or("AUTO")
+                .to_string()
+        };
+
         if !out_result.is_null() {
             *out_result = MAP_SUCCESS;
         }
-        let state = Arc::new(WasmDeviceState {
+
+        let state = Arc::new(WasmCaptureState {
+            slot_idx,
+            generation,
+            ctrl_ptr,
+            data_ptr,
             sample_rate: sample_rate.clamp(8000, 192000),
             channels: channels.clamp(1, 8),
-            user_data_addr: 0,
-            alive: AtomicBool::new(false),
+            requested_device_id: req_id,
+            user_data_addr: rust_user_data as usize,
+            alive: AtomicBool::new(true),
             active: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            pump: Mutex::new(WasmCapturePumpState::new()),
         });
-        Arc::into_raw(state) as *mut MapDeviceContext
+
+        if let Ok(mut devs) = capture_devices_registry().lock() {
+            devs.retain(|d| d.is_alive());
+            devs.push(state.clone());
+        }
+
+        Box::into_raw(Box::new(WasmDeviceHandle::Capture(state))) as *mut MapDeviceContext
     }
 
     pub unsafe fn map_device_start(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
-            let state = &*(ctx as *const WasmDeviceState);
-            state.active.store(true, Ordering::Release);
+            match &*(ctx as *const WasmDeviceHandle) {
+                WasmDeviceHandle::Output(state) => {
+                    state.active.store(true, Ordering::Release);
+                }
+                WasmDeviceHandle::Capture(cap) => {
+                    cap.failed.store(false, Ordering::Release);
+                    cap.active.store(true, Ordering::Release);
+                    let _ = with_capture_slot(cap.slot_idx, |slot| {
+                        if slot.ctrl.generation.load(Ordering::Acquire) == cap.generation {
+                            slot.ctrl.active.store(1, Ordering::Release);
+                        }
+                    });
+                    dispatch_start_capture_cmd(cap);
+                }
+            }
         }
         MAP_SUCCESS
     }
 
     pub unsafe fn map_device_stop(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
-            let state = &*(ctx as *const WasmDeviceState);
-            state.active.store(false, Ordering::Release);
+            match &*(ctx as *const WasmDeviceHandle) {
+                WasmDeviceHandle::Output(state) => {
+                    state.active.store(false, Ordering::Release);
+                }
+                WasmDeviceHandle::Capture(cap) => {
+                    cap.active.store(false, Ordering::Release);
+                    let _ = with_capture_slot(cap.slot_idx, |slot| {
+                        if slot.ctrl.generation.load(Ordering::Acquire) == cap.generation {
+                            slot.ctrl.active.store(0, Ordering::Release);
+                        }
+                    });
+                    dispatch_stop_capture_cmd(cap.slot_idx, cap.generation);
+                }
+            }
         }
         MAP_SUCCESS
     }
 
     pub unsafe fn map_device_destroy(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
-            let state = Arc::from_raw(ctx as *const WasmDeviceState);
-            if let Ok(mut devs) = devices_registry().lock() {
-                state.active.store(false, Ordering::Release);
-                state.alive.store(false, Ordering::Release);
-                devs.retain(|d| d.is_alive());
-            } else {
-                state.active.store(false, Ordering::Release);
-                state.alive.store(false, Ordering::Release);
+            let handle = Box::from_raw(ctx as *mut WasmDeviceHandle);
+            match *handle {
+                WasmDeviceHandle::Output(state) => {
+                    if let Ok(mut devs) = devices_registry().lock() {
+                        state.active.store(false, Ordering::Release);
+                        state.alive.store(false, Ordering::Release);
+                        devs.retain(|d| d.is_alive());
+                    } else {
+                        state.active.store(false, Ordering::Release);
+                        state.alive.store(false, Ordering::Release);
+                    }
+                }
+                WasmDeviceHandle::Capture(cap) => {
+                    cap.active.store(false, Ordering::Release);
+                    cap.alive.store(false, Ordering::Release);
+                    let _ = with_capture_slot(cap.slot_idx, |slot| {
+                        if slot.ctrl.generation.load(Ordering::Acquire) == cap.generation {
+                            slot.ctrl.active.store(0, Ordering::Release);
+                            slot.ctrl.generation.fetch_add(1, Ordering::AcqRel);
+                            slot.in_use.store(false, Ordering::Release);
+                        }
+                    });
+                    if let Ok(mut devs) = capture_devices_registry().lock() {
+                        devs.retain(|d| d.is_alive());
+                    }
+                    dispatch_stop_capture_cmd(cap.slot_idx, cap.generation);
+                }
             }
         }
         MAP_SUCCESS
     }
-
-    pub unsafe extern "C" fn map_device_enumerate_devices(
-        out_devices: *mut *mut MapDeviceInfo,
-        out_count: *mut u32,
-    ) -> i32 {
-        if !out_devices.is_null() {
-            *out_devices = std::ptr::null_mut();
-        }
-        if !out_count.is_null() {
-            *out_count = 0;
-        }
-        MAP_SUCCESS
-    }
-
-    pub unsafe extern "C" fn map_device_enumerate_capture_devices(
-        out_devices: *mut *mut MapDeviceInfo,
-        out_count: *mut u32,
-    ) -> i32 {
-        map_device_enumerate_devices(out_devices, out_count)
-    }
-
-    pub unsafe fn map_device_free_devices(_devices: *mut MapDeviceInfo) {}
-
-    pub unsafe extern "C" fn map_device_enumerate_all(out_all: *mut MapAllDevices) -> i32 {
-        if !out_all.is_null() {
-            *out_all = MapAllDevices::default();
-        }
-        MAP_SUCCESS
-    }
-
-    pub unsafe fn map_device_free_all(_all: *mut MapAllDevices) {}
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -827,66 +1453,91 @@ pub unsafe extern "C" fn rust_on_device_notification(
 
 /// Safely queries all playback and capture audio devices from the OS in a single pass.
 pub fn safe_enumerate_all_devices() -> Result<(Vec<MapDeviceInfo>, Vec<MapDeviceInfo>), i32> {
-    let mut all = MapAllDevices::default();
-    let res = unsafe { map_device_enumerate_all(&mut all) };
-    if res != 0 {
-        return Err(res);
+    #[cfg(target_arch = "wasm32")]
+    {
+        Ok((Vec::new(), wasm_device_bridge::cached_capture_device_infos()))
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut all = MapAllDevices::default();
+        let res = unsafe { map_device_enumerate_all(&mut all) };
+        if res != 0 {
+            return Err(res);
+        }
 
-    let playback = if !all.playback_devices.is_null() && all.playback_count > 0 {
-        let slice = unsafe { std::slice::from_raw_parts(all.playback_devices, all.playback_count as usize) };
-        slice.to_vec()
-    } else {
-        Vec::new()
-    };
+        let playback = if !all.playback_devices.is_null() && all.playback_count > 0 {
+            let slice = unsafe {
+                std::slice::from_raw_parts(all.playback_devices, all.playback_count as usize)
+            };
+            slice.to_vec()
+        } else {
+            Vec::new()
+        };
 
-    let capture = if !all.capture_devices.is_null() && all.capture_count > 0 {
-        let slice = unsafe { std::slice::from_raw_parts(all.capture_devices, all.capture_count as usize) };
-        slice.to_vec()
-    } else {
-        Vec::new()
-    };
+        let capture = if !all.capture_devices.is_null() && all.capture_count > 0 {
+            let slice = unsafe {
+                std::slice::from_raw_parts(all.capture_devices, all.capture_count as usize)
+            };
+            slice.to_vec()
+        } else {
+            Vec::new()
+        };
 
-    unsafe { map_device_free_all(&mut all) };
-    Ok((playback, capture))
+        unsafe { map_device_free_all(&mut all) };
+        Ok((playback, capture))
+    }
 }
 
 /// Safely queries all playback output devices.
 pub fn safe_enumerate_playback_devices() -> Result<Vec<MapDeviceInfo>, i32> {
-    let mut count = 0;
-    let mut ptr = std::ptr::null_mut();
-    let res = unsafe { map_device_enumerate_devices(&mut ptr, &mut count) };
-    if res != 0 {
-        return Err(res);
+    #[cfg(target_arch = "wasm32")]
+    {
+        Ok(Vec::new())
     }
-    let devs = if !ptr.is_null() && count > 0 {
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        slice.to_vec()
-    } else {
-        Vec::new()
-    };
-    if !ptr.is_null() {
-        unsafe { map_device_free_devices(ptr) };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut count = 0;
+        let mut ptr = std::ptr::null_mut();
+        let res = unsafe { map_device_enumerate_devices(&mut ptr, &mut count) };
+        if res != 0 {
+            return Err(res);
+        }
+        let devs = if !ptr.is_null() && count > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+            slice.to_vec()
+        } else {
+            Vec::new()
+        };
+        if !ptr.is_null() {
+            unsafe { map_device_free_devices(ptr) };
+        }
+        Ok(devs)
     }
-    Ok(devs)
 }
 
 /// Safely queries all capture input devices.
 pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
-    let mut count = 0;
-    let mut ptr = std::ptr::null_mut();
-    let res = unsafe { map_device_enumerate_capture_devices(&mut ptr, &mut count) };
-    if res != 0 {
-        return Err(res);
+    #[cfg(target_arch = "wasm32")]
+    {
+        Ok(wasm_device_bridge::cached_capture_device_infos())
     }
-    let devs = if !ptr.is_null() && count > 0 {
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        slice.to_vec()
-    } else {
-        Vec::new()
-    };
-    if !ptr.is_null() {
-        unsafe { map_device_free_devices(ptr) };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut count = 0;
+        let mut ptr = std::ptr::null_mut();
+        let res = unsafe { map_device_enumerate_capture_devices(&mut ptr, &mut count) };
+        if res != 0 {
+            return Err(res);
+        }
+        let devs = if !ptr.is_null() && count > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+            slice.to_vec()
+        } else {
+            Vec::new()
+        };
+        if !ptr.is_null() {
+            unsafe { map_device_free_devices(ptr) };
+        }
+        Ok(devs)
     }
-    Ok(devs)
 }

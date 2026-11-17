@@ -470,3 +470,61 @@ fn test_open_memory_owned_with_hint_decodes_seeks_and_releases_cleanly() {
     let _ = deck.stop();
     drop(deck);
 }
+
+#[test]
+fn test_wasm_capture_ring_wraparound_generation_and_resampler() {
+    use miniaudio_player::bridge::ffi::wasm_audio_protocol::*;
+    use std::sync::atomic::Ordering;
+
+    let slot = WasmWebCaptureSlot::new_boxed(48000);
+    slot.reset_for_generation(1, 48000);
+
+    // Inactive writes must be ignored
+    slot.push_mono(1, &[0.25, -0.25]);
+    let mut popped = Vec::new();
+    slot.pop_mono_all(&mut popped);
+    assert!(popped.is_empty());
+
+    // Generation mismatch writes must be ignored even when active
+    slot.ctrl.active.store(1, Ordering::Release);
+    slot.push_mono(999, &[0.5, -0.5]);
+    slot.pop_mono_all(&mut popped);
+    assert!(popped.is_empty());
+
+    // Push & pop 24,576 samples (> 16,384 wraparound) in 128-frame Web Audio quanta
+    let mut seq = 0usize;
+    let total_samples = WEB_CAPTURE_CAP_SAMPLES + 8192;
+    let mut received = Vec::with_capacity(total_samples);
+    while received.len() < total_samples {
+        let quantum: Vec<f32> = (0..128)
+            .map(|k| (((seq + k) % 1000) as f32) * 0.001 - 0.5)
+            .collect();
+        seq += 128;
+        slot.push_mono(1, &quantum);
+        slot.pop_mono_all(&mut popped);
+        received.extend_from_slice(&popped);
+    }
+    assert_eq!(received.len(), total_samples);
+    assert_eq!(slot.ctrl.overruns.load(Ordering::Relaxed), 0);
+    for (idx, &val) in received.iter().enumerate() {
+        let expected = ((idx % 1000) as f32) * 0.001 - 0.5;
+        assert!((val - expected).abs() < 1e-6, "sample mismatch at {}", idx);
+    }
+
+    // Overrun counter increments when filling beyond ring capacity without consumer
+    let full_chunk = vec![0.1f32; WEB_CAPTURE_CAP_SAMPLES];
+    slot.push_mono(1, &full_chunk);
+    slot.push_mono(1, &[0.2f32; 64]);
+    assert_eq!(slot.ctrl.overruns.load(Ordering::Relaxed), 1);
+
+    // Verify 48000 -> 44100 Hz linear mono resampling preserves 440 Hz tone energy
+    let mut mono_resampler = LinearPcmResampler::<1>::new();
+    let in_48k: Vec<f32> = (0..480)
+        .map(|n| (2.0 * std::f32::consts::PI * 440.0 * (n as f32) / 48000.0).sin() * 0.5)
+        .collect();
+    let mut out_44k = Vec::new();
+    mono_resampler.process(&in_48k, 48000, 44100, &mut out_44k);
+    assert!((438..=444).contains(&out_44k.len()));
+    let peak = out_44k.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(peak > 0.45 && peak <= 0.51, "unexpected resampled peak: {}", peak);
+}
